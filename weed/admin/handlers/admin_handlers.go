@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"net/url"
+	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
@@ -28,6 +29,7 @@ type AdminHandlers struct {
 	pluginHandlers         *PluginHandlers
 	mqHandlers             *MessageQueueHandlers
 	serviceAccountHandlers *ServiceAccountHandlers
+	groupHandlers          *GroupHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
@@ -40,6 +42,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 	pluginHandlers := NewPluginHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
 	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
+	groupHandlers := NewGroupHandlers(adminServer)
 	return &AdminHandlers{
 		adminServer:            adminServer,
 		sessionStore:           store,
@@ -51,6 +54,7 @@ func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *Admi
 		pluginHandlers:         pluginHandlers,
 		mqHandlers:             mqHandlers,
 		serviceAccountHandlers: serviceAccountHandlers,
+		groupHandlers:          groupHandlers,
 	}
 }
 
@@ -104,6 +108,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/object-store/buckets/{bucket}", h.ShowBucketDetails).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/users", h.userHandlers.ShowObjectStoreUsers).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/policies", h.policyHandlers.ShowPolicies).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/groups", h.groupHandlers.ShowGroups).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets", h.ShowS3TablesBuckets).Methods(http.MethodGet)
 	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces", h.ShowS3TablesNamespaces).Methods(http.MethodGet)
@@ -185,6 +190,19 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.UpdateServiceAccount)).Methods(http.MethodPut)
 	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.DeleteServiceAccount)).Methods(http.MethodDelete)
 
+	groupsApi := api.PathPrefix("/groups").Subrouter()
+	groupsApi.HandleFunc("", h.groupHandlers.GetGroups).Methods(http.MethodGet)
+	groupsApi.Handle("", wrapWrite(h.groupHandlers.CreateGroup)).Methods(http.MethodPost)
+	groupsApi.HandleFunc("/{name}", h.groupHandlers.GetGroupDetails).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}", wrapWrite(h.groupHandlers.DeleteGroup)).Methods(http.MethodDelete)
+	groupsApi.Handle("/{name}/status", wrapWrite(h.groupHandlers.SetGroupStatus)).Methods(http.MethodPut)
+	groupsApi.HandleFunc("/{name}/members", h.groupHandlers.GetGroupMembers).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/members", wrapWrite(h.groupHandlers.AddGroupMember)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/members/{username}", wrapWrite(h.groupHandlers.RemoveGroupMember)).Methods(http.MethodDelete)
+	groupsApi.HandleFunc("/{name}/policies", h.groupHandlers.GetGroupPolicies).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/policies", wrapWrite(h.groupHandlers.AttachGroupPolicy)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/policies/{policyName}", wrapWrite(h.groupHandlers.DetachGroupPolicy)).Methods(http.MethodDelete)
+
 	policyApi := api.PathPrefix("/object-store/policies").Subrouter()
 	policyApi.HandleFunc("", h.policyHandlers.GetPolicies).Methods(http.MethodGet)
 	policyApi.Handle("", wrapWrite(h.policyHandlers.CreatePolicy)).Methods(http.MethodPost)
@@ -229,8 +247,6 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 	pluginApi.HandleFunc("/status", h.adminServer.GetPluginStatusAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/workers", h.adminServer.GetPluginWorkersAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types", h.adminServer.GetPluginJobTypesAPI).Methods(http.MethodGet)
-	pluginApi.HandleFunc("/scheduler-config", h.adminServer.GetPluginSchedulerConfigAPI).Methods(http.MethodGet)
-	pluginApi.Handle("/scheduler-config", wrapWrite(h.adminServer.UpdatePluginSchedulerConfigAPI)).Methods(http.MethodPut)
 	pluginApi.HandleFunc("/jobs", h.adminServer.GetPluginJobsAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/jobs/{jobId}", h.adminServer.GetPluginJobAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/jobs/{jobId}/detail", h.adminServer.GetPluginJobDetailAPI).Methods(http.MethodGet)
@@ -278,8 +294,26 @@ func (h *AdminHandlers) ShowDashboard(w http.ResponseWriter, r *http.Request) {
 
 // ShowS3Buckets renders the Object Store buckets management page
 func (h *AdminHandlers) ShowS3Buckets(w http.ResponseWriter, r *http.Request) {
-	// Get Object Store buckets data from the server
-	s3Data := h.getS3BucketsData(r)
+	// Get pagination and sorting parameters from query string
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	pageSize := 100
+	if ps := r.URL.Query().Get("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 1000 {
+			pageSize = parsed
+		}
+	}
+
+	sortBy := defaultQuery(r.URL.Query().Get("sortBy"), "name")
+	sortOrder := defaultQuery(r.URL.Query().Get("sortOrder"), "asc")
+
+	// Get Object Store buckets data with pagination
+	s3Data := h.getS3BucketsData(r, page, pageSize, sortBy, sortOrder)
 	username := h.getUsername(r)
 
 	// Render HTML template
@@ -446,15 +480,15 @@ func (h *AdminHandlers) ShowBucketDetails(w http.ResponseWriter, r *http.Request
 	writeJSON(w, http.StatusOK, details)
 }
 
-// getS3BucketsData retrieves Object Store buckets data from the server
-func (h *AdminHandlers) getS3BucketsData(r *http.Request) dash.S3BucketsData {
+// getS3BucketsData retrieves Object Store buckets data from the server with pagination
+func (h *AdminHandlers) getS3BucketsData(r *http.Request, page, pageSize int, sortBy, sortOrder string) dash.S3BucketsData {
 	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
 	}
 
 	// Get Object Store buckets data
-	data, err := h.adminServer.GetS3BucketsData()
+	data, err := h.adminServer.GetS3BucketsData(page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		// Return empty data on error
 		return dash.S3BucketsData{
@@ -463,6 +497,11 @@ func (h *AdminHandlers) getS3BucketsData(r *http.Request) dash.S3BucketsData {
 			TotalBuckets: 0,
 			TotalSize:    0,
 			LastUpdated:  time.Now(),
+			CurrentPage:  1,
+			TotalPages:   1,
+			PageSize:     pageSize,
+			SortBy:       sortBy,
+			SortOrder:    sortOrder,
 		}
 	}
 

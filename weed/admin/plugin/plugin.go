@@ -34,6 +34,11 @@ type Options struct {
 	SchedulerTick          time.Duration
 	ClusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
 	LockManager            LockManager
+	// ConfigDefaultsProvider is an optional callback invoked when a job type's
+	// config is being bootstrapped from its descriptor defaults. It can enrich
+	// or replace the default config before it is persisted. If nil, descriptor
+	// defaults are used as-is.
+	ConfigDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 }
 
 // JobTypeInfo contains metadata about a plugin job type.
@@ -54,6 +59,7 @@ type Plugin struct {
 
 	schedulerTick          time.Duration
 	clusterContextProvider func(context.Context) (*plugin_pb.ClusterContext, error)
+	configDefaultsProvider func(config *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig
 	lockManager            LockManager
 
 	schedulerMu       sync.Mutex
@@ -72,9 +78,7 @@ type Plugin struct {
 	schedulerRun              map[string]*schedulerRunInfo
 	schedulerLoopMu           sync.Mutex
 	schedulerLoopState        schedulerLoopState
-	schedulerConfigMu         sync.RWMutex
-	schedulerConfig           SchedulerConfig
-	schedulerWakeCh           chan struct{}
+	schedulerWakeCh chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -161,6 +165,7 @@ func New(options Options) (*Plugin, error) {
 		sendTimeout:               sendTimeout,
 		schedulerTick:             schedulerTick,
 		clusterContextProvider:    options.ClusterContextProvider,
+		configDefaultsProvider:    options.ConfigDefaultsProvider,
 		lockManager:               options.LockManager,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
@@ -180,21 +185,6 @@ func New(options Options) (*Plugin, error) {
 		shutdownCh:                make(chan struct{}),
 	}
 	plugin.ctx, plugin.ctxCancel = context.WithCancel(context.Background())
-
-	if cfg, err := plugin.store.LoadSchedulerConfig(); err != nil {
-		glog.Warningf("Plugin failed to load scheduler config: %v", err)
-		plugin.schedulerConfig = DefaultSchedulerConfig()
-	} else if cfg == nil {
-		defaults := DefaultSchedulerConfig()
-		plugin.schedulerConfig = defaults
-		if plugin.store.IsConfigured() {
-			if err := plugin.store.SaveSchedulerConfig(&defaults); err != nil {
-				glog.Warningf("Plugin failed to persist scheduler defaults: %v", err)
-			}
-		}
-	} else {
-		plugin.schedulerConfig = normalizeSchedulerConfig(*cfg)
-	}
 
 	if err := plugin.loadPersistedMonitorState(); err != nil {
 		glog.Warningf("Plugin failed to load persisted monitoring state: %v", err)
@@ -402,6 +392,7 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	return nil
 }
 
+
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
 }
@@ -416,31 +407,6 @@ func (r *Plugin) IsConfigured() bool {
 
 func (r *Plugin) BaseDir() string {
 	return r.store.BaseDir()
-}
-
-func (r *Plugin) GetSchedulerConfig() SchedulerConfig {
-	if r == nil {
-		return DefaultSchedulerConfig()
-	}
-	r.schedulerConfigMu.RLock()
-	cfg := r.schedulerConfig
-	r.schedulerConfigMu.RUnlock()
-	return normalizeSchedulerConfig(cfg)
-}
-
-func (r *Plugin) UpdateSchedulerConfig(cfg SchedulerConfig) (SchedulerConfig, error) {
-	if r == nil {
-		return DefaultSchedulerConfig(), fmt.Errorf("plugin is not initialized")
-	}
-	normalized := normalizeSchedulerConfig(cfg)
-	if err := r.store.SaveSchedulerConfig(&normalized); err != nil {
-		return SchedulerConfig{}, err
-	}
-	r.schedulerConfigMu.Lock()
-	r.schedulerConfig = normalized
-	r.schedulerConfigMu.Unlock()
-	r.wakeScheduler()
-	return normalized, nil
 }
 
 func (r *Plugin) acquireAdminLock(reason string) (func(), error) {
@@ -720,6 +686,11 @@ func (r *Plugin) executeJobWithExecutor(
 		}
 		return completed, nil
 	}
+}
+
+// HasCapableWorker checks if any non-stale worker has a capability for the given job type.
+func (r *Plugin) HasCapableWorker(jobType string) bool {
+	return r.registry.HasCapableWorker(jobType)
 }
 
 func (r *Plugin) ListWorkers() []*WorkerSession {
@@ -1035,14 +1006,6 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		return nil
 	}
 
-	existing, err := r.store.LoadJobTypeConfig(jobType)
-	if err != nil {
-		return err
-	}
-	if existing != nil {
-		return nil
-	}
-
 	workerDefaults := CloneConfigValueMap(descriptor.WorkerDefaultValues)
 	if len(workerDefaults) == 0 && descriptor.WorkerConfigForm != nil {
 		workerDefaults = CloneConfigValueMap(descriptor.WorkerConfigForm.DefaultValues)
@@ -1079,7 +1042,22 @@ func (r *Plugin) ensureJobTypeConfigFromDescriptor(jobType string, descriptor *p
 		UpdatedBy:          "plugin",
 	}
 
-	return r.store.SaveJobTypeConfig(cfg)
+	// Check existence first to avoid calling configDefaultsProvider unnecessarily
+	// (e.g., it may make a blocking gRPC call to fetch master config).
+	existing, err := r.store.LoadJobTypeConfig(jobType)
+	if err != nil {
+		return err
+	}
+	if existing != nil {
+		return nil
+	}
+
+	if r.configDefaultsProvider != nil {
+		cfg = r.configDefaultsProvider(cfg)
+	}
+
+	_, err = r.store.SaveJobTypeConfigIfNotExists(cfg)
+	return err
 }
 
 func (r *Plugin) handleDetectionProposals(workerID string, message *plugin_pb.DetectionProposals) {
@@ -1440,4 +1418,14 @@ func (s *streamSession) close() {
 	s.closeOnce.Do(func() {
 		close(s.outgoing)
 	})
+}
+
+// WorkerConnectForTest simulates a worker connecting (test helper).
+func (r *Plugin) WorkerConnectForTest(hello *plugin_pb.WorkerHello) {
+	r.registry.UpsertFromHello(hello)
+}
+
+// WorkerDisconnectForTest simulates a worker disconnecting (test helper).
+func (r *Plugin) WorkerDisconnectForTest(workerID string) {
+	r.registry.Remove(workerID)
 }

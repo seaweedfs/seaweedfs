@@ -73,6 +73,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
 			leader, _ := s.RaftHashicorp.LeaderWithID()
+			s.topo.SetLastLeaderChangeTime(time.Now())
 			if isLeader {
 
 				if updatePeers {
@@ -99,7 +100,6 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
-			s.topo.LastLeaderChangeTime = time.Now()
 		}
 	}
 }

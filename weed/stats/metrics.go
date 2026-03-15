@@ -573,6 +573,26 @@ func RecordBucketActiveTime(bucket string) {
 	bucketLastActiveLock.Unlock()
 }
 
+func DeleteBucketMetrics(bucket string) {
+	bucketLastActiveLock.Lock()
+	delete(bucketLastActiveTsNs, bucket)
+	bucketLastActiveLock.Unlock()
+
+	labels := prometheus.Labels{"bucket": bucket}
+	c := S3RequestCounter.DeletePartialMatch(labels)
+	c += S3RequestHistogram.DeletePartialMatch(labels)
+	c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
+	c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
+	c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
+	c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
+	c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
+	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+
+	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
+}
+
 func DeleteCollectionMetrics(collection string) {
 	labels := prometheus.Labels{"collection": collection}
 	c := MasterReplicaPlacementMismatch.DeletePartialMatch(labels)
@@ -590,27 +610,32 @@ func bucketMetricTTLControl() {
 	for {
 		now := time.Now().UnixNano()
 
+		// Collect expired buckets under the lock, then release before
+		// doing the expensive Prometheus DeletePartialMatch calls.
+		// This prevents blocking RecordBucketActiveTime during cleanup.
 		bucketLastActiveLock.Lock()
+		var expiredBuckets []string
 		for bucket, ts := range bucketLastActiveTsNs {
 			if (now - ts) > ttlNs {
+				expiredBuckets = append(expiredBuckets, bucket)
 				delete(bucketLastActiveTsNs, bucket)
-
-				labels := prometheus.Labels{"bucket": bucket}
-				c := S3RequestCounter.DeletePartialMatch(labels)
-				c += S3RequestHistogram.DeletePartialMatch(labels)
-				c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
-				c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
-				c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
-				c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
-				c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
-				c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
-				c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
-				c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
-				glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 			}
 		}
-
 		bucketLastActiveLock.Unlock()
+
+		for _, bucket := range expiredBuckets {
+			labels := prometheus.Labels{"bucket": bucket}
+			// Only delete gauges and histograms, which represent current state.
+			// Counters (traffic, requests, objects) must persist for the process
+			// lifetime so that Prometheus rate()/increase() queries work correctly.
+			c := S3RequestHistogram.DeletePartialMatch(labels)
+			c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
+			c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+			glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
+		}
+
 		time.Sleep(bucketAtiveTTL)
 	}
 

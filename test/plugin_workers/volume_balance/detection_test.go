@@ -37,7 +37,9 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 		MasterGrpcAddresses: []string{master.Address()},
 	}, 10)
 	require.NoError(t, err)
-	require.Len(t, proposals, 1)
+	// With default batch_size=20 and 10 overloaded volumes vs 1 underloaded,
+	// all moves are grouped into a single batch proposal.
+	require.Len(t, proposals, 1, "expected exactly one batch proposal")
 
 	proposal := proposals[0]
 	require.Equal(t, "volume_balance", proposal.JobType)
@@ -46,8 +48,15 @@ func TestVolumeBalanceDetectionIntegration(t *testing.T) {
 
 	params := &worker_pb.TaskParams{}
 	require.NoError(t, proto.Unmarshal(paramsValue.GetBytesValue(), params))
-	require.NotEmpty(t, params.Sources)
-	require.NotEmpty(t, params.Targets)
+
+	bp := params.GetBalanceParams()
+	require.NotNil(t, bp, "expected BalanceParams in batch proposal")
+	require.Greater(t, len(bp.Moves), 1, "batch proposal should contain multiple moves")
+	for _, move := range bp.Moves {
+		require.NotZero(t, move.VolumeId)
+		require.NotEmpty(t, move.SourceNode)
+		require.NotEmpty(t, move.TargetNode)
+	}
 }
 
 func buildBalanceVolumeListResponse(t *testing.T) *master_pb.VolumeListResponse {

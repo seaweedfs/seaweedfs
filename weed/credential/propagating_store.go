@@ -20,6 +20,14 @@ import (
 var _ CredentialStore = &PropagatingCredentialStore{}
 var _ PolicyManager = &PropagatingCredentialStore{}
 
+type propagatingManagedPolicyLoader interface {
+	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
+}
+
+type propagatingInlinePolicyLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
 type PropagatingCredentialStore struct {
 	CredentialStore
 	masterClient   *wdclient.MasterClient
@@ -240,6 +248,38 @@ func (s *PropagatingCredentialStore) ListPolicyNames(ctx context.Context) ([]str
 	return s.CredentialStore.ListPolicyNames(ctx)
 }
 
+func (s *PropagatingCredentialStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	if loader, ok := s.CredentialStore.(propagatingManagedPolicyLoader); ok {
+		return loader.LoadManagedPolicies(ctx)
+	}
+
+	policies, err := s.CredentialStore.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policyDocument := range policies {
+		content, err := json.Marshal(policyDocument)
+		if err != nil {
+			return nil, err
+		}
+		managedPolicies = append(managedPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	return managedPolicies, nil
+}
+
+func (s *PropagatingCredentialStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	if loader, ok := s.CredentialStore.(propagatingInlinePolicyLoader); ok {
+		return loader.LoadInlinePolicies(ctx)
+	}
+	return nil, nil
+}
+
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if pm, ok := s.CredentialStore.(PolicyManager); ok {
 		if err := pm.CreatePolicy(ctx, name, document); err != nil {
@@ -341,6 +381,54 @@ func (s *PropagatingCredentialStore) DeleteServiceAccount(ctx context.Context, i
 	}
 	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
 		_, err := client.PutIdentity(tx, &iam_pb.PutIdentityRequest{Identity: identity})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) CreateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.CreateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.CreateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error) {
+	return s.CredentialStore.GetGroup(ctx, groupName)
+}
+
+func (s *PropagatingCredentialStore) DeleteGroup(ctx context.Context, groupName string) error {
+	glog.V(4).Infof("IAM: PropagatingCredentialStore.DeleteGroup %s", groupName)
+	if err := s.CredentialStore.DeleteGroup(ctx, groupName); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.RemoveGroup(tx, &iam_pb.RemoveGroupRequest{GroupName: groupName})
+		return err
+	})
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListGroups(ctx context.Context) ([]string, error) {
+	return s.CredentialStore.ListGroups(ctx)
+}
+
+func (s *PropagatingCredentialStore) UpdateGroup(ctx context.Context, group *iam_pb.Group) error {
+	if group != nil {
+		glog.V(4).Infof("IAM: PropagatingCredentialStore.UpdateGroup %s", group.Name)
+	}
+	if err := s.CredentialStore.UpdateGroup(ctx, group); err != nil {
+		return err
+	}
+	s.propagateChange(ctx, func(tx context.Context, client s3_pb.SeaweedS3IamCacheClient) error {
+		_, err := client.PutGroup(tx, &iam_pb.PutGroupRequest{Group: group})
 		return err
 	})
 	return nil

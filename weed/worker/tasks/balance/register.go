@@ -58,7 +58,10 @@ func RegisterBalanceTask() {
 				dialOpt,
 			), nil
 		},
-		DetectionFunc:  Detection,
+		DetectionFunc: func(metrics []*types.VolumeHealthMetrics, info *types.ClusterInfo, config base.TaskConfig) ([]*types.TaskDetectionResult, error) {
+			results, _, err := Detection(metrics, info, config, 0)
+			return results, err
+		},
 		ScanInterval:   30 * time.Minute,
 		SchedulingFunc: Scheduling,
 		MaxConcurrent:  1,

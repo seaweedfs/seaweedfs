@@ -235,53 +235,6 @@ func (s *AdminServer) GetPluginSchedulerStatusAPI(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, response)
 }
 
-// GetPluginSchedulerConfigAPI returns scheduler configuration.
-func (s *AdminServer) GetPluginSchedulerConfigAPI(w http.ResponseWriter, r *http.Request) {
-	pluginSvc := s.GetPlugin()
-	if pluginSvc == nil {
-		writeJSONError(w, http.StatusNotFound, "plugin is not enabled")
-		return
-	}
-
-	writeJSON(w, http.StatusOK, pluginSvc.GetSchedulerConfig())
-}
-
-// UpdatePluginSchedulerConfigAPI updates scheduler configuration.
-func (s *AdminServer) UpdatePluginSchedulerConfigAPI(w http.ResponseWriter, r *http.Request) {
-	pluginSvc := s.GetPlugin()
-	if pluginSvc == nil {
-		writeJSONError(w, http.StatusNotFound, "plugin is not enabled")
-		return
-	}
-
-	var req struct {
-		IdleSleepSeconds *int32 `json:"idle_sleep_seconds"`
-	}
-
-	if err := decodeJSONBody(newJSONMaxReader(w, r), &req); err != nil {
-		if errors.Is(err, io.EOF) {
-			writeJSONError(w, http.StatusBadRequest, "request body is required")
-			return
-		}
-		writeJSONError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
-		return
-	}
-	if req.IdleSleepSeconds == nil {
-		writeJSONError(w, http.StatusBadRequest, "idle_sleep_seconds is required")
-		return
-	}
-
-	updated, err := pluginSvc.UpdateSchedulerConfig(plugin.SchedulerConfig{
-		IdleSleepSeconds: *req.IdleSleepSeconds,
-	})
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, updated)
-}
-
 // RequestPluginJobTypeSchemaAPI asks a worker for one job type schema.
 func (s *AdminServer) RequestPluginJobTypeSchemaAPI(w http.ResponseWriter, r *http.Request) {
 	jobType := strings.TrimSpace(mux.Vars(r)["jobType"])

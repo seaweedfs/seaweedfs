@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
@@ -88,20 +89,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 			// Skip permission check if user is already the owner (optimization)
 			if !isOwner {
-				hasPermission := false
-				// Check permissions for each bucket
-				// For JWT-authenticated users, use IAM authorization
-				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-				if s3a.iam.iamIntegration != nil && sessionToken != "" {
-					// Use IAM authorization for JWT users
-					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
-					hasPermission = (errCode == s3err.ErrNone)
-				} else {
-					// Use legacy authorization for non-JWT users
-					hasPermission = identity.CanDo(s3_constants.ACTION_LIST, entry.Name, "")
-				}
-
-				if !hasPermission {
+				if errCode := s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, ""); errCode != s3err.ErrNone {
 					continue
 				}
 			}
@@ -264,10 +252,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// If collection exists but bucket directory doesn't, this is an inconsistent state
+	// that can occur when a previous bucket deletion partially completed (collection
+	// deletion failed but directory deletion succeeded, or volumes were recreated).
+	// Recover by proceeding to create the missing bucket directory.
 	if collectionExists {
-		glog.Errorf("PutBucketHandler: collection exists but bucket directory missing for %s", bucket)
-		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-		return
+		glog.Warningf("PutBucketHandler: collection exists but bucket directory missing for %s, recovering by creating bucket directory", bucket)
 	}
 
 	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
@@ -309,6 +298,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}); err != nil {
+		// If mkdir failed because another request created the bucket concurrently,
+		// return BucketAlreadyExists instead of InternalError.
+		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
+			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+			return
+		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -382,9 +378,18 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	// Delete bucket directory first, then collection. This order ensures that if
+	// collection deletion fails, the bucket directory is already gone, preventing
+	// the "collection exists but bucket directory missing" inconsistency that blocks
+	// bucket recreation. An orphaned collection is harmless and will be cleaned up
+	// or reused when the bucket is recreated.
+	err := s3a.rm(s3a.option.BucketsPath, bucket, false, true)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
 
-		// delete collection
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
 			Collection: s3a.getCollectionName(bucket),
 		}
@@ -398,19 +403,14 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	})
 
 	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+		// Log but don't fail — the bucket directory is already removed, so the bucket
+		// is effectively deleted. The orphaned collection will be cleaned up or reused.
+		glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
 	}
 
-	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
-
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
-	// Clean up bucket-related caches and locks after successful deletion
+	// Clean up bucket-related caches, locks, and metrics after successful deletion
 	s3a.invalidateBucketConfigCache(bucket)
+	stats_collect.DeleteBucketMetrics(bucket)
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
@@ -543,6 +543,10 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 				}
 			} else {
 				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+			}
+			// Remove bucket from negative cache — it exists now
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 			}
 			return nil
 		}

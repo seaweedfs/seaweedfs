@@ -53,14 +53,24 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 
 	lastFileName := req.StartFromFileName
 	includeLastFile := req.InclusiveStartFrom
+	snapshotTsNs := req.SnapshotTsNs
+	if snapshotTsNs == 0 {
+		snapshotTsNs = time.Now().UnixNano()
+	}
+	sentSnapshot := false
 	var listErr error
 	for limit > 0 {
 		var hasEntries bool
 		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(stream.Context(), util.FullPath(req.Directory), lastFileName, includeLastFile, int64(paginationLimit), req.Prefix, "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
-			if err = stream.Send(&filer_pb.ListEntriesResponse{
+			resp := &filer_pb.ListEntriesResponse{
 				Entry: entry.ToProtoEntry(),
-			}); err != nil {
+			}
+			if !sentSnapshot {
+				resp.SnapshotTsNs = snapshotTsNs
+				sentSnapshot = true
+			}
+			if err = stream.Send(resp); err != nil {
 				return false, err
 			}
 
@@ -78,12 +88,19 @@ func (fs *FilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream file
 			return err
 		}
 		if !hasEntries {
-			return nil
+			break
 		}
 
 		includeLastFile = false
 
 	}
+
+	// For empty directories we intentionally do NOT send a snapshot-only
+	// response (Entry == nil). Many consumers (Java FilerClient, S3 listing,
+	// etc.) treat any received response as an entry. The Go client-side
+	// DoSeaweedListWithSnapshot generates a client-side cutoff when the
+	// server sends no snapshot, so snapshot consistency is preserved
+	// without a server-side send.
 
 	return nil
 }
@@ -162,10 +179,12 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 		newEntry.TtlSec = 0
 	}
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	createErr := fs.filer.CreateEntry(ctx, newEntry, req.OExcl, req.IsFromOtherCluster, req.Signatures, req.SkipCheckParentDirectory, so.MaxFileNameLength)
 
 	if createErr == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
+		resp.MetadataEvent = eventSink.Last()
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
@@ -201,16 +220,19 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 		return &filer_pb.UpdateEntryResponse{}, err
 	}
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
+	resp := &filer_pb.UpdateEntryResponse{}
 	if err = fs.filer.UpdateEntry(ctx, entry, newEntry); err == nil {
 		fs.filer.DeleteChunksNotRecursive(garbage)
 
 		fs.filer.NotifyUpdateEvent(ctx, entry, newEntry, true, req.IsFromOtherCluster, req.Signatures)
+		resp.MetadataEvent = eventSink.Last()
 
 	} else {
 		glog.V(3).InfofCtx(ctx, "UpdateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), err)
 	}
 
-	return &filer_pb.UpdateEntryResponse{}, err
+	return resp, err
 }
 
 func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
@@ -303,10 +325,13 @@ func (fs *FilerServer) DeleteEntry(ctx context.Context, req *filer_pb.DeleteEntr
 
 	glog.V(4).InfofCtx(ctx, "DeleteEntry %v", req)
 
+	ctx, eventSink := filer.WithMetadataEventSink(ctx)
 	err = fs.filer.DeleteEntryMetaAndData(ctx, util.JoinPath(req.Directory, req.Name), req.IsRecursive, req.IgnoreRecursiveError, req.IsDeleteData, req.IsFromOtherCluster, req.Signatures, req.IfNotModifiedAfter)
 	resp = &filer_pb.DeleteEntryResponse{}
 	if err != nil && err != filer_pb.ErrNotFound {
 		resp.Error = err.Error()
+	} else {
+		resp.MetadataEvent = eventSink.Last()
 	}
 	return resp, nil
 }

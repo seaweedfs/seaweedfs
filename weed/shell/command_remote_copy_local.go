@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -253,6 +254,7 @@ func syncFileToRemote(commandEnv *CommandEnv, remoteStorage remote_storage.Remot
 		ctx := context.Background()
 
 		// Update local entry with remote information
+		remoteEntry.LastLocalSyncTsNs = time.Now().UnixNano()
 		localEntry.RemoteEntry = remoteEntry
 
 		// Update the entry

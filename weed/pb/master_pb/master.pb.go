@@ -2650,6 +2650,7 @@ func (*VacuumVolumeResponse) Descriptor() ([]byte, []int) {
 
 type DisableVacuumRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ByPlugin      bool                   `protobuf:"varint,1,opt,name=by_plugin,json=byPlugin,proto3" json:"by_plugin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2682,6 +2683,13 @@ func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use DisableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*DisableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{37}
+}
+
+func (x *DisableVacuumRequest) GetByPlugin() bool {
+	if x != nil {
+		return x.ByPlugin
+	}
+	return false
 }
 
 type DisableVacuumResponse struct {
@@ -2722,6 +2730,7 @@ func (*DisableVacuumResponse) Descriptor() ([]byte, []int) {
 
 type EnableVacuumRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	ByPlugin      bool                   `protobuf:"varint,1,opt,name=by_plugin,json=byPlugin,proto3" json:"by_plugin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2754,6 +2763,13 @@ func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EnableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*EnableVacuumRequest) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{39}
+}
+
+func (x *EnableVacuumRequest) GetByPlugin() bool {
+	if x != nil {
+		return x.ByPlugin
+	}
+	return false
 }
 
 type EnableVacuumResponse struct {
@@ -2981,8 +2997,11 @@ type GetMasterConfigurationResponse struct {
 	Leader                 string                 `protobuf:"bytes,5,opt,name=leader,proto3" json:"leader,omitempty"`
 	VolumeSizeLimitMB      uint32                 `protobuf:"varint,6,opt,name=volume_size_limit_m_b,json=volumeSizeLimitMB,proto3" json:"volume_size_limit_m_b,omitempty"`
 	VolumePreallocate      bool                   `protobuf:"varint,7,opt,name=volume_preallocate,json=volumePreallocate,proto3" json:"volume_preallocate,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
+	MaintenanceScripts      string `protobuf:"bytes,8,opt,name=maintenance_scripts,json=maintenanceScripts,proto3" json:"maintenance_scripts,omitempty"`
+	MaintenanceSleepMinutes uint32 `protobuf:"varint,9,opt,name=maintenance_sleep_minutes,json=maintenanceSleepMinutes,proto3" json:"maintenance_sleep_minutes,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *GetMasterConfigurationResponse) Reset() {
@@ -3062,6 +3081,20 @@ func (x *GetMasterConfigurationResponse) GetVolumePreallocate() bool {
 		return x.VolumePreallocate
 	}
 	return false
+}
+
+func (x *GetMasterConfigurationResponse) GetMaintenanceScripts() string {
+	if x != nil {
+		return x.MaintenanceScripts
+	}
+	return ""
+}
+
+func (x *GetMasterConfigurationResponse) GetMaintenanceSleepMinutes() uint32 {
+	if x != nil {
+		return x.MaintenanceSleepMinutes
+	}
+	return 0
 }
 
 type ListClusterNodesRequest struct {
@@ -4509,10 +4542,12 @@ const file_master_proto_rawDesc = "" +
 	"\n" +
 	"collection\x18\x03 \x01(\tR\n" +
 	"collection\"\x16\n" +
-	"\x14VacuumVolumeResponse\"\x16\n" +
-	"\x14DisableVacuumRequest\"\x17\n" +
-	"\x15DisableVacuumResponse\"\x15\n" +
-	"\x13EnableVacuumRequest\"\x16\n" +
+	"\x14VacuumVolumeResponse\"3\n" +
+	"\x14DisableVacuumRequest\x12\x1b\n" +
+	"\tby_plugin\x18\x01 \x01(\bR\bbyPlugin\"\x17\n" +
+	"\x15DisableVacuumResponse\"2\n" +
+	"\x13EnableVacuumRequest\x12\x1b\n" +
+	"\tby_plugin\x18\x01 \x01(\bR\bbyPlugin\"\x16\n" +
 	"\x14EnableVacuumResponse\"\x93\x02\n" +
 	"\x19VolumeMarkReadonlyRequest\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
@@ -4529,7 +4564,7 @@ const file_master_proto_rawDesc = "" +
 	" \x01(\bR\n" +
 	"isReadonly\"\x1c\n" +
 	"\x1aVolumeMarkReadonlyResponse\"\x1f\n" +
-	"\x1dGetMasterConfigurationRequest\"\xf3\x02\n" +
+	"\x1dGetMasterConfigurationRequest\"\xe0\x03\n" +
 	"\x1eGetMasterConfigurationResponse\x12'\n" +
 	"\x0fmetrics_address\x18\x01 \x01(\tR\x0emetricsAddress\x128\n" +
 	"\x18metrics_interval_seconds\x18\x02 \x01(\rR\x16metricsIntervalSeconds\x12D\n" +
@@ -4537,7 +4572,9 @@ const file_master_proto_rawDesc = "" +
 	"\x13default_replication\x18\x04 \x01(\tR\x12defaultReplication\x12\x16\n" +
 	"\x06leader\x18\x05 \x01(\tR\x06leader\x120\n" +
 	"\x15volume_size_limit_m_b\x18\x06 \x01(\rR\x11volumeSizeLimitMB\x12-\n" +
-	"\x12volume_preallocate\x18\a \x01(\bR\x11volumePreallocate\"q\n" +
+	"\x12volume_preallocate\x18\a \x01(\bR\x11volumePreallocate\x12/\n" +
+	"\x13maintenance_scripts\x18\b \x01(\tR\x12maintenanceScripts\x12:\n" +
+	"\x19maintenance_sleep_minutes\x18\t \x01(\rR\x17maintenanceSleepMinutes\"q\n" +
 	"\x17ListClusterNodesRequest\x12\x1f\n" +
 	"\vclient_type\x18\x01 \x01(\tR\n" +
 	"clientType\x12\x1f\n" +

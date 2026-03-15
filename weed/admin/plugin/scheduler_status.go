@@ -216,22 +216,18 @@ func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 	now := time.Now().UTC()
 	loopState := r.snapshotSchedulerLoopState()
-	schedulerConfig := r.GetSchedulerConfig()
 	status := SchedulerStatus{
 		Now:                  now,
 		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
 		InProcessJobs:        r.listInProcessJobs(now),
-		IdleSleepSeconds:     int(schedulerConfig.IdleSleepSeconds),
+		IdleSleepSeconds:     int(defaultSchedulerIdleSleep / time.Second),
 		CurrentJobType:       loopState.currentJobType,
 		CurrentPhase:         loopState.currentPhase,
 		LastIterationHadJobs: loopState.lastIterationHadJobs,
 	}
 	nextDetectionAt := r.earliestNextDetectionAt()
 	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
-		idleSleep := schedulerConfig.IdleSleepDuration()
-		if idleSleep > 0 {
-			nextDetectionAt = loopState.lastIterationCompleted.Add(idleSleep)
-		}
+		nextDetectionAt = loopState.lastIterationCompleted.Add(defaultSchedulerIdleSleep)
 	}
 	if !nextDetectionAt.IsZero() {
 		at := nextDetectionAt

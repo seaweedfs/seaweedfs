@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -51,67 +50,12 @@ func SubscribeMetaEvents(mc *MetaCache, selfSignature int32, client filer_pb.Fil
 	}
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
-		message := resp.EventNotification
-
-		for _, sig := range message.Signatures {
-			if sig == selfSignature && selfSignature != 0 {
-				return nil
-			}
-		}
-
-		dir := resp.Directory
-		var oldPath util.FullPath
-		var newEntry *filer.Entry
-		if message.OldEntry != nil {
-			oldPath = util.NewFullPath(dir, message.OldEntry.Name)
-			glog.V(4).Infof("deleting %v", oldPath)
-		}
-
-		if message.NewEntry != nil {
-			if message.NewParentPath != "" {
-				dir = message.NewParentPath
-			}
-			key := util.NewFullPath(dir, message.NewEntry.Name)
-			glog.V(4).Infof("creating %v", key)
-			newEntry = filer.FromPbEntry(dir, message.NewEntry)
-		}
-		err := mc.AtomicUpdateEntryFromFiler(context.Background(), oldPath, newEntry)
-		if err == nil {
-			if message.NewEntry != nil || message.OldEntry != nil {
-				dirsToNotify := make(map[util.FullPath]struct{})
-				if oldPath != "" {
-					parent, _ := oldPath.DirAndName()
-					dirsToNotify[util.FullPath(parent)] = struct{}{}
-				}
-				if newEntry != nil {
-					newParent, _ := newEntry.DirAndName()
-					dirsToNotify[util.FullPath(newParent)] = struct{}{}
-				}
-				if message.NewEntry != nil && message.NewEntry.IsDirectory {
-					childPath := util.NewFullPath(dir, message.NewEntry.Name)
-					dirsToNotify[childPath] = struct{}{}
-				}
-				for dirPath := range dirsToNotify {
-					mc.noteDirectoryUpdate(dirPath)
-				}
-			}
-			if message.OldEntry != nil && message.NewEntry != nil {
-				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-				mc.invalidateFunc(oldKey, message.OldEntry)
-				if message.OldEntry.Name != message.NewEntry.Name {
-					newKey := util.NewFullPath(dir, message.NewEntry.Name)
-					mc.invalidateFunc(newKey, message.NewEntry)
-				}
-			} else if filer_pb.IsCreate(resp) {
-				// no need to invalidate
-			} else if filer_pb.IsDelete(resp) {
-				oldKey := util.NewFullPath(resp.Directory, message.OldEntry.Name)
-				mc.invalidateFunc(oldKey, message.OldEntry)
-			}
-		}
-
-		return err
-
+		// Let all events (including self-originated ones) flow through the
+		// applier so that the directory-build buffering and dedup logic
+		// can handle them consistently. The dedupRing in
+		// applyMetadataResponseNow catches duplicates that were already
+		// applied locally via applyLocalMetadataEvent.
+		return mc.ApplyMetadataResponse(context.Background(), resp, SubscriberMetadataResponseApplyOptions)
 	}
 
 	prefix := dir

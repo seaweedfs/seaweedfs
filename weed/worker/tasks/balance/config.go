@@ -14,6 +14,9 @@ type Config struct {
 	base.BaseConfig
 	ImbalanceThreshold float64 `json:"imbalance_threshold"`
 	MinServerCount     int     `json:"min_server_count"`
+	DataCenterFilter   string  `json:"-"` // per-detection-run, not persisted
+	RackFilter         string  `json:"-"` // per-detection-run, not persisted
+	NodeFilter         string  `json:"-"` // per-detection-run, not persisted
 }
 
 // NewDefaultConfig creates a new default balance configuration

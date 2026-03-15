@@ -159,6 +159,13 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
+	// GetObjectAttributes (object-level only)
+	// Must be checked before versionId, because GET /bucket/key?attributes&versionId=xyz
+	// is a GetObjectAttributes request, not a GetObjectVersion request
+	if hasObject && query.Has("attributes") && method == http.MethodGet {
+		return s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
+	}
+
 	// Versioning operations - distinguish between versionId (specific version) and versions (list versions)
 	// versionId: Used to access/delete a specific version of an object (e.g., GET /bucket/key?versionId=xyz)
 	if query.Has("versionId") {

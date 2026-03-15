@@ -3,15 +3,14 @@ package s3err
 import (
 	"bytes"
 	"encoding/xml"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aws/aws-sdk-go/private/protocol/xml/xmlutil"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 type mimeType string
@@ -41,6 +40,7 @@ func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) 
 }
 
 func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
+	r, reqID := request_id.Ensure(r)
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
 	object := vars["object"]
@@ -49,19 +49,19 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 	}
 
 	apiError := GetAPIError(errorCode)
-	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object)
+	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object, reqID)
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }
 
-func getRESTErrorResponse(err APIError, resource string, bucket, object string) RESTErrorResponse {
+func getRESTErrorResponse(err APIError, resource string, bucket, object, requestID string) RESTErrorResponse {
 	return RESTErrorResponse{
 		Code:       err.Code,
 		BucketName: bucket,
 		Key:        object,
 		Message:    err.Description,
 		Resource:   resource,
-		RequestID:  fmt.Sprintf("%d", time.Now().UnixNano()),
+		RequestID:  requestID,
 	}
 }
 
@@ -75,7 +75,8 @@ func EncodeXMLResponse(response interface{}) []byte {
 }
 
 func setCommonHeaders(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("x-amz-request-id", fmt.Sprintf("%d", time.Now().UnixNano()))
+	_, reqID := request_id.Ensure(r)
+	w.Header().Set(request_id.AmzRequestIDHeader, reqID)
 	w.Header().Set("Accept-Ranges", "bytes")
 
 	// Handle CORS headers for requests with Origin header

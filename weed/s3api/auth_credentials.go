@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
@@ -48,6 +49,8 @@ type IdentityAccessManagement struct {
 	accessKeyIdent    map[string]*Identity
 	nameToIdentity    map[string]*Identity // O(1) lookup by identity name
 	policies          map[string]*iam_pb.Policy
+	groups            map[string]*iam_pb.Group // group name -> group
+	userGroups        map[string][]string      // user name -> group names (reverse index)
 	accounts          map[string]*Account
 	emailAccount      map[string]*Account
 	hashes            map[string]*sync.Pool
@@ -66,6 +69,10 @@ type IdentityAccessManagement struct {
 
 	// Bucket policy engine for evaluating bucket policies
 	policyEngine *BucketPolicyEngine
+
+	// Cached policy engine for IAM policy fallback evaluation.
+	// Keyed by policy name, kept in sync by PutPolicy/DeletePolicy.
+	iamPolicyEngine *policy_engine.PolicyEngine
 
 	// background polling
 	stopChan     chan struct{}
@@ -558,6 +565,16 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	for _, policy := range config.Policies {
 		policies[policy.Name] = policy
 	}
+	groups := make(map[string]*iam_pb.Group)
+	userGroupsMap := make(map[string][]string)
+	for _, g := range config.Groups {
+		groups[g.Name] = g
+		if !g.Disabled {
+			for _, member := range g.Members {
+				userGroupsMap[member] = append(userGroupsMap[member], g.Name)
+			}
+		}
+	}
 	for _, ident := range config.Identities {
 		glog.V(3).Infof("loading identity %s (disabled=%v)", ident.Name, ident.Disabled)
 		t := &Identity{
@@ -658,6 +675,9 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+	iam.groups = groups
+	iam.userGroups = userGroupsMap
+	iam.rebuildIAMPolicyEngineLocked()
 
 	// Re-add environment-based identities that were preserved
 	for _, envIdent := range envIdentities {
@@ -693,7 +713,7 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 	iam.loadEnvironmentVariableCredentials()
 
 	// Log configuration summary - always log to help debugging
-	glog.Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
+	glog.V(1).Infof("Loaded %d identities, %d accounts, %d access keys. Auth enabled: %v",
 		len(iam.identities), len(iam.accounts), len(iam.accessKeyIdent), iam.isAuthEnabled)
 
 	if glog.V(2) {
@@ -914,6 +934,24 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 	iam.nameToIdentity = nameToIdentity
 	iam.accessKeyIdent = accessKeyIdent
 	iam.policies = policies
+
+	// Process groups: only replace if config.Groups is non-nil (full config reload).
+	// Partial updates (e.g., UpsertIdentity) pass nil Groups and should preserve existing state.
+	if config.Groups != nil {
+		mergedGroups := make(map[string]*iam_pb.Group)
+		mergedUserGroups := make(map[string][]string)
+		for _, g := range config.Groups {
+			mergedGroups[g.Name] = g
+			if !g.Disabled {
+				for _, member := range g.Members {
+					mergedUserGroups[member] = append(mergedUserGroups[member], g.Name)
+				}
+			}
+		}
+		iam.groups = mergedGroups
+		iam.userGroups = mergedUserGroups
+	}
+	iam.rebuildIAMPolicyEngineLocked()
 	// Update authentication state based on whether identities exist
 	// Once enabled, keep it enabled (one-way toggle)
 	authJustEnabled := iam.updateAuthenticationState(len(identities))
@@ -1546,6 +1584,165 @@ func (iam *IdentityAccessManagement) GetCredentialManager() *credential.Credenti
 	return iam.credentialManager
 }
 
+type managedPolicyLoader interface {
+	LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error)
+}
+
+type inlinePolicyLoader interface {
+	LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error)
+}
+
+func inlinePolicyRuntimeName(userName, policyName string) string {
+	return "__inline_policy__/" + userName + "/" + policyName
+}
+
+func mergePoliciesIntoConfiguration(config *iam_pb.S3ApiConfiguration, policies []*iam_pb.Policy) {
+	if len(policies) == 0 {
+		return
+	}
+
+	existingPolicies := make(map[string]int, len(config.Policies))
+	for idx, policy := range config.Policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
+		existingPolicies[policy.Name] = idx
+	}
+
+	for _, policy := range policies {
+		if policy == nil || policy.Name == "" {
+			continue
+		}
+		policyCopy := &iam_pb.Policy{Name: policy.Name, Content: policy.Content}
+		if existingIdx, found := existingPolicies[policy.Name]; found {
+			config.Policies[existingIdx] = policyCopy
+			continue
+		}
+
+		config.Policies = append(config.Policies, policyCopy)
+		existingPolicies[policy.Name] = len(config.Policies) - 1
+	}
+}
+
+func appendUniquePolicyName(policyNames []string, policyName string) []string {
+	for _, existingPolicyName := range policyNames {
+		if existingPolicyName == policyName {
+			return policyNames
+		}
+	}
+	return append(policyNames, policyName)
+}
+
+func (iam *IdentityAccessManagement) loadManagedPoliciesForRuntime(ctx context.Context) ([]*iam_pb.Policy, error) {
+	store := iam.credentialManager.GetStore()
+	if store == nil {
+		return nil, nil
+	}
+
+	if loader, ok := store.(managedPolicyLoader); ok {
+		return loader.LoadManagedPolicies(ctx)
+	}
+
+	policies, err := iam.credentialManager.GetPolicies(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	managedPolicies := make([]*iam_pb.Policy, 0, len(policies))
+	for name, policyDocument := range policies {
+		content, err := json.Marshal(policyDocument)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal policy %q: %w", name, err)
+		}
+
+		managedPolicies = append(managedPolicies, &iam_pb.Policy{
+			Name:    name,
+			Content: string(content),
+		})
+	}
+
+	return managedPolicies, nil
+}
+
+func (iam *IdentityAccessManagement) hydrateRuntimePolicies(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	if iam.credentialManager == nil || config == nil {
+		return nil
+	}
+
+	managedPolicies, err := iam.loadManagedPoliciesForRuntime(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load managed policies for runtime: %w", err)
+	}
+	mergePoliciesIntoConfiguration(config, managedPolicies)
+
+	store := iam.credentialManager.GetStore()
+	if store == nil {
+		return nil
+	}
+
+	inlineLoader, ok := store.(inlinePolicyLoader)
+	if !ok {
+		return nil
+	}
+
+	inlinePoliciesByUser, err := inlineLoader.LoadInlinePolicies(ctx)
+	if err != nil {
+		return fmt.Errorf("failed to load inline policies for runtime: %w", err)
+	}
+
+	if len(inlinePoliciesByUser) == 0 {
+		return nil
+	}
+
+	identityByName := make(map[string]*iam_pb.Identity, len(config.Identities))
+	for _, identity := range config.Identities {
+		identityByName[identity.Name] = identity
+	}
+
+	inlinePolicies := make([]*iam_pb.Policy, 0)
+	for userName, userPolicies := range inlinePoliciesByUser {
+		identity, found := identityByName[userName]
+		if !found {
+			continue
+		}
+
+		for policyName, policyDocument := range userPolicies {
+			content, err := json.Marshal(policyDocument)
+			if err != nil {
+				return fmt.Errorf("failed to marshal inline policy %q for user %q: %w", policyName, userName, err)
+			}
+
+			runtimePolicyName := inlinePolicyRuntimeName(userName, policyName)
+			inlinePolicies = append(inlinePolicies, &iam_pb.Policy{
+				Name:    runtimePolicyName,
+				Content: string(content),
+			})
+			identity.PolicyNames = appendUniquePolicyName(identity.PolicyNames, runtimePolicyName)
+		}
+	}
+
+	mergePoliciesIntoConfiguration(config, inlinePolicies)
+	return nil
+}
+
+func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context.Context, policies []*iam_pb.Policy) error {
+	if iam == nil || iam.iamIntegration == nil {
+		return nil
+	}
+
+	provider, ok := iam.iamIntegration.(IAMManagerProvider)
+	if !ok {
+		return nil
+	}
+
+	manager := provider.GetIAMManager()
+	if manager == nil {
+		return nil
+	}
+
+	return manager.SyncRuntimePolicies(ctx, policies)
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
@@ -1558,6 +1755,15 @@ func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager
 
 	glog.V(2).Infof("Credential manager returned %d identities and %d accounts",
 		len(s3ApiConfiguration.Identities), len(s3ApiConfiguration.Accounts))
+
+	if err := iam.hydrateRuntimePolicies(context.Background(), s3ApiConfiguration); err != nil {
+		glog.Errorf("Failed to hydrate runtime IAM policies: %v", err)
+		return err
+	}
+	if err := iam.syncRuntimePoliciesToIAMManager(context.Background(), s3ApiConfiguration.Policies); err != nil {
+		glog.Errorf("Failed to sync runtime IAM policies to advanced IAM manager: %v", err)
+		return err
+	}
 
 	if err := iam.loadS3ApiConfiguration(s3ApiConfiguration); err != nil {
 		glog.Errorf("Failed to load S3 API configuration: %v", err)
@@ -1658,6 +1864,84 @@ func determineIAMAuthPath(sessionToken, principal, principalArn string) iamAuthP
 	return iamAuthPathNone
 }
 
+// evaluateIAMPolicies evaluates attached IAM policies for a user identity.
+// Returns true if any matching statement explicitly allows the action.
+// Uses the cached iamPolicyEngine to avoid re-parsing policy JSON on every request.
+func (iam *IdentityAccessManagement) evaluateIAMPolicies(r *http.Request, identity *Identity, action Action, bucket, object string) bool {
+	if identity == nil {
+		return false
+	}
+
+	iam.m.RLock()
+	engine := iam.iamPolicyEngine
+	groupNames := iam.userGroups[identity.Name]
+	// Snapshot group policy names to avoid holding the lock during evaluation.
+	// We copy the needed data since PutGroup/RemoveGroup mutate iam.groups in-place.
+	var groupPolicies [][]string
+	for _, gName := range groupNames {
+		g, ok := iam.groups[gName]
+		if !ok || g.Disabled {
+			continue
+		}
+		policyNames := make([]string, len(g.PolicyNames))
+		copy(policyNames, g.PolicyNames)
+		groupPolicies = append(groupPolicies, policyNames)
+	}
+	iam.m.RUnlock()
+
+	// Collect all policy names: user policies + group policies
+	if len(identity.PolicyNames) == 0 && len(groupPolicies) == 0 {
+		return false
+	}
+
+	if engine == nil {
+		return false
+	}
+
+	resource := buildResourceARN(bucket, object)
+	principal := buildPrincipalARN(identity, r)
+	s3Action := ResolveS3Action(r, string(action), bucket, object)
+	explicitAllow := false
+	conditions := policy_engine.ExtractConditionValuesFromRequest(r)
+	for k, v := range policy_engine.ExtractPrincipalVariables(principal) {
+		conditions[k] = v
+	}
+
+	evalArgs := &policy_engine.PolicyEvaluationArgs{
+		Action:     s3Action,
+		Resource:   resource,
+		Principal:  principal,
+		Conditions: conditions,
+		Claims:     identity.Claims,
+	}
+
+	// Evaluate user's own policies
+	for _, policyName := range identity.PolicyNames {
+		result := engine.EvaluatePolicy(policyName, evalArgs)
+		if result == policy_engine.PolicyResultDeny {
+			return false
+		}
+		if result == policy_engine.PolicyResultAllow {
+			explicitAllow = true
+		}
+	}
+
+	// Evaluate policies from user's groups
+	for _, policyNames := range groupPolicies {
+		for _, policyName := range policyNames {
+			result := engine.EvaluatePolicy(policyName, evalArgs)
+			if result == policy_engine.PolicyResultDeny {
+				return false
+			}
+			if result == policy_engine.PolicyResultAllow {
+				explicitAllow = true
+			}
+		}
+	}
+
+	return explicitAllow
+}
+
 // VerifyActionPermission checks if the identity is allowed to perform the action on the resource.
 // It handles both traditional identities (via Actions) and IAM/STS identities (via Policy).
 func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, identity *Identity, action Action, bucket, object string) s3err.ErrorCode {
@@ -1674,11 +1958,34 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
+	iam.m.RLock()
+	userGroupNames := iam.userGroups[identity.Name]
+	groupsHavePolicies := false
+	for _, gn := range userGroupNames {
+		if g, ok := iam.groups[gn]; ok && !g.Disabled && len(g.PolicyNames) > 0 {
+			groupsHavePolicies = true
+			break
+		}
+	}
+	iam.m.RUnlock()
+	hasAttachedPolicies := len(identity.PolicyNames) > 0 || groupsHavePolicies
 
-	if (len(identity.Actions) == 0 || hasSessionToken) && iam.iamIntegration != nil {
+	if (len(identity.Actions) == 0 || hasSessionToken || hasAttachedPolicies) && iam.iamIntegration != nil {
 		return iam.authorizeWithIAM(r, identity, action, bucket, object)
 	}
 
+	// Attached IAM policies are authoritative for IAM users. The legacy Actions
+	// field is a lossy projection that cannot represent deny statements,
+	// conditions, or fine-grained action differences such as PutObject vs
+	// DeleteObject.
+	if hasAttachedPolicies {
+		if iam.evaluateIAMPolicies(r, identity, action, bucket, object) {
+			return s3err.ErrNone
+		}
+		return s3err.ErrAccessDenied
+	}
+
+	// Traditional actions-based authorization from static S3 config.
 	if len(identity.Actions) > 0 {
 		if !identity.CanDo(action, bucket, object) {
 			return s3err.ErrAccessDenied
@@ -1709,11 +2016,25 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 		}
 	}
 
-	// Create IAMIdentity for authorization
+	// Create IAMIdentity for authorization — copy PolicyNames to avoid mutating shared identity
+	policyNames := make([]string, len(identity.PolicyNames))
+	copy(policyNames, identity.PolicyNames)
+
+	// Include policies inherited from user's groups
+	iam.m.RLock()
+	if groupNames, ok := iam.userGroups[identity.Name]; ok {
+		for _, gn := range groupNames {
+			if g, exists := iam.groups[gn]; exists && !g.Disabled {
+				policyNames = append(policyNames, g.PolicyNames...)
+			}
+		}
+	}
+	iam.m.RUnlock()
+
 	iamIdentity := &IAMIdentity{
 		Name:        identity.Name,
 		Account:     identity.Account,
-		PolicyNames: identity.PolicyNames,
+		PolicyNames: policyNames,
 		Claims:      identity.Claims, // Copy claims for policy variable substitution
 	}
 
@@ -1752,6 +2073,12 @@ func (iam *IdentityAccessManagement) PutPolicy(name string, content string) erro
 		iam.policies = make(map[string]*iam_pb.Policy)
 	}
 	iam.policies[name] = &iam_pb.Policy{Name: name, Content: content}
+	iam.ensureIAMPolicyEngine()
+	// Remove old entry first so that a parse failure doesn't leave a stale allow.
+	_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	if err := iam.iamPolicyEngine.SetBucketPolicy(name, content); err != nil {
+		glog.Warningf("IAM policy %q is stored but could not be compiled for cache: %v", name, err)
+	}
 	return nil
 }
 
@@ -1770,7 +2097,94 @@ func (iam *IdentityAccessManagement) DeletePolicy(name string) error {
 	iam.m.Lock()
 	defer iam.m.Unlock()
 	delete(iam.policies, name)
+	if iam.iamPolicyEngine != nil {
+		_ = iam.iamPolicyEngine.DeleteBucketPolicy(name)
+	}
 	return nil
+}
+
+func (iam *IdentityAccessManagement) PutGroup(group *iam_pb.Group) error {
+	if group == nil {
+		return fmt.Errorf("put group failed: nil group")
+	}
+	if group.Name == "" {
+		return fmt.Errorf("put group failed: empty group name")
+	}
+	glog.V(1).Infof("IAM: put group %s", group.Name)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	// Remove old reverse index entries for this group
+	if old, ok := iam.groups[group.Name]; ok && !old.Disabled {
+		for _, member := range old.Members {
+			iam.removeUserGroupLocked(member, group.Name)
+		}
+	}
+
+	iam.groups[group.Name] = group
+
+	// Add new reverse index entries if group is enabled
+	if !group.Disabled {
+		for _, member := range group.Members {
+			iam.userGroups[member] = append(iam.userGroups[member], group.Name)
+		}
+	}
+
+	return nil
+}
+
+func (iam *IdentityAccessManagement) RemoveGroup(groupName string) {
+	glog.V(1).Infof("IAM: remove group %s", groupName)
+
+	iam.m.Lock()
+	defer iam.m.Unlock()
+
+	if g, ok := iam.groups[groupName]; ok && !g.Disabled {
+		for _, member := range g.Members {
+			iam.removeUserGroupLocked(member, groupName)
+		}
+	}
+	delete(iam.groups, groupName)
+}
+
+// removeUserGroupLocked removes a group from a user's group list.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) removeUserGroupLocked(username, groupName string) {
+	groups := iam.userGroups[username]
+	for i, g := range groups {
+		if g == groupName {
+			iam.userGroups[username] = append(groups[:i], groups[i+1:]...)
+			if len(iam.userGroups[username]) == 0 {
+				delete(iam.userGroups, username)
+			}
+			return
+		}
+	}
+}
+
+// ensureIAMPolicyEngine lazily initializes the shared IAM policy engine.
+// Must be called with iam.m held.
+func (iam *IdentityAccessManagement) ensureIAMPolicyEngine() {
+	if iam.iamPolicyEngine == nil {
+		iam.iamPolicyEngine = policy_engine.NewPolicyEngine()
+	}
+}
+
+// rebuildIAMPolicyEngineLocked rebuilds the entire IAM policy engine cache
+// from the current policies map. Must be called with iam.m held.
+func (iam *IdentityAccessManagement) rebuildIAMPolicyEngineLocked() {
+	if len(iam.policies) == 0 {
+		iam.iamPolicyEngine = nil
+		return
+	}
+	engine := policy_engine.NewPolicyEngine()
+	for name, p := range iam.policies {
+		if err := engine.SetBucketPolicy(name, p.Content); err != nil {
+			glog.Warningf("IAM policy cache rebuild: skipping invalid policy %q: %v", name, err)
+		}
+	}
+	iam.iamPolicyEngine = engine
 }
 
 // ListPolicies lists all policies

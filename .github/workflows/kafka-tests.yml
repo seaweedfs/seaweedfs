@@ -37,7 +37,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code
@@ -82,7 +82,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code
@@ -132,7 +132,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -311,7 +311,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -473,7 +473,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -631,7 +631,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -789,7 +789,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code

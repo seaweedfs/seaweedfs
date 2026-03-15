@@ -53,7 +53,8 @@ func (h *PluginHandlers) ShowPluginMonitoring(w http.ResponseWriter, r *http.Req
 }
 
 func (h *PluginHandlers) renderPluginPage(w http.ResponseWriter, r *http.Request, page string) {
-	component := app.Plugin(page)
+	initialJob := r.URL.Query().Get("job")
+	component := app.Plugin(page, initialJob)
 	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 

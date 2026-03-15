@@ -91,8 +91,19 @@ func (f *Filer) doBatchDeleteFolderMetaAndData(ctx context.Context, entry *Entry
 				lastFileName = sub.Name()
 				if sub.IsDirectory() {
 					subIsDeletingBucket := f.IsBucket(sub)
-					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, false, nil, onHardLinkIdsFn)
+					err = f.doBatchDeleteFolderMetaAndData(ctx, sub, isRecursive, ignoreRecursiveError, shouldDeleteChunks, subIsDeletingBucket, isFromOtherCluster, nil, onHardLinkIdsFn)
 				} else {
+					if !isFromOtherCluster {
+						if _, remoteErr := f.maybeDeleteFromRemote(ctx, sub); remoteErr != nil {
+							glog.Warningf("remote delete child %s: %v", sub.FullPath, remoteErr)
+							if !ignoreRecursiveError {
+								err = remoteErr
+							}
+						}
+					}
+					if err != nil && !ignoreRecursiveError {
+						break
+					}
 					f.NotifyUpdateEvent(ctx, sub, nil, shouldDeleteChunks, isFromOtherCluster, nil)
 					if len(sub.HardLinkId) != 0 {
 						// hard link chunk data are deleted separately
@@ -130,9 +141,16 @@ func (f *Filer) doDeleteEntryMetaAndData(ctx context.Context, entry *Entry, shou
 
 	glog.V(3).InfofCtx(ctx, "deleting entry %v, delete chunks: %v", entry.FullPath, shouldDeleteChunks)
 
+	if !isFromOtherCluster {
+		if _, remoteDeletionErr := f.maybeDeleteFromRemote(ctx, entry); remoteDeletionErr != nil {
+			return remoteDeletionErr
+		}
+	}
+
 	if storeDeletionErr := f.Store.DeleteOneEntry(ctx, entry); storeDeletionErr != nil {
 		return fmt.Errorf("filer store delete: %w", storeDeletionErr)
 	}
+
 	if !entry.IsDirectory() {
 		f.NotifyUpdateEvent(ctx, entry, nil, shouldDeleteChunks, isFromOtherCluster, signatures)
 	}

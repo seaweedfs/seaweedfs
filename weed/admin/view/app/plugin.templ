@@ -1,13 +1,13 @@
 package app
 
-templ Plugin(page string) {
+templ Plugin(page string, initialJob string) {
     {{
         currentPage := page
         if currentPage == "" {
             currentPage = "overview"
         }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -65,7 +65,7 @@ templ Plugin(page string) {
 
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-info h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Workers</div>
@@ -73,7 +73,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-warning h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
@@ -81,11 +81,20 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-success h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
                             <h4 class="mb-0" id="plugin-status-activities">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Next Run</div>
+                            <h4 class="mb-0 plugin-scheduler-next-run">-</h4>
+                            <div class="text-muted small plugin-scheduler-next-run-meta"></div>
                         </div>
                     </div>
                 </div>
@@ -144,38 +153,6 @@ templ Plugin(page string) {
                                     </tbody>
                                 </table>
                             </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div class="row mb-4">
-                <div class="col-lg-6 mb-3">
-                    <div class="card shadow-sm h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-sliders-h me-2"></i>Scheduler Settings</h5>
-                            <small class="text-muted">Global</small>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-2">
-                                <label class="form-label" for="plugin-scheduler-idle-sleep-overview">Sleep Between Iterations (s)</label>
-                                <input type="number" class="form-control" id="plugin-scheduler-idle-sleep-overview" min="0"/>
-                                <div class="form-text">Used when no jobs are detected.</div>
-                            </div>
-                            <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn-overview">
-                                <i class="fas fa-save me-1"></i>Save Scheduler Settings
-                            </button>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-lg-6 mb-3">
-                    <div class="card shadow-sm h-100">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
-                            <small class="text-muted">Scheduler</small>
-                        </div>
-                        <div class="card-body">
-                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
-                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
                         </div>
                     </div>
                 </div>
@@ -262,7 +239,7 @@ templ Plugin(page string) {
                 </div>
 
                 <div class="col-lg-4 mb-3">
-                    <div class="card shadow-sm h-100">
+                    <div class="card shadow-sm">
                         <div class="card-header">
                             <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>Job Scheduling Settings</h5>
                         </div>
@@ -273,6 +250,11 @@ templ Plugin(page string) {
                                     <div class="form-check form-switch mt-1">
                                         <input class="form-check-input" type="checkbox" id="plugin-admin-enabled"/>
                                     </div>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
+                                    <div class="form-text">How often to check for new work.</div>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
@@ -303,22 +285,6 @@ templ Plugin(page string) {
                                     <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
                                 </div>
                             </div>
-                        </div>
-                    </div>
-
-                    <div class="card shadow-sm mt-3">
-                        <div class="card-header">
-                            <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler Settings</h5>
-                        </div>
-                        <div class="card-body">
-                            <div class="mb-3">
-                                <label class="form-label" for="plugin-scheduler-idle-sleep">Sleep Between Iterations (s)</label>
-                                <input type="number" class="form-control" id="plugin-scheduler-idle-sleep" min="0"/>
-                                <div class="form-text">Used when no jobs are detected.</div>
-                            </div>
-                            <button type="button" class="btn btn-outline-primary" id="plugin-save-scheduler-btn">
-                                <i class="fas fa-save me-1"></i>Save Scheduler Settings
-                            </button>
                         </div>
                     </div>
 
@@ -623,6 +589,7 @@ templ Plugin(page string) {
                 jobTypes: [],
                 lastDetectionByJobType: {},
                 initialPage: String(page.getAttribute('data-plugin-page') || 'overview').trim().toLowerCase(),
+                initialJob: String(page.getAttribute('data-plugin-job') || '').trim(),
                 activeTopTab: 'overview',
                 activeSubTab: 'configuration',
                 initialNavigationApplied: false,
@@ -632,8 +599,6 @@ templ Plugin(page string) {
                 activities: [],
                 schedulerStates: [],
                 schedulerStatus: null,
-                schedulerConfig: null,
-                schedulerConfigLoaded: false,
                 allJobs: [],
                 allActivities: [],
                 loadedJobType: '',
@@ -753,6 +718,28 @@ templ Plugin(page string) {
                 return 'configuration';
             }
 
+            function buildPluginURL(topTab, subTab, jobType) {
+                if (topTab === 'overview') {
+                    return '/plugin';
+                }
+                var effectiveSubTab = normalizeSubTab(subTab);
+                var path = '/plugin/' + encodeURIComponent(effectiveSubTab);
+                var jt = String(jobType || '').trim();
+                if (jt) {
+                    path += '?job=' + encodeURIComponent(jt);
+                }
+                return path;
+            }
+
+            function updateURL(replace) {
+                var url = buildPluginURL(state.activeTopTab, state.activeSubTab, state.selectedJobType);
+                if (replace) {
+                    history.replaceState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                } else {
+                    history.pushState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                }
+            }
+
             // Parse a job type item (string or object) into a safe object shape
             function parseJobTypeItem(item) {
                 var jobType = '';
@@ -818,8 +805,13 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                var firstItem = parseJobTypeItem(state.jobTypes[0]);
-                state.selectedJobType = firstItem.jobType;
+                // If a specific job type was provided in the URL, use it
+                if (state.initialJob && hasJobType(state.initialJob)) {
+                    state.selectedJobType = state.initialJob;
+                } else {
+                    var firstItem = parseJobTypeItem(state.jobTypes[0]);
+                    state.selectedJobType = firstItem.jobType;
+                }
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -1062,6 +1054,9 @@ templ Plugin(page string) {
                 }
 
                 var jobType = String(plan.job_type || '').trim().toLowerCase();
+                if (jobType === 'volume_balance') {
+                    return renderBalanceExecutionPlan(plan);
+                }
                 if (jobType !== 'erasure_coding') {
                     var fallbackText = toPrettyJson(plan);
                     if (!fallbackText) {
@@ -1135,6 +1130,44 @@ templ Plugin(page string) {
                             '<td>' + escapeHtml(textOrDash(assignment.target_data_center)) + '</td>' +
                             '<td>' + escapeHtml(textOrDash(assignment.target_rack)) + '</td>' +
                             '</tr>';
+                    }
+                    html += '</tbody></table></div>';
+                }
+
+                html += '</div>';
+                return html;
+            }
+
+            function renderBalanceExecutionPlan(plan) {
+                var html = '<div class="mb-3"><h6>Execution Plan</h6>';
+                var moves = Array.isArray(plan.moves) ? plan.moves : [];
+
+                if (moves.length === 0) {
+                    // Single-move balance job
+                    var src = textOrDash(plan.source_node || plan.source_server);
+                    var dst = textOrDash(plan.target_node || plan.target_server);
+                    var vid = textOrDash(plan.volume_id);
+                    var col = textOrDash(plan.collection);
+                    html += `<div class="row g-2 mb-2">
+                        <div class="col-md-3"><small><strong>Volume:</strong> ${escapeHtml(vid)}</small></div>
+                        <div class="col-md-3"><small><strong>Collection:</strong> ${escapeHtml(col)}</small></div>
+                        <div class="col-md-3"><small><strong>Source:</strong> <code>${escapeHtml(src)}</code></small></div>
+                        <div class="col-md-3"><small><strong>Target:</strong> <code>${escapeHtml(dst)}</code></small></div>
+                        </div>`;
+                } else {
+                    // Batch balance job
+                    html += '<div class="mb-2"><span class="badge bg-info">' + escapeHtml(String(moves.length)) + ' moves</span></div>';
+                    html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0">' +
+                        '<thead><tr><th>#</th><th>Volume</th><th>Source</th><th>Target</th><th>Collection</th></tr></thead><tbody>';
+                    for (var i = 0; i < moves.length; i++) {
+                        var move = moves[i] || {};
+                        html += `<tr>
+                            <td>${escapeHtml(String(i + 1))}</td>
+                            <td>${escapeHtml(textOrDash(move.volume_id))}</td>
+                            <td><code>${escapeHtml(textOrDash(move.source_node))}</code></td>
+                            <td><code>${escapeHtml(textOrDash(move.target_node))}</code></td>
+                            <td>${escapeHtml(textOrDash(move.collection))}</td>
+                        </tr>`;
                     }
                     html += '</tbody></table></div>';
                 }
@@ -1712,9 +1745,15 @@ templ Plugin(page string) {
                         barClass = 'bg-warning';
                     }
 
+                    var jobTypeCell = escapeHtml(textOrDash(executionJob.job_type));
+                    var execLabels = executionJob.labels || {};
+                    if (execLabels.batch === 'true' && execLabels.batch_size) {
+                        jobTypeCell += ' <span class="badge bg-info">' + escapeHtml(execLabels.batch_size) + ' moves</span>';
+                    }
+
                     rows += '<tr>' +
                         '<td>' + renderJobLink(executionJob.job_id) + '</td>' +
-                        '<td>' + escapeHtml(textOrDash(executionJob.job_type)) + '</td>' +
+                        '<td>' + jobTypeCell + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionJob.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
                         '<td><small>' + escapeHtml(textOrDash(executionJob.worker_id)) + '</small></td>' +
@@ -2461,6 +2500,7 @@ templ Plugin(page string) {
                 }
 
                 document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
+                document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
                 document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
                 document.getElementById('plugin-admin-max-runtime').value = String(pickNumber('job_type_max_runtime_seconds'));
                 document.getElementById('plugin-admin-max-results').value = String(pickNumber('max_jobs_per_detection'));
@@ -2471,9 +2511,6 @@ templ Plugin(page string) {
             }
 
             function collectAdminSettings() {
-                var existingRuntime = (state.config && state.config.admin_runtime) ? state.config.admin_runtime : {};
-                var existingDetectionInterval = Number(existingRuntime.detection_interval_seconds || 0);
-
                 function getInt(id) {
                     var raw = String(document.getElementById(id).value || '').trim();
                     if (!raw) {
@@ -2488,7 +2525,7 @@ templ Plugin(page string) {
 
                 return {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
-                    detection_interval_seconds: existingDetectionInterval,
+                    detection_interval_seconds: getInt('plugin-admin-detection-interval'),
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
                     job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),
                     max_jobs_per_detection: getInt('plugin-admin-max-results'),
@@ -2806,75 +2843,6 @@ templ Plugin(page string) {
                 }
             }
 
-            async function loadSchedulerConfig(forceRefresh) {
-                if (state.schedulerConfigLoaded && !forceRefresh) {
-                    return;
-                }
-                var idleInputs = [
-                    document.getElementById('plugin-scheduler-idle-sleep'),
-                    document.getElementById('plugin-scheduler-idle-sleep-overview'),
-                ].filter(Boolean);
-                if (idleInputs.length === 0) {
-                    return;
-                }
-                try {
-                    var cfg = await pluginRequest('GET', '/api/plugin/scheduler-config');
-                    state.schedulerConfig = cfg || {};
-                    state.schedulerConfigLoaded = true;
-                    var idleSeconds = Number((cfg && cfg.idle_sleep_seconds) || 0);
-                    idleInputs.forEach(function(input) {
-                        input.value = idleSeconds > 0 ? String(idleSeconds) : '';
-                    });
-                } catch (e) {
-                    notify('Failed to load scheduler config: ' + e.message, 'error');
-                }
-            }
-
-            async function saveSchedulerConfig(sourceInput) {
-                var idleInputs = [
-                    document.getElementById('plugin-scheduler-idle-sleep'),
-                    document.getElementById('plugin-scheduler-idle-sleep-overview'),
-                ].filter(Boolean);
-                if (idleInputs.length === 0) {
-                    return;
-                }
-                var raw = '';
-                if (sourceInput) {
-                    raw = String(sourceInput.value || '').trim();
-                }
-                if (!raw) {
-                    for (var i = 0; i < idleInputs.length; i++) {
-                        if (idleInputs[i] === sourceInput) {
-                            continue;
-                        }
-                        var candidate = String(idleInputs[i].value || '').trim();
-                        if (candidate) {
-                            raw = candidate;
-                            break;
-                        }
-                    }
-                }
-                var parsed = raw ? parseInt(raw, 10) : 0;
-                if (Number.isNaN(parsed) || parsed < 0) {
-                    notify('Invalid idle sleep value', 'error');
-                    return;
-                }
-                try {
-                    var updated = await pluginRequest('PUT', '/api/plugin/scheduler-config', {
-                        idle_sleep_seconds: parsed,
-                    });
-                    state.schedulerConfig = updated || {};
-                    state.schedulerConfigLoaded = true;
-                    var idleSeconds = Number((updated && updated.idle_sleep_seconds) || 0);
-                    idleInputs.forEach(function(input) {
-                        input.value = idleSeconds > 0 ? String(idleSeconds) : '';
-                    });
-                    notify('Scheduler settings saved', 'success');
-                } catch (e) {
-                    notify('Failed to save scheduler config: ' + e.message, 'error');
-                }
-            }
-
             function getMaxResults() {
                 var raw = String(document.getElementById('plugin-admin-max-results').value || '').trim();
                 if (!raw) {
@@ -3051,19 +3019,6 @@ templ Plugin(page string) {
                     saveConfig();
                 });
 
-                var saveSchedulerBtn = document.getElementById('plugin-save-scheduler-btn');
-                if (saveSchedulerBtn) {
-                    saveSchedulerBtn.addEventListener('click', function() {
-                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep'));
-                    });
-                }
-                var saveSchedulerBtnOverview = document.getElementById('plugin-save-scheduler-btn-overview');
-                if (saveSchedulerBtnOverview) {
-                    saveSchedulerBtnOverview.addEventListener('click', function() {
-                        saveSchedulerConfig(document.getElementById('plugin-scheduler-idle-sleep-overview'));
-                    });
-                }
-
                 document.getElementById('plugin-trigger-detection-btn').addEventListener('click', function() {
                     runDetection();
                 });
@@ -3088,6 +3043,7 @@ templ Plugin(page string) {
                         if (topTabKey === 'overview') {
                             state.activeTopTab = 'overview';
                             renderNavigationState();
+                            updateURL(false);
                             return;
                         }
 
@@ -3099,6 +3055,7 @@ templ Plugin(page string) {
                         state.selectedJobType = jobType;
                         ensureActiveNavigation();
                         renderNavigationState();
+                        updateURL(false);
                         if (state.loadedJobType !== jobType) {
                             try {
                                 await loadDescriptorAndConfig(jobType, false);
@@ -3126,6 +3083,7 @@ templ Plugin(page string) {
                         var subTabKey = normalizeSubTab(subTab.getAttribute('data-plugin-subtab'));
                         state.activeSubTab = subTabKey;
                         renderNavigationState();
+                        updateURL(false);
                         return;
                     }
 
@@ -3148,12 +3106,44 @@ templ Plugin(page string) {
                 ensureActiveNavigation();
                 renderNavigationState();
                 await refreshAll();
-                await loadSchedulerConfig(false);
+
+                // Set the initial browser history state to match the current view
+                updateURL(true);
 
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
                 }, 3000);
             }
+
+            window.addEventListener('popstate', async function(event) {
+                var s = event.state;
+                if (!s || !s.pluginTopTab) {
+                    // No plugin state — treat as overview
+                    state.activeTopTab = 'overview';
+                    renderNavigationState();
+                    return;
+                }
+                state.activeTopTab = String(s.pluginTopTab || 'overview');
+                state.activeSubTab = normalizeSubTab(s.pluginSubTab);
+                var jobType = String(s.pluginJob || '').trim();
+                if (jobType) {
+                    state.selectedJobType = jobType;
+                }
+                ensureActiveNavigation();
+                renderNavigationState();
+                // If a job type is selected and not loaded yet, load it
+                if (state.selectedJobType && state.loadedJobType !== state.selectedJobType) {
+                    try {
+                        await loadDescriptorAndConfig(state.selectedJobType, false);
+                    } catch (e) {
+                        console.error('Failed to load data on popstate navigation:', e);
+                    }
+                }
+                renderQueueJobs();
+                renderDetectionJobs();
+                renderExecutionJobs();
+                renderExecutionActivities();
+            });
 
             window.addEventListener('beforeunload', function() {
                 if (state.refreshTimer) {

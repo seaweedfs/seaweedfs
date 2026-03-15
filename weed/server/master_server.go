@@ -185,6 +185,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		r.HandleFunc("/{fileId}", requestIDMiddleware(ms.redirectHandler))
 	}
 
+	ms.Topo.SetAdminServerConnectedFunc(ms.isAdminServerConnectedFunc)
 	ms.Topo.StartRefreshWritableVolumes(
 		ms.grpcDialOption,
 		ms.option.GarbageThreshold,
@@ -213,7 +214,7 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 			stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", e.Value())).Inc()
 			if ms.Topo.RaftServer.Leader() != "" {
 				glog.V(0).Infof("[%s] %s becomes leader.", ms.Topo.RaftServer.Name(), ms.Topo.RaftServer.Leader())
-				ms.Topo.LastLeaderChangeTime = time.Now()
+				ms.Topo.SetLastLeaderChangeTime(time.Now())
 				if ms.Topo.RaftServer.Leader() == ms.Topo.RaftServer.Name() {
 					go ms.ensureTopologyId()
 				}
@@ -223,11 +224,14 @@ func (ms *MasterServer) SetRaftServer(raftServer *RaftServer) {
 	} else if raftServer.RaftHashicorp != nil {
 		ms.Topo.HashicorpRaft = raftServer.RaftHashicorp
 		raftServerName = ms.Topo.HashicorpRaft.String()
-		ms.Topo.LastLeaderChangeTime = time.Now()
 	}
 	ms.Topo.RaftServerAccessLock.Unlock()
 
 	if ms.Topo.IsLeader() {
+		// Seed the warmup timestamp so IsWarmingUp() is active even if the
+		// leader change event hasn't fired yet (e.g. node is already leader
+		// on startup). Followers don't need warmup state.
+		ms.Topo.SetLastLeaderChangeTime(time.Now())
 		glog.V(0).Infof("%s I am the leader!", raftServerName)
 		go ms.ensureTopologyId()
 	} else {
@@ -333,7 +337,7 @@ func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-func (ms *MasterServer) isAdminServerConnected() bool {
+func (ms *MasterServer) isAdminServerConnectedFunc() bool {
 	if ms == nil || ms.adminLocks == nil {
 		return false
 	}
@@ -343,15 +347,16 @@ func (ms *MasterServer) isAdminServerConnected() bool {
 
 func (ms *MasterServer) startAdminScripts() {
 	v := util.GetViper()
-	v.SetDefault("master.maintenance.scripts", maintenance.DefaultMasterMaintenanceScripts)
 	adminScripts := v.GetString("master.maintenance.scripts")
 	if adminScripts == "" {
 		return
 	}
 	glog.V(0).Infof("adminScripts: %v", adminScripts)
 
-	v.SetDefault("master.maintenance.sleep_minutes", 17)
 	sleepMinutes := v.GetFloat64("master.maintenance.sleep_minutes")
+	if sleepMinutes <= 0 {
+		sleepMinutes = float64(maintenance.DefaultMaintenanceSleepMinutes)
+	}
 
 	scriptLines := strings.Split(adminScripts, "\n")
 	if !strings.Contains(adminScripts, "lock") {
@@ -379,7 +384,7 @@ func (ms *MasterServer) startAdminScripts() {
 		for {
 			time.Sleep(time.Duration(sleepMinutes) * time.Minute)
 			if ms.Topo.IsLeader() && ms.MasterClient.GetMaster(context.Background()) != "" {
-				if ms.isAdminServerConnected() {
+				if ms.isAdminServerConnectedFunc() {
 					glog.V(1).Infof("Skipping master maintenance scripts because admin server is connected")
 					continue
 				}

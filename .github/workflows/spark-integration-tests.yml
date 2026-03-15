@@ -43,7 +43,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.24'
+        go-version-file: 'go.mod'
 
     - name: Build SeaweedFS binary
       run: |

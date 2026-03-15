@@ -51,18 +51,20 @@ templ Layout(view ViewContext, content templ.Component) {
     <link rel="stylesheet" href="/static/css/admin.css">
 </head>
 <body>
-    <div class="container-fluid">
+    <div class="container-fluid p-0">
         <!-- Header -->
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
             <div class="container-fluid">
                 <a class="navbar-brand fw-bold" href="/admin">
                     <i class="fas fa-server me-2"></i>
                     SeaweedFS Admin
-                    <span class="badge bg-warning text-dark ms-2">ALPHA</span>
                 </a>
                 
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+                <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation menu">
                     <span class="navbar-toggler-icon"></span>
+                </button>
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="User menu">
+                    <i class="fas fa-user"></i>
                 </button>
                 
                 <div class="collapse navbar-collapse" id="navbarNav">
@@ -84,7 +86,7 @@ templ Layout(view ViewContext, content templ.Component) {
 
         <div class="row g-0">
             <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
+            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse" id="sidebarMenu">
                 <div class="position-sticky pt-3">
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
                         <span>MAIN</span>
@@ -167,6 +169,11 @@ templ Layout(view ViewContext, content templ.Component) {
                             </a>
                         </li>
                         <li class="nav-item">
+                            <a class="nav-link" href="/object-store/groups">
+                                <i class="fas fa-users-cog me-2"></i>Groups
+                            </a>
+                        </li>
+                        <li class="nav-item">
                             <a class="nav-link" href="/object-store/service-accounts">
                                 <i class="fas fa-robot me-2"></i>Service Accounts
                             </a>
@@ -245,19 +252,6 @@ templ Layout(view ViewContext, content templ.Component) {
                                 </div>
                             }
                         </li>
-                        <!-- Commented out for later -->
-                        <!--
-                        <li class="nav-item">
-                            <a class="nav-link" href="/metrics">
-                                <i class="fas fa-chart-line me-2"></i>Metrics
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/logs">
-                                <i class="fas fa-file-alt me-2"></i>Logs
-                            </a>
-                        </li>
-                        -->
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
@@ -275,56 +269,15 @@ templ Layout(view ViewContext, content templ.Component) {
                                 </a>
                             }
                         </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/detection" {
-                                <a class="nav-link active" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/queue" {
-                                <a class="nav-link active" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/execution" {
-                                <a class="nav-link active" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/configuration" {
-                                <a class="nav-link active" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
-                                </a>
-                            }
-                        </li>
                     </ul>
                 </div>
             </div>
 
+            <!-- Sidebar backdrop for mobile -->
+            <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
             <!-- Main content -->
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4">
                 <div class="pt-3">
                     @content
                 </div>
@@ -337,6 +290,9 @@ templ Layout(view ViewContext, content templ.Component) {
         <div class="container-fluid text-center">
             <small class="text-muted">
                 &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin v{version.VERSION_NUMBER}
+                if version.COMMIT != "" {
+                    <span class="mx-1">({version.COMMIT})</span>
+                }
                 if !strings.Contains(version.VERSION, "enterprise") {
                     <span class="mx-2">•</span>
                     <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">

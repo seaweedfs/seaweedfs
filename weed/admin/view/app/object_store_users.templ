@@ -384,6 +384,21 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                 <!-- Options loaded dynamically -->
                             </select>
                         </div>
+                        <div class="mb-3">
+                            <label class="form-label">Groups</label>
+                            <div id="editUserGroups">
+                                <!-- Groups loaded dynamically -->
+                            </div>
+                            <div class="input-group mt-2">
+                                <select class="form-select" id="editGroupSelect">
+                                    <option value="">Add to group...</option>
+                                </select>
+                                <button class="btn btn-outline-primary" type="button" onclick="addUserToGroupFromEdit()"
+                                        aria-label="Add user to group" title="Add user to group">
+                                    <i class="fas fa-plus"></i>
+                                </button>
+                            </div>
+                        </div>
                     </form>
                 </div>
                 <div class="modal-footer">
@@ -427,9 +442,31 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 <div class="modal-body">
                     <div class="d-flex justify-content-between align-items-center mb-3">
                         <h6>Access Keys for <span id="accessKeysUsername"></span></h6>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">
+                        <button type="button" class="btn btn-primary btn-sm" onclick="toggleCreateKeyForm()">
                             <i class="fas fa-plus me-1"></i>Create New Key
                         </button>
+                    </div>
+                    <div id="createKeyForm" class="card mb-3" style="display: none;">
+                        <div class="card-body">
+                            <p class="text-muted small mb-2">Leave blank to auto-generate.</p>
+                            <div class="mb-2">
+                                <label for="newAccessKeyInput" class="form-label form-label-sm">Access Key</label>
+                                <input type="text" class="form-control form-control-sm" id="newAccessKeyInput" placeholder="Auto-generated if empty" minlength="4" maxlength="128">
+                            </div>
+                            <div class="mb-2">
+                                <label for="newSecretKeyInput" class="form-label form-label-sm">Secret Key</label>
+                                <div class="input-group input-group-sm">
+                                    <input type="password" class="form-control form-control-sm" id="newSecretKeyInput" placeholder="Auto-generated if empty" minlength="8" maxlength="128">
+                                    <button class="btn btn-outline-secondary" type="button" onclick="toggleSecretKeyVisibility()" aria-label="Toggle secret key visibility">
+                                        <i class="fas fa-eye" id="secretKeyToggleIcon"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-primary btn-sm" onclick="createAccessKey()">Create</button>
+                                <button type="button" class="btn btn-secondary btn-sm" onclick="toggleCreateKeyForm()">Cancel</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="accessKeysContent">
                         <!-- Content will be loaded dynamically -->
@@ -912,6 +949,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                         }
                     }
                     
+                    // Populate groups
+                    await populateEditUserGroups(username);
+
                     // Show modal
                     const modal = new bootstrap.Modal(document.getElementById('editUserModal'));
                     modal.show();
@@ -1027,6 +1067,103 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         }
 
 
+        // Populate groups in the edit user modal
+        async function populateEditUserGroups(username) {
+            const container = document.getElementById('editUserGroups');
+            const groupSelect = document.getElementById('editGroupSelect');
+            container.innerHTML = '';
+            groupSelect.innerHTML = '<option value="">Add to group...</option>';
+
+            try {
+                // Fetch all groups
+                const groupsResp = await fetch('/api/groups');
+                if (!groupsResp.ok) return;
+                const groupsData = await groupsResp.json();
+                const allGroups = groupsData.groups || [];
+
+                // Fetch user details to get current groups
+                const userResp = await fetch(`/api/users/${encodeURIComponent(username)}`);
+                if (!userResp.ok) return;
+                const user = await userResp.json();
+                const userGroups = user.groups || [];
+
+                // Show current group badges with remove button
+                if (userGroups.length > 0) {
+                    userGroups.forEach(function(group) {
+                        const badge = document.createElement('span');
+                        badge.className = 'badge bg-primary me-1 mb-1';
+                        badge.textContent = group + ' ';
+                        const removeIcon = document.createElement('i');
+                        removeIcon.className = 'fas fa-times ms-1';
+                        removeIcon.style.cursor = 'pointer';
+                        removeIcon.setAttribute('aria-label', 'Remove from group ' + group);
+                        removeIcon.setAttribute('title', 'Remove from group');
+                        removeIcon.addEventListener('click', function() {
+                            removeUserFromGroupInEdit(group);
+                        });
+                        badge.appendChild(removeIcon);
+                        container.appendChild(badge);
+                    });
+                } else {
+                    container.innerHTML = '<span class="text-muted">No groups</span>';
+                }
+
+                // Populate dropdown with groups the user is NOT in
+                allGroups.forEach(function(g) {
+                    if (!userGroups.includes(g.name)) {
+                        const opt = document.createElement('option');
+                        opt.value = g.name;
+                        opt.textContent = g.name;
+                        groupSelect.appendChild(opt);
+                    }
+                });
+            } catch (error) {
+                console.error('Error loading groups:', error);
+            }
+        }
+
+        // Add user to group from edit modal
+        async function addUserToGroupFromEdit() {
+            const username = document.getElementById('editUsername').value;
+            const groupSelect = document.getElementById('editGroupSelect');
+            const groupName = groupSelect.value;
+            if (!groupName) return;
+
+            try {
+                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: username })
+                });
+                if (response.ok) {
+                    await populateEditUserGroups(username);
+                } else {
+                    const error = await response.json();
+                    showAlert('Failed to add to group: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to add to group: ' + error.message, 'error');
+            }
+        }
+
+        // Remove user from group in edit modal
+        async function removeUserFromGroupInEdit(groupName) {
+            const username = document.getElementById('editUsername').value;
+            try {
+                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members/${encodeURIComponent(username)}`, {
+                    method: 'DELETE'
+                });
+                if (response.ok) {
+                    await populateEditUserGroups(username);
+                } else {
+                    const error = await response.json();
+                    showAlert('Failed to remove from group: ' + (error.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                showAlert('Failed to remove from group: ' + error.message, 'error');
+            }
+        }
+
         // Handle update user form submission
         async function handleUpdateUser() {
             const username = document.getElementById('editUsername').value;
@@ -1113,6 +1250,16 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                   }).join('');
               } else {
                   detailsHtml += '<span class="text-muted">No policies attached</span>';
+              }
+              detailsHtml += '</div>';
+              detailsHtml += '<h6 class="text-muted">Groups</h6>';
+              detailsHtml += '<div class="mb-3">';
+              if (user.groups && user.groups.length > 0) {
+                  detailsHtml += user.groups.map(function(group) {
+                      return '<span class="badge bg-primary me-1">' + escapeHtml(group) + '</span>';
+                  }).join('');
+              } else {
+                  detailsHtml += '<span class="text-muted">No groups</span>';
               }
               detailsHtml += '</div>';
               detailsHtml += '<h6 class="text-muted">Access Keys</h6>';
@@ -1222,10 +1369,66 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Reset and hide the create key form
+        function resetCreateKeyForm() {
+            document.getElementById('createKeyForm').style.display = 'none';
+            document.getElementById('newAccessKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').value = '';
+            document.getElementById('newSecretKeyInput').type = 'password';
+            document.getElementById('secretKeyToggleIcon').className = 'fas fa-eye';
+        }
+
+        // Toggle create key form visibility
+        function toggleCreateKeyForm() {
+            const form = document.getElementById('createKeyForm');
+            if (form.style.display === 'none') {
+                form.style.display = 'block';
+            } else {
+                resetCreateKeyForm();
+            }
+        }
+
+        // Toggle secret key input visibility
+        function toggleSecretKeyVisibility() {
+            const input = document.getElementById('newSecretKeyInput');
+            const icon = document.getElementById('secretKeyToggleIcon');
+            if (input.type === 'password') {
+                input.type = 'text';
+                icon.className = 'fas fa-eye-slash';
+            } else {
+                input.type = 'password';
+                icon.className = 'fas fa-eye';
+            }
+        }
+
+        // Reset form when modal is dismissed
+        document.getElementById('accessKeysModal').addEventListener('hidden.bs.modal', resetCreateKeyForm);
+
         // Create new access key
+        var isCreatingKey = false;
         async function createAccessKey() {
+            if (isCreatingKey) return;
+
             const username = document.getElementById('accessKeysUsername').textContent;
-            
+            const accessKeyInput = document.getElementById('newAccessKeyInput');
+            const secretKeyInput = document.getElementById('newSecretKeyInput');
+            if ((accessKeyInput.value.trim() && !accessKeyInput.reportValidity()) ||
+                (secretKeyInput.value.trim() && !secretKeyInput.reportValidity())) {
+                return;
+            }
+            const accessKey = accessKeyInput.value.trim();
+            const secretKey = secretKeyInput.value.trim();
+
+            const body = {};
+            if (accessKey) body.access_key = accessKey;
+            if (secretKey) body.secret_key = secretKey;
+
+            isCreatingKey = true;
+            const createBtn = document.querySelector('#createKeyForm .btn-primary');
+            const cancelBtn = document.querySelector('#createKeyForm .btn-secondary');
+            if (createBtn) createBtn.disabled = true;
+            if (cancelBtn) cancelBtn.disabled = true;
+
             try {
                 const encodedUsername = encodeURIComponent(username);
                 const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
@@ -1233,19 +1436,20 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({})
+                    body: JSON.stringify(body)
                 });
-                
+
                 if (response.ok) {
                     const result = await response.json();
-                    
-                    // Show the new access key details (IMPORTANT: secret key is only shown once!)
+
+                    // Show the new access key details
                     if (result.access_key) {
                         showNewAccessKeyModal(result.access_key);
                     }
-                    
+
                     showSuccessMessage('Access key created successfully');
-                    
+                    resetCreateKeyForm();
+
                     // Refresh access keys display
                     refreshAccessKeysList(username);
                 } else {
@@ -1255,6 +1459,10 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             } catch (error) {
                 console.error('Error creating access key:', error);
                 showAlert('Failed to create access key: ' + error.message, 'error');
+            } finally {
+                isCreatingKey = false;
+                if (createBtn) createBtn.disabled = false;
+                if (cancelBtn) cancelBtn.disabled = false;
             }
         }
 

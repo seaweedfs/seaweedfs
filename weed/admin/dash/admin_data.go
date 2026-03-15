@@ -80,6 +80,11 @@ type AccessKeyInfo struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CreateAccessKeyRequest struct {
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+}
+
 type UpdateAccessKeyStatusRequest struct {
 	Status string `json:"status" binding:"required"`
 }
@@ -90,6 +95,7 @@ type UserDetails struct {
 	Actions     []string        `json:"actions"`
 	PolicyNames []string        `json:"policy_names"`
 	AccessKeys  []AccessKeyInfo `json:"access_keys"`
+	Groups      []string        `json:"groups"`
 }
 
 type FilerNode struct {

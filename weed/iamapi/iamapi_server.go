@@ -21,6 +21,7 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -117,6 +118,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
+	apiRouter.Use(request_id.Middleware)
 	// ListBuckets
 
 	// apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))

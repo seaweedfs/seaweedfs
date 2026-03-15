@@ -93,12 +93,12 @@ spec:
           {{- $adminSecretName := .Values.admin.secret.existingSecret | default (printf "%s-admin-secret" (include "seaweedfs.fullname" .)) }}
           env:
             {{- if $adminAuthEnabled }}
-            - name: SEAWEEDFS_ADMIN_USER
+            - name: WEED_ADMIN_USER
               valueFrom:
                 secretKeyRef:
                   name: {{ $adminSecretName }}
                   key: {{ if .Values.admin.secret.existingSecret }}{{ .Values.admin.secret.userKey }}{{ else }}adminUser{{ end }}
-            - name: SEAWEEDFS_ADMIN_PASSWORD
+            - name: WEED_ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ $adminSecretName }}
@@ -152,10 +152,6 @@ spec:
               -dataDir=/data \
               {{- else if .Values.admin.dataDir }}
               -dataDir={{ .Values.admin.dataDir }} \
-              {{- end }}
-              {{- if $adminAuthEnabled }}
-              -adminUser="${SEAWEEDFS_ADMIN_USER}" \
-              -adminPassword="${SEAWEEDFS_ADMIN_PASSWORD}" \
               {{- end }}
               {{- if .Values.admin.masters }}
               -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}

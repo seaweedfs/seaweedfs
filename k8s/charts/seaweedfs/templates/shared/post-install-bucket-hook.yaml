@@ -51,7 +51,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     metadata:
@@ -92,6 +92,7 @@ spec:
           - "/bin/sh"
           - "-ec"
           - |
+            set -o pipefail
             wait_for_service() {
               local url=$1
               local max_attempts=60  # 5 minutes total (5s * 60)
@@ -117,8 +118,7 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
-          set -o pipefail
-          {{- range $createBuckets }}
+            {{- range $createBuckets }}
             {{- $bucketName := .name }}
             {{- $bucketLock := or .lock .objectLock .withLock }}
             bucket_list=$(/bin/echo 's3.bucket.list' | /usr/bin/weed shell) || { echo "Error listing s3 buckets"; exit 1; }

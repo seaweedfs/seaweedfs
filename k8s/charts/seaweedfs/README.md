@@ -165,8 +165,9 @@ admin:
   enabled: true
   port: 23646
   grpcPort: 33646  # For worker connections
-  adminUser: "admin"
-  adminPassword: "your-secure-password"  # Leave empty to disable auth
+  secret:
+    adminUser: "admin"
+    adminPassword: "your-secure-password"  # Leave empty to disable auth
   
   # Optional: persist admin data
   data:
@@ -190,6 +191,8 @@ If `adminPassword` is set, the admin interface requires authentication:
 - Password: Value of `adminPassword`
 
 If `adminPassword` is empty or not set, the admin interface runs without authentication (not recommended for production).
+
+As an alternative, a kubernetes Secret can be used (`admin.secret.existingSecret`).
 
 ### Admin Data Persistence
 

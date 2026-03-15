@@ -120,6 +120,28 @@ func (r *Registry) List() []*WorkerSession {
 	return out
 }
 
+// HasCapableWorker checks if any non-stale worker session has a capability for the given job type.
+// A worker is capable if its capabilities include the job type with CanDetect or CanExecute true.
+func (r *Registry) HasCapableWorker(jobType string) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	now := time.Now()
+	for _, session := range r.sessions {
+		if r.isSessionStaleLocked(session, now) {
+			continue
+		}
+		capability := session.Capabilities[jobType]
+		if capability == nil {
+			continue
+		}
+		if capability.CanDetect || capability.CanExecute {
+			return true
+		}
+	}
+	return false
+}
+
 // DetectableJobTypes returns sorted job types that currently have at least one detect-capable worker.
 func (r *Registry) DetectableJobTypes() []string {
 	r.mu.RLock()

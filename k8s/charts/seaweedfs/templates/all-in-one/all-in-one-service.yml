@@ -2,7 +2,7 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ printf "%s-all-in-one" (include "seaweedfs.fullname" .) | trunc 63 | trimSuffix "-" }}
+  name: {{ include "seaweedfs.componentName" (list . "all-in-one") }}
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -17,6 +17,9 @@ metadata:
 spec:
   type: {{ .Values.allInOne.service.type | default "ClusterIP" }}
   internalTrafficPolicy: {{ .Values.allInOne.service.internalTrafficPolicy | default "Cluster" }}
+  {{- if and (semverCompare ">=1.31-0" .Capabilities.KubeVersion.GitVersion) .Values.allInOne.s3.trafficDistribution }}
+  trafficDistribution: {{ include "seaweedfs.trafficDistribution" (dict "value" .Values.allInOne.s3.trafficDistribution "Capabilities" .Capabilities) }}
+  {{- end }}
   ports:
   # Master ports
   - name: "swfs-master"
