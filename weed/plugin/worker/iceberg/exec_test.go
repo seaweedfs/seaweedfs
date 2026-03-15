@@ -649,8 +649,9 @@ func TestRewriteManifestsBelowThreshold(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		MinInputFiles:    10, // threshold higher than actual count (1)
-		MaxCommitRetries: 3,
+		MinInputFiles:         10,
+		MinManifestsToRewrite: 10, // threshold higher than actual manifest count (1)
+		MaxCommitRetries:      3,
 	}
 
 	result, err := handler.rewriteManifests(context.Background(), client, setup.BucketName, setup.tablePath(), config)
