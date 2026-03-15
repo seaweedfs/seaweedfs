@@ -493,21 +493,16 @@ func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error 
 }
 
 func (h *Handler) dialFiler(ctx context.Context, address string) (*grpc.ClientConn, error) {
-	dialCtx, dialCancel := context.WithTimeout(ctx, filerConnectTimeout)
-	defer dialCancel()
+	opCtx, opCancel := context.WithTimeout(ctx, filerConnectTimeout)
+	defer opCancel()
 
-	conn, err := pb.GrpcDial(dialCtx, address, false, h.grpcDialOption)
+	conn, err := pb.GrpcDial(opCtx, address, false, h.grpcDialOption)
 	if err != nil {
 		return nil, err
 	}
 
-	pingCtx, pingCancel := context.WithTimeout(ctx, filerConnectTimeout)
-	defer pingCancel()
 	client := filer_pb.NewSeaweedFilerClient(conn)
-	if _, err := client.Ping(pingCtx, &filer_pb.PingRequest{
-		Target:     "iceberg_maintenance",
-		TargetType: "plugin_worker",
-	}); err != nil {
+	if _, err := client.Ping(opCtx, &filer_pb.PingRequest{}); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}

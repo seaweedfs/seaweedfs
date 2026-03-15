@@ -190,7 +190,26 @@ func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.Seaweed
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	return fakeServer, filer_pb.NewSeaweedFilerClient(conn), listener.Addr().String()
+	client := filer_pb.NewSeaweedFilerClient(conn)
+	deadline := time.Now().Add(time.Second)
+	for {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_, err := client.Ping(pingCtx, &filer_pb.PingRequest{})
+		cancel()
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("filer not ready: %v", err)
+		}
+		code := status.Code(err)
+		if code != codes.Unavailable && code != codes.DeadlineExceeded && code != codes.Canceled {
+			t.Fatalf("unexpected filer readiness error: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return fakeServer, client, listener.Addr().String()
 }
 
 // ---------------------------------------------------------------------------
