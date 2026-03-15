@@ -329,6 +329,12 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
 		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
 	}
+	// Reject path traversal in bucket/namespace/table names.
+	for _, name := range []string{bucketName, namespace, tableName} {
+		if strings.Contains(name, "..") || strings.ContainsAny(name, "/\\") {
+			return fmt.Errorf("invalid name %q: must not contain path separators or '..'", name)
+		}
+	}
 	if tablePath == "" {
 		tablePath = path.Join(namespace, tableName)
 	}
