@@ -515,6 +515,59 @@ func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
 	}
 }
 
+func TestSplitOversizedBinRespectsTargetSize(t *testing.T) {
+	targetSize := int64(100)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 80, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 80, partition: map[int]any{}},
+		{path: "data/f3.parquet", size: 10, partition: map[int]any{}},
+		{path: "data/f4.parquet", size: 10, partition: map[int]any{}},
+	})
+
+	bins := splitOversizedBin(compactionBin{
+		PartitionKey: "__unpartitioned__",
+		Partition:    map[int]any{},
+		Entries:      entries,
+		TotalSize:    180,
+	}, targetSize, minFiles)
+
+	if len(bins) == 0 {
+		t.Fatal("expected at least one valid bin")
+	}
+	for i, bin := range bins {
+		if bin.TotalSize > targetSize {
+			t.Fatalf("bin %d exceeds target size: got %d want <= %d", i, bin.TotalSize, targetSize)
+		}
+		if len(bin.Entries) < minFiles {
+			t.Fatalf("bin %d does not meet minFiles: got %d want >= %d", i, len(bin.Entries), minFiles)
+		}
+	}
+}
+
+func TestSplitOversizedBinDropsImpossibleRunts(t *testing.T) {
+	targetSize := int64(100)
+	minFiles := 2
+
+	entries := makeTestEntries(t, []testEntrySpec{
+		{path: "data/f1.parquet", size: 60, partition: map[int]any{}},
+		{path: "data/f2.parquet", size: 60, partition: map[int]any{}},
+		{path: "data/f3.parquet", size: 60, partition: map[int]any{}},
+	})
+
+	bins := splitOversizedBin(compactionBin{
+		PartitionKey: "__unpartitioned__",
+		Partition:    map[int]any{},
+		Entries:      entries,
+		TotalSize:    180,
+	}, targetSize, minFiles)
+
+	if len(bins) != 0 {
+		t.Fatalf("expected no valid bins, got %d", len(bins))
+	}
+}
+
 type testEntrySpec struct {
 	path      string
 	size      int64
