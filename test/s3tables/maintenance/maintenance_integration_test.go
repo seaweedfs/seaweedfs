@@ -695,7 +695,9 @@ func testCompactDataFiles(t *testing.T) {
 
 	var compacted *filer_pb.Entry
 	listErr := filer_pb.SeaweedList(ctx, client, dataDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-		if strings.HasPrefix(entry.Name, "compact-") && strings.HasSuffix(entry.Name, ".parquet") {
+		if strings.HasPrefix(entry.Name, "compact-") &&
+			!strings.HasPrefix(entry.Name, "compact-input-") &&
+			strings.HasSuffix(entry.Name, ".parquet") {
 			compacted = entry
 		}
 		return nil
