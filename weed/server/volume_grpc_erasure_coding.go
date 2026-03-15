@@ -220,10 +220,19 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	var location *storage.DiskLocation
 
-	// Use disk_id if explicitly provided (disk-aware storage).
-	// DiskId=0 is treated as "not specified" (protobuf default) and triggers
-	// auto-selection below. Callers that want to target a specific disk must
-	// use DiskId >= 1 (1-indexed in the RPC, mapped to Locations[DiskId]).
+	// Select the target location for storing EC shard files.
+	//
+	// When req.DiskId > 0 the caller is explicitly choosing a disk:
+	//   location = vs.store.Locations[req.DiskId]
+	//   (DiskId=1 → Locations[1], DiskId=2 → Locations[2], etc.)
+	//
+	// When req.DiskId == 0 (the protobuf default, meaning "not specified")
+	// we auto-select location by preferring the disk that already holds EC
+	// shards for this volume, then falling back to any HDD, then any disk.
+	//
+	// Note: Locations[0] cannot be targeted explicitly via DiskId because 0
+	// is indistinguishable from "unset". It can still be chosen by the
+	// auto-select logic.
 	if req.DiskId > 0 {
 		// Validate disk ID is within bounds
 		if int(req.DiskId) >= len(vs.store.Locations) {
