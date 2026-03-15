@@ -133,12 +133,12 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					Description: "Controls for bin-packing small Parquet data files.",
 					Fields: []*plugin_pb.ConfigField{
 						{
-							Name:        "target_file_size_bytes",
-							Label:       "Target File Size (bytes)",
-							Description: "Files smaller than this are candidates for compaction.",
+							Name:        "target_file_size_mb",
+							Label:       "Target File Size (MB)",
+							Description: "Files smaller than this (in megabytes) are candidates for compaction.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1024 * 1024}},
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
 							Name:        "min_input_files",
@@ -205,7 +205,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+				"target_file_size_mb":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
 				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
 				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
@@ -227,7 +227,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+			"target_file_size_mb":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
 			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
