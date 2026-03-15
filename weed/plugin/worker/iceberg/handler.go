@@ -148,6 +148,13 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 						},
+						{
+							Name:        "apply_deletes",
+							Label:       "Apply Deletes",
+							Description: "When true, compaction applies position and equality deletes to data files. When false, tables with delete manifests are skipped.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
 					},
 				},
 				{
@@ -205,7 +212,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"target_file_size_mb":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+				"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
 				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
 				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
@@ -213,6 +220,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
 				"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 				"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+				"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -227,13 +235,14 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"target_file_size_mb":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+			"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
 			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
 			"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 			"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+			"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
 		},
 	}
 }
@@ -393,6 +402,7 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	var lastErr error
 	totalOps := len(ops)
 	completedOps := 0
+	allMetrics := make(map[string]int64)
 
 	// Execute operations in correct Iceberg maintenance order:
 	// expire_snapshots → remove_orphans → rewrite_manifests
@@ -420,19 +430,35 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 
 		var opResult string
 		var opErr error
+		var opMetrics map[string]int64
 
 		switch op {
 		case "compact":
-			opResult, opErr = h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
+			opResult, opMetrics, opErr = h.compactDataFiles(ctx, filerClient, bucketName, tablePath, workerConfig, func(binIdx, totalBins int) {
+				binProgress := progress + float64(binIdx+1)/float64(totalBins)*(100.0/float64(totalOps))
+				_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+					JobId:           request.Job.JobId,
+					JobType:         canonicalJobType,
+					State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+					ProgressPercent: binProgress,
+					Stage:           fmt.Sprintf("compact bin %d/%d", binIdx+1, totalBins),
+					Message:         fmt.Sprintf("compacting bin %d of %d", binIdx+1, totalBins),
+				})
+			})
 		case "expire_snapshots":
-			opResult, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
+			opResult, opMetrics, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "remove_orphans":
-			opResult, opErr = h.removeOrphans(ctx, filerClient, bucketName, tablePath, workerConfig)
+			opResult, opMetrics, opErr = h.removeOrphans(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "rewrite_manifests":
-			opResult, opErr = h.rewriteManifests(ctx, filerClient, bucketName, tablePath, workerConfig)
+			opResult, opMetrics, opErr = h.rewriteManifests(ctx, filerClient, bucketName, tablePath, workerConfig)
 		default:
 			glog.Warningf("unknown maintenance operation: %s", op)
 			continue
+		}
+
+		// Accumulate per-operation metrics with dot-prefixed keys
+		for k, v := range opMetrics {
+			allMetrics[op+"."+k] = v
 		}
 
 		completedOps++
@@ -448,6 +474,16 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	resultSummary := strings.Join(results, "; ")
 	success := lastErr == nil
 
+	// Build OutputValues with base table info + per-operation metrics
+	outputValues := map[string]*plugin_pb.ConfigValue{
+		"bucket":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketName}},
+		"namespace": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: namespace}},
+		"table":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: tableName}},
+	}
+	for k, v := range allMetrics {
+		outputValues[k] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: v}}
+	}
+
 	return sender.SendCompleted(&plugin_pb.JobCompleted{
 		JobId:   request.Job.JobId,
 		JobType: canonicalJobType,
@@ -459,12 +495,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 			return ""
 		}(),
 		Result: &plugin_pb.JobResult{
-			Summary: resultSummary,
-			OutputValues: map[string]*plugin_pb.ConfigValue{
-				"bucket":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketName}},
-				"namespace": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: namespace}},
-				"table":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: tableName}},
-			},
+			Summary:      resultSummary,
+			OutputValues: outputValues,
 		},
 		Activities: []*plugin_pb.ActivityEvent{
 			pluginworker.BuildExecutorActivity("completed", resultSummary),
