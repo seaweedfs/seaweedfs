@@ -394,27 +394,41 @@ func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []comp
 		bins = append(bins, current)
 	}
 
-	// Merge a trailing runt (fewer than minFiles) into the previous bin
-	// so we don't emit a bin that's too small to compact, while still
-	// keeping all earlier bins within targetSize.
-	if len(bins) > 1 && len(bins[len(bins)-1].Entries) < minFiles {
-		last := bins[len(bins)-1]
-		bins = bins[:len(bins)-1]
-		prev := &bins[len(bins)-1]
-		prev.Entries = append(prev.Entries, last.Entries...)
-		prev.TotalSize += last.TotalSize
-	}
-
-	// Filter out any bin that still doesn't meet minFiles (can only happen
-	// when the entire input has fewer than minFiles entries, which shouldn't
-	// reach here, but guard defensively).
-	filtered := bins[:0]
-	for _, b := range bins {
-		if len(b.Entries) >= minFiles {
-			filtered = append(filtered, b)
+	// Merge any bin with fewer than minFiles entries into its neighbor.
+	// Repeat until no more merges are needed. This handles runts at the
+	// end (from the split) and small leading bins (from largest-first
+	// sorting placing single large files into their own bins).
+	for changed := true; changed && len(bins) > 1; {
+		changed = false
+		for i := 0; i < len(bins); i++ {
+			if len(bins[i].Entries) >= minFiles {
+				continue
+			}
+			// Pick the better neighbor to merge into.
+			var target int
+			if i == 0 {
+				target = 1
+			} else if i == len(bins)-1 {
+				target = i - 1
+			} else if bins[i-1].TotalSize <= bins[i+1].TotalSize {
+				target = i - 1
+			} else {
+				target = i + 1
+			}
+			bins[target].Entries = append(bins[target].Entries, bins[i].Entries...)
+			bins[target].TotalSize += bins[i].TotalSize
+			bins = append(bins[:i], bins[i+1:]...)
+			changed = true
+			break // restart scan after structural change
 		}
 	}
-	return filtered
+
+	// Final guard: if a single remaining bin has fewer than minFiles
+	// (entire input too small), return nothing.
+	if len(bins) == 1 && len(bins[0].Entries) < minFiles {
+		return nil
+	}
+	return bins
 }
 
 // partitionKey creates a string key from a partition map for grouping.
@@ -474,9 +488,10 @@ func mergeParquetFiles(
 	writer := parquet.NewWriter(&outputBuf, parquetSchema)
 
 	// drainReader streams all rows from reader into writer, then closes reader.
+	// source identifies the input file for error messages.
 	var totalRows int64
 	rows := make([]parquet.Row, 256)
-	drainReader := func(reader *parquet.Reader) error {
+	drainReader := func(reader *parquet.Reader, source string) error {
 		defer reader.Close()
 		for {
 			select {
@@ -487,7 +502,7 @@ func mergeParquetFiles(
 			n, readErr := reader.ReadRows(rows)
 			if n > 0 {
 				if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
-					return fmt.Errorf("write rows: %w", writeErr)
+					return fmt.Errorf("write rows from %s: %w", source, writeErr)
 				}
 				totalRows += int64(n)
 			}
@@ -495,13 +510,14 @@ func mergeParquetFiles(
 				if readErr == io.EOF {
 					return nil
 				}
-				return fmt.Errorf("read rows: %w", readErr)
+				return fmt.Errorf("read rows from %s: %w", source, readErr)
 			}
 		}
 	}
 
 	// Drain the first file.
-	if err := drainReader(firstReader); err != nil {
+	firstSource := entries[0].DataFile().FilePath()
+	if err := drainReader(firstReader, firstSource); err != nil {
 		writer.Close()
 		return nil, 0, err
 	}
@@ -529,7 +545,7 @@ func mergeParquetFiles(
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		if err := drainReader(reader); err != nil {
+		if err := drainReader(reader, entry.DataFile().FilePath()); err != nil {
 			writer.Close()
 			return nil, 0, err
 		}
