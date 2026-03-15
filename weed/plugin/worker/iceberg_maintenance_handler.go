@@ -263,7 +263,7 @@ func (h *IcebergMaintenanceHandler) Detect(ctx context.Context, request *plugin_
 
 	workerConfig := parseIcebergMaintenanceConfig(request.GetWorkerConfigValues())
 
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), 0) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), 0) {
 		return h.sendEmptyDetection(sender)
 	}
 
@@ -273,7 +273,7 @@ func (h *IcebergMaintenanceHandler) Detect(ctx context.Context, request *plugin_
 		filerAddresses = append(filerAddresses, request.ClusterContext.FilerGrpcAddresses...)
 	}
 	if len(filerAddresses) == 0 {
-		_ = sender.SendActivity(buildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
+		_ = sender.SendActivity(BuildDetectorActivity("skipped", "no filer addresses in cluster context", nil))
 		return h.sendEmptyDetection(sender)
 	}
 
@@ -293,11 +293,11 @@ func (h *IcebergMaintenanceHandler) Detect(ctx context.Context, request *plugin_
 
 	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter)
 	if err != nil {
-		_ = sender.SendActivity(buildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
+		_ = sender.SendActivity(BuildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
 		return fmt.Errorf("scan tables: %w", err)
 	}
 
-	_ = sender.SendActivity(buildDetectorActivity("scan_complete",
+	_ = sender.SendActivity(BuildDetectorActivity("scan_complete",
 		fmt.Sprintf("found %d table(s) needing maintenance", len(tables)),
 		map[string]*plugin_pb.ConfigValue{
 			"tables_found": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(tables))}},
@@ -365,7 +365,7 @@ func (h *IcebergMaintenanceHandler) Execute(ctx context.Context, request *plugin
 		Stage:           "assigned",
 		Message:         fmt.Sprintf("maintenance job accepted for %s/%s/%s", bucketName, namespace, tableName),
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", fmt.Sprintf("maintenance job accepted for %s/%s/%s", bucketName, namespace, tableName)),
+			BuildExecutorActivity("assigned", fmt.Sprintf("maintenance job accepted for %s/%s/%s", bucketName, namespace, tableName)),
 		},
 	}); err != nil {
 		return err
@@ -402,7 +402,7 @@ func (h *IcebergMaintenanceHandler) Execute(ctx context.Context, request *plugin
 			Stage:           op,
 			Message:         fmt.Sprintf("running %s", op),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(op, fmt.Sprintf("starting %s for %s/%s/%s", op, bucketName, namespace, tableName)),
+				BuildExecutorActivity(op, fmt.Sprintf("starting %s for %s/%s/%s", op, bucketName, namespace, tableName)),
 			},
 		})
 
@@ -455,7 +455,7 @@ func (h *IcebergMaintenanceHandler) Execute(ctx context.Context, request *plugin
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 		CompletedAt: timestamppb.Now(),
 	})
