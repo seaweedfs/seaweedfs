@@ -370,6 +370,89 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	return meta
 }
 
+func writeCurrentSnapshotManifests(t *testing.T, fs *fakeFilerServer, setup tableSetup, meta table.Metadata, manifestEntries [][]iceberg.ManifestEntry) {
+	t.Helper()
+
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil {
+		t.Fatal("current snapshot is required")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	version := meta.Version()
+	schema := meta.CurrentSchema()
+	spec := meta.PartitionSpec()
+
+	var manifests []iceberg.ManifestFile
+	for i, entries := range manifestEntries {
+		manifestName := fmt.Sprintf("detect-manifest-%d.avro", i+1)
+		var manifestBuf bytes.Buffer
+		mf, err := iceberg.WriteManifest(
+			path.Join("metadata", manifestName),
+			&manifestBuf,
+			version,
+			spec,
+			schema,
+			currentSnap.SnapshotID,
+			entries,
+		)
+		if err != nil {
+			t.Fatalf("write manifest %d: %v", i+1, err)
+		}
+		fs.putEntry(metaDir, manifestName, &filer_pb.Entry{
+			Name: manifestName,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				FileSize: uint64(manifestBuf.Len()),
+			},
+			Content: manifestBuf.Bytes(),
+		})
+		manifests = append(manifests, mf)
+	}
+
+	var manifestListBuf bytes.Buffer
+	seqNum := currentSnap.SequenceNumber
+	if err := iceberg.WriteManifestList(version, &manifestListBuf, currentSnap.SnapshotID, currentSnap.ParentSnapshotID, &seqNum, 0, manifests); err != nil {
+		t.Fatalf("write current manifest list: %v", err)
+	}
+	fs.putEntry(metaDir, path.Base(currentSnap.ManifestList), &filer_pb.Entry{
+		Name: path.Base(currentSnap.ManifestList),
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(manifestListBuf.Len()),
+		},
+		Content: manifestListBuf.Bytes(),
+	})
+}
+
+func makeManifestEntries(t *testing.T, specs []testEntrySpec, snapshotID int64) []iceberg.ManifestEntry {
+	t.Helper()
+
+	entries := make([]iceberg.ManifestEntry, 0, len(specs))
+	for _, spec := range specs {
+		dfBuilder, err := iceberg.NewDataFileBuilder(
+			*iceberg.UnpartitionedSpec,
+			iceberg.EntryContentData,
+			spec.path,
+			iceberg.ParquetFile,
+			spec.partition,
+			nil, nil,
+			1,
+			spec.size,
+		)
+		if err != nil {
+			t.Fatalf("failed to build data file %s: %v", spec.path, err)
+		}
+		entries = append(entries, iceberg.NewManifestEntry(
+			iceberg.EntryStatusADDED,
+			&snapshotID,
+			nil, nil,
+			dfBuilder.Build(),
+		))
+	}
+	return entries
+}
+
 // ---------------------------------------------------------------------------
 // Recording senders for Execute tests
 // ---------------------------------------------------------------------------
@@ -931,6 +1014,125 @@ func TestConnectToFilerFailsWhenAllAddressesAreUnreachable(t *testing.T) {
 	_, _, err = handler.connectToFiler(context.Background(), []string{deadAddr})
 	if err == nil {
 		t.Fatal("expected connectToFiler to fail")
+	}
+}
+
+func TestDetectSchedulesCompactionWithoutSnapshotPressure(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-3.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 24 * 365,
+		MaxSnapshotsToKeep:     10,
+		TargetFileSizeBytes:    4096,
+		MinInputFiles:          2,
+		Operations:             "compact",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 compaction candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	manifestEntries := make([][]iceberg.ManifestEntry, 0, 5)
+	for i := 0; i < 5; i++ {
+		manifestEntries = append(manifestEntries, makeManifestEntries(t, []testEntrySpec{
+			{path: fmt.Sprintf("data/rewrite-%d.parquet", i), size: 1024, partition: map[int]any{}},
+		}, 1))
+	}
+	writeCurrentSnapshotManifests(t, fs, setup, meta, manifestEntries)
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 24 * 365,
+		MaxSnapshotsToKeep:     10,
+		MinManifestsToRewrite:  5,
+		Operations:             "rewrite_manifests",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 manifest rewrite candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectSchedulesOrphanCleanupWithoutSnapshotPressure(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	fs.putEntry(dataDir, "stale-orphan.parquet", &filer_pb.Entry{
+		Name: "stale-orphan.parquet",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Add(-200 * time.Hour).Unix(),
+			FileSize: 100,
+		},
+		Content: []byte("orphan"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 24 * 365,
+		MaxSnapshotsToKeep:     10,
+		OrphanOlderThanHours:   72,
+		Operations:             "remove_orphans",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 orphan cleanup candidate, got %d", len(tables))
 	}
 }
 

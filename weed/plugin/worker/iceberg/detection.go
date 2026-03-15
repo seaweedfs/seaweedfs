@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -37,13 +39,16 @@ func (h *Handler) scanTablesForMaintenance(
 	limit int,
 ) ([]tableInfo, error) {
 	var tables []tableInfo
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		return nil, fmt.Errorf("parse operations: %w", err)
+	}
 
 	// Compile wildcard matchers once (nil = match all)
 	bucketMatchers := wildcard.CompileWildcardMatchers(bucketFilter)
 	nsMatchers := wildcard.CompileWildcardMatchers(namespaceFilter)
 	tableMatchers := wildcard.CompileWildcardMatchers(tableFilter)
 
-	// List entries under /buckets to find table buckets
 	bucketsPath := s3tables.TablesPath
 	bucketEntries, err := listFilerEntries(ctx, filerClient, bucketsPath, "")
 	if err != nil {
@@ -135,12 +140,18 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				if needsMaintenance(icebergMeta, config) {
+				tablePath := path.Join(nsName, tblName)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, config, ops)
+				if err != nil {
+					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
+					continue
+				}
+				if needsWork {
 					tables = append(tables, tableInfo{
 						BucketName: bucketName,
 						Namespace:  nsName,
 						TableName:  tblName,
-						TablePath:  path.Join(nsName, tblName),
+						TablePath:  tablePath,
 						Metadata:   icebergMeta,
 					})
 					if limit > 0 && len(tables) > limit {
@@ -154,8 +165,159 @@ func (h *Handler) scanTablesForMaintenance(
 	return tables, nil
 }
 
-// needsMaintenance checks if a table needs any maintenance based on
-// metadata-only thresholds (no manifest reading).
+func normalizeDetectionConfig(config Config) Config {
+	normalized := config
+	if normalized.TargetFileSizeBytes <= 0 {
+		normalized.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
+	}
+	if normalized.MinInputFiles < 2 {
+		normalized.MinInputFiles = defaultMinInputFiles
+	}
+	if normalized.MinManifestsToRewrite < 2 {
+		normalized.MinManifestsToRewrite = 2
+	}
+	if normalized.OrphanOlderThanHours <= 0 {
+		normalized.OrphanOlderThanHours = defaultOrphanOlderThanHours
+	}
+	return normalized
+}
+
+func (h *Handler) tableNeedsMaintenance(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+	config Config,
+	ops []string,
+) (bool, error) {
+	if len(meta.Snapshots()) == 0 {
+		return false, nil
+	}
+
+	config = normalizeDetectionConfig(config)
+	loadManifests := func() ([]iceberg.ManifestFile, error) {
+		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
+	}
+
+	var currentManifests []iceberg.ManifestFile
+	var manifestsErr error
+	manifestsLoaded := false
+	getCurrentManifests := func() ([]iceberg.ManifestFile, error) {
+		if manifestsLoaded {
+			return currentManifests, manifestsErr
+		}
+		currentManifests, manifestsErr = loadManifests()
+		manifestsLoaded = true
+		return currentManifests, manifestsErr
+	}
+
+	for _, op := range ops {
+		switch op {
+		case "expire_snapshots":
+			if needsMaintenance(meta, config) {
+				return true, nil
+			}
+		case "compact":
+			manifests, err := getCurrentManifests()
+			if err != nil {
+				return false, err
+			}
+			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
+			if err != nil {
+				return false, err
+			}
+			if eligible {
+				return true, nil
+			}
+		case "rewrite_manifests":
+			manifests, err := getCurrentManifests()
+			if err != nil {
+				return false, err
+			}
+			if int64(len(manifests)) >= config.MinManifestsToRewrite {
+				return true, nil
+			}
+		case "remove_orphans":
+			_, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+			if err != nil {
+				return false, err
+			}
+			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
+			if err != nil {
+				return false, err
+			}
+			if len(orphanCandidates) > 0 {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func loadCurrentManifests(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+) ([]iceberg.ManifestFile, error) {
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil || currentSnap.ManifestList == "" {
+		return nil, nil
+	}
+
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest list: %w", err)
+	}
+	manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
+	if err != nil {
+		return nil, fmt.Errorf("parse manifest list: %w", err)
+	}
+	return manifests, nil
+}
+
+func hasEligibleCompaction(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	manifests []iceberg.ManifestFile,
+	config Config,
+) (bool, error) {
+	if len(manifests) == 0 {
+		return false, nil
+	}
+
+	specIDs := make(map[int32]struct{})
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			return false, nil
+		}
+		specIDs[mf.PartitionSpecID()] = struct{}{}
+	}
+	if len(specIDs) > 1 {
+		return false, nil
+	}
+
+	var allEntries []iceberg.ManifestEntry
+	for _, mf := range manifests {
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			return false, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			return false, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+		allEntries = append(allEntries, entries...)
+	}
+
+	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
+	return len(bins) > 0, nil
+}
+
+// needsMaintenance checks whether snapshot expiration work is needed based on
+// metadata-only thresholds.
 func needsMaintenance(meta table.Metadata, config Config) bool {
 	snapshots := meta.Snapshots()
 	if len(snapshots) == 0 {

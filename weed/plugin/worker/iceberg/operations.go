@@ -229,31 +229,54 @@ func (h *Handler) removeOrphans(
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
 
-	// Collect all referenced files from all snapshots
-	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
+	orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
 	if err != nil {
-		return "", nil, fmt.Errorf("collect referenced files: %w", err)
+		return "", nil, fmt.Errorf("collect orphan candidates: %w", err)
 	}
 
-	// Reference the active metadata file so it is not treated as orphan
-	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
+	orphanCount := 0
+	for _, candidate := range orphanCandidates {
+		if delErr := deleteFilerFile(ctx, filerClient, candidate.Dir, candidate.Entry.Name); delErr != nil {
+			glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", candidate.Dir, candidate.Entry.Name, delErr)
+		} else {
+			orphanCount++
+		}
+	}
 
-	// Also reference the current metadata files
+	metrics := map[string]int64{
+		MetricOrphansRemoved: int64(orphanCount),
+		MetricDurationMs:     time.Since(start).Milliseconds(),
+	}
+	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), metrics, nil
+}
+
+func collectOrphanCandidates(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+	metadataFileName string,
+	orphanOlderThanHours int64,
+) ([]filerFileEntry, error) {
+	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
+	if err != nil {
+		return nil, fmt.Errorf("collect referenced files: %w", err)
+	}
+
+	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
 	for mle := range meta.PreviousFiles() {
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
 
-	// Precompute a normalized lookup set so orphan checks are O(1) per file.
 	normalizedRefs := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
 		normalizedRefs[ref] = struct{}{}
 		normalizedRefs[normalizeIcebergPath(ref, bucketName, tablePath)] = struct{}{}
 	}
 
-	// List actual files on filer in metadata/ and data/ directories
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, tablePath)
-	safetyThreshold := time.Now().Add(-time.Duration(config.OrphanOlderThanHours) * time.Hour)
-	orphanCount := 0
+	safetyThreshold := time.Now().Add(-time.Duration(orphanOlderThanHours) * time.Hour)
+	var candidates []filerFileEntry
 
 	for _, subdir := range []string{"metadata", "data"} {
 		dirPath := path.Join(tableBasePath, subdir)
@@ -265,39 +288,22 @@ func (h *Handler) removeOrphans(
 
 		for _, fe := range fileEntries {
 			entry := fe.Entry
-			// Build relative path from the table base (e.g. "data/region=us/file.parquet")
 			fullPath := path.Join(fe.Dir, entry.Name)
 			relPath := strings.TrimPrefix(fullPath, tableBasePath+"/")
-
-			_, isReferenced := normalizedRefs[relPath]
-
-			if isReferenced {
+			if _, isReferenced := normalizedRefs[relPath]; isReferenced {
 				continue
 			}
-
-			// Check safety window — skip entries with unknown age
 			if entry.Attributes == nil {
 				continue
 			}
-			mtime := time.Unix(entry.Attributes.Mtime, 0)
-			if mtime.After(safetyThreshold) {
+			if time.Unix(entry.Attributes.Mtime, 0).After(safetyThreshold) {
 				continue
 			}
-
-			// Delete orphan
-			if delErr := deleteFilerFile(ctx, filerClient, fe.Dir, entry.Name); delErr != nil {
-				glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", fe.Dir, entry.Name, delErr)
-			} else {
-				orphanCount++
-			}
+			candidates = append(candidates, fe)
 		}
 	}
 
-	metrics := map[string]int64{
-		MetricOrphansRemoved: int64(orphanCount),
-		MetricDurationMs:     time.Since(start).Milliseconds(),
-	}
-	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), metrics, nil
+	return candidates, nil
 }
 
 // ---------------------------------------------------------------------------
