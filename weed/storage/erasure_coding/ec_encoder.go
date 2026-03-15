@@ -127,6 +127,7 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 	shardHasData := make([]bool, ctx.Total())
 	inputFiles := make([]*os.File, ctx.Total())
 	outputFiles := make([]*os.File, ctx.Total())
+	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		shardFileName := baseFileName + ctx.ToExt(shardId)
 		if util.FileExists(shardFileName) {
@@ -136,6 +137,7 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 				return nil, err
 			}
 			defer inputFiles[shardId].Close()
+			presentCount++
 		} else {
 			outputFiles[shardId], err = os.OpenFile(shardFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
 			if err != nil {
@@ -145,6 +147,14 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
 		}
 	}
+
+	if presentCount < ctx.DataShards {
+		return nil, fmt.Errorf("not enough shards to rebuild %s: found %d shards, need at least %d (data shards), missing shards: %v",
+			baseFileName, presentCount, ctx.DataShards, generatedShardIds)
+	}
+
+	glog.V(0).Infof("rebuilding %s: %d shards present, %d missing %v, config %s",
+		baseFileName, presentCount, len(generatedShardIds), generatedShardIds, ctx.String())
 
 	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx)
 	if err != nil {
