@@ -850,16 +850,19 @@ func TestCollectEqualityDeletes(t *testing.T) {
 	snapID := int64(1)
 	entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())
 
-	result, fieldIDs, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl", []iceberg.ManifestEntry{entry}, schema)
+	groups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl", []iceberg.ManifestEntry{entry}, schema)
 	if err != nil {
 		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
 
-	if len(result) != 3 {
-		t.Errorf("expected 3 equality delete keys, got %d", len(result))
+	if len(groups) != 1 {
+		t.Fatalf("expected 1 equality delete group, got %d", len(groups))
 	}
-	if len(fieldIDs) != 2 {
-		t.Errorf("expected 2 field IDs, got %d", len(fieldIDs))
+	if len(groups[0].Keys) != 3 {
+		t.Errorf("expected 3 equality delete keys, got %d", len(groups[0].Keys))
+	}
+	if len(groups[0].FieldIDs) != 2 {
+		t.Errorf("expected 2 field IDs, got %d", len(groups[0].FieldIDs))
 	}
 }
 
@@ -919,7 +922,7 @@ func TestMergeParquetFilesWithPositionDeletes(t *testing.T) {
 
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, posDeletes, nil, nil, nil,
+		entries, posDeletes, nil, nil,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)
@@ -996,17 +999,46 @@ func TestMergeParquetFilesWithEqualityDeletes(t *testing.T) {
 		iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfb.Build()),
 	}
 
-	// Build equality deletes: delete rows where name="bob" or name="dave"
-	// Build the composite key the same way buildEqualityKey does
-	eqDeletes := map[string]struct{}{
-		"bob":  {},
-		"dave": {},
+	// Build equality deletes via the collect pipeline so keys match the
+	// encoding used by mergeParquetFiles.
+	schema := newTestSchema() // field 1=id, field 2=name
+
+	type eqDeleteRow struct {
+		ID   int64  `parquet:"id"`
+		Name string `parquet:"name"`
+	}
+	var eqBuf bytes.Buffer
+	eqWriter := parquet.NewWriter(&eqBuf, parquet.SchemaOf(new(eqDeleteRow)))
+	for _, r := range []eqDeleteRow{{0, "bob"}, {0, "dave"}} {
+		if err := eqWriter.Write(&r); err != nil {
+			t.Fatalf("write eq delete: %v", err)
+		}
+	}
+	if err := eqWriter.Close(); err != nil {
+		t.Fatalf("close eq writer: %v", err)
+	}
+	eqDataDir := "/buckets/test-bucket/ns/tbl/data"
+	fs.putEntry(eqDataDir, "eq-del.parquet", &filer_pb.Entry{
+		Name: "eq-del.parquet", Content: eqBuf.Bytes(),
+	})
+
+	eqDfb, err := iceberg.NewDataFileBuilder(spec, iceberg.EntryContentEqDeletes,
+		"data/eq-del.parquet", iceberg.ParquetFile, map[int]any{}, nil, nil, 2, int64(eqBuf.Len()))
+	if err != nil {
+		t.Fatalf("build eq delete: %v", err)
+	}
+	eqDfb.EqualityFieldIDs([]int{2}) // field 2 = name
+	eqEntry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, eqDfb.Build())
+
+	eqGroups, err := collectEqualityDeletes(context.Background(), client, "test-bucket", "ns/tbl",
+		[]iceberg.ManifestEntry{eqEntry}, schema)
+	if err != nil {
+		t.Fatalf("collectEqualityDeletes: %v", err)
 	}
 
-	schema := newTestSchema() // field 1=id, field 2=name
 	merged, count, err := mergeParquetFiles(
 		context.Background(), client, "test-bucket", "ns/tbl",
-		entries, nil, eqDeletes, []int{2}, schema, // field 2 = name
+		entries, nil, eqGroups, schema,
 	)
 	if err != nil {
 		t.Fatalf("mergeParquetFiles: %v", err)

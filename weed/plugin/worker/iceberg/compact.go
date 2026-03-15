@@ -95,8 +95,7 @@ func (h *Handler) compactDataFiles(
 
 	// Collect delete entries if we need to apply deletes
 	var positionDeletes map[string][]int64
-	var equalityDeletes map[string]struct{}
-	var equalityFieldIDs []int
+	var eqDeleteGroups []equalityDeleteGroup
 	if config.ApplyDeletes && len(deleteManifests) > 0 {
 		var allDeleteEntries []iceberg.ManifestEntry
 		for _, mf := range deleteManifests {
@@ -130,7 +129,7 @@ func (h *Handler) compactDataFiles(
 		}
 
 		if len(eqDeleteEntries) > 0 {
-			equalityDeletes, equalityFieldIDs, err = collectEqualityDeletes(ctx, filerClient, bucketName, tablePath, eqDeleteEntries, meta.CurrentSchema())
+			eqDeleteGroups, err = collectEqualityDeletes(ctx, filerClient, bucketName, tablePath, eqDeleteEntries, meta.CurrentSchema())
 			if err != nil {
 				return "", nil, fmt.Errorf("collect equality deletes: %w", err)
 			}
@@ -213,7 +212,7 @@ func (h *Handler) compactDataFiles(
 		mergedFileName := fmt.Sprintf("compact-%d-%d-%d.parquet", snapshotID, newSnapID, binIdx)
 		mergedFilePath := path.Join("data", mergedFileName)
 
-		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, equalityDeletes, equalityFieldIDs, schema)
+		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
 			continue
@@ -364,7 +363,7 @@ func (h *Handler) compactDataFiles(
 	// Position deletes reference specific data files — if all those files
 	// were compacted, the deletes are fully consumed. Equality deletes
 	// apply broadly, so they're only consumed if all data files were compacted.
-	if !config.ApplyDeletes || (len(positionDeletes) == 0 && len(equalityDeletes) == 0) {
+	if !config.ApplyDeletes || (len(positionDeletes) == 0 && len(eqDeleteGroups) == 0) {
 		for _, mf := range deleteManifests {
 			allManifests = append(allManifests, mf)
 		}
@@ -692,18 +691,28 @@ func readPositionDeleteFile(
 	return result, nil
 }
 
-// collectEqualityDeletes reads equality delete Parquet files and returns a set
-// of composite keys that should be deleted. Each key is built from the equality
-// field values of a row. Also returns the field IDs used for equality comparison.
+// equalityDeleteGroup holds a set of delete keys for a specific set of equality field IDs.
+// Different equality delete files may use different field IDs, so deletes are grouped.
+type equalityDeleteGroup struct {
+	FieldIDs []int
+	Keys     map[string]struct{}
+}
+
+// collectEqualityDeletes reads equality delete Parquet files and returns groups
+// of delete keys, one per distinct set of equality field IDs. This correctly
+// handles the case where different delete files use different equality columns.
 func collectEqualityDeletes(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	deleteEntries []iceberg.ManifestEntry,
 	schema *iceberg.Schema,
-) (map[string]struct{}, []int, error) {
-	result := make(map[string]struct{})
-	var fieldIDs []int
+) ([]equalityDeleteGroup, error) {
+	type groupState struct {
+		fieldIDs []int
+		keys     map[string]struct{}
+	}
+	groups := make(map[string]*groupState)
 
 	for _, entry := range deleteEntries {
 		if entry.DataFile().ContentType() != iceberg.EntryContentEqDeletes {
@@ -713,19 +722,28 @@ func collectEqualityDeletes(
 		if len(eqFieldIDs) == 0 {
 			continue
 		}
-		if len(fieldIDs) == 0 {
-			fieldIDs = eqFieldIDs
+
+		groupKey := fmt.Sprint(eqFieldIDs)
+		gs, ok := groups[groupKey]
+		if !ok {
+			gs = &groupState{fieldIDs: eqFieldIDs, keys: make(map[string]struct{})}
+			groups[groupKey] = gs
 		}
 
 		keys, err := readEqualityDeleteFile(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath(), eqFieldIDs, schema)
 		if err != nil {
-			return nil, nil, fmt.Errorf("read equality delete file %s: %w", entry.DataFile().FilePath(), err)
+			return nil, fmt.Errorf("read equality delete file %s: %w", entry.DataFile().FilePath(), err)
 		}
 		for k := range keys {
-			result[k] = struct{}{}
+			gs.keys[k] = struct{}{}
 		}
 	}
-	return result, fieldIDs, nil
+
+	result := make([]equalityDeleteGroup, 0, len(groups))
+	for _, gs := range groups {
+		result = append(result, equalityDeleteGroup{FieldIDs: gs.fieldIDs, Keys: gs.keys})
+	}
+	return result, nil
 }
 
 // readEqualityDeleteFile reads an equality delete Parquet file and returns a set
@@ -788,17 +806,21 @@ func readEqualityDeleteFile(
 	return result, nil
 }
 
-// buildEqualityKey builds a composite string key from specific column values in a row.
+// buildEqualityKey builds a composite string key from specific column values
+// in a row. Each value is serialized as "kind:length:value" to avoid ambiguity
+// between types (e.g., int 123 vs string "123") and to prevent collisions from
+// values containing separator characters.
 func buildEqualityKey(row parquet.Row, colIndices []int) string {
 	if len(colIndices) == 1 {
-		return row[colIndices[0]].String()
+		v := row[colIndices[0]]
+		s := v.String()
+		return fmt.Sprintf("%d:%d:%s", v.Kind(), len(s), s)
 	}
 	var b strings.Builder
-	for i, idx := range colIndices {
-		if i > 0 {
-			b.WriteByte(0)
-		}
-		b.WriteString(row[idx].String())
+	for _, idx := range colIndices {
+		v := row[idx]
+		s := v.String()
+		fmt.Fprintf(&b, "%d:%d:%s", v.Kind(), len(s), s)
 	}
 	return b.String()
 }
@@ -839,8 +861,7 @@ func mergeParquetFiles(
 	bucketName, tablePath string,
 	entries []iceberg.ManifestEntry,
 	positionDeletes map[string][]int64,
-	equalityDeletes map[string]struct{},
-	equalityFieldIDs []int,
+	eqDeleteGroups []equalityDeleteGroup,
 	icebergSchema *iceberg.Schema,
 ) ([]byte, int64, error) {
 	if len(entries) == 0 {
@@ -859,13 +880,20 @@ func mergeParquetFiles(
 		return nil, 0, fmt.Errorf("no parquet schema found in %s", entries[0].DataFile().FilePath())
 	}
 
-	// Resolve equality delete column indices from the Parquet schema.
-	var eqColIndices []int
-	if len(equalityDeletes) > 0 && len(equalityFieldIDs) > 0 && icebergSchema != nil {
-		eqColIndices, err = resolveEqualityColIndices(parquetSchema, equalityFieldIDs, icebergSchema)
-		if err != nil {
-			firstReader.Close()
-			return nil, 0, fmt.Errorf("resolve equality columns: %w", err)
+	// Resolve equality delete column indices for each group.
+	type resolvedEqGroup struct {
+		colIndices []int
+		keys       map[string]struct{}
+	}
+	var resolvedEqGroups []resolvedEqGroup
+	if len(eqDeleteGroups) > 0 && icebergSchema != nil {
+		for _, g := range eqDeleteGroups {
+			indices, resolveErr := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
+			if resolveErr != nil {
+				firstReader.Close()
+				return nil, 0, fmt.Errorf("resolve equality columns: %w", resolveErr)
+			}
+			resolvedEqGroups = append(resolvedEqGroups, resolvedEqGroup{colIndices: indices, keys: g.Keys})
 		}
 	}
 
@@ -874,6 +902,7 @@ func mergeParquetFiles(
 
 	var totalRows int64
 	rows := make([]parquet.Row, 256)
+	hasEqDeletes := len(resolvedEqGroups) > 0
 
 	// drainReader streams rows from reader into writer, filtering out deleted
 	// rows. source is the data file path (used for error messages and
@@ -894,7 +923,7 @@ func mergeParquetFiles(
 			n, readErr := reader.ReadRows(rows)
 			if n > 0 {
 				// Filter rows if we have any deletes
-				if len(posDeletes) > 0 || len(equalityDeletes) > 0 {
+				if len(posDeletes) > 0 || hasEqDeletes {
 					writeIdx := 0
 					for i := 0; i < n; i++ {
 						rowPos := absolutePos + int64(i)
@@ -910,12 +939,17 @@ func mergeParquetFiles(
 							}
 						}
 
-						// Check equality deletes
-						if len(equalityDeletes) > 0 && len(eqColIndices) > 0 {
-							key := buildEqualityKey(rows[i], eqColIndices)
-							if _, deleted := equalityDeletes[key]; deleted {
-								continue // skip this row
+						// Check equality deletes — each group independently
+						deleted := false
+						for _, g := range resolvedEqGroups {
+							key := buildEqualityKey(rows[i], g.colIndices)
+							if _, ok := g.keys[key]; ok {
+								deleted = true
+								break
 							}
+						}
+						if deleted {
+							continue // skip this row
 						}
 
 						rows[writeIdx] = rows[i]
