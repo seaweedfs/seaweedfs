@@ -498,7 +498,7 @@ func testExpireSnapshots(t *testing.T) {
 		MaxCommitRetries:       3,
 	}
 
-	result, err := handler.ExpireSnapshots(context.Background(), client, bucket, path.Join(ns, tbl), config)
+	result, _, err := handler.ExpireSnapshots(context.Background(), client, bucket, path.Join(ns, tbl), config)
 	require.NoError(t, err)
 	assert.Contains(t, result, "expired")
 	t.Logf("ExpireSnapshots result: %s", result)
@@ -565,7 +565,7 @@ func testRemoveOrphans(t *testing.T) {
 		MaxCommitRetries:     3,
 	}
 
-	result, err := handler.RemoveOrphans(ctx, client, bucket, tablePath, config)
+	result, _, err := handler.RemoveOrphans(ctx, client, bucket, tablePath, config)
 	require.NoError(t, err)
 	assert.Contains(t, result, "removed")
 	t.Logf("RemoveOrphans result: %s", result)
@@ -601,7 +601,7 @@ func testRewriteManifests(t *testing.T) {
 	}
 
 	tablePath := path.Join(ns, tbl)
-	result, err := handler.RewriteManifests(context.Background(), client, bucket, tablePath, config)
+	result, _, err := handler.RewriteManifests(context.Background(), client, bucket, tablePath, config)
 	require.NoError(t, err)
 	assert.Contains(t, result, "below threshold")
 	t.Logf("RewriteManifests result: %s", result)
@@ -650,7 +650,7 @@ func testFullMaintenanceCycle(t *testing.T) {
 		MaxSnapshotsToKeep:     1,
 		MaxCommitRetries:       3,
 	}
-	result, err := handler.ExpireSnapshots(ctx, client, bucket, tablePath, expireConfig)
+	result, _, err := handler.ExpireSnapshots(ctx, client, bucket, tablePath, expireConfig)
 	require.NoError(t, err)
 	assert.Contains(t, result, "expired")
 	t.Logf("Step 1 (expire): %s", result)
@@ -660,7 +660,7 @@ func testFullMaintenanceCycle(t *testing.T) {
 		OrphanOlderThanHours: 72,
 		MaxCommitRetries:     3,
 	}
-	result, err = handler.RemoveOrphans(ctx, client, bucket, tablePath, orphanConfig)
+	result, _, err = handler.RemoveOrphans(ctx, client, bucket, tablePath, orphanConfig)
 	require.NoError(t, err)
 	t.Logf("Step 2 (orphans): %s", result)
 	// The orphan and the unreferenced files from expired snapshots should be gone
