@@ -364,13 +364,22 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 
 // splitOversizedBin splits a bin whose total size exceeds targetSize into
 // sub-bins that each stay under targetSize while meeting minFiles.
+// Entries are sorted by size descending before splitting so that large
+// files are placed first, improving bin packing efficiency.
 func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []compactionBin {
+	// Sort largest-first for better packing.
+	sorted := make([]iceberg.ManifestEntry, len(bin.Entries))
+	copy(sorted, bin.Entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].DataFile().FileSizeBytes() > sorted[j].DataFile().FileSizeBytes()
+	})
+
 	var bins []compactionBin
 	current := compactionBin{
 		PartitionKey: bin.PartitionKey,
 		Partition:    bin.Partition,
 	}
-	for _, entry := range bin.Entries {
+	for _, entry := range sorted {
 		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize && len(current.Entries) >= minFiles {
 			bins = append(bins, current)
 			current = compactionBin{
