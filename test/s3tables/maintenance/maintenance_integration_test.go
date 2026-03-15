@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -303,7 +304,7 @@ func s3put(t *testing.T, s3Endpoint, bucket, key string, body []byte) {
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
 		b, _ := io.ReadAll(resp.Body)
-		t.Logf("s3put(%s/%s) → %d: %s", bucket, key, resp.StatusCode, string(b))
+		require.FailNowf(t, "s3put failed", "s3put(%s/%s) → %d: %s", bucket, key, resp.StatusCode, string(b))
 	}
 }
 
@@ -452,7 +453,10 @@ func lookupEntry(t *testing.T, client filer_pb.SeaweedFilerClient, dir, name str
 		Directory: dir, Name: name,
 	})
 	if err != nil {
-		return nil
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		require.NoError(t, err, "lookupEntry(%s, %s): unexpected error", dir, name)
 	}
 	return resp.Entry
 }
@@ -535,7 +539,7 @@ func testRemoveOrphans(t *testing.T) {
 	// Create orphan files (old enough to be removed)
 	oldTime := time.Now().Add(-200 * time.Hour).Unix()
 	writeOrphan := func(dir, name string) {
-		_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+		resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 			Directory: dir,
 			Entry: &filer_pb.Entry{
 				Name: name,
@@ -546,7 +550,8 @@ func testRemoveOrphans(t *testing.T) {
 				Content: []byte("orphan"),
 			},
 		})
-		require.NoError(t, err)
+		require.NoError(t, err, "writeOrphan(%s, %s): rpc error", dir, name)
+		require.Empty(t, resp.Error, "writeOrphan(%s, %s): resp error", dir, name)
 	}
 	writeOrphan(dataDir, "orphan-data.parquet")
 	writeOrphan(metaDir, "orphan-meta.avro")
@@ -623,7 +628,7 @@ func testFullMaintenanceCycle(t *testing.T) {
 	// Add an orphan
 	dataDir := path.Join(s3tables.TablesPath, bucket, tablePath, "data")
 	oldTime := time.Now().Add(-200 * time.Hour).Unix()
-	_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+	orphanResp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 		Directory: dataDir,
 		Entry: &filer_pb.Entry{
 			Name: "orphan.parquet",
@@ -635,6 +640,7 @@ func testFullMaintenanceCycle(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
+	require.Empty(t, orphanResp.Error)
 
 	handler := icebergHandler.NewHandler(nil)
 
