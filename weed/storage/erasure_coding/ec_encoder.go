@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/klauspost/reedsolomon"
 
@@ -67,7 +68,10 @@ func WriteEcFilesWithContext(baseFileName string, ctx *ECContext) error {
 	return generateEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
 }
 
-func RebuildEcFiles(baseFileName string) ([]uint32, error) {
+// RebuildEcFiles rebuilds missing EC shard files.
+// additionalDirs are extra directories to search for existing shard files,
+// which handles multi-disk servers where shards may be spread across disks.
+func RebuildEcFiles(baseFileName string, additionalDirs ...string) ([]uint32, error) {
 	// Attempt to load EC config from .vif file to preserve original configuration
 	var ctx *ECContext
 	if volumeInfo, _, found, _ := volume_info.MaybeLoadVolumeInfo(baseFileName + ".vif"); found && volumeInfo.EcShardConfig != nil {
@@ -90,12 +94,13 @@ func RebuildEcFiles(baseFileName string) ([]uint32, error) {
 		ctx = NewDefaultECContext("", 0)
 	}
 
-	return RebuildEcFilesWithContext(baseFileName, ctx)
+	return RebuildEcFilesWithContext(baseFileName, ctx, additionalDirs...)
 }
 
-// RebuildEcFilesWithContext rebuilds missing EC files using the provided context
-func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext) ([]uint32, error) {
-	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx)
+// RebuildEcFilesWithContext rebuilds missing EC files using the provided context.
+// additionalDirs are extra directories to search for existing shard files.
+func RebuildEcFilesWithContext(baseFileName string, ctx *ECContext, additionalDirs ...string) ([]uint32, error) {
+	return generateMissingEcFiles(baseFileName, 256*1024, ErasureCodingLargeBlockSize, ErasureCodingSmallBlockSize, ctx, additionalDirs)
 }
 
 func ToExt(ecIndex int) string {
@@ -122,28 +127,69 @@ func generateEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, 
 	return nil
 }
 
-func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext) (generatedShardIds []uint32, err error) {
+// findShardFile looks for a shard file at baseFileName+ext, then in additionalDirs.
+func findShardFile(baseFileName string, ext string, additionalDirs []string) string {
+	primary := baseFileName + ext
+	if util.FileExists(primary) {
+		return primary
+	}
+	baseName := filepath.Base(baseFileName)
+	for _, dir := range additionalDirs {
+		candidate := filepath.Join(dir, baseName+ext)
+		if util.FileExists(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
 
+func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
+
+	// Pass 1: discover which shards exist and which are missing,
+	// opening input files but NOT creating output files yet.
 	shardHasData := make([]bool, ctx.Total())
+	shardPaths := make([]string, ctx.Total()) // non-empty for present shards
 	inputFiles := make([]*os.File, ctx.Total())
-	outputFiles := make([]*os.File, ctx.Total())
+	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
-		shardFileName := baseFileName + ctx.ToExt(shardId)
-		if util.FileExists(shardFileName) {
+		ext := ctx.ToExt(shardId)
+		shardPath := findShardFile(baseFileName, ext, additionalDirs)
+		if shardPath != "" {
 			shardHasData[shardId] = true
-			inputFiles[shardId], err = os.OpenFile(shardFileName, os.O_RDONLY, 0)
+			shardPaths[shardId] = shardPath
+			inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
 			if err != nil {
 				return nil, err
 			}
 			defer inputFiles[shardId].Close()
+			presentCount++
 		} else {
-			outputFiles[shardId], err = os.OpenFile(shardFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
-			if err != nil {
-				return nil, err
-			}
-			defer outputFiles[shardId].Close()
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
 		}
+	}
+
+	// Pre-check: bail out before creating any output files.
+	if presentCount < ctx.DataShards {
+		return nil, fmt.Errorf("not enough shards to rebuild %s: found %d shards, need at least %d (data shards), missing shards: %v",
+			baseFileName, presentCount, ctx.DataShards, generatedShardIds)
+	}
+
+	glog.V(0).Infof("rebuilding %s: %d shards present, %d missing %v, config %s",
+		baseFileName, presentCount, len(generatedShardIds), generatedShardIds, ctx.String())
+
+	// Pass 2: create output files for missing shards now that we know
+	// reconstruction is possible.
+	outputFiles := make([]*os.File, ctx.Total())
+	for shardId := 0; shardId < ctx.Total(); shardId++ {
+		if shardHasData[shardId] {
+			continue
+		}
+		outputFileName := baseFileName + ctx.ToExt(shardId)
+		outputFiles[shardId], err = os.OpenFile(outputFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, err
+		}
+		defer outputFiles[shardId].Close()
 	}
 
 	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx)
