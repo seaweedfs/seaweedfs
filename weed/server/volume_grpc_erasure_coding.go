@@ -209,7 +209,9 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 	// Clean up gathered files after rebuild (whether it succeeds or fails)
 	defer func() {
 		for _, f := range gatheredFiles {
-			os.Remove(f)
+			if err := os.Remove(f); err != nil {
+				glog.Warningf("failed to remove gathered shard link %s: %v", f, err)
+			}
 		}
 	}()
 
@@ -244,7 +246,10 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	var location *storage.DiskLocation
 
-	// Use disk_id if explicitly provided (disk-aware storage)
+	// Use disk_id if explicitly provided (disk-aware storage).
+	// DiskId=0 is treated as "not specified" (protobuf default) and triggers
+	// auto-selection below. Callers that want to target a specific disk must
+	// use DiskId >= 1 (1-indexed in the RPC, mapped to Locations[DiskId]).
 	if req.DiskId > 0 {
 		// Validate disk ID is within bounds
 		if int(req.DiskId) >= len(vs.store.Locations) {
