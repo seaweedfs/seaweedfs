@@ -249,6 +249,7 @@ func newTestSchema() *iceberg.Schema {
 	return iceberg.NewSchema(0,
 		iceberg.NestedField{ID: 1, Type: iceberg.PrimitiveTypes.Int64, Name: "id", Required: true},
 		iceberg.NestedField{ID: 2, Type: iceberg.PrimitiveTypes.String, Name: "name", Required: false},
+		iceberg.NestedField{ID: 3, Type: iceberg.PrimitiveTypes.String, Name: "payload", Required: false},
 	)
 }
 
