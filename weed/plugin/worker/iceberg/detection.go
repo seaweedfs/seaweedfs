@@ -348,6 +348,10 @@ func hasEligibleCompaction(
 }
 
 func compactionMinInputFiles(minInputFiles int64) (int, error) {
+	// Ensure the configured value is positive and fits into the platform's int type
+	if minInputFiles <= 0 {
+		return 0, fmt.Errorf("min input files must be positive, got %d", minInputFiles)
+	}
 	maxInt := int64(^uint(0) >> 1)
 	if minInputFiles > maxInt {
 		return 0, fmt.Errorf("min input files %d exceeds platform int size", minInputFiles)
