@@ -158,9 +158,9 @@ func (h *Handler) expireSnapshots(
 	}
 
 	metrics := map[string]int64{
-		"snapshots_expired": int64(len(toExpire)),
-		"files_deleted":     int64(deletedCount),
-		"duration_ms":       time.Since(start).Milliseconds(),
+		MetricSnapshotsExpired: int64(len(toExpire)),
+		MetricFilesDeleted:     int64(deletedCount),
+		MetricDurationMs:       time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("expired %d snapshot(s), deleted %d unreferenced file(s)", len(toExpire), deletedCount), metrics, nil
 }
@@ -294,8 +294,8 @@ func (h *Handler) removeOrphans(
 	}
 
 	metrics := map[string]int64{
-		"orphans_removed": int64(orphanCount),
-		"duration_ms":     time.Since(start).Milliseconds(),
+		MetricOrphansRemoved: int64(orphanCount),
+		MetricDurationMs:     time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), metrics, nil
 }
@@ -501,9 +501,9 @@ func (h *Handler) rewriteManifests(
 
 	committed = true
 	metrics := map[string]int64{
-		"manifests_rewritten": int64(len(manifests)),
-		"entries_total":       int64(totalEntries),
-		"duration_ms":         time.Since(start).Milliseconds(),
+		MetricManifestsRewritten: int64(len(manifests)),
+		MetricEntriesTotal:       int64(totalEntries),
+		MetricDurationMs:         time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(manifests), len(specMap), totalEntries), metrics, nil
 }

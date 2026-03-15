@@ -1343,17 +1343,17 @@ func TestCompactDataFilesMetrics(t *testing.T) {
 	if metrics == nil {
 		t.Fatal("expected non-nil metrics")
 	}
-	if metrics["files_merged"] != 2 {
-		t.Errorf("expected files_merged=2, got %d", metrics["files_merged"])
+	if metrics[MetricFilesMerged] != 2 {
+		t.Errorf("expected files_merged=2, got %d", metrics[MetricFilesMerged])
 	}
-	if metrics["files_written"] != 1 {
-		t.Errorf("expected files_written=1, got %d", metrics["files_written"])
+	if metrics[MetricFilesWritten] != 1 {
+		t.Errorf("expected files_written=1, got %d", metrics[MetricFilesWritten])
 	}
-	if metrics["bins"] != 1 {
-		t.Errorf("expected bins=1, got %d", metrics["bins"])
+	if metrics[MetricBins] != 1 {
+		t.Errorf("expected bins=1, got %d", metrics[MetricBins])
 	}
-	if metrics["duration_ms"] < 0 {
-		t.Errorf("expected non-negative duration_ms, got %d", metrics["duration_ms"])
+	if metrics[MetricDurationMs] < 0 {
+		t.Errorf("expected non-negative duration_ms, got %d", metrics[MetricDurationMs])
 	}
 
 	// Verify progress callback was invoked
@@ -1393,11 +1393,11 @@ func TestExpireSnapshotsMetrics(t *testing.T) {
 	if metrics == nil {
 		t.Fatal("expected non-nil metrics")
 	}
-	if metrics["snapshots_expired"] == 0 {
+	if metrics[MetricSnapshotsExpired] == 0 {
 		t.Error("expected snapshots_expired > 0")
 	}
-	if metrics["duration_ms"] < 0 {
-		t.Errorf("expected non-negative duration_ms, got %d", metrics["duration_ms"])
+	if metrics[MetricDurationMs] < 0 {
+		t.Errorf("expected non-negative duration_ms, got %d", metrics[MetricDurationMs])
 	}
 }
 
@@ -1430,13 +1430,13 @@ func TestExecuteCompletionOutputValues(t *testing.T) {
 	}
 
 	// Verify metrics have the expected keys
-	if _, ok := metrics["snapshots_expired"]; !ok {
+	if _, ok := metrics[MetricSnapshotsExpired]; !ok {
 		t.Error("expected 'snapshots_expired' key in metrics")
 	}
-	if _, ok := metrics["files_deleted"]; !ok {
+	if _, ok := metrics[MetricFilesDeleted]; !ok {
 		t.Error("expected 'files_deleted' key in metrics")
 	}
-	if _, ok := metrics["duration_ms"]; !ok {
+	if _, ok := metrics[MetricDurationMs]; !ok {
 		t.Error("expected 'duration_ms' key in metrics")
 	}
 }

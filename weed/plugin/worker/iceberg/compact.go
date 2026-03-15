@@ -441,10 +441,10 @@ func (h *Handler) compactDataFiles(
 
 	committed = true
 	metrics := map[string]int64{
-		"files_merged":  int64(totalMerged),
-		"files_written": int64(len(newManifestEntries)),
-		"bins":          int64(len(bins)),
-		"duration_ms":   time.Since(start).Milliseconds(),
+		MetricFilesMerged:  int64(totalMerged),
+		MetricFilesWritten: int64(len(newManifestEntries)),
+		MetricBins:         int64(len(bins)),
+		MetricDurationMs:   time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("compacted %d files into %d (across %d bins)", totalMerged, len(newManifestEntries), len(bins)), metrics, nil
 }
