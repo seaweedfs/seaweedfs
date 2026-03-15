@@ -166,6 +166,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					},
 				},
 				{
+					SectionId:   "manifests",
+					Title:       "Manifest Rewriting",
+					Description: "Controls for merging small manifests.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "min_manifests_to_rewrite",
+							Label:       "Min Manifests",
+							Description: "Minimum number of manifests before rewriting is triggered.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+						},
+					},
+				},
+				{
 					SectionId:   "general",
 					Title:       "General",
 					Description: "General maintenance settings.",
@@ -192,6 +207,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"target_file_size_bytes":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
 				"min_input_files":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
 				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},

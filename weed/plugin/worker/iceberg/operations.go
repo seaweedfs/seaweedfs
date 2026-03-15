@@ -322,8 +322,8 @@ func (h *Handler) rewriteManifests(
 		return "", fmt.Errorf("parse manifest list: %w", err)
 	}
 
-	if int64(len(manifests)) < config.MinInputFiles {
-		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinInputFiles), nil
+	if int64(len(manifests)) < config.MinManifestsToRewrite {
+		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinManifestsToRewrite), nil
 	}
 
 	// Collect all entries from data manifests, grouped by partition spec ID

@@ -18,6 +18,7 @@ const (
 	defaultMaxCommitRetries       = 5
 	defaultTargetFileSizeBytes    = 256 * 1024 * 1024
 	defaultMinInputFiles          = 5
+	defaultMinManifestsToRewrite  = 5
 	defaultOperations             = "all"
 )
 
@@ -29,6 +30,7 @@ type Config struct {
 	MaxCommitRetries       int64
 	TargetFileSizeBytes    int64
 	MinInputFiles          int64
+	MinManifestsToRewrite  int64
 	Operations             string
 }
 
@@ -42,6 +44,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MaxCommitRetries:       readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
 		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_bytes", defaultTargetFileSizeBytes),
 		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
+		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
 	}
 
@@ -63,6 +66,9 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	}
 	if cfg.MinInputFiles < 2 {
 		cfg.MinInputFiles = defaultMinInputFiles
+	}
+	if cfg.MinManifestsToRewrite < 2 {
+		cfg.MinManifestsToRewrite = defaultMinManifestsToRewrite
 	}
 
 	return cfg
