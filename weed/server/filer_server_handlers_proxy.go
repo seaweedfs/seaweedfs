@@ -22,7 +22,7 @@ import (
 const proxyReadConcurrencyPerVolumeServer = 16
 
 var (
-	proxySemaphores   sync.Map // host -> chan struct{}
+	proxySemaphores sync.Map // host -> chan struct{}
 )
 
 func (fs *FilerServer) maybeAddVolumeJwtAuthorization(r *http.Request, fileId string, isWrite bool) {

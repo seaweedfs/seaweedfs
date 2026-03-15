@@ -362,7 +362,7 @@ type ListAttachedGroupPoliciesResponse struct {
 
 // ListGroupsForUserResponse is the response for ListGroupsForUser action.
 type ListGroupsForUserResponse struct {
-	XMLName                  xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupsForUserResponse"`
+	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupsForUserResponse"`
 	ListGroupsForUserResult struct {
 		Groups      []*iam.Group `xml:"Groups>member"`
 		IsTruncated bool         `xml:"IsTruncated"`

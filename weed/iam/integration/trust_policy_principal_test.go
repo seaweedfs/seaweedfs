@@ -22,13 +22,13 @@ func TestTrustPolicyAWSUserPrincipal(t *testing.T) {
 	ctx := context.Background()
 
 	const (
-		accountID    = "000000000000"
-		backendUser  = "backend"
-		backendArn   = "arn:aws:iam::" + accountID + ":user/" + backendUser
-		otherUser    = "other"
-		otherArn     = "arn:aws:iam::" + accountID + ":user/" + otherUser
-		clientRoleN  = "ClientRole"
-		clientRoleA  = "arn:aws:iam::role/" + clientRoleN
+		accountID   = "000000000000"
+		backendUser = "backend"
+		backendArn  = "arn:aws:iam::" + accountID + ":user/" + backendUser
+		otherUser   = "other"
+		otherArn    = "arn:aws:iam::" + accountID + ":user/" + otherUser
+		clientRoleN = "ClientRole"
+		clientRoleA = "arn:aws:iam::role/" + clientRoleN
 	)
 
 	// Create role with trust policy restricted to a specific AWS user principal

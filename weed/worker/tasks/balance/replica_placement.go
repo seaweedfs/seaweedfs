@@ -143,4 +143,3 @@ func findTopRackKeys(m map[rackKey]int) (topKeys []rackKey, max int) {
 	}
 	return
 }
-

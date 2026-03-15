@@ -649,8 +649,9 @@ func TestRewriteManifestsBelowThreshold(t *testing.T) {
 
 	handler := NewHandler(nil)
 	config := Config{
-		MinInputFiles:    10, // threshold higher than actual count (1)
-		MaxCommitRetries: 3,
+		MinInputFiles:         10,
+		MinManifestsToRewrite: 10, // threshold higher than actual manifest count (1)
+		MaxCommitRetries:      3,
 	}
 
 	result, err := handler.rewriteManifests(context.Background(), client, setup.BucketName, setup.tablePath(), config)
@@ -775,8 +776,8 @@ func TestDetectWithFakeFiler(t *testing.T) {
 	handler := NewHandler(nil)
 
 	config := Config{
-		SnapshotRetentionHours: 0,  // everything is expired
-		MaxSnapshotsToKeep:     2,  // 3 > 2, needs maintenance
+		SnapshotRetentionHours: 0, // everything is expired
+		MaxSnapshotsToKeep:     2, // 3 > 2, needs maintenance
 		MaxCommitRetries:       3,
 	}
 
@@ -785,7 +786,7 @@ func TestDetectWithFakeFiler(t *testing.T) {
 		client,
 		config,
 		"", "", "", // no filters
-		0,          // no limit
+		0, // no limit
 	)
 	if err != nil {
 		t.Fatalf("scanTablesForMaintenance failed: %v", err)

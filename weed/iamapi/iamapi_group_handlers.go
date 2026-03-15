@@ -326,4 +326,3 @@ func buildUserGroupsIndex(s3cfg *iam_pb.S3ApiConfiguration) map[string][]string 
 	}
 	return index
 }
-

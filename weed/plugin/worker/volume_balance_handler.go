@@ -14,8 +14,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
+	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
@@ -1391,7 +1391,7 @@ func buildBatchVolumeBalanceProposals(
 			},
 			Labels: map[string]string{
 				"task_type":  "balance",
-				"batch":     "true",
+				"batch":      "true",
 				"batch_size": fmt.Sprintf("%d", len(moves)),
 			},
 		})

@@ -9,19 +9,19 @@ import (
 
 // Type aliases for IAM response types from shared package
 type (
-	CommonResponse               = iamlib.CommonResponse
-	ListUsersResponse            = iamlib.ListUsersResponse
-	ListAccessKeysResponse       = iamlib.ListAccessKeysResponse
-	DeleteAccessKeyResponse      = iamlib.DeleteAccessKeyResponse
-	CreatePolicyResponse         = iamlib.CreatePolicyResponse
-	CreateUserResponse           = iamlib.CreateUserResponse
-	DeleteUserResponse           = iamlib.DeleteUserResponse
-	GetUserResponse              = iamlib.GetUserResponse
-	UpdateUserResponse           = iamlib.UpdateUserResponse
-	CreateAccessKeyResponse      = iamlib.CreateAccessKeyResponse
-	UpdateAccessKeyResponse      = iamlib.UpdateAccessKeyResponse
-	PutUserPolicyResponse        = iamlib.PutUserPolicyResponse
-	DeleteUserPolicyResponse     = iamlib.DeleteUserPolicyResponse
+	CommonResponse                   = iamlib.CommonResponse
+	ListUsersResponse                = iamlib.ListUsersResponse
+	ListAccessKeysResponse           = iamlib.ListAccessKeysResponse
+	DeleteAccessKeyResponse          = iamlib.DeleteAccessKeyResponse
+	CreatePolicyResponse             = iamlib.CreatePolicyResponse
+	CreateUserResponse               = iamlib.CreateUserResponse
+	DeleteUserResponse               = iamlib.DeleteUserResponse
+	GetUserResponse                  = iamlib.GetUserResponse
+	UpdateUserResponse               = iamlib.UpdateUserResponse
+	CreateAccessKeyResponse          = iamlib.CreateAccessKeyResponse
+	UpdateAccessKeyResponse          = iamlib.UpdateAccessKeyResponse
+	PutUserPolicyResponse            = iamlib.PutUserPolicyResponse
+	DeleteUserPolicyResponse         = iamlib.DeleteUserPolicyResponse
 	GetUserPolicyResponse            = iamlib.GetUserPolicyResponse
 	GetPolicyResponse                = iamlib.GetPolicyResponse
 	DeletePolicyResponse             = iamlib.DeletePolicyResponse
@@ -30,12 +30,12 @@ type (
 	DetachUserPolicyResponse         = iamlib.DetachUserPolicyResponse
 	ListAttachedUserPoliciesResponse = iamlib.ListAttachedUserPoliciesResponse
 	ErrorResponse                    = iamlib.ErrorResponse
-	ServiceAccountInfo           = iamlib.ServiceAccountInfo
-	CreateServiceAccountResponse = iamlib.CreateServiceAccountResponse
-	DeleteServiceAccountResponse = iamlib.DeleteServiceAccountResponse
-	ListServiceAccountsResponse  = iamlib.ListServiceAccountsResponse
-	GetServiceAccountResponse    = iamlib.GetServiceAccountResponse
-	UpdateServiceAccountResponse = iamlib.UpdateServiceAccountResponse
+	ServiceAccountInfo               = iamlib.ServiceAccountInfo
+	CreateServiceAccountResponse     = iamlib.CreateServiceAccountResponse
+	DeleteServiceAccountResponse     = iamlib.DeleteServiceAccountResponse
+	ListServiceAccountsResponse      = iamlib.ListServiceAccountsResponse
+	GetServiceAccountResponse        = iamlib.GetServiceAccountResponse
+	UpdateServiceAccountResponse     = iamlib.UpdateServiceAccountResponse
 	// Group response types
 	CreateGroupResponse               = iamlib.CreateGroupResponse
 	DeleteGroupResponse               = iamlib.DeleteGroupResponse

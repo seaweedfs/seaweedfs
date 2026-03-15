@@ -12,9 +12,9 @@ import (
 
 func TestDeriveECBalanceWorkerConfig(t *testing.T) {
 	tests := []struct {
-		name     string
-		values   map[string]*plugin_pb.ConfigValue
-		check    func(t *testing.T, config *ecBalanceWorkerConfig)
+		name   string
+		values map[string]*plugin_pb.ConfigValue
+		check  func(t *testing.T, config *ecBalanceWorkerConfig)
 	}{
 		{
 			name:   "nil values uses defaults",

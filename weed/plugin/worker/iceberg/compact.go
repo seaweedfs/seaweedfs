@@ -364,14 +364,23 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 
 // splitOversizedBin splits a bin whose total size exceeds targetSize into
 // sub-bins that each stay under targetSize while meeting minFiles.
+// Entries are sorted by size descending before splitting so that large
+// files are placed first, improving bin packing efficiency.
 func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []compactionBin {
+	// Sort largest-first for better packing.
+	sorted := make([]iceberg.ManifestEntry, len(bin.Entries))
+	copy(sorted, bin.Entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].DataFile().FileSizeBytes() > sorted[j].DataFile().FileSizeBytes()
+	})
+
 	var bins []compactionBin
 	current := compactionBin{
 		PartitionKey: bin.PartitionKey,
 		Partition:    bin.Partition,
 	}
-	for _, entry := range bin.Entries {
-		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize && len(current.Entries) >= minFiles {
+	for _, entry := range sorted {
+		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize {
 			bins = append(bins, current)
 			current = compactionBin{
 				PartitionKey: bin.PartitionKey,
@@ -381,8 +390,43 @@ func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []comp
 		current.Entries = append(current.Entries, entry)
 		current.TotalSize += entry.DataFile().FileSizeBytes()
 	}
-	if len(current.Entries) >= minFiles {
+	if len(current.Entries) > 0 {
 		bins = append(bins, current)
+	}
+
+	// Merge any bin with fewer than minFiles entries into its neighbor.
+	// Repeat until no more merges are needed. This handles runts at the
+	// end (from the split) and small leading bins (from largest-first
+	// sorting placing single large files into their own bins).
+	for changed := true; changed && len(bins) > 1; {
+		changed = false
+		for i := 0; i < len(bins); i++ {
+			if len(bins[i].Entries) >= minFiles {
+				continue
+			}
+			// Pick the better neighbor to merge into.
+			var target int
+			if i == 0 {
+				target = 1
+			} else if i == len(bins)-1 {
+				target = i - 1
+			} else if bins[i-1].TotalSize <= bins[i+1].TotalSize {
+				target = i - 1
+			} else {
+				target = i + 1
+			}
+			bins[target].Entries = append(bins[target].Entries, bins[i].Entries...)
+			bins[target].TotalSize += bins[i].TotalSize
+			bins = append(bins[:i], bins[i+1:]...)
+			changed = true
+			break // restart scan after structural change
+		}
+	}
+
+	// Final guard: if a single remaining bin has fewer than minFiles
+	// (entire input too small), return nothing.
+	if len(bins) == 1 && len(bins[0].Entries) < minFiles {
+		return nil
 	}
 	return bins
 }
@@ -413,10 +457,11 @@ func partitionKey(partition map[int]any) string {
 }
 
 // mergeParquetFiles reads multiple small Parquet files and merges them into
-// a single Parquet file. It reads rows from each source and writes them to
-// the output using the schema from the first file.
-//
-// Files are loaded into memory (appropriate for compacting small files).
+// a single Parquet file. Files are processed one at a time: each source file
+// is loaded, its rows are streamed into the output writer, and then its data
+// is released before the next file is loaded. This keeps peak memory
+// proportional to the size of a single input file plus the output buffer,
+// rather than the sum of all inputs.
 func mergeParquetFiles(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -427,72 +472,84 @@ func mergeParquetFiles(
 		return nil, 0, fmt.Errorf("no entries to merge")
 	}
 
-	// Read all source files and create parquet readers
-	type sourceFile struct {
-		reader *parquet.Reader
-		data   []byte
+	// Load the first file to obtain the schema for the writer.
+	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entries[0].DataFile().FilePath())
+	if err != nil {
+		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
 	}
-	var sources []sourceFile
-	defer func() {
-		for _, src := range sources {
-			if src.reader != nil {
-				src.reader.Close()
+	firstReader := parquet.NewReader(bytes.NewReader(firstData))
+	parquetSchema := firstReader.Schema()
+	if parquetSchema == nil {
+		firstReader.Close()
+		return nil, 0, fmt.Errorf("no parquet schema found in %s", entries[0].DataFile().FilePath())
+	}
+
+	var outputBuf bytes.Buffer
+	writer := parquet.NewWriter(&outputBuf, parquetSchema)
+
+	// drainReader streams all rows from reader into writer, then closes reader.
+	// source identifies the input file for error messages.
+	var totalRows int64
+	rows := make([]parquet.Row, 256)
+	drainReader := func(reader *parquet.Reader, source string) error {
+		defer reader.Close()
+		for {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			default:
+			}
+			n, readErr := reader.ReadRows(rows)
+			if n > 0 {
+				if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
+					return fmt.Errorf("write rows from %s: %w", source, writeErr)
+				}
+				totalRows += int64(n)
+			}
+			if readErr != nil {
+				if readErr == io.EOF {
+					return nil
+				}
+				return fmt.Errorf("read rows from %s: %w", source, readErr)
 			}
 		}
-	}()
+	}
 
-	var parquetSchema *parquet.Schema
-	for _, entry := range entries {
+	// Drain the first file.
+	firstSource := entries[0].DataFile().FilePath()
+	if err := drainReader(firstReader, firstSource); err != nil {
+		writer.Close()
+		return nil, 0, err
+	}
+	firstData = nil // allow GC
+
+	// Process remaining files one at a time.
+	for _, entry := range entries[1:] {
 		select {
 		case <-ctx.Done():
+			writer.Close()
 			return nil, 0, ctx.Err()
 		default:
 		}
 
 		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
 		if err != nil {
+			writer.Close()
 			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
 		}
 
 		reader := parquet.NewReader(bytes.NewReader(data))
-		readerSchema := reader.Schema()
-		if parquetSchema == nil {
-			parquetSchema = readerSchema
-		} else if !schemasEqual(parquetSchema, readerSchema) {
+		if !schemasEqual(parquetSchema, reader.Schema()) {
+			reader.Close()
+			writer.Close()
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
-		sources = append(sources, sourceFile{reader: reader, data: data})
-	}
 
-	if parquetSchema == nil {
-		return nil, 0, fmt.Errorf("no parquet schema found")
-	}
-
-	// Write merged output
-	var outputBuf bytes.Buffer
-	writer := parquet.NewWriter(&outputBuf, parquetSchema)
-
-	var totalRows int64
-	rows := make([]parquet.Row, 256)
-
-	for _, src := range sources {
-		for {
-			n, err := src.reader.ReadRows(rows)
-			if n > 0 {
-				if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
-					writer.Close()
-					return nil, 0, fmt.Errorf("write rows: %w", writeErr)
-				}
-				totalRows += int64(n)
-			}
-			if err != nil {
-				if err == io.EOF {
-					break
-				}
-				writer.Close()
-				return nil, 0, fmt.Errorf("read rows: %w", err)
-			}
+		if err := drainReader(reader, entry.DataFile().FilePath()); err != nil {
+			writer.Close()
+			return nil, 0, err
 		}
+		// data goes out of scope here, eligible for GC before next iteration.
 	}
 
 	if err := writer.Close(); err != nil {

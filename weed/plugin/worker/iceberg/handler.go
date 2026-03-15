@@ -166,6 +166,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 					},
 				},
 				{
+					SectionId:   "manifests",
+					Title:       "Manifest Rewriting",
+					Description: "Controls for merging small manifests.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "min_manifests_to_rewrite",
+							Label:       "Min Manifests",
+							Description: "Minimum number of manifests before rewriting is triggered.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+						},
+					},
+				},
+				{
 					SectionId:   "general",
 					Title:       "General",
 					Description: "General maintenance settings.",
@@ -190,8 +205,9 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"target_file_size_bytes":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
-				"min_input_files":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
 				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
@@ -211,8 +227,8 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"target_file_size_bytes":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
-			"min_input_files":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+			"target_file_size_bytes":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeBytes}},
+			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
 			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
 			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
 			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
@@ -255,11 +271,10 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	namespaceFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "namespace_filter", ""))
 	tableFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "table_filter", ""))
 
-	// Connect to filer to scan table buckets
-	filerAddress := filerAddresses[0]
-	conn, err := grpc.NewClient(filerAddress, h.grpcDialOption)
+	// Connect to filer — try each address until one succeeds.
+	filerAddress, conn, err := h.connectToFiler(filerAddresses)
 	if err != nil {
-		return fmt.Errorf("connect to filer %s: %w", filerAddress, err)
+		return fmt.Errorf("connect to filer: %w", err)
 	}
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
@@ -328,6 +343,12 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 
 	if bucketName == "" || namespace == "" || tableName == "" || filerAddress == "" {
 		return fmt.Errorf("missing required parameters: bucket_name=%q, namespace=%q, table_name=%q, filer_address=%q", bucketName, namespace, tableName, filerAddress)
+	}
+	// Reject path traversal in bucket/namespace/table names.
+	for _, name := range []string{bucketName, namespace, tableName} {
+		if strings.Contains(name, "..") || strings.ContainsAny(name, "/\\") {
+			return fmt.Errorf("invalid name %q: must not contain path separators or '..'", name)
+		}
 	}
 	if tablePath == "" {
 		tablePath = path.Join(namespace, tableName)
@@ -465,6 +486,25 @@ func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error 
 		Success:        true,
 		TotalProposals: 0,
 	})
+}
+
+// connectToFiler tries each filer address in order and returns the first
+// successful gRPC connection. If all addresses fail, it returns a
+// consolidated error.
+func (h *Handler) connectToFiler(addresses []string) (string, *grpc.ClientConn, error) {
+	var lastErr error
+	for _, addr := range addresses {
+		conn, err := grpc.NewClient(addr, h.grpcDialOption)
+		if err != nil {
+			lastErr = fmt.Errorf("filer %s: %w", addr, err)
+			continue
+		}
+		return addr, conn, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no filer addresses provided")
+	}
+	return "", nil, lastErr
 }
 
 // Ensure Handler implements JobHandler.

@@ -15,7 +15,7 @@ const (
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeReplication   TaskType = "replication"
-	TaskTypeECBalance    TaskType = "ec_balance"
+	TaskTypeECBalance     TaskType = "ec_balance"
 )
 
 // Common task status constants
