@@ -167,7 +167,7 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 			continue
 		}
 
-		if hasEcx && existingShardCount > rebuildShardCount {
+		if hasEcx && (rebuildLocation == nil || existingShardCount > rebuildShardCount) {
 			if rebuildLocation != nil {
 				otherLocationsWithShards = append(otherLocationsWithShards, rebuildLocation)
 			}
