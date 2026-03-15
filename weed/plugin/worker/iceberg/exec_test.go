@@ -428,36 +428,7 @@ func writeCurrentSnapshotManifests(t *testing.T, fs *fakeFilerServer, setup tabl
 
 func makeManifestEntries(t *testing.T, specs []testEntrySpec, snapshotID int64) []iceberg.ManifestEntry {
 	t.Helper()
-
-	entries := make([]iceberg.ManifestEntry, 0, len(specs))
-	for _, spec := range specs {
-		partitionSpec := iceberg.UnpartitionedSpec
-		if spec.partitionSpec != nil {
-			partitionSpec = spec.partitionSpec
-		} else if len(spec.partition) > 0 {
-			t.Fatalf("partition spec is required for partitioned test entry %s", spec.path)
-		}
-		dfBuilder, err := iceberg.NewDataFileBuilder(
-			*partitionSpec,
-			iceberg.EntryContentData,
-			spec.path,
-			iceberg.ParquetFile,
-			spec.partition,
-			nil, nil,
-			1,
-			spec.size,
-		)
-		if err != nil {
-			t.Fatalf("failed to build data file %s: %v", spec.path, err)
-		}
-		entries = append(entries, iceberg.NewManifestEntry(
-			iceberg.EntryStatusADDED,
-			&snapshotID,
-			nil, nil,
-			dfBuilder.Build(),
-		))
-	}
-	return entries
+	return makeManifestEntriesWithSnapshot(t, specs, snapshotID, iceberg.EntryStatusADDED)
 }
 
 // ---------------------------------------------------------------------------
@@ -1165,6 +1136,47 @@ func TestDetectSchedulesCompactionWithDeleteManifestPresent(t *testing.T) {
 	}
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 compaction candidate with delete manifest present, got %d", len(tables))
+	}
+}
+
+func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	manifestListName := path.Base(setup.Snapshots[0].ManifestList)
+	fs.putEntry(metaDir, manifestListName, &filer_pb.Entry{
+		Name: manifestListName,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("not-a-manifest-list")),
+		},
+		Content: []byte("not-a-manifest-list"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 0,
+		MaxSnapshotsToKeep:     10,
+		Operations:             "compact,expire_snapshots",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected snapshot expiration candidate despite compaction evaluation error, got %d", len(tables))
 	}
 }
 

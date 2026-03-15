@@ -211,6 +211,7 @@ func (h *Handler) tableNeedsMaintenance(
 		manifestsLoaded = true
 		return currentManifests, manifestsErr
 	}
+	var opEvalErrors []string
 
 	for _, op := range ops {
 		switch op {
@@ -221,11 +222,13 @@ func (h *Handler) tableNeedsMaintenance(
 		case "compact":
 			manifests, err := getCurrentManifests()
 			if err != nil {
-				return false, err
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
 			}
 			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
 			if err != nil {
-				return false, err
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
 			}
 			if eligible {
 				return true, nil
@@ -233,7 +236,8 @@ func (h *Handler) tableNeedsMaintenance(
 		case "rewrite_manifests":
 			manifests, err := getCurrentManifests()
 			if err != nil {
-				return false, err
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
 			}
 			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
 				return true, nil
@@ -242,18 +246,24 @@ func (h *Handler) tableNeedsMaintenance(
 			if metadataFileName == "" {
 				_, currentMetadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 				if err != nil {
-					return false, err
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					continue
 				}
 				metadataFileName = currentMetadataFileName
 			}
 			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
 			if err != nil {
-				return false, err
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
 			}
 			if len(orphanCandidates) > 0 {
 				return true, nil
 			}
 		}
+	}
+
+	if len(opEvalErrors) > 0 {
+		return false, fmt.Errorf("evaluate maintenance operations: %s", strings.Join(opEvalErrors, "; "))
 	}
 
 	return false, nil
