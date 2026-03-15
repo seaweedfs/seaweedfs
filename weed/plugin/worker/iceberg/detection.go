@@ -195,10 +195,6 @@ func (h *Handler) tableNeedsMaintenance(
 	config Config,
 	ops []string,
 ) (bool, error) {
-	if len(meta.Snapshots()) == 0 {
-		return false, nil
-	}
-
 	config = normalizeDetectionConfig(config)
 	loadManifests := func() ([]iceberg.ManifestFile, error) {
 		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
@@ -239,7 +235,7 @@ func (h *Handler) tableNeedsMaintenance(
 			if err != nil {
 				return false, err
 			}
-			if int64(len(manifests)) >= config.MinManifestsToRewrite {
+			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
 				return true, nil
 			}
 		case "remove_orphans":
@@ -268,6 +264,16 @@ func metadataFileNameFromLocation(location, bucketName, tablePath string) string
 		return ""
 	}
 	return path.Base(normalizeIcebergPath(location, bucketName, tablePath))
+}
+
+func countDataManifests(manifests []iceberg.ManifestFile) int64 {
+	var count int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() == iceberg.ManifestContentData {
+			count++
+		}
+	}
+	return count
 }
 
 func loadCurrentManifests(

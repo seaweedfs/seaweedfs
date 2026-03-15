@@ -1207,6 +1207,112 @@ func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
 	}
 }
 
+func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil {
+		t.Fatal("current snapshot is required")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	version := meta.Version()
+	schema := meta.CurrentSchema()
+	spec := meta.PartitionSpec()
+
+	dataEntries := makeManifestEntries(t, []testEntrySpec{
+		{path: "data/rewrite-0.parquet", size: 1024, partition: map[int]any{}},
+	}, currentSnap.SnapshotID)
+
+	var dataManifestBuf bytes.Buffer
+	dataManifestName := "detect-rewrite-data.avro"
+	dataManifest, err := iceberg.WriteManifest(
+		path.Join("metadata", dataManifestName),
+		&dataManifestBuf,
+		version,
+		spec,
+		schema,
+		currentSnap.SnapshotID,
+		dataEntries,
+	)
+	if err != nil {
+		t.Fatalf("write data manifest: %v", err)
+	}
+	fs.putEntry(metaDir, dataManifestName, &filer_pb.Entry{
+		Name: dataManifestName,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(dataManifestBuf.Len()),
+		},
+		Content: dataManifestBuf.Bytes(),
+	})
+
+	manifests := []iceberg.ManifestFile{dataManifest}
+	for i := 0; i < 4; i++ {
+		deleteManifest := iceberg.NewManifestFile(
+			version,
+			path.Join("metadata", fmt.Sprintf("detect-delete-%d.avro", i)),
+			0,
+			int32(spec.ID()),
+			currentSnap.SnapshotID,
+		).Content(iceberg.ManifestContentDeletes).
+			SequenceNum(currentSnap.SequenceNumber, currentSnap.SequenceNumber).
+			DeletedFiles(1).
+			DeletedRows(1).
+			Build()
+		manifests = append(manifests, deleteManifest)
+	}
+
+	var manifestListBuf bytes.Buffer
+	seqNum := currentSnap.SequenceNumber
+	if err := iceberg.WriteManifestList(
+		version,
+		&manifestListBuf,
+		currentSnap.SnapshotID,
+		currentSnap.ParentSnapshotID,
+		&seqNum,
+		0,
+		manifests,
+	); err != nil {
+		t.Fatalf("write manifest list: %v", err)
+	}
+	fs.putEntry(metaDir, path.Base(currentSnap.ManifestList), &filer_pb.Entry{
+		Name: path.Base(currentSnap.ManifestList),
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(manifestListBuf.Len()),
+		},
+		Content: manifestListBuf.Bytes(),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 24 * 365,
+		MaxSnapshotsToKeep:     10,
+		MinManifestsToRewrite:  2,
+		Operations:             "rewrite_manifests",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 0 {
+		t.Fatalf("expected no manifest rewrite candidate when only one data manifest exists, got %d", len(tables))
+	}
+}
+
 func TestDetectSchedulesOrphanCleanupWithoutSnapshotPressure(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -1245,6 +1351,41 @@ func TestDetectSchedulesOrphanCleanupWithoutSnapshotPressure(t *testing.T) {
 	}
 	if len(tables) != 1 {
 		t.Fatalf("expected 1 orphan cleanup candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectSchedulesOrphanCleanupWithoutSnapshots(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+	}
+	populateTable(t, fs, setup)
+
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	fs.putEntry(dataDir, "stale-orphan.parquet", &filer_pb.Entry{
+		Name: "stale-orphan.parquet",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Add(-200 * time.Hour).Unix(),
+			FileSize: 100,
+		},
+		Content: []byte("orphan"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		OrphanOlderThanHours: 72,
+		Operations:           "remove_orphans",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 orphan cleanup candidate without snapshots, got %d", len(tables))
 	}
 }
 
