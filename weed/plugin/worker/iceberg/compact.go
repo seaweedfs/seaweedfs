@@ -380,7 +380,7 @@ func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []comp
 		Partition:    bin.Partition,
 	}
 	for _, entry := range sorted {
-		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize && len(current.Entries) >= minFiles {
+		if current.TotalSize > 0 && current.TotalSize+entry.DataFile().FileSizeBytes() > targetSize {
 			bins = append(bins, current)
 			current = compactionBin{
 				PartitionKey: bin.PartitionKey,
@@ -390,10 +390,31 @@ func splitOversizedBin(bin compactionBin, targetSize int64, minFiles int) []comp
 		current.Entries = append(current.Entries, entry)
 		current.TotalSize += entry.DataFile().FileSizeBytes()
 	}
-	if len(current.Entries) >= minFiles {
+	if len(current.Entries) > 0 {
 		bins = append(bins, current)
 	}
-	return bins
+
+	// Merge a trailing runt (fewer than minFiles) into the previous bin
+	// so we don't emit a bin that's too small to compact, while still
+	// keeping all earlier bins within targetSize.
+	if len(bins) > 1 && len(bins[len(bins)-1].Entries) < minFiles {
+		last := bins[len(bins)-1]
+		bins = bins[:len(bins)-1]
+		prev := &bins[len(bins)-1]
+		prev.Entries = append(prev.Entries, last.Entries...)
+		prev.TotalSize += last.TotalSize
+	}
+
+	// Filter out any bin that still doesn't meet minFiles (can only happen
+	// when the entire input has fewer than minFiles entries, which shouldn't
+	// reach here, but guard defensively).
+	filtered := bins[:0]
+	for _, b := range bins {
+		if len(b.Entries) >= minFiles {
+			filtered = append(filtered, b)
+		}
+	}
+	return filtered
 }
 
 // partitionKey creates a string key from a partition map for grouping.
