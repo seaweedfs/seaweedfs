@@ -155,15 +155,17 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		if err != nil {
 			return nil, err
 		}
-		if existingShardCount == 0 {
-			continue
-		}
 
 		indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
 		if !util.FileExists(indexBaseFileName+".ecx") && location.IdxDirectory != location.Directory {
 			indexBaseFileName = path.Join(location.Directory, baseFileName)
 		}
 		hasEcx := util.FileExists(indexBaseFileName + ".ecx")
+
+		// Skip locations that have neither shard files nor an .ecx file.
+		if existingShardCount == 0 && !hasEcx {
+			continue
+		}
 
 		if hasEcx && existingShardCount > rebuildShardCount {
 			if rebuildLocation != nil {

@@ -145,15 +145,18 @@ func findShardFile(baseFileName string, ext string, additionalDirs []string) str
 
 func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize int64, smallBlockSize int64, ctx *ECContext, additionalDirs []string) (generatedShardIds []uint32, err error) {
 
+	// Pass 1: discover which shards exist and which are missing,
+	// opening input files but NOT creating output files yet.
 	shardHasData := make([]bool, ctx.Total())
+	shardPaths := make([]string, ctx.Total()) // non-empty for present shards
 	inputFiles := make([]*os.File, ctx.Total())
-	outputFiles := make([]*os.File, ctx.Total())
 	presentCount := 0
 	for shardId := 0; shardId < ctx.Total(); shardId++ {
 		ext := ctx.ToExt(shardId)
 		shardPath := findShardFile(baseFileName, ext, additionalDirs)
 		if shardPath != "" {
 			shardHasData[shardId] = true
+			shardPaths[shardId] = shardPath
 			inputFiles[shardId], err = os.OpenFile(shardPath, os.O_RDONLY, 0)
 			if err != nil {
 				return nil, err
@@ -161,16 +164,11 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 			defer inputFiles[shardId].Close()
 			presentCount++
 		} else {
-			outputFileName := baseFileName + ext
-			outputFiles[shardId], err = os.OpenFile(outputFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
-			if err != nil {
-				return nil, err
-			}
-			defer outputFiles[shardId].Close()
 			generatedShardIds = append(generatedShardIds, uint32(shardId))
 		}
 	}
 
+	// Pre-check: bail out before creating any output files.
 	if presentCount < ctx.DataShards {
 		return nil, fmt.Errorf("not enough shards to rebuild %s: found %d shards, need at least %d (data shards), missing shards: %v",
 			baseFileName, presentCount, ctx.DataShards, generatedShardIds)
@@ -178,6 +176,21 @@ func generateMissingEcFiles(baseFileName string, bufferSize int, largeBlockSize 
 
 	glog.V(0).Infof("rebuilding %s: %d shards present, %d missing %v, config %s",
 		baseFileName, presentCount, len(generatedShardIds), generatedShardIds, ctx.String())
+
+	// Pass 2: create output files for missing shards now that we know
+	// reconstruction is possible.
+	outputFiles := make([]*os.File, ctx.Total())
+	for shardId := 0; shardId < ctx.Total(); shardId++ {
+		if shardHasData[shardId] {
+			continue
+		}
+		outputFileName := baseFileName + ctx.ToExt(shardId)
+		outputFiles[shardId], err = os.OpenFile(outputFileName, os.O_TRUNC|os.O_WRONLY|os.O_CREATE, 0644)
+		if err != nil {
+			return nil, err
+		}
+		defer outputFiles[shardId].Close()
+	}
 
 	err = rebuildEcFiles(shardHasData, inputFiles, outputFiles, ctx)
 	if err != nil {
