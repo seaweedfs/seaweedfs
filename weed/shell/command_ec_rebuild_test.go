@@ -80,7 +80,7 @@ func TestEcShardMapShardCount(t *testing.T) {
 	}
 }
 
-// TestRebuildEcVolumesInsufficientShards tests error handling for unrepairable volumes
+// TestRebuildEcVolumesInsufficientShards tests that unrepairable volumes are skipped
 func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	var logBuffer bytes.Buffer
 
@@ -101,11 +101,13 @@ func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	erb.rebuildEcVolumes("c1")
 	err := erb.ewg.Wait()
 
-	if err == nil {
-		t.Fatal("Expected error for insufficient shards, got nil")
+	// Unrepairable volumes should be skipped (not cause an error)
+	if err != nil {
+		t.Fatalf("Expected no error for unrepairable volume (should be skipped), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unrepairable") {
-		t.Errorf("Expected 'unrepairable' in error message, got: %s", err.Error())
+	// Verify the skip message was logged
+	if !strings.Contains(logBuffer.String(), "unrepairable") {
+		t.Errorf("Expected 'unrepairable' in log output, got: %s", logBuffer.String())
 	}
 }
 
