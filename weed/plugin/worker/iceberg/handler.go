@@ -255,11 +255,10 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	namespaceFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "namespace_filter", ""))
 	tableFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "table_filter", ""))
 
-	// Connect to filer to scan table buckets
-	filerAddress := filerAddresses[0]
-	conn, err := grpc.NewClient(filerAddress, h.grpcDialOption)
+	// Connect to filer — try each address until one succeeds.
+	filerAddress, conn, err := h.connectToFiler(filerAddresses)
 	if err != nil {
-		return fmt.Errorf("connect to filer %s: %w", filerAddress, err)
+		return fmt.Errorf("connect to filer: %w", err)
 	}
 	defer conn.Close()
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
@@ -471,6 +470,25 @@ func (h *Handler) sendEmptyDetection(sender pluginworker.DetectionSender) error 
 		Success:        true,
 		TotalProposals: 0,
 	})
+}
+
+// connectToFiler tries each filer address in order and returns the first
+// successful gRPC connection. If all addresses fail, it returns a
+// consolidated error.
+func (h *Handler) connectToFiler(addresses []string) (string, *grpc.ClientConn, error) {
+	var lastErr error
+	for _, addr := range addresses {
+		conn, err := grpc.NewClient(addr, h.grpcDialOption)
+		if err != nil {
+			lastErr = fmt.Errorf("filer %s: %w", addr, err)
+			continue
+		}
+		return addr, conn, nil
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no filer addresses provided")
+	}
+	return "", nil, lastErr
 }
 
 // Ensure Handler implements JobHandler.
