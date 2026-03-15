@@ -41,6 +41,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/seaweedfs/seaweedfs/weed/command"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	icebergHandler "github.com/seaweedfs/seaweedfs/weed/plugin/worker/iceberg"
@@ -358,12 +359,55 @@ func newS3Client(t *testing.T, endpoint string) *s3.Client {
 func s3putObject(t *testing.T, client *s3.Client, bucket, key string, body []byte) {
 	t.Helper()
 
-	_, err := client.PutObject(context.Background(), &s3.PutObjectInput{
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	_, err := client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(bucket),
 		Key:    aws.String(key),
 		Body:   bytes.NewReader(body),
 	})
 	require.NoError(t, err)
+}
+
+type testFilerClient struct {
+	client filer_pb.SeaweedFilerClient
+}
+
+func (c testFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c.client)
+}
+
+func (c testFilerClient) AdjustedUrl(location *filer_pb.Location) string {
+	if location == nil {
+		return ""
+	}
+	if location.PublicUrl != "" {
+		return location.PublicUrl
+	}
+	return location.Url
+}
+
+func (c testFilerClient) GetDataCenter() string {
+	return ""
+}
+
+func readFile(t *testing.T, client filer_pb.SeaweedFilerClient, dir, name string) []byte {
+	t.Helper()
+
+	entry := lookupEntry(t, client, dir, name)
+	require.NotNil(t, entry, "readFile(%s, %s): entry missing", dir, name)
+	if len(entry.Content) > 0 || len(entry.Chunks) == 0 {
+		return entry.Content
+	}
+
+	reader := filer.NewFileReader(testFilerClient{client: client}, entry)
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
+	content, err := io.ReadAll(reader)
+	require.NoError(t, err, "readFile(%s, %s): read chunked content", dir, name)
+	return content
 }
 
 // createBucketViaS3 creates a regular S3 bucket via the S3 PUT Bucket API.
@@ -714,10 +758,64 @@ func testCompactDataFiles(t *testing.T) {
 	require.NotEmpty(t, xattr)
 
 	var internalMeta struct {
-		MetadataVersion int `json:"metadataVersion"`
+		MetadataVersion  int    `json:"metadataVersion"`
+		MetadataLocation string `json:"metadataLocation,omitempty"`
 	}
 	require.NoError(t, json.Unmarshal(xattr, &internalMeta))
 	assert.Greater(t, internalMeta.MetadataVersion, 1, "metadata version should advance after compaction")
+
+	metadataName := path.Base(internalMeta.MetadataLocation)
+	require.NotEmpty(t, metadataName, "compaction should point table metadata at a committed metadata file")
+	metadataBytes := readFile(t, client, metaDir, metadataName)
+	committedMeta, err := table.ParseMetadataBytes(metadataBytes)
+	require.NoError(t, err)
+
+	currentSnap := committedMeta.CurrentSnapshot()
+	require.NotNil(t, currentSnap, "committed metadata should include a current snapshot")
+	assert.Equal(t, snapshots[0].SequenceNumber+1, currentSnap.SequenceNumber, "compaction should advance the snapshot sequence number")
+
+	manifestListName := path.Base(currentSnap.ManifestList)
+	require.NotEmpty(t, manifestListName, "committed snapshot should reference a manifest list")
+	manifestListBytes := readFile(t, client, metaDir, manifestListName)
+	manifestFiles, err := iceberg.ReadManifestList(bytes.NewReader(manifestListBytes))
+	require.NoError(t, err)
+	require.Len(t, manifestFiles, 1, "compaction should commit a single replacement manifest")
+	assert.Equal(t, snapshots[0].SequenceNumber+1, manifestFiles[0].SequenceNum(), "new manifest should use the committed snapshot sequence number")
+	assert.Equal(t, snapshots[0].SequenceNumber+1, manifestFiles[0].MinSequenceNum(), "compaction manifest should inherit the committed sequence number for added data")
+
+	manifestName = path.Base(manifestFiles[0].FilePath())
+	manifestBytes := readFile(t, client, metaDir, manifestName)
+	manifestEntries, err := iceberg.ReadManifest(manifestFiles[0], bytes.NewReader(manifestBytes), false)
+	require.NoError(t, err)
+	require.Len(t, manifestEntries, len(files)+1, "compaction should replace the input files with one merged output")
+
+	deletedPaths := make(map[string]struct{}, len(files))
+	addedPaths := make(map[string]struct{})
+	for _, entry := range manifestEntries {
+		switch entry.Status() {
+		case iceberg.EntryStatusADDED:
+			addedPaths[entry.DataFile().FilePath()] = struct{}{}
+			assert.Equal(t, snapshots[0].SequenceNumber+1, entry.SequenceNum(), "added entries should inherit the new snapshot sequence number")
+			fileSeqNum := entry.FileSequenceNum()
+			require.NotNil(t, fileSeqNum, "added entries should carry a file sequence number")
+			assert.Equal(t, snapshots[0].SequenceNumber+1, *fileSeqNum)
+		case iceberg.EntryStatusDELETED:
+			deletedPaths[entry.DataFile().FilePath()] = struct{}{}
+			assert.Equal(t, snapshots[0].SequenceNumber, entry.SequenceNum(), "deleted entries should preserve the original data sequence number")
+			fileSeqNum := entry.FileSequenceNum()
+			require.NotNil(t, fileSeqNum, "deleted entries should preserve file sequence numbers")
+			assert.Equal(t, snapshots[0].SequenceNumber, *fileSeqNum)
+		default:
+			t.Fatalf("unexpected manifest entry status %v for %s", entry.Status(), entry.DataFile().FilePath())
+		}
+	}
+
+	require.Len(t, addedPaths, 1, "compaction should add exactly one merged parquet file")
+	assert.Contains(t, addedPaths, path.Join("data", compacted.Name))
+	require.Len(t, deletedPaths, len(files), "compaction should delete every original small input file")
+	for _, file := range files {
+		assert.Contains(t, deletedPaths, path.Join("data", file.name))
+	}
 }
 
 func testRemoveOrphans(t *testing.T) {
