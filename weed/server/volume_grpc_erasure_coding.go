@@ -180,44 +180,18 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 		return &volume_server_pb.VolumeEcShardsRebuildResponse{}, nil
 	}
 
-	// Gather shard files from other locations to the rebuild location.
-	// This handles the case where existing local shards are on a different disk
+	// Collect additional directories where shard files may exist.
+	// On multi-disk servers, existing local shards may be on a different disk
 	// than where copied shards were placed during ec.rebuild.
 	rebuildDataDir := rebuildLocation.Directory
-	var gatheredFiles []string
+	var additionalDirs []string
 	for _, otherLocation := range otherLocationsWithShards {
-		otherDataDir := otherLocation.Directory
-		for shardId := 0; shardId < erasure_coding.MaxShardCount; shardId++ {
-			ext := erasure_coding.ToExt(shardId)
-			srcPath := path.Join(otherDataDir, baseFileName+ext)
-			dstPath := path.Join(rebuildDataDir, baseFileName+ext)
-			if util.FileExists(srcPath) && !util.FileExists(dstPath) {
-				// Hard link the shard file to the rebuild location
-				if err := os.Link(srcPath, dstPath); err != nil {
-					// Fall back to symlink if hard link fails (e.g., cross-device)
-					if symlinkErr := os.Symlink(srcPath, dstPath); symlinkErr != nil {
-						glog.Warningf("failed to gather shard %s to %s: link=%v symlink=%v", srcPath, dstPath, err, symlinkErr)
-						continue
-					}
-				}
-				gatheredFiles = append(gatheredFiles, dstPath)
-				glog.V(0).Infof("gathered shard %s from %s to rebuild location %s", baseFileName+ext, otherDataDir, rebuildDataDir)
-			}
-		}
+		additionalDirs = append(additionalDirs, otherLocation.Directory)
 	}
 
-	// Clean up gathered files after rebuild (whether it succeeds or fails)
-	defer func() {
-		for _, f := range gatheredFiles {
-			if err := os.Remove(f); err != nil {
-				glog.Warningf("failed to remove gathered shard link %s: %v", f, err)
-			}
-		}
-	}()
-
-	// Rebuild missing EC files
+	// Rebuild missing EC files, searching all disk locations for input shards
 	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
-	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName); err != nil {
+	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, additionalDirs...); err != nil {
 		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
 	} else {
 		rebuiltShardIds = generatedShardIds
