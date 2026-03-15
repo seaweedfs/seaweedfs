@@ -15,7 +15,7 @@ const (
 	TaskTypeErasureCoding TaskType = "erasure_coding"
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeReplication   TaskType = "replication"
-	TaskTypeECBalance    TaskType = "ec_balance"
+	TaskTypeECBalance     TaskType = "ec_balance"
 )
 
 // TaskStatus represents the status of a maintenance task

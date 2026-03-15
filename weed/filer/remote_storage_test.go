@@ -52,9 +52,9 @@ func TestFilerRemoteStorage_FindMountDirectory_LongestPrefixWins(t *testing.T) {
 	})
 
 	tests := []struct {
-		path           string
-		wantMount      string
-		wantBucket     string
+		path       string
+		wantMount  string
+		wantBucket string
 	}{
 		{"/buckets/mybucket/file.txt", "/buckets/mybucket", "bucket-root"},
 		{"/buckets/mybucket/prefix/file.txt", "/buckets/mybucket/prefix", "bucket-prefix"},

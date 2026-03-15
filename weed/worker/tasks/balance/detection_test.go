@@ -551,11 +551,11 @@ func TestDetection_SkipsPreExistingPendingTasks(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		volID := uint32(1 + i)
 		err := at.AddPendingTask(topology.TaskSpec{
-			TaskID:     fmt.Sprintf("existing-%d", volID),
-			TaskType:   topology.TaskTypeBalance,
-			VolumeID:   volID,
-			VolumeSize: 1024,
-			Sources:    []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
+			TaskID:       fmt.Sprintf("existing-%d", volID),
+			TaskType:     topology.TaskTypeBalance,
+			VolumeID:     volID,
+			VolumeSize:   1024,
+			Sources:      []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
 			Destinations: []topology.TaskDestinationSpec{{ServerID: "node-b", DiskID: 2}},
 		})
 		if err != nil {
@@ -717,9 +717,9 @@ func TestDetection_FourServers_DestinationSpreading(t *testing.T) {
 // the effective volume distribution is within the configured threshold.
 func TestDetection_ConvergenceVerification(t *testing.T) {
 	tests := []struct {
-		name       string
-		counts     []int // volumes per server
-		threshold  float64
+		name      string
+		counts    []int // volumes per server
+		threshold float64
 	}{
 		{"2-server-big-gap", []int{100, 10}, 0.2},
 		{"3-server-staircase", []int{90, 50, 10}, 0.2},

@@ -78,7 +78,7 @@ type Plugin struct {
 	schedulerRun              map[string]*schedulerRunInfo
 	schedulerLoopMu           sync.Mutex
 	schedulerLoopState        schedulerLoopState
-	schedulerWakeCh chan struct{}
+	schedulerWakeCh           chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -391,7 +391,6 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	r.wakeScheduler()
 	return nil
 }
-
 
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)

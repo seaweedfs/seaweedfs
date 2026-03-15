@@ -44,8 +44,8 @@ type Topology struct {
 
 	pulse int64
 
-	volumeSizeLimit  uint64
-	replicationAsMin bool
+	volumeSizeLimit          uint64
+	replicationAsMin         bool
 	vacuumDisabledByOperator atomic.Bool // true when operator manually disables vacuum
 	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
 	adminServerConnectedFunc func() bool // optional callback to check admin server presence

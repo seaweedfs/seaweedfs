@@ -363,11 +363,11 @@ func TestManifestRewriteNestedPathConsistency(t *testing.T) {
 
 func TestNormalizeIcebergPath(t *testing.T) {
 	tests := []struct {
-		name       string
+		name        string
 		icebergPath string
-		bucket     string
-		tablePath  string
-		expected   string
+		bucket      string
+		tablePath   string
+		expected    string
 	}{
 		{
 			"relative metadata path",

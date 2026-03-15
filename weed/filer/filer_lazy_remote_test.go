@@ -29,29 +29,29 @@ import (
 // --- minimal FilerStore stub ---
 
 type stubFilerStore struct {
-	mu      sync.Mutex
-	entries map[string]*Entry
-	kv      map[string][]byte
-	insertErr error
+	mu              sync.Mutex
+	entries         map[string]*Entry
+	kv              map[string][]byte
+	insertErr       error
 	deleteErrByPath map[string]error
 }
 
 func newStubFilerStore() *stubFilerStore {
 	return &stubFilerStore{
-		entries: make(map[string]*Entry),
-		kv: make(map[string][]byte),
+		entries:         make(map[string]*Entry),
+		kv:              make(map[string][]byte),
 		deleteErrByPath: make(map[string]error),
 	}
 }
 
-func (s *stubFilerStore) GetName() string { return "stub" }
+func (s *stubFilerStore) GetName() string                             { return "stub" }
 func (s *stubFilerStore) Initialize(util.Configuration, string) error { return nil }
-func (s *stubFilerStore) Shutdown() {}
+func (s *stubFilerStore) Shutdown()                                   {}
 func (s *stubFilerStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
-func (s *stubFilerStore) CommitTransaction(context.Context) error    { return nil }
-func (s *stubFilerStore) RollbackTransaction(context.Context) error  { return nil }
+func (s *stubFilerStore) CommitTransaction(context.Context) error   { return nil }
+func (s *stubFilerStore) RollbackTransaction(context.Context) error { return nil }
 func (s *stubFilerStore) KvPut(_ context.Context, key []byte, value []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -245,9 +245,9 @@ func (c *stubRemoteClient) ListDirectory(_ context.Context, loc *remote_pb.Remot
 	}
 	return nil
 }
-func (c *stubRemoteClient) ListBuckets() ([]*remote_storage.Bucket, error)    { return nil, nil }
-func (c *stubRemoteClient) CreateBucket(string) error                         { return nil }
-func (c *stubRemoteClient) DeleteBucket(string) error                         { return nil }
+func (c *stubRemoteClient) ListBuckets() ([]*remote_storage.Bucket, error) { return nil, nil }
+func (c *stubRemoteClient) CreateBucket(string) error                      { return nil }
+func (c *stubRemoteClient) DeleteBucket(string) error                      { return nil }
 
 // --- stub RemoteStorageClientMaker ---
 

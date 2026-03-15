@@ -213,7 +213,7 @@ func TestDetectGlobalImbalance(t *testing.T) {
 		"node1": {
 			nodeID: "node1", address: "node1:8080", rack: "dc1:rack1", freeSlots: 5,
 			ecShards: map[uint32]*ecVolumeInfo{
-				100: {collection: "col1", shardBits: 0x3FFF},  // 14 shards
+				100: {collection: "col1", shardBits: 0x3FFF},   // 14 shards
 				200: {collection: "col1", shardBits: 0b111111}, // 6 shards
 			},
 		},

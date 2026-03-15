@@ -37,8 +37,8 @@ type MetaCache struct {
 	applyDone         chan struct{}
 	applyStateMu      sync.Mutex
 	applyClosed       bool
-	buildingDirs map[util.FullPath]*directoryBuildState
-	dedupRing    dedupRingBuffer
+	buildingDirs      map[util.FullPath]*directoryBuildState
+	dedupRing         dedupRingBuffer
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -98,8 +98,8 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
-		applyCh:        make(chan metadataApplyRequest, 128),
-		applyDone:      make(chan struct{}),
+		applyCh:      make(chan metadataApplyRequest, 128),
+		applyDone:    make(chan struct{}),
 		buildingDirs: make(map[util.FullPath]*directoryBuildState),
 		dedupRing:    newDedupRingBuffer(),
 	}

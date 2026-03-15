@@ -162,10 +162,10 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-				"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+				"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+				"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
 				"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60}},
-				"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -180,10 +180,10 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-			"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+			"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+			"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
 			"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60}},
-			"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
 }
@@ -527,11 +527,11 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 			},
 		},
 		Labels: map[string]string{
-			"task_type":     "ec_balance",
-			"volume_id":     fmt.Sprintf("%d", result.VolumeID),
-			"collection":    result.Collection,
-			"source_node":   sourceNode,
-			"target_node":   targetNode,
+			"task_type":   "ec_balance",
+			"volume_id":   fmt.Sprintf("%d", result.VolumeID),
+			"collection":  result.Collection,
+			"source_node": sourceNode,
+			"target_node": targetNode,
 		},
 	}, nil
 }

@@ -47,14 +47,14 @@ import (
 // ---------------------------------------------------------------------------
 
 type testCluster struct {
-	dataDir        string
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	filerGrpcPort  int
-	s3Port         int
-	s3Endpoint     string
-	isRunning      bool
+	dataDir       string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
+	filerGrpcPort int
+	s3Port        int
+	s3Endpoint    string
+	isRunning     bool
 }
 
 var shared *testCluster
@@ -344,11 +344,11 @@ func populateTableViaFiler(
 
 	// Create the S3 bucket via PUT, then create the directory tree via S3 PUT
 	// object with zero-byte content (the filer creates intermediate dirs).
-	s3put(t, s3Endpoint, bucketName, "", nil)                                         // create bucket
-	s3put(t, s3Endpoint, bucketName, namespace+"/.dir", []byte{})                     // create ns dir
-	s3put(t, s3Endpoint, bucketName, tablePath+"/.dir", []byte{})                     // create table dir
-	s3put(t, s3Endpoint, bucketName, tablePath+"/metadata/.dir", []byte{})            // create metadata dir
-	s3put(t, s3Endpoint, bucketName, tablePath+"/data/.dir", []byte{})                // create data dir
+	s3put(t, s3Endpoint, bucketName, "", nil)                              // create bucket
+	s3put(t, s3Endpoint, bucketName, namespace+"/.dir", []byte{})          // create ns dir
+	s3put(t, s3Endpoint, bucketName, tablePath+"/.dir", []byte{})          // create table dir
+	s3put(t, s3Endpoint, bucketName, tablePath+"/metadata/.dir", []byte{}) // create metadata dir
+	s3put(t, s3Endpoint, bucketName, tablePath+"/data/.dir", []byte{})     // create data dir
 
 	// Now set the table bucket and table xattrs via filer gRPC.
 	// Mark bucket as table bucket.
@@ -679,4 +679,3 @@ func testFullMaintenanceCycle(t *testing.T) {
 	assert.Greater(t, internalMeta.MetadataVersion, 1, "metadata version should have advanced through the cycle")
 	t.Logf("Final metadata version: %d", internalMeta.MetadataVersion)
 }
-
