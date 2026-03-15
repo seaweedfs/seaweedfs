@@ -16,7 +16,7 @@ const (
 	defaultMaxSnapshotsToKeep     = 5
 	defaultOrphanOlderThanHours   = 72
 	defaultMaxCommitRetries       = 5
-	defaultTargetFileSizeBytes    = 256 * 1024 * 1024
+	defaultTargetFileSizeMB       = 256
 	defaultMinInputFiles          = 5
 	defaultMinManifestsToRewrite  = 5
 	defaultOperations             = "all"
@@ -42,7 +42,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MaxSnapshotsToKeep:     readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
 		OrphanOlderThanHours:   readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
 		MaxCommitRetries:       readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
-		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_bytes", defaultTargetFileSizeBytes),
+		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
 		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
 		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
@@ -62,7 +62,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
-		cfg.TargetFileSizeBytes = defaultTargetFileSizeBytes
+		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
 	}
 	if cfg.MinInputFiles < 2 {
 		cfg.MinInputFiles = defaultMinInputFiles
