@@ -191,7 +191,7 @@ func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.Seaweed
 	t.Cleanup(func() { conn.Close() })
 
 	client := filer_pb.NewSeaweedFilerClient(conn)
-	deadline := time.Now().Add(time.Second)
+	deadline := time.Now().Add(5 * time.Second)
 	for {
 		pingCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 		_, err := client.Ping(pingCtx, &filer_pb.PingRequest{})
