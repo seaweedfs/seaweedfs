@@ -288,19 +288,29 @@ func hasEligibleCompaction(
 		return false, nil
 	}
 
+	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
+	if err != nil {
+		return false, err
+	}
+
+	var dataManifests []iceberg.ManifestFile
 	specIDs := make(map[int32]struct{})
 	for _, mf := range manifests {
 		if mf.ManifestContent() != iceberg.ManifestContentData {
-			return false, nil
+			continue
 		}
+		dataManifests = append(dataManifests, mf)
 		specIDs[mf.PartitionSpecID()] = struct{}{}
+	}
+	if len(dataManifests) == 0 {
+		return false, nil
 	}
 	if len(specIDs) > 1 {
 		return false, nil
 	}
 
 	var allEntries []iceberg.ManifestEntry
-	for _, mf := range manifests {
+	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
 		if err != nil {
 			return false, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
@@ -312,8 +322,16 @@ func hasEligibleCompaction(
 		allEntries = append(allEntries, entries...)
 	}
 
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
+	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, minInputFiles)
 	return len(bins) > 0, nil
+}
+
+func compactionMinInputFiles(minInputFiles int64) (int, error) {
+	maxInt := int64(^uint(0) >> 1)
+	if minInputFiles > maxInt {
+		return 0, fmt.Errorf("min input files %d exceeds platform int size", minInputFiles)
+	}
+	return int(minInputFiles), nil
 }
 
 // needsMaintenance checks whether snapshot expiration work is needed based on
