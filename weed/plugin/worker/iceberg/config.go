@@ -32,6 +32,7 @@ type Config struct {
 	MinInputFiles          int64
 	MinManifestsToRewrite  int64
 	Operations             string
+	ApplyDeletes           bool
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
@@ -46,6 +47,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
 		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
+		ApplyDeletes:           readBoolConfig(values, "apply_deletes", true),
 	}
 
 	// Clamp to safe minimums using the default constants
@@ -149,6 +151,34 @@ func readStringConfig(values map[string]*plugin_pb.ConfigValue, field string, fa
 		return strconv.FormatBool(kind.BoolValue)
 	default:
 		glog.V(1).Infof("readStringConfig: unexpected config value type %T for field %q, using fallback", value.Kind, field)
+	}
+	return fallback
+}
+
+// readBoolConfig reads a bool value from plugin config, with fallback.
+func readBoolConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback bool) bool {
+	if values == nil {
+		return fallback
+	}
+	value := values[field]
+	if value == nil {
+		return fallback
+	}
+	switch kind := value.Kind.(type) {
+	case *plugin_pb.ConfigValue_BoolValue:
+		return kind.BoolValue
+	case *plugin_pb.ConfigValue_StringValue:
+		s := strings.TrimSpace(strings.ToLower(kind.StringValue))
+		if s == "true" || s == "1" || s == "yes" {
+			return true
+		}
+		if s == "false" || s == "0" || s == "no" {
+			return false
+		}
+	case *plugin_pb.ConfigValue_Int64Value:
+		return kind.Int64Value != 0
+	default:
+		glog.V(1).Infof("readBoolConfig: unexpected config value type %T for field %q, using fallback", value.Kind, field)
 	}
 	return fallback
 }
