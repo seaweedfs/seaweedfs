@@ -695,6 +695,8 @@ func testCompactDataFiles(t *testing.T) {
 
 	var compacted *filer_pb.Entry
 	listErr := filer_pb.SeaweedList(ctx, client, dataDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		// Compacted output uses compact-{snapID}-{newSnapID}-{binIdx}.parquet.
+		// The test inputs use compact-input-{n}.parquet and must not satisfy this check.
 		if strings.HasPrefix(entry.Name, "compact-") &&
 			!strings.HasPrefix(entry.Name, "compact-input-") &&
 			strings.HasSuffix(entry.Name, ".parquet") {
