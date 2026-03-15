@@ -517,6 +517,7 @@ func upsertFile(t *testing.T, ctx context.Context, client filer_pb.SeaweedFilerC
 		entry.Attributes = &filer_pb.FuseAttributes{}
 	}
 	entry.Content = content
+	entry.Chunks = nil
 	entry.Attributes.Mtime = time.Now().Unix()
 	entry.Attributes.FileMode = uint32(0644)
 	entry.Attributes.FileSize = uint64(len(content))
