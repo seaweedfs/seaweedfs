@@ -1202,12 +1202,6 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // StopOffset 0 means nothing to read
-        if req.stop_offset == 0 {
-            let stream = tokio_stream::iter(Vec::new());
-            return Ok(Response::new(Box::pin(stream)));
-        }
-
         // Open file and read content
         let file = match std::fs::File::open(&file_name) {
             Ok(f) => f,
