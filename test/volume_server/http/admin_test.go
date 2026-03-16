@@ -45,6 +45,19 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 			t.Fatalf("status payload missing field %q", field)
 		}
 	}
+	diskStatuses, ok := payload["DiskStatuses"].([]interface{})
+	if !ok || len(diskStatuses) == 0 {
+		t.Fatalf("status payload expected non-empty DiskStatuses, got %#v", payload["DiskStatuses"])
+	}
+	firstDisk, ok := diskStatuses[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("status payload disk status has unexpected shape: %#v", diskStatuses[0])
+	}
+	for _, field := range []string{"dir", "all", "used", "free", "disk_type"} {
+		if _, found := firstDisk[field]; !found {
+			t.Fatalf("status disk payload missing field %q: %#v", field, firstDisk)
+		}
+	}
 
 	healthReq := mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/healthz")
 	healthResp := framework.DoRequest(t, client, healthReq)

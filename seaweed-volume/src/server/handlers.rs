@@ -2147,6 +2147,10 @@ pub async fn status_handler(
                 serde_json::Value::from(vol.deleted_count()),
             );
             vol_info.insert(
+                "DeletedByteCount".to_string(),
+                serde_json::Value::from(vol.deleted_size()),
+            );
+            vol_info.insert(
                 "ReadOnly".to_string(),
                 serde_json::Value::from(vol.is_read_only()),
             );
@@ -2154,23 +2158,110 @@ pub async fn status_handler(
                 "Version".to_string(),
                 serde_json::Value::from(vol.version().0),
             );
+            vol_info.insert(
+                "CompactRevision".to_string(),
+                serde_json::Value::from(vol.super_block.compaction_revision),
+            );
+            vol_info.insert(
+                "ModifiedAtSecond".to_string(),
+                serde_json::Value::from(vol.last_modified_ts()),
+            );
+            vol_info.insert(
+                "DiskType".to_string(),
+                serde_json::Value::from(loc.disk_type.to_string()),
+            );
+
+            let replica = &vol.super_block.replica_placement;
+            let mut replica_value = serde_json::Map::new();
+            if replica.diff_data_center_count > 0 {
+                replica_value.insert(
+                    "dc".to_string(),
+                    serde_json::Value::from(replica.diff_data_center_count),
+                );
+            }
+            if replica.diff_rack_count > 0 {
+                replica_value.insert(
+                    "rack".to_string(),
+                    serde_json::Value::from(replica.diff_rack_count),
+                );
+            }
+            if replica.same_rack_count > 0 {
+                replica_value.insert(
+                    "node".to_string(),
+                    serde_json::Value::from(replica.same_rack_count),
+                );
+            }
+            vol_info.insert(
+                "ReplicaPlacement".to_string(),
+                serde_json::Value::Object(replica_value),
+            );
+
+            let ttl = vol.super_block.ttl;
+            let mut ttl_value = serde_json::Map::new();
+            if ttl.count > 0 {
+                ttl_value.insert("Count".to_string(), serde_json::Value::from(ttl.count));
+            }
+            if ttl.unit > 0 {
+                ttl_value.insert("Unit".to_string(), serde_json::Value::from(ttl.unit));
+            }
+            vol_info.insert("Ttl".to_string(), serde_json::Value::Object(ttl_value));
+
+            let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
+            vol_info.insert(
+                "RemoteStorageName".to_string(),
+                serde_json::Value::from(remote_storage_name),
+            );
+            vol_info.insert(
+                "RemoteStorageKey".to_string(),
+                serde_json::Value::from(remote_storage_key),
+            );
             volumes.push(serde_json::Value::Object(vol_info));
         }
     }
+    volumes.sort_by(|a, b| {
+        let left = a.get("Id").and_then(|v| v.as_u64()).unwrap_or_default();
+        let right = b.get("Id").and_then(|v| v.as_u64()).unwrap_or_default();
+        left.cmp(&right)
+    });
 
     // Build disk statuses
     let mut disk_statuses = Vec::new();
     for loc in &store.locations {
         let dir = &loc.directory;
+        let resolved_dir = std::path::Path::new(dir)
+            .canonicalize()
+            .map(|path| path.to_string_lossy().to_string())
+            .unwrap_or_else(|_| dir.clone());
+        let (all, free) = crate::storage::disk_location::get_disk_stats(&resolved_dir);
+        let used = all.saturating_sub(free);
+        let percent_free = if all > 0 {
+            (free as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+        let percent_used = if all > 0 {
+            (used as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+
         let mut ds = serde_json::Map::new();
-        ds.insert("dir".to_string(), serde_json::Value::from(dir.clone()));
-        // Add disk stats if available
-        if let Ok(path) = std::path::Path::new(&dir).canonicalize() {
-            ds.insert(
-                "dir".to_string(),
-                serde_json::Value::from(path.to_string_lossy().to_string()),
-            );
-        }
+        ds.insert("dir".to_string(), serde_json::Value::from(resolved_dir));
+        ds.insert("all".to_string(), serde_json::Value::from(all));
+        ds.insert("used".to_string(), serde_json::Value::from(used));
+        ds.insert("free".to_string(), serde_json::Value::from(free));
+        ds.insert(
+            "percent_free".to_string(),
+            serde_json::Value::from(percent_free),
+        );
+        ds.insert(
+            "percent_used".to_string(),
+            serde_json::Value::from(percent_used),
+        );
+        ds.insert(
+            "disk_type".to_string(),
+            serde_json::Value::from(loc.disk_type.to_string()),
+        );
         disk_statuses.push(serde_json::Value::Object(ds));
     }
 
