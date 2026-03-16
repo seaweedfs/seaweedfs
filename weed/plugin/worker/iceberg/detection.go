@@ -196,6 +196,15 @@ func (h *Handler) tableNeedsMaintenance(
 	ops []string,
 ) (bool, error) {
 	config = normalizeDetectionConfig(config)
+
+	// Evaluate the metadata-only expiration check first so large tables do not
+	// pay for manifest reads when snapshot expiry already makes them eligible.
+	for _, op := range ops {
+		if op == "expire_snapshots" && needsMaintenance(meta, config) {
+			return true, nil
+		}
+	}
+
 	loadManifests := func() ([]iceberg.ManifestFile, error) {
 		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
 	}
@@ -215,10 +224,6 @@ func (h *Handler) tableNeedsMaintenance(
 
 	for _, op := range ops {
 		switch op {
-		case "expire_snapshots":
-			if needsMaintenance(meta, config) {
-				return true, nil
-			}
 		case "compact":
 			manifests, err := getCurrentManifests()
 			if err != nil {
