@@ -813,6 +813,23 @@ impl Volume {
         }
     }
 
+    /// Read a raw byte range from the current .dat backend.
+    ///
+    /// This matches Go paths that stream directly from `DataBackend`, including
+    /// remote-only tiered volumes whose `.dat` is no longer present locally.
+    pub fn read_dat_slice(&self, offset: u64, size: usize) -> Result<Vec<u8>, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let dat_size = self.current_dat_file_size()?;
+        if size == 0 || offset >= dat_size {
+            return Ok(Vec::new());
+        }
+
+        let read_len = std::cmp::min(size as u64, dat_size - offset) as usize;
+        let mut buf = vec![0u8; read_len];
+        self.read_exact_at_backend(&mut buf, offset)?;
+        Ok(buf)
+    }
+
     // ---- SuperBlock I/O ----
 
     fn read_super_block(&mut self) -> Result<(), VolumeError> {
