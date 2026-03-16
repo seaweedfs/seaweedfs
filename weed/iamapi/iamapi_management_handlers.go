@@ -459,7 +459,7 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 			for i, statement := range policyDocument.Statement {
 				// Use order-independent comparison to avoid duplicates from different action orderings
 				if stringSlicesEqual(statement.Action.Strings(), actions) {
-					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlice(append(
+					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlicePtr(append(
 						policyDocument.Statement[i].Resource.Strings(), resource)...)
 					isEqAction = true
 					break
@@ -471,7 +471,7 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 			policyDocumentStatement := policy_engine.PolicyStatement{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice(actions...),
-				Resource: policy_engine.NewStringOrStringSlice(resource),
+				Resource: policy_engine.NewStringOrStringSlicePtr(resource),
 			}
 			policyDocument.Statement = append(policyDocument.Statement, policyDocumentStatement)
 		}

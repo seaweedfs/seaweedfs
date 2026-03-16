@@ -619,7 +619,7 @@ func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePolicies(t *te
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}
@@ -673,7 +673,7 @@ func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePoliciesThroug
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}

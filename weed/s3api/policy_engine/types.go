@@ -82,14 +82,22 @@ func (s StringOrStringSlice) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.values)
 }
 
-// Strings returns the slice of strings
-func (s StringOrStringSlice) Strings() []string {
+// Strings returns the slice of strings. Nil-safe for pointer receivers.
+func (s *StringOrStringSlice) Strings() []string {
+	if s == nil {
+		return nil
+	}
 	return s.values
 }
 
 // NewStringOrStringSlice creates a new StringOrStringSlice from strings
 func NewStringOrStringSlice(values ...string) StringOrStringSlice {
 	return StringOrStringSlice{values: values}
+}
+
+// NewStringOrStringSlicePtr creates a new *StringOrStringSlice from strings
+func NewStringOrStringSlicePtr(values ...string) *StringOrStringSlice {
+	return &StringOrStringSlice{values: values}
 }
 
 // PolicyConditions represents policy conditions with proper typing
@@ -138,7 +146,7 @@ type PolicyStatement struct {
 	Effect      PolicyEffect         `json:"Effect"`
 	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
 	Action      StringOrStringSlice  `json:"Action"`
-	Resource    StringOrStringSlice  `json:"Resource,omitempty"`
+	Resource    *StringOrStringSlice `json:"Resource,omitempty"`
 	NotResource *StringOrStringSlice `json:"NotResource,omitempty"`
 	Condition   PolicyConditions     `json:"Condition,omitempty"`
 }
@@ -236,7 +244,7 @@ func validateStatement(stmt *PolicyStatement) error {
 		return fmt.Errorf("action is required")
 	}
 
-	if len(stmt.Resource.Strings()) == 0 && (stmt.NotResource == nil || len(stmt.NotResource.Strings()) == 0) {
+	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
 		return fmt.Errorf("statement must specify Resource or NotResource")
 	}
 
@@ -279,10 +287,7 @@ func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 // compileStatement compiles a single policy statement
 func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	resStrings := slices.Clone(stmt.Resource.Strings())
-	var notResStrings []string
-	if stmt.NotResource != nil {
-		notResStrings = slices.Clone(stmt.NotResource.Strings())
-	}
+	notResStrings := slices.Clone(stmt.NotResource.Strings())
 	compiled := &CompiledStatement{
 		Statement: &PolicyStatement{
 			Sid:    stmt.Sid,
@@ -299,7 +304,11 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	}
 
 	// Deep clone Resource/NotResource into the internal statement as well for completeness
-	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
+	if stmt.Resource != nil {
+		resourceClone := *stmt.Resource
+		resourceClone.values = slices.Clone(stmt.Resource.values)
+		compiled.Statement.Resource = &resourceClone
+	}
 	if stmt.NotResource != nil {
 		notResourceClone := *stmt.NotResource
 		notResourceClone.values = slices.Clone(stmt.NotResource.values)
@@ -454,6 +463,8 @@ func normalizeToStringSliceWithError(value interface{}) ([]string, error) {
 		}
 		return result, nil
 	case StringOrStringSlice:
+		return v.Strings(), nil
+	case *StringOrStringSlice:
 		return v.Strings(), nil
 	default:
 		return nil, fmt.Errorf("unexpected type for policy value: %T", v)
