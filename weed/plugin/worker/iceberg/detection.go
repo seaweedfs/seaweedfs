@@ -333,18 +333,13 @@ func hasEligibleCompaction(
 	}
 
 	var dataManifests []iceberg.ManifestFile
-	specIDs := make(map[int32]struct{})
 	for _, mf := range manifests {
 		if mf.ManifestContent() != iceberg.ManifestContentData {
 			continue
 		}
 		dataManifests = append(dataManifests, mf)
-		specIDs[mf.PartitionSpecID()] = struct{}{}
 	}
 	if len(dataManifests) == 0 {
-		return false, nil
-	}
-	if len(specIDs) > 1 {
 		return false, nil
 	}
 
