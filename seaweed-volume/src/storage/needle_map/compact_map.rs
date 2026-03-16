@@ -10,8 +10,8 @@
 
 use std::collections::HashMap;
 
-use crate::storage::types::*;
 use super::NeedleValue;
+use crate::storage::types::*;
 
 /// Maximum entries per segment. Must be <= u16::MAX (65535).
 const SEGMENT_CHUNK_SIZE: u64 = 50_000;
@@ -25,9 +25,9 @@ type Chunk = u64;
 /// Compact entry: 10 bytes (2 + 4 + 4) vs 16 bytes for full NeedleId + NeedleValue.
 #[derive(Clone, Copy)]
 struct CompactEntry {
-    key: CompactKey,       // 2 bytes
+    key: CompactKey,           // 2 bytes
     offset: [u8; OFFSET_SIZE], // 4 bytes
-    size: Size,            // 4 bytes
+    size: Size,                // 4 bytes
 }
 
 impl CompactEntry {
@@ -186,7 +186,8 @@ impl CompactMap {
     /// Insert or update. Returns old NeedleValue if updating.
     pub fn set(&mut self, id: NeedleId, offset: Offset, size: Size) -> Option<NeedleValue> {
         let chunk = id.0 / SEGMENT_CHUNK_SIZE;
-        let segment = self.segments
+        let segment = self
+            .segments
             .entry(chunk)
             .or_insert_with(|| Segment::new(chunk));
         segment.set(id, offset, size)

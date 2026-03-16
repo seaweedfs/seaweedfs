@@ -582,7 +582,8 @@ mod tests {
         {
             assert_eq!(OFFSET_SIZE, 5);
             assert_eq!(NEEDLE_MAP_ENTRY_SIZE, 17); // 8 + 5 + 4
-            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8 * 256); // 8TB
+            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8 * 256);
+            // 8TB
         }
         #[cfg(not(feature = "5bytes"))]
         {

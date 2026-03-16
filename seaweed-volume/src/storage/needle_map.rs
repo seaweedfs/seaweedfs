@@ -384,19 +384,21 @@ impl RedbNeedleMap {
                 io::Error::new(io::ErrorKind::Other, format!("redb insert meta: {}", e))
             })?;
         }
-        txn.commit()
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit meta: {}", e)))?;
+        txn.commit().map_err(|e| {
+            io::Error::new(io::ErrorKind::Other, format!("redb commit meta: {}", e))
+        })?;
         Ok(())
     }
 
     /// Read the stored .idx file size from redb metadata.
     fn read_idx_size_meta(&self) -> io::Result<Option<u64>> {
-        let txn = self.db.begin_read().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e))
-        })?;
-        let meta = txn.open_table(META_TABLE).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e))
-        })?;
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+        let meta = txn
+            .open_table(META_TABLE)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open meta: {}", e)))?;
         match meta.get(META_IDX_SIZE) {
             Ok(Some(guard)) => Ok(Some(guard.value())),
             Ok(None) => Ok(None),
@@ -410,15 +412,16 @@ impl RedbNeedleMap {
     /// Rebuild metrics by scanning all entries in the redb table.
     /// Called when reusing an existing .rdb without a full rebuild.
     fn rebuild_metrics_from_db(&self) -> io::Result<()> {
-        let txn = self.db.begin_read().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e))
-        })?;
-        let table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
-        })?;
-        let iter = table.iter().map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e))
-        })?;
+        let txn = self
+            .db
+            .begin_read()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb begin_read: {}", e)))?;
+        let table = txn
+            .open_table(NEEDLE_TABLE)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e)))?;
+        let iter = table
+            .iter()
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb iter: {}", e)))?;
         for entry in iter {
             let (key_guard, val_guard) = entry.map_err(|e| {
                 io::Error::new(io::ErrorKind::Other, format!("redb iter next: {}", e))
@@ -477,9 +480,8 @@ impl RedbNeedleMap {
         reader: &mut R,
         idx_size: u64,
     ) -> io::Result<Self> {
-        let db = Database::open(db_path).map_err(|e| {
-            io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e))
-        })?;
+        let db = Database::open(db_path)
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb open: {}", e)))?;
 
         let nm = RedbNeedleMap {
             db,
@@ -488,9 +490,9 @@ impl RedbNeedleMap {
             idx_file_offset: 0,
         };
 
-        let stored_idx_size = nm.read_idx_size_meta()?.ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "no idx_size in redb meta")
-        })?;
+        let stored_idx_size = nm
+            .read_idx_size_meta()?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no idx_size in redb meta"))?;
 
         if stored_idx_size > idx_size {
             // .idx shrank — corrupted or truncated, need full rebuild
@@ -524,14 +526,12 @@ impl RedbNeedleMap {
                                     size: Size(-(old.size.0)),
                                 };
                                 let packed = pack_needle_value(&deleted_nv);
-                                table
-                                    .insert(key_u64, packed.as_slice())
-                                    .map_err(|e| {
-                                        io::Error::new(
-                                            io::ErrorKind::Other,
-                                            format!("redb insert: {}", e),
-                                        )
-                                    })?;
+                                table.insert(key_u64, packed.as_slice()).map_err(|e| {
+                                    io::Error::new(
+                                        io::ErrorKind::Other,
+                                        format!("redb insert: {}", e),
+                                    )
+                                })?;
                             }
                         }
                     } else {
@@ -539,22 +539,16 @@ impl RedbNeedleMap {
                         let old = nm.get_via_table(&table, key_u64).ok().flatten();
                         let nv = NeedleValue { offset, size };
                         let packed = pack_needle_value(&nv);
-                        table
-                            .insert(key_u64, packed.as_slice())
-                            .map_err(|e| {
-                                io::Error::new(
-                                    io::ErrorKind::Other,
-                                    format!("redb insert: {}", e),
-                                )
-                            })?;
+                        table.insert(key_u64, packed.as_slice()).map_err(|e| {
+                            io::Error::new(io::ErrorKind::Other, format!("redb insert: {}", e))
+                        })?;
                         nm.metric.on_put(key, old.as_ref(), size);
                     }
                     Ok(())
                 })?;
             }
-            txn.commit().map_err(|e| {
-                io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e))
-            })?;
+            txn.commit()
+                .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("redb commit: {}", e)))?;
 
             nm.save_idx_size_meta(idx_size)?;
         }

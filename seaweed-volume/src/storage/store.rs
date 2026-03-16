@@ -217,7 +217,15 @@ impl Store {
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
             let dat_path = format!("{}.dat", base);
             if std::path::Path::new(&dat_path).exists() {
-                return loc.create_volume(vid, collection, self.needle_map_kind, None, None, 0, Version::current());
+                return loc.create_volume(
+                    vid,
+                    collection,
+                    self.needle_map_kind,
+                    None,
+                    None,
+                    0,
+                    Version::current(),
+                );
             }
         }
         Err(VolumeError::Io(io::Error::new(
@@ -275,11 +283,7 @@ impl Store {
     /// Configure a volume's replica placement on disk.
     /// The volume must already be unmounted. This opens the .dat file directly,
     /// modifies the replica_placement byte (offset 1), and writes it back.
-    pub fn configure_volume(
-        &self,
-        vid: VolumeId,
-        rp: ReplicaPlacement,
-    ) -> Result<(), VolumeError> {
+    pub fn configure_volume(&self, vid: VolumeId, rp: ReplicaPlacement) -> Result<(), VolumeError> {
         let (_, base_path, _) = self.find_volume_file_base(vid).ok_or_else(|| {
             VolumeError::Io(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -586,13 +590,15 @@ impl Store {
     pub fn find_ec_dir(&self, vid: VolumeId, collection: &str) -> Option<String> {
         for loc in &self.locations {
             // Check idx directory first
-            let idx_base = crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
+            let idx_base =
+                crate::storage::volume::volume_file_name(&loc.idx_directory, collection, vid);
             if std::path::Path::new(&format!("{}.ecx", idx_base)).exists() {
                 return Some(loc.directory.clone());
             }
             // Fall back to data directory if .ecx was created before -dir.idx was configured
             if loc.idx_directory != loc.directory {
-                let data_base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
+                let data_base =
+                    crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
                 if std::path::Path::new(&format!("{}.ecx", data_base)).exists() {
                     return Some(loc.directory.clone());
                 }
@@ -750,9 +756,8 @@ fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {
 }
 
 fn save_vif_volume_info(path: &str, info: &VifVolumeInfo) -> Result<(), VolumeError> {
-    let content = serde_json::to_string_pretty(info).map_err(|e| {
-        VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string()))
-    })?;
+    let content = serde_json::to_string_pretty(info)
+        .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
     std::fs::write(path, content)?;
     Ok(())
 }
@@ -811,7 +816,15 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(1),
+                "",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
         assert!(store.has_volume(VolumeId(1)));
         assert!(!store.has_volume(VolumeId(2)));
@@ -824,7 +837,15 @@ mod tests {
         let dir = tmp.path().to_str().unwrap();
         let mut store = make_test_store(&[dir]);
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(1),
+                "",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
 
         // Write
@@ -890,10 +911,26 @@ mod tests {
 
         // Add volumes — should go to location with fewest volumes
         store
-            .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(1),
+                "",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
         store
-            .add_volume(VolumeId(2), "", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(2),
+                "",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
 
         assert_eq!(store.total_volume_count(), 2);
@@ -909,13 +946,37 @@ mod tests {
         let mut store = make_test_store(&[dir]);
 
         store
-            .add_volume(VolumeId(1), "pics", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(1),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
         store
-            .add_volume(VolumeId(2), "pics", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(2),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
         store
-            .add_volume(VolumeId(3), "docs", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(3),
+                "docs",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
         assert_eq!(store.total_volume_count(), 3);
 

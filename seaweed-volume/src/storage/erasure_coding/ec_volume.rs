@@ -72,8 +72,7 @@ impl EcVolume {
 
         // Read expire_at_sec from .vif if present
         let expire_at_sec = {
-            let base =
-                crate::storage::volume::volume_file_name(dir, collection, volume_id);
+            let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
             let vif_path = format!("{}.vif", base);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
@@ -130,9 +129,8 @@ impl EcVolume {
         }
 
         // Open .ecj file (deletion journal) — use ecx_actual_dir for consistency
-        let ecj_base = crate::storage::volume::volume_file_name(
-            &vol.ecx_actual_dir, collection, volume_id,
-        );
+        let ecj_base =
+            crate::storage::volume::volume_file_name(&vol.ecx_actual_dir, collection, volume_id);
         let ecj_path = format!("{}.ecj", ecj_base);
         let ecj_file = OpenOptions::new()
             .read(true)
@@ -399,7 +397,9 @@ impl EcVolume {
         }
         // Remove .ecx/.ecj from ecx_actual_dir (where they were found)
         let actual_base = crate::storage::volume::volume_file_name(
-            &self.ecx_actual_dir, &self.collection, self.volume_id,
+            &self.ecx_actual_dir,
+            &self.collection,
+            self.volume_id,
         );
         let _ = fs::remove_file(format!("{}.ecx", actual_base));
         let _ = fs::remove_file(format!("{}.ecj", actual_base));
@@ -410,7 +410,9 @@ impl EcVolume {
         }
         if self.ecx_actual_dir != self.dir && self.dir_idx != self.dir {
             let data_base = crate::storage::volume::volume_file_name(
-                &self.dir, &self.collection, self.volume_id,
+                &self.dir,
+                &self.collection,
+                self.volume_id,
             );
             let _ = fs::remove_file(format!("{}.ecx", data_base));
             let _ = fs::remove_file(format!("{}.ecj", data_base));

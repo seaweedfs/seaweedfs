@@ -725,7 +725,11 @@ impl Volume {
         self.read_needle_with_option(n, &mut read_option)
     }
 
-    pub fn read_needle_with_option(&self, n: &mut Needle, read_option: &mut ReadOption) -> Result<i32, VolumeError> {
+    pub fn read_needle_with_option(
+        &self,
+        n: &mut Needle,
+        read_option: &mut ReadOption,
+    ) -> Result<i32, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
         let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
         let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
@@ -796,11 +800,7 @@ impl Volume {
             {
                 // Double-read: in 4-byte offset mode, the actual data may be
                 // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
-                self.read_needle_blob_and_parse(
-                    n,
-                    offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
-                    size,
-                )
+                self.read_needle_blob_and_parse(n, offset + MAX_POSSIBLE_VOLUME_SIZE as i64, size)
             }
             Err(e) => Err(e),
         }
@@ -2714,7 +2714,11 @@ mod tests {
 
         // After compaction, the revision should have changed
         let new_rev = v.super_block.compaction_revision;
-        assert_eq!(new_rev, initial_rev + 1, "compaction should increment revision");
+        assert_eq!(
+            new_rev,
+            initial_rev + 1,
+            "compaction should increment revision"
+        );
 
         // Re-lookup needle 1 — should still be found with the new revision
         let (new_offset, relookup_rev) = v.re_lookup_needle_data_offset(NeedleId(1)).unwrap();
@@ -2731,7 +2735,10 @@ mod tests {
 
         // Deleted needle should not be found
         let result = v.re_lookup_needle_data_offset(NeedleId(2));
-        assert!(result.is_err(), "deleted needle should not be found after compaction");
+        assert!(
+            result.is_err(),
+            "deleted needle should not be found after compaction"
+        );
     }
 
     #[test]
@@ -2799,11 +2806,20 @@ mod tests {
         v.destroy().unwrap();
 
         // .dat and .idx should be gone
-        assert!(!std::path::Path::new(&dat_path).exists(), ".dat should be removed");
-        assert!(!std::path::Path::new(&idx_path).exists(), ".idx should be removed");
+        assert!(
+            !std::path::Path::new(&dat_path).exists(),
+            ".dat should be removed"
+        );
+        assert!(
+            !std::path::Path::new(&idx_path).exists(),
+            ".idx should be removed"
+        );
 
         // .vif MUST be preserved for EC volumes
-        assert!(std::path::Path::new(&vif_path).exists(), ".vif must survive destroy");
+        assert!(
+            std::path::Path::new(&vif_path).exists(),
+            ".vif must survive destroy"
+        );
     }
 
     /// Volume destroy with separate idx directory must clean up both dirs.
@@ -2847,8 +2863,17 @@ mod tests {
 
         v.destroy().unwrap();
 
-        assert!(!std::path::Path::new(&dat_path).exists(), ".dat removed from data dir");
-        assert!(!std::path::Path::new(&idx_path).exists(), ".idx removed from idx dir");
-        assert!(std::path::Path::new(&vif_path).exists(), ".vif preserved in data dir");
+        assert!(
+            !std::path::Path::new(&dat_path).exists(),
+            ".dat removed from data dir"
+        );
+        assert!(
+            !std::path::Path::new(&idx_path).exists(),
+            ".idx removed from idx dir"
+        );
+        assert!(
+            std::path::Path::new(&vif_path).exists(),
+            ".vif preserved in data dir"
+        );
     }
 }

@@ -611,15 +611,13 @@ pub fn get_disk_stats(path: &str) -> (u64, u64) {
 /// Matches Go's `calculateExpectedShardSize`: large blocks (1GB * data_shards) first,
 /// then small blocks (1MB * data_shards) for the remainder.
 fn calculate_expected_shard_size(dat_file_size: i64) -> i64 {
-    let large_batch_size =
-        ERASURE_CODING_LARGE_BLOCK_SIZE as i64 * DATA_SHARDS_COUNT as i64;
+    let large_batch_size = ERASURE_CODING_LARGE_BLOCK_SIZE as i64 * DATA_SHARDS_COUNT as i64;
     let num_large_batches = dat_file_size / large_batch_size;
     let mut shard_size = num_large_batches * ERASURE_CODING_LARGE_BLOCK_SIZE as i64;
     let remaining = dat_file_size - (num_large_batches * large_batch_size);
 
     if remaining > 0 {
-        let small_batch_size =
-            ERASURE_CODING_SMALL_BLOCK_SIZE as i64 * DATA_SHARDS_COUNT as i64;
+        let small_batch_size = ERASURE_CODING_SMALL_BLOCK_SIZE as i64 * DATA_SHARDS_COUNT as i64;
         // Ceiling division
         let num_small_batches = (remaining + small_batch_size - 1) / small_batch_size;
         shard_size += num_small_batches * ERASURE_CODING_SMALL_BLOCK_SIZE as i64;
@@ -679,8 +677,16 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
+        loc.create_volume(
+            VolumeId(1),
+            "",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
 
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_some());
@@ -704,10 +710,26 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-            loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
-                .unwrap();
-            loc.create_volume(VolumeId(2), "test", NeedleMapKind::InMemory, None, None, 0, Version::current())
-                .unwrap();
+            loc.create_volume(
+                VolumeId(1),
+                "",
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
+            loc.create_volume(
+                VolumeId(2),
+                "test",
+                NeedleMapKind::InMemory,
+                None,
+                None,
+                0,
+                Version::current(),
+            )
+            .unwrap();
             loc.close();
         }
 
@@ -743,10 +765,26 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
-        loc.create_volume(VolumeId(2), "", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
+        loc.create_volume(
+            VolumeId(1),
+            "",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        loc.create_volume(
+            VolumeId(2),
+            "",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
         loc.delete_volume(VolumeId(1)).unwrap();
@@ -768,12 +806,36 @@ mod tests {
         )
         .unwrap();
 
-        loc.create_volume(VolumeId(1), "pics", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
-        loc.create_volume(VolumeId(2), "pics", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
-        loc.create_volume(VolumeId(3), "docs", NeedleMapKind::InMemory, None, None, 0, Version::current())
-            .unwrap();
+        loc.create_volume(
+            VolumeId(1),
+            "pics",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        loc.create_volume(
+            VolumeId(2),
+            "pics",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        loc.create_volume(
+            VolumeId(3),
+            "docs",
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
         assert_eq!(loc.volumes_len(), 3);
 
         loc.delete_collection("pics");

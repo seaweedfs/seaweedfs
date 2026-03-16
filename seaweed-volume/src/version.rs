@@ -21,7 +21,9 @@ pub fn commit() -> &'static str {
 pub fn version_number() -> &'static str {
     static VERSION_NUMBER: OnceLock<String> = OnceLock::new();
     VERSION_NUMBER
-        .get_or_init(|| parse_go_version_number().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()))
+        .get_or_init(|| {
+            parse_go_version_number().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string())
+        })
         .as_str()
 }
 
@@ -34,7 +36,8 @@ pub fn version() -> &'static str {
 
 pub fn full_version() -> &'static str {
     static FULL: OnceLock<String> = OnceLock::new();
-    FULL.get_or_init(|| format!("{} {}", version(), commit())).as_str()
+    FULL.get_or_init(|| format!("{} {}", version(), commit()))
+        .as_str()
 }
 
 pub fn server_header() -> &'static str {
@@ -45,7 +48,10 @@ pub fn server_header() -> &'static str {
 }
 
 fn parse_go_version_number() -> Option<String> {
-    let src = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../weed/util/version/constants.go"));
+    let src = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../weed/util/version/constants.go"
+    ));
     let mut major: Option<u32> = None;
     let mut minor: Option<u32> = None;
     for line in src.lines() {

@@ -588,7 +588,15 @@ mod tests {
         let data_shards = 10;
         let parity_shards = 4;
         let total_shards = data_shards + parity_shards;
-        write_ec_files(dat_dir, idx_dir, "", VolumeId(1), data_shards, parity_shards).unwrap();
+        write_ec_files(
+            dat_dir,
+            idx_dir,
+            "",
+            VolumeId(1),
+            data_shards,
+            parity_shards,
+        )
+        .unwrap();
 
         // Verify all 14 shard files in data dir
         for i in 0..total_shards {
@@ -653,6 +661,9 @@ mod tests {
 
         // Should fail: .idx is in idx_dir, not wrong_dir
         let result = write_ec_files(dat_dir, wrong_dir, "", VolumeId(1), 10, 4);
-        assert!(result.is_err(), "should fail when idx_dir doesn't contain .idx");
+        assert!(
+            result.is_err(),
+            "should fail when idx_dir doesn't contain .idx"
+        );
     }
 }
