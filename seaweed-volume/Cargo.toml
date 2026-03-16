@@ -113,6 +113,8 @@ thiserror = "1"
 anyhow = "1"
 async-trait = "0.1"
 futures = "0.3"
+async-stream = "0.3"
+x509-parser = "0.16"
 
 # Disk space checking
 sysinfo = "0.31"

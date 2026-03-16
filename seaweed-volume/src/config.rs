@@ -247,6 +247,8 @@ pub struct VolumeServerConfig {
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     /// Enable batched write queue for improved throughput under load.
     pub enable_write_queue: bool,
@@ -787,6 +789,8 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
         grpc_ca_file: sec.grpc_ca_file,
+        grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
+        grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
         tls_policy: sec.tls_policy,
         enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
             .map(|v| v == "1" || v == "true")
@@ -816,6 +820,8 @@ pub struct SecurityConfig {
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
     pub tls_policy: TlsPolicy,
     pub access_ui: bool,
     /// IPs from [guard] white_list in security.toml
@@ -853,10 +859,12 @@ const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
 ///
 /// [grpc]
 /// ca = "/path/to/ca.pem"
+/// allowed_wildcard_domain = ".example.com"
 ///
 /// [grpc.volume]
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
+/// allowed_commonNames = "volume-a.internal,volume-b.internal"
 /// ```
 pub fn parse_security_config(path: &str) -> SecurityConfig {
     let Some(config_path) = resolve_security_config_path(path) else {
@@ -963,6 +971,9 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 },
                 Section::Grpc => match key {
                     "ca" => cfg.grpc_ca_file = value.to_string(),
+                    "allowed_wildcard_domain" => {
+                        cfg.grpc_allowed_wildcard_domain = value.to_string()
+                    }
                     _ => {}
                 },
                 Section::HttpsVolume => match key {
@@ -975,6 +986,10 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                     "cert" => cfg.grpc_cert_file = value.to_string(),
                     "key" => cfg.grpc_key_file = value.to_string(),
                     "ca" => cfg.grpc_ca_file = value.to_string(),
+                    "allowed_commonNames" => {
+                        cfg.grpc_volume_allowed_common_names =
+                            value.split(',').map(|name| name.to_string()).collect();
+                    }
                     _ => {}
                 },
                 Section::Tls => match key {
@@ -1097,6 +1112,12 @@ fn apply_env_overrides(cfg: &mut SecurityConfig) {
     } else if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
         cfg.grpc_ca_file = v;
     }
+    if let Ok(v) = std::env::var("WEED_GRPC_ALLOWED_WILDCARD_DOMAIN") {
+        cfg.grpc_allowed_wildcard_domain = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
+        cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
+    }
     if let Ok(v) = std::env::var("WEED_TLS_MIN_VERSION") {
         cfg.tls_policy.min_version = v;
     }
@@ -1185,6 +1206,8 @@ mod tests {
             "WEED_GRPC_VOLUME_KEY",
             "WEED_GRPC_CA",
             "WEED_GRPC_VOLUME_CA",
+            "WEED_GRPC_ALLOWED_WILDCARD_DOMAIN",
+            "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES",
             "WEED_TLS_MIN_VERSION",
             "WEED_TLS_MAX_VERSION",
             "WEED_TLS_CIPHER_SUITES",
@@ -1430,6 +1453,35 @@ key = "/etc/seaweedfs/volume-key.pem"
             assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
             assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
             assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_peer_name_policy() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+allowed_wildcard_domain = ".example.com"
+
+[grpc.volume]
+allowed_commonNames = "volume-a.internal,volume-b.internal"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.grpc_allowed_wildcard_domain, ".example.com");
+            assert_eq!(
+                cfg.grpc_volume_allowed_common_names,
+                vec![
+                    String::from("volume-a.internal"),
+                    String::from("volume-b.internal")
+                ]
+            );
         });
     }
 

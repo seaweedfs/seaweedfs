@@ -5,7 +5,10 @@ use tracing::{error, info, warn};
 use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
-use seaweed_volume::security::tls::build_rustls_server_config;
+use seaweed_volume::security::tls::{
+    build_rustls_server_config, build_rustls_server_config_with_grpc_client_auth,
+    GrpcClientAuthPolicy, TlsPolicy,
+};
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
@@ -121,43 +124,36 @@ fn build_outgoing_http_client(
     Ok((builder.build()?, scheme.to_string()))
 }
 
-fn build_grpc_server_tls_config(
+fn build_grpc_server_tls_acceptor(
     cert_path: &str,
     key_path: &str,
     ca_path: &str,
-) -> Option<tonic::transport::ServerTlsConfig> {
+    tls_policy: &TlsPolicy,
+    allowed_wildcard_domain: &str,
+    allowed_common_names: &[String],
+) -> Option<TlsAcceptor> {
     if cert_path.is_empty() || key_path.is_empty() || ca_path.is_empty() {
         return None;
     }
-
-    let cert = match std::fs::read_to_string(cert_path) {
-        Ok(cert) => cert,
+    let client_auth_policy = GrpcClientAuthPolicy {
+        allowed_common_names: allowed_common_names.to_vec(),
+        allowed_wildcard_domain: allowed_wildcard_domain.to_string(),
+    };
+    let mut server_config = match build_rustls_server_config_with_grpc_client_auth(
+        cert_path,
+        key_path,
+        ca_path,
+        tls_policy,
+        &client_auth_policy,
+    ) {
+        Ok(server_config) => server_config,
         Err(e) => {
-            warn!("Failed to read gRPC cert '{}': {}", cert_path, e);
+            warn!("Failed to build gRPC TLS config: {}", e);
             return None;
         }
     };
-    let key = match std::fs::read_to_string(key_path) {
-        Ok(key) => key,
-        Err(e) => {
-            warn!("Failed to read gRPC key '{}': {}", key_path, e);
-            return None;
-        }
-    };
-    let ca_cert = match std::fs::read_to_string(ca_path) {
-        Ok(ca_cert) => ca_cert,
-        Err(e) => {
-            warn!("Failed to read gRPC CA cert '{}': {}", ca_path, e);
-            return None;
-        }
-    };
-
-    let identity = tonic::transport::Identity::from_pem(cert, key);
-    Some(
-        tonic::transport::ServerTlsConfig::new()
-            .identity(identity)
-            .client_ca_root(tonic::transport::Certificate::from_pem(ca_cert)),
-    )
+    server_config.alpn_protocols = vec![b"h2".to_vec()];
+    Some(TlsAcceptor::from(Arc::new(server_config)))
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -305,11 +301,15 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     let public_port = config.public_port;
     let needs_public = public_port != config.port;
 
-    // Build gRPC service
-    let grpc_service = VolumeGrpcService {
-        state: state.clone(),
-    };
     let grpc_addr = format!("{}:{}", config.bind_ip, config.grpc_port);
+    let grpc_tls_acceptor = build_grpc_server_tls_acceptor(
+        &config.grpc_cert_file,
+        &config.grpc_key_file,
+        &config.grpc_ca_file,
+        &config.tls_policy,
+        &config.grpc_allowed_wildcard_domain,
+        &config.grpc_volume_allowed_common_names,
+    );
 
     info!("Starting HTTP server on {}", admin_addr);
     info!("Starting gRPC server on {}", grpc_addr);
@@ -441,21 +441,24 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     };
 
     let grpc_handle = {
-        let grpc_cert_file = config.grpc_cert_file.clone();
-        let grpc_key_file = config.grpc_key_file.clone();
-        let grpc_ca_file = config.grpc_ca_file.clone();
+        let grpc_state = state.clone();
+        let grpc_addr = grpc_addr.clone();
+        let grpc_tls_acceptor = grpc_tls_acceptor.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             let addr = grpc_addr.parse().expect("Invalid gRPC address");
-            if let Some(tls_config) =
-                build_grpc_server_tls_config(&grpc_cert_file, &grpc_key_file, &grpc_ca_file)
-            {
+            let grpc_service = VolumeGrpcService {
+                state: grpc_state.clone(),
+            };
+            if let Some(tls_acceptor) = grpc_tls_acceptor {
+                let listener = tokio::net::TcpListener::bind(&grpc_addr)
+                    .await
+                    .unwrap_or_else(|e| panic!("Failed to bind gRPC to {}: {}", grpc_addr, e));
+                let incoming = grpc_tls_incoming(listener, tls_acceptor);
                 info!("gRPC server listening on {} (TLS enabled)", addr);
                 if let Err(e) = tonic::transport::Server::builder()
-                    .tls_config(tls_config)
-                    .expect("Failed to configure gRPC TLS")
                     .add_service(VolumeServerServer::new(grpc_service))
-                    .serve_with_shutdown(addr, async move {
+                    .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
                     })
                     .await
@@ -656,6 +659,30 @@ async fn run_metrics_push_loop(
     }
 }
 
+fn grpc_tls_incoming(
+    listener: tokio::net::TcpListener,
+    tls_acceptor: TlsAcceptor,
+) -> impl tokio_stream::Stream<
+    Item = Result<tokio_rustls::server::TlsStream<tokio::net::TcpStream>, std::io::Error>,
+> {
+    async_stream::stream! {
+        loop {
+            match listener.accept().await {
+                Ok((tcp_stream, remote_addr)) => match tls_acceptor.accept(tcp_stream).await {
+                    Ok(tls_stream) => yield Ok(tls_stream),
+                    Err(e) => {
+                        tracing::debug!("gRPC TLS handshake failed from {}: {}", remote_addr, e);
+                    }
+                },
+                Err(e) => {
+                    yield Err(e);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /// Serve an axum Router over TLS using tokio-rustls.
 /// Accepts TCP connections, performs TLS handshake, then serves HTTP over the encrypted stream.
 async fn serve_https<F>(
@@ -713,7 +740,8 @@ async fn serve_https<F>(
 
 #[cfg(test)]
 mod tests {
-    use super::build_grpc_server_tls_config;
+    use super::build_grpc_server_tls_acceptor;
+    use seaweed_volume::security::tls::TlsPolicy;
 
     fn write_pem(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
         let path = dir.path().join(name);
@@ -735,15 +763,55 @@ mod tests {
             "-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----\n",
         );
 
-        assert!(build_grpc_server_tls_config(&cert, &key, "").is_none());
+        assert!(
+            build_grpc_server_tls_acceptor(&cert, &key, "", &TlsPolicy::default(), "", &[])
+                .is_none()
+        );
     }
 
     #[test]
     fn test_grpc_server_tls_returns_none_when_files_are_missing() {
-        assert!(build_grpc_server_tls_config(
+        assert!(build_grpc_server_tls_acceptor(
             "/missing/server.crt",
             "/missing/server.key",
             "/missing/ca.crt",
+            &TlsPolicy::default(),
+            "",
+            &[],
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn test_grpc_server_tls_disables_on_unsupported_tls_policy() {
+        let dir = tempfile::tempdir().unwrap();
+        let cert = write_pem(
+            &dir,
+            "server.crt",
+            "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
+        );
+        let key = write_pem(
+            &dir,
+            "server.key",
+            "-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----\n",
+        );
+        let ca = write_pem(
+            &dir,
+            "ca.crt",
+            "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
+        );
+
+        assert!(build_grpc_server_tls_acceptor(
+            &cert,
+            &key,
+            &ca,
+            &TlsPolicy {
+                min_version: "TLS 1.0".to_string(),
+                max_version: "TLS 1.1".to_string(),
+                cipher_suites: String::new(),
+            },
+            "",
+            &[],
         )
         .is_none());
     }
