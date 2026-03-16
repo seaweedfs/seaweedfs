@@ -2430,16 +2430,17 @@ pub async fn stats_counter_handler() -> Response {
 }
 
 pub async fn stats_memory_handler() -> Response {
-    // Basic memory stats - Rust doesn't have GC stats like Go
+    let mem = super::memory_status::collect_mem_status();
     let info = serde_json::json!({
         "Version": crate::version::full_version(),
         "Memory": {
-            "Mallocs": 0,
-            "Frees": 0,
-            "HeapSys": 0,
-            "HeapAlloc": 0,
-            "HeapIdle": 0,
-            "HeapReleased": 0,
+            "goroutines": mem.goroutines,
+            "all": mem.all,
+            "used": mem.used,
+            "free": mem.free,
+            "self": mem.self_,
+            "heap": mem.heap,
+            "stack": mem.stack,
         },
     });
     (
@@ -2892,6 +2893,22 @@ mod tests {
         let headers = HeaderMap::new();
         let resp = handle_range_request("bytes=999-1000", data, headers);
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+    }
+
+    #[tokio::test]
+    async fn test_stats_memory_handler_matches_go_memstatus_shape() {
+        let response = stats_memory_handler().await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        let memory = payload.get("Memory").unwrap();
+
+        for key in ["goroutines", "all", "used", "free", "self", "heap", "stack"] {
+            assert!(memory.get(key).is_some(), "missing key {}", key);
+        }
     }
 
     #[test]
