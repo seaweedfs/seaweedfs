@@ -403,13 +403,13 @@ func needsMaintenance(meta table.Metadata, config Config) bool {
 }
 
 // buildMaintenanceProposal creates a JobProposal for a table needing maintenance.
-func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress string) *plugin_pb.JobProposal {
+func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress, resourceGroup string) *plugin_pb.JobProposal {
 	dedupeKey := fmt.Sprintf("iceberg_maintenance:%s/%s/%s", t.BucketName, t.Namespace, t.TableName)
 
 	snapshotCount := len(t.Metadata.Snapshots())
 	summary := fmt.Sprintf("Maintain %s/%s/%s (%d snapshots)", t.BucketName, t.Namespace, t.TableName, snapshotCount)
 
-	return &plugin_pb.JobProposal{
+	proposal := &plugin_pb.JobProposal{
 		ProposalId: fmt.Sprintf("iceberg-%s-%s-%s-%d", t.BucketName, t.Namespace, t.TableName, time.Now().UnixMilli()),
 		DedupeKey:  dedupeKey,
 		JobType:    jobType,
@@ -428,4 +428,9 @@ func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress string) *pl
 			"table":     t.TableName,
 		},
 	}
+	if resourceGroup != "" {
+		proposal.Parameters["resource_group"] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_StringValue{StringValue: resourceGroup}}
+		proposal.Labels["resource_group"] = resourceGroup
+	}
+	return proposal
 }
