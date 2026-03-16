@@ -127,9 +127,6 @@ func (h *Handler) scanTablesForMaintenance(
 				}
 
 				tablePath := path.Join(nsName, tblName)
-				if metadataFileName == "" {
-					metadataFileName = metadataFileNameFromLocation("", bucketName, tablePath)
-				}
 				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, planningIndex, config, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
