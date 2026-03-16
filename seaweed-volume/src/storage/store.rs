@@ -216,7 +216,9 @@ impl Store {
             }
             let base = crate::storage::volume::volume_file_name(&loc.directory, collection, vid);
             let dat_path = format!("{}.dat", base);
-            if std::path::Path::new(&dat_path).exists() {
+            let vif_path = format!("{}.vif", base);
+            if std::path::Path::new(&dat_path).exists() || std::path::Path::new(&vif_path).exists()
+            {
                 return loc.create_volume(
                     vid,
                     collection,
@@ -264,12 +266,9 @@ impl Store {
                 for entry in entries.flatten() {
                     let name = entry.file_name();
                     let name = name.to_string_lossy();
-                    if !name.ends_with(".dat") {
-                        continue;
-                    }
                     if let Some((collection, file_vid)) = parse_volume_filename(&name) {
                         if file_vid == vid {
-                            let base = name.trim_end_matches(".dat");
+                            let base = strip_volume_suffix(&name)?;
                             let base_path = format!("{}/{}", loc.directory, base);
                             return Some((loc_idx, base_path, collection));
                         }
@@ -716,7 +715,7 @@ impl Store {
 
 /// Parse a volume filename like "collection_42.dat" or "42.dat" into (collection, VolumeId).
 fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
-    let stem = filename.strip_suffix(".dat")?;
+    let stem = strip_volume_suffix(filename)?;
     if let Some(pos) = stem.rfind('_') {
         let collection = &stem[..pos];
         let id_str = &stem[pos + 1..];
@@ -726,6 +725,13 @@ fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
         let id: u32 = stem.parse().ok()?;
         Some((String::new(), VolumeId(id)))
     }
+}
+
+fn strip_volume_suffix(filename: &str) -> Option<&str> {
+    filename
+        .strip_suffix(".dat")
+        .or_else(|| filename.strip_suffix(".vif"))
+        .or_else(|| filename.strip_suffix(".idx"))
 }
 
 fn load_vif_volume_info(path: &str) -> Result<VifVolumeInfo, VolumeError> {

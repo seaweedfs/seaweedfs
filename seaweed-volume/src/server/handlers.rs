@@ -804,6 +804,7 @@ async fn get_or_head_handler_inner(
     let stream_info = store.read_volume_needle_stream_info(vid, &mut n, read_deleted);
     let stream_info = match stream_info {
         Ok(info) => Some(info),
+        Err(crate::storage::volume::VolumeError::StreamingUnsupported) => None,
         Err(crate::storage::volume::VolumeError::NotFound) => {
             metrics::HANDLER_COUNTER
                 .with_label_values(&[metrics::ERROR_GET_NOT_FOUND])

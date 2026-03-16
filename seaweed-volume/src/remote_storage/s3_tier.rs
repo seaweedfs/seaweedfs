@@ -367,6 +367,27 @@ impl S3TierBackend {
         Ok(file_size)
     }
 
+    pub async fn read_range(&self, key: &str, offset: u64, size: usize) -> Result<Vec<u8>, String> {
+        let end = offset + (size as u64).saturating_sub(1);
+        let range = format!("bytes={}-{}", offset, end);
+        let resp = self
+            .client
+            .get_object()
+            .bucket(&self.bucket)
+            .key(key)
+            .range(&range)
+            .send()
+            .await
+            .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+
+        let body = resp
+            .body
+            .collect()
+            .await
+            .map_err(|e| format!("failed to read object {} body: {}", key, e))?;
+        Ok(body.into_bytes().to_vec())
+    }
+
     /// Delete a file from S3.
     pub async fn delete_file(&self, key: &str) -> Result<(), String> {
         self.client
@@ -392,6 +413,36 @@ impl S3TierBackend {
                 .await
                 .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
             Ok(())
+        })
+    }
+
+    pub fn read_range_blocking(
+        &self,
+        key: &str,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, String> {
+        let client = self.client.clone();
+        let bucket = self.bucket.clone();
+        let key = key.to_string();
+        block_on_tier_future(async move {
+            let end = offset + (size as u64).saturating_sub(1);
+            let range = format!("bytes={}-{}", offset, end);
+            let resp = client
+                .get_object()
+                .bucket(&bucket)
+                .key(&key)
+                .range(&range)
+                .send()
+                .await
+                .map_err(|e| format!("failed to get object {} range {}: {}", key, range, e))?;
+
+            let body = resp
+                .body
+                .collect()
+                .await
+                .map_err(|e| format!("failed to read object {} body: {}", key, e))?;
+            Ok(body.into_bytes().to_vec())
         })
     }
 }

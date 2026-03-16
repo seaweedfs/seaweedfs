@@ -4,7 +4,7 @@
 //! A Store contains one or more DiskLocations (one per configured directory).
 //! Matches Go's storage/disk_location.go.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
@@ -106,12 +106,13 @@ impl DiskLocation {
         // Scan for .dat files
         let entries = fs::read_dir(&self.directory)?;
         let mut dat_files: Vec<(String, VolumeId)> = Vec::new();
+        let mut seen = HashSet::new();
 
         for entry in entries {
             let entry = entry?;
             let name = entry.file_name().into_string().unwrap_or_default();
-            if name.ends_with(".dat") {
-                if let Some((collection, vid)) = parse_volume_filename(&name) {
+            if let Some((collection, vid)) = parse_volume_filename(&name) {
+                if seen.insert((collection.clone(), vid)) {
                     dat_files.push((collection, vid));
                 }
             }
@@ -628,7 +629,10 @@ fn calculate_expected_shard_size(dat_file_size: i64) -> i64 {
 
 /// Parse a volume filename like "collection_42.dat" or "42.dat" into (collection, VolumeId).
 fn parse_volume_filename(filename: &str) -> Option<(String, VolumeId)> {
-    let stem = filename.strip_suffix(".dat")?;
+    let stem = filename
+        .strip_suffix(".dat")
+        .or_else(|| filename.strip_suffix(".vif"))
+        .or_else(|| filename.strip_suffix(".idx"))?;
     if let Some(pos) = stem.rfind('_') {
         let collection = &stem[..pos];
         let id_str = &stem[pos + 1..];
@@ -657,6 +661,14 @@ mod tests {
         );
         assert_eq!(
             parse_volume_filename("pics_7.dat"),
+            Some(("pics".to_string(), VolumeId(7)))
+        );
+        assert_eq!(
+            parse_volume_filename("42.vif"),
+            Some(("".to_string(), VolumeId(42)))
+        );
+        assert_eq!(
+            parse_volume_filename("pics_7.idx"),
             Some(("pics".to_string(), VolumeId(7)))
         );
         assert_eq!(parse_volume_filename("notadat.idx"), None);
