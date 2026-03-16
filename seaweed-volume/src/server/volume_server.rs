@@ -14,7 +14,7 @@ use std::sync::{Arc, RwLock};
 
 use axum::{
     extract::{Request, State},
-    http::{HeaderValue, Method, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{any, get},
@@ -160,23 +160,57 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 /// DELETE → delete, OPTIONS → CORS headers, anything else → 400.
 async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
     let start = std::time::Instant::now();
-    let method_str = request.method().as_str().to_string();
+    let method = request.method().clone();
+    let method_str = method.as_str().to_string();
+    let request_bytes = request
+        .headers()
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<i64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(0);
+    super::server_stats::record_request_open();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
         .with_label_values(&[&method_str])
         .inc();
-    let response = match request.method().clone() {
+    let response = match method.clone() {
         Method::GET | Method::HEAD => {
+            super::server_stats::record_read_request();
             handlers::get_or_head_handler_from_request(state, request).await
         }
-        Method::POST | Method::PUT => handlers::post_handler(state, request).await,
-        Method::DELETE => handlers::delete_handler(state, request).await,
-        Method::OPTIONS => admin_options_response(),
+        Method::POST | Method::PUT => {
+            super::server_stats::record_write_request();
+            if request_bytes > 0 {
+                super::server_stats::record_bytes_in(request_bytes);
+            }
+            handlers::post_handler(state, request).await
+        }
+        Method::DELETE => {
+            super::server_stats::record_delete_request();
+            handlers::delete_handler(state, request).await
+        }
+        Method::OPTIONS => {
+            super::server_stats::record_read_request();
+            admin_options_response()
+        }
         _ => (
             StatusCode::BAD_REQUEST,
             format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
         )
             .into_response(),
     };
+    if method == Method::GET {
+        if let Some(response_bytes) = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value > 0)
+        {
+            super::server_stats::record_bytes_out(response_bytes);
+        }
+    }
+    super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
         .with_label_values(&[&method_str])
         .dec();
@@ -194,17 +228,35 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
 /// anything else → 200 (passthrough no-op).
 async fn public_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
     let start = std::time::Instant::now();
-    let method_str = request.method().as_str().to_string();
+    let method = request.method().clone();
+    let method_str = method.as_str().to_string();
+    super::server_stats::record_request_open();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
         .with_label_values(&[&method_str])
         .inc();
-    let response = match request.method().clone() {
+    let response = match method.clone() {
         Method::GET | Method::HEAD => {
+            super::server_stats::record_read_request();
             handlers::get_or_head_handler_from_request(state, request).await
         }
-        Method::OPTIONS => public_options_response(),
+        Method::OPTIONS => {
+            super::server_stats::record_read_request();
+            public_options_response()
+        }
         _ => StatusCode::OK.into_response(),
     };
+    if method == Method::GET {
+        if let Some(response_bytes) = response
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<i64>().ok())
+            .filter(|value| *value > 0)
+        {
+            super::server_stats::record_bytes_out(response_bytes);
+        }
+    }
+    super::server_stats::record_request_close();
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
         .with_label_values(&[&method_str])
         .dec();

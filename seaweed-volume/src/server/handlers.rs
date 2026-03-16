@@ -2312,79 +2312,17 @@ pub async fn status_handler(
         left.cmp(&right)
     });
 
-    // Build disk statuses
-    let mut disk_statuses = Vec::new();
-    for loc in &store.locations {
-        let dir = &loc.directory;
-        let resolved_dir = std::path::Path::new(dir)
-            .canonicalize()
-            .map(|path| path.to_string_lossy().to_string())
-            .unwrap_or_else(|_| dir.clone());
-        let (all, free) = crate::storage::disk_location::get_disk_stats(&resolved_dir);
-        let used = all.saturating_sub(free);
-        let percent_free = if all > 0 {
-            (free as f64 / all as f64) * 100.0
-        } else {
-            0.0
-        };
-        let percent_used = if all > 0 {
-            (used as f64 / all as f64) * 100.0
-        } else {
-            0.0
-        };
-
-        let mut ds = serde_json::Map::new();
-        ds.insert("dir".to_string(), serde_json::Value::from(resolved_dir));
-        ds.insert("all".to_string(), serde_json::Value::from(all));
-        ds.insert("used".to_string(), serde_json::Value::from(used));
-        ds.insert("free".to_string(), serde_json::Value::from(free));
-        ds.insert(
-            "percent_free".to_string(),
-            serde_json::Value::from(percent_free),
-        );
-        ds.insert(
-            "percent_used".to_string(),
-            serde_json::Value::from(percent_used),
-        );
-        ds.insert(
-            "disk_type".to_string(),
-            serde_json::Value::from(loc.disk_type.to_string()),
-        );
-        disk_statuses.push(serde_json::Value::Object(ds));
-    }
-
     let mut m = serde_json::Map::new();
     m.insert(
         "Version".to_string(),
-        serde_json::Value::from(crate::version::full_version()),
+        serde_json::Value::from(crate::version::version()),
     );
     m.insert("Volumes".to_string(), serde_json::Value::Array(volumes));
     m.insert(
         "DiskStatuses".to_string(),
-        serde_json::Value::Array(disk_statuses),
+        serde_json::Value::Array(build_disk_statuses(&store)),
     );
-
-    let json_value = serde_json::Value::Object(m);
-
-    let is_pretty = params.pretty.as_ref().is_some_and(|s| !s.is_empty());
-    let json_body = if is_pretty {
-        serde_json::to_string_pretty(&json_value).unwrap()
-    } else {
-        serde_json::to_string(&json_value).unwrap()
-    };
-
-    if let Some(ref cb) = params.callback {
-        let jsonp = format!("{}({})", cb, json_body);
-        Response::builder()
-            .header(header::CONTENT_TYPE, "application/javascript")
-            .body(Body::from(jsonp))
-            .unwrap()
-    } else {
-        Response::builder()
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json_body))
-            .unwrap()
-    }
+    json_response_with_params(StatusCode::OK, &serde_json::Value::Object(m), Some(&params))
 }
 
 // ============================================================================
@@ -2424,15 +2362,18 @@ pub async fn metrics_handler() -> Response {
 // Stats Handlers
 // ============================================================================
 
-pub async fn stats_counter_handler() -> Response {
-    let body = metrics::gather_metrics();
-    (StatusCode::OK, [(header::CONTENT_TYPE, "text/plain")], body).into_response()
+pub async fn stats_counter_handler(Query(params): Query<ReadQueryParams>) -> Response {
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
+        "Counters": super::server_stats::snapshot(),
+    });
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
 }
 
-pub async fn stats_memory_handler() -> Response {
+pub async fn stats_memory_handler(Query(params): Query<ReadQueryParams>) -> Response {
     let mem = super::memory_status::collect_mem_status();
-    let info = serde_json::json!({
-        "Version": crate::version::full_version(),
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
         "Memory": {
             "goroutines": mem.goroutines,
             "all": mem.all,
@@ -2443,37 +2384,19 @@ pub async fn stats_memory_handler() -> Response {
             "stack": mem.stack,
         },
     });
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
-        info.to_string(),
-    )
-        .into_response()
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
 }
 
-pub async fn stats_disk_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
+pub async fn stats_disk_handler(
+    Query(params): Query<ReadQueryParams>,
+    State(state): State<Arc<VolumeServerState>>,
+) -> Response {
     let store = state.store.read().unwrap();
-    let mut ds = Vec::new();
-    for loc in &store.locations {
-        let dir = loc.directory.clone();
-        let (all, free) = crate::storage::disk_location::get_disk_stats(&dir);
-        ds.push(serde_json::json!({
-            "dir": dir,
-            "all": all,
-            "used": all - free,
-            "free": free,
-        }));
-    }
-    let info = serde_json::json!({
-        "Version": crate::version::full_version(),
-        "DiskStatuses": ds,
+    let payload = serde_json::json!({
+        "Version": crate::version::version(),
+        "DiskStatuses": build_disk_statuses(&store),
     });
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "application/json")],
-        info.to_string(),
-    )
-        .into_response()
+    json_response_with_params(StatusCode::OK, &payload, Some(&params))
 }
 
 // ============================================================================
@@ -2656,6 +2579,80 @@ fn try_expand_chunk_manifest(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+fn absolute_display_path(path: &str) -> String {
+    let p = std::path::Path::new(path);
+    if p.is_absolute() {
+        return path.to_string();
+    }
+    std::env::current_dir()
+        .map(|cwd| cwd.join(p).to_string_lossy().to_string())
+        .unwrap_or_else(|_| path.to_string())
+}
+
+fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::Value> {
+    let mut disk_statuses = Vec::new();
+    for loc in &store.locations {
+        let resolved_dir = absolute_display_path(&loc.directory);
+        let (all, free) = crate::storage::disk_location::get_disk_stats(&resolved_dir);
+        let used = all.saturating_sub(free);
+        let percent_free = if all > 0 {
+            (free as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+        let percent_used = if all > 0 {
+            (used as f64 / all as f64) * 100.0
+        } else {
+            0.0
+        };
+
+        disk_statuses.push(serde_json::json!({
+            "dir": resolved_dir,
+            "all": all,
+            "used": used,
+            "free": free,
+            "percent_free": percent_free,
+            "percent_used": percent_used,
+            "disk_type": loc.disk_type.to_string(),
+        }));
+    }
+    disk_statuses
+}
+
+fn json_response_with_params<T: Serialize>(
+    status: StatusCode,
+    body: &T,
+    params: Option<&ReadQueryParams>,
+) -> Response {
+    let is_pretty = params
+        .and_then(|params| params.pretty.as_ref())
+        .is_some_and(|value| !value.is_empty());
+    let callback = params
+        .and_then(|params| params.callback.as_ref())
+        .filter(|value| !value.is_empty())
+        .cloned();
+
+    let json_body = if is_pretty {
+        serde_json::to_string_pretty(body).unwrap()
+    } else {
+        serde_json::to_string(body).unwrap()
+    };
+
+    if let Some(callback) = callback {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/javascript")
+            .body(Body::from(format!("{}({})", callback, json_body)))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .unwrap()
+    }
+}
 
 /// Return a JSON error response with optional query string for pretty/JSONP support.
 /// Supports `?pretty=<any non-empty value>` for pretty-printed JSON and `?callback=fn` for JSONP,
@@ -2897,7 +2894,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stats_memory_handler_matches_go_memstatus_shape() {
-        let response = stats_memory_handler().await;
+        let response = stats_memory_handler(Query(ReadQueryParams::default())).await;
         assert_eq!(response.status(), StatusCode::OK);
 
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
@@ -2909,6 +2906,28 @@ mod tests {
         for key in ["goroutines", "all", "used", "free", "self", "heap", "stack"] {
             assert!(memory.get(key).is_some(), "missing key {}", key);
         }
+    }
+
+    #[tokio::test]
+    async fn test_stats_counter_handler_matches_go_json_shape() {
+        super::super::server_stats::reset_for_tests();
+        super::super::server_stats::record_read_request();
+
+        let response = stats_counter_handler(Query(ReadQueryParams::default())).await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let payload: serde_json::Value = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(
+            payload.get("Version").and_then(|value| value.as_str()),
+            Some(crate::version::version())
+        );
+        let counters = payload.get("Counters").unwrap();
+        assert!(counters.get("ReadRequests").is_some());
+        assert!(counters.get("Requests").is_some());
     }
 
     #[test]
