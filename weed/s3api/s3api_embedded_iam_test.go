@@ -504,7 +504,7 @@ func TestEmbeddedIamAttachUserPolicyRefreshesIAM(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::bucket/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::bucket/*"),
 			},
 		},
 	}

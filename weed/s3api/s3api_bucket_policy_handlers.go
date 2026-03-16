@@ -317,9 +317,11 @@ func (s3a *S3ApiServer) validateBucketPolicy(policyDoc *policy_engine.PolicyDocu
 		}
 
 		// Validate NotResources refer to this bucket
-		for _, notResource := range statement.NotResource.Strings() {
-			if !s3a.validateResourceForBucket(notResource, bucket) {
-				return fmt.Errorf("statement %d: NotResource %s does not match bucket %s", i, notResource, bucket)
+		if statement.NotResource != nil {
+			for _, notResource := range statement.NotResource.Strings() {
+				if !s3a.validateResourceForBucket(notResource, bucket) {
+					return fmt.Errorf("statement %d: NotResource %s does not match bucket %s", i, notResource, bucket)
+				}
 			}
 		}
 
