@@ -109,6 +109,22 @@ func (h *Handler) compactDataFiles(
 	var deletedManifestEntries []iceberg.ManifestEntry
 	totalMerged := 0
 
+	entrySeqNum := func(entry iceberg.ManifestEntry) *int64 {
+		seqNum := entry.SequenceNum()
+		if seqNum < 0 {
+			return nil
+		}
+		return &seqNum
+	}
+
+	entryFileSeqNum := func(entry iceberg.ManifestEntry) *int64 {
+		if fileSeqNum := entry.FileSequenceNum(); fileSeqNum != nil {
+			value := *fileSeqNum
+			return &value
+		}
+		return entrySeqNum(entry)
+	}
+
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 	dataDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "data")
 
@@ -189,7 +205,7 @@ func (h *Handler) compactDataFiles(
 			delEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusDELETED,
 				&newSnapID,
-				nil, nil,
+				entrySeqNum(entry), entryFileSeqNum(entry),
 				entry.DataFile(),
 			)
 			deletedManifestEntries = append(deletedManifestEntries, delEntry)
@@ -221,7 +237,7 @@ func (h *Handler) compactDataFiles(
 			existingEntry := iceberg.NewManifestEntry(
 				iceberg.EntryStatusEXISTING,
 				func() *int64 { id := entry.SnapshotID(); return &id }(),
-				nil, nil,
+				entrySeqNum(entry), entryFileSeqNum(entry),
 				entry.DataFile(),
 			)
 			manifestEntries = append(manifestEntries, existingEntry)
