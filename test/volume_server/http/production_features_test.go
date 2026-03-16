@@ -2,8 +2,10 @@ package volume_server_http_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"strings"
 	"testing"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 )
 
 func TestStatsEndpoints(t *testing.T) {
@@ -156,6 +159,79 @@ func TestUploadWithCustomTimestamp(t *testing.T) {
 	gotLastModified := getResp.Header.Get("Last-Modified")
 	if gotLastModified != expectedLastModified {
 		t.Fatalf("Last-Modified mismatch: got %q, want %q", gotLastModified, expectedLastModified)
+	}
+}
+
+func TestMultipartUploadUsesFormFieldsForTimestampAndTTL(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(94)
+	const needleID = uint64(940001)
+	const cookie = uint32(0xAABBCC04)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	payload := []byte("multipart-form-fields-data")
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("ts", "1700000000"); err != nil {
+		t.Fatalf("write multipart ts field: %v", err)
+	}
+	if err := writer.WriteField("ttl", "7d"); err != nil {
+		t.Fatalf("write multipart ttl field: %v", err)
+	}
+	filePart, err := writer.CreateFormFile("file", "multipart.txt")
+	if err != nil {
+		t.Fatalf("create multipart file field: %v", err)
+	}
+	if _, err := filePart.Write(payload); err != nil {
+		t.Fatalf("write multipart file payload: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, cluster.VolumeAdminURL()+"/"+fid, &body)
+	if err != nil {
+		t.Fatalf("create multipart upload request: %v", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+
+	client := framework.NewHTTPClient()
+	uploadResp := framework.DoRequest(t, client, req)
+	uploadBody := framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("multipart upload expected 201, got %d, body: %s", uploadResp.StatusCode, string(uploadBody))
+	}
+
+	readResp := framework.ReadBytes(t, client, cluster.VolumeAdminURL(), fid)
+	_ = framework.ReadAllAndClose(t, readResp)
+	if readResp.StatusCode != http.StatusOK {
+		t.Fatalf("multipart upload read expected 200, got %d", readResp.StatusCode)
+	}
+	expectedLastModified := time.Unix(1700000000, 0).UTC().Format(http.TimeFormat)
+	if got := readResp.Header.Get("Last-Modified"); got != expectedLastModified {
+		t.Fatalf("multipart upload Last-Modified mismatch: got %q want %q", got, expectedLastModified)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	statusResp, err := grpcClient.VolumeNeedleStatus(ctx, &volume_server_pb.VolumeNeedleStatusRequest{
+		VolumeId: volumeID,
+		NeedleId: needleID,
+	})
+	if err != nil {
+		t.Fatalf("VolumeNeedleStatus after multipart upload failed: %v", err)
+	}
+	if got := statusResp.GetTtl(); got != "7d" {
+		t.Fatalf("multipart upload TTL mismatch: got %q want %q", got, "7d")
 	}
 }
 
