@@ -1,6 +1,6 @@
 use std::sync::{Arc, RwLock};
 
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
@@ -162,6 +162,45 @@ fn build_outgoing_http_client(
     }
 
     Ok((builder.build()?, scheme.to_string()))
+}
+
+fn build_grpc_server_tls_config(
+    cert_path: &str,
+    key_path: &str,
+    ca_path: &str,
+) -> Option<tonic::transport::ServerTlsConfig> {
+    if cert_path.is_empty() || key_path.is_empty() || ca_path.is_empty() {
+        return None;
+    }
+
+    let cert = match std::fs::read_to_string(cert_path) {
+        Ok(cert) => cert,
+        Err(e) => {
+            warn!("Failed to read gRPC cert '{}': {}", cert_path, e);
+            return None;
+        }
+    };
+    let key = match std::fs::read_to_string(key_path) {
+        Ok(key) => key,
+        Err(e) => {
+            warn!("Failed to read gRPC key '{}': {}", key_path, e);
+            return None;
+        }
+    };
+    let ca_cert = match std::fs::read_to_string(ca_path) {
+        Ok(ca_cert) => ca_cert,
+        Err(e) => {
+            warn!("Failed to read gRPC CA cert '{}': {}", ca_path, e);
+            return None;
+        }
+    };
+
+    let identity = tonic::transport::Identity::from_pem(cert, key);
+    Some(
+        tonic::transport::ServerTlsConfig::new()
+            .identity(identity)
+            .client_ca_root(tonic::transport::Certificate::from_pem(ca_cert)),
+    )
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -446,28 +485,14 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     let grpc_handle = {
         let grpc_cert_file = config.grpc_cert_file.clone();
         let grpc_key_file = config.grpc_key_file.clone();
+        let grpc_ca_file = config.grpc_ca_file.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
             let addr = grpc_addr.parse().expect("Invalid gRPC address");
-            let use_tls = !grpc_cert_file.is_empty() && !grpc_key_file.is_empty();
-            if use_tls {
+            if let Some(tls_config) =
+                build_grpc_server_tls_config(&grpc_cert_file, &grpc_key_file, &grpc_ca_file)
+            {
                 info!("gRPC server listening on {} (TLS enabled)", addr);
-                let cert = std::fs::read_to_string(&grpc_cert_file).unwrap_or_else(|e| {
-                    panic!("Failed to read gRPC cert '{}': {}", grpc_cert_file, e)
-                });
-                let key = std::fs::read_to_string(&grpc_key_file).unwrap_or_else(|e| {
-                    panic!("Failed to read gRPC key '{}': {}", grpc_key_file, e)
-                });
-                let identity = tonic::transport::Identity::from_pem(cert, key);
-                let mut tls_config = tonic::transport::ServerTlsConfig::new().identity(identity);
-                let grpc_ca_file = config.grpc_ca_file.clone();
-                if !grpc_ca_file.is_empty() {
-                    let ca_cert = std::fs::read_to_string(&grpc_ca_file).unwrap_or_else(|e| {
-                        panic!("Failed to read gRPC CA cert '{}': {}", grpc_ca_file, e)
-                    });
-                    tls_config =
-                        tls_config.client_ca_root(tonic::transport::Certificate::from_pem(ca_cert));
-                }
                 if let Err(e) = tonic::transport::Server::builder()
                     .tls_config(tls_config)
                     .expect("Failed to configure gRPC TLS")
@@ -725,5 +750,43 @@ async fn serve_https<F>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_grpc_server_tls_config;
+
+    fn write_pem(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
+        let path = dir.path().join(name);
+        std::fs::write(&path, body).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn test_grpc_server_tls_requires_ca() {
+        let dir = tempfile::tempdir().unwrap();
+        let cert = write_pem(
+            &dir,
+            "server.crt",
+            "-----BEGIN CERTIFICATE-----\nZmFrZQ==\n-----END CERTIFICATE-----\n",
+        );
+        let key = write_pem(
+            &dir,
+            "server.key",
+            "-----BEGIN PRIVATE KEY-----\nZmFrZQ==\n-----END PRIVATE KEY-----\n",
+        );
+
+        assert!(build_grpc_server_tls_config(&cert, &key, "").is_none());
+    }
+
+    #[test]
+    fn test_grpc_server_tls_returns_none_when_files_are_missing() {
+        assert!(build_grpc_server_tls_config(
+            "/missing/server.crt",
+            "/missing/server.key",
+            "/missing/ca.crt",
+        )
+        .is_none());
     }
 }
