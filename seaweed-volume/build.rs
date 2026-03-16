@@ -7,8 +7,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "proto/volume_server.proto",
                 "proto/master.proto",
                 "proto/remote.proto",
+                "../weed/pb/filer.proto",
             ],
-            &["proto/"],
+            &["proto/", "../weed/pb/"],
         )?;
     Ok(())
 }

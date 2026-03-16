@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio_stream::Stream;
 use tonic::{Request, Response, Status, Streaming};
 
+use crate::pb::filer_pb;
 use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
 use crate::pb::volume_server_pb;
@@ -3180,11 +3181,7 @@ impl VolumeServer for VolumeGrpcService {
         let start = now_ns();
 
         // Route ping based on target type (matches Go's volume_grpc_admin.go Ping)
-        let remote_time_ns = if req.target.is_empty() {
-            // Self-ping: no target specified, just return our own time
-            now_ns()
-        } else if req.target_type == "volumeServer" {
-            // Connect to target volume server and call its Ping RPC
+        let remote_time_ns = if req.target_type == "volumeServer" {
             match ping_volume_server_target(&req.target).await {
                 Ok(t) => t,
                 Err(e) => {
@@ -3206,8 +3203,7 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         } else if req.target_type == "filer" {
-            // Filer ping — we don't have a filer client, just connect and return time
-            match ping_grpc_target(&req.target).await {
+            match ping_filer_target(&req.target).await {
                 Ok(t) => t,
                 Err(e) => {
                     return Err(Status::internal(format!(
@@ -3241,13 +3237,10 @@ async fn ping_volume_server_target(target: &str) -> Result<i64, String> {
     let addr = to_grpc_endpoint(target)?;
     let channel = tonic::transport::Channel::from_shared(addr.clone())
         .map_err(|e| e.to_string())?;
-    let channel = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        channel.connect(),
-    )
-    .await
-    .map_err(|_| "connection timeout".to_string())?
-    .map_err(|e| e.to_string())?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+        .await
+        .map_err(|_| "connection timeout".to_string())?
+        .map_err(|e| e.to_string())?;
 
     let mut client =
         volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
@@ -3266,13 +3259,10 @@ async fn ping_master_target(target: &str) -> Result<i64, String> {
     let addr = to_grpc_endpoint(target)?;
     let channel = tonic::transport::Channel::from_shared(addr.clone())
         .map_err(|e| e.to_string())?;
-    let channel = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        channel.connect(),
-    )
-    .await
-    .map_err(|_| "connection timeout".to_string())?
-    .map_err(|e| e.to_string())?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+        .await
+        .map_err(|_| "connection timeout".to_string())?
+        .map_err(|e| e.to_string())?;
 
     let mut client = master_pb::seaweed_client::SeaweedClient::new(channel);
     let resp = client
@@ -3285,20 +3275,21 @@ async fn ping_master_target(target: &str) -> Result<i64, String> {
     Ok(resp.into_inner().start_time_ns)
 }
 
-/// Ping a remote gRPC target (generic fallback, e.g. filer).
-/// Connects and returns the current time (we don't have the filer proto client).
-async fn ping_grpc_target(target: &str) -> Result<i64, String> {
+/// Ping a remote filer target by calling its Ping RPC (matches Go behavior).
+async fn ping_filer_target(target: &str) -> Result<i64, String> {
     let addr = to_grpc_endpoint(target)?;
-    let channel = tonic::transport::Channel::from_shared(addr)
+    let channel = tonic::transport::Channel::from_shared(addr).map_err(|e| e.to_string())?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+        .await
+        .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
-    match tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect()).await {
-        Ok(Ok(_channel)) => Ok(std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as i64),
-        Ok(Err(e)) => Err(e.to_string()),
-        Err(_) => Err("connection timeout".to_string()),
-    }
+
+    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::new(channel);
+    let resp = client
+        .ping(filer_pb::PingRequest::default())
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(resp.into_inner().start_time_ns)
 }
 
 /// Parse a SeaweedFS server address ("ip:port.grpcPort" or "ip:port") into a gRPC address.

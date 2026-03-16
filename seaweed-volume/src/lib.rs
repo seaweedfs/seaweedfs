@@ -18,4 +18,7 @@ pub mod pb {
     pub mod master_pb {
         tonic::include_proto!("master_pb");
     }
+    pub mod filer_pb {
+        tonic::include_proto!("filer_pb");
+    }
 }

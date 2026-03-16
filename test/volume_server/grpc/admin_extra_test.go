@@ -367,6 +367,17 @@ func TestPingUnknownAndUnreachableTargetPaths(t *testing.T) {
 		t.Fatalf("Ping unknown target type expected stop_time_ns >= start_time_ns")
 	}
 
+	emptyTargetResp, err := grpcClient.Ping(ctx, &volume_server_pb.PingRequest{})
+	if err != nil {
+		t.Fatalf("Ping empty target should not return grpc error, got: %v", err)
+	}
+	if emptyTargetResp.GetRemoteTimeNs() != 0 {
+		t.Fatalf("Ping empty target expected remote_time_ns=0, got %d", emptyTargetResp.GetRemoteTimeNs())
+	}
+	if emptyTargetResp.GetStopTimeNs() < emptyTargetResp.GetStartTimeNs() {
+		t.Fatalf("Ping empty target expected stop_time_ns >= start_time_ns")
+	}
+
 	_, err = grpcClient.Ping(ctx, &volume_server_pb.PingRequest{
 		TargetType: cluster.MasterType,
 		Target:     "127.0.0.1:1",
