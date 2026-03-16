@@ -1024,8 +1024,7 @@ async fn get_or_head_handler_inner(
     // Only set if not already set by response-content-disposition query param
     if !response_headers.contains_key(header::CONTENT_DISPOSITION) && !filename.is_empty() {
         let disposition_type = if let Some(ref dl_val) = query.dl {
-            // Parse dl as bool: "true", "1" -> attachment; anything else -> inline
-            if dl_val == "true" || dl_val == "1" {
+            if parse_go_bool(dl_val).unwrap_or(false) {
                 "attachment"
             } else {
                 "inline"
@@ -1312,6 +1311,14 @@ fn extract_filename_from_path(path: &str) -> String {
         parts[2].to_string()
     } else {
         String::new()
+    }
+}
+
+fn parse_go_bool(value: &str) -> Option<bool> {
+    match value {
+        "1" | "t" | "T" | "TRUE" | "True" | "true" => Some(true),
+        "0" | "f" | "F" | "FALSE" | "False" | "false" => Some(false),
+        _ => None,
     }
 }
 

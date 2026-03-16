@@ -59,6 +59,44 @@ func TestReadPassthroughHeadersAndDownloadDisposition(t *testing.T) {
 	}
 }
 
+func TestDownloadDispositionUsesGoBoolParsing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(97)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fullFileID := framework.NewFileID(volumeID, 661123, 0x55667789)
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fullFileID, []byte("dl-bool-parse-content"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	parts := strings.SplitN(fullFileID, ",", 2)
+	if len(parts) != 2 {
+		t.Fatalf("unexpected file id format: %q", fullFileID)
+	}
+	fidOnly := parts[1]
+
+	url := fmt.Sprintf("%s/%d/%s/%s?dl=t", clusterHarness.VolumeAdminURL(), volumeID, fidOnly, "report.txt")
+	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, url))
+	_ = framework.ReadAllAndClose(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("download read expected 200, got %d", resp.StatusCode)
+	}
+	contentDisposition := resp.Header.Get("Content-Disposition")
+	if !strings.Contains(contentDisposition, "attachment") || !strings.Contains(contentDisposition, "report.txt") {
+		t.Fatalf("download disposition with dl=t mismatch: %q", contentDisposition)
+	}
+}
+
 func TestStaticAssetEndpoints(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
