@@ -122,7 +122,8 @@ pub struct Cli {
     pub metrics_ip: String,
 
     /// Directories to store data files. dir[,dir]...
-    #[arg(long = "dir", default_value = "/tmp")]
+    /// If empty, defaults to the platform temp directory (Go's os.TempDir()).
+    #[arg(long = "dir", default_value = "")]
     pub dir: String,
 
     /// Directory to store .idx files.
@@ -571,8 +572,12 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         .collect();
 
     // Parse folders
-    let folders: Vec<String> = cli
-        .dir
+    let dir_value = if cli.dir.trim().is_empty() {
+        default_volume_dir()
+    } else {
+        cli.dir
+    };
+    let folders: Vec<String> = dir_value
         .split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -778,6 +783,10 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
     }
 }
 
+fn default_volume_dir() -> String {
+    std::env::temp_dir().to_string_lossy().into_owned()
+}
+
 /// Parsed security configuration from security.toml.
 #[derive(Debug, Default)]
 pub struct SecurityConfig {
@@ -813,6 +822,9 @@ const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
 ///
+/// [grpc]
+/// ca = "/path/to/ca.pem"
+///
 /// [grpc.volume]
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
@@ -840,6 +852,7 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         None,
         JwtSigning,
         JwtSigningRead,
+        Grpc,
         HttpsVolume,
         GrpcVolume,
         Guard,
@@ -859,6 +872,10 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         }
         if trimmed == "[jwt.signing]" {
             section = Section::JwtSigning;
+            continue;
+        }
+        if trimmed == "[grpc]" {
+            section = Section::Grpc;
             continue;
         }
         if trimmed == "[https.volume]" {
@@ -896,6 +913,10 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::JwtSigning => match key {
                     "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
                     "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(0),
+                    _ => {}
+                },
+                Section::Grpc => match key {
+                    "ca" => cfg.grpc_ca_file = value.to_string(),
                     _ => {}
                 },
                 Section::HttpsVolume => match key {
@@ -1007,7 +1028,9 @@ fn apply_env_overrides(cfg: &mut SecurityConfig) {
     if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_KEY") {
         cfg.grpc_key_file = v;
     }
-    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
+    if let Ok(v) = std::env::var("WEED_GRPC_CA") {
+        cfg.grpc_ca_file = v;
+    } else if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
         cfg.grpc_ca_file = v;
     }
     if let Ok(v) = std::env::var("WEED_GUARD_WHITE_LIST") {
@@ -1083,6 +1106,7 @@ mod tests {
             "WEED_HTTPS_VOLUME_CA",
             "WEED_GRPC_VOLUME_CERT",
             "WEED_GRPC_VOLUME_KEY",
+            "WEED_GRPC_CA",
             "WEED_GRPC_VOLUME_CA",
             "WEED_GUARD_WHITE_LIST",
             "WEED_ACCESS_UI",
@@ -1229,6 +1253,12 @@ mod tests {
     }
 
     #[test]
+    fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
+        let cfg = resolve_config(Cli::parse_from(["bin"]));
+        assert_eq!(cfg.folders, vec![default_volume_dir()]);
+    }
+
+    #[test]
     fn test_parse_security_config_access_ui() {
         let _guard = process_state_lock();
         let tmp = tempfile::NamedTempFile::new().unwrap();
@@ -1295,6 +1325,31 @@ key = "home-secret"
                     assert_eq!(cfg.jwt_signing_key, b"home-secret");
                 });
             });
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_root_ca() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+ca = "/etc/seaweedfs/grpc-ca.pem"
+
+[grpc.volume]
+cert = "/etc/seaweedfs/volume-cert.pem"
+key = "/etc/seaweedfs/volume-key.pem"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
+            assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
+            assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
         });
     }
 
