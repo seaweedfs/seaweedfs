@@ -515,7 +515,7 @@ impl VolumeServer for VolumeGrpcService {
             collection: vol.collection.clone(),
             replication: vol.super_block.replica_placement.to_string(),
             ttl: vol.super_block.ttl.to_string(),
-            tail_offset: vol.content_size(),
+            tail_offset: vol.dat_file_size().unwrap_or(0),
             compact_revision: vol.super_block.compaction_revision as u32,
             idx_file_size: vol.idx_file_size(),
             version: vol.version().0 as u32,
