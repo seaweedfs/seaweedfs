@@ -210,6 +210,24 @@ func (h *Handler) tableNeedsMaintenance(
 		}
 		return computedPlanningIndex, nil
 	}
+	checkPlanningIndex := func(eligibleFn func(*planningIndex, Config) (bool, bool)) (bool, error) {
+		if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
+			if eligible, ok := eligibleFn(cachedPlanningIndex, config); ok {
+				return eligible, nil
+			}
+		}
+
+		index, err := getPlanningIndex()
+		if err != nil {
+			return false, err
+		}
+		if index == nil {
+			return false, nil
+		}
+
+		eligible, _ := eligibleFn(index, config)
+		return eligible, nil
+	}
 
 	var opEvalErrors []string
 
@@ -219,48 +237,21 @@ func (h *Handler) tableNeedsMaintenance(
 			// Handled by the metadata-only check above.
 			continue
 		case "compact":
-			if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
-				if eligible, ok := cachedPlanningIndex.compactionEligible(config); ok {
-					if eligible {
-						return true, nil
-					}
-					continue
-				}
-			}
-			index, err := getPlanningIndex()
+			eligible, err := checkPlanningIndex((*planningIndex).compactionEligible)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
-				continue
-			}
-			if index == nil {
-				continue
-			}
-			eligible, ok := index.compactionEligible(config)
-			if !ok {
 				continue
 			}
 			if eligible {
 				return true, nil
 			}
 		case "rewrite_manifests":
-			if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
-				if eligible, ok := cachedPlanningIndex.rewriteManifestsEligible(config); ok {
-					if eligible {
-						return true, nil
-					}
-					continue
-				}
-			}
-			index, err := getPlanningIndex()
+			eligible, err := checkPlanningIndex((*planningIndex).rewriteManifestsEligible)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			if index == nil {
-				continue
-			}
-			eligible, ok := index.rewriteManifestsEligible(config)
-			if ok && eligible {
+			if eligible {
 				return true, nil
 			}
 		case "remove_orphans":

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/apache/iceberg-go/table"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"google.golang.org/grpc/codes"
@@ -59,6 +60,7 @@ func parseTableMetadataEnvelope(metadataBytes []byte) (table.Metadata, string, *
 	var index *planningIndex
 	if len(envelope.PlanningIndex) > 0 {
 		if err := json.Unmarshal(envelope.PlanningIndex, &index); err != nil {
+			glog.V(2).Infof("iceberg maintenance: ignoring invalid planning index cache: %v", err)
 			index = nil
 		}
 	}
@@ -206,14 +208,17 @@ func persistPlanningIndex(
 		return fmt.Errorf("marshal updated metadata xattr: %w", err)
 	}
 
-	expectedVersionXattr := resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion]
+	expectedExtended := make(map[string][]byte, 1)
+	if expectedVersionXattr, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion]; ok && len(expectedVersionXattr) > 0 {
+		expectedExtended[s3tables.ExtendedKeyMetadataVersion] = expectedVersionXattr
+	} else {
+		expectedExtended[s3tables.ExtendedKeyMetadata] = existingXattr
+	}
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
 	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
-		Directory: parentDir,
-		Entry:     resp.Entry,
-		ExpectedExtended: map[string][]byte{
-			s3tables.ExtendedKeyMetadataVersion: expectedVersionXattr,
-		},
+		Directory:        parentDir,
+		Entry:            resp.Entry,
+		ExpectedExtended: expectedExtended,
 	})
 	if err != nil {
 		if status.Code(err) == codes.FailedPrecondition {
