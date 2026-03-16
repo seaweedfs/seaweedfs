@@ -140,11 +140,6 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, getOut.Policy)
 
-			// Parse both into generic maps for semantic comparison
-			var submitted, returned map[string]interface{}
-			require.NoError(t, json.Unmarshal(policyJSON, &submitted))
-			require.NoError(t, json.Unmarshal([]byte(*getOut.Policy), &returned))
-
 			// The returned policy must not contain fields that were not submitted.
 			// This is the exact issue from #8657: NotResource:null was being added.
 			returnedJSON := *getOut.Policy
@@ -154,11 +149,7 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 			}
 
 			// Semantic comparison of all submitted fields
-			submittedNorm, err := json.Marshal(submitted)
-			require.NoError(t, err)
-			returnedNorm, err := json.Marshal(returned)
-			require.NoError(t, err)
-			require.JSONEq(t, string(submittedNorm), string(returnedNorm),
+			require.JSONEq(t, string(policyJSON), returnedJSON,
 				"GET should return semantically identical policy to what was PUT")
 		})
 	}
