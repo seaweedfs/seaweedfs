@@ -160,6 +160,18 @@ func normalizeDetectionConfig(config Config) Config {
 	if normalized.MinInputFiles < 2 {
 		normalized.MinInputFiles = defaultMinInputFiles
 	}
+	if normalized.DeleteTargetFileSizeBytes <= 0 {
+		normalized.DeleteTargetFileSizeBytes = defaultDeleteTargetFileSizeMB * 1024 * 1024
+	}
+	if normalized.DeleteMinInputFiles < 2 {
+		normalized.DeleteMinInputFiles = defaultDeleteMinInputFiles
+	}
+	if normalized.DeleteMaxFileGroupSizeBytes <= 0 {
+		normalized.DeleteMaxFileGroupSizeBytes = defaultDeleteMaxGroupSizeMB * 1024 * 1024
+	}
+	if normalized.DeleteMaxOutputFiles <= 0 {
+		normalized.DeleteMaxOutputFiles = defaultDeleteMaxOutputFiles
+	}
 	if normalized.MinManifestsToRewrite < minManifestsToRewrite {
 		normalized.MinManifestsToRewrite = minManifestsToRewrite
 	}
@@ -262,6 +274,20 @@ func (h *Handler) tableNeedsMaintenance(
 					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 					planningIndexErrorReported = true
 				}
+				continue
+			}
+			if eligible {
+				return true, nil
+			}
+		case "rewrite_position_delete_files":
+			manifests, err := getCurrentManifests()
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config)
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
 			if eligible {

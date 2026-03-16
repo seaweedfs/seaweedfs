@@ -42,15 +42,17 @@ func TestParseOperations(t *testing.T) {
 		expected []string
 		wantErr  bool
 	}{
-		{"all", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
-		{"", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"all", []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"", []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots", []string{"expire_snapshots"}, false},
 		{"compact", []string{"compact"}, false},
+		{"rewrite_position_delete_files", []string{"rewrite_position_delete_files"}, false},
 		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}, false},
 		{"compact,expire_snapshots", []string{"compact", "expire_snapshots"}, false},
 		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"compact,expire_snapshots,remove_orphans,rewrite_manifests", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"compact,rewrite_position_delete_files,rewrite_manifests", []string{"compact", "rewrite_position_delete_files", "rewrite_manifests"}, false},
 		{"unknown_op", nil, true},
 		{"expire_snapshots,bad_op", nil, true},
 	}
