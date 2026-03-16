@@ -153,32 +153,7 @@ func (h *Handler) scanTablesForMaintenance(
 }
 
 func normalizeDetectionConfig(config Config) Config {
-	normalized := config
-	if normalized.TargetFileSizeBytes <= 0 {
-		normalized.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
-	}
-	if normalized.MinInputFiles < 2 {
-		normalized.MinInputFiles = defaultMinInputFiles
-	}
-	if normalized.DeleteTargetFileSizeBytes <= 0 {
-		normalized.DeleteTargetFileSizeBytes = defaultDeleteTargetFileSizeMB * 1024 * 1024
-	}
-	if normalized.DeleteMinInputFiles < 2 {
-		normalized.DeleteMinInputFiles = defaultDeleteMinInputFiles
-	}
-	if normalized.DeleteMaxFileGroupSizeBytes <= 0 {
-		normalized.DeleteMaxFileGroupSizeBytes = defaultDeleteMaxGroupSizeMB * 1024 * 1024
-	}
-	if normalized.DeleteMaxOutputFiles <= 0 {
-		normalized.DeleteMaxOutputFiles = defaultDeleteMaxOutputFiles
-	}
-	if normalized.MinManifestsToRewrite < minManifestsToRewrite {
-		normalized.MinManifestsToRewrite = minManifestsToRewrite
-	}
-	if normalized.OrphanOlderThanHours <= 0 {
-		normalized.OrphanOlderThanHours = defaultOrphanOlderThanHours
-	}
-	return normalized
+	return applyThresholdDefaults(config)
 }
 
 func (h *Handler) tableNeedsMaintenance(

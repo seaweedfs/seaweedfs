@@ -27,78 +27,92 @@ const (
 	defaultOperations             = "all"
 
 	// Metric keys returned by maintenance operations.
-	MetricFilesMerged        = "files_merged"
-	MetricFilesWritten       = "files_written"
-	MetricBins               = "bins"
-	MetricSnapshotsExpired   = "snapshots_expired"
-	MetricFilesDeleted       = "files_deleted"
-	MetricOrphansRemoved     = "orphans_removed"
-	MetricManifestsRewritten = "manifests_rewritten"
+	MetricFilesMerged          = "files_merged"
+	MetricFilesWritten         = "files_written"
+	MetricBins                 = "bins"
+	MetricSnapshotsExpired     = "snapshots_expired"
+	MetricFilesDeleted         = "files_deleted"
+	MetricOrphansRemoved       = "orphans_removed"
+	MetricManifestsRewritten   = "manifests_rewritten"
 	MetricDeleteFilesRewritten = "delete_files_rewritten"
 	MetricDeleteFilesWritten   = "delete_files_written"
 	MetricDeleteBytesRewritten = "delete_bytes_rewritten"
 	MetricDeleteGroupsPlanned  = "delete_groups_planned"
 	MetricDeleteGroupsSkipped  = "delete_groups_skipped"
-	MetricEntriesTotal       = "entries_total"
-	MetricDurationMs         = "duration_ms"
+	MetricEntriesTotal         = "entries_total"
+	MetricDurationMs           = "duration_ms"
 )
 
 // Config holds parsed worker config values.
 type Config struct {
-	SnapshotRetentionHours int64
-	MaxSnapshotsToKeep     int64
-	OrphanOlderThanHours   int64
-	MaxCommitRetries       int64
-	TargetFileSizeBytes    int64
-	MinInputFiles          int64
+	SnapshotRetentionHours      int64
+	MaxSnapshotsToKeep          int64
+	OrphanOlderThanHours        int64
+	MaxCommitRetries            int64
+	TargetFileSizeBytes         int64
+	MinInputFiles               int64
 	DeleteTargetFileSizeBytes   int64
 	DeleteMinInputFiles         int64
 	DeleteMaxFileGroupSizeBytes int64
 	DeleteMaxOutputFiles        int64
-	MinManifestsToRewrite  int64
-	Operations             string
-	ApplyDeletes           bool
-	Where                  string
-	RewriteStrategy        string
-	SortFields             string
-	SortMaxInputBytes      int64
+	MinManifestsToRewrite       int64
+	Operations                  string
+	ApplyDeletes                bool
+	Where                       string
+	RewriteStrategy             string
+	SortFields                  string
+	SortMaxInputBytes           int64
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
 // Values are clamped to safe minimums to prevent misconfiguration.
 func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		SnapshotRetentionHours: readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
-		MaxSnapshotsToKeep:     readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
-		OrphanOlderThanHours:   readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
-		MaxCommitRetries:       readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
-		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
-		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
+		SnapshotRetentionHours:      readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
+		MaxSnapshotsToKeep:          readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
+		OrphanOlderThanHours:        readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
+		MaxCommitRetries:            readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
+		TargetFileSizeBytes:         readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
+		MinInputFiles:               readInt64Config(values, "min_input_files", defaultMinInputFiles),
 		DeleteTargetFileSizeBytes:   readInt64Config(values, "delete_target_file_size_mb", defaultDeleteTargetFileSizeMB) * 1024 * 1024,
 		DeleteMinInputFiles:         readInt64Config(values, "delete_min_input_files", defaultDeleteMinInputFiles),
 		DeleteMaxFileGroupSizeBytes: readInt64Config(values, "delete_max_file_group_size_mb", defaultDeleteMaxGroupSizeMB) * 1024 * 1024,
 		DeleteMaxOutputFiles:        readInt64Config(values, "delete_max_output_files", defaultDeleteMaxOutputFiles),
-		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
-		Operations:             readStringConfig(values, "operations", defaultOperations),
-		ApplyDeletes:           readBoolConfig(values, "apply_deletes", true),
-		Where:                  strings.TrimSpace(readStringConfig(values, "where", "")),
-		RewriteStrategy:        strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", "binpack"))),
-		SortFields:             strings.TrimSpace(readStringConfig(values, "sort_fields", "")),
-		SortMaxInputBytes:      readInt64Config(values, "sort_max_input_mb", 0) * 1024 * 1024,
+		MinManifestsToRewrite:       readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
+		Operations:                  readStringConfig(values, "operations", defaultOperations),
+		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
+		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
+		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", "binpack"))),
+		SortFields:                  strings.TrimSpace(readStringConfig(values, "sort_fields", "")),
+		SortMaxInputBytes:           readInt64Config(values, "sort_max_input_mb", 0) * 1024 * 1024,
 	}
 
-	// Clamp to safe minimums using the default constants
+	// Clamp the fields that are always defaulted by worker config parsing.
 	if cfg.SnapshotRetentionHours <= 0 {
 		cfg.SnapshotRetentionHours = defaultSnapshotRetentionHours
 	}
 	if cfg.MaxSnapshotsToKeep <= 0 {
 		cfg.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
 	}
-	if cfg.OrphanOlderThanHours <= 0 {
-		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
-	}
 	if cfg.MaxCommitRetries <= 0 {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
+	}
+	cfg = applyThresholdDefaults(cfg)
+	if cfg.RewriteStrategy == "" {
+		cfg.RewriteStrategy = "binpack"
+	}
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+		cfg.RewriteStrategy = "binpack"
+	}
+	if cfg.SortMaxInputBytes < 0 {
+		cfg.SortMaxInputBytes = 0
+	}
+	return cfg
+}
+
+func applyThresholdDefaults(cfg Config) Config {
+	if cfg.OrphanOlderThanHours <= 0 {
+		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
 		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
@@ -121,16 +135,6 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
 		cfg.MinManifestsToRewrite = minManifestsToRewrite
 	}
-	if cfg.RewriteStrategy == "" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.SortMaxInputBytes < 0 {
-		cfg.SortMaxInputBytes = 0
-	}
-
 	return cfg
 }
 

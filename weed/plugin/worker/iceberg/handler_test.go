@@ -850,6 +850,29 @@ func TestParseConfigApplyDeletes(t *testing.T) {
 	}
 }
 
+func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
+	config := normalizeDetectionConfig(Config{})
+
+	if config.TargetFileSizeBytes != defaultTargetFileSizeMB*1024*1024 {
+		t.Fatalf("expected TargetFileSizeBytes default, got %d", config.TargetFileSizeBytes)
+	}
+	if config.DeleteTargetFileSizeBytes != defaultDeleteTargetFileSizeMB*1024*1024 {
+		t.Fatalf("expected DeleteTargetFileSizeBytes default, got %d", config.DeleteTargetFileSizeBytes)
+	}
+	if config.DeleteMinInputFiles != defaultDeleteMinInputFiles {
+		t.Fatalf("expected DeleteMinInputFiles default, got %d", config.DeleteMinInputFiles)
+	}
+	if config.DeleteMaxFileGroupSizeBytes != defaultDeleteMaxGroupSizeMB*1024*1024 {
+		t.Fatalf("expected DeleteMaxFileGroupSizeBytes default, got %d", config.DeleteMaxFileGroupSizeBytes)
+	}
+	if config.DeleteMaxOutputFiles != defaultDeleteMaxOutputFiles {
+		t.Fatalf("expected DeleteMaxOutputFiles default, got %d", config.DeleteMaxOutputFiles)
+	}
+	if config.OrphanOlderThanHours != defaultOrphanOlderThanHours {
+		t.Fatalf("expected OrphanOlderThanHours default, got %d", config.OrphanOlderThanHours)
+	}
+}
+
 func TestCollectPositionDeletes(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
