@@ -22,6 +22,13 @@ use seaweed_volume::storage::types::DiskType;
 
 use tokio_rustls::TlsAcceptor;
 
+const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
+const GRPC_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+const GRPC_KEEPALIVE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
+const GRPC_MAX_HEADER_LIST_SIZE: u32 = 8 * 1024 * 1024;
+const GRPC_MAX_CONCURRENT_STREAMS: u32 = 1000;
+
 fn main() {
     // Initialize tracing
     tracing_subscriber::fmt()
@@ -203,6 +210,24 @@ fn build_http_server_tls_acceptor(
     };
 
     Ok(Some(TlsAcceptor::from(Arc::new(tls_config))))
+}
+
+fn build_grpc_server_builder() -> tonic::transport::Server {
+    tonic::transport::Server::builder()
+        .http2_keepalive_interval(Some(GRPC_KEEPALIVE_INTERVAL))
+        .http2_keepalive_timeout(Some(GRPC_KEEPALIVE_TIMEOUT))
+        .max_concurrent_streams(Some(GRPC_MAX_CONCURRENT_STREAMS))
+        .initial_stream_window_size(Some(GRPC_INITIAL_WINDOW_SIZE))
+        .initial_connection_window_size(Some(GRPC_INITIAL_WINDOW_SIZE))
+        .http2_max_header_list_size(Some(GRPC_MAX_HEADER_LIST_SIZE))
+}
+
+fn build_volume_grpc_service(
+    grpc_service: VolumeGrpcService,
+) -> VolumeServerServer<VolumeGrpcService> {
+    VolumeServerServer::new(grpc_service)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE)
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -507,10 +532,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     .build_v1alpha()
                     .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {} (TLS enabled)", addr);
-                if let Err(e) = tonic::transport::Server::builder()
+                if let Err(e) = build_grpc_server_builder()
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
-                    .add_service(VolumeServerServer::new(grpc_service))
+                    .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
                     })
@@ -528,10 +553,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     .build_v1alpha()
                     .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {}", addr);
-                if let Err(e) = tonic::transport::Server::builder()
+                if let Err(e) = build_grpc_server_builder()
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
-                    .add_service(VolumeServerServer::new(grpc_service))
+                    .add_service(build_volume_grpc_service(grpc_service))
                     .serve_with_shutdown(addr, async move {
                         let _ = shutdown_rx.recv().await;
                     })
