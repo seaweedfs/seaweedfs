@@ -13,6 +13,7 @@ use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
+use seaweed_volume::server::profiling::CpuProfileSession;
 use seaweed_volume::server::volume_server::{
     build_metrics_router, RuntimeMetricsConfig, VolumeServerState,
 };
@@ -39,6 +40,13 @@ fn main() {
         .init();
 
     let config = config::parse_cli();
+    let cpu_profile = match CpuProfileSession::start(&config) {
+        Ok(session) => session,
+        Err(e) => {
+            error!("{}", e);
+            std::process::exit(1);
+        }
+    };
     info!(
         "SeaweedFS Volume Server (Rust) v{}",
         seaweed_volume::version::full_version()
@@ -53,7 +61,7 @@ fn main() {
         .build()
         .expect("Failed to build tokio runtime");
 
-    if let Err(e) = rt.block_on(run(config)) {
+    if let Err(e) = rt.block_on(run(config, cpu_profile)) {
         error!("Volume server failed: {}", e);
         std::process::exit(1);
     }
@@ -245,7 +253,10 @@ where
     Box::pin(stream)
 }
 
-async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
+async fn run(
+    config: VolumeServerConfig,
+    cpu_profile: Option<CpuProfileSession>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the store
     let mut store = Store::new(config.index_type);
     store.id = config.id.clone();
@@ -712,6 +723,10 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     }
     if let Some(h) = metrics_push_handle {
         let _ = h.await;
+    }
+
+    if let Some(cpu_profile) = cpu_profile {
+        cpu_profile.finish().map_err(std::io::Error::other)?;
     }
 
     info!("Volume server stopped.");

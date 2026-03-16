@@ -138,6 +138,8 @@ mod tests {
             white_list: vec![],
             fix_jpg_orientation: false,
             read_mode: ReadMode::Local,
+            cpu_profile: String::new(),
+            mem_profile: String::new(),
             compaction_byte_per_second: 0,
             maintenance_byte_per_second: 0,
             file_size_limit_bytes: 0,
