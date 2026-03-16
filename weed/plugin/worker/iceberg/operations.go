@@ -168,9 +168,9 @@ func (h *Handler) expireSnapshots(
 
 func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) ([]int64, []string, error) {
 	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
-	minSnapshotsToKeep := int(config.MaxSnapshotsToKeep)
-	if minSnapshotsToKeep < 1 {
-		minSnapshotsToKeep = 1
+	minSnapshotsToKeep, err := snapshotMinKeep(config.MaxSnapshotsToKeep)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	snapsToKeep := make(map[int64]struct{})
@@ -208,7 +208,7 @@ func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) (
 			refMinSnapshotsToKeep = *ref.MinSnapshotsToKeep
 		}
 
-		numSnapshots := 0
+		ancestorCount := 0
 		snapshotID := ref.SnapshotID
 		for {
 			snap = meta.SnapshotByID(snapshotID)
@@ -217,7 +217,7 @@ func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) (
 			}
 
 			snapshotAgeMs := nowMs - snap.TimestampMs
-			if snapshotAgeMs > maxSnapshotAgeMs && numSnapshots >= refMinSnapshotsToKeep {
+			if snapshotAgeMs > maxSnapshotAgeMs && ancestorCount >= refMinSnapshotsToKeep {
 				break
 			}
 
@@ -227,7 +227,7 @@ func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) (
 			}
 
 			snapshotID = *snap.ParentSnapshotID
-			numSnapshots++
+			ancestorCount++
 		}
 	}
 
@@ -245,6 +245,17 @@ func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) (
 	}
 
 	return toExpire, refsToRemove, nil
+}
+
+func snapshotMinKeep(maxSnapshotsToKeep int64) (int, error) {
+	if maxSnapshotsToKeep < 1 {
+		return 1, nil
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if maxSnapshotsToKeep > maxInt {
+		return 0, fmt.Errorf("max snapshots to keep %d exceeds platform int size", maxSnapshotsToKeep)
+	}
+	return int(maxSnapshotsToKeep), nil
 }
 
 func snapshotIDSet(snapshots []table.Snapshot) map[int64]struct{} {
