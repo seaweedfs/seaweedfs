@@ -243,9 +243,10 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	}
 
 	// Build internal metadata xattr
+	const metadataVersion = 1
 	internalMeta := map[string]interface{}{
-		"metadataVersion":  1,
-		"metadataLocation": path.Join("metadata", fmt.Sprintf("v%d.metadata.json", meta.Version())),
+		"metadataVersion":  metadataVersion,
+		"metadataLocation": path.Join("metadata", fmt.Sprintf("v%d.metadata.json", metadataVersion)),
 		"metadata": map[string]interface{}{
 			"fullMetadata": json.RawMessage(fullMetadataJSON),
 		},
