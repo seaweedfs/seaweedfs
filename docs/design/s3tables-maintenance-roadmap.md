@@ -14,7 +14,7 @@ This document captures the comparison against common open source table-maintenan
 
 Reference docs used for comparison:
 
-- [Apache Iceberg Spark procedures](https://iceberg.apache.org/docs/1.10.0/spark-procedures/)
+- [Apache Iceberg Spark procedures](https://iceberg.apache.org/docs/latest/spark-procedures/)
 - [Apache Iceberg Flink table maintenance](https://iceberg.apache.org/docs/nightly/flink-maintenance/)
 - [Delta Lake optimizations](https://docs.delta.io/latest/optimizations-oss.html)
 - [Delta Lake utility commands](https://docs.delta.io/latest/delta-utility.html)
