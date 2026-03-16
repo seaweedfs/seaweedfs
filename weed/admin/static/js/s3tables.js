@@ -2,6 +2,11 @@
  * Shared S3 Tables functionality for the SeaweedFS Admin Dashboard.
  */
 
+// URL prefix helper for subdirectory deployment
+function s3tBasePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
 // Shared Modals
 let s3tablesBucketDeleteModal = null;
 let s3tablesBucketPolicyModal = null;
@@ -31,7 +36,7 @@ function initS3TablesBuckets() {
         document.getElementById('createS3TablesBucketModal').addEventListener('show.bs.modal', async function () {
             if (ownerSelect.options.length <= 1) {
                 try {
-                    const response = await fetch('/api/users');
+                    const response = await fetch(s3tBasePath('/api/users'));
                     const data = await response.json();
                     const users = data.users || [];
                     users.forEach(user => {
@@ -97,7 +102,7 @@ function initS3TablesBuckets() {
             const payload = { name: name, tags: tags, owner: owner };
 
             try {
-                const response = await fetch('/api/s3tables/buckets', {
+                const response = await fetch(s3tBasePath('/api/s3tables/buckets'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -126,7 +131,7 @@ function initS3TablesBuckets() {
                 return;
             }
             try {
-                const response = await fetch('/api/s3tables/bucket-policy', {
+                const response = await fetch(s3tBasePath('/api/s3tables/bucket-policy'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ bucket_arn: bucketArn, policy: policy })
@@ -232,7 +237,7 @@ function initS3TablesTables() {
                 payload.metadata = metadata;
             }
             try {
-                const response = await fetch('/api/s3tables/tables', {
+                const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
@@ -260,7 +265,7 @@ function initS3TablesTables() {
                 return;
             }
             try {
-                const response = await fetch('/api/s3tables/table-policy', {
+                const response = await fetch(s3tBasePath('/api/s3tables/table-policy'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ bucket_arn: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value, policy: policy })
@@ -330,7 +335,7 @@ function initIcebergNamespaces() {
                 if (csrfToken) {
                     headers['X-CSRF-Token'] = csrfToken;
                 }
-                const response = await fetch('/api/s3tables/namespaces', {
+                const response = await fetch(s3tBasePath('/api/s3tables/namespaces'), {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify({ bucket_arn: bucketArn, name: name })
@@ -379,7 +384,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
     }
     try {
         const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace });
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`));
         const data = await response.json();
         if (!response.ok) {
             node.textContent = data.error || 'Failed to load tables';
@@ -400,7 +405,7 @@ async function loadIcebergNamespaceTables(node, bucketArn, catalogName) {
             item.className = 'list-group-item py-1';
             const link = document.createElement('a');
             link.className = 'text-decoration-none';
-            link.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`;
+            link.href = s3tBasePath(`/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables/${encodeURIComponent(table.name)}`);
             const icon = document.createElement('i');
             icon.className = 'fas fa-table text-primary me-2';
             link.appendChild(icon);
@@ -476,7 +481,7 @@ function initIcebergTables() {
                 if (csrfToken) {
                     headers['X-CSRF-Token'] = csrfToken;
                 }
-                const response = await fetch('/api/s3tables/tables', {
+                const response = await fetch(s3tBasePath('/api/s3tables/tables'), {
                     method: 'POST',
                     headers: headers,
                     body: JSON.stringify(payload)
@@ -525,7 +530,7 @@ async function deleteS3TablesBucket() {
     const bucketArn = document.getElementById('deleteS3TablesBucketModal').dataset.bucketArn;
     if (!bucketArn) return;
     try {
-        const response = await fetch(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/buckets?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE' });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete bucket');
@@ -542,7 +547,7 @@ async function loadS3TablesBucketPolicy(bucketArn) {
     document.getElementById('s3tablesBucketPolicyText').value = '';
     if (!bucketArn) return;
     try {
-        const response = await fetch(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`));
         const data = await response.json();
         if (response.ok && data.policy) {
             document.getElementById('s3tablesBucketPolicyText').value = data.policy;
@@ -556,7 +561,7 @@ async function deleteS3TablesBucketPolicy() {
     const bucketArn = document.getElementById('s3tablesBucketPolicyArn').value;
     if (!bucketArn) return;
     try {
-        const response = await fetch(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/bucket-policy?bucket=${encodeURIComponent(bucketArn)}`), { method: 'DELETE' });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete policy');
@@ -585,7 +590,7 @@ async function deleteS3TablesTable() {
         query.set('version', versionToken);
     }
     try {
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), { method: 'DELETE' });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete table');
@@ -621,7 +626,7 @@ async function deleteIcebergTable() {
         if (csrfToken) {
             requestOptions.headers = { 'X-CSRF-Token': csrfToken };
         }
-        const response = await fetch(`/api/s3tables/tables?${query.toString()}`, requestOptions);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tables?${query.toString()}`), requestOptions);
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to drop table');
@@ -630,7 +635,7 @@ async function deleteIcebergTable() {
         alert('Table dropped');
         const isDetailsPage = window.location.pathname.includes('/tables/') && window.location.pathname.includes('/namespaces/');
         if (isDetailsPage && catalogName && namespace) {
-            window.location.href = `/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`;
+            window.location.href = s3tBasePath(`/object-store/s3tables/buckets/${encodeURIComponent(catalogName)}/namespaces/${encodeURIComponent(namespace)}/tables`);
         } else {
             location.reload();
         }
@@ -644,7 +649,7 @@ async function loadS3TablesTablePolicy(bucketArn, namespace, name) {
     if (!bucketArn || !namespace || !name) return;
     const query = new URLSearchParams({ bucket: bucketArn, namespace: namespace, name: name });
     try {
-        const response = await fetch(`/api/s3tables/table-policy?${query.toString()}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`));
         const data = await response.json();
         if (response.ok && data.policy) {
             document.getElementById('s3tablesTablePolicyText').value = data.policy;
@@ -660,7 +665,7 @@ async function deleteS3TablesTablePolicy() {
     const dataNamespace = dataContainer.dataset.namespace || '';
     const query = new URLSearchParams({ bucket: dataBucketArn, namespace: dataNamespace, name: document.getElementById('s3tablesTablePolicyName').value });
     try {
-        const response = await fetch(`/api/s3tables/table-policy?${query.toString()}`, { method: 'DELETE' });
+        const response = await fetch(s3tBasePath(`/api/s3tables/table-policy?${query.toString()}`), { method: 'DELETE' });
         const data = await response.json();
         if (!response.ok) {
             alert(data.error || 'Failed to delete policy');
@@ -851,7 +856,7 @@ async function openS3TablesTags(resourceArn) {
     document.getElementById('s3tablesTagsList').textContent = 'Loading...';
     s3tablesTagsModal.show();
     try {
-        const response = await fetch(`/api/s3tables/tags?arn=${encodeURIComponent(resourceArn)}`);
+        const response = await fetch(s3tBasePath(`/api/s3tables/tags?arn=${encodeURIComponent(resourceArn)}`));
         const data = await response.json();
         if (response.ok) {
             document.getElementById('s3tablesTagsList').textContent = JSON.stringify(data.tags || {}, null, 2);
@@ -865,7 +870,7 @@ async function openS3TablesTags(resourceArn) {
 
 async function updateS3TablesTags(resourceArn, tags) {
     try {
-        const response = await fetch('/api/s3tables/tags', {
+        const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ resource_arn: resourceArn, tags: tags })
@@ -892,7 +897,7 @@ async function deleteS3TablesTags() {
         return;
     }
     try {
-        const response = await fetch('/api/s3tables/tags', {
+        const response = await fetch(s3tBasePath('/api/s3tables/tags'), {
             method: 'DELETE',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ resource_arn: resourceArn, tag_keys: tagKeys })

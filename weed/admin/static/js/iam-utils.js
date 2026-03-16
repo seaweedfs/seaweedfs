@@ -2,12 +2,17 @@
  * Shared IAM utility functions for the SeaweedFS Admin Dashboard.
  */
 
+// URL prefix helper for subdirectory deployment
+function iamBasePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
 // Delete user function
 async function deleteUser(username) {
     showDeleteConfirm(username, async function () {
         try {
             const encodedUsername = encodeURIComponent(username);
-            const response = await fetch(`/api/users/${encodedUsername}`, {
+            const response = await fetch(iamBasePath(`/api/users/${encodedUsername}`), {
                 method: 'DELETE'
             });
 
@@ -30,7 +35,7 @@ async function deleteGroup(name) {
     showDeleteConfirm(name, async function () {
         try {
             const encodedName = encodeURIComponent(name);
-            const response = await fetch(`/api/groups/${encodedName}`, {
+            const response = await fetch(iamBasePath(`/api/groups/${encodedName}`), {
                 method: 'DELETE'
             });
 
@@ -54,7 +59,7 @@ async function deleteAccessKey(username, accessKey) {
         try {
             const encodedUsername = encodeURIComponent(username);
             const encodedAccessKey = encodeURIComponent(accessKey);
-            const response = await fetch(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`, {
+            const response = await fetch(iamBasePath(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`), {
                 method: 'DELETE'
             });
 
