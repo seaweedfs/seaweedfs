@@ -9,11 +9,12 @@
 //!
 //! Matches Go's server/volume_server.go.
 
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU32, Ordering};
 use std::sync::{Arc, RwLock};
 
 use axum::{
-    extract::{Request, State},
+    extract::{connect_info::ConnectInfo, Request, State},
     http::{header, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -127,15 +128,47 @@ pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<Str
     Ok(format!("{}://{}", scheme, raw_target))
 }
 
+fn request_remote_addr(request: &Request) -> Option<SocketAddr> {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|info| info.0)
+}
+
+fn request_is_whitelisted(state: &VolumeServerState, request: &Request) -> bool {
+    request_remote_addr(request)
+        .map(|remote_addr| {
+            state
+                .guard
+                .read()
+                .unwrap()
+                .check_whitelist(&remote_addr.to_string())
+        })
+        .unwrap_or(true)
+}
+
+async fn whitelist_guard_middleware(
+    State(state): State<Arc<VolumeServerState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    if !request_is_whitelisted(&state, &request) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    next.run(request).await
+}
+
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.
 async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let origin = request.headers().get("origin").cloned();
     let request_id = super::request_id::generate_http_request_id();
 
-    let mut response = super::request_id::scope_request_id(request_id.clone(), async move {
-        next.run(request).await
-    })
-    .await;
+    let mut response =
+        super::request_id::scope_request_id(
+            request_id.clone(),
+            async move { next.run(request).await },
+        )
+        .await;
 
     let headers = response.headers_mut();
     if let Ok(val) = HeaderValue::from_str(crate::version::server_header()) {
@@ -175,7 +208,10 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
     crate::metrics::INFLIGHT_REQUESTS_GAUGE
         .with_label_values(&[&method_str])
         .inc();
+    let whitelist_rejected = matches!(method, Method::POST | Method::PUT | Method::DELETE)
+        && !request_is_whitelisted(&state, &request);
     let response = match method.clone() {
+        _ if whitelist_rejected => StatusCode::UNAUTHORIZED.into_response(),
         Method::GET | Method::HEAD => {
             super::server_stats::record_read_request();
             handlers::get_or_head_handler_from_request(state, request).await
@@ -330,11 +366,18 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/:vid/:fid/:filename", any(admin_store_handler))
         .fallback(admin_store_handler);
     if ui_enabled {
-        router = router
-            .route("/ui/index.html", get(handlers::ui_handler))
+        let whitelist_state = state.clone();
+        let stats_router = Router::new()
             .route("/stats/disk", get(handlers::stats_disk_handler))
             .route("/stats/counter", get(handlers::stats_counter_handler))
-            .route("/stats/memory", get(handlers::stats_memory_handler));
+            .route("/stats/memory", get(handlers::stats_memory_handler))
+            .route_layer(middleware::from_fn_with_state(
+                whitelist_state,
+                whitelist_guard_middleware,
+            ));
+        router = router
+            .route("/ui/index.html", get(handlers::ui_handler))
+            .merge(stats_router);
     }
     router
         .layer(middleware::from_fn(common_headers_middleware))

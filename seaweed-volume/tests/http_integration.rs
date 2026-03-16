@@ -6,6 +6,7 @@
 use std::sync::{Arc, RwLock};
 
 use axum::body::Body;
+use axum::extract::connect_info::ConnectInfo;
 use axum::http::{Request, StatusCode};
 use tower::ServiceExt; // for `oneshot`
 
@@ -23,10 +24,21 @@ use tempfile::TempDir;
 /// Create a test VolumeServerState with a temp directory, a single disk
 /// location, and one pre-created volume (VolumeId 1).
 fn test_state() -> (Arc<VolumeServerState>, TempDir) {
-    test_state_with_signing_key(Vec::new())
+    test_state_with_guard(Vec::new(), Vec::new())
 }
 
 fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>, TempDir) {
+    test_state_with_guard(Vec::new(), signing_key)
+}
+
+fn test_state_with_whitelist(whitelist: Vec<String>) -> (Arc<VolumeServerState>, TempDir) {
+    test_state_with_guard(whitelist, Vec::new())
+}
+
+fn test_state_with_guard(
+    whitelist: Vec<String>,
+    signing_key: Vec<u8>,
+) -> (Arc<VolumeServerState>, TempDir) {
     let tmp = TempDir::new().expect("failed to create temp dir");
     let dir = tmp.path().to_str().unwrap();
 
@@ -53,7 +65,13 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         )
         .expect("failed to create volume");
 
-    let guard = Guard::new(&[], SigningKey(signing_key), 0, SigningKey(vec![]), 0);
+    let guard = Guard::new(
+        &whitelist,
+        SigningKey(signing_key),
+        0,
+        SigningKey(vec![]),
+        0,
+    );
     let state = Arc::new(VolumeServerState {
         store: RwLock::new(store),
         guard: RwLock::new(guard),
@@ -107,6 +125,15 @@ async fn body_bytes(response: axum::response::Response) -> Vec<u8> {
         .await
         .expect("failed to read body")
         .to_vec()
+}
+
+fn with_remote_addr(request: Request<Body>, remote_addr: &str) -> Request<Body> {
+    let mut request = request;
+    let remote_addr = remote_addr
+        .parse::<std::net::SocketAddr>()
+        .expect("invalid socket address");
+    request.extensions_mut().insert(ConnectInfo(remote_addr));
+    request
 }
 
 // ============================================================================
@@ -220,6 +247,84 @@ async fn metrics_router_serves_metrics() {
                 .body(Body::empty())
                 .unwrap(),
         )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn admin_router_rejects_non_whitelisted_uploads() {
+    let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(with_remote_addr(
+            Request::builder()
+                .method("POST")
+                .uri("/1,000000000000000001")
+                .body(Body::from("blocked"))
+                .unwrap(),
+            "10.0.0.9:12345",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_router_rejects_non_whitelisted_deletes() {
+    let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(with_remote_addr(
+            Request::builder()
+                .method("DELETE")
+                .uri("/1,000000000000000001")
+                .body(Body::empty())
+                .unwrap(),
+            "10.0.0.9:12345",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_router_rejects_non_whitelisted_stats_routes() {
+    let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
+    let app = build_admin_router_with_ui(state, true);
+
+    let response = app
+        .oneshot(with_remote_addr(
+            Request::builder()
+                .uri("/stats/counter")
+                .body(Body::empty())
+                .unwrap(),
+            "10.0.0.9:12345",
+        ))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn admin_router_allows_whitelisted_stats_routes() {
+    let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
+    let app = build_admin_router_with_ui(state, true);
+
+    let response = app
+        .oneshot(with_remote_addr(
+            Request::builder()
+                .uri("/stats/counter")
+                .body(Body::empty())
+                .unwrap(),
+            "127.0.0.1:12345",
+        ))
         .await
         .unwrap();
 

@@ -812,7 +812,7 @@ async fn serve_http<F>(
     use hyper_util::service::TowerToHyperService;
     use tower::Service;
 
-    let mut make_svc = app.into_make_service();
+    let mut make_svc = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
 
     tokio::pin!(shutdown_signal);
 
@@ -858,7 +858,7 @@ async fn serve_https<F>(
     use hyper_util::service::TowerToHyperService;
     use tower::Service;
 
-    let mut make_svc = app.into_make_service();
+    let mut make_svc = app.into_make_service_with_connect_info::<std::net::SocketAddr>();
 
     tokio::pin!(shutdown_signal);
 
