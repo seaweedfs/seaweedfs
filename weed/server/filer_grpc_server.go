@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -17,6 +18,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (fs *FilerServer) LookupDirectoryEntry(ctx context.Context, req *filer_pb.LookupDirectoryEntryRequest) (*filer_pb.LookupDirectoryEntryResponse, error) {
@@ -202,6 +205,9 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	if err != nil {
 		return &filer_pb.UpdateEntryResponse{}, fmt.Errorf("not found %s: %v", fullpath, err)
 	}
+	if err := validateUpdateEntryPreconditions(entry, req.ExpectedExtended); err != nil {
+		return &filer_pb.UpdateEntryResponse{}, err
+	}
 
 	chunks, garbage, err2 := fs.cleanupChunks(ctx, fullpath, entry, req.Entry)
 	if err2 != nil {
@@ -233,6 +239,31 @@ func (fs *FilerServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntr
 	}
 
 	return resp, err
+}
+
+func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[string][]byte) error {
+	if len(expectedExtended) == 0 {
+		return nil
+	}
+
+	for key, expectedValue := range expectedExtended {
+		var actualValue []byte
+		var ok bool
+		if entry != nil {
+			actualValue, ok = entry.Extended[key]
+		}
+		if ok {
+			if !bytes.Equal(actualValue, expectedValue) {
+				return status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+			}
+			continue
+		}
+		if len(expectedValue) > 0 {
+			return status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+		}
+	}
+
+	return nil
 }
 
 func (fs *FilerServer) cleanupChunks(ctx context.Context, fullpath string, existingEntry *filer.Entry, newEntry *filer_pb.Entry) (chunks, garbage []*filer_pb.FileChunk, err error) {
