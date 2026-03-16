@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -227,6 +228,71 @@ func TestReadAllNeedlesExistingThenMissingVolumeAbortsStream(t *testing.T) {
 
 	if !seenUploadedNeedle {
 		t.Fatalf("ReadAllNeedles should stream entries from existing volume before missing-volume abort")
+	}
+}
+
+func TestReadAllNeedlesPreservesDatOrderAcrossOverwrite(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(86)
+	const firstNeedleID = uint64(444551)
+	const secondNeedleID = uint64(444552)
+	const firstCookie = uint32(0xAA22BB33)
+	const secondCookie = uint32(0xCC44DD55)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	uploads := []struct {
+		fid  string
+		body string
+	}{
+		{fid: framework.NewFileID(volumeID, firstNeedleID, firstCookie), body: "read-all-first"},
+		{fid: framework.NewFileID(volumeID, secondNeedleID, secondCookie), body: "read-all-second"},
+		{fid: framework.NewFileID(volumeID, firstNeedleID, firstCookie), body: "read-all-first-overwrite"},
+	}
+	for _, upload := range uploads {
+		resp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), upload.fid, []byte(upload.body))
+		_ = framework.ReadAllAndClose(t, resp)
+		if resp.StatusCode != 201 {
+			t.Fatalf("upload for %s expected 201, got %d", upload.fid, resp.StatusCode)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.ReadAllNeedles(ctx, &volume_server_pb.ReadAllNeedlesRequest{VolumeIds: []uint32{volumeID}})
+	if err != nil {
+		t.Fatalf("ReadAllNeedles start failed: %v", err)
+	}
+
+	var orderedIDs []uint64
+	var orderedBodies []string
+	for {
+		msg, recvErr := stream.Recv()
+		if recvErr == io.EOF {
+			break
+		}
+		if recvErr != nil {
+			t.Fatalf("ReadAllNeedles recv failed: %v", recvErr)
+		}
+		orderedIDs = append(orderedIDs, msg.GetNeedleId())
+		orderedBodies = append(orderedBodies, string(msg.GetNeedleBlob()))
+	}
+
+	wantIDs := []uint64{secondNeedleID, firstNeedleID}
+	wantBodies := []string{"read-all-second", "read-all-first-overwrite"}
+	if !reflect.DeepEqual(orderedIDs, wantIDs) {
+		t.Fatalf("ReadAllNeedles order mismatch: got %v want %v", orderedIDs, wantIDs)
+	}
+	if !reflect.DeepEqual(orderedBodies, wantBodies) {
+		t.Fatalf("ReadAllNeedles bodies mismatch: got %v want %v", orderedBodies, wantBodies)
 	}
 }
 
