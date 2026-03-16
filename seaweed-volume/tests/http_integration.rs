@@ -82,6 +82,7 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         ),
         read_mode: seaweed_volume::config::ReadMode::Local,
         master_url: String::new(),
+        master_urls: Vec::new(),
         self_url: String::new(),
         http_client: reqwest::Client::new(),
         outgoing_http_scheme: "http".to_string(),
@@ -532,4 +533,36 @@ async fn admin_router_can_expose_ui_with_explicit_override() {
     // UI handler does JWT check inside but read_signing_key is empty in this test,
     // so it returns 200 (auth is only enforced when read key is set)
     assert_eq!(response.status(), StatusCode::OK);
+    let body = body_bytes(response).await;
+    let html = String::from_utf8(body).unwrap();
+    assert!(html.contains("Disk Stats"));
+    assert!(html.contains("System Stats"));
+    assert!(html.contains("Volumes"));
+}
+
+#[tokio::test]
+async fn admin_router_serves_volume_ui_static_assets() {
+    let (state, _tmp) = test_state();
+    let app = build_admin_router(state);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/seaweedfsstatic/bootstrap/3.3.1/css/bootstrap.min.css")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok()),
+        Some("text/css; charset=utf-8")
+    );
+    let body = body_bytes(response).await;
+    assert!(body.len() > 1000);
 }

@@ -78,6 +78,8 @@ pub struct VolumeServerState {
     pub read_mode: ReadMode,
     /// First master address for volume lookups (e.g., "localhost:9333").
     pub master_url: String,
+    /// Seed master addresses for UI rendering.
+    pub master_urls: Vec<String>,
     /// This server's own address (ip:port) for filtering self from lookup results.
     pub self_url: String,
     /// HTTP client for proxy requests and master lookups.

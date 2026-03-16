@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
@@ -2404,26 +2404,20 @@ pub async fn stats_disk_handler(
 // ============================================================================
 
 pub async fn favicon_handler() -> Response {
-    // Return a minimal valid ICO (1x1 transparent)
-    let ico = include_bytes!("favicon.ico");
-    (
-        StatusCode::OK,
-        [(header::CONTENT_TYPE, "image/x-icon")],
-        ico.as_ref(),
-    )
-        .into_response()
+    let asset = super::ui::favicon_asset();
+    (StatusCode::OK, [(header::CONTENT_TYPE, asset.content_type)], asset.bytes).into_response()
 }
 
-pub async fn static_asset_handler() -> Response {
-    // Return a minimal valid PNG (1x1 transparent)
-    let png: &[u8] = &[
-        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F,
-        0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x62, 0x00,
-        0x00, 0x00, 0x02, 0x00, 0x01, 0xE5, 0x27, 0xDE, 0xFC, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45,
-        0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
-    ];
-    (StatusCode::OK, [(header::CONTENT_TYPE, "image/png")], png).into_response()
+pub async fn static_asset_handler(Path(path): Path<String>) -> Response {
+    match super::ui::lookup_static_asset(&path) {
+        Some(asset) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, asset.content_type)],
+            asset.bytes,
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 pub async fn ui_handler(
@@ -2440,9 +2434,7 @@ pub async fn ui_handler(
     }
     drop(guard);
 
-    let html = r#"<!DOCTYPE html>
-<html><head><title>SeaweedFS Volume Server</title></head>
-<body><h1>SeaweedFS Volume Server</h1><p>Rust implementation</p></body></html>"#;
+    let html = super::ui::render_volume_server_html(&state);
     (
         StatusCode::OK,
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],

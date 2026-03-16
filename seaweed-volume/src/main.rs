@@ -41,6 +41,7 @@ fn main() {
         .init();
 
     let config = config::parse_cli();
+    seaweed_volume::server::server_stats::init_process_start();
     let cpu_profile = match CpuProfileSession::start(&config) {
         Ok(session) => session,
         Err(e) => {
@@ -333,6 +334,7 @@ async fn run(
         ),
         read_mode: config.read_mode,
         master_url,
+        master_urls: config.masters.clone(),
         self_url,
         http_client,
         outgoing_http_scheme,

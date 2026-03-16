@@ -673,6 +673,7 @@ mod tests {
             s3_tier_registry: std::sync::RwLock::new(S3TierRegistry::new()),
             read_mode: ReadMode::Local,
             master_url: String::new(),
+            master_urls: Vec::new(),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
