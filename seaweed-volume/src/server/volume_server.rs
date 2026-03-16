@@ -60,6 +60,8 @@ pub struct VolumeServerState {
     pub rack: String,
     /// File size limit in bytes (0 = no limit).
     pub file_size_limit_bytes: i64,
+    /// Default IO rate limit for maintenance copy/replication work.
+    pub maintenance_byte_per_second: i64,
     /// Whether the server is connected to master (heartbeat active).
     pub is_heartbeating: AtomicBool,
     /// Whether master addresses are configured.

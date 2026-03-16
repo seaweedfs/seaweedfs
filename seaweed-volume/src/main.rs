@@ -310,6 +310,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         data_center: config.data_center.clone(),
         rack: config.rack.clone(),
         file_size_limit_bytes: config.file_size_limit_bytes,
+        maintenance_byte_per_second: config.maintenance_byte_per_second,
         is_heartbeating: std::sync::atomic::AtomicBool::new(config.masters.is_empty()),
         has_master: !config.masters.is_empty(),
         pre_stop_seconds: config.pre_stop_seconds,

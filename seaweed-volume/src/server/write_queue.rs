@@ -186,6 +186,7 @@ mod tests {
             data_center: String::new(),
             rack: String::new(),
             file_size_limit_bytes: 0,
+            maintenance_byte_per_second: 0,
             is_heartbeating: AtomicBool::new(false),
             has_master: false,
             pre_stop_seconds: 0,

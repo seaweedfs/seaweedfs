@@ -24,6 +24,46 @@ use super::volume_server::VolumeServerState;
 
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
 
+struct WriteThrottler {
+    bytes_per_second: i64,
+    last_size_counter: i64,
+    last_size_check_time: std::time::Instant,
+}
+
+impl WriteThrottler {
+    fn new(bytes_per_second: i64) -> Self {
+        Self {
+            bytes_per_second,
+            last_size_counter: 0,
+            last_size_check_time: std::time::Instant::now(),
+        }
+    }
+
+    async fn maybe_slowdown(&mut self, delta: i64) {
+        if self.bytes_per_second <= 0 {
+            return;
+        }
+
+        self.last_size_counter += delta;
+        let elapsed = self.last_size_check_time.elapsed();
+        if elapsed <= std::time::Duration::from_millis(100) {
+            return;
+        }
+
+        let over_limit_bytes = self.last_size_counter - self.bytes_per_second / 10;
+        if over_limit_bytes > 0 {
+            let over_ratio = over_limit_bytes as f64 / self.bytes_per_second as f64;
+            let sleep_time = std::time::Duration::from_millis((over_ratio * 1000.0) as u64);
+            if !sleep_time.is_zero() {
+                tokio::time::sleep(sleep_time).await;
+            }
+        }
+
+        self.last_size_counter = 0;
+        self.last_size_check_time = std::time::Instant::now();
+    }
+}
+
 struct MasterVolumeInfo {
     volume_id: VolumeId,
     collection: String,
@@ -923,6 +963,12 @@ impl VolumeServer for VolumeGrpcService {
             let result = async {
                 let report_interval: i64 = 128 * 1024 * 1024;
                 let mut next_report_target: i64 = report_interval;
+                let io_byte_per_second = if req.io_byte_per_second > 0 {
+                    req.io_byte_per_second
+                } else {
+                    state.maintenance_byte_per_second
+                };
+                let mut throttler = WriteThrottler::new(io_byte_per_second);
 
                 // Copy .dat file
                 if !has_remote_dat {
@@ -941,6 +987,7 @@ impl VolumeServer for VolumeGrpcService {
                         Some(&tx),
                         &mut next_report_target,
                         report_interval,
+                        &mut throttler,
                     )
                     .await
                     .map_err(|e| Status::internal(e))?;
@@ -965,6 +1012,7 @@ impl VolumeServer for VolumeGrpcService {
                     None,
                     &mut next_report_target,
                     report_interval,
+                    &mut throttler,
                 )
                 .await
                 .map_err(|e| Status::internal(e))?;
@@ -988,6 +1036,7 @@ impl VolumeServer for VolumeGrpcService {
                     None,
                     &mut next_report_target,
                     report_interval,
+                    &mut throttler,
                 )
                 .await
                 .map_err(|e| Status::internal(e))?;
@@ -3382,6 +3431,7 @@ async fn copy_file_from_source(
     >,
     next_report_target: &mut i64,
     report_interval: i64,
+    throttler: &mut WriteThrottler,
 ) -> Result<i64, String> {
     let copy_req = volume_server_pb::CopyFileRequest {
         volume_id,
@@ -3427,6 +3477,9 @@ async fn copy_file_from_source(
             file.write_all(&resp.file_content)
                 .map_err(|e| format!("write file {}: {}", dest_path, e))?;
             progressed_bytes += resp.file_content.len() as i64;
+            throttler
+                .maybe_slowdown(resp.file_content.len() as i64)
+                .await;
 
             if let Some(tx) = progress_tx {
                 if progressed_bytes > *next_report_target {
