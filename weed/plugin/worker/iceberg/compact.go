@@ -3,6 +3,8 @@ package iceberg
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -156,6 +158,9 @@ func (h *Handler) compactDataFiles(
 	// Compute the snapshot ID for the commit up front so all manifest entries
 	// reference the same snapshot that will actually be committed.
 	newSnapID := time.Now().UnixMilli()
+	// Random suffix for artifact filenames to avoid collisions between
+	// concurrent compaction runs on different tables sharing a timestamp.
+	artifactSuffix := compactRandomSuffix()
 
 	// Process each bin: read source Parquet files, merge, write output
 	var newManifestEntries []iceberg.ManifestEntry
@@ -209,7 +214,7 @@ func (h *Handler) compactDataFiles(
 		default:
 		}
 
-		mergedFileName := fmt.Sprintf("compact-%d-%d-%d.parquet", snapshotID, newSnapID, binIdx)
+		mergedFileName := fmt.Sprintf("compact-%d-%d-%s-%d.parquet", snapshotID, newSnapID, artifactSuffix, binIdx)
 		mergedFilePath := path.Join("data", mergedFileName)
 
 		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
@@ -337,7 +342,7 @@ func (h *Handler) compactDataFiles(
 		}
 
 		var manifestBuf bytes.Buffer
-		manifestFileName := fmt.Sprintf("compact-%d-spec%d.avro", newSnapID, se.specID)
+		manifestFileName := fmt.Sprintf("compact-%d-%s-spec%d.avro", newSnapID, artifactSuffix, se.specID)
 		newManifest, err := iceberg.WriteManifest(
 			path.Join("metadata", manifestFileName),
 			&manifestBuf,
@@ -394,7 +399,7 @@ func (h *Handler) compactDataFiles(
 		return "", nil, fmt.Errorf("write compact manifest list: %w", err)
 	}
 
-	manifestListFileName := fmt.Sprintf("snap-%d.avro", newSnapID)
+	manifestListFileName := fmt.Sprintf("snap-%d-%s.avro", newSnapID, artifactSuffix)
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
 		return "", nil, fmt.Errorf("save compact manifest list: %w", err)
 	}
@@ -496,8 +501,11 @@ func buildCompactionBins(entries []iceberg.ManifestEntry, targetSize int64, minF
 		}
 	}
 
-	// Sort by partition key for deterministic order
+	// Sort by spec ID then partition key for deterministic order
 	sort.Slice(result, func(i, j int) bool {
+		if result[i].SpecID != result[j].SpecID {
+			return result[i].SpecID < result[j].SpecID
+		}
 		return result[i].PartitionKey < result[j].PartitionKey
 	})
 
@@ -603,7 +611,8 @@ func partitionKey(partition map[int]any) string {
 }
 
 // collectPositionDeletes reads position delete Parquet files and returns a map
-// from data file path to sorted row positions that should be deleted.
+// from normalized data file path to sorted row positions that should be deleted.
+// Paths are normalized so that absolute S3 URLs and relative paths match.
 func collectPositionDeletes(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -620,7 +629,8 @@ func collectPositionDeletes(
 			return nil, fmt.Errorf("read position delete file %s: %w", entry.DataFile().FilePath(), err)
 		}
 		for filePath, positions := range fileDeletes {
-			result[filePath] = append(result[filePath], positions...)
+			normalized := normalizeIcebergPath(filePath, bucketName, tablePath)
+			result[normalized] = append(result[normalized], positions...)
 		}
 	}
 	// Sort positions for each file (binary search during filtering)
@@ -910,7 +920,9 @@ func mergeParquetFiles(
 	drainReader := func(reader *parquet.Reader, source string) error {
 		defer reader.Close()
 
-		posDeletes := positionDeletes[source]
+		// Normalize source path so it matches the normalized keys in positionDeletes.
+		normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
+		posDeletes := positionDeletes[normalizedSource]
 		posDeleteIdx := 0
 		var absolutePos int64
 
@@ -1020,6 +1032,16 @@ func mergeParquetFiles(
 	}
 
 	return outputBuf.Bytes(), totalRows, nil
+}
+
+// compactRandomSuffix returns a short random hex string for use in artifact
+// filenames to prevent collisions between concurrent runs.
+func compactRandomSuffix() string {
+	b := make([]byte, 4)
+	if _, err := rand.Read(b); err != nil {
+		return fmt.Sprintf("%x", time.Now().UnixNano()&0xFFFFFFFF)
+	}
+	return hex.EncodeToString(b)
 }
 
 // schemasEqual compares two parquet schemas structurally.

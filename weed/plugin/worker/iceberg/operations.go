@@ -334,8 +334,17 @@ func (h *Handler) rewriteManifests(
 		return "", nil, fmt.Errorf("parse manifest list: %w", err)
 	}
 
-	if int64(len(manifests)) < config.MinManifestsToRewrite {
-		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinManifestsToRewrite), nil, nil
+	// Separate data manifests from delete manifests. Only data manifests
+	// are candidates for rewriting; delete manifests are carried forward.
+	var dataManifests []iceberg.ManifestFile
+	for _, mf := range manifests {
+		if mf.ManifestContent() == iceberg.ManifestContentData {
+			dataManifests = append(dataManifests, mf)
+		}
+	}
+
+	if int64(len(dataManifests)) < config.MinManifestsToRewrite {
+		return fmt.Sprintf("only %d data manifests, below threshold of %d", len(dataManifests), config.MinManifestsToRewrite), nil, nil
 	}
 
 	// Collect all entries from data manifests, grouped by partition spec ID
@@ -353,10 +362,7 @@ func (h *Handler) rewriteManifests(
 		specByID[ps.ID()] = ps
 	}
 
-	for _, mf := range manifests {
-		if mf.ManifestContent() != iceberg.ManifestContentData {
-			continue
-		}
+	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
 		if err != nil {
 			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
@@ -388,6 +394,7 @@ func (h *Handler) rewriteManifests(
 	snapshotID := currentSnap.SnapshotID
 	newSnapshotID := time.Now().UnixMilli()
 	newSeqNum := currentSnap.SequenceNumber + 1
+	artifactSuffix := compactRandomSuffix()
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 
 	// Track written artifacts so we can clean them up if the commit fails.
@@ -415,7 +422,7 @@ func (h *Handler) rewriteManifests(
 	totalEntries := 0
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
-		manifestFileName := fmt.Sprintf("merged-%d-spec%d-%d.avro", newSnapshotID, se.specID, time.Now().UnixMilli())
+		manifestFileName := fmt.Sprintf("merged-%d-%s-spec%d.avro", newSnapshotID, artifactSuffix, se.specID)
 		manifestPath := path.Join("metadata", manifestFileName)
 
 		var manifestBuf bytes.Buffer
@@ -453,7 +460,7 @@ func (h *Handler) rewriteManifests(
 	}
 
 	// Save new manifest list
-	manifestListFileName := fmt.Sprintf("snap-%d-%d.avro", newSnapshotID, time.Now().UnixMilli())
+	manifestListFileName := fmt.Sprintf("snap-%d-%s.avro", newSnapshotID, artifactSuffix)
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
 		return "", nil, fmt.Errorf("save manifest list: %w", err)
 	}
@@ -501,11 +508,11 @@ func (h *Handler) rewriteManifests(
 
 	committed = true
 	metrics := map[string]int64{
-		MetricManifestsRewritten: int64(len(manifests)),
+		MetricManifestsRewritten: int64(len(dataManifests)),
 		MetricEntriesTotal:       int64(totalEntries),
 		MetricDurationMs:         time.Since(start).Milliseconds(),
 	}
-	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(manifests), len(specMap), totalEntries), metrics, nil
+	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(dataManifests), len(specMap), totalEntries), metrics, nil
 }
 
 // ---------------------------------------------------------------------------
