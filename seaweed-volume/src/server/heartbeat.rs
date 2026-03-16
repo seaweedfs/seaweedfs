@@ -632,7 +632,13 @@ mod tests {
     fn test_state_with_store(store: Store) -> Arc<VolumeServerState> {
         Arc::new(VolumeServerState {
             store: RwLock::new(store),
-            guard: RwLock::new(Guard::new(&[], SigningKey(vec![]), 0, SigningKey(vec![]), 0)),
+            guard: RwLock::new(Guard::new(
+                &[],
+                SigningKey(vec![]),
+                0,
+                SigningKey(vec![]),
+                0,
+            )),
             is_stopping: RwLock::new(false),
             maintenance: std::sync::atomic::AtomicBool::new(false),
             state_version: std::sync::atomic::AtomicU32::new(0),
@@ -657,6 +663,7 @@ mod tests {
             master_url: String::new(),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
             metrics_runtime: std::sync::RwLock::new(Default::default()),
             metrics_notify: tokio::sync::Notify::new(),
             has_slow_read: true,
@@ -684,7 +691,15 @@ mod tests {
             )
             .unwrap();
         store
-            .add_volume(VolumeId(7), "pics", None, None, 0, DiskType::HardDrive, Version::current())
+            .add_volume(
+                VolumeId(7),
+                "pics",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
             .unwrap();
 
         let heartbeat = build_heartbeat(&test_config(), &store);

@@ -14,7 +14,7 @@ use axum::http::{header, HeaderMap, Method, Request, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 
-use super::volume_server::VolumeServerState;
+use super::volume_server::{normalize_outgoing_http_url, VolumeServerState};
 use crate::config::ReadMode;
 use crate::metrics;
 use crate::storage::needle::needle::Needle;
@@ -325,10 +325,14 @@ struct LookupResult {
 /// Look up volume locations from the master via HTTP /dir/lookup.
 async fn lookup_volume(
     client: &reqwest::Client,
+    scheme: &str,
     master_url: &str,
     volume_id: u32,
 ) -> Result<Vec<VolumeLocation>, String> {
-    let url = format!("http://{}/dir/lookup?volumeId={}", master_url, volume_id);
+    let url = normalize_outgoing_http_url(
+        scheme,
+        &format!("{}/dir/lookup?volumeId={}", master_url, volume_id),
+    )?;
     let resp = client
         .get(&url)
         .send()
@@ -356,9 +360,14 @@ async fn do_replicated_request(
     headers: &axum::http::HeaderMap,
     body: Option<bytes::Bytes>,
 ) -> Result<(), String> {
-    let locations = lookup_volume(&state.http_client, &state.master_url, vid)
-        .await
-        .map_err(|e| format!("lookup volume failed: {}", e))?;
+    let locations = lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.master_url,
+        vid,
+    )
+    .await
+    .map_err(|e| format!("lookup volume failed: {}", e))?;
 
     let remote_locations: Vec<_> = locations
         .into_iter()
@@ -377,7 +386,10 @@ async fn do_replicated_request(
 
     let mut futures = Vec::new();
     for loc in remote_locations {
-        let url = format!("http://{}{}?{}", loc.url, path, new_query);
+        let url = normalize_outgoing_http_url(
+            &state.outgoing_http_scheme,
+            &format!("{}{}?{}", loc.url, path, new_query),
+        )?;
         let client = state.http_client.clone();
 
         let mut req_builder = client.request(method.clone(), &url);
@@ -440,7 +452,14 @@ async fn proxy_or_redirect_to_target(
     vid: VolumeId,
 ) -> Response {
     // Look up volume locations from master
-    let locations = match lookup_volume(&state.http_client, &state.master_url, vid.0).await {
+    let locations = match lookup_volume(
+        &state.http_client,
+        &state.outgoing_http_scheme,
+        &state.master_url,
+        vid.0,
+    )
+    .await
+    {
         Ok(locs) => locs,
         Err(e) => {
             tracing::warn!("volume lookup failed for {}: {}", vid.0, e);
@@ -473,7 +492,7 @@ async fn proxy_or_redirect_to_target(
 
     match state.read_mode {
         ReadMode::Proxy => proxy_request(state, &info, target).await,
-        ReadMode::Redirect => redirect_request(&info, target),
+        ReadMode::Redirect => redirect_request(&info, target, &state.outgoing_http_scheme),
         ReadMode::Local => unreachable!(),
     }
 }
@@ -485,17 +504,22 @@ async fn proxy_request(
     target: &VolumeLocation,
 ) -> Response {
     // Build target URL, adding proxied=true query param
-    let scheme = "http";
-    let target_host = &target.url;
     let path = info.path.trim_start_matches('/');
 
-    let target_url = if info.original_query.is_empty() {
-        format!("{}://{}/{}?proxied=true", scheme, target_host, path)
+    let raw_target = if info.original_query.is_empty() {
+        format!("{}/{}?proxied=true", target.url, path)
     } else {
         format!(
-            "{}://{}/{}?{}&proxied=true",
-            scheme, target_host, path, info.original_query
+            "{}/{}?{}&proxied=true",
+            target.url, path, info.original_query
         )
+    };
+    let target_url = match normalize_outgoing_http_url(&state.outgoing_http_scheme, &raw_target) {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!("proxy target url {} invalid: {}", raw_target, e);
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
     };
 
     // Build the proxy request
@@ -542,10 +566,7 @@ async fn proxy_request(
 }
 
 /// Return a redirect response to the target volume server.
-fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation) -> Response {
-    let scheme = "http";
-    let target_host = &target.public_url;
-
+fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &str) -> Response {
     // Build query string: preserve collection, add proxied=true, drop readDeleted (Go parity)
     let mut query_params = Vec::new();
     if !info.original_query.is_empty() {
@@ -561,10 +582,14 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation) -> Respons
     query_params.push("proxied=true".to_string());
     let query = query_params.join("&");
 
-    let location = format!(
-        "{}://{}/{},{}?{}",
-        scheme, target_host, &info.vid_str, &info.fid_str, query
+    let raw_target = format!(
+        "{}/{},{}?{}",
+        target.public_url, &info.vid_str, &info.fid_str, query
     );
+    let location = match normalize_outgoing_http_url(scheme, &raw_target) {
+        Ok(url) => url,
+        Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
 
     Response::builder()
         .status(StatusCode::MOVED_PERMANENTLY)
@@ -661,11 +686,12 @@ async fn get_or_head_handler_inner(
     // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state
-        .guard
-        .read()
-        .unwrap()
-        .check_jwt_for_file(token.as_deref(), &file_id, false)
+    if let Err(e) =
+        state
+            .guard
+            .read()
+            .unwrap()
+            .check_jwt_for_file(token.as_deref(), &file_id, false)
     {
         return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
     }
@@ -881,8 +907,7 @@ async fn get_or_head_handler_inner(
                         let mut not_modified_headers = HeaderMap::new();
                         not_modified_headers.insert(header::ETAG, etag.parse().unwrap());
                         if let Some(ref lm) = last_modified_str {
-                            not_modified_headers
-                                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+                            not_modified_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
                         }
                         return (StatusCode::NOT_MODIFIED, not_modified_headers).into_response();
                     }
@@ -1099,8 +1124,8 @@ async fn get_or_head_handler_inner(
     let mut data = n.data;
 
     // Check if image operations are needed — must decompress first regardless of Accept-Encoding
-    let needs_image_ops = is_image
-        && (query.width.is_some() || query.height.is_some() || query.mode.is_some());
+    let needs_image_ops =
+        is_image && (query.width.is_some() || query.height.is_some() || query.mode.is_some());
 
     if is_compressed {
         if needs_image_ops {
@@ -1432,7 +1457,8 @@ pub async fn post_handler(
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = request.headers().clone();
-    let query_fields: Vec<(String, String)> = serde_urlencoded::from_str(&query).unwrap_or_default();
+    let query_fields: Vec<(String, String)> =
+        serde_urlencoded::from_str(&query).unwrap_or_default();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
@@ -1557,90 +1583,89 @@ pub async fn post_handler(
         parsed_content_encoding,
         parsed_content_md5,
         multipart_form_fields,
-    ) =
-        if content_type_str.starts_with("multipart/form-data") {
-            // Extract boundary from Content-Type
-            let boundary = content_type_str
-                .split(';')
-                .find_map(|part| {
-                    let part = part.trim();
-                    if let Some(val) = part.strip_prefix("boundary=") {
-                        Some(val.trim_matches('"').to_string())
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or_default();
+    ) = if content_type_str.starts_with("multipart/form-data") {
+        // Extract boundary from Content-Type
+        let boundary = content_type_str
+            .split(';')
+            .find_map(|part| {
+                let part = part.trim();
+                if let Some(val) = part.strip_prefix("boundary=") {
+                    Some(val.trim_matches('"').to_string())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
 
-            let mut multipart = multer::Multipart::new(
-                futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }),
-                boundary,
-            );
+        let mut multipart = multer::Multipart::new(
+            futures::stream::once(async { Ok::<_, std::io::Error>(body.clone()) }),
+            boundary,
+        );
 
-            let mut file_data: Option<Vec<u8>> = None;
-            let mut file_name: Option<String> = None;
-            let mut file_content_type: Option<String> = None;
-            let mut file_content_encoding: Option<String> = None;
-            let mut file_content_md5: Option<String> = None;
-            let mut form_fields = std::collections::HashMap::new();
+        let mut file_data: Option<Vec<u8>> = None;
+        let mut file_name: Option<String> = None;
+        let mut file_content_type: Option<String> = None;
+        let mut file_content_encoding: Option<String> = None;
+        let mut file_content_md5: Option<String> = None;
+        let mut form_fields = std::collections::HashMap::new();
 
-            while let Ok(Some(field)) = multipart.next_field().await {
-                let field_name = field.name().map(|s| s.to_string());
-                let fname = field.file_name().map(|s| {
-                    // Clean Windows backslashes
-                    let cleaned = s.replace('\\', "/");
-                    cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
-                });
-                let fct = field.content_type().map(|m| m.to_string());
-                let field_headers = field.headers().clone();
-                let fce = field_headers
-                    .get(header::CONTENT_ENCODING)
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string());
-                let fmd5 = field_headers
-                    .get("Content-MD5")
-                    .and_then(|v| v.to_str().ok())
-                    .map(|s| s.to_string());
+        while let Ok(Some(field)) = multipart.next_field().await {
+            let field_name = field.name().map(|s| s.to_string());
+            let fname = field.file_name().map(|s| {
+                // Clean Windows backslashes
+                let cleaned = s.replace('\\', "/");
+                cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
+            });
+            let fct = field.content_type().map(|m| m.to_string());
+            let field_headers = field.headers().clone();
+            let fce = field_headers
+                .get(header::CONTENT_ENCODING)
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
+            let fmd5 = field_headers
+                .get("Content-MD5")
+                .and_then(|v| v.to_str().ok())
+                .map(|s| s.to_string());
 
-                if let Ok(data) = field.bytes().await {
-                    if file_data.is_none() && fname.is_some() {
-                        // First file field
-                        file_data = Some(data.to_vec());
-                        file_name = fname;
-                        file_content_type = fct;
-                        file_content_encoding = fce;
-                        file_content_md5 = fmd5;
-                    } else if let Some(name) = field_name {
-                        form_fields
-                            .entry(name)
-                            .or_insert_with(|| String::from_utf8_lossy(&data).to_string());
-                    }
+            if let Ok(data) = field.bytes().await {
+                if file_data.is_none() && fname.is_some() {
+                    // First file field
+                    file_data = Some(data.to_vec());
+                    file_name = fname;
+                    file_content_type = fct;
+                    file_content_encoding = fce;
+                    file_content_md5 = fmd5;
+                } else if let Some(name) = field_name {
+                    form_fields
+                        .entry(name)
+                        .or_insert_with(|| String::from_utf8_lossy(&data).to_string());
                 }
             }
+        }
 
-            if let Some(data) = file_data {
-                (
-                    data,
-                    file_name.unwrap_or_default(),
-                    file_content_type,
-                    file_content_encoding,
-                    file_content_md5,
-                    form_fields,
-                )
-            } else {
-                // No file field found, use raw body
-                (body.to_vec(), String::new(), None, None, None, form_fields)
-            }
-        } else {
+        if let Some(data) = file_data {
             (
-                body.to_vec(),
-                String::new(),
-                None,
-                None,
-                None,
-                std::collections::HashMap::new(),
+                data,
+                file_name.unwrap_or_default(),
+                file_content_type,
+                file_content_encoding,
+                file_content_md5,
+                form_fields,
             )
-        };
+        } else {
+            // No file field found, use raw body
+            (body.to_vec(), String::new(), None, None, None, form_fields)
+        }
+    } else {
+        (
+            body.to_vec(),
+            String::new(),
+            None,
+            None,
+            None,
+            std::collections::HashMap::new(),
+        )
+    };
 
     let form_value = |name: &str| {
         query_fields
@@ -2639,9 +2664,9 @@ fn json_error_with_query(
     let body = serde_json::json!({"error": msg.into()});
 
     let (is_pretty, callback) = if let Some(q) = query {
-        let pretty = q.split('&').any(|p| {
-            p.starts_with("pretty=") && p.len() > "pretty=".len()
-        });
+        let pretty = q
+            .split('&')
+            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
         let cb = q
             .split('&')
             .find_map(|p| p.strip_prefix("callback="))
@@ -2939,6 +2964,38 @@ mod tests {
         assert_eq!(
             streaming_chunk_size(8 * 1024 * 1024, 128 * 1024),
             128 * 1024
+        );
+    }
+
+    #[test]
+    fn test_normalize_outgoing_http_url_rewrites_scheme() {
+        let url = normalize_outgoing_http_url(
+            "https",
+            "http://master.example.com:9333/dir/lookup?volumeId=7",
+        )
+        .unwrap();
+        assert_eq!(url, "https://master.example.com:9333/dir/lookup?volumeId=7");
+    }
+
+    #[test]
+    fn test_redirect_request_uses_outgoing_http_scheme() {
+        let info = ProxyRequestInfo {
+            original_headers: HeaderMap::new(),
+            original_query: "collection=photos&readDeleted=true".to_string(),
+            path: "/3,01637037d6".to_string(),
+            vid_str: "3".to_string(),
+            fid_str: "01637037d6".to_string(),
+        };
+        let target = VolumeLocation {
+            url: "volume.internal:8080".to_string(),
+            public_url: "volume.public:8080".to_string(),
+        };
+
+        let response = redirect_request(&info, &target, "https");
+        assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(
+            response.headers().get(header::LOCATION).unwrap(),
+            "https://volume.public:8080/3,01637037d6?collection=photos&proxied=true"
         );
     }
 }

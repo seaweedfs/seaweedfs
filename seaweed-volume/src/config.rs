@@ -238,6 +238,10 @@ pub struct VolumeServerConfig {
     pub https_cert_file: String,
     pub https_key_file: String,
     pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
@@ -773,6 +777,10 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         https_cert_file: sec.https_cert_file,
         https_key_file: sec.https_key_file,
         https_ca_file: sec.https_ca_file,
+        https_client_enabled: sec.https_client_enabled,
+        https_client_cert_file: sec.https_client_cert_file,
+        https_client_key_file: sec.https_client_key_file,
+        https_client_ca_file: sec.https_client_ca_file,
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
         grpc_ca_file: sec.grpc_ca_file,
@@ -797,6 +805,10 @@ pub struct SecurityConfig {
     pub https_cert_file: String,
     pub https_key_file: String,
     pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
@@ -821,6 +833,12 @@ const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
 /// [https.volume]
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
+///
+/// [https.client]
+/// enabled = true
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
 ///
 /// [grpc]
 /// ca = "/path/to/ca.pem"
@@ -852,6 +870,7 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         None,
         JwtSigning,
         JwtSigningRead,
+        HttpsClient,
         Grpc,
         HttpsVolume,
         GrpcVolume,
@@ -872,6 +891,10 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         }
         if trimmed == "[jwt.signing]" {
             section = Section::JwtSigning;
+            continue;
+        }
+        if trimmed == "[https.client]" {
+            section = Section::HttpsClient;
             continue;
         }
         if trimmed == "[grpc]" {
@@ -913,6 +936,13 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::JwtSigning => match key {
                     "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
                     "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(0),
+                    _ => {}
+                },
+                Section::HttpsClient => match key {
+                    "enabled" => cfg.https_client_enabled = value.parse().unwrap_or(false),
+                    "cert" => cfg.https_client_cert_file = value.to_string(),
+                    "key" => cfg.https_client_key_file = value.to_string(),
+                    "ca" => cfg.https_client_ca_file = value.to_string(),
                     _ => {}
                 },
                 Section::Grpc => match key {
@@ -1022,6 +1052,18 @@ fn apply_env_overrides(cfg: &mut SecurityConfig) {
     if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CA") {
         cfg.https_ca_file = v;
     }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_ENABLED") {
+        cfg.https_client_enabled = v == "true" || v == "1";
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CERT") {
+        cfg.https_client_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_KEY") {
+        cfg.https_client_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CA") {
+        cfg.https_client_ca_file = v;
+    }
     if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CERT") {
         cfg.grpc_cert_file = v;
     }
@@ -1104,6 +1146,10 @@ mod tests {
             "WEED_HTTPS_VOLUME_CERT",
             "WEED_HTTPS_VOLUME_KEY",
             "WEED_HTTPS_VOLUME_CA",
+            "WEED_HTTPS_CLIENT_ENABLED",
+            "WEED_HTTPS_CLIENT_CERT",
+            "WEED_HTTPS_CLIENT_KEY",
+            "WEED_HTTPS_CLIENT_CA",
             "WEED_GRPC_VOLUME_CERT",
             "WEED_GRPC_VOLUME_KEY",
             "WEED_GRPC_CA",
@@ -1350,6 +1396,31 @@ key = "/etc/seaweedfs/volume-key.pem"
             assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
             assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
             assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_https_client_settings() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[https.client]
+enabled = true
+cert = "/etc/seaweedfs/client-cert.pem"
+key = "/etc/seaweedfs/client-key.pem"
+ca = "/etc/seaweedfs/client-ca.pem"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert!(cfg.https_client_enabled);
+            assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
+            assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
+            assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
         });
     }
 

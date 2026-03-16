@@ -198,6 +198,7 @@ mod tests {
             master_url: String::new(),
             self_url: String::new(),
             http_client: reqwest::Client::new(),
+            outgoing_http_scheme: "http".to_string(),
             metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
             metrics_notify: tokio::sync::Notify::new(),
             has_slow_read: true,

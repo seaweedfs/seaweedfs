@@ -72,7 +72,9 @@ fn load_rustls_config(cert_path: &str, key_path: &str, ca_path: &str) -> rustls:
             .expect("Failed to parse CA certificate PEM");
         let mut root_store = rustls::RootCertStore::empty();
         for cert in ca_certs {
-            root_store.add(cert).expect("Failed to add CA certificate to root store");
+            root_store
+                .add(cert)
+                .expect("Failed to add CA certificate to root store");
         }
         let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
             .build()
@@ -87,6 +89,78 @@ fn load_rustls_config(cert_path: &str, key_path: &str, ca_path: &str) -> rustls:
             .with_single_cert(certs, key)
             .expect("Failed to build rustls ServerConfig")
     }
+}
+
+fn build_outgoing_http_client(
+    config: &VolumeServerConfig,
+) -> Result<(reqwest::Client, String), Box<dyn std::error::Error>> {
+    let scheme = if config.https_client_enabled {
+        "https"
+    } else {
+        "http"
+    };
+    if !config.https_client_enabled {
+        return Ok((reqwest::Client::new(), scheme.to_string()));
+    }
+
+    let mut builder = reqwest::Client::builder();
+    if !config.https_client_ca_file.is_empty() {
+        let ca_pem = std::fs::read(&config.https_client_ca_file).map_err(|e| {
+            format!(
+                "Failed to read HTTPS client CA file '{}': {}",
+                config.https_client_ca_file, e
+            )
+        })?;
+        let cert = reqwest::Certificate::from_pem(&ca_pem).map_err(|e| {
+            format!(
+                "Failed to parse HTTPS client CA PEM '{}': {}",
+                config.https_client_ca_file, e
+            )
+        })?;
+        builder = builder.add_root_certificate(cert);
+    }
+
+    match (
+        config.https_client_cert_file.is_empty(),
+        config.https_client_key_file.is_empty(),
+    ) {
+        (true, true) => {}
+        (false, false) => {
+            let cert_pem = std::fs::read(&config.https_client_cert_file).map_err(|e| {
+                format!(
+                    "Failed to read HTTPS client cert file '{}': {}",
+                    config.https_client_cert_file, e
+                )
+            })?;
+            let key_pem = std::fs::read(&config.https_client_key_file).map_err(|e| {
+                format!(
+                    "Failed to read HTTPS client key file '{}': {}",
+                    config.https_client_key_file, e
+                )
+            })?;
+            let mut identity_pem = cert_pem;
+            if !identity_pem.ends_with(b"\n") {
+                identity_pem.push(b'\n');
+            }
+            identity_pem.extend_from_slice(&key_pem);
+            let identity = reqwest::Identity::from_pem(&identity_pem).map_err(|e| {
+                format!(
+                    "Failed to parse HTTPS client identity '{}'+ '{}': {}",
+                    config.https_client_cert_file, config.https_client_key_file, e
+                )
+            })?;
+            builder = builder.identity(identity);
+        }
+        _ => {
+            return Err(format!(
+                "HTTPS client requires both cert and key, got cert='{}' key='{}'",
+                config.https_client_cert_file, config.https_client_key_file
+            )
+            .into());
+        }
+    }
+
+    Ok((builder.build()?, scheme.to_string()))
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -131,6 +205,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     );
     let master_url = config.masters.first().cloned().unwrap_or_default();
     let self_url = format!("{}:{}", config.ip, config.port);
+    let (http_client, outgoing_http_scheme) = build_outgoing_http_client(&config)?;
 
     let security_file = config.security_file.clone();
     let cli_white_list = config.white_list.clone();
@@ -163,7 +238,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         read_mode: config.read_mode,
         master_url,
         self_url,
-        http_client: reqwest::Client::new(),
+        http_client,
+        outgoing_http_scheme,
         metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
         metrics_notify: tokio::sync::Notify::new(),
         has_slow_read: config.has_slow_read,
@@ -186,7 +262,9 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         let store = state.store.read().unwrap();
         let mut max_vols: i64 = 0;
         for loc in &store.locations {
-            max_vols += loc.max_volume_count.load(std::sync::atomic::Ordering::Relaxed) as i64;
+            max_vols += loc
+                .max_volume_count
+                .load(std::sync::atomic::Ordering::Relaxed) as i64;
         }
         metrics::MAX_VOLUMES.set(max_vols);
     }
@@ -282,9 +360,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     {
         let state_reload = state.clone();
         tokio::spawn(async move {
-            let mut sighup =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
-                    .expect("Failed to install SIGHUP handler");
+            let mut sighup = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::hangup())
+                .expect("Failed to install SIGHUP handler");
             loop {
                 sighup.recv().await;
                 info!("Received SIGHUP, reloading...");
@@ -320,7 +397,11 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                 "TLS enabled for HTTP server (cert={}, key={})",
                 config.https_cert_file, config.https_key_file
             );
-            let tls_config = load_rustls_config(&config.https_cert_file, &config.https_key_file, &config.https_ca_file);
+            let tls_config = load_rustls_config(
+                &config.https_cert_file,
+                &config.https_key_file,
+                &config.https_ca_file,
+            );
             Some(TlsAcceptor::from(Arc::new(tls_config)))
         } else {
             None
@@ -381,7 +462,8 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     let ca_cert = std::fs::read_to_string(&grpc_ca_file).unwrap_or_else(|e| {
                         panic!("Failed to read gRPC CA cert '{}': {}", grpc_ca_file, e)
                     });
-                    tls_config = tls_config.client_ca_root(tonic::transport::Certificate::from_pem(ca_cert));
+                    tls_config =
+                        tls_config.client_ca_root(tonic::transport::Certificate::from_pem(ca_cert));
                 }
                 if let Err(e) = tonic::transport::Server::builder()
                     .tls_config(tls_config)

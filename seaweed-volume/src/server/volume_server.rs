@@ -79,6 +79,8 @@ pub struct VolumeServerState {
     pub self_url: String,
     /// HTTP client for proxy requests and master lookups.
     pub http_client: reqwest::Client,
+    /// Scheme used for outgoing master and peer HTTP requests ("http" or "https").
+    pub outgoing_http_scheme: String,
     /// Metrics push settings learned from master heartbeat responses.
     pub metrics_runtime: std::sync::RwLock<RuntimeMetricsConfig>,
     pub metrics_notify: tokio::sync::Notify,
@@ -103,6 +105,17 @@ impl VolumeServerState {
 
 pub fn build_metrics_router() -> Router {
     Router::new().route("/metrics", get(handlers::metrics_handler))
+}
+
+pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<String, String> {
+    if raw_target.starts_with("http://") || raw_target.starts_with("https://") {
+        let mut url = reqwest::Url::parse(raw_target)
+            .map_err(|e| format!("invalid url {}: {}", raw_target, e))?;
+        url.set_scheme(scheme)
+            .map_err(|_| format!("invalid scheme {}", scheme))?;
+        return Ok(url.to_string());
+    }
+    Ok(format!("{}://{}", scheme, raw_target))
 }
 
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.

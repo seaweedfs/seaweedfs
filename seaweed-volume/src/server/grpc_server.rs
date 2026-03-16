@@ -2726,10 +2726,14 @@ impl VolumeServer for VolumeGrpcService {
         // Replicate to peers concurrently (matches Go's sync.WaitGroup + goroutines)
         if !req.replicas.is_empty() {
             let file_id = format!("{},{:x}{:08x}", vid, req.needle_id, req.cookie);
-            let http_client = reqwest::Client::new();
+            let http_client = self.state.http_client.clone();
+            let scheme = self.state.outgoing_http_scheme.clone();
             let mut handles = Vec::new();
             for replica in &req.replicas {
-                let url = format!("http://{}/{}?type=replicate", replica.url, file_id);
+                let raw_target = format!("{}/{}?type=replicate", replica.url, file_id);
+                let url =
+                    crate::server::volume_server::normalize_outgoing_http_url(&scheme, &raw_target)
+                        .map_err(Status::internal)?;
                 let data_clone = data.clone();
                 let client_clone = http_client.clone();
                 let needle_id = req.needle_id;
@@ -2844,7 +2848,11 @@ impl VolumeServer for VolumeGrpcService {
 
         let store = self.state.store.read().unwrap();
         let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-            store.locations.iter().flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid)).collect()
+            store
+                .locations
+                .iter()
+                .flat_map(|loc| loc.ec_volumes().map(|(vid, _)| *vid))
+                .collect()
         } else {
             req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
         };
@@ -3094,7 +3102,7 @@ impl VolumeServer for VolumeGrpcService {
                             crc: n.checksum.0,
                             ttl: ttl_str,
                         },
-                    ))
+                    ));
                 }
                 Err(_) => {
                     return Err(Status::not_found(format!(
@@ -3236,15 +3244,14 @@ fn to_grpc_endpoint(target: &str) -> Result<String, String> {
 /// Ping a remote volume server target by actually calling its Ping RPC (matches Go behavior).
 async fn ping_volume_server_target(target: &str) -> Result<i64, String> {
     let addr = to_grpc_endpoint(target)?;
-    let channel = tonic::transport::Channel::from_shared(addr.clone())
-        .map_err(|e| e.to_string())?;
+    let channel =
+        tonic::transport::Channel::from_shared(addr.clone()).map_err(|e| e.to_string())?;
     let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
         .await
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client =
-        volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
     let resp = client
         .ping(volume_server_pb::PingRequest {
             target: String::new(),
@@ -3258,8 +3265,8 @@ async fn ping_volume_server_target(target: &str) -> Result<i64, String> {
 /// Ping a remote master target by actually calling its Ping RPC (matches Go behavior).
 async fn ping_master_target(target: &str) -> Result<i64, String> {
     let addr = to_grpc_endpoint(target)?;
-    let channel = tonic::transport::Channel::from_shared(addr.clone())
-        .map_err(|e| e.to_string())?;
+    let channel =
+        tonic::transport::Channel::from_shared(addr.clone()).map_err(|e| e.to_string())?;
     let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
         .await
         .map_err(|_| "connection timeout".to_string())?
