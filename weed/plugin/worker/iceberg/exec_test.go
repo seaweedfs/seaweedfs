@@ -38,7 +38,7 @@ type fakeFilerServer struct {
 
 	mu           sync.Mutex
 	entries      map[string]map[string]*filer_pb.Entry // dir → name → entry
-	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest)
+	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest) error
 
 	// Counters for assertions
 	createCalls int
@@ -145,7 +145,9 @@ func (f *fakeFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	f.mu.Unlock()
 
 	if beforeUpdate != nil {
-		beforeUpdate(f, req)
+		if err := beforeUpdate(f, req); err != nil {
+			return nil, err
+		}
 	}
 
 	f.mu.Lock()
@@ -161,7 +163,13 @@ func (f *fakeFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEnt
 	}
 	for key, expectedValue := range req.ExpectedExtended {
 		actualValue, ok := current.Extended[key]
-		if !ok || !bytes.Equal(actualValue, expectedValue) {
+		if ok {
+			if !bytes.Equal(actualValue, expectedValue) {
+				return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+			}
+			continue
+		}
+		if len(expectedValue) > 0 {
 			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
 		}
 	}
@@ -307,7 +315,8 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 		Name:        setup.TableName,
 		IsDirectory: true,
 		Extended: map[string][]byte{
-			s3tables.ExtendedKeyMetadata: xattr,
+			s3tables.ExtendedKeyMetadata:        xattr,
+			s3tables.ExtendedKeyMetadataVersion: metadataVersionXattr(metadataVersion),
 		},
 	})
 
@@ -1527,30 +1536,32 @@ func TestMetadataVersionCASDetectsConcurrentUpdate(t *testing.T) {
 	populateTable(t, fs, setup)
 
 	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
-	fs.beforeUpdate = func(f *fakeFilerServer, req *filer_pb.UpdateEntryRequest) {
+	fs.beforeUpdate = func(f *fakeFilerServer, req *filer_pb.UpdateEntryRequest) error {
 		entry := f.getEntry(path.Dir(tableDir), path.Base(tableDir))
 		if entry == nil {
-			t.Fatal("table entry not found before concurrent update")
+			return fmt.Errorf("table entry not found before concurrent update")
 		}
 
 		updatedEntry := cloneEntryForTest(t, entry)
 		var internalMeta map[string]json.RawMessage
 		if err := json.Unmarshal(updatedEntry.Extended[s3tables.ExtendedKeyMetadata], &internalMeta); err != nil {
-			t.Fatalf("unmarshal xattr: %v", err)
+			return fmt.Errorf("unmarshal xattr: %w", err)
 		}
 
 		versionJSON, err := json.Marshal(2)
 		if err != nil {
-			t.Fatalf("marshal version: %v", err)
+			return fmt.Errorf("marshal version: %w", err)
 		}
 		internalMeta["metadataVersion"] = versionJSON
 
 		updatedXattr, err := json.Marshal(internalMeta)
 		if err != nil {
-			t.Fatalf("marshal xattr: %v", err)
+			return fmt.Errorf("marshal xattr: %w", err)
 		}
 		updatedEntry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
+		updatedEntry.Extended[s3tables.ExtendedKeyMetadataVersion] = metadataVersionXattr(2)
 		f.putEntry(path.Dir(tableDir), path.Base(tableDir), updatedEntry)
+		return nil
 	}
 
 	err := updateTableMetadataXattr(context.Background(), client, tableDir, 1, []byte(`{}`), "metadata/v2.metadata.json")

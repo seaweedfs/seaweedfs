@@ -252,7 +252,13 @@ func validateUpdateEntryPreconditions(entry *filer.Entry, expectedExtended map[s
 		if entry != nil {
 			actualValue, ok = entry.Extended[key]
 		}
-		if !ok || !bytes.Equal(actualValue, expectedValue) {
+		if ok {
+			if !bytes.Equal(actualValue, expectedValue) {
+				return status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+			}
+			continue
+		}
+		if len(expectedValue) > 0 {
 			return status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
 		}
 	}
