@@ -131,6 +131,52 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 
 const defaultGCSOpTimeout = 30 * time.Second
 
+func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(ctx, &storage.Query{
+		Delimiter: "/",
+		Prefix:    pathKey,
+		Versions:  false,
+	})
+
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr != nil {
+			if iterErr == iterator.Done {
+				return nil
+			}
+			return fmt.Errorf("list directory %s%s: %w", loc.Bucket, loc.Path, iterErr)
+		}
+
+		if objectAttr.Prefix != "" {
+			// Common prefix → subdirectory
+			dirKey := "/" + strings.TrimSuffix(objectAttr.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err = visitFn(dir, name, true, nil); err != nil {
+				return err
+			}
+		} else {
+			key := "/" + objectAttr.Name
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			if err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
+				RemoteMtime: objectAttr.Updated.Unix(),
+				RemoteSize:  objectAttr.Size,
+				RemoteETag:  objectAttr.Etag,
+				StorageName: gcs.conf.Name,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
 func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
 	key := loc.Path[1:]
 	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)

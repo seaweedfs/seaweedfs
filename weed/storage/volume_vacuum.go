@@ -64,22 +64,26 @@ func (v *Volume) CompactByVolumeData(opts *CompactOptions) error {
 	//v.accessLock.Lock()
 	//defer v.accessLock.Unlock()
 	//glog.V(3).Infof("Got Compaction lock...")
-	if v.isCompacting || v.isCommitCompacting {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting...", v.Id)
 		return nil
 	}
-	v.isCompacting = true
-	defer func() {
-		v.isCompacting = false
-	}()
+	defer v.isCompactionInProgress.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
 	glog.V(3).Infof("creating copies for volume %d ,last offset %d...", v.Id, v.lastCompactIndexOffset)
+	if v.DataBackend == nil {
+		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
+	}
+	nm := v.nm
+	if nm == nil {
+		return fmt.Errorf("volume %d needle map is nil", v.Id)
+	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact failed to sync volume %d", v.Id)
 	}
-	if err := v.nm.Sync(); err != nil {
+	if err := nm.Sync(); err != nil {
 		glog.V(0).Infof("compact failed to sync volume idx %d", v.Id)
 	}
 
@@ -102,14 +106,11 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	}
 	glog.V(3).Infof("Compact2 volume %d ...", v.Id)
 
-	if v.isCompacting || v.isCommitCompacting {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		glog.V(0).Infof("Volume %d is already compacting2 ...", v.Id)
 		return nil
 	}
-	v.isCompacting = true
-	defer func() {
-		v.isCompacting = false
-	}()
+	defer v.isCompactionInProgress.Store(false)
 
 	v.lastCompactIndexOffset = v.IndexFileSize()
 	v.lastCompactRevision = v.SuperBlock.CompactionRevision
@@ -117,10 +118,14 @@ func (v *Volume) CompactByIndex(opts *CompactOptions) error {
 	if v.DataBackend == nil {
 		return fmt.Errorf("volume %d backend is empty remote:%v", v.Id, v.HasRemoteFile())
 	}
+	nm := v.nm
+	if nm == nil {
+		return fmt.Errorf("volume %d needle map is nil", v.Id)
+	}
 	if err := v.DataBackend.Sync(); err != nil {
 		glog.V(0).Infof("compact2 failed to sync volume dat %d: %v", v.Id, err)
 	}
-	if err := v.nm.Sync(); err != nil {
+	if err := nm.Sync(); err != nil {
 		glog.V(0).Infof("compact2 failed to sync volume idx %d: %v", v.Id, err)
 	}
 
@@ -139,14 +144,11 @@ func (v *Volume) CommitCompact() error {
 	}
 	glog.V(0).Infof("Committing volume %d vacuuming...", v.Id)
 
-	if v.isCommitCompacting {
-		glog.V(0).Infof("Volume %d is already commit compacting ...", v.Id)
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
+		glog.V(0).Infof("Volume %d is already compacting ...", v.Id)
 		return nil
 	}
-	v.isCommitCompacting = true
-	defer func() {
-		v.isCommitCompacting = false
-	}()
+	defer v.isCompactionInProgress.Store(false)
 
 	v.dataFileAccessLock.Lock()
 	defer v.dataFileAccessLock.Unlock()
@@ -531,7 +533,7 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
-	if v.Ttl.String() == "" {
+	if v.Ttl.String() == "" && v.nm != nil {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
 			return err

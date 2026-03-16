@@ -319,3 +319,85 @@ func TestRegistryReturnsNoDetectorWhenAllWorkersStale(t *testing.T) {
 		t.Fatalf("expected no detector when all workers are stale")
 	}
 }
+
+func TestRegistryHasCapableWorkerWithDetectCapability(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: false},
+		},
+	})
+
+	if !r.HasCapableWorker("vacuum") {
+		t.Fatalf("expected HasCapableWorker to return true for detect-capable worker")
+	}
+	if r.HasCapableWorker("balance") {
+		t.Fatalf("expected HasCapableWorker to return false for unknown job type")
+	}
+}
+
+func TestRegistryHasCapableWorkerWithExecuteCapability(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: false, CanExecute: true},
+		},
+	})
+
+	if !r.HasCapableWorker("vacuum") {
+		t.Fatalf("expected HasCapableWorker to return true for execute-capable worker")
+	}
+}
+
+func TestRegistryHasCapableWorkerReturnsFalseWhenNoWorkers(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	if r.HasCapableWorker("vacuum") {
+		t.Fatalf("expected HasCapableWorker to return false with no workers")
+	}
+}
+
+func TestRegistryHasCapableWorkerSkipsStaleWorkers(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.staleAfter = 2 * time.Second
+
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-stale",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: true, CanExecute: true},
+		},
+	})
+
+	r.mu.Lock()
+	r.sessions["worker-stale"].LastSeenAt = time.Now().Add(-10 * time.Second)
+	r.mu.Unlock()
+
+	if r.HasCapableWorker("vacuum") {
+		t.Fatalf("expected HasCapableWorker to return false when all workers are stale")
+	}
+}
+
+func TestRegistryHasCapableWorkerIgnoresNilCapability(t *testing.T) {
+	t.Parallel()
+
+	r := NewRegistry()
+	r.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-a",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: "vacuum", CanDetect: false, CanExecute: false},
+		},
+	})
+
+	if r.HasCapableWorker("vacuum") {
+		t.Fatalf("expected HasCapableWorker to return false when capability has no detect or execute")
+	}
+}

@@ -10,14 +10,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/aws-sdk-go/aws"
-	v1credentials "github.com/aws/aws-sdk-go/aws/credentials"
-	v1signer "github.com/aws/aws-sdk-go/aws/signer/v4"
-	v1s3 "github.com/aws/aws-sdk-go/service/s3"
 	v2aws "github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	v2s3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/aws-sdk-go/aws"
+	v1credentials "github.com/aws/aws-sdk-go/aws/credentials"
+	v1signer "github.com/aws/aws-sdk-go/aws/signer/v4"
+	v1s3 "github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -187,8 +187,8 @@ func testGetObjectAttributesMultipart(t *testing.T, cluster *TestCluster) {
 
 	// Test pagination: MaxParts=1
 	resp2, err := client.GetObjectAttributes(context.Background(), &v2s3.GetObjectAttributesInput{
-		Bucket:  v2aws.String(bucketName),
-		Key:     v2aws.String(objectKey),
+		Bucket:   v2aws.String(bucketName),
+		Key:      v2aws.String(objectKey),
 		MaxParts: v2aws.Int32(1),
 		ObjectAttributes: []types.ObjectAttributes{
 			types.ObjectAttributesObjectParts,

@@ -111,6 +111,9 @@ type AdminServer struct {
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
 
+	// Background goroutine lifecycle
+	bgCancel context.CancelFunc
+
 	// Collection statistics caching
 	collectionStatsCache          map[string]collectionStats
 	lastCollectionStatsUpdate     time.Time
@@ -137,8 +140,8 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	)
 
 	// Start master client connection process (like shell and filer do)
-	ctx := context.Background()
-	go masterClient.KeepConnectedToMaster(ctx)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go masterClient.KeepConnectedToMaster(bgCtx)
 
 	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
 	presenceLock := newAdminPresenceLock(masterClient)
@@ -159,6 +162,7 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		icebergPort:                   icebergPort,
 		pluginLock:                    lockManager,
 		adminPresenceLock:             presenceLock,
+		bgCancel:                      bgCancel,
 	}
 
 	// Initialize topic retention purger
@@ -256,9 +260,91 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
+		go server.monitorVacuumWorker(bgCtx)
 	}
 
 	return server
+}
+
+// vacuumToggler abstracts the master's vacuum enable/disable for testing.
+type vacuumToggler interface {
+	disableVacuum() error
+	enableVacuum() error
+}
+
+// masterVacuumToggler implements vacuumToggler via gRPC calls to the master.
+type masterVacuumToggler struct {
+	server *AdminServer
+}
+
+func (m *masterVacuumToggler) disableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+func (m *masterVacuumToggler) enableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.EnableVacuum(ctx, &master_pb.EnableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
+// is present and calls disable/enable accordingly. Returns the updated state
+// and whether the call failed (for log dedup on retries).
+func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
+	if hasWorker == previouslyActive {
+		return previouslyActive, false
+	}
+	if hasWorker {
+		if !retrying {
+			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		}
+		if err := toggler.disableVacuum(); err != nil {
+			glog.Warningf("Failed to disable vacuum on master: %v", err)
+			return false, true // retry next tick
+		}
+		return true, false
+	}
+	if !retrying {
+		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	}
+	if err := toggler.enableVacuum(); err != nil {
+		glog.Warningf("Failed to enable vacuum on master: %v", err)
+		return true, true // retry next tick
+	}
+	return false, false
+}
+
+// monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
+// disables/enables the master's automatic scheduled vacuum accordingly.
+func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
+	const pollInterval = 30 * time.Second
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	toggler := &masterVacuumToggler{server: s}
+	vacuumWorkerActive := false
+	retrying := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.plugin == nil {
+				continue
+			}
+			hasWorker := s.plugin.HasCapableWorker("vacuum")
+			vacuumWorkerActive, retrying = syncVacuumState(hasWorker, vacuumWorkerActive, toggler, retrying)
+		}
+	}
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files
@@ -1499,6 +1585,11 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 // Shutdown gracefully shuts down the admin server
 func (s *AdminServer) Shutdown() {
 	glog.V(1).Infof("Shutting down admin server...")
+
+	// Cancel background goroutines (vacuum monitor, etc.)
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
 
 	// Stop maintenance manager
 	s.StopMaintenanceManager()

@@ -814,3 +814,74 @@ func TestListObjectsV2_Regression_Sorting(t *testing.T) {
 	// With fix, it sees both and processes "reports"
 	assert.Contains(t, results, "file1", "Should return the nested file even if 'reports' directory is not the first match")
 }
+
+func TestListObjectsV2_PrefixEndingWithSlash_DoesNotMatchSiblings(t *testing.T) {
+	// Regression test: listing with prefix "1/" should only return objects under
+	// directory "1", not objects under "1000" or any other sibling whose name
+	// shares the same prefix string.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/bucket/path/to/list": {
+				{Name: "1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "1000", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "2500", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1": {
+				{Name: "fileA", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1000": {
+				{Name: "fileB", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "fileC", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/2500": {
+				{Name: "fileD", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// Simulate listing with prefix "path/to/list/1/" (no delimiter).
+	// normalizePrefixMarker("path/to/list/1/", "") returns dir="path/to/list", prefix="1"
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000' or '2500'")
+}
+
+func TestListObjectsV2_PrefixEndingWithSlash_WithDelimiter(t *testing.T) {
+	// Same scenario but with delimiter="/", verifying the fix works for both cases.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/bucket/path/to/list": {
+				{Name: "1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "1000", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1": {
+				{Name: "fileA", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1000": {
+				{Name: "fileB", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "/", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+		results = append(results, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000'")
+}

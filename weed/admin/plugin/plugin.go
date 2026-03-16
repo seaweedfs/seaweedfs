@@ -78,7 +78,7 @@ type Plugin struct {
 	schedulerRun              map[string]*schedulerRunInfo
 	schedulerLoopMu           sync.Mutex
 	schedulerLoopState        schedulerLoopState
-	schedulerWakeCh chan struct{}
+	schedulerWakeCh           chan struct{}
 
 	dedupeMu           sync.Mutex
 	recentDedupeByType map[string]map[string]time.Time
@@ -392,7 +392,6 @@ func (r *Plugin) SaveJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) err
 	return nil
 }
 
-
 func (r *Plugin) LoadDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
 	return r.store.LoadDescriptor(jobType)
 }
@@ -686,6 +685,11 @@ func (r *Plugin) executeJobWithExecutor(
 		}
 		return completed, nil
 	}
+}
+
+// HasCapableWorker checks if any non-stale worker has a capability for the given job type.
+func (r *Plugin) HasCapableWorker(jobType string) bool {
+	return r.registry.HasCapableWorker(jobType)
 }
 
 func (r *Plugin) ListWorkers() []*WorkerSession {
@@ -1413,4 +1417,14 @@ func (s *streamSession) close() {
 	s.closeOnce.Do(func() {
 		close(s.outgoing)
 	})
+}
+
+// WorkerConnectForTest simulates a worker connecting (test helper).
+func (r *Plugin) WorkerConnectForTest(hello *plugin_pb.WorkerHello) {
+	r.registry.UpsertFromHello(hello)
+}
+
+// WorkerDisconnectForTest simulates a worker disconnecting (test helper).
+func (r *Plugin) WorkerDisconnectForTest(workerID string) {
+	r.registry.Remove(workerID)
 }

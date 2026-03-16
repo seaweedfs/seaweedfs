@@ -9,12 +9,15 @@ import (
 	"io"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/apache/iceberg-go/table"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -23,6 +26,30 @@ import (
 type filerFileEntry struct {
 	Dir   string
 	Entry *filer_pb.Entry
+}
+
+var initGlobalHTTPClientOnce sync.Once
+
+type singleFilerClient struct {
+	client filer_pb.SeaweedFilerClient
+}
+
+func (c singleFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(c.client)
+}
+
+func (c singleFilerClient) AdjustedUrl(location *filer_pb.Location) string {
+	if location == nil {
+		return ""
+	}
+	if location.PublicUrl != "" {
+		return location.PublicUrl
+	}
+	return location.Url
+}
+
+func (c singleFilerClient) GetDataCenter() string {
+	return ""
 }
 
 // listFilerEntries lists all entries in a directory.
@@ -174,15 +201,20 @@ func loadFileByIcebergPath(ctx context.Context, client filer_pb.SeaweedFilerClie
 		return nil, fmt.Errorf("file not found: %s/%s", dir, fileName)
 	}
 
-	// Inline content is available for small files (metadata, manifests, and
-	// manifest lists written by saveFilerFile). Larger files uploaded via S3
-	// are stored as chunks with empty Content — detect this and return a
-	// clear error rather than silently returning empty data.
-	if len(resp.Entry.Content) == 0 && len(resp.Entry.Chunks) > 0 {
-		return nil, fmt.Errorf("file %s/%s is stored in chunks; only inline content is supported", dir, fileName)
+	if len(resp.Entry.Content) > 0 || len(resp.Entry.Chunks) == 0 {
+		return resp.Entry.Content, nil
 	}
 
-	return resp.Entry.Content, nil
+	initGlobalHTTPClientOnce.Do(util_http.InitGlobalHttpClient)
+	reader := filer.NewFileReader(singleFilerClient{client: client}, resp.Entry)
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("read chunked file %s/%s: %w", dir, fileName, err)
+	}
+	return data, nil
 }
 
 // normalizeIcebergPath converts an Iceberg path (which may be an S3 URL, an

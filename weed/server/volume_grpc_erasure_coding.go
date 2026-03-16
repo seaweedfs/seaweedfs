@@ -144,36 +144,67 @@ func (vs *VolumeServer) VolumeEcShardsRebuild(ctx context.Context, req *volume_s
 
 	var rebuiltShardIds []uint32
 
+	// Find the rebuild location: the location with the most shards and an .ecx file.
+	// With multi-disk servers, shards may be spread across different locations.
+	var rebuildLocation *storage.DiskLocation
+	var rebuildShardCount int
+	var otherLocationsWithShards []*storage.DiskLocation
+
 	for _, location := range vs.store.Locations {
 		_, _, existingShardCount, err := checkEcVolumeStatus(baseFileName, location)
 		if err != nil {
 			return nil, err
 		}
 
-		if existingShardCount == 0 {
+		indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
+		if !util.FileExists(indexBaseFileName+".ecx") && location.IdxDirectory != location.Directory {
+			indexBaseFileName = path.Join(location.Directory, baseFileName)
+		}
+		hasEcx := util.FileExists(indexBaseFileName + ".ecx")
+
+		// Skip locations that have neither shard files nor an .ecx file.
+		if existingShardCount == 0 && !hasEcx {
 			continue
 		}
 
-		indexBaseFileName := path.Join(location.IdxDirectory, baseFileName)
-		if !util.FileExists(indexBaseFileName+".ecx") && location.IdxDirectory != location.Directory {
-			// .ecx may be in the data directory if created before -dir.idx was configured
-			indexBaseFileName = path.Join(location.Directory, baseFileName)
-		}
-		if util.FileExists(indexBaseFileName + ".ecx") {
-			// write .ec00 ~ .ec13 files
-			dataBaseFileName := path.Join(location.Directory, baseFileName)
-			if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName); err != nil {
-				return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
-			} else {
-				rebuiltShardIds = generatedShardIds
+		if hasEcx && (rebuildLocation == nil || existingShardCount > rebuildShardCount) {
+			if rebuildLocation != nil {
+				otherLocationsWithShards = append(otherLocationsWithShards, rebuildLocation)
 			}
-
-			if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
-				return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
-			}
-
-			break
+			rebuildLocation = location
+			rebuildShardCount = existingShardCount
+		} else {
+			otherLocationsWithShards = append(otherLocationsWithShards, location)
 		}
+	}
+
+	if rebuildLocation == nil {
+		return &volume_server_pb.VolumeEcShardsRebuildResponse{}, nil
+	}
+
+	// Collect additional directories where shard files may exist.
+	// On multi-disk servers, existing local shards may be on a different disk
+	// than where copied shards were placed during ec.rebuild.
+	rebuildDataDir := rebuildLocation.Directory
+	var additionalDirs []string
+	for _, otherLocation := range otherLocationsWithShards {
+		additionalDirs = append(additionalDirs, otherLocation.Directory)
+	}
+
+	// Rebuild missing EC files, searching all disk locations for input shards
+	dataBaseFileName := path.Join(rebuildDataDir, baseFileName)
+	if generatedShardIds, err := erasure_coding.RebuildEcFiles(dataBaseFileName, additionalDirs...); err != nil {
+		return nil, fmt.Errorf("RebuildEcFiles %s: %v", dataBaseFileName, err)
+	} else {
+		rebuiltShardIds = generatedShardIds
+	}
+
+	indexBaseFileName := path.Join(rebuildLocation.IdxDirectory, baseFileName)
+	if !util.FileExists(indexBaseFileName+".ecx") && rebuildLocation.IdxDirectory != rebuildLocation.Directory {
+		indexBaseFileName = path.Join(rebuildLocation.Directory, baseFileName)
+	}
+	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsRebuildResponse{
@@ -191,8 +222,20 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 
 	var location *storage.DiskLocation
 
-	// Use disk_id if provided (disk-aware storage)
-	if req.DiskId > 0 || (req.DiskId == 0 && len(vs.store.Locations) > 0) {
+	// Select the target location for storing EC shard files.
+	//
+	// When req.DiskId > 0 the caller is explicitly choosing a disk:
+	//   location = vs.store.Locations[req.DiskId]
+	//   (DiskId=1 → Locations[1], DiskId=2 → Locations[2], etc.)
+	//
+	// When req.DiskId == 0 (the protobuf default, meaning "not specified")
+	// we auto-select location by preferring the disk that already holds EC
+	// shards for this volume, then falling back to any HDD, then any disk.
+	//
+	// Note: Locations[0] cannot be targeted explicitly via DiskId because 0
+	// is indistinguishable from "unset". It can still be chosen by the
+	// auto-select logic.
+	if req.DiskId > 0 {
 		// Validate disk ID is within bounds
 		if int(req.DiskId) >= len(vs.store.Locations) {
 			return nil, fmt.Errorf("invalid disk_id %d: only have %d disks", req.DiskId, len(vs.store.Locations))
@@ -202,13 +245,21 @@ func (vs *VolumeServer) VolumeEcShardsCopy(ctx context.Context, req *volume_serv
 		location = vs.store.Locations[req.DiskId]
 		glog.V(1).Infof("Using disk %d for EC shard copy: %s", req.DiskId, location.Directory)
 	} else {
-		// Fallback to old behavior for backward compatibility
-		if req.CopyEcxFile {
-			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
-				return location.DiskType == types.HardDriveType
+		// Prefer a location that already has shards for this volume,
+		// so all shards end up on the same disk for rebuild.
+		location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
+			_, found := loc.FindEcVolume(needle.VolumeId(req.VolumeId))
+			return found
+		})
+		if location == nil {
+			// Fall back to any HDD location with free space
+			location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
+				return loc.DiskType == types.HardDriveType
 			})
-		} else {
-			location = vs.store.FindFreeLocation(func(location *storage.DiskLocation) bool {
+		}
+		if location == nil {
+			// Fall back to any location with free space
+			location = vs.store.FindFreeLocation(func(loc *storage.DiskLocation) bool {
 				return true
 			})
 		}

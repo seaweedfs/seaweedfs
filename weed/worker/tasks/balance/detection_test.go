@@ -2,6 +2,7 @@ package balance
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
@@ -550,11 +551,11 @@ func TestDetection_SkipsPreExistingPendingTasks(t *testing.T) {
 	for i := 0; i < 15; i++ {
 		volID := uint32(1 + i)
 		err := at.AddPendingTask(topology.TaskSpec{
-			TaskID:     fmt.Sprintf("existing-%d", volID),
-			TaskType:   topology.TaskTypeBalance,
-			VolumeID:   volID,
-			VolumeSize: 1024,
-			Sources:    []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
+			TaskID:       fmt.Sprintf("existing-%d", volID),
+			TaskType:     topology.TaskTypeBalance,
+			VolumeID:     volID,
+			VolumeSize:   1024,
+			Sources:      []topology.TaskSourceSpec{{ServerID: "node-a", DiskID: 1}},
 			Destinations: []topology.TaskDestinationSpec{{ServerID: "node-b", DiskID: 2}},
 		})
 		if err != nil {
@@ -716,9 +717,9 @@ func TestDetection_FourServers_DestinationSpreading(t *testing.T) {
 // the effective volume distribution is within the configured threshold.
 func TestDetection_ConvergenceVerification(t *testing.T) {
 	tests := []struct {
-		name       string
-		counts     []int // volumes per server
-		threshold  float64
+		name      string
+		counts    []int // volumes per server
+		threshold float64
 	}{
 		{"2-server-big-gap", []int{100, 10}, 0.2},
 		{"3-server-staircase", []int{90, 50, 10}, 0.2},
@@ -999,4 +1000,113 @@ func TestDetection_ZeroVolumeServerIncludedInBalance(t *testing.T) {
 	imbalance := float64(maxC-minC) / avg
 	t.Logf("Distribution 8/2/1/0 → %v after %d moves (imbalance=%.1f%%)",
 		effective, len(tasks), imbalance*100)
+}
+
+func TestDetection_DataCenterFilter(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc2", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	// node-c is in dc2, should be excluded by filter
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc2", "rack1", "c1", 200, 30)...)
+
+	// Only include metrics from dc1
+	dc1Metrics := make([]*types.VolumeHealthMetrics, 0)
+	for _, m := range metrics {
+		if m.DataCenter == "dc1" {
+			dc1Metrics = append(dc1Metrics, m)
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	conf := defaultConf()
+	conf.DataCenterFilter = "dc1"
+
+	tasks, _, err := Detection(dc1Metrics, clusterInfo, conf, 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within dc1, got 0")
+	}
+
+	// With DC filter, only node-a and node-b are considered in topology seeding.
+	// node-c should never appear as source or destination.
+	for _, task := range tasks {
+		if task.Server == "node-c" {
+			t.Errorf("node-c (dc2) should not be a source with dc1 filter")
+		}
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c (dc2) should not be a target with dc1 filter")
+				}
+			}
+		}
+	}
+
+	if len(tasks) > 0 {
+		t.Logf("Created %d tasks within dc1 scope", len(tasks))
+	}
+}
+
+func TestDetection_NodeFilter(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1"},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1"},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1"},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 5)...)
+
+	// Only include metrics from node-a and node-b
+	filteredMetrics := make([]*types.VolumeHealthMetrics, 0)
+	for _, m := range metrics {
+		if m.Server == "node-a" || m.Server == "node-b" {
+			filteredMetrics = append(filteredMetrics, m)
+		}
+	}
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	conf := defaultConf()
+	conf.NodeFilter = "node-a,node-b"
+
+	tasks, _, err := Detection(filteredMetrics, clusterInfo, conf, 100)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	// Ensure detection produced tasks so the following checks are not vacuous.
+	if len(tasks) == 0 {
+		t.Fatal("Expected balance tasks for 50/10 imbalance within node-a,node-b scope, got 0")
+	}
+
+	for _, task := range tasks {
+		if task.Server == "node-c" {
+			t.Errorf("node-c should not be a source with node filter")
+		}
+		if task.TypedParams != nil {
+			for _, tgt := range task.TypedParams.Targets {
+				if strings.Contains(tgt.Node, "node-c") {
+					t.Errorf("node-c should not be a target with node filter")
+				}
+			}
+		}
+	}
+
+	t.Logf("Created %d tasks within node-a,node-b scope", len(tasks))
 }

@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -43,9 +44,11 @@ type Topology struct {
 
 	pulse int64
 
-	volumeSizeLimit  uint64
-	replicationAsMin bool
-	isDisableVacuum  bool
+	volumeSizeLimit          uint64
+	replicationAsMin         bool
+	vacuumDisabledByOperator atomic.Bool // true when operator manually disables vacuum
+	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
+	adminServerConnectedFunc func() bool // optional callback to check admin server presence
 
 	Sequence sequence.Sequencer
 
@@ -526,14 +529,49 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 	glog.Infof("[%s] reLink To topo  ", dn.Id())
 }
 
-func (t *Topology) DisableVacuum() {
-	glog.V(0).Infof("DisableVacuum")
-	t.isDisableVacuum = true
+// IsVacuumDisabled returns true if vacuum is disabled by either the
+// operator or the plugin monitor.
+func (t *Topology) IsVacuumDisabled() bool {
+	return t.vacuumDisabledByOperator.Load() || t.vacuumDisabledByPlugin.Load()
 }
 
+// DisableVacuum is called by the operator (shell command / manual RPC).
+// Only sets the operator flag; does not affect the plugin flag.
+func (t *Topology) DisableVacuum() {
+	glog.V(0).Infof("DisableVacuum (by operator)")
+	t.vacuumDisabledByOperator.Store(true)
+}
+
+// EnableVacuum is called by the operator (shell command / manual RPC).
+// Only clears the operator flag; does not affect the plugin flag.
 func (t *Topology) EnableVacuum() {
-	glog.V(0).Infof("EnableVacuum")
-	t.isDisableVacuum = false
+	glog.V(0).Infof("EnableVacuum (by operator)")
+	t.vacuumDisabledByOperator.Store(false)
+}
+
+// DisableVacuumByPlugin is called by the admin server's vacuum monitor
+// when a vacuum plugin worker connects. Only sets the plugin flag.
+func (t *Topology) DisableVacuumByPlugin() {
+	glog.V(0).Infof("DisableVacuum (by plugin worker)")
+	t.vacuumDisabledByPlugin.Store(true)
+}
+
+// EnableVacuumByPlugin is called by the admin server's vacuum monitor
+// when a vacuum plugin worker disconnects. Only clears the plugin flag.
+func (t *Topology) EnableVacuumByPlugin() {
+	glog.V(0).Infof("EnableVacuum (by plugin worker)")
+	t.vacuumDisabledByPlugin.Store(false)
+}
+
+// IsVacuumDisabledByPlugin returns whether the plugin monitor has disabled vacuum.
+func (t *Topology) IsVacuumDisabledByPlugin() bool {
+	return t.vacuumDisabledByPlugin.Load()
+}
+
+// SetAdminServerConnectedFunc sets an optional callback used by the vacuum
+// safety net to detect when the admin server has disconnected.
+func (t *Topology) SetAdminServerConnectedFunc(f func() bool) {
+	t.adminServerConnectedFunc = f
 }
 
 func (t *Topology) GetTopologyId() string {

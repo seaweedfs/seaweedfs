@@ -38,16 +38,17 @@ func (h *Handler) expireSnapshots(
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	config Config,
-) (string, error) {
+) (string, map[string]int64, error) {
+	start := time.Now()
 	// Load current metadata
 	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
-		return "", fmt.Errorf("load metadata: %w", err)
+		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
 
 	snapshots := meta.Snapshots()
 	if len(snapshots) == 0 {
-		return "no snapshots", nil
+		return "no snapshots", nil, nil
 	}
 
 	// Determine which snapshots to expire
@@ -92,7 +93,7 @@ func (h *Handler) expireSnapshots(
 	}
 
 	if len(toExpire) == 0 {
-		return "no snapshots expired", nil
+		return "no snapshots expired", nil, nil
 	}
 
 	// Split snapshots into expired and kept sets
@@ -113,11 +114,11 @@ func (h *Handler) expireSnapshots(
 	// This lets us determine which files become unreferenced.
 	expiredFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
 	if err != nil {
-		return "", fmt.Errorf("collect expired snapshot files: %w", err)
+		return "", nil, fmt.Errorf("collect expired snapshot files: %w", err)
 	}
 	keptFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
 	if err != nil {
-		return "", fmt.Errorf("collect kept snapshot files: %w", err)
+		return "", nil, fmt.Errorf("collect kept snapshot files: %w", err)
 	}
 
 	// Normalize kept file paths for consistent comparison
@@ -136,7 +137,7 @@ func (h *Handler) expireSnapshots(
 		return builder.RemoveSnapshots(toExpire)
 	})
 	if err != nil {
-		return "", fmt.Errorf("commit snapshot expiration: %w", err)
+		return "", nil, fmt.Errorf("commit snapshot expiration: %w", err)
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
@@ -156,7 +157,12 @@ func (h *Handler) expireSnapshots(
 		}
 	}
 
-	return fmt.Sprintf("expired %d snapshot(s), deleted %d unreferenced file(s)", len(toExpire), deletedCount), nil
+	metrics := map[string]int64{
+		MetricSnapshotsExpired: int64(len(toExpire)),
+		MetricFilesDeleted:     int64(deletedCount),
+		MetricDurationMs:       time.Since(start).Milliseconds(),
+	}
+	return fmt.Sprintf("expired %d snapshot(s), deleted %d unreferenced file(s)", len(toExpire), deletedCount), metrics, nil
 }
 
 // collectSnapshotFiles returns all file paths (manifest lists, manifest files,
@@ -215,38 +221,62 @@ func (h *Handler) removeOrphans(
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	config Config,
-) (string, error) {
+) (string, map[string]int64, error) {
+	start := time.Now()
 	// Load current metadata
 	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
-		return "", fmt.Errorf("load metadata: %w", err)
+		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
 
-	// Collect all referenced files from all snapshots
+	orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
+	if err != nil {
+		return "", nil, fmt.Errorf("collect orphan candidates: %w", err)
+	}
+
+	orphanCount := 0
+	for _, candidate := range orphanCandidates {
+		if delErr := deleteFilerFile(ctx, filerClient, candidate.Dir, candidate.Entry.Name); delErr != nil {
+			glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", candidate.Dir, candidate.Entry.Name, delErr)
+		} else {
+			orphanCount++
+		}
+	}
+
+	metrics := map[string]int64{
+		MetricOrphansRemoved: int64(orphanCount),
+		MetricDurationMs:     time.Since(start).Milliseconds(),
+	}
+	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), metrics, nil
+}
+
+func collectOrphanCandidates(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+	metadataFileName string,
+	orphanOlderThanHours int64,
+) ([]filerFileEntry, error) {
 	referencedFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, meta.Snapshots())
 	if err != nil {
-		return "", fmt.Errorf("collect referenced files: %w", err)
+		return nil, fmt.Errorf("collect referenced files: %w", err)
 	}
 
-	// Reference the active metadata file so it is not treated as orphan
 	referencedFiles[path.Join("metadata", metadataFileName)] = struct{}{}
-
-	// Also reference the current metadata files
 	for mle := range meta.PreviousFiles() {
 		referencedFiles[mle.MetadataFile] = struct{}{}
 	}
 
-	// Precompute a normalized lookup set so orphan checks are O(1) per file.
 	normalizedRefs := make(map[string]struct{}, len(referencedFiles))
 	for ref := range referencedFiles {
 		normalizedRefs[ref] = struct{}{}
 		normalizedRefs[normalizeIcebergPath(ref, bucketName, tablePath)] = struct{}{}
 	}
 
-	// List actual files on filer in metadata/ and data/ directories
 	tableBasePath := path.Join(s3tables.TablesPath, bucketName, tablePath)
-	safetyThreshold := time.Now().Add(-time.Duration(config.OrphanOlderThanHours) * time.Hour)
-	orphanCount := 0
+	safetyThreshold := time.Now().Add(-time.Duration(orphanOlderThanHours) * time.Hour)
+	var candidates []filerFileEntry
 
 	for _, subdir := range []string{"metadata", "data"} {
 		dirPath := path.Join(tableBasePath, subdir)
@@ -258,35 +288,22 @@ func (h *Handler) removeOrphans(
 
 		for _, fe := range fileEntries {
 			entry := fe.Entry
-			// Build relative path from the table base (e.g. "data/region=us/file.parquet")
 			fullPath := path.Join(fe.Dir, entry.Name)
 			relPath := strings.TrimPrefix(fullPath, tableBasePath+"/")
-
-			_, isReferenced := normalizedRefs[relPath]
-
-			if isReferenced {
+			if _, isReferenced := normalizedRefs[relPath]; isReferenced {
 				continue
 			}
-
-			// Check safety window — skip entries with unknown age
 			if entry.Attributes == nil {
 				continue
 			}
-			mtime := time.Unix(entry.Attributes.Mtime, 0)
-			if mtime.After(safetyThreshold) {
+			if time.Unix(entry.Attributes.Mtime, 0).After(safetyThreshold) {
 				continue
 			}
-
-			// Delete orphan
-			if delErr := deleteFilerFile(ctx, filerClient, fe.Dir, entry.Name); delErr != nil {
-				glog.Warningf("iceberg maintenance: failed to delete orphan %s/%s: %v", fe.Dir, entry.Name, delErr)
-			} else {
-				orphanCount++
-			}
+			candidates = append(candidates, fe)
 		}
 	}
 
-	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), nil
+	return candidates, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -299,31 +316,41 @@ func (h *Handler) rewriteManifests(
 	filerClient filer_pb.SeaweedFilerClient,
 	bucketName, tablePath string,
 	config Config,
-) (string, error) {
+) (string, map[string]int64, error) {
+	start := time.Now()
 	// Load current metadata
 	meta, metadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
 	if err != nil {
-		return "", fmt.Errorf("load metadata: %w", err)
+		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
 
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
-		return "no current snapshot", nil
+		return "no current snapshot", nil, nil
 	}
 
 	// Read manifest list
 	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
 	if err != nil {
-		return "", fmt.Errorf("read manifest list: %w", err)
+		return "", nil, fmt.Errorf("read manifest list: %w", err)
 	}
 
 	manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
 	if err != nil {
-		return "", fmt.Errorf("parse manifest list: %w", err)
+		return "", nil, fmt.Errorf("parse manifest list: %w", err)
 	}
 
-	if int64(len(manifests)) < config.MinInputFiles {
-		return fmt.Sprintf("only %d manifests, below threshold of %d", len(manifests), config.MinInputFiles), nil
+	// Separate data manifests from delete manifests. Only data manifests
+	// are candidates for rewriting; delete manifests are carried forward.
+	var dataManifests []iceberg.ManifestFile
+	for _, mf := range manifests {
+		if mf.ManifestContent() == iceberg.ManifestContentData {
+			dataManifests = append(dataManifests, mf)
+		}
+	}
+
+	if int64(len(dataManifests)) < config.MinManifestsToRewrite {
+		return fmt.Sprintf("only %d data manifests, below threshold of %d", len(dataManifests), config.MinManifestsToRewrite), nil, nil
 	}
 
 	// Collect all entries from data manifests, grouped by partition spec ID
@@ -341,17 +368,14 @@ func (h *Handler) rewriteManifests(
 		specByID[ps.ID()] = ps
 	}
 
-	for _, mf := range manifests {
-		if mf.ManifestContent() != iceberg.ManifestContentData {
-			continue
-		}
+	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
 		if err != nil {
-			return "", fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+			return "", nil, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
 		}
 		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
 		if err != nil {
-			return "", fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
 		}
 
 		sid := mf.PartitionSpecID()
@@ -359,7 +383,7 @@ func (h *Handler) rewriteManifests(
 		if !ok {
 			ps, found := specByID[int(sid)]
 			if !found {
-				return "", fmt.Errorf("partition spec %d not found in table metadata", sid)
+				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", sid)
 			}
 			se = &specEntries{specID: sid, spec: ps}
 			specMap[sid] = se
@@ -368,7 +392,7 @@ func (h *Handler) rewriteManifests(
 	}
 
 	if len(specMap) == 0 {
-		return "no data entries to rewrite", nil
+		return "no data entries to rewrite", nil, nil
 	}
 
 	schema := meta.CurrentSchema()
@@ -376,6 +400,7 @@ func (h *Handler) rewriteManifests(
 	snapshotID := currentSnap.SnapshotID
 	newSnapshotID := time.Now().UnixMilli()
 	newSeqNum := currentSnap.SequenceNumber + 1
+	artifactSuffix := compactRandomSuffix()
 	metaDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
 
 	// Track written artifacts so we can clean them up if the commit fails.
@@ -403,7 +428,7 @@ func (h *Handler) rewriteManifests(
 	totalEntries := 0
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
-		manifestFileName := fmt.Sprintf("merged-%d-spec%d-%d.avro", newSnapshotID, se.specID, time.Now().UnixMilli())
+		manifestFileName := fmt.Sprintf("merged-%d-%s-spec%d.avro", newSnapshotID, artifactSuffix, se.specID)
 		manifestPath := path.Join("metadata", manifestFileName)
 
 		var manifestBuf bytes.Buffer
@@ -417,11 +442,11 @@ func (h *Handler) rewriteManifests(
 			se.entries,
 		)
 		if err != nil {
-			return "", fmt.Errorf("write merged manifest for spec %d: %w", se.specID, err)
+			return "", nil, fmt.Errorf("write merged manifest for spec %d: %w", se.specID, err)
 		}
 
 		if err := saveFilerFile(ctx, filerClient, metaDir, manifestFileName, manifestBuf.Bytes()); err != nil {
-			return "", fmt.Errorf("save merged manifest for spec %d: %w", se.specID, err)
+			return "", nil, fmt.Errorf("save merged manifest for spec %d: %w", se.specID, err)
 		}
 		writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestFileName})
 		newManifests = append(newManifests, mergedManifest)
@@ -437,13 +462,13 @@ func (h *Handler) rewriteManifests(
 	var manifestListBuf bytes.Buffer
 	err = iceberg.WriteManifestList(version, &manifestListBuf, newSnapshotID, &snapshotID, &newSeqNum, 0, newManifests)
 	if err != nil {
-		return "", fmt.Errorf("write manifest list: %w", err)
+		return "", nil, fmt.Errorf("write manifest list: %w", err)
 	}
 
 	// Save new manifest list
-	manifestListFileName := fmt.Sprintf("snap-%d-%d.avro", newSnapshotID, time.Now().UnixMilli())
+	manifestListFileName := fmt.Sprintf("snap-%d-%s.avro", newSnapshotID, artifactSuffix)
 	if err := saveFilerFile(ctx, filerClient, metaDir, manifestListFileName, manifestListBuf.Bytes()); err != nil {
-		return "", fmt.Errorf("save manifest list: %w", err)
+		return "", nil, fmt.Errorf("save manifest list: %w", err)
 	}
 	writtenArtifacts = append(writtenArtifacts, artifact{dir: metaDir, fileName: manifestListFileName})
 
@@ -484,11 +509,16 @@ func (h *Handler) rewriteManifests(
 		)
 	})
 	if err != nil {
-		return "", fmt.Errorf("commit manifest rewrite: %w", err)
+		return "", nil, fmt.Errorf("commit manifest rewrite: %w", err)
 	}
 
 	committed = true
-	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(manifests), len(specMap), totalEntries), nil
+	metrics := map[string]int64{
+		MetricManifestsRewritten: int64(len(dataManifests)),
+		MetricEntriesTotal:       int64(totalEntries),
+		MetricDurationMs:         time.Since(start).Milliseconds(),
+	}
+	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(dataManifests), len(specMap), totalEntries), metrics, nil
 }
 
 // ---------------------------------------------------------------------------

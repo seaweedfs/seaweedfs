@@ -16,9 +16,22 @@ const (
 	defaultMaxSnapshotsToKeep     = 5
 	defaultOrphanOlderThanHours   = 72
 	defaultMaxCommitRetries       = 5
-	defaultTargetFileSizeBytes    = 256 * 1024 * 1024
+	defaultTargetFileSizeMB       = 256
 	defaultMinInputFiles          = 5
+	defaultMinManifestsToRewrite  = 5
+	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
+
+	// Metric keys returned by maintenance operations.
+	MetricFilesMerged        = "files_merged"
+	MetricFilesWritten       = "files_written"
+	MetricBins               = "bins"
+	MetricSnapshotsExpired   = "snapshots_expired"
+	MetricFilesDeleted       = "files_deleted"
+	MetricOrphansRemoved     = "orphans_removed"
+	MetricManifestsRewritten = "manifests_rewritten"
+	MetricEntriesTotal       = "entries_total"
+	MetricDurationMs         = "duration_ms"
 )
 
 // Config holds parsed worker config values.
@@ -29,7 +42,9 @@ type Config struct {
 	MaxCommitRetries       int64
 	TargetFileSizeBytes    int64
 	MinInputFiles          int64
+	MinManifestsToRewrite  int64
 	Operations             string
+	ApplyDeletes           bool
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
@@ -40,9 +55,11 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MaxSnapshotsToKeep:     readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
 		OrphanOlderThanHours:   readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
 		MaxCommitRetries:       readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
-		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_bytes", defaultTargetFileSizeBytes),
+		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
 		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
+		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
+		ApplyDeletes:           readBoolConfig(values, "apply_deletes", true),
 	}
 
 	// Clamp to safe minimums using the default constants
@@ -59,10 +76,13 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
-		cfg.TargetFileSizeBytes = defaultTargetFileSizeBytes
+		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
 	}
 	if cfg.MinInputFiles < 2 {
 		cfg.MinInputFiles = defaultMinInputFiles
+	}
+	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
+		cfg.MinManifestsToRewrite = minManifestsToRewrite
 	}
 
 	return cfg
@@ -143,6 +163,35 @@ func readStringConfig(values map[string]*plugin_pb.ConfigValue, field string, fa
 		return strconv.FormatBool(kind.BoolValue)
 	default:
 		glog.V(1).Infof("readStringConfig: unexpected config value type %T for field %q, using fallback", value.Kind, field)
+	}
+	return fallback
+}
+
+// readBoolConfig reads a bool value from plugin config, with fallback.
+func readBoolConfig(values map[string]*plugin_pb.ConfigValue, field string, fallback bool) bool {
+	if values == nil {
+		return fallback
+	}
+	value := values[field]
+	if value == nil {
+		return fallback
+	}
+	switch kind := value.Kind.(type) {
+	case *plugin_pb.ConfigValue_BoolValue:
+		return kind.BoolValue
+	case *plugin_pb.ConfigValue_StringValue:
+		s := strings.TrimSpace(strings.ToLower(kind.StringValue))
+		if s == "true" || s == "1" || s == "yes" {
+			return true
+		}
+		if s == "false" || s == "0" || s == "no" {
+			return false
+		}
+		glog.V(1).Infof("readBoolConfig: unrecognized string value %q for field %q, using fallback %v", kind.StringValue, field, fallback)
+	case *plugin_pb.ConfigValue_Int64Value:
+		return kind.Int64Value != 0
+	default:
+		glog.V(1).Infof("readBoolConfig: unexpected config value type %T for field %q, using fallback", value.Kind, field)
 	}
 	return fallback
 }

@@ -11,8 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	ecstorage "github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	erasurecodingtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -601,7 +601,8 @@ func (h *ErasureCodingHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	return collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	return metrics, activeTopology, err
 }
 
 func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *erasureCodingWorkerConfig {

@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -204,6 +206,13 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 	// Get metadata using structured API
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
+		// If the bucket directory is not found (e.g., during bucket recreation after
+		// a partial delete), treat it as having no encryption configured rather than
+		// failing the upload with an internal error.
+		if errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found") {
+			glog.Warningf("getEncryptionConfiguration: bucket metadata not found for %s, treating as no encryption: %v", bucket, err)
+			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+		}
 		glog.Errorf("getEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return nil, s3err.ErrInternalError
 	}

@@ -269,50 +269,6 @@ templ Layout(view ViewContext, content templ.Component) {
                                 </a>
                             }
                         </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/detection" {
-                                <a class="nav-link active" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/queue" {
-                                <a class="nav-link active" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/execution" {
-                                <a class="nav-link active" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/configuration" {
-                                <a class="nav-link active" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
-                                </a>
-                            }
-                        </li>
                     </ul>
                 </div>
             </div>
@@ -334,6 +290,9 @@ templ Layout(view ViewContext, content templ.Component) {
         <div class="container-fluid text-center">
             <small class="text-muted">
                 &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin v{version.VERSION_NUMBER}
+                if version.COMMIT != "" {
+                    <span class="mx-1">({version.COMMIT})</span>
+                }
                 if !strings.Contains(version.VERSION, "enterprise") {
                     <span class="mx-2">•</span>
                     <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">

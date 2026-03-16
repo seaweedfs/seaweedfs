@@ -317,26 +317,15 @@ func (l *FileTaskLogger) writeLogEntry(entry TaskLogEntry) {
 		return
 	}
 
-	// Flush to disk
-	if err := l.logFile.Sync(); err != nil {
-		glog.Errorf("Failed to sync log file: %v", err)
-	}
-
-	// Also log to console and stderr if enabled
+	// Only forward errors and warnings to glog; routine task logs stay in the task log file.
 	if l.config.EnableConsole {
-		// Log to glog with proper call depth to show actual source location
-		// We need depth 3 to skip: writeLogEntry -> log -> Info/Warning/Error calls to reach the original caller
 		formattedMsg := fmt.Sprintf("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
 		switch entry.Level {
 		case "ERROR":
-			glog.ErrorDepth(3, formattedMsg)
+			glog.ErrorDepth(4, formattedMsg)
 		case "WARNING":
-			glog.WarningDepth(3, formattedMsg)
-		default: // INFO, DEBUG, etc.
-			glog.InfoDepth(3, formattedMsg)
+			glog.WarningDepth(4, formattedMsg)
 		}
-		// Also log to stderr for immediate visibility
-		fmt.Fprintf(os.Stderr, "[TASK-%s] %s: %s\n", l.taskID, entry.Level, entry.Message)
 	}
 }
 
