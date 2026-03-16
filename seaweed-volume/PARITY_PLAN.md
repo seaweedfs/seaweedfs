@@ -1,6 +1,6 @@
 # Rust Volume Server Parity Plan
 
-Generated: 2026-03-08
+Generated: 2026-03-16
 
 ## Goal
 
@@ -154,6 +154,37 @@ The startup/runtime gaps that were verified in the initial audit are now closed:
    Closed by `66e3900dc`.
 
 There are no remaining verified gaps from the initial startup/runtime audit. The broader line-by-line comparison batches below are still required to either confirm parity or surface new gaps.
+
+## Execution Status As Of 2026-03-16
+
+The file-by-file comparison and verification work executed in this round was:
+
+1. Startup and harness alignment
+   Compared `weed/command/volume.go`, `test/volume_server/framework/cluster*.go`, `seaweed-volume/src/config.rs`, and `seaweed-volume/src/main.rs` to ensure the Rust server is invoked with Go-compatible flags and is rebuilt from the current source during parity runs.
+
+2. HTTP admin surface
+   Compared `weed/server/volume_server_handlers_admin.go` against `seaweed-volume/src/server/handlers.rs` with emphasis on `/status` payload shape, disk-status fields, and volume ordering.
+
+3. gRPC admin surface
+   Compared `weed/server/volume_grpc_admin.go` against `seaweed-volume/src/server/grpc_server.rs` with emphasis on `Ping`, `VolumeConfigure`, readonly/writable flows, and error wrapping.
+
+4. Storage/index layout
+   Compared Go index-entry defaults in `weed/storage/types` and `weed/storage/idx/*.go` against the Rust default feature set in `seaweed-volume/Cargo.toml` and the Rust index reader/writer paths to confirm default binaries use the same offset width.
+
+5. End-to-end parity verification
+   Re-ran the Go HTTP and gRPC integration suites with `VOLUME_SERVER_IMPL=rust` after each fix to confirm wire-level compatibility.
+
+### Verified mismatches closed in this round
+
+- Rust parity runs could reuse a stale `weed-volume` binary across test invocations, hiding source and feature changes from the Go harness.
+- Rust defaulted to 5-byte index offsets, while the default Go `go build` path uses 4-byte offsets unless built with `-tags 5BytesOffset`.
+- Rust `/status` omitted Go fields in both `Volumes` and `DiskStatuses`, and did not sort volumes by `Id`.
+- Rust `Ping` treated an empty target as a self-ping and only performed a raw gRPC connect for filer targets; Go returns `remote_time_ns=0` for the empty request and performs a real filer `Ping` RPC.
+
+### Verification commands
+
+- `VOLUME_SERVER_IMPL=rust go test -count=1 -timeout 1200s ./test/volume_server/http/...`
+- `VOLUME_SERVER_IMPL=rust go test -count=1 -timeout 1200s ./test/volume_server/grpc/...`
 
 ## Execution Plan
 
