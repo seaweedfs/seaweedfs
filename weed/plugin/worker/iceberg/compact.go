@@ -685,10 +685,7 @@ func readPositionDeleteFile(
 		for i := 0; i < n; i++ {
 			row := rows[i]
 			fp := row[filePathIdx].String()
-			var pos int64
-			if row[posIdx].Column() == posIdx {
-				pos = row[posIdx].Int64()
-			}
+			pos := row[posIdx].Int64()
 			result[fp] = append(result[fp], pos)
 		}
 		if readErr != nil {
@@ -773,24 +770,9 @@ func readEqualityDeleteFile(
 	reader := parquet.NewReader(bytes.NewReader(data))
 	defer reader.Close()
 
-	// Map Iceberg field IDs → column names → Parquet column indices
-	pqSchema := reader.Schema()
-	colNameToIdx := make(map[string]int)
-	for i, col := range pqSchema.Columns() {
-		colNameToIdx[strings.Join(col, ".")] = i
-	}
-
-	colIndices := make([]int, len(fieldIDs))
-	for i, fid := range fieldIDs {
-		field, ok := icebergSchema.FindFieldByID(fid)
-		if !ok {
-			return nil, fmt.Errorf("field ID %d not found in iceberg schema", fid)
-		}
-		idx, ok := colNameToIdx[field.Name]
-		if !ok {
-			return nil, fmt.Errorf("column %q (field ID %d) not found in parquet schema of %s", field.Name, fid, filePath)
-		}
-		colIndices[i] = idx
+	colIndices, err := resolveEqualityColIndices(reader.Schema(), fieldIDs, icebergSchema)
+	if err != nil {
+		return nil, fmt.Errorf("resolve columns in %s: %w", filePath, err)
 	}
 
 	result := make(map[string]struct{})

@@ -733,10 +733,10 @@ func testCompactDataFiles(t *testing.T) {
 		MaxCommitRetries:    3,
 	}
 
-	result, err := handler.CompactDataFiles(ctx, client, bucket, tablePath, config)
+	result, metrics, err := handler.CompactDataFiles(ctx, client, bucket, tablePath, config)
 	require.NoError(t, err)
 	assert.Contains(t, result, "compacted")
-	t.Logf("CompactDataFiles result: %s", result)
+	t.Logf("CompactDataFiles result: %s, metrics: %v", result, metrics)
 
 	var compacted *filer_pb.Entry
 	listErr := filer_pb.SeaweedList(ctx, client, dataDir, "", func(entry *filer_pb.Entry, isLast bool) error {
