@@ -84,6 +84,8 @@ func collectDeleteRewriteGroups(
 				continue
 			}
 
+			allPositionEntries = append(allPositionEntries, entry)
+
 			fileDeletes, err := readPositionDeleteFile(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
 			if err != nil {
 				return nil, nil, fmt.Errorf("read position delete file %s: %w", entry.DataFile().FilePath(), err)
@@ -93,7 +95,6 @@ func collectDeleteRewriteGroups(
 				continue
 			}
 
-			allPositionEntries = append(allPositionEntries, entry)
 			var referencedPath string
 			var positions []int64
 			for fp, pos := range fileDeletes {
@@ -144,7 +145,7 @@ func groupEligibleForRewrite(group *deleteRewriteGroup, config Config) bool {
 	if config.DeleteMaxOutputFiles > 0 && outputFiles > config.DeleteMaxOutputFiles {
 		return false
 	}
-	return int64(len(group.Inputs)) >= config.DeleteMinInputFiles || group.TotalSize < target
+	return int64(len(group.Inputs)) >= config.DeleteMinInputFiles
 }
 
 func estimatedDeleteOutputFiles(totalSize, targetSize int64) int {
@@ -266,7 +267,8 @@ func (h *Handler) rewritePositionDeleteFiles(
 		return "", nil, fmt.Errorf("parse manifest list: %w", err)
 	}
 
-	var dataManifests, equalityDeleteManifests []iceberg.ManifestFile
+	var dataManifests []iceberg.ManifestFile
+	var allEqualityEntries []iceberg.ManifestEntry
 	for _, mf := range manifests {
 		switch mf.ManifestContent() {
 		case iceberg.ManifestContentData:
@@ -280,15 +282,10 @@ func (h *Handler) rewritePositionDeleteFiles(
 			if parseErr != nil {
 				return "", nil, fmt.Errorf("parse delete manifest %s: %w", mf.FilePath(), parseErr)
 			}
-			hasEqualityDeletes := false
 			for _, entry := range entries {
 				if entry.DataFile().ContentType() == iceberg.EntryContentEqDeletes {
-					hasEqualityDeletes = true
-					break
+					allEqualityEntries = append(allEqualityEntries, entry)
 				}
-			}
-			if hasEqualityDeletes {
-				equalityDeleteManifests = append(equalityDeleteManifests, mf)
 			}
 		}
 	}
@@ -382,15 +379,6 @@ func (h *Handler) rewritePositionDeleteFiles(
 		})
 
 		outputFiles := estimatedDeleteOutputFiles(group.TotalSize, config.DeleteTargetFileSizeBytes)
-		if config.DeleteMaxOutputFiles > 0 && int64(outputFiles) > config.DeleteMaxOutputFiles {
-			skippedGroups++
-			for _, input := range group.Inputs {
-				delete(replacedPaths, input.Entry.DataFile().FilePath())
-				deleteFilesRewritten--
-				deleteBytesRewritten -= input.Entry.DataFile().FileSizeBytes()
-			}
-			continue
-		}
 		rowsPerFile := (len(rows) + outputFiles - 1) / outputFiles
 		if rowsPerFile < 1 {
 			rowsPerFile = len(rows)
@@ -454,6 +442,17 @@ func (h *Handler) rewritePositionDeleteFiles(
 		return "no position delete files eligible for rewrite", nil, nil
 	}
 
+	for _, entry := range allEqualityEntries {
+		existingEntry := iceberg.NewManifestEntry(
+			iceberg.EntryStatusEXISTING,
+			func() *int64 { id := entry.SnapshotID(); return &id }(),
+			manifestEntrySeqNum(entry),
+			manifestEntryFileSeqNum(entry),
+			entry.DataFile(),
+		)
+		addToSpec(entry.DataFile().SpecID(), existingEntry)
+	}
+
 	for _, entry := range allPositionEntries {
 		if _, replaced := replacedPaths[entry.DataFile().FilePath()]; replaced {
 			continue
@@ -474,9 +473,8 @@ func (h *Handler) rewritePositionDeleteFiles(
 	}
 	sort.Slice(sortedSpecIDs, func(i, j int) bool { return sortedSpecIDs[i] < sortedSpecIDs[j] })
 
-	allManifests := make([]iceberg.ManifestFile, 0, len(dataManifests)+len(equalityDeleteManifests)+len(sortedSpecIDs))
+	allManifests := make([]iceberg.ManifestFile, 0, len(dataManifests)+len(sortedSpecIDs))
 	allManifests = append(allManifests, dataManifests...)
-	allManifests = append(allManifests, equalityDeleteManifests...)
 
 	for _, specID := range sortedSpecIDs {
 		spec, ok := specByID[int(specID)]
