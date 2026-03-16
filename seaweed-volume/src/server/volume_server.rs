@@ -128,29 +128,20 @@ pub fn normalize_outgoing_http_url(scheme: &str, raw_target: &str) -> Result<Str
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.
 async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let origin = request.headers().get("origin").cloned();
-    let _request_id = request.headers().get("x-amz-request-id").cloned();
+    let request_id = super::request_id::generate_http_request_id();
 
-    let mut response = next.run(request).await;
+    let mut response = super::request_id::scope_request_id(request_id.clone(), async move {
+        next.run(request).await
+    })
+    .await;
 
     let headers = response.headers_mut();
     if let Ok(val) = HeaderValue::from_str(crate::version::server_header()) {
         headers.insert("Server", val);
     }
 
-    // Always generate a server-side request ID (matching Go's request_id.Ensure
-    // which ignores client-sent headers to prevent spoofing).
-    // Format: "%X%08X" — nanosecond timestamp hex + 4 random bytes hex.
-    {
-        use rand::Rng;
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos() as u64;
-        let rand_val: u32 = rand::thread_rng().gen();
-        let id = format!("{:X}{:08X}", nanos, rand_val);
-        if let Ok(val) = HeaderValue::from_str(&id) {
-            headers.insert("x-amz-request-id", val);
-        }
+    if let Ok(val) = HeaderValue::from_str(&request_id) {
+        headers.insert("x-amz-request-id", val);
     }
 
     if origin.is_some() {

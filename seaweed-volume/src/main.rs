@@ -14,6 +14,7 @@ use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
 use seaweed_volume::server::profiling::CpuProfileSession;
+use seaweed_volume::server::request_id::GrpcRequestIdLayer;
 use seaweed_volume::server::volume_server::{
     build_metrics_router, RuntimeMetricsConfig, VolumeServerState,
 };
@@ -569,6 +570,7 @@ async fn run(
                     .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {} (TLS enabled)", addr);
                 if let Err(e) = build_grpc_server_builder()
+                    .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
                     .add_service(build_volume_grpc_service(grpc_service))
@@ -590,6 +592,7 @@ async fn run(
                     .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {}", addr);
                 if let Err(e) = build_grpc_server_builder()
+                    .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
                     .add_service(build_volume_grpc_service(grpc_service))

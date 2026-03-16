@@ -5,5 +5,6 @@ pub mod handlers;
 pub mod heartbeat;
 pub mod memory_status;
 pub mod profiling;
+pub mod request_id;
 pub mod volume_server;
 pub mod write_queue;

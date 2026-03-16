@@ -222,7 +222,10 @@ async fn try_get_master_configuration(
         .timeout(Duration::from_secs(10))
         .connect()
         .await?;
-    let mut client = SeaweedClient::new(channel)
+    let mut client = SeaweedClient::with_interceptor(
+        channel,
+        super::request_id::outgoing_request_id_interceptor,
+    )
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
@@ -249,7 +252,10 @@ async fn do_heartbeat(
         .connect()
         .await?;
 
-    let mut client = SeaweedClient::new(channel)
+    let mut client = SeaweedClient::with_interceptor(
+        channel,
+        super::request_id::outgoing_request_id_interceptor,
+    )
         .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
         .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 

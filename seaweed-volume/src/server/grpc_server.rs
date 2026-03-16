@@ -99,7 +99,10 @@ impl VolumeGrpcService {
             .connect()
             .await
             .map_err(|e| Status::internal(format!("connect to master {}: {}", master_url, e)))?;
-        let mut client = SeaweedClient::new(channel)
+        let mut client = SeaweedClient::with_interceptor(
+            channel,
+            super::request_id::outgoing_request_id_interceptor,
+        )
             .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
             .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
         client
@@ -898,9 +901,12 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+            channel,
+            super::request_id::outgoing_request_id_interceptor,
+        )
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Get file status from source
         let vol_info = client
@@ -1630,9 +1636,12 @@ impl VolumeServer for VolumeGrpcService {
             .await
             .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+            channel,
+            super::request_id::outgoing_request_id_interceptor,
+        )
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Call VolumeTailSender on source
         let mut stream = client
@@ -1896,9 +1905,12 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+            channel,
+            super::request_id::outgoing_request_id_interceptor,
+        )
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Copy each shard
         for &shard_id in &req.shard_ids {
@@ -3315,9 +3327,12 @@ async fn ping_volume_server_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+        channel,
+        super::request_id::outgoing_request_id_interceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(volume_server_pb::PingRequest {
             target: String::new(),
@@ -3339,9 +3354,12 @@ async fn ping_master_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = master_pb::seaweed_client::SeaweedClient::new(channel)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = master_pb::seaweed_client::SeaweedClient::with_interceptor(
+        channel,
+        super::request_id::outgoing_request_id_interceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(master_pb::PingRequest {
             target: String::new(),
@@ -3363,9 +3381,12 @@ async fn ping_filer_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::new(channel)
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::with_interceptor(
+        channel,
+        super::request_id::outgoing_request_id_interceptor,
+    )
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(filer_pb::PingRequest::default())
         .await
@@ -3413,10 +3434,8 @@ fn set_file_mtime(path: &str, modified_ts_ns: i64) {
 
 /// Copy a file from a remote volume server via CopyFile streaming RPC.
 /// Returns the modified_ts_ns received from the source.
-async fn copy_file_from_source(
-    client: &mut volume_server_pb::volume_server_client::VolumeServerClient<
-        tonic::transport::Channel,
-    >,
+async fn copy_file_from_source<T>(
+    client: &mut volume_server_pb::volume_server_client::VolumeServerClient<T>,
     is_ec_volume: bool,
     collection: &str,
     volume_id: u32,
@@ -3432,7 +3451,13 @@ async fn copy_file_from_source(
     next_report_target: &mut i64,
     report_interval: i64,
     throttler: &mut WriteThrottler,
-) -> Result<i64, String> {
+) -> Result<i64, String>
+where
+    T: tonic::client::GrpcService<tonic::body::BoxBody>,
+    T::Error: Into<tonic::codegen::StdError>,
+    T::ResponseBody: http_body::Body<Data = bytes::Bytes> + Send + 'static,
+    <T::ResponseBody as http_body::Body>::Error: Into<tonic::codegen::StdError> + Send,
+{
     let copy_req = volume_server_pb::CopyFileRequest {
         volume_id,
         ext: ext.to_string(),
