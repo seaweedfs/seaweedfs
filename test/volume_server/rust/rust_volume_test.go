@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -260,9 +259,10 @@ func TestRustVolumeServerStatus(t *testing.T) {
 	}
 }
 
-// TestRustMetricsEndpoint verifies that GET /metrics returns 200 with
-// Prometheus text format content.
-func TestRustMetricsEndpoint(t *testing.T) {
+// TestRustMetricsEndpointIsNotOnAdminPortByDefault verifies that the default
+// volume admin listener does not expose Prometheus metrics. Go serves metrics
+// only on the dedicated metrics listener when -metricsPort is configured.
+func TestRustMetricsEndpointIsNotOnAdminPortByDefault(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
@@ -273,15 +273,8 @@ func TestRustMetricsEndpoint(t *testing.T) {
 	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/metrics"))
 	body := framework.ReadAllAndClose(t, resp)
 
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected /metrics 200, got %d", resp.StatusCode)
-	}
-
-	bodyStr := string(body)
-	// Prometheus text format includes lines starting with "# HELP" or "# TYPE",
-	// or at minimum metric names. Check for common indicators.
-	if !strings.Contains(bodyStr, "# ") && !strings.Contains(bodyStr, "_total") && !strings.Contains(bodyStr, "_seconds") {
-		t.Fatalf("/metrics response does not look like Prometheus text format, got: %.200s", bodyStr)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("expected admin /metrics 400 when metricsPort is unset, got %d body=%s", resp.StatusCode, string(body))
 	}
 }
 
