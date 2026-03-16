@@ -1376,6 +1376,121 @@ func TestDetectInvalidatesPlanningIndexWhenCompactionConfigChanges(t *testing.T)
 	}
 }
 
+func TestDetectPlanningIndexPreservesUnscannedSections(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	compactConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+	if _, err := handler.scanTablesForMaintenance(context.Background(), client, compactConfig, "", "", "", 0); err != nil {
+		t.Fatalf("compact scanTablesForMaintenance failed: %v", err)
+	}
+
+	rewriteConfig := Config{
+		MinManifestsToRewrite: 5,
+		Operations:            "rewrite_manifests",
+	}
+	if _, err := handler.scanTablesForMaintenance(context.Background(), client, rewriteConfig, "", "", "", 0); err != nil {
+		t.Fatalf("rewrite scanTablesForMaintenance failed: %v", err)
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	tableEntry := fs.getEntry(tableDir, setup.TableName)
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	var envelope struct {
+		PlanningIndex *planningIndex `json:"planningIndex,omitempty"`
+	}
+	if err := json.Unmarshal(tableEntry.Extended[s3tables.ExtendedKeyMetadata], &envelope); err != nil {
+		t.Fatalf("parse table metadata xattr: %v", err)
+	}
+	if envelope.PlanningIndex == nil {
+		t.Fatal("expected persisted planning index")
+	}
+	if envelope.PlanningIndex.Compaction == nil {
+		t.Fatal("expected compaction section to be preserved")
+	}
+	if envelope.PlanningIndex.RewriteManifests == nil {
+		t.Fatal("expected rewrite_manifests section to be added")
+	}
+}
+
+func TestTableNeedsMaintenanceCachesPlanningIndexBuildError(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "snap-1.avro", &filer_pb.Entry{
+		Name: "snap-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes:   4096,
+		MinInputFiles:         2,
+		MinManifestsToRewrite: 2,
+		Operations:            "compact,rewrite_manifests",
+	}
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		t.Fatalf("parseOperations: %v", err)
+	}
+
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	if err == nil {
+		t.Fatal("expected planning-index build error")
+	}
+	if needsWork {
+		t.Fatal("expected no maintenance result on planning-index build error")
+	}
+	if strings.Count(err.Error(), "parse manifest list") != 1 {
+		t.Fatalf("expected planning-index build error to be reported once, got %q", err)
+	}
+}
+
 func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.T) {
 	fs, client := startFakeFiler(t)
 

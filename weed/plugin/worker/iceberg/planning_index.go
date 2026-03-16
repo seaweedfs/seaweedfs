@@ -116,6 +116,24 @@ func operationRequested(ops []string, wanted string) bool {
 	return false
 }
 
+func mergePlanningIndexSections(index, existing *planningIndex) *planningIndex {
+	if index == nil || existing == nil {
+		return index
+	}
+	if index.SnapshotID != existing.SnapshotID || index.ManifestList != existing.ManifestList {
+		return index
+	}
+	if index.Compaction == nil && existing.Compaction != nil {
+		copy := *existing.Compaction
+		index.Compaction = &copy
+	}
+	if index.RewriteManifests == nil && existing.RewriteManifests != nil {
+		copy := *existing.RewriteManifests
+		index.RewriteManifests = &copy
+	}
+	return index
+}
+
 func buildPlanningIndex(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -195,6 +213,9 @@ func persistPlanningIndex(
 	var internalMeta map[string]json.RawMessage
 	if err := json.Unmarshal(existingXattr, &internalMeta); err != nil {
 		return fmt.Errorf("unmarshal metadata xattr: %w", err)
+	}
+	if _, _, existingIndex, err := parseTableMetadataEnvelope(existingXattr); err == nil {
+		index = mergePlanningIndexSections(index, existingIndex)
 	}
 
 	indexJSON, err := json.Marshal(index)

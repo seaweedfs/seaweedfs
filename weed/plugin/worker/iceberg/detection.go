@@ -190,13 +190,17 @@ func (h *Handler) tableNeedsMaintenance(
 	}
 
 	var computedPlanningIndex *planningIndex
+	var planningIndexLoaded bool
+	var planningIndexErr error
 	getPlanningIndex := func() (*planningIndex, error) {
-		if computedPlanningIndex != nil {
-			return computedPlanningIndex, nil
+		if planningIndexLoaded {
+			return computedPlanningIndex, planningIndexErr
 		}
+		planningIndexLoaded = true
 
 		index, err := buildPlanningIndex(ctx, filerClient, bucketName, tablePath, meta, config, ops)
 		if err != nil {
+			planningIndexErr = err
 			return nil, err
 		}
 		computedPlanningIndex = index
@@ -227,6 +231,7 @@ func (h *Handler) tableNeedsMaintenance(
 	}
 
 	var opEvalErrors []string
+	planningIndexErrorReported := false
 
 	for _, op := range ops {
 		switch op {
@@ -236,7 +241,10 @@ func (h *Handler) tableNeedsMaintenance(
 		case "compact":
 			eligible, err := checkPlanningIndex((*planningIndex).compactionEligible)
 			if err != nil {
-				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				if !planningIndexErrorReported {
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					planningIndexErrorReported = true
+				}
 				continue
 			}
 			if eligible {
@@ -245,7 +253,10 @@ func (h *Handler) tableNeedsMaintenance(
 		case "rewrite_manifests":
 			eligible, err := checkPlanningIndex((*planningIndex).rewriteManifestsEligible)
 			if err != nil {
-				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				if !planningIndexErrorReported {
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					planningIndexErrorReported = true
+				}
 				continue
 			}
 			if eligible {
