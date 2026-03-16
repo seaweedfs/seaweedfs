@@ -3084,14 +3084,15 @@ impl VolumeServer for VolumeGrpcService {
             };
             match store.read_volume_needle(vid, &mut n) {
                 Ok(_) => {
+                    let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());
                     return Ok(Response::new(
                         volume_server_pb::VolumeNeedleStatusResponse {
                             needle_id: n.id.0,
                             cookie: n.cookie.0,
-                            size: n.data_size,
+                            size: n.size.0 as u32,
                             last_modified: n.last_modified,
                             crc: n.checksum.0,
-                            ttl: String::new(),
+                            ttl: ttl_str,
                         },
                     ))
                 }
