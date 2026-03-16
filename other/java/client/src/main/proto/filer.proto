@@ -213,6 +213,7 @@ message UpdateEntryRequest {
     Entry entry = 2;
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
+    map<string, bytes> expected_extended = 5;
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;

@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // ---------------------------------------------------------------------------
@@ -35,8 +36,9 @@ import (
 type fakeFilerServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
 
-	mu      sync.Mutex
-	entries map[string]map[string]*filer_pb.Entry // dir → name → entry
+	mu           sync.Mutex
+	entries      map[string]map[string]*filer_pb.Entry // dir → name → entry
+	beforeUpdate func(*fakeFilerServer, *filer_pb.UpdateEntryRequest)
 
 	// Counters for assertions
 	createCalls int
@@ -138,9 +140,33 @@ func (f *fakeFilerServer) CreateEntry(_ context.Context, req *filer_pb.CreateEnt
 func (f *fakeFilerServer) UpdateEntry(_ context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	f.mu.Lock()
 	f.updateCalls++
+	beforeUpdate := f.beforeUpdate
+	f.beforeUpdate = nil
 	f.mu.Unlock()
 
-	f.putEntry(req.Directory, req.Entry.Name, req.Entry)
+	if beforeUpdate != nil {
+		beforeUpdate(f, req)
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	dirEntries, ok := f.entries[req.Directory]
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "entry not found: %s/%s", req.Directory, req.Entry.Name)
+	}
+	current := dirEntries[req.Entry.Name]
+	if current == nil {
+		return nil, status.Errorf(codes.NotFound, "entry not found: %s/%s", req.Directory, req.Entry.Name)
+	}
+	for key, expectedValue := range req.ExpectedExtended {
+		actualValue, ok := current.Extended[key]
+		if !ok || !bytes.Equal(actualValue, expectedValue) {
+			return nil, status.Errorf(codes.FailedPrecondition, "extended attribute %q changed", key)
+		}
+	}
+
+	dirEntries[req.Entry.Name] = req.Entry
 	return &filer_pb.UpdateEntryResponse{}, nil
 }
 
@@ -1484,6 +1510,66 @@ func TestMetadataVersionCAS(t *testing.T) {
 	if version != 2 {
 		t.Errorf("expected version 2 after update, got %d", version)
 	}
+}
+
+func TestMetadataVersionCASDetectsConcurrentUpdate(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "ns",
+		TableName:  "tbl",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
+	fs.beforeUpdate = func(f *fakeFilerServer, req *filer_pb.UpdateEntryRequest) {
+		entry := f.getEntry(path.Dir(tableDir), path.Base(tableDir))
+		if entry == nil {
+			t.Fatal("table entry not found before concurrent update")
+		}
+
+		updatedEntry := cloneEntryForTest(t, entry)
+		var internalMeta map[string]json.RawMessage
+		if err := json.Unmarshal(updatedEntry.Extended[s3tables.ExtendedKeyMetadata], &internalMeta); err != nil {
+			t.Fatalf("unmarshal xattr: %v", err)
+		}
+
+		versionJSON, err := json.Marshal(2)
+		if err != nil {
+			t.Fatalf("marshal version: %v", err)
+		}
+		internalMeta["metadataVersion"] = versionJSON
+
+		updatedXattr, err := json.Marshal(internalMeta)
+		if err != nil {
+			t.Fatalf("marshal xattr: %v", err)
+		}
+		updatedEntry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
+		f.putEntry(path.Dir(tableDir), path.Base(tableDir), updatedEntry)
+	}
+
+	err := updateTableMetadataXattr(context.Background(), client, tableDir, 1, []byte(`{}`), "metadata/v2.metadata.json")
+	if err == nil {
+		t.Fatal("expected version conflict error")
+	}
+	if !strings.Contains(err.Error(), "metadata version conflict") {
+		t.Fatalf("expected metadata version conflict, got %q", err)
+	}
+}
+
+func cloneEntryForTest(t *testing.T, entry *filer_pb.Entry) *filer_pb.Entry {
+	t.Helper()
+
+	cloned, ok := proto.Clone(entry).(*filer_pb.Entry)
+	if !ok {
+		t.Fatal("clone entry: unexpected type")
+	}
+	return cloned
 }
 
 // ---------------------------------------------------------------------------
