@@ -180,6 +180,9 @@ The file-by-file comparison and verification work executed in this round was:
 - Rust defaulted to 5-byte index offsets, while the default Go `go build` path uses 4-byte offsets unless built with `-tags 5BytesOffset`.
 - Rust `/status` omitted Go fields in both `Volumes` and `DiskStatuses`, and did not sort volumes by `Id`.
 - Rust `Ping` treated an empty target as a self-ping and only performed a raw gRPC connect for filer targets; Go returns `remote_time_ns=0` for the empty request and performs a real filer `Ping` RPC.
+- Rust `VolumeNeedleStatus` dropped stored TTL metadata and reported `data_size` instead of Go’s `Size` field.
+- Rust multipart uploads ignored form fields such as `ts`, `ttl`, and `cm`, and also ignored part-level `Content-Encoding` and `Content-MD5`.
+- Rust only treated `dl=true` and `dl=1` as truthy, while Go accepts the full `strconv.ParseBool` set such as `dl=t` and `dl=True`.
 
 ### Verification commands
 
