@@ -2186,10 +2186,9 @@ fn get_append_at_ns(last: u64) -> u64 {
 
 /// Remove all files associated with a volume.
 pub(crate) fn remove_volume_files(base: &str) {
-    // Note: .vif is intentionally NOT deleted here — it must be preserved
-    // for EC volumes that reference it after the original volume is destroyed.
-    // Matches Go's volume.Destroy() which only removes .dat/.idx.
-    for ext in &[".dat", ".idx", ".sdx", ".cpd", ".cpx", ".note", ".rdb"] {
+    for ext in &[
+        ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb",
+    ] {
         let _ = fs::remove_file(format!("{}{}", base, ext));
     }
     // leveldb uses a directory
@@ -2889,9 +2888,9 @@ mod tests {
         assert!(v.no_write_can_delete);
     }
 
-    /// Volume destroy must preserve .vif files (needed by EC volumes).
+    /// Volume destroy removes .vif alongside the primary data files.
     #[test]
-    fn test_destroy_preserves_vif() {
+    fn test_destroy_removes_vif() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
@@ -2929,14 +2928,13 @@ mod tests {
             ".idx should be removed"
         );
 
-        // .vif MUST be preserved for EC volumes
         assert!(
-            std::path::Path::new(&vif_path).exists(),
-            ".vif must survive destroy"
+            !std::path::Path::new(&vif_path).exists(),
+            ".vif should be removed"
         );
     }
 
-    /// Volume destroy with separate idx directory must clean up both dirs.
+    /// Volume destroy with separate idx directory must clean up both dirs and .vif.
     #[test]
     fn test_destroy_with_separate_idx_dir() {
         let dat_tmp = TempDir::new().unwrap();
@@ -2986,8 +2984,8 @@ mod tests {
             ".idx removed from idx dir"
         );
         assert!(
-            std::path::Path::new(&vif_path).exists(),
-            ".vif preserved in data dir"
+            !std::path::Path::new(&vif_path).exists(),
+            ".vif removed from data dir"
         );
     }
 }
