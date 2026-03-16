@@ -1015,7 +1015,7 @@ impl Volume {
         check_cookie: bool,
     ) -> Result<(u64, Size, bool), VolumeError> {
         let _guard = self.data_file_access_control.write_lock();
-        if self.no_write_or_delete {
+        if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
 
@@ -1418,8 +1418,19 @@ impl Volume {
     /// Mark this volume as writable (allow writes and deletes).
     pub fn set_writable(&mut self) {
         self.no_write_or_delete = false;
-        self.no_write_can_delete = false;
+        self.no_write_can_delete = self.has_remote_file;
         self.save_vif();
+    }
+
+    /// Recompute the Go-style write/delete mode from the current remote tier state.
+    pub fn refresh_remote_write_mode(&mut self) {
+        self.has_remote_file = !self.volume_info.files.is_empty();
+        if self.has_remote_file {
+            self.no_write_can_delete = true;
+            self.no_write_or_delete = false;
+        } else {
+            self.no_write_can_delete = false;
+        }
     }
 
     /// Path to .vif file.
@@ -1441,8 +1452,8 @@ impl Volume {
                 if pb_info.read_only {
                     self.no_write_or_delete = true;
                 }
-                self.has_remote_file = !pb_info.files.is_empty();
                 self.volume_info = pb_info;
+                self.refresh_remote_write_mode();
                 return;
             }
             // Fall back to legacy format
@@ -1689,7 +1700,7 @@ impl Volume {
         offset: i64,
         needle_blob: &[u8],
     ) -> Result<(), VolumeError> {
-        if self.no_write_or_delete {
+        if self.is_read_only() {
             return Err(VolumeError::ReadOnly);
         }
         let dat_file = self.dat_file.as_mut().ok_or_else(|| {
@@ -2773,6 +2784,109 @@ mod tests {
         assert_eq!(info.compaction_revision, v.super_block.compaction_revision);
         assert_eq!(info.data_size, data.len() as u32);
         assert!(info.data_file_offset > 0);
+    }
+
+    #[test]
+    fn test_remote_vif_load_blocks_writes_but_allows_delete() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let dat_size_before_reload = {
+            let mut v = make_test_volume(dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"remote".to_vec(),
+                data_size: 6,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+
+            let vif = VifVolumeInfo {
+                files: vec![VifRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "default".to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: v.dat_file_size().unwrap(),
+                    modified_time: 123,
+                    extension: ".dat".to_string(),
+                }],
+                version: v.version().0 as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+
+            v.dat_file_size().unwrap()
+        };
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert!(v.is_read_only());
+        assert!(!v.no_write_or_delete);
+        assert!(v.no_write_can_delete);
+
+        let err = v
+            .write_needle(
+                &mut Needle {
+                    id: NeedleId(2),
+                    cookie: Cookie(0x5678),
+                    data: b"blocked".to_vec(),
+                    data_size: 7,
+                    ..Needle::default()
+                },
+                true,
+            )
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::ReadOnly));
+
+        let deleted_size = v
+            .delete_needle(&mut Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                ..Needle::default()
+            })
+            .unwrap();
+        assert!(deleted_size.0 > 0);
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before_reload);
+    }
+
+    #[test]
+    fn test_set_writable_keeps_remote_delete_only_mode() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        v.volume_info.files.push(PbRemoteFile {
+            backend_type: "s3".to_string(),
+            backend_id: "default".to_string(),
+            key: "remote-key".to_string(),
+            offset: 0,
+            file_size: v.dat_file_size().unwrap(),
+            modified_time: 123,
+            extension: ".dat".to_string(),
+        });
+        v.refresh_remote_write_mode();
+        v.set_writable();
+
+        assert!(v.is_read_only());
+        assert!(!v.no_write_or_delete);
+        assert!(v.no_write_can_delete);
     }
 
     /// Volume destroy must preserve .vif files (needed by EC volumes).

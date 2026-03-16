@@ -2500,7 +2500,7 @@ impl VolumeServer for VolumeGrpcService {
                             modified_time: now_unix,
                             extension: ".dat".to_string(),
                         });
-                        vol.has_remote_file = true;
+                        vol.refresh_remote_write_mode();
 
                         if let Err(e) = vol.save_volume_info() {
                             return Err(Status::internal(format!(
@@ -2638,7 +2638,7 @@ impl VolumeServer for VolumeGrpcService {
                             if !vol.volume_info.files.is_empty() {
                                 vol.volume_info.files.remove(0);
                             }
-                            vol.has_remote_file = !vol.volume_info.files.is_empty();
+                            vol.refresh_remote_write_mode();
 
                             if let Err(e) = vol.save_volume_info() {
                                 return Err(Status::internal(format!(
