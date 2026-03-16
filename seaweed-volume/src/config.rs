@@ -2,6 +2,8 @@ use clap::Parser;
 use std::net::UdpSocket;
 use std::path::{Path, PathBuf};
 
+use crate::security::tls::TlsPolicy;
+
 /// SeaweedFS Volume Server (Rust implementation)
 ///
 /// Start a volume server to provide storage spaces.
@@ -245,6 +247,7 @@ pub struct VolumeServerConfig {
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
+    pub tls_policy: TlsPolicy,
     /// Enable batched write queue for improved throughput under load.
     pub enable_write_queue: bool,
     /// Path to security.toml — stored for SIGHUP reload.
@@ -784,6 +787,7 @@ fn resolve_config(cli: Cli) -> VolumeServerConfig {
         grpc_cert_file: sec.grpc_cert_file,
         grpc_key_file: sec.grpc_key_file,
         grpc_ca_file: sec.grpc_ca_file,
+        tls_policy: sec.tls_policy,
         enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false),
@@ -812,6 +816,7 @@ pub struct SecurityConfig {
     pub grpc_cert_file: String,
     pub grpc_key_file: String,
     pub grpc_ca_file: String,
+    pub tls_policy: TlsPolicy,
     pub access_ui: bool,
     /// IPs from [guard] white_list in security.toml
     pub guard_white_list: Vec<String>,
@@ -833,6 +838,12 @@ const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
 /// [https.volume]
 /// cert = "/path/to/cert.pem"
 /// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
+///
+/// [tls]
+/// min_version = "TLS 1.2"
+/// max_version = "TLS 1.3"
+/// cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
 ///
 /// [https.client]
 /// enabled = true
@@ -874,6 +885,7 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         Grpc,
         HttpsVolume,
         GrpcVolume,
+        Tls,
         Guard,
         Access,
     }
@@ -907,6 +919,10 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
         }
         if trimmed == "[grpc.volume]" {
             section = Section::GrpcVolume;
+            continue;
+        }
+        if trimmed == "[tls]" {
+            section = Section::Tls;
             continue;
         }
         if trimmed == "[guard]" {
@@ -959,6 +975,12 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                     "cert" => cfg.grpc_cert_file = value.to_string(),
                     "key" => cfg.grpc_key_file = value.to_string(),
                     "ca" => cfg.grpc_ca_file = value.to_string(),
+                    _ => {}
+                },
+                Section::Tls => match key {
+                    "min_version" => cfg.tls_policy.min_version = value.to_string(),
+                    "max_version" => cfg.tls_policy.max_version = value.to_string(),
+                    "cipher_suites" => cfg.tls_policy.cipher_suites = value.to_string(),
                     _ => {}
                 },
                 Section::Guard => match key {
@@ -1075,6 +1097,15 @@ fn apply_env_overrides(cfg: &mut SecurityConfig) {
     } else if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
         cfg.grpc_ca_file = v;
     }
+    if let Ok(v) = std::env::var("WEED_TLS_MIN_VERSION") {
+        cfg.tls_policy.min_version = v;
+    }
+    if let Ok(v) = std::env::var("WEED_TLS_MAX_VERSION") {
+        cfg.tls_policy.max_version = v;
+    }
+    if let Ok(v) = std::env::var("WEED_TLS_CIPHER_SUITES") {
+        cfg.tls_policy.cipher_suites = v;
+    }
     if let Ok(v) = std::env::var("WEED_GUARD_WHITE_LIST") {
         cfg.guard_white_list = v
             .split(',')
@@ -1154,6 +1185,9 @@ mod tests {
             "WEED_GRPC_VOLUME_KEY",
             "WEED_GRPC_CA",
             "WEED_GRPC_VOLUME_CA",
+            "WEED_TLS_MIN_VERSION",
+            "WEED_TLS_MAX_VERSION",
+            "WEED_TLS_CIPHER_SUITES",
             "WEED_GUARD_WHITE_LIST",
             "WEED_ACCESS_UI",
         ];
@@ -1421,6 +1455,32 @@ ca = "/etc/seaweedfs/client-ca.pem"
             assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
             assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
             assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_tls_policy_settings() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[tls]
+min_version = "TLS 1.2"
+max_version = "TLS 1.3"
+cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.tls_policy.min_version, "TLS 1.2");
+            assert_eq!(cfg.tls_policy.max_version, "TLS 1.3");
+            assert_eq!(
+                cfg.tls_policy.cipher_suites,
+                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+            );
         });
     }
 

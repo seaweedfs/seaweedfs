@@ -5,6 +5,7 @@ use tracing::{error, info, warn};
 use seaweed_volume::config::{self, VolumeServerConfig};
 use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
+use seaweed_volume::security::tls::build_rustls_server_config;
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
@@ -45,50 +46,6 @@ fn main() {
     if let Err(e) = rt.block_on(run(config)) {
         error!("Volume server failed: {}", e);
         std::process::exit(1);
-    }
-}
-
-/// Build a rustls ServerConfig from cert, key, and optional CA PEM files.
-/// When `ca_path` is non-empty, enables mTLS (client certificate verification).
-fn load_rustls_config(cert_path: &str, key_path: &str, ca_path: &str) -> rustls::ServerConfig {
-    let cert_pem = std::fs::read(cert_path)
-        .unwrap_or_else(|e| panic!("Failed to read TLS cert file '{}': {}", cert_path, e));
-    let key_pem = std::fs::read(key_path)
-        .unwrap_or_else(|e| panic!("Failed to read TLS key file '{}': {}", key_path, e));
-
-    let certs = rustls_pemfile::certs(&mut &cert_pem[..])
-        .collect::<Result<Vec<_>, _>>()
-        .expect("Failed to parse TLS certificate PEM");
-    let key = rustls_pemfile::private_key(&mut &key_pem[..])
-        .expect("Failed to parse TLS private key PEM")
-        .expect("No private key found in PEM file");
-
-    let builder = rustls::ServerConfig::builder();
-    if !ca_path.is_empty() {
-        // mTLS: verify client certificates against the CA
-        let ca_pem = std::fs::read(ca_path)
-            .unwrap_or_else(|e| panic!("Failed to read CA cert file '{}': {}", ca_path, e));
-        let ca_certs = rustls_pemfile::certs(&mut &ca_pem[..])
-            .collect::<Result<Vec<_>, _>>()
-            .expect("Failed to parse CA certificate PEM");
-        let mut root_store = rustls::RootCertStore::empty();
-        for cert in ca_certs {
-            root_store
-                .add(cert)
-                .expect("Failed to add CA certificate to root store");
-        }
-        let verifier = rustls::server::WebPkiClientVerifier::builder(Arc::new(root_store))
-            .build()
-            .expect("Failed to build client certificate verifier");
-        builder
-            .with_client_cert_verifier(verifier)
-            .with_single_cert(certs, key)
-            .expect("Failed to build rustls ServerConfig with mTLS")
-    } else {
-        builder
-            .with_no_client_auth()
-            .with_single_cert(certs, key)
-            .expect("Failed to build rustls ServerConfig")
     }
 }
 
@@ -439,11 +396,12 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                 "TLS enabled for HTTP server (cert={}, key={})",
                 config.https_cert_file, config.https_key_file
             );
-            let tls_config = load_rustls_config(
+            let tls_config = build_rustls_server_config(
                 &config.https_cert_file,
                 &config.https_key_file,
                 &config.https_ca_file,
-            );
+                &config.tls_policy,
+            )?;
             Some(TlsAcceptor::from(Arc::new(tls_config)))
         } else {
             None

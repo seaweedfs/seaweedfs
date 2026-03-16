@@ -99,6 +99,7 @@ pub fn build_grpc_endpoint(
 mod tests {
     use super::{build_grpc_endpoint, grpc_endpoint_uri, load_outgoing_grpc_tls};
     use crate::config::{NeedleMapKind, ReadMode, VolumeServerConfig};
+    use crate::security::tls::TlsPolicy;
 
     fn sample_config() -> VolumeServerConfig {
         VolumeServerConfig {
@@ -155,6 +156,7 @@ mod tests {
             grpc_cert_file: String::new(),
             grpc_key_file: String::new(),
             grpc_ca_file: String::new(),
+            tls_policy: TlsPolicy::default(),
             enable_write_queue: false,
             security_file: String::new(),
         }
