@@ -505,13 +505,19 @@ func TestBuildCompactionBinsMultiplePartitions(t *testing.T) {
 
 	partA := map[int]any{1: "us-east"}
 	partB := map[int]any{1: "eu-west"}
+	partitionSpec := iceberg.NewPartitionSpec(iceberg.PartitionField{
+		SourceID:  1,
+		FieldID:   1000,
+		Name:      "region",
+		Transform: iceberg.IdentityTransform{},
+	})
 
 	entries := makeTestEntries(t, []testEntrySpec{
-		{path: "data/a1.parquet", size: 1024, partition: partA},
-		{path: "data/a2.parquet", size: 2048, partition: partA},
-		{path: "data/b1.parquet", size: 1024, partition: partB},
-		{path: "data/b2.parquet", size: 2048, partition: partB},
-		{path: "data/b3.parquet", size: 4096, partition: partB},
+		{path: "data/a1.parquet", size: 1024, partition: partA, partitionSpec: &partitionSpec},
+		{path: "data/a2.parquet", size: 2048, partition: partA, partitionSpec: &partitionSpec},
+		{path: "data/b1.parquet", size: 1024, partition: partB, partitionSpec: &partitionSpec},
+		{path: "data/b2.parquet", size: 2048, partition: partB, partitionSpec: &partitionSpec},
+		{path: "data/b3.parquet", size: 4096, partition: partB, partitionSpec: &partitionSpec},
 	})
 
 	bins := buildCompactionBins(entries, targetSize, minFiles)
@@ -574,38 +580,63 @@ func TestSplitOversizedBinDropsImpossibleRunts(t *testing.T) {
 }
 
 type testEntrySpec struct {
-	path      string
-	size      int64
-	partition map[int]any
-	specID    int32 // partition spec ID; 0 uses UnpartitionedSpec
+	path          string
+	size          int64
+	partition     map[int]any
+	partitionSpec *iceberg.PartitionSpec
+	specID        int32 // partition spec ID; 0 uses UnpartitionedSpec
 }
 
-// makeTestEntries creates manifest entries using UnpartitionedSpec (spec ID 0).
-// The specID field in testEntrySpec is ignored here; for multi-spec testing,
-// use makeTestEntriesWithSpec instead.
-func makeTestEntries(t *testing.T, specs []testEntrySpec) []iceberg.ManifestEntry {
+func buildTestDataFile(t *testing.T, spec testEntrySpec) iceberg.DataFile {
 	t.Helper()
+
+	partitionSpec := iceberg.UnpartitionedSpec
+	if spec.partitionSpec != nil {
+		partitionSpec = spec.partitionSpec
+	} else if len(spec.partition) > 0 {
+		t.Fatalf("partition spec is required for partitioned test entry %s", spec.path)
+	}
+	dfBuilder, err := iceberg.NewDataFileBuilder(
+		*partitionSpec,
+		iceberg.EntryContentData,
+		spec.path,
+		iceberg.ParquetFile,
+		spec.partition,
+		nil, nil,
+		1, // recordCount (must be > 0)
+		spec.size,
+	)
+	if err != nil {
+		t.Fatalf("failed to build data file %s: %v", spec.path, err)
+	}
+	return dfBuilder.Build()
+}
+
+func makeManifestEntriesWithSnapshot(
+	t *testing.T,
+	specs []testEntrySpec,
+	snapshotID int64,
+	status iceberg.ManifestEntryStatus,
+) []iceberg.ManifestEntry {
+	t.Helper()
+
 	entries := make([]iceberg.ManifestEntry, 0, len(specs))
 	for _, spec := range specs {
-		partSpec := *iceberg.UnpartitionedSpec
-		dfBuilder, err := iceberg.NewDataFileBuilder(
-			partSpec,
-			iceberg.EntryContentData,
-			spec.path,
-			iceberg.ParquetFile,
-			spec.partition,
+		entries = append(entries, iceberg.NewManifestEntry(
+			status,
+			&snapshotID,
 			nil, nil,
-			1, // recordCount (must be > 0)
-			spec.size,
-		)
-		if err != nil {
-			t.Fatalf("failed to build data file %s: %v", spec.path, err)
-		}
-		snapID := int64(1)
-		entry := iceberg.NewManifestEntry(iceberg.EntryStatusADDED, &snapID, nil, nil, dfBuilder.Build())
-		entries = append(entries, entry)
+			buildTestDataFile(t, spec),
+		))
 	}
 	return entries
+}
+
+// makeTestEntries creates manifest entries using the default unpartitioned
+// spec. For multi-spec testing, use makeTestEntriesWithSpec instead.
+func makeTestEntries(t *testing.T, specs []testEntrySpec) []iceberg.ManifestEntry {
+	t.Helper()
+	return makeManifestEntriesWithSnapshot(t, specs, 1, iceberg.EntryStatusADDED)
 }
 
 // makeTestEntriesWithSpec creates manifest entries using specific partition specs.

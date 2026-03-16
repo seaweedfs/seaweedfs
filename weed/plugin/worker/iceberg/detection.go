@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -18,11 +20,12 @@ import (
 
 // tableInfo captures metadata about a table for detection/execution.
 type tableInfo struct {
-	BucketName string
-	Namespace  string
-	TableName  string
-	TablePath  string // namespace/tableName
-	Metadata   table.Metadata
+	BucketName       string
+	Namespace        string
+	TableName        string
+	TablePath        string // namespace/tableName
+	MetadataFileName string
+	Metadata         table.Metadata
 }
 
 // scanTablesForMaintenance enumerates table buckets and their tables,
@@ -37,13 +40,16 @@ func (h *Handler) scanTablesForMaintenance(
 	limit int,
 ) ([]tableInfo, error) {
 	var tables []tableInfo
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		return nil, fmt.Errorf("parse operations: %w", err)
+	}
 
 	// Compile wildcard matchers once (nil = match all)
 	bucketMatchers := wildcard.CompileWildcardMatchers(bucketFilter)
 	nsMatchers := wildcard.CompileWildcardMatchers(namespaceFilter)
 	tableMatchers := wildcard.CompileWildcardMatchers(tableFilter)
 
-	// List entries under /buckets to find table buckets
 	bucketsPath := s3tables.TablesPath
 	bucketEntries, err := listFilerEntries(ctx, filerClient, bucketsPath, "")
 	if err != nil {
@@ -117,7 +123,8 @@ func (h *Handler) scanTablesForMaintenance(
 
 				// Parse the internal metadata to get FullMetadata
 				var internalMeta struct {
-					Metadata *struct {
+					MetadataLocation string `json:"metadataLocation,omitempty"`
+					Metadata         *struct {
 						FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
 					} `json:"metadata,omitempty"`
 				}
@@ -135,13 +142,21 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				if needsMaintenance(icebergMeta, config) {
+				tablePath := path.Join(nsName, tblName)
+				metadataFileName := metadataFileNameFromLocation(internalMeta.MetadataLocation, bucketName, tablePath)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, config, ops)
+				if err != nil {
+					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
+					continue
+				}
+				if needsWork {
 					tables = append(tables, tableInfo{
-						BucketName: bucketName,
-						Namespace:  nsName,
-						TableName:  tblName,
-						TablePath:  path.Join(nsName, tblName),
-						Metadata:   icebergMeta,
+						BucketName:       bucketName,
+						Namespace:        nsName,
+						TableName:        tblName,
+						TablePath:        tablePath,
+						MetadataFileName: metadataFileName,
+						Metadata:         icebergMeta,
 					})
 					if limit > 0 && len(tables) > limit {
 						return tables, nil
@@ -154,8 +169,216 @@ func (h *Handler) scanTablesForMaintenance(
 	return tables, nil
 }
 
-// needsMaintenance checks if a table needs any maintenance based on
-// metadata-only thresholds (no manifest reading).
+func normalizeDetectionConfig(config Config) Config {
+	normalized := config
+	if normalized.TargetFileSizeBytes <= 0 {
+		normalized.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
+	}
+	if normalized.MinInputFiles < 2 {
+		normalized.MinInputFiles = defaultMinInputFiles
+	}
+	if normalized.MinManifestsToRewrite < minManifestsToRewrite {
+		normalized.MinManifestsToRewrite = minManifestsToRewrite
+	}
+	if normalized.OrphanOlderThanHours <= 0 {
+		normalized.OrphanOlderThanHours = defaultOrphanOlderThanHours
+	}
+	return normalized
+}
+
+func (h *Handler) tableNeedsMaintenance(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+	metadataFileName string,
+	config Config,
+	ops []string,
+) (bool, error) {
+	config = normalizeDetectionConfig(config)
+
+	// Evaluate the metadata-only expiration check first so large tables do not
+	// pay for manifest reads when snapshot expiry already makes them eligible.
+	for _, op := range ops {
+		if op == "expire_snapshots" && needsMaintenance(meta, config) {
+			return true, nil
+		}
+	}
+
+	loadManifests := func() ([]iceberg.ManifestFile, error) {
+		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
+	}
+
+	var currentManifests []iceberg.ManifestFile
+	var manifestsErr error
+	manifestsLoaded := false
+	getCurrentManifests := func() ([]iceberg.ManifestFile, error) {
+		if manifestsLoaded {
+			return currentManifests, manifestsErr
+		}
+		currentManifests, manifestsErr = loadManifests()
+		manifestsLoaded = true
+		return currentManifests, manifestsErr
+	}
+	var opEvalErrors []string
+
+	for _, op := range ops {
+		switch op {
+		case "expire_snapshots":
+			// Handled by the metadata-only check above.
+			continue
+		case "compact":
+			manifests, err := getCurrentManifests()
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			if eligible {
+				return true, nil
+			}
+		case "rewrite_manifests":
+			manifests, err := getCurrentManifests()
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
+				return true, nil
+			}
+		case "remove_orphans":
+			if metadataFileName == "" {
+				_, currentMetadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+				if err != nil {
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					continue
+				}
+				metadataFileName = currentMetadataFileName
+			}
+			orphanCandidates, err := collectOrphanCandidates(ctx, filerClient, bucketName, tablePath, meta, metadataFileName, config.OrphanOlderThanHours)
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			if len(orphanCandidates) > 0 {
+				return true, nil
+			}
+		}
+	}
+
+	if len(opEvalErrors) > 0 {
+		return false, fmt.Errorf("evaluate maintenance operations: %s", strings.Join(opEvalErrors, "; "))
+	}
+
+	return false, nil
+}
+
+func metadataFileNameFromLocation(location, bucketName, tablePath string) string {
+	if location == "" {
+		return ""
+	}
+	return path.Base(normalizeIcebergPath(location, bucketName, tablePath))
+}
+
+func countDataManifests(manifests []iceberg.ManifestFile) int64 {
+	var count int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() == iceberg.ManifestContentData {
+			count++
+		}
+	}
+	return count
+}
+
+func loadCurrentManifests(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+) ([]iceberg.ManifestFile, error) {
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil || currentSnap.ManifestList == "" {
+		return nil, nil
+	}
+
+	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
+	if err != nil {
+		return nil, fmt.Errorf("read manifest list: %w", err)
+	}
+	manifests, err := iceberg.ReadManifestList(bytes.NewReader(manifestListData))
+	if err != nil {
+		return nil, fmt.Errorf("parse manifest list: %w", err)
+	}
+	return manifests, nil
+}
+
+func hasEligibleCompaction(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	manifests []iceberg.ManifestFile,
+	config Config,
+) (bool, error) {
+	if len(manifests) == 0 {
+		return false, nil
+	}
+
+	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
+	if err != nil {
+		return false, err
+	}
+
+	var dataManifests []iceberg.ManifestFile
+	specIDs := make(map[int32]struct{})
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			continue
+		}
+		dataManifests = append(dataManifests, mf)
+		specIDs[mf.PartitionSpecID()] = struct{}{}
+	}
+	if len(dataManifests) == 0 {
+		return false, nil
+	}
+	if len(specIDs) > 1 {
+		return false, nil
+	}
+
+	var allEntries []iceberg.ManifestEntry
+	for _, mf := range dataManifests {
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			return false, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			return false, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+		allEntries = append(allEntries, entries...)
+	}
+
+	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, minInputFiles)
+	return len(bins) > 0, nil
+}
+
+func compactionMinInputFiles(minInputFiles int64) (int, error) {
+	// Ensure the configured value is positive and fits into the platform's int type
+	if minInputFiles <= 0 {
+		return 0, fmt.Errorf("min input files must be positive, got %d", minInputFiles)
+	}
+	maxInt := int64(^uint(0) >> 1)
+	if minInputFiles > maxInt {
+		return 0, fmt.Errorf("min input files %d exceeds platform int size", minInputFiles)
+	}
+	return int(minInputFiles), nil
+}
+
+// needsMaintenance checks whether snapshot expiration work is needed based on
+// metadata-only thresholds.
 func needsMaintenance(meta table.Metadata, config Config) bool {
 	snapshots := meta.Snapshots()
 	if len(snapshots) == 0 {
