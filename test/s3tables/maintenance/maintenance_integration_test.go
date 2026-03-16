@@ -736,6 +736,11 @@ func testCompactDataFiles(t *testing.T) {
 	result, metrics, err := handler.CompactDataFiles(ctx, client, bucket, tablePath, config)
 	require.NoError(t, err)
 	assert.Contains(t, result, "compacted")
+	require.NotNil(t, metrics, "expected non-nil metrics from CompactDataFiles")
+	assert.Contains(t, metrics, icebergHandler.MetricFilesMerged)
+	assert.Contains(t, metrics, icebergHandler.MetricFilesWritten)
+	assert.Contains(t, metrics, icebergHandler.MetricBins)
+	assert.Contains(t, metrics, icebergHandler.MetricDurationMs)
 	t.Logf("CompactDataFiles result: %s, metrics: %v", result, metrics)
 
 	var compacted *filer_pb.Entry

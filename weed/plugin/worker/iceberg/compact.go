@@ -220,7 +220,7 @@ func (h *Handler) compactDataFiles(
 		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
-			continue
+			goto binDone
 		}
 
 		// Write merged file to filer
@@ -232,52 +232,55 @@ func (h *Handler) compactDataFiles(
 		}
 
 		// Use the partition spec matching this bin's spec ID
-		binSpec, ok := specByID[int(bin.SpecID)]
-		if !ok {
-			glog.Warningf("iceberg compact: spec %d not found for bin %d, skipping", bin.SpecID, binIdx)
-			_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
-			continue
-		}
+		{
+			binSpec, ok := specByID[int(bin.SpecID)]
+			if !ok {
+				glog.Warningf("iceberg compact: spec %d not found for bin %d, skipping", bin.SpecID, binIdx)
+				_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
+				goto binDone
+			}
 
-		// Create new DataFile entry for the merged file
-		dfBuilder, err := iceberg.NewDataFileBuilder(
-			binSpec,
-			iceberg.EntryContentData,
-			mergedFilePath,
-			iceberg.ParquetFile,
-			bin.Partition,
-			nil, nil,
-			recordCount,
-			int64(len(mergedData)),
-		)
-		if err != nil {
-			glog.Warningf("iceberg compact: failed to build data file entry for bin %d: %v", binIdx, err)
-			// Clean up the written file
-			_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
-			continue
-		}
-		writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
-
-		newEntry := iceberg.NewManifestEntry(
-			iceberg.EntryStatusADDED,
-			&newSnapID,
-			nil, nil,
-			dfBuilder.Build(),
-		)
-		newManifestEntries = append(newManifestEntries, newEntry)
-
-		// Mark original entries as deleted
-		for _, entry := range bin.Entries {
-			delEntry := iceberg.NewManifestEntry(
-				iceberg.EntryStatusDELETED,
-				&newSnapID,
-				entrySeqNum(entry), entryFileSeqNum(entry),
-				entry.DataFile(),
+			// Create new DataFile entry for the merged file
+			dfBuilder, err := iceberg.NewDataFileBuilder(
+				binSpec,
+				iceberg.EntryContentData,
+				mergedFilePath,
+				iceberg.ParquetFile,
+				bin.Partition,
+				nil, nil,
+				recordCount,
+				int64(len(mergedData)),
 			)
-			deletedManifestEntries = append(deletedManifestEntries, delEntry)
+			if err != nil {
+				glog.Warningf("iceberg compact: failed to build data file entry for bin %d: %v", binIdx, err)
+				_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
+				goto binDone
+			}
+			writtenArtifacts = append(writtenArtifacts, artifact{dir: dataDir, fileName: mergedFileName})
+
+			newEntry := iceberg.NewManifestEntry(
+				iceberg.EntryStatusADDED,
+				&newSnapID,
+				nil, nil,
+				dfBuilder.Build(),
+			)
+			newManifestEntries = append(newManifestEntries, newEntry)
+
+			// Mark original entries as deleted
+			for _, entry := range bin.Entries {
+				delEntry := iceberg.NewManifestEntry(
+					iceberg.EntryStatusDELETED,
+					&newSnapID,
+					entrySeqNum(entry), entryFileSeqNum(entry),
+					entry.DataFile(),
+				)
+				deletedManifestEntries = append(deletedManifestEntries, delEntry)
+			}
+
+			totalMerged += len(bin.Entries)
 		}
 
-		totalMerged += len(bin.Entries)
+	binDone:
 		if onProgress != nil {
 			onProgress(binIdx, len(bins))
 		}
@@ -333,9 +336,17 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
-	// Write one manifest per spec ID
+	// Write one manifest per spec ID, iterating in sorted order for
+	// deterministic manifest list construction.
+	sortedSpecIDs := make([]int32, 0, len(specEntriesMap))
+	for sid := range specEntriesMap {
+		sortedSpecIDs = append(sortedSpecIDs, sid)
+	}
+	sort.Slice(sortedSpecIDs, func(i, j int) bool { return sortedSpecIDs[i] < sortedSpecIDs[j] })
+
 	var allManifests []iceberg.ManifestFile
-	for _, se := range specEntriesMap {
+	for _, sid := range sortedSpecIDs {
+		se := specEntriesMap[sid]
 		ps, ok := specByID[int(se.specID)]
 		if !ok {
 			return "", nil, fmt.Errorf("partition spec %d not found in table metadata", se.specID)
