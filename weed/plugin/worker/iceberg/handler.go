@@ -287,23 +287,23 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
-				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
-				"delete_target_file_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
-				"delete_min_input_files":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
+				"target_file_size_mb":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+				"min_input_files":               {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"delete_target_file_size_mb":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
+				"delete_min_input_files":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
 				"delete_max_file_group_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxGroupSizeMB}},
-				"delete_max_output_files":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
-				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
-				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
-				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
-				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
-				"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
-				"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
-				"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
-				"rewrite_strategy":         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "binpack"}},
-				"sort_fields":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"sort_max_input_mb":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-				"where":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"delete_max_output_files":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
+				"min_manifests_to_rewrite":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
+				"snapshot_retention_hours":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+				"max_snapshots_to_keep":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+				"orphan_older_than_hours":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+				"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+				"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+				"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+				"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "binpack"}},
+				"sort_fields":                   {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -318,22 +318,22 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
-			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
-			"delete_target_file_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
-			"delete_min_input_files":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
+			"target_file_size_mb":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+			"min_input_files":               {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+			"delete_target_file_size_mb":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
+			"delete_min_input_files":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
 			"delete_max_file_group_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxGroupSizeMB}},
-			"delete_max_output_files":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
-			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
-			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
-			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
-			"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
-			"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
-			"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
-			"rewrite_strategy":         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "binpack"}},
-			"sort_fields":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-			"sort_max_input_mb":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-			"where":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			"delete_max_output_files":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
+			"snapshot_retention_hours":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+			"max_snapshots_to_keep":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+			"orphan_older_than_hours":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+			"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+			"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+			"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+			"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "binpack"}},
+			"sort_fields":                   {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+			"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
 }
@@ -350,13 +350,12 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
-	if _, err := parseOperations(workerConfig.Operations); err != nil {
+	ops, err := parseOperations(workerConfig.Operations)
+	if err != nil {
 		return fmt.Errorf("invalid operations config: %w", err)
 	}
-	if ops, err := parseOperations(workerConfig.Operations); err == nil {
-		if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
-			return fmt.Errorf("invalid where config: %w", err)
-		}
+	if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
+		return fmt.Errorf("invalid where config: %w", err)
 	}
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.

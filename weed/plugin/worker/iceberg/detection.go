@@ -400,13 +400,10 @@ func hasEligibleCompaction(
 
 	candidateEntries := allEntries
 	if predicate != nil {
-		specByID := make(map[int]iceberg.PartitionSpec)
-		for _, ps := range meta.PartitionSpecs() {
-			specByID[ps.ID()] = ps
-		}
+		specsByID := specByID(meta)
 		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
 		for _, entry := range allEntries {
-			spec, ok := specByID[int(entry.DataFile().SpecID())]
+			spec, ok := specsByID[int(entry.DataFile().SpecID())]
 			if !ok {
 				continue
 			}
@@ -436,10 +433,7 @@ func countDataManifestsForRewrite(
 		return countDataManifests(manifests), nil
 	}
 
-	specByID := make(map[int]iceberg.PartitionSpec)
-	for _, ps := range meta.PartitionSpecs() {
-		specByID[ps.ID()] = ps
-	}
+	specsByID := specByID(meta)
 
 	var count int64
 	for _, mf := range manifests {
@@ -457,24 +451,22 @@ func countDataManifestsForRewrite(
 		if len(entries) == 0 {
 			continue
 		}
-		spec, ok := specByID[int(mf.PartitionSpecID())]
+		spec, ok := specsByID[int(mf.PartitionSpecID())]
 		if !ok {
 			continue
 		}
-		allMatch := true
-		hasMatch := false
+		allMatch := len(entries) > 0
 		for _, entry := range entries {
 			match, err := predicate.Matches(spec, entry.DataFile().Partition())
 			if err != nil {
 				return 0, err
 			}
-			if match {
-				hasMatch = true
-				continue
+			if !match {
+				allMatch = false
+				break
 			}
-			allMatch = false
 		}
-		if hasMatch && allMatch {
+		if allMatch {
 			count++
 		}
 	}

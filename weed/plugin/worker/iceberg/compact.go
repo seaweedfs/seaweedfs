@@ -143,11 +143,11 @@ func (h *Handler) compactDataFiles(
 	}
 
 	candidateEntries := allEntries
+	specsByID := specByID(meta)
 	if predicate != nil {
-		specs := specByID(meta)
 		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
 		for _, entry := range allEntries {
-			spec, ok := specs[int(entry.DataFile().SpecID())]
+			spec, ok := specsByID[int(entry.DataFile().SpecID())]
 			if !ok {
 				continue
 			}
@@ -161,14 +161,19 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
+	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
+	if err != nil {
+		return "", nil, err
+	}
+
 	// Build compaction bins: group small data files by partition.
-	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
+	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
 	if len(bins) == 0 {
 		return "no files eligible for compaction", nil, nil
 	}
 
 	// Build a lookup from spec ID to PartitionSpec for per-bin manifest writing.
-	specByID := specByID(meta)
+	specByID := specsByID
 
 	schema := meta.CurrentSchema()
 	version := meta.Version()

@@ -175,9 +175,7 @@ func (p *partitionPredicate) Matches(spec iceberg.PartitionSpec, partition map[i
 	for field := range spec.Fields() {
 		if value, ok := partition[field.FieldID]; ok {
 			valuesByName[field.Name] = value
-			continue
 		}
-		valuesByName[field.Name] = partition[field.SourceID]
 	}
 
 	for _, clause := range p.Clauses {

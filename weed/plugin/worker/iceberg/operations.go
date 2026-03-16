@@ -382,20 +382,18 @@ func (h *Handler) rewriteManifests(
 			if !found {
 				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", mf.PartitionSpecID())
 			}
-			allMatch := true
-			hasMatch := false
+			allMatch := len(entries) > 0
 			for _, entry := range entries {
 				match, err := predicate.Matches(spec, entry.DataFile().Partition())
 				if err != nil {
 					return "", nil, err
 				}
-				if match {
-					hasMatch = true
-					continue
+				if !match {
+					allMatch = false
+					break
 				}
-				allMatch = false
 			}
-			if !hasMatch || !allMatch {
+			if !allMatch {
 				carriedDataManifests = append(carriedDataManifests, mf)
 				continue
 			}

@@ -19,7 +19,7 @@ import (
 type partitionedTestFile struct {
 	Name      string
 	Partition map[int]any
-	Rows       []struct {
+	Rows      []struct {
 		ID   int64
 		Name string
 	}
@@ -143,6 +143,24 @@ func TestValidateWhereOperations(t *testing.T) {
 	}
 	if err := validateWhereOperations("name = 'us'", []string{"expire_snapshots"}); err == nil {
 		t.Fatal("expected where validation to reject expire_snapshots")
+	}
+}
+
+func TestPartitionPredicateMatchesUsesPartitionFieldIDs(t *testing.T) {
+	spec := iceberg.NewPartitionSpec(iceberg.PartitionField{
+		SourceID:  2,
+		FieldID:   1000,
+		Name:      "name",
+		Transform: iceberg.IdentityTransform{},
+	})
+	predicate := &partitionPredicate{Clauses: []whereClause{{Field: "name", Literals: []string{"'us'"}}}}
+
+	match, err := predicate.Matches(spec, map[int]any{2: "us"})
+	if err == nil {
+		t.Fatal("expected missing partition field ID to be rejected")
+	}
+	if match {
+		t.Fatal("expected source-column key to not match partition predicate")
 	}
 }
 
