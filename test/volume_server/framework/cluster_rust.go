@@ -20,7 +20,7 @@ type RustCluster struct {
 	testingTB testing.TB
 	profile   matrix.Profile
 
-	weedBinary      string // Go weed binary (for the master)
+	weedBinary       string // Go weed binary (for the master)
 	rustVolumeBinary string // Rust volume binary
 
 	baseDir   string
@@ -221,14 +221,20 @@ func FindOrBuildRustBinary() (string, error) {
 		return "", fmt.Errorf("RUST_VOLUME_BINARY is set but not executable: %s", fromEnv)
 	}
 
-	// Derive the seaweed-volume crate directory from this source file's location.
+	// Derive the Rust volume crate directory from this source file's location.
 	rustCrateDir := ""
 	if _, file, _, ok := runtime.Caller(0); ok {
 		repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-		rustCrateDir = filepath.Join(repoRoot, "weed-volume")
+		for _, candidate := range []string{"seaweed-volume", "weed-volume"} {
+			dir := filepath.Join(repoRoot, candidate)
+			if isDir(dir) && isFile(filepath.Join(dir, "Cargo.toml")) {
+				rustCrateDir = dir
+				break
+			}
+		}
 	}
 	if rustCrateDir == "" {
-		return "", fmt.Errorf("unable to detect seaweed-volume crate directory")
+		return "", fmt.Errorf("unable to detect Rust volume crate directory")
 	}
 
 	// Check for a pre-built release binary.
@@ -256,6 +262,16 @@ func FindOrBuildRustBinary() (string, error) {
 		return "", fmt.Errorf("built rust volume binary is not executable: %s", releaseBin)
 	}
 	return releaseBin, nil
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func isFile(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // --- accessor methods (mirror Cluster) ---
