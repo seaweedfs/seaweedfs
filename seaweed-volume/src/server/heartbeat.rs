@@ -673,6 +673,7 @@ mod tests {
             outgoing_grpc_tls: None,
             metrics_runtime: std::sync::RwLock::new(Default::default()),
             metrics_notify: tokio::sync::Notify::new(),
+            fix_jpg_orientation: false,
             has_slow_read: true,
             read_buffer_size_bytes: 4 * 1024 * 1024,
             security_file: String::new(),

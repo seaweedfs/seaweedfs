@@ -89,6 +89,8 @@ pub struct VolumeServerState {
     /// Metrics push settings learned from master heartbeat responses.
     pub metrics_runtime: std::sync::RwLock<RuntimeMetricsConfig>,
     pub metrics_notify: tokio::sync::Notify,
+    /// Whether JPEG uploads should be normalized using EXIF orientation.
+    pub fix_jpg_orientation: bool,
     /// Read tuning flags for large-file streaming.
     pub has_slow_read: bool,
     pub read_buffer_size_bytes: usize,

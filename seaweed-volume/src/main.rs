@@ -327,6 +327,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         outgoing_grpc_tls,
         metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
         metrics_notify: tokio::sync::Notify::new(),
+        fix_jpg_orientation: config.fix_jpg_orientation,
         has_slow_read: config.has_slow_read,
         read_buffer_size_bytes: (config.read_buffer_size_mb.max(1) as usize) * 1024 * 1024,
         security_file,
