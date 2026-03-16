@@ -22,15 +22,15 @@ const (
 	defaultOperations             = "all"
 
 	// Metric keys returned by maintenance operations.
-	MetricFilesMerged         = "files_merged"
-	MetricFilesWritten        = "files_written"
-	MetricBins                = "bins"
-	MetricSnapshotsExpired    = "snapshots_expired"
-	MetricFilesDeleted        = "files_deleted"
-	MetricOrphansRemoved      = "orphans_removed"
-	MetricManifestsRewritten  = "manifests_rewritten"
-	MetricEntriesTotal        = "entries_total"
-	MetricDurationMs          = "duration_ms"
+	MetricFilesMerged        = "files_merged"
+	MetricFilesWritten       = "files_written"
+	MetricBins               = "bins"
+	MetricSnapshotsExpired   = "snapshots_expired"
+	MetricFilesDeleted       = "files_deleted"
+	MetricOrphansRemoved     = "orphans_removed"
+	MetricManifestsRewritten = "manifests_rewritten"
+	MetricEntriesTotal       = "entries_total"
+	MetricDurationMs         = "duration_ms"
 )
 
 // Config holds parsed worker config values.
