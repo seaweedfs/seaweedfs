@@ -153,8 +153,23 @@ func (f *fakeFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEnt
 	return &filer_pb.DeleteEntryResponse{}, nil
 }
 
+func (f *fakeFilerServer) Ping(_ context.Context, _ *filer_pb.PingRequest) (*filer_pb.PingResponse, error) {
+	now := time.Now().UnixNano()
+	return &filer_pb.PingResponse{
+		StartTimeNs:  now,
+		RemoteTimeNs: now,
+		StopTimeNs:   now,
+	}, nil
+}
+
 // startFakeFiler starts a gRPC server and returns a connected client.
 func startFakeFiler(t *testing.T) (*fakeFilerServer, filer_pb.SeaweedFilerClient) {
+	t.Helper()
+	fakeServer, client, _ := startFakeFilerWithAddress(t)
+	return fakeServer, client
+}
+
+func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.SeaweedFilerClient, string) {
 	t.Helper()
 	fakeServer := newFakeFilerServer()
 
@@ -175,7 +190,26 @@ func startFakeFiler(t *testing.T) (*fakeFilerServer, filer_pb.SeaweedFilerClient
 	}
 	t.Cleanup(func() { conn.Close() })
 
-	return fakeServer, filer_pb.NewSeaweedFilerClient(conn)
+	client := filer_pb.NewSeaweedFilerClient(conn)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		pingCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		_, err := client.Ping(pingCtx, &filer_pb.PingRequest{})
+		cancel()
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("filer not ready: %v", err)
+		}
+		code := status.Code(err)
+		if code != codes.Unavailable && code != codes.DeadlineExceeded && code != codes.Canceled {
+			t.Fatalf("unexpected filer readiness error: %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	return fakeServer, client, listener.Addr().String()
 }
 
 // ---------------------------------------------------------------------------
@@ -857,6 +891,44 @@ func TestDetectWithFilters(t *testing.T) {
 	}
 	if tables[0].BucketName != "bucket-a" {
 		t.Errorf("expected bucket-a, got %q", tables[0].BucketName)
+	}
+}
+
+func TestConnectToFilerSkipsUnreachableAddresses(t *testing.T) {
+	handler := NewHandler(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	_, _, liveAddr := startFakeFilerWithAddress(t)
+
+	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for dead address: %v", err)
+	}
+	deadAddr := deadListener.Addr().String()
+	_ = deadListener.Close()
+
+	addr, conn, err := handler.connectToFiler(context.Background(), []string{deadAddr, liveAddr})
+	if err != nil {
+		t.Fatalf("connectToFiler failed: %v", err)
+	}
+	defer conn.Close()
+
+	if addr != liveAddr {
+		t.Fatalf("expected live address %q, got %q", liveAddr, addr)
+	}
+}
+
+func TestConnectToFilerFailsWhenAllAddressesAreUnreachable(t *testing.T) {
+	handler := NewHandler(grpc.WithTransportCredentials(insecure.NewCredentials()))
+
+	deadListener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for dead address: %v", err)
+	}
+	deadAddr := deadListener.Addr().String()
+	_ = deadListener.Close()
+
+	_, _, err = handler.connectToFiler(context.Background(), []string{deadAddr})
+	if err == nil {
+		t.Fatal("expected connectToFiler to fail")
 	}
 }
 
