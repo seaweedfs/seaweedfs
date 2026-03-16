@@ -219,7 +219,7 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 		Metadata:   meta,
 	}
 
-	proposal := handler.buildMaintenanceProposal(info, "localhost:8888")
+	proposal := handler.buildMaintenanceProposal(info, "localhost:8888", "my-bucket")
 
 	expectedDedupe := "iceberg_maintenance:my-bucket/analytics/events"
 	if proposal.DedupeKey != expectedDedupe {
@@ -240,6 +240,93 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 	}
 	if readStringConfig(proposal.Parameters, "filer_address", "") != "localhost:8888" {
 		t.Error("expected filer_address=localhost:8888 in parameters")
+	}
+	if readStringConfig(proposal.Parameters, "resource_group", "") != "my-bucket" {
+		t.Error("expected resource_group=my-bucket in parameters")
+	}
+	if proposal.Labels["resource_group"] != "my-bucket" {
+		t.Error("expected resource_group label to be set")
+	}
+}
+
+func TestReadResourceGroupConfig(t *testing.T) {
+	cfg, err := readResourceGroupConfig(nil)
+	if err != nil {
+		t.Fatalf("readResourceGroupConfig(nil): %v", err)
+	}
+	if cfg.GroupBy != resourceGroupNone {
+		t.Fatalf("expected default groupBy=%q, got %q", resourceGroupNone, cfg.GroupBy)
+	}
+
+	cfg, err = readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"resource_group_by":             {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "bucket_namespace"}},
+		"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+	})
+	if err != nil {
+		t.Fatalf("readResourceGroupConfig(valid): %v", err)
+	}
+	if cfg.GroupBy != resourceGroupBucketNamespace {
+		t.Fatalf("expected bucket_namespace grouping, got %q", cfg.GroupBy)
+	}
+	if cfg.MaxTablesPerGroup != 2 {
+		t.Fatalf("expected max tables per group=2, got %d", cfg.MaxTablesPerGroup)
+	}
+
+	if _, err := readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"resource_group_by": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "invalid"}},
+	}); err == nil {
+		t.Fatal("expected invalid resource_group_by to fail")
+	}
+
+	if _, err := readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+	}); err == nil {
+		t.Fatal("expected group cap without grouping to fail")
+	}
+}
+
+func TestSelectTablesByResourceGroupRoundRobin(t *testing.T) {
+	tables := []tableInfo{
+		{BucketName: "a", Namespace: "ns1", TableName: "t1"},
+		{BucketName: "a", Namespace: "ns1", TableName: "t2"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t3"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t4"},
+	}
+
+	selected, hasMore := selectTablesByResourceGroup(tables, resourceGroupConfig{
+		GroupBy: resourceGroupBucket,
+	}, 3)
+	if !hasMore {
+		t.Fatal("expected hasMore when maxResults truncates the selection")
+	}
+	if len(selected) != 3 {
+		t.Fatalf("expected 3 selected tables, got %d", len(selected))
+	}
+	if selected[0].BucketName != "a" || selected[1].BucketName != "b" || selected[2].BucketName != "a" {
+		t.Fatalf("expected round-robin bucket order [a, b, a], got [%s, %s, %s]", selected[0].BucketName, selected[1].BucketName, selected[2].BucketName)
+	}
+}
+
+func TestSelectTablesByResourceGroupCap(t *testing.T) {
+	tables := []tableInfo{
+		{BucketName: "a", Namespace: "ns1", TableName: "t1"},
+		{BucketName: "a", Namespace: "ns1", TableName: "t2"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t3"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t4"},
+	}
+
+	selected, hasMore := selectTablesByResourceGroup(tables, resourceGroupConfig{
+		GroupBy:           resourceGroupBucket,
+		MaxTablesPerGroup: 1,
+	}, 0)
+	if !hasMore {
+		t.Fatal("expected hasMore when per-group cap omits tables")
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 selected tables, got %d", len(selected))
+	}
+	if selected[0].BucketName != "a" || selected[1].BucketName != "b" {
+		t.Fatalf("expected one table per bucket, got [%s, %s]", selected[0].BucketName, selected[1].BucketName)
 	}
 }
 

@@ -96,11 +96,36 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
+				{
+					SectionId:   "resources",
+					Title:       "Resource Groups",
+					Description: "Controls for fair proposal distribution across buckets or namespaces.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "resource_group_by",
+							Label:       "Group Proposals By",
+							Description: "When set, detection emits proposals in round-robin order across the selected resource group.",
+							Placeholder: "none, bucket, namespace, or bucket_namespace",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "max_tables_per_resource_group",
+							Label:       "Max Tables Per Group",
+							Description: "Optional cap on how many proposals a single resource group can receive in one detection run. Zero disables the cap.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+					},
+				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"bucket_filter":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"namespace_filter": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"table_filter":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"bucket_filter":                 {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"namespace_filter":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"table_filter":                  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"resource_group_by":             {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: resourceGroupNone}},
+				"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -283,6 +308,10 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	bucketFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "bucket_filter", ""))
 	namespaceFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "namespace_filter", ""))
 	tableFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "table_filter", ""))
+	resourceGroups, err := readResourceGroupConfig(request.GetAdminConfigValues())
+	if err != nil {
+		return fmt.Errorf("invalid admin resource group config: %w", err)
+	}
 
 	// Connect to filer — try each address until one succeeds.
 	filerAddress, conn, err := h.connectToFiler(ctx, filerAddresses)
@@ -293,7 +322,11 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
 
 	maxResults := int(request.MaxResults)
-	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, maxResults)
+	scanLimit := maxResults
+	if resourceGroups.enabled() {
+		scanLimit = 0
+	}
+	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, scanLimit)
 	if err != nil {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
 		return fmt.Errorf("scan tables: %w", err)
@@ -305,15 +338,11 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 			"tables_found": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(tables))}},
 		}))
 
-	hasMore := false
-	if maxResults > 0 && len(tables) > maxResults {
-		hasMore = true
-		tables = tables[:maxResults]
-	}
+	tables, hasMore := selectTablesByResourceGroup(tables, resourceGroups, maxResults)
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(tables))
 	for _, t := range tables {
-		proposal := h.buildMaintenanceProposal(t, filerAddress)
+		proposal := h.buildMaintenanceProposal(t, filerAddress, resourceGroupKey(t, resourceGroups.GroupBy))
 		proposals = append(proposals, proposal)
 	}
 
