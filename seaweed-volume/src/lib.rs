@@ -9,6 +9,9 @@ pub mod version;
 
 /// Generated protobuf modules.
 pub mod pb {
+    pub const FILE_DESCRIPTOR_SET: &[u8] =
+        tonic::include_file_descriptor_set!("seaweed_descriptor");
+
     pub mod remote_pb {
         tonic::include_proto!("remote_pb");
     }

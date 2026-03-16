@@ -455,8 +455,18 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     .await
                     .unwrap_or_else(|e| panic!("Failed to bind gRPC to {}: {}", grpc_addr, e));
                 let incoming = grpc_tls_incoming(listener, tls_acceptor);
+                let reflection_v1 = tonic_reflection::server::Builder::configure()
+                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                    .build_v1()
+                    .expect("Failed to build gRPC reflection v1 service");
+                let reflection_v1alpha = tonic_reflection::server::Builder::configure()
+                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                    .build_v1alpha()
+                    .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {} (TLS enabled)", addr);
                 if let Err(e) = tonic::transport::Server::builder()
+                    .add_service(reflection_v1)
+                    .add_service(reflection_v1alpha)
                     .add_service(VolumeServerServer::new(grpc_service))
                     .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
@@ -466,8 +476,18 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                     error!("gRPC server error: {}", e);
                 }
             } else {
+                let reflection_v1 = tonic_reflection::server::Builder::configure()
+                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                    .build_v1()
+                    .expect("Failed to build gRPC reflection v1 service");
+                let reflection_v1alpha = tonic_reflection::server::Builder::configure()
+                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                    .build_v1alpha()
+                    .expect("Failed to build gRPC reflection v1alpha service");
                 info!("gRPC server listening on {}", addr);
                 if let Err(e) = tonic::transport::Server::builder()
+                    .add_service(reflection_v1)
+                    .add_service(reflection_v1alpha)
                     .add_service(VolumeServerServer::new(grpc_service))
                     .serve_with_shutdown(addr, async move {
                         let _ = shutdown_rx.recv().await;

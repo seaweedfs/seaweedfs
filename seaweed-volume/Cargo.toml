@@ -25,6 +25,7 @@ tokio-stream = "0.1"
 
 # gRPC + protobuf
 tonic = { version = "0.12", features = ["tls"] }
+tonic-reflection = "0.12"
 prost = "0.13"
 prost-types = "0.13"
 
