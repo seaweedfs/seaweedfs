@@ -85,22 +85,22 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 			},
 		},
 		{
-			name: "deny with NotResource",
+			name: "allow with NotResource",
 			policy: map[string]interface{}{
 				"Version": "2012-10-17",
 				"Statement": []interface{}{
 					map[string]interface{}{
-						"Sid":         "DenyOutside",
-						"Effect":      "Deny",
+						"Sid":         "AllowOutsidePublic",
+						"Effect":      "Allow",
 						"Principal":   "*",
-						"Action":      "s3:*",
-						"NotResource": "arn:aws:s3:::" + bucket + "/public/*",
+						"Action":      "s3:GetObject",
+						"NotResource": "arn:aws:s3:::" + bucket + "/private/*",
 					},
 				},
 			},
 		},
 		{
-			name: "multiple statements mixed",
+			name: "multiple statements with NotResource",
 			policy: map[string]interface{}{
 				"Version": "2012-10-17",
 				"Statement": []interface{}{
@@ -112,10 +112,10 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 						"Resource":  "arn:aws:s3:::" + bucket + "/*",
 					},
 					map[string]interface{}{
-						"Sid":         "DenyPrivate",
+						"Sid":         "DenyPrivateObjects",
 						"Effect":      "Deny",
 						"Principal":   "*",
-						"Action":      "s3:*",
+						"Action":      "s3:GetObject",
 						"NotResource": "arn:aws:s3:::" + bucket + "/public/*",
 					},
 				},
