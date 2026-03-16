@@ -16,7 +16,7 @@ const (
 
 type resourceGroupConfig struct {
 	GroupBy           string
-	MaxTablesPerGroup int
+	MaxTablesPerGroup int64
 }
 
 func readResourceGroupConfig(values map[string]*plugin_pb.ConfigValue) (resourceGroupConfig, error) {
@@ -33,7 +33,7 @@ func readResourceGroupConfig(values map[string]*plugin_pb.ConfigValue) (resource
 
 	maxTablesPerGroup := readInt64Config(values, "max_tables_per_resource_group", 0)
 	if maxTablesPerGroup < 0 {
-		maxTablesPerGroup = 0
+		return resourceGroupConfig{}, fmt.Errorf("max_tables_per_resource_group must be >= 0, got %d", maxTablesPerGroup)
 	}
 	if groupBy == resourceGroupNone && maxTablesPerGroup > 0 {
 		return resourceGroupConfig{}, fmt.Errorf("max_tables_per_resource_group requires resource_group_by to be set")
@@ -41,7 +41,7 @@ func readResourceGroupConfig(values map[string]*plugin_pb.ConfigValue) (resource
 
 	return resourceGroupConfig{
 		GroupBy:           groupBy,
-		MaxTablesPerGroup: int(maxTablesPerGroup),
+		MaxTablesPerGroup: maxTablesPerGroup,
 	}, nil
 }
 
@@ -81,7 +81,7 @@ func selectTablesByResourceGroup(tables []tableInfo, cfg resourceGroupConfig, ma
 	}
 
 	selected := make([]tableInfo, 0, len(tables))
-	selectedPerGroup := make(map[string]int)
+	selectedPerGroup := make(map[string]int64)
 	for {
 		progress := false
 		for _, key := range groupOrder {
