@@ -1940,8 +1940,8 @@ github.com/t3rm1n4l/go-mega v0.0.0-20251031123324-a804aaa87491/go.mod h1:ykucQyi
 github.com/tailscale/depaware v0.0.0-20210622194025-720c4b409502/go.mod h1:p9lPsd+cx33L3H9nNoecRRxPssFKUwwI50I3pZ0yT+8=
 github.com/tarantool/go-iproto v1.1.0 h1:HULVOIHsiehI+FnHfM7wMDntuzUddO09DKqu2WnFQ5A=
 github.com/tarantool/go-iproto v1.1.0/go.mod h1:LNCtdyZxojUed8SbOiYHoc3v9NvaZTB7p96hUySMlIo=
-github.com/tarantool/go-tarantool/v2 v2.4.1 h1:Bk9mh+gMPVmHTSefHvVBpEkf6P2UZA/8xa5kqgyQtyo=
-github.com/tarantool/go-tarantool/v2 v2.4.1/go.mod h1:MTbhdjFc3Jl63Lgi/UJr5D+QbT+QegqOzsNJGmaw7VM=
+github.com/tarantool/go-tarantool/v2 v2.4.2 h1:rkzYtFhLJLA9RDIhjzN93MJBN5PBxHW4+soq+RB90gE=
+github.com/tarantool/go-tarantool/v2 v2.4.2/go.mod h1:MTbhdjFc3Jl63Lgi/UJr5D+QbT+QegqOzsNJGmaw7VM=
 github.com/testcontainers/testcontainers-go v0.39.0 h1:uCUJ5tA+fcxbFAB0uP3pIK3EJ2IjjDUHFSZ1H1UxAts=
 github.com/testcontainers/testcontainers-go v0.39.0/go.mod h1:qmHpkG7H5uPf/EvOORKvS6EuDkBUPE3zpVGaH9NL7f8=
 github.com/testcontainers/testcontainers-go/modules/compose v0.39.0 h1:N9Kn9UOIq24o3Y01SFDYF5y3hpq4dNBzDS4pynHb/OQ=

@@ -151,7 +151,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.1
 	github.com/shirou/gopsutil/v4 v4.26.2
-	github.com/tarantool/go-tarantool/v2 v2.4.1
+	github.com/tarantool/go-tarantool/v2 v2.4.2
 	github.com/testcontainers/testcontainers-go v0.39.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
