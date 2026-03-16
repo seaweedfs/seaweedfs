@@ -1733,25 +1733,10 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         // Check existing .vif for EC shard config (matching Go's MaybeLoadVolumeInfo)
-        let (data_shards, parity_shards) = {
-            let base = crate::storage::volume::volume_file_name(&dir, collection, vid);
-            let vif_path = format!("{}.vif", base);
-            let mut ds = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
-            let mut ps = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-            if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
-                if let Ok(vif_info) =
-                    serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
-                {
-                    if let Some(ec) = vif_info.ec_shard_config {
-                        if ec.data_shards > 0 && ec.parity_shards > 0 {
-                            ds = ec.data_shards;
-                            ps = ec.parity_shards;
-                        }
-                    }
-                }
-            }
-            (ds, ps)
-        };
+        let (data_shards, parity_shards) =
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                &dir, collection, vid,
+            );
 
         crate::storage::erasure_coding::ec_encoder::write_ec_files(
             &dir,
@@ -1814,7 +1799,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Check which shards are missing
         let (data_shards, parity_shards) =
-            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, vid);
+            crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                &dir, collection, vid,
+            );
         let total_shards = data_shards + parity_shards;
 
         let mut missing: Vec<u32> = Vec::new();
@@ -2954,7 +2941,9 @@ impl VolumeServer for VolumeGrpcService {
 
             total_volumes += 1;
             let (data_shards, parity_shards) =
-                crate::storage::erasure_coding::ec_volume::read_ec_shard_config(&dir, *vid);
+                crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                    &dir, &collection, *vid,
+                );
 
             match crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
                 &dir,

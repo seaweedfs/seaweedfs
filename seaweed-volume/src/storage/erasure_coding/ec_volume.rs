@@ -35,16 +35,20 @@ pub struct EcVolume {
     pub expire_at_sec: u64,
 }
 
-pub fn read_ec_shard_config(dir: &str, volume_id: VolumeId) -> (u32, u32) {
+pub fn read_ec_shard_config(dir: &str, collection: &str, volume_id: VolumeId) -> (u32, u32) {
     let mut data_shards = crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT as u32;
     let mut parity_shards = crate::storage::erasure_coding::ec_shard::PARITY_SHARDS_COUNT as u32;
-    let vif_path = format!("{}/{}.vif", dir, volume_id.0);
+    let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
+    let vif_path = format!("{}.vif", base);
     if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
         if let Ok(vif_info) =
             serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
         {
             if let Some(ec) = vif_info.ec_shard_config {
-                if ec.data_shards > 0 && ec.parity_shards > 0 {
+                if ec.data_shards > 0
+                    && ec.parity_shards > 0
+                    && (ec.data_shards + ec.parity_shards) <= TOTAL_SHARDS_COUNT as u32
+                {
                     data_shards = ec.data_shards;
                     parity_shards = ec.parity_shards;
                 }
@@ -62,7 +66,7 @@ impl EcVolume {
         collection: &str,
         volume_id: VolumeId,
     ) -> io::Result<Self> {
-        let (data_shards, parity_shards) = read_ec_shard_config(dir, volume_id);
+        let (data_shards, parity_shards) = read_ec_shard_config(dir, collection, volume_id);
 
         let total_shards = (data_shards + parity_shards) as usize;
         let mut shards = Vec::with_capacity(total_shards);
@@ -425,7 +429,6 @@ impl EcVolume {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::idx;
     use tempfile::TempDir;
 
     fn write_ecx_file(
@@ -509,5 +512,55 @@ mod tests {
             .unwrap();
         assert_eq!(vol.shard_count(), 1);
         assert!(vol.shard_bits().has_shard_id(3));
+    }
+
+    #[test]
+    fn test_ec_volume_uses_collection_prefixed_vif_config() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 6,
+                parity_shards: 3,
+            }),
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.data_shards, 6);
+        assert_eq!(vol.parity_shards, 3);
+    }
+
+    #[test]
+    fn test_ec_volume_invalid_vif_config_falls_back_to_defaults() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        write_ecx_file(dir, "pics", VolumeId(1), &[]);
+
+        let vif = crate::storage::volume::VifVolumeInfo {
+            ec_shard_config: Some(crate::storage::volume::VifEcShardConfig {
+                data_shards: 10,
+                parity_shards: 10,
+            }),
+            ..Default::default()
+        };
+        let base = crate::storage::volume::volume_file_name(dir, "pics", VolumeId(1));
+        std::fs::write(
+            format!("{}.vif", base),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let vol = EcVolume::new(dir, dir, "pics", VolumeId(1)).unwrap();
+        assert_eq!(vol.data_shards, DATA_SHARDS_COUNT as u32);
+        assert_eq!(vol.parity_shards, PARITY_SHARDS_COUNT as u32);
     }
 }
