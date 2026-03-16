@@ -2026,12 +2026,43 @@ func populateTableWithDeleteFiles(
 		}
 	},
 ) table.Metadata {
+	return populateTableWithDeleteFilesAndSortOrder(t, fs, setup, dataFiles, posDeleteFiles, eqDeleteFiles, table.UnsortedSortOrder)
+}
+
+func populateTableWithDeleteFilesAndSortOrder(
+	t *testing.T,
+	fs *fakeFilerServer,
+	setup tableSetup,
+	dataFiles []struct {
+		Name string
+		Rows []struct {
+			ID   int64
+			Name string
+		}
+	},
+	posDeleteFiles []struct {
+		Name string
+		Rows []struct {
+			FilePath string
+			Pos      int64
+		}
+	},
+	eqDeleteFiles []struct {
+		Name     string
+		FieldIDs []int
+		Rows     []struct {
+			ID   int64
+			Name string
+		}
+	},
+	sortOrder table.SortOrder,
+) table.Metadata {
 	t.Helper()
 
 	schema := newTestSchema()
 	spec := *iceberg.UnpartitionedSpec
 
-	meta, err := table.NewMetadata(schema, &spec, table.UnsortedSortOrder, "s3://"+setup.BucketName+"/"+setup.tablePath(), nil)
+	meta, err := table.NewMetadata(schema, &spec, sortOrder, "s3://"+setup.BucketName+"/"+setup.tablePath(), nil)
 	if err != nil {
 		t.Fatalf("create metadata: %v", err)
 	}
@@ -2188,7 +2219,20 @@ func populateTableWithDeleteFiles(
 	// Build final metadata with snapshot
 	now := time.Now().UnixMilli()
 	snap := table.Snapshot{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"}
-	meta = buildTestMetadata(t, []table.Snapshot{snap})
+	builder, err := table.MetadataBuilderFromBase(meta, "s3://"+setup.BucketName+"/"+setup.tablePath())
+	if err != nil {
+		t.Fatalf("create metadata builder: %v", err)
+	}
+	if err := builder.AddSnapshot(&snap); err != nil {
+		t.Fatalf("add snapshot: %v", err)
+	}
+	if err := builder.SetSnapshotRef(table.MainBranch, snap.SnapshotID, table.BranchRef); err != nil {
+		t.Fatalf("set snapshot ref: %v", err)
+	}
+	meta, err = builder.Build()
+	if err != nil {
+		t.Fatalf("build metadata: %v", err)
+	}
 
 	// Register table structure
 	fullMetadataJSON, _ := json.Marshal(meta)
@@ -2323,6 +2367,52 @@ func rewriteDeleteManifestsAsMixed(
 		Name: "snap-1.avro", Content: manifestListBuf.Bytes(),
 		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(manifestListBuf.Len())},
 	})
+}
+
+func readCompactedRows(t *testing.T, fs *fakeFilerServer, setup tableSetup) []struct {
+	ID   int64
+	Name string
+} {
+	t.Helper()
+
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	entries := fs.listDir(dataDir)
+	var mergedContent []byte
+	for _, e := range entries {
+		if strings.HasPrefix(e.Name, "compact-") {
+			mergedContent = e.Content
+			break
+		}
+	}
+	if mergedContent == nil {
+		t.Fatal("no merged file found")
+	}
+
+	reader := parquet.NewReader(bytes.NewReader(mergedContent))
+	defer reader.Close()
+
+	type row struct {
+		ID   int64  `parquet:"id"`
+		Name string `parquet:"name"`
+	}
+	var outputRows []struct {
+		ID   int64
+		Name string
+	}
+	for {
+		var r row
+		if err := reader.Read(&r); err != nil {
+			if err == io.EOF {
+				break
+			}
+			t.Fatalf("read: %v", err)
+		}
+		outputRows = append(outputRows, struct {
+			ID   int64
+			Name string
+		}{ID: r.ID, Name: r.Name})
+	}
+	return outputRows
 }
 
 func TestCompactDataFilesMetrics(t *testing.T) {
@@ -2829,6 +2919,168 @@ func TestCompactDataFilesWithMixedDeletes(t *testing.T) {
 		if r.Name == "alice" || r.Name == "eve" {
 			t.Errorf("%q should have been deleted", r.Name)
 		}
+	}
+}
+
+func TestCompactDataFilesSortStrategyUsesConfiguredFields(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{3, "charlie"}, {1, "alice"}}},
+			{"d2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{4, "delta"}, {2, "bravo"}}},
+		},
+		nil,
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+		RewriteStrategy:     "sort",
+		SortFields:          "id",
+	}
+
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "using sort") {
+		t.Fatalf("expected sorted compaction result, got %q", result)
+	}
+
+	rows := readCompactedRows(t, fs, setup)
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 compacted rows, got %d", len(rows))
+	}
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].ID > rows[i].ID {
+			t.Fatalf("rows are not sorted by id: %+v", rows)
+		}
+	}
+}
+
+func TestCompactDataFilesSortStrategyUsesTableSortOrder(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceID:  2,
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortDESC,
+		NullOrder: table.NullsLast,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFilesAndSortOrder(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "charlie"}}},
+			{"d2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{3, "bravo"}, {4, "delta"}}},
+		},
+		nil,
+		nil,
+		sortOrder,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+		RewriteStrategy:     "sort",
+	}
+
+	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err != nil {
+		t.Fatalf("compactDataFiles: %v", err)
+	}
+	if !strings.Contains(result, "name desc") {
+		t.Fatalf("expected table sort order in result, got %q", result)
+	}
+
+	rows := readCompactedRows(t, fs, setup)
+	gotNames := make([]string, 0, len(rows))
+	for _, row := range rows {
+		gotNames = append(gotNames, row.Name)
+	}
+	expectedNames := []string{"delta", "charlie", "bravo", "alice"}
+	if len(gotNames) != len(expectedNames) {
+		t.Fatalf("got %d rows, want %d", len(gotNames), len(expectedNames))
+	}
+	for i := range expectedNames {
+		if gotNames[i] != expectedNames[i] {
+			t.Fatalf("names[%d] = %q, want %q (all names: %v)", i, gotNames[i], expectedNames[i], gotNames)
+		}
+	}
+}
+
+func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+		RewriteStrategy:     "sort",
+		SortFields:          "id",
+		SortMaxInputBytes:   1024,
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 0 {
+		t.Fatalf("expected no sort compaction candidates above the input cap, got %d", len(tables))
 	}
 }
 

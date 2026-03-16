@@ -22,6 +22,7 @@ const (
 	defaultDeleteMinInputFiles    = 2
 	defaultDeleteMaxGroupSizeMB   = 256
 	defaultDeleteMaxOutputFiles   = 8
+	defaultRewriteStrategy        = "binpack"
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
@@ -82,7 +83,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		Operations:                  readStringConfig(values, "operations", defaultOperations),
 		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
 		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
-		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", "binpack"))),
+		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
 		SortFields:                  strings.TrimSpace(readStringConfig(values, "sort_fields", "")),
 		SortMaxInputBytes:           readInt64Config(values, "sort_max_input_mb", 0) * 1024 * 1024,
 	}
@@ -98,15 +99,6 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
 	}
 	cfg = applyThresholdDefaults(cfg)
-	if cfg.RewriteStrategy == "" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.SortMaxInputBytes < 0 {
-		cfg.SortMaxInputBytes = 0
-	}
 	return cfg
 }
 
@@ -131,6 +123,15 @@ func applyThresholdDefaults(cfg Config) Config {
 	}
 	if cfg.DeleteMaxOutputFiles <= 0 {
 		cfg.DeleteMaxOutputFiles = defaultDeleteMaxOutputFiles
+	}
+	if cfg.RewriteStrategy == "" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.SortMaxInputBytes < 0 {
+		cfg.SortMaxInputBytes = 0
 	}
 	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
 		cfg.MinManifestsToRewrite = minManifestsToRewrite

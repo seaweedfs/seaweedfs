@@ -438,7 +438,13 @@ func hasEligibleCompaction(
 		}
 	}
 
+	rewritePlan, err := resolveCompactionRewritePlan(config, meta)
+	if err != nil {
+		return false, fmt.Errorf("resolve rewrite strategy: %w", err)
+	}
+
 	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
+	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	return len(bins) > 0, nil
 }
 
