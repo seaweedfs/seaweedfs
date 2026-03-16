@@ -124,6 +124,20 @@ fn build_outgoing_http_client(
     Ok((builder.build()?, scheme.to_string()))
 }
 
+fn tls_policy_is_configured(policy: &TlsPolicy) -> bool {
+    !policy.min_version.is_empty()
+        || !policy.max_version.is_empty()
+        || !policy.cipher_suites.is_empty()
+}
+
+fn effective_http_tls_policy(ca_path: &str, configured_policy: &TlsPolicy) -> TlsPolicy {
+    if ca_path.is_empty() {
+        TlsPolicy::default()
+    } else {
+        configured_policy.clone()
+    }
+}
+
 fn build_grpc_server_tls_acceptor(
     cert_path: &str,
     key_path: &str,
@@ -154,6 +168,41 @@ fn build_grpc_server_tls_acceptor(
     };
     server_config.alpn_protocols = vec![b"h2".to_vec()];
     Some(TlsAcceptor::from(Arc::new(server_config)))
+}
+
+fn build_http_server_tls_acceptor(
+    config: &VolumeServerConfig,
+) -> Result<Option<TlsAcceptor>, Box<dyn std::error::Error>> {
+    if config.https_cert_file.is_empty() || config.https_key_file.is_empty() {
+        return Ok(None);
+    }
+
+    let effective_policy = effective_http_tls_policy(&config.https_ca_file, &config.tls_policy);
+    let tls_config = match build_rustls_server_config(
+        &config.https_cert_file,
+        &config.https_key_file,
+        &config.https_ca_file,
+        &effective_policy,
+    ) {
+        Ok(tls_config) => tls_config,
+        Err(e)
+            if !config.https_ca_file.is_empty() && tls_policy_is_configured(&config.tls_policy) =>
+        {
+            warn!(
+                "Failed to apply HTTP TLS policy '{}', falling back to default rustls policy",
+                e
+            );
+            build_rustls_server_config(
+                &config.https_cert_file,
+                &config.https_key_file,
+                &config.https_ca_file,
+                &TlsPolicy::default(),
+            )?
+        }
+        Err(e) => return Err(e.into()),
+    };
+
+    Ok(Some(TlsAcceptor::from(Arc::new(tls_config))))
 }
 
 async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -396,13 +445,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
                 "TLS enabled for HTTP server (cert={}, key={})",
                 config.https_cert_file, config.https_key_file
             );
-            let tls_config = build_rustls_server_config(
-                &config.https_cert_file,
-                &config.https_key_file,
-                &config.https_ca_file,
-                &config.tls_policy,
-            )?;
-            Some(TlsAcceptor::from(Arc::new(tls_config)))
+            build_http_server_tls_acceptor(&config)?
         } else {
             None
         };
@@ -745,7 +788,9 @@ async fn serve_https<F>(
 
 #[cfg(test)]
 mod tests {
-    use super::build_grpc_server_tls_acceptor;
+    use super::{
+        build_grpc_server_tls_acceptor, effective_http_tls_policy, tls_policy_is_configured,
+    };
     use seaweed_volume::security::tls::TlsPolicy;
 
     fn write_pem(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
@@ -819,5 +864,32 @@ mod tests {
             &[],
         )
         .is_none());
+    }
+
+    #[test]
+    fn test_effective_http_tls_policy_ignores_tls_policy_without_ca() {
+        let configured = TlsPolicy {
+            min_version: "TLS 1.3".to_string(),
+            max_version: "TLS 1.3".to_string(),
+            cipher_suites: "TLS_AES_128_GCM_SHA256".to_string(),
+        };
+        assert_eq!(
+            effective_http_tls_policy("", &configured),
+            TlsPolicy::default()
+        );
+        assert_eq!(
+            effective_http_tls_policy("/etc/seaweedfs/http-ca.pem", &configured),
+            configured
+        );
+    }
+
+    #[test]
+    fn test_tls_policy_is_configured_detects_non_empty_fields() {
+        assert!(!tls_policy_is_configured(&TlsPolicy::default()));
+        assert!(tls_policy_is_configured(&TlsPolicy {
+            min_version: "TLS 1.2".to_string(),
+            max_version: String::new(),
+            cipher_suites: String::new(),
+        }));
     }
 }
