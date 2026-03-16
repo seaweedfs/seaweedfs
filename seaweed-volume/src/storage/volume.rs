@@ -470,7 +470,11 @@ impl Volume {
     }
 
     pub fn version(&self) -> Version {
-        self.super_block.version
+        if self.volume_info.version != 0 {
+            Version(self.volume_info.version as u8)
+        } else {
+            self.super_block.version
+        }
     }
 
     // ---- Loading ----
@@ -1454,6 +1458,12 @@ impl Volume {
                 }
                 self.volume_info = pb_info;
                 self.refresh_remote_write_mode();
+                if self.volume_info.version == 0 {
+                    self.volume_info.version = Version::current().0 as u32;
+                }
+                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                    self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+                }
                 return;
             }
             // Fall back to legacy format
@@ -2911,6 +2921,75 @@ mod tests {
         assert!(v.is_read_only());
         assert!(!v.no_write_or_delete);
         assert!(v.no_write_can_delete);
+    }
+
+    #[test]
+    fn test_load_vif_defaults_local_version_and_bytes_offset() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            let vif = VifVolumeInfo::default();
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert_eq!(v.volume_info.version, Version::current().0 as u32);
+        assert_eq!(v.volume_info.bytes_offset, OFFSET_SIZE as u32);
+        assert_eq!(v.version(), Version::current());
+    }
+
+    #[test]
+    fn test_version_prefers_vif_version_override() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            let vif = VifVolumeInfo {
+                version: VERSION_2.0 as u32,
+                bytes_offset: OFFSET_SIZE as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert_eq!(v.volume_info.version, VERSION_2.0 as u32);
+        assert_eq!(v.version(), VERSION_2);
     }
 
     /// Volume destroy removes .vif alongside the primary data files.
