@@ -22,6 +22,7 @@ default = []
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-stream = "0.1"
+tokio-io-timeout = "1"
 
 # gRPC + protobuf
 tonic = { version = "0.12", features = ["tls"] }
