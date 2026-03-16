@@ -78,9 +78,7 @@ pub fn current_request_id() -> Option<String> {
     CURRENT_REQUEST_ID.try_with(Clone::clone).ok()
 }
 
-pub fn outgoing_request_id_interceptor(
-    mut request: Request<()>,
-) -> Result<Request<()>, Status> {
+pub fn outgoing_request_id_interceptor(mut request: Request<()>) -> Result<Request<()>, Status> {
     if let Some(request_id) = current_request_id() {
         let value = MetadataValue::try_from(request_id.as_str())
             .map_err(|_| Status::internal("invalid scoped request id"))?;
@@ -112,9 +110,10 @@ mod tests {
     #[tokio::test]
     async fn test_scope_request_id_exposes_current_value() {
         let request_id = "req-123".to_string();
-        let current = scope_request_id(request_id.clone(), async move {
-            current_request_id().unwrap()
-        })
+        let current = scope_request_id(
+            request_id.clone(),
+            async move { current_request_id().unwrap() },
+        )
         .await;
         assert_eq!(current, request_id);
     }

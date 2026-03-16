@@ -103,8 +103,8 @@ impl VolumeGrpcService {
             channel,
             super::request_id::outgoing_request_id_interceptor,
         )
-            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
         client
             .volume_mark_readonly(master_pb::VolumeMarkReadonlyRequest {
                 ip: info.ip.clone(),
@@ -901,12 +901,13 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-            channel,
-            super::request_id::outgoing_request_id_interceptor,
-        )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client =
+            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+                channel,
+                super::request_id::outgoing_request_id_interceptor,
+            )
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Get file status from source
         let vol_info = client
@@ -1636,12 +1637,13 @@ impl VolumeServer for VolumeGrpcService {
             .await
             .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-            channel,
-            super::request_id::outgoing_request_id_interceptor,
-        )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client =
+            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+                channel,
+                super::request_id::outgoing_request_id_interceptor,
+            )
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Call VolumeTailSender on source
         let mut stream = client
@@ -1905,12 +1907,13 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
-            channel,
-            super::request_id::outgoing_request_id_interceptor,
-        )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+        let mut client =
+            volume_server_pb::volume_server_client::VolumeServerClient::with_interceptor(
+                channel,
+                super::request_id::outgoing_request_id_interceptor,
+            )
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Copy each shard
         for &shard_id in &req.shard_ids {

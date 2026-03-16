@@ -365,7 +365,14 @@ pub fn render_volume_server_html(state: &VolumeServerState) -> String {
     )
 }
 
-fn collect_ui_data(store: &Store) -> (Vec<UiDiskRow>, Vec<UiVolumeRow>, Vec<UiVolumeRow>, Vec<UiEcVolumeRow>) {
+fn collect_ui_data(
+    store: &Store,
+) -> (
+    Vec<UiDiskRow>,
+    Vec<UiVolumeRow>,
+    Vec<UiVolumeRow>,
+    Vec<UiEcVolumeRow>,
+) {
     let mut disk_rows = Vec::new();
     let mut volumes = Vec::new();
     let mut remote_volumes = Vec::new();
@@ -484,7 +491,11 @@ fn bytes_to_human_readable(bytes: u64) -> String {
         exp += 1;
     }
 
-    format!("{:.2} {}iB", bytes as f64 / div as f64, ["K", "M", "G", "T", "P", "E"][exp])
+    format!(
+        "{:.2} {}iB",
+        bytes as f64 / div as f64,
+        ["K", "M", "G", "T", "P", "E"][exp]
+    )
 }
 
 fn escape_html(input: &str) -> String {
@@ -494,4 +505,3 @@ fn escape_html(input: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
 }
-

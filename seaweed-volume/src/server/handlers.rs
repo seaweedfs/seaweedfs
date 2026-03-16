@@ -1797,14 +1797,12 @@ pub async fn post_handler(
 
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
     // Only for non-compressed uploads that are JPEG files.
-    let body_data = if state.fix_jpg_orientation
-        && !is_gzipped
-        && crate::images::is_jpeg(&mime_type, &path)
-    {
-        crate::images::fix_jpg_orientation(&body_data_raw)
-    } else {
-        body_data_raw
-    };
+    let body_data =
+        if state.fix_jpg_orientation && !is_gzipped && crate::images::is_jpeg(&mime_type, &path) {
+            crate::images::fix_jpg_orientation(&body_data_raw)
+        } else {
+            body_data_raw
+        };
 
     // H3: Capture original data size BEFORE auto-compression
     let original_data_size = body_data.len() as u32;
@@ -2405,7 +2403,12 @@ pub async fn stats_disk_handler(
 
 pub async fn favicon_handler() -> Response {
     let asset = super::ui::favicon_asset();
-    (StatusCode::OK, [(header::CONTENT_TYPE, asset.content_type)], asset.bytes).into_response()
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, asset.content_type)],
+        asset.bytes,
+    )
+        .into_response()
 }
 
 pub async fn static_asset_handler(Path(path): Path<String>) -> Response {

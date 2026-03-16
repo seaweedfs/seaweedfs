@@ -226,8 +226,8 @@ async fn try_get_master_configuration(
         channel,
         super::request_id::outgoing_request_id_interceptor,
     )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
         .await?;
@@ -256,8 +256,8 @@ async fn do_heartbeat(
         channel,
         super::request_id::outgoing_request_id_interceptor,
     )
-        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
-        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
+    .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+    .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
 

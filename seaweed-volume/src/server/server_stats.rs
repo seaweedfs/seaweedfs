@@ -238,4 +238,3 @@ pub fn reset_for_tests() {
     let mut inner = SERVER_STATS.inner.lock().unwrap();
     *inner = ServerStatsInner::default();
 }
-
