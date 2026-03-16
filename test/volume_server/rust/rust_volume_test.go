@@ -278,6 +278,28 @@ func TestRustMetricsEndpointIsNotOnAdminPortByDefault(t *testing.T) {
 	}
 }
 
+func TestRustUiAccessOverrideIgnoresReadJwt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	profile := matrix.P3()
+	profile.EnableUIAccess = true
+
+	cluster := framework.StartRustVolumeCluster(t, profile)
+	client := framework.NewHTTPClient()
+
+	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))
+	body := framework.ReadAllAndClose(t, resp)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected /ui/index.html 200 with access.ui override, got %d body=%s", resp.StatusCode, string(body))
+	}
+	if len(body) == 0 {
+		t.Fatalf("expected non-empty UI response body")
+	}
+}
+
 // keys returns the keys of a map for diagnostic messages.
 func keys(m map[string]interface{}) []string {
 	ks := make([]string, 0, len(m))

@@ -635,14 +635,31 @@ async fn admin_router_can_expose_ui_with_explicit_override() {
         .await
         .unwrap();
 
-    // UI handler does JWT check inside but read_signing_key is empty in this test,
-    // so it returns 200 (auth is only enforced when read key is set)
     assert_eq!(response.status(), StatusCode::OK);
     let body = body_bytes(response).await;
     let html = String::from_utf8(body).unwrap();
     assert!(html.contains("Disk Stats"));
     assert!(html.contains("System Stats"));
     assert!(html.contains("Volumes"));
+}
+
+#[tokio::test]
+async fn admin_router_ui_override_ignores_read_jwt_checks() {
+    let (state, _tmp) = test_state_with_signing_key(b"write-secret".to_vec());
+    state.guard.write().unwrap().read_signing_key = SigningKey(b"read-secret".to_vec());
+    let app = build_admin_router_with_ui(state, true);
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/ui/index.html")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]

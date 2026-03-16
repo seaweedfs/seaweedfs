@@ -332,6 +332,13 @@ func writeSecurityConfig(configDir string, profile matrix.Profile) error {
 		b.WriteString("\"\n")
 		b.WriteString("expires_after_seconds = 60\n")
 	}
+	if profile.EnableUIAccess {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[access]\n")
+		b.WriteString("ui = true\n")
+	}
 	if b.Len() == 0 {
 		b.WriteString("# optional security config generated for integration tests\n")
 	}

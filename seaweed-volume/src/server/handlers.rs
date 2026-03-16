@@ -2423,20 +2423,7 @@ pub async fn static_asset_handler(Path(path): Path<String>) -> Response {
     }
 }
 
-pub async fn ui_handler(
-    State(state): State<Arc<VolumeServerState>>,
-    headers: HeaderMap,
-) -> Response {
-    // If JWT signing is enabled, require auth
-    let token = extract_jwt(&headers, &axum::http::Uri::from_static("/ui/index.html"));
-    let guard = state.guard.read().unwrap();
-    if let Err(e) = guard.check_jwt(token.as_deref(), false) {
-        if guard.has_read_signing_key() {
-            return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
-        }
-    }
-    drop(guard);
-
+pub async fn ui_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
     let html = super::ui::render_volume_server_html(&state);
     (
         StatusCode::OK,
