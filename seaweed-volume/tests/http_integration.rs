@@ -84,6 +84,7 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         self_url: String::new(),
         http_client: reqwest::Client::new(),
         outgoing_http_scheme: "http".to_string(),
+        outgoing_grpc_tls: None,
         metrics_runtime: std::sync::RwLock::new(
             seaweed_volume::server::volume_server::RuntimeMetricsConfig::default(),
         ),

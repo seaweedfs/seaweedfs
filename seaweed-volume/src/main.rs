@@ -7,6 +7,7 @@ use seaweed_volume::metrics;
 use seaweed_volume::pb::volume_server_pb::volume_server_server::VolumeServerServer;
 use seaweed_volume::security::{Guard, SigningKey};
 use seaweed_volume::server::debug::build_debug_router;
+use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
 use seaweed_volume::server::volume_server::{
     build_metrics_router, RuntimeMetricsConfig, VolumeServerState,
@@ -206,6 +207,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
     let master_url = config.masters.first().cloned().unwrap_or_default();
     let self_url = format!("{}:{}", config.ip, config.port);
     let (http_client, outgoing_http_scheme) = build_outgoing_http_client(&config)?;
+    let outgoing_grpc_tls = load_outgoing_grpc_tls(&config)?;
 
     let security_file = config.security_file.clone();
     let cli_white_list = config.white_list.clone();
@@ -240,6 +242,7 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         self_url,
         http_client,
         outgoing_http_scheme,
+        outgoing_grpc_tls,
         metrics_runtime: std::sync::RwLock::new(RuntimeMetricsConfig::default()),
         metrics_notify: tokio::sync::Notify::new(),
         has_slow_read: config.has_slow_read,

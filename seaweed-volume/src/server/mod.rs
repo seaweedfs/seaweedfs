@@ -1,4 +1,5 @@
 pub mod debug;
+pub mod grpc_client;
 pub mod grpc_server;
 pub mod handlers;
 pub mod heartbeat;

@@ -25,6 +25,7 @@ use crate::config::ReadMode;
 use crate::security::Guard;
 use crate::storage::store::Store;
 
+use super::grpc_client::OutgoingGrpcTlsConfig;
 use super::handlers;
 use super::write_queue::WriteQueue;
 
@@ -81,6 +82,8 @@ pub struct VolumeServerState {
     pub http_client: reqwest::Client,
     /// Scheme used for outgoing master and peer HTTP requests ("http" or "https").
     pub outgoing_http_scheme: String,
+    /// Optional client TLS material for outgoing gRPC connections.
+    pub outgoing_grpc_tls: Option<OutgoingGrpcTlsConfig>,
     /// Metrics push settings learned from master heartbeat responses.
     pub metrics_runtime: std::sync::RwLock<RuntimeMetricsConfig>,
     pub metrics_notify: tokio::sync::Notify,

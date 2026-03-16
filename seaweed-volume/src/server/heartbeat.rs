@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::broadcast;
-use tonic::transport::Channel;
 use tracing::{error, info, warn};
 
+use super::grpc_client::build_grpc_endpoint;
 use super::volume_server::VolumeServerState;
 use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
@@ -168,16 +168,16 @@ pub async fn run_heartbeat_with_state(
     }
 }
 
-/// Convert a master address "host:port" to a gRPC endpoint URL.
+/// Convert a master address "host:port" to a gRPC host:port target.
 /// The Go master uses port + 10000 for gRPC by default.
 fn to_grpc_address(master_addr: &str) -> String {
     if let Some((host, port_str)) = master_addr.rsplit_once(':') {
         if let Ok(port) = port_str.parse::<u16>() {
             let grpc_port = port + 10000;
-            return format!("http://{}:{}", host, grpc_port);
+            return format!("{}:{}", host, grpc_port);
         }
     }
-    format!("http://{}", master_addr)
+    master_addr.to_string()
 }
 
 /// Call GetMasterConfiguration on seed masters before starting the heartbeat loop.
@@ -188,7 +188,7 @@ async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerSta
     loop {
         for master_addr in &config.master_addresses {
             let grpc_addr = to_grpc_address(master_addr);
-            match try_get_master_configuration(&grpc_addr).await {
+            match try_get_master_configuration(&grpc_addr, state.outgoing_grpc_tls.as_ref()).await {
                 Ok(resp) => {
                     let changed = apply_metrics_push_settings(
                         state,
@@ -215,8 +215,9 @@ async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerSta
 
 async fn try_get_master_configuration(
     grpc_addr: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<master_pb::GetMasterConfigurationResponse, Box<dyn std::error::Error>> {
-    let channel = Channel::from_shared(grpc_addr.to_string())?
+    let channel = build_grpc_endpoint(grpc_addr, tls)?
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(10))
         .connect()
@@ -240,7 +241,7 @@ async fn do_heartbeat(
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
-    let channel = Channel::from_shared(grpc_addr.to_string())?
+    let channel = build_grpc_endpoint(grpc_addr, state.outgoing_grpc_tls.as_ref())?
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(30))
         .connect()
@@ -664,6 +665,7 @@ mod tests {
             self_url: String::new(),
             http_client: reqwest::Client::new(),
             outgoing_http_scheme: "http".to_string(),
+            outgoing_grpc_tls: None,
             metrics_runtime: std::sync::RwLock::new(Default::default()),
             metrics_notify: tokio::sync::Notify::new(),
             has_slow_read: true,

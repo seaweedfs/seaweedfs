@@ -19,6 +19,7 @@ use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 
+use super::grpc_client::build_grpc_endpoint;
 use super::volume_server::VolumeServerState;
 
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
@@ -50,7 +51,7 @@ impl VolumeGrpcService {
         let grpc_addr = parse_grpc_address(&master_url).map_err(|e| {
             Status::internal(format!("invalid master address {}: {}", master_url, e))
         })?;
-        let endpoint = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
+        let endpoint = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| Status::internal(format!("master address {}: {}", master_url, e)))?
             .connect_timeout(std::time::Duration::from_secs(5))
             .timeout(std::time::Duration::from_secs(30));
@@ -842,7 +843,7 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
+        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| {
                 Status::internal(format!("VolumeCopy volume {} parse source: {}", vid, e))
             })?
@@ -1570,7 +1571,7 @@ impl VolumeServer for VolumeGrpcService {
         let grpc_addr = parse_grpc_address(source)
             .map_err(|e| Status::internal(format!("invalid source address {}: {}", source, e)))?;
 
-        let channel = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
+        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| Status::internal(format!("parse source: {}", e)))?
             .connect()
             .await
@@ -1824,7 +1825,7 @@ impl VolumeServer for VolumeGrpcService {
             ))
         })?;
 
-        let channel = tonic::transport::Channel::from_shared(format!("http://{}", grpc_addr))
+        let channel = build_grpc_endpoint(&grpc_addr, self.state.outgoing_grpc_tls.as_ref())
             .map_err(|e| {
                 Status::internal(format!(
                     "VolumeEcShardsCopy volume {} parse source: {}",
@@ -3191,7 +3192,9 @@ impl VolumeServer for VolumeGrpcService {
 
         // Route ping based on target type (matches Go's volume_grpc_admin.go Ping)
         let remote_time_ns = if req.target_type == "volumeServer" {
-            match ping_volume_server_target(&req.target).await {
+            match ping_volume_server_target(&req.target, self.state.outgoing_grpc_tls.as_ref())
+                .await
+            {
                 Ok(t) => t,
                 Err(e) => {
                     return Err(Status::internal(format!(
@@ -3202,7 +3205,7 @@ impl VolumeServer for VolumeGrpcService {
             }
         } else if req.target_type == "master" {
             // Connect to target master and call its Ping RPC
-            match ping_master_target(&req.target).await {
+            match ping_master_target(&req.target, self.state.outgoing_grpc_tls.as_ref()).await {
                 Ok(t) => t,
                 Err(e) => {
                     return Err(Status::internal(format!(
@@ -3212,7 +3215,7 @@ impl VolumeServer for VolumeGrpcService {
                 }
             }
         } else if req.target_type == "filer" {
-            match ping_filer_target(&req.target).await {
+            match ping_filer_target(&req.target, self.state.outgoing_grpc_tls.as_ref()).await {
                 Ok(t) => t,
                 Err(e) => {
                     return Err(Status::internal(format!(
@@ -3235,18 +3238,22 @@ impl VolumeServer for VolumeGrpcService {
     }
 }
 
-/// Build a gRPC endpoint URL from a SeaweedFS server address.
-fn to_grpc_endpoint(target: &str) -> Result<String, String> {
+/// Build a gRPC endpoint from a SeaweedFS server address.
+fn to_grpc_endpoint(
+    target: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Result<tonic::transport::Endpoint, String> {
     let grpc_host_port = parse_grpc_address(target)?;
-    Ok(format!("http://{}", grpc_host_port))
+    build_grpc_endpoint(&grpc_host_port, tls).map_err(|e| e.to_string())
 }
 
 /// Ping a remote volume server target by actually calling its Ping RPC (matches Go behavior).
-async fn ping_volume_server_target(target: &str) -> Result<i64, String> {
-    let addr = to_grpc_endpoint(target)?;
-    let channel =
-        tonic::transport::Channel::from_shared(addr.clone()).map_err(|e| e.to_string())?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+async fn ping_volume_server_target(
+    target: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Result<i64, String> {
+    let endpoint = to_grpc_endpoint(target, tls)?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
         .await
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
@@ -3263,11 +3270,12 @@ async fn ping_volume_server_target(target: &str) -> Result<i64, String> {
 }
 
 /// Ping a remote master target by actually calling its Ping RPC (matches Go behavior).
-async fn ping_master_target(target: &str) -> Result<i64, String> {
-    let addr = to_grpc_endpoint(target)?;
-    let channel =
-        tonic::transport::Channel::from_shared(addr.clone()).map_err(|e| e.to_string())?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+async fn ping_master_target(
+    target: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Result<i64, String> {
+    let endpoint = to_grpc_endpoint(target, tls)?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
         .await
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
@@ -3284,10 +3292,12 @@ async fn ping_master_target(target: &str) -> Result<i64, String> {
 }
 
 /// Ping a remote filer target by calling its Ping RPC (matches Go behavior).
-async fn ping_filer_target(target: &str) -> Result<i64, String> {
-    let addr = to_grpc_endpoint(target)?;
-    let channel = tonic::transport::Channel::from_shared(addr).map_err(|e| e.to_string())?;
-    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), channel.connect())
+async fn ping_filer_target(
+    target: &str,
+    tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
+) -> Result<i64, String> {
+    let endpoint = to_grpc_endpoint(target, tls)?;
+    let channel = tokio::time::timeout(std::time::Duration::from_secs(5), endpoint.connect())
         .await
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
