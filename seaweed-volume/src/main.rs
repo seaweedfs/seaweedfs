@@ -517,33 +517,18 @@ async fn run(config: VolumeServerConfig) -> Result<(), Box<dyn std::error::Error
         let listener = tokio::net::TcpListener::bind(&public_addr)
             .await
             .unwrap_or_else(|e| panic!("Failed to bind public HTTP to {}: {}", public_addr, e));
-        let pub_scheme = if https_tls_acceptor.is_some() {
-            "HTTPS"
-        } else {
-            "HTTP"
-        };
-        info!("Public {} server listening on {}", pub_scheme, public_addr);
-        if let Some(tls_acceptor) = https_tls_acceptor {
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            Some(tokio::spawn(async move {
-                serve_https(listener, public_router, tls_acceptor, async move {
+        info!("Public HTTP server listening on {}", public_addr);
+        let mut shutdown_rx = shutdown_tx.subscribe();
+        Some(tokio::spawn(async move {
+            if let Err(e) = axum::serve(listener, public_router)
+                .with_graceful_shutdown(async move {
                     let _ = shutdown_rx.recv().await;
                 })
-                .await;
-            }))
-        } else {
-            let mut shutdown_rx = shutdown_tx.subscribe();
-            Some(tokio::spawn(async move {
-                if let Err(e) = axum::serve(listener, public_router)
-                    .with_graceful_shutdown(async move {
-                        let _ = shutdown_rx.recv().await;
-                    })
-                    .await
-                {
-                    error!("Public HTTP server error: {}", e);
-                }
-            }))
-        }
+                .await
+            {
+                error!("Public HTTP server error: {}", e);
+            }
+        }))
     } else {
         None
     };
