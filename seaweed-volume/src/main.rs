@@ -269,27 +269,6 @@ async fn run(
     store.data_center = config.data_center.clone();
     store.rack = config.rack.clone();
 
-    // Add disk locations
-    for (i, dir) in config.folders.iter().enumerate() {
-        let idx_dir = if config.idx_folder.is_empty() {
-            dir.as_str()
-        } else {
-            config.idx_folder.as_str()
-        };
-        let max_volumes = config.folder_max_limits[i];
-        let disk_type = DiskType::from_string(&config.disk_types[i]);
-        let tags = config.folder_tags.get(i).cloned().unwrap_or_default();
-
-        info!(
-            "Adding storage location: {} (max_volumes={}, disk_type={:?})",
-            dir, max_volumes, disk_type
-        );
-        let min_free_space = config.min_free_spaces[i].clone();
-        store
-            .add_location(dir, idx_dir, max_volumes, disk_type, min_free_space, tags)
-            .map_err(|e| format!("Failed to add storage location {}: {}", dir, e))?;
-    }
-
     // Build shared state
     let guard = Guard::new(
         &config.white_list,
@@ -347,6 +326,43 @@ async fn run(
         security_file,
         cli_white_list,
     });
+
+    if !config.masters.is_empty() {
+        let hb_config = seaweed_volume::server::heartbeat::HeartbeatConfig {
+            ip: config.ip.clone(),
+            port: config.port,
+            grpc_port: config.grpc_port,
+            public_url: config.public_url.clone(),
+            data_center: config.data_center.clone(),
+            rack: config.rack.clone(),
+            master_addresses: config.masters.clone(),
+            pulse_seconds: 5,
+        };
+        seaweed_volume::server::heartbeat::prime_master_configuration(&hb_config, &state).await;
+    }
+
+    {
+        let mut store = state.store.write().unwrap();
+        for (i, dir) in config.folders.iter().enumerate() {
+            let idx_dir = if config.idx_folder.is_empty() {
+                dir.as_str()
+            } else {
+                config.idx_folder.as_str()
+            };
+            let max_volumes = config.folder_max_limits[i];
+            let disk_type = DiskType::from_string(&config.disk_types[i]);
+            let tags = config.folder_tags.get(i).cloned().unwrap_or_default();
+
+            info!(
+                "Adding storage location: {} (max_volumes={}, disk_type={:?})",
+                dir, max_volumes, disk_type
+            );
+            let min_free_space = config.min_free_spaces[i].clone();
+            store
+                .add_location(dir, idx_dir, max_volumes, disk_type, min_free_space, tags)
+                .map_err(|e| format!("Failed to add storage location {}: {}", dir, e))?;
+        }
+    }
 
     // Initialize the batched write queue if enabled
     if config.enable_write_queue {

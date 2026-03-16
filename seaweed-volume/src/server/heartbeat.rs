@@ -47,9 +47,6 @@ pub async fn run_heartbeat_with_state(
         config.master_addresses
     );
 
-    // Call GetMasterConfiguration before starting the heartbeat loop (matches Go behavior).
-    check_with_master(&config, &state).await;
-
     let pulse = Duration::from_secs(config.pulse_seconds.max(1));
     let mut new_leader: Option<String> = None;
     let mut duplicate_retry_count: u32 = 0;
@@ -213,6 +210,10 @@ async fn check_with_master(config: &HeartbeatConfig, state: &Arc<VolumeServerSta
         }
         tokio::time::sleep(Duration::from_millis(1790)).await;
     }
+}
+
+pub async fn prime_master_configuration(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) {
+    check_with_master(config, state).await;
 }
 
 async fn try_get_master_configuration(
