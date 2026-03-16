@@ -3,7 +3,6 @@ package iceberg
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -121,30 +120,17 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				// Parse the internal metadata to get FullMetadata
-				var internalMeta struct {
-					MetadataLocation string `json:"metadataLocation,omitempty"`
-					Metadata         *struct {
-						FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
-					} `json:"metadata,omitempty"`
-				}
-				if err := json.Unmarshal(metadataBytes, &internalMeta); err != nil {
-					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse metadata: %v", bucketName, nsName, tblName, err)
-					continue
-				}
-				if internalMeta.Metadata == nil || len(internalMeta.Metadata.FullMetadata) == 0 {
-					continue
-				}
-
-				icebergMeta, err := table.ParseMetadataBytes(internalMeta.Metadata.FullMetadata)
+				icebergMeta, metadataFileName, planningIndex, err := parseTableMetadataEnvelope(metadataBytes)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
 					continue
 				}
 
 				tablePath := path.Join(nsName, tblName)
-				metadataFileName := metadataFileNameFromLocation(internalMeta.MetadataLocation, bucketName, tablePath)
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, config, ops)
+				if metadataFileName == "" {
+					metadataFileName = metadataFileNameFromLocation("", bucketName, tablePath)
+				}
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, planningIndex, config, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
@@ -192,6 +178,7 @@ func (h *Handler) tableNeedsMaintenance(
 	bucketName, tablePath string,
 	meta table.Metadata,
 	metadataFileName string,
+	cachedPlanningIndex *planningIndex,
 	config Config,
 	ops []string,
 ) (bool, error) {
@@ -205,21 +192,25 @@ func (h *Handler) tableNeedsMaintenance(
 		}
 	}
 
-	loadManifests := func() ([]iceberg.ManifestFile, error) {
-		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
+	var computedPlanningIndex *planningIndex
+	getPlanningIndex := func() (*planningIndex, error) {
+		if computedPlanningIndex != nil {
+			return computedPlanningIndex, nil
+		}
+
+		index, err := buildPlanningIndex(ctx, filerClient, bucketName, tablePath, meta, config, ops)
+		if err != nil {
+			return nil, err
+		}
+		computedPlanningIndex = index
+		if index != nil {
+			if err := persistPlanningIndex(ctx, filerClient, bucketName, tablePath, index); err != nil {
+				glog.V(2).Infof("iceberg maintenance: unable to persist planning index for %s/%s: %v", bucketName, tablePath, err)
+			}
+		}
+		return computedPlanningIndex, nil
 	}
 
-	var currentManifests []iceberg.ManifestFile
-	var manifestsErr error
-	manifestsLoaded := false
-	getCurrentManifests := func() ([]iceberg.ManifestFile, error) {
-		if manifestsLoaded {
-			return currentManifests, manifestsErr
-		}
-		currentManifests, manifestsErr = loadManifests()
-		manifestsLoaded = true
-		return currentManifests, manifestsErr
-	}
 	var opEvalErrors []string
 
 	for _, op := range ops {
@@ -228,26 +219,48 @@ func (h *Handler) tableNeedsMaintenance(
 			// Handled by the metadata-only check above.
 			continue
 		case "compact":
-			manifests, err := getCurrentManifests()
+			if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
+				if eligible, ok := cachedPlanningIndex.compactionEligible(config); ok {
+					if eligible {
+						return true, nil
+					}
+					continue
+				}
+			}
+			index, err := getPlanningIndex()
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
-			if err != nil {
-				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+			if index == nil {
+				continue
+			}
+			eligible, ok := index.compactionEligible(config)
+			if !ok {
 				continue
 			}
 			if eligible {
 				return true, nil
 			}
 		case "rewrite_manifests":
-			manifests, err := getCurrentManifests()
+			if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
+				if eligible, ok := cachedPlanningIndex.rewriteManifestsEligible(config); ok {
+					if eligible {
+						return true, nil
+					}
+					continue
+				}
+			}
+			index, err := getPlanningIndex()
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
+			if index == nil {
+				continue
+			}
+			eligible, ok := index.rewriteManifestsEligible(config)
+			if ok && eligible {
 				return true, nil
 			}
 		case "remove_orphans":

@@ -1255,6 +1255,127 @@ func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
 	}
 }
 
+func TestDetectUsesPlanningIndexForRepeatedCompactionScans(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-3.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 compaction candidate, got %d", len(tables))
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	tableEntry := fs.getEntry(tableDir, setup.TableName)
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	var envelope struct {
+		PlanningIndex *planningIndex `json:"planningIndex,omitempty"`
+	}
+	if err := json.Unmarshal(tableEntry.Extended[s3tables.ExtendedKeyMetadata], &envelope); err != nil {
+		t.Fatalf("parse table metadata xattr: %v", err)
+	}
+	if envelope.PlanningIndex == nil || envelope.PlanningIndex.Compaction == nil {
+		t.Fatal("expected persisted compaction planning index after first scan")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "snap-1.avro", &filer_pb.Entry{
+		Name: "snap-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	tables, err = handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance with cached planning index failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected cached planning index to preserve 1 compaction candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectInvalidatesPlanningIndexWhenCompactionConfigChanges(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	initialConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       3,
+		Operations:          "compact",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, initialConfig, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("initial scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 0 {
+		t.Fatalf("expected no compaction candidates with min_input_files=3, got %d", len(tables))
+	}
+
+	updatedConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+
+	tables, err = handler.scanTablesForMaintenance(context.Background(), client, updatedConfig, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("updated scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected planning index invalidation to yield 1 compaction candidate, got %d", len(tables))
+	}
+}
+
 func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
