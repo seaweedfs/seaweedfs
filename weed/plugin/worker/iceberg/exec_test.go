@@ -498,7 +498,7 @@ func (r *recordingExecutionSender) SendCompleted(c *plugin_pb.JobCompleted) erro
 func TestExpireSnapshotsExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "analytics",
@@ -541,7 +541,7 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "ns",

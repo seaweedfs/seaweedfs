@@ -43,12 +43,27 @@ func hasEligibleDeleteRewrite(
 	bucketName, tablePath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
+	meta table.Metadata,
+	predicate *partitionPredicate,
 ) (bool, error) {
 	groups, _, err := collectDeleteRewriteGroups(ctx, filerClient, bucketName, tablePath, manifests)
 	if err != nil {
 		return false, err
 	}
 	for _, group := range groups {
+		if predicate != nil {
+			spec, ok := specByID(meta)[int(group.SpecID)]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, group.Partition)
+			if err != nil {
+				return false, err
+			}
+			if !match {
+				continue
+			}
+		}
 		if groupEligibleForRewrite(group, config) {
 			return true, nil
 		}
@@ -316,9 +331,10 @@ func (h *Handler) rewritePositionDeleteFiles(
 		}
 	}()
 
-	specByID := make(map[int]iceberg.PartitionSpec)
-	for _, ps := range meta.PartitionSpecs() {
-		specByID[ps.ID()] = ps
+	specByID := specByID(meta)
+	predicate, err := parsePartitionPredicate(config.Where, meta)
+	if err != nil {
+		return "", nil, err
 	}
 
 	type specEntries struct {
@@ -358,6 +374,20 @@ func (h *Handler) rewritePositionDeleteFiles(
 
 	for _, key := range sortedKeys {
 		group := groupMap[key]
+		if predicate != nil {
+			spec, ok := specByID[int(group.SpecID)]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, group.Partition)
+			if err != nil {
+				return "", nil, err
+			}
+			if !match {
+				skippedGroups++
+				continue
+			}
+		}
 		if !groupEligibleForRewrite(group, config) {
 			skippedGroups++
 			continue

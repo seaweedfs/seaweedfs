@@ -208,6 +208,10 @@ func (h *Handler) tableNeedsMaintenance(
 	ops []string,
 ) (bool, error) {
 	config = normalizeDetectionConfig(config)
+	predicate, err := parsePartitionPredicate(config.Where, meta)
+	if err != nil {
+		return false, err
+	}
 
 	// Evaluate the metadata-only expiration check first so large tables do not
 	// pay for manifest reads when snapshot expiry already makes them eligible.
@@ -245,7 +249,7 @@ func (h *Handler) tableNeedsMaintenance(
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
+			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config, meta, predicate)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -259,7 +263,7 @@ func (h *Handler) tableNeedsMaintenance(
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config)
+			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config, meta, predicate)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -273,7 +277,12 @@ func (h *Handler) tableNeedsMaintenance(
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
+			count, err := countDataManifestsForRewrite(ctx, filerClient, bucketName, tablePath, manifests, meta, predicate)
+			if err != nil {
+				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				continue
+			}
+			if count >= config.MinManifestsToRewrite {
 				return true, nil
 			}
 		case "remove_orphans":
@@ -348,6 +357,8 @@ func hasEligibleCompaction(
 	bucketName, tablePath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
+	meta table.Metadata,
+	predicate *partitionPredicate,
 ) (bool, error) {
 	if len(manifests) == 0 {
 		return false, nil
@@ -387,8 +398,87 @@ func hasEligibleCompaction(
 		allEntries = append(allEntries, entries...)
 	}
 
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, minInputFiles)
+	candidateEntries := allEntries
+	if predicate != nil {
+		specByID := make(map[int]iceberg.PartitionSpec)
+		for _, ps := range meta.PartitionSpecs() {
+			specByID[ps.ID()] = ps
+		}
+		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
+		for _, entry := range allEntries {
+			spec, ok := specByID[int(entry.DataFile().SpecID())]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return false, err
+			}
+			if match {
+				candidateEntries = append(candidateEntries, entry)
+			}
+		}
+	}
+
+	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
 	return len(bins) > 0, nil
+}
+
+func countDataManifestsForRewrite(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	manifests []iceberg.ManifestFile,
+	meta table.Metadata,
+	predicate *partitionPredicate,
+) (int64, error) {
+	if predicate == nil {
+		return countDataManifests(manifests), nil
+	}
+
+	specByID := make(map[int]iceberg.PartitionSpec)
+	for _, ps := range meta.PartitionSpecs() {
+		specByID[ps.ID()] = ps
+	}
+
+	var count int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			return 0, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			return 0, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		spec, ok := specByID[int(mf.PartitionSpecID())]
+		if !ok {
+			continue
+		}
+		allMatch := true
+		hasMatch := false
+		for _, entry := range entries {
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return 0, err
+			}
+			if match {
+				hasMatch = true
+				continue
+			}
+			allMatch = false
+		}
+		if hasMatch && allMatch {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func compactionMinInputFiles(minInputFiles int64) (int, error) {

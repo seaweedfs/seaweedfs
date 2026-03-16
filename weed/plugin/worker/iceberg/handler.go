@@ -353,6 +353,11 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	if _, err := parseOperations(workerConfig.Operations); err != nil {
 		return fmt.Errorf("invalid operations config: %w", err)
 	}
+	if ops, err := parseOperations(workerConfig.Operations); err == nil {
+		if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
+			return fmt.Errorf("invalid where config: %w", err)
+		}
+	}
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
 
@@ -464,6 +469,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	ops, opsErr := parseOperations(workerConfig.Operations)
 	if opsErr != nil {
 		return fmt.Errorf("invalid operations config: %w", opsErr)
+	}
+	if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
+		return fmt.Errorf("invalid where config: %w", err)
 	}
 
 	// Send initial progress

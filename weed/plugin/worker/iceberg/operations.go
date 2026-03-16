@@ -323,6 +323,10 @@ func (h *Handler) rewriteManifests(
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	predicate, err := parsePartitionPredicate(config.Where, meta)
+	if err != nil {
+		return "", nil, err
+	}
 
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
@@ -349,10 +353,6 @@ func (h *Handler) rewriteManifests(
 		}
 	}
 
-	if int64(len(dataManifests)) < config.MinManifestsToRewrite {
-		return fmt.Sprintf("only %d data manifests, below threshold of %d", len(dataManifests), config.MinManifestsToRewrite), nil, nil
-	}
-
 	// Collect all entries from data manifests, grouped by partition spec ID
 	// so we write one merged manifest per spec (required for spec-evolved tables).
 	type specEntries struct {
@@ -363,10 +363,9 @@ func (h *Handler) rewriteManifests(
 	specMap := make(map[int32]*specEntries)
 
 	// Build a lookup from spec ID to PartitionSpec
-	specByID := make(map[int]iceberg.PartitionSpec)
-	for _, ps := range meta.PartitionSpecs() {
-		specByID[ps.ID()] = ps
-	}
+	specByID := specByID(meta)
+	var carriedDataManifests []iceberg.ManifestFile
+	var manifestsRewritten int64
 
 	for _, mf := range dataManifests {
 		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
@@ -376,6 +375,30 @@ func (h *Handler) rewriteManifests(
 		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
 		if err != nil {
 			return "", nil, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+
+		if predicate != nil {
+			spec, found := specByID[int(mf.PartitionSpecID())]
+			if !found {
+				return "", nil, fmt.Errorf("partition spec %d not found in table metadata", mf.PartitionSpecID())
+			}
+			allMatch := true
+			hasMatch := false
+			for _, entry := range entries {
+				match, err := predicate.Matches(spec, entry.DataFile().Partition())
+				if err != nil {
+					return "", nil, err
+				}
+				if match {
+					hasMatch = true
+					continue
+				}
+				allMatch = false
+			}
+			if !hasMatch || !allMatch {
+				carriedDataManifests = append(carriedDataManifests, mf)
+				continue
+			}
 		}
 
 		sid := mf.PartitionSpecID()
@@ -389,6 +412,11 @@ func (h *Handler) rewriteManifests(
 			specMap[sid] = se
 		}
 		se.entries = append(se.entries, entries...)
+		manifestsRewritten++
+	}
+
+	if manifestsRewritten < config.MinManifestsToRewrite {
+		return fmt.Sprintf("only %d data manifests, below threshold of %d", manifestsRewritten, config.MinManifestsToRewrite), nil, nil
 	}
 
 	if len(specMap) == 0 {
@@ -425,6 +453,7 @@ func (h *Handler) rewriteManifests(
 
 	// Write one merged manifest per partition spec
 	var newManifests []iceberg.ManifestFile
+	newManifests = append(newManifests, carriedDataManifests...)
 	totalEntries := 0
 	for _, se := range specMap {
 		totalEntries += len(se.entries)
@@ -514,11 +543,11 @@ func (h *Handler) rewriteManifests(
 
 	committed = true
 	metrics := map[string]int64{
-		MetricManifestsRewritten: int64(len(dataManifests)),
+		MetricManifestsRewritten: manifestsRewritten,
 		MetricEntriesTotal:       int64(totalEntries),
 		MetricDurationMs:         time.Since(start).Milliseconds(),
 	}
-	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", len(dataManifests), len(specMap), totalEntries), metrics, nil
+	return fmt.Sprintf("rewrote %d manifests into %d (%d entries)", manifestsRewritten, len(specMap), totalEntries), metrics, nil
 }
 
 // ---------------------------------------------------------------------------

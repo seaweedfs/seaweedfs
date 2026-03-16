@@ -48,6 +48,10 @@ func (h *Handler) compactDataFiles(
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	predicate, err := parsePartitionPredicate(config.Where, meta)
+	if err != nil {
+		return "", nil, err
+	}
 
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
@@ -138,18 +142,33 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
-	// Build compaction bins: group small files by partition
-	// MinInputFiles is clamped by ParseConfig to [2, ...] so int conversion is safe.
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
+	candidateEntries := allEntries
+	if predicate != nil {
+		specs := specByID(meta)
+		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
+		for _, entry := range allEntries {
+			spec, ok := specs[int(entry.DataFile().SpecID())]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return "", nil, err
+			}
+			if match {
+				candidateEntries = append(candidateEntries, entry)
+			}
+		}
+	}
+
+	// Build compaction bins: group small data files by partition.
+	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
 	if len(bins) == 0 {
 		return "no files eligible for compaction", nil, nil
 	}
 
 	// Build a lookup from spec ID to PartitionSpec for per-bin manifest writing.
-	specByID := make(map[int]iceberg.PartitionSpec)
-	for _, ps := range meta.PartitionSpecs() {
-		specByID[ps.ID()] = ps
-	}
+	specByID := specByID(meta)
 
 	schema := meta.CurrentSchema()
 	version := meta.Version()
