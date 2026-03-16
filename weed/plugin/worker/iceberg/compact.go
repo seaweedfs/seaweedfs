@@ -952,89 +952,19 @@ func mergeParquetFiles(
 	var outputBuf bytes.Buffer
 	writer := parquet.NewWriter(&outputBuf, parquetSchema)
 
-	var totalRows int64
-	rows := make([]parquet.Row, 256)
-	hasEqDeletes := len(resolvedEqGroups) > 0
-
-	// drainReader streams rows from reader into writer, filtering out deleted
-	// rows. source is the data file path (used for error messages and
-	// position delete lookups).
-	drainReader := func(reader *parquet.Reader, source string) error {
-		defer reader.Close()
-
-		// Normalize source path so it matches the normalized keys in positionDeletes.
-		normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
-		posDeletes := positionDeletes[normalizedSource]
-		posDeleteIdx := 0
-		var absolutePos int64
-
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	drainReader := func(reader *parquet.Reader, source string) (int64, error) {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+			if _, err := writer.WriteRows(filtered); err != nil {
+				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
-			n, readErr := reader.ReadRows(rows)
-			if n > 0 {
-				// Filter rows if we have any deletes
-				if len(posDeletes) > 0 || hasEqDeletes {
-					writeIdx := 0
-					for i := 0; i < n; i++ {
-						rowPos := absolutePos + int64(i)
-
-						// Check position deletes (sorted, so advance index)
-						if len(posDeletes) > 0 {
-							for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
-								posDeleteIdx++
-							}
-							if posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] == rowPos {
-								posDeleteIdx++
-								continue // skip this row
-							}
-						}
-
-						// Check equality deletes — each group independently
-						deleted := false
-						for _, g := range resolvedEqGroups {
-							key := buildEqualityKey(rows[i], g.colIndices)
-							if _, ok := g.keys[key]; ok {
-								deleted = true
-								break
-							}
-						}
-						if deleted {
-							continue // skip this row
-						}
-
-						rows[writeIdx] = rows[i]
-						writeIdx++
-					}
-					absolutePos += int64(n)
-					if writeIdx > 0 {
-						if _, writeErr := writer.WriteRows(rows[:writeIdx]); writeErr != nil {
-							return fmt.Errorf("write rows from %s: %w", source, writeErr)
-						}
-						totalRows += int64(writeIdx)
-					}
-				} else {
-					if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
-						return fmt.Errorf("write rows from %s: %w", source, writeErr)
-					}
-					totalRows += int64(n)
-				}
-			}
-			if readErr != nil {
-				if readErr == io.EOF {
-					return nil
-				}
-				return fmt.Errorf("read rows from %s: %w", source, readErr)
-			}
-		}
+			return nil
+		})
 	}
 
 	// Drain the first file.
 	firstSource := entries[0].DataFile().FilePath()
-	if err := drainReader(firstReader, firstSource); err != nil {
+	totalRows, err := drainReader(firstReader, firstSource)
+	if err != nil {
 		writer.Close()
 		return nil, 0, err
 	}
@@ -1062,10 +992,12 @@ func mergeParquetFiles(
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		if err := drainReader(reader, entry.DataFile().FilePath()); err != nil {
+		rowsWritten, err := drainReader(reader, entry.DataFile().FilePath())
+		if err != nil {
 			writer.Close()
 			return nil, 0, err
 		}
+		totalRows += rowsWritten
 		// data goes out of scope here, eligible for GC before next iteration.
 	}
 
@@ -1099,6 +1031,76 @@ func resolveEqualityDeleteGroupsForSchema(
 		resolved = append(resolved, resolvedEqDeleteGroup{colIndices: indices, keys: g.Keys})
 	}
 	return resolved, nil
+}
+
+func visitFilteredParquetRows(
+	ctx context.Context,
+	reader *parquet.Reader,
+	source, bucketName, tablePath string,
+	positionDeletes map[string][]int64,
+	resolvedEqGroups []resolvedEqDeleteGroup,
+	onRows func([]parquet.Row) error,
+) (int64, error) {
+	defer reader.Close()
+
+	rows := make([]parquet.Row, 256)
+	filteredRows := make([]parquet.Row, 0, len(rows))
+	normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
+	posDeletes := positionDeletes[normalizedSource]
+	posDeleteIdx := 0
+	var absolutePos int64
+	var totalRows int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return totalRows, ctx.Err()
+		default:
+		}
+
+		n, readErr := reader.ReadRows(rows)
+		if n > 0 {
+			filteredRows = filteredRows[:0]
+			for i := 0; i < n; i++ {
+				rowPos := absolutePos + int64(i)
+				for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
+					posDeleteIdx++
+				}
+				if posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] == rowPos {
+					posDeleteIdx++
+					continue
+				}
+
+				deleted := false
+				for _, g := range resolvedEqGroups {
+					key := buildEqualityKey(rows[i], g.colIndices)
+					if _, ok := g.keys[key]; ok {
+						deleted = true
+						break
+					}
+				}
+				if deleted {
+					continue
+				}
+
+				filteredRows = append(filteredRows, rows[i])
+			}
+			absolutePos += int64(n)
+			if len(filteredRows) > 0 {
+				if err := onRows(filteredRows); err != nil {
+					return totalRows, err
+				}
+				totalRows += int64(len(filteredRows))
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				return totalRows, nil
+			}
+			return totalRows, fmt.Errorf("read rows from %s: %w", source, readErr)
+		}
+	}
 }
 
 func mergeParquetFilesSorted(
@@ -1143,62 +1145,18 @@ func mergeParquetFilesSorted(
 
 	comparator := parquetSchema.Comparator(sortingColumns...)
 	var allRows []parquet.Row
-	var totalRows int64
 
-	collectRows := func(reader *parquet.Reader, source string) error {
-		defer reader.Close()
-
-		normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
-		posDeletes := positionDeletes[normalizedSource]
-		posDeleteIdx := 0
-		var absolutePos int64
-		rows := make([]parquet.Row, 256)
-
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	collectRows := func(reader *parquet.Reader, source string) (int64, error) {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+			for _, row := range filtered {
+				allRows = append(allRows, row.Clone())
 			}
-
-			n, readErr := reader.ReadRows(rows)
-			for i := 0; i < n; i++ {
-				rowPos := absolutePos + int64(i)
-				for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
-					posDeleteIdx++
-				}
-				if posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] == rowPos {
-					posDeleteIdx++
-					continue
-				}
-
-				deleted := false
-				for _, g := range resolvedEqGroups {
-					key := buildEqualityKey(rows[i], g.colIndices)
-					if _, ok := g.keys[key]; ok {
-						deleted = true
-						break
-					}
-				}
-				if deleted {
-					continue
-				}
-
-				allRows = append(allRows, rows[i].Clone())
-				totalRows++
-			}
-			absolutePos += int64(n)
-
-			if readErr != nil {
-				if readErr == io.EOF {
-					return nil
-				}
-				return fmt.Errorf("read rows from %s: %w", source, readErr)
-			}
-		}
+			return nil
+		})
 	}
 
-	if err := collectRows(firstReader, entries[0].DataFile().FilePath()); err != nil {
+	totalRows, err := collectRows(firstReader, entries[0].DataFile().FilePath())
+	if err != nil {
 		return nil, 0, err
 	}
 
@@ -1220,9 +1178,11 @@ func mergeParquetFilesSorted(
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		if err := collectRows(reader, entry.DataFile().FilePath()); err != nil {
+		rowsCollected, err := collectRows(reader, entry.DataFile().FilePath())
+		if err != nil {
 			return nil, 0, err
 		}
+		totalRows += rowsCollected
 	}
 
 	sort.SliceStable(allRows, func(i, j int) bool {
