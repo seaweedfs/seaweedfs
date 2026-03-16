@@ -129,6 +129,13 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
+						{
+							Name:        "clean_expired_metadata",
+							Label:       "Clean Expired Metadata",
+							Description: "When true, delete older unreferenced metadata JSON files after snapshot expiration planning finishes.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
 					},
 				},
 				{
@@ -173,6 +180,13 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+						{
+							Name:        "remove_orphans_dry_run",
+							Label:       "Dry Run",
+							Description: "When true, report orphan files without deleting them.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
 						},
 					},
 				},
@@ -225,6 +239,8 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 				"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
 				"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+				"remove_orphans_dry_run":   {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false}},
+				"clean_expired_metadata":   {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -247,6 +263,8 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
 			"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
 			"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+			"remove_orphans_dry_run":   {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false}},
+			"clean_expired_metadata":   {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: false}},
 		},
 	}
 }

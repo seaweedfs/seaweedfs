@@ -761,6 +761,27 @@ func TestParseConfigApplyDeletes(t *testing.T) {
 	}
 }
 
+func TestParseConfigLifecycleFlags(t *testing.T) {
+	config := ParseConfig(nil)
+	if config.RemoveOrphansDryRun {
+		t.Error("expected RemoveOrphansDryRun=false by default")
+	}
+	if config.CleanExpiredMetadata {
+		t.Error("expected CleanExpiredMetadata=false by default")
+	}
+
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"remove_orphans_dry_run": {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+		"clean_expired_metadata": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "true"}},
+	})
+	if !config.RemoveOrphansDryRun {
+		t.Error("expected RemoveOrphansDryRun=true when explicitly set")
+	}
+	if !config.CleanExpiredMetadata {
+		t.Error("expected CleanExpiredMetadata=true when set via string 'true'")
+	}
+}
+
 func TestCollectPositionDeletes(t *testing.T) {
 	fs, client := startFakeFiler(t)
 

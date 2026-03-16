@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"path"
-	"sort"
 	"strings"
 	"time"
 
@@ -51,49 +50,11 @@ func (h *Handler) expireSnapshots(
 		return "no snapshots", nil, nil
 	}
 
-	// Determine which snapshots to expire
-	currentSnap := meta.CurrentSnapshot()
-	var currentSnapID int64
-	if currentSnap != nil {
-		currentSnapID = currentSnap.SnapshotID
-	}
-
-	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
-	nowMs := time.Now().UnixMilli()
-
-	// Sort snapshots by timestamp descending (most recent first) so that
-	// the keep-count logic always preserves the newest snapshots.
-	sorted := make([]table.Snapshot, len(snapshots))
-	copy(sorted, snapshots)
-	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].TimestampMs > sorted[j].TimestampMs
-	})
-
-	// Walk from newest to oldest. The current snapshot is always kept.
-	// Among the remaining, keep up to MaxSnapshotsToKeep-1 (since current
-	// counts toward the quota). Expire the rest only if they exceed the
-	// retention window; snapshots within the window are kept regardless.
-	var toExpire []int64
-	var kept int64
-	for _, snap := range sorted {
-		if snap.SnapshotID == currentSnapID {
-			kept++
-			continue
-		}
-		age := nowMs - snap.TimestampMs
-		if kept < config.MaxSnapshotsToKeep {
-			kept++
-			continue
-		}
-		if age > retentionMs {
-			toExpire = append(toExpire, snap.SnapshotID)
-		} else {
-			kept++
-		}
-	}
-
-	if len(toExpire) == 0 {
-		return "no snapshots expired", nil, nil
+	plannedSnapshotIDs := snapshotIDSet(snapshots)
+	plannedRefs := snapshotRefs(meta)
+	toExpire, refsToRemove, err := planSnapshotExpiration(meta, config, start)
+	if err != nil {
+		return "", nil, fmt.Errorf("plan snapshot expiration: %w", err)
 	}
 
 	// Split snapshots into expired and kept sets
@@ -102,7 +63,7 @@ func (h *Handler) expireSnapshots(
 		expireSet[id] = struct{}{}
 	}
 	var expiredSnaps, keptSnaps []table.Snapshot
-	for _, snap := range sorted {
+	for _, snap := range snapshots {
 		if _, ok := expireSet[snap.SnapshotID]; ok {
 			expiredSnaps = append(expiredSnaps, snap)
 		} else {
@@ -110,15 +71,19 @@ func (h *Handler) expireSnapshots(
 		}
 	}
 
-	// Collect all files referenced by each set before modifying metadata.
-	// This lets us determine which files become unreferenced.
-	expiredFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
-	if err != nil {
-		return "", nil, fmt.Errorf("collect expired snapshot files: %w", err)
-	}
-	keptFiles, err := collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
-	if err != nil {
-		return "", nil, fmt.Errorf("collect kept snapshot files: %w", err)
+	expiredFiles := make(map[string]struct{})
+	keptFiles := make(map[string]struct{})
+	if len(toExpire) > 0 {
+		// Collect all files referenced by each set before modifying metadata.
+		// This lets us determine which files become unreferenced.
+		expiredFiles, err = collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, expiredSnaps)
+		if err != nil {
+			return "", nil, fmt.Errorf("collect expired snapshot files: %w", err)
+		}
+		keptFiles, err = collectSnapshotFiles(ctx, filerClient, bucketName, tablePath, keptSnaps)
+		if err != nil {
+			return "", nil, fmt.Errorf("collect kept snapshot files: %w", err)
+		}
 	}
 
 	// Normalize kept file paths for consistent comparison
@@ -127,17 +92,25 @@ func (h *Handler) expireSnapshots(
 		normalizedKept[normalizeIcebergPath(f, bucketName, tablePath)] = struct{}{}
 	}
 
-	// Use MetadataBuilder to remove snapshots and create new metadata
-	err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
-		// Guard: verify table head hasn't changed since we planned
-		cs := currentMeta.CurrentSnapshot()
-		if (cs == nil) != (currentSnapID == 0) || (cs != nil && cs.SnapshotID != currentSnapID) {
-			return errStalePlan
+	if len(toExpire) > 0 || len(refsToRemove) > 0 {
+		// Use MetadataBuilder to remove refs/snapshots and create new metadata.
+		err = h.commitWithRetry(ctx, filerClient, bucketName, tablePath, metadataFileName, config, func(currentMeta table.Metadata, builder *table.MetadataBuilder) error {
+			if !sameSnapshotSet(currentMeta, plannedSnapshotIDs) || !sameSnapshotRefs(currentMeta, plannedRefs) {
+				return errStalePlan
+			}
+			for _, refName := range refsToRemove {
+				if err := builder.RemoveSnapshotRef(refName); err != nil {
+					return err
+				}
+			}
+			if len(toExpire) == 0 {
+				return nil
+			}
+			return builder.RemoveSnapshots(toExpire)
+		})
+		if err != nil {
+			return "", nil, fmt.Errorf("commit snapshot expiration: %w", err)
 		}
-		return builder.RemoveSnapshots(toExpire)
-	})
-	if err != nil {
-		return "", nil, fmt.Errorf("commit snapshot expiration: %w", err)
 	}
 
 	// Delete files exclusively referenced by expired snapshots (best-effort)
@@ -157,12 +130,164 @@ func (h *Handler) expireSnapshots(
 		}
 	}
 
-	metrics := map[string]int64{
-		MetricSnapshotsExpired: int64(len(toExpire)),
-		MetricFilesDeleted:     int64(deletedCount),
-		MetricDurationMs:       time.Since(start).Milliseconds(),
+	metadataFilesDeleted := 0
+	if config.CleanExpiredMetadata {
+		metadataFilesDeleted, err = cleanupExpiredMetadataFiles(ctx, filerClient, bucketName, tablePath)
+		if err != nil {
+			return "", nil, fmt.Errorf("clean expired metadata: %w", err)
+		}
 	}
-	return fmt.Sprintf("expired %d snapshot(s), deleted %d unreferenced file(s)", len(toExpire), deletedCount), metrics, nil
+
+	if len(toExpire) == 0 && len(refsToRemove) == 0 && metadataFilesDeleted == 0 {
+		return "no snapshots expired", nil, nil
+	}
+
+	metrics := map[string]int64{
+		MetricSnapshotsExpired:     int64(len(toExpire)),
+		MetricSnapshotRefsRemoved:  int64(len(refsToRemove)),
+		MetricFilesDeleted:         int64(deletedCount),
+		MetricMetadataFilesDeleted: int64(metadataFilesDeleted),
+		MetricDurationMs:           time.Since(start).Milliseconds(),
+	}
+
+	var summaryParts []string
+	if len(toExpire) > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("expired %d snapshot(s)", len(toExpire)))
+	}
+	if len(refsToRemove) > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("removed %d snapshot ref(s)", len(refsToRemove)))
+	}
+	if len(toExpire) > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("deleted %d unreferenced file(s)", deletedCount))
+	}
+	if metadataFilesDeleted > 0 {
+		summaryParts = append(summaryParts, fmt.Sprintf("deleted %d expired metadata file(s)", metadataFilesDeleted))
+	}
+	return strings.Join(summaryParts, ", "), metrics, nil
+}
+
+func planSnapshotExpiration(meta table.Metadata, config Config, now time.Time) ([]int64, []string, error) {
+	retentionMs := config.SnapshotRetentionHours * 3600 * 1000
+	minSnapshotsToKeep := int(config.MaxSnapshotsToKeep)
+	if minSnapshotsToKeep < 1 {
+		minSnapshotsToKeep = 1
+	}
+
+	snapsToKeep := make(map[int64]struct{})
+	var refsToRemove []string
+	nowMs := now.UnixMilli()
+	refCount := 0
+
+	for refName, ref := range meta.Refs() {
+		refCount++
+		snap := meta.SnapshotByID(ref.SnapshotID)
+		if snap == nil {
+			return nil, nil, fmt.Errorf("snapshot ref %q points to missing snapshot %d", refName, ref.SnapshotID)
+		}
+
+		maxRefAgeMs := retentionMs
+		if ref.MaxRefAgeMs != nil {
+			maxRefAgeMs = *ref.MaxRefAgeMs
+		}
+		if refName != table.MainBranch && nowMs-snap.TimestampMs > maxRefAgeMs {
+			refsToRemove = append(refsToRemove, refName)
+			continue
+		}
+
+		if ref.SnapshotRefType != table.BranchRef {
+			snapsToKeep[ref.SnapshotID] = struct{}{}
+			continue
+		}
+
+		maxSnapshotAgeMs := retentionMs
+		if ref.MaxSnapshotAgeMs != nil {
+			maxSnapshotAgeMs = *ref.MaxSnapshotAgeMs
+		}
+		refMinSnapshotsToKeep := minSnapshotsToKeep
+		if ref.MinSnapshotsToKeep != nil && *ref.MinSnapshotsToKeep > 0 {
+			refMinSnapshotsToKeep = *ref.MinSnapshotsToKeep
+		}
+
+		numSnapshots := 0
+		snapshotID := ref.SnapshotID
+		for {
+			snap = meta.SnapshotByID(snapshotID)
+			if snap == nil {
+				return nil, nil, fmt.Errorf("snapshot %d not found while traversing ref %q", snapshotID, refName)
+			}
+
+			snapshotAgeMs := nowMs - snap.TimestampMs
+			if snapshotAgeMs > maxSnapshotAgeMs && numSnapshots >= refMinSnapshotsToKeep {
+				break
+			}
+
+			snapsToKeep[snap.SnapshotID] = struct{}{}
+			if snap.ParentSnapshotID == nil {
+				break
+			}
+
+			snapshotID = *snap.ParentSnapshotID
+			numSnapshots++
+		}
+	}
+
+	if refCount == 0 {
+		if currentSnap := meta.CurrentSnapshot(); currentSnap != nil {
+			snapsToKeep[currentSnap.SnapshotID] = struct{}{}
+		}
+	}
+
+	var toExpire []int64
+	for _, snap := range meta.Snapshots() {
+		if _, ok := snapsToKeep[snap.SnapshotID]; !ok {
+			toExpire = append(toExpire, snap.SnapshotID)
+		}
+	}
+
+	return toExpire, refsToRemove, nil
+}
+
+func snapshotIDSet(snapshots []table.Snapshot) map[int64]struct{} {
+	ids := make(map[int64]struct{}, len(snapshots))
+	for _, snap := range snapshots {
+		ids[snap.SnapshotID] = struct{}{}
+	}
+	return ids
+}
+
+func sameSnapshotSet(meta table.Metadata, expected map[int64]struct{}) bool {
+	current := meta.Snapshots()
+	if len(current) != len(expected) {
+		return false
+	}
+	for _, snap := range current {
+		if _, ok := expected[snap.SnapshotID]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func snapshotRefs(meta table.Metadata) map[string]table.SnapshotRef {
+	refs := make(map[string]table.SnapshotRef)
+	for refName, ref := range meta.Refs() {
+		refs[refName] = ref
+	}
+	return refs
+}
+
+func sameSnapshotRefs(meta table.Metadata, expected map[string]table.SnapshotRef) bool {
+	current := snapshotRefs(meta)
+	if len(current) != len(expected) {
+		return false
+	}
+	for refName, expectedRef := range expected {
+		currentRef, ok := current[refName]
+		if !ok || !currentRef.Equals(expectedRef) {
+			return false
+		}
+	}
+	return true
 }
 
 // collectSnapshotFiles returns all file paths (manifest lists, manifest files,
@@ -234,6 +359,15 @@ func (h *Handler) removeOrphans(
 		return "", nil, fmt.Errorf("collect orphan candidates: %w", err)
 	}
 
+	if config.RemoveOrphansDryRun {
+		metrics := map[string]int64{
+			MetricOrphansFound:   int64(len(orphanCandidates)),
+			MetricOrphansRemoved: 0,
+			MetricDurationMs:     time.Since(start).Milliseconds(),
+		}
+		return fmt.Sprintf("found %d orphan file(s) (dry run)", len(orphanCandidates)), metrics, nil
+	}
+
 	orphanCount := 0
 	for _, candidate := range orphanCandidates {
 		if delErr := deleteFilerFile(ctx, filerClient, candidate.Dir, candidate.Entry.Name); delErr != nil {
@@ -244,10 +378,58 @@ func (h *Handler) removeOrphans(
 	}
 
 	metrics := map[string]int64{
+		MetricOrphansFound:   int64(len(orphanCandidates)),
 		MetricOrphansRemoved: int64(orphanCount),
 		MetricDurationMs:     time.Since(start).Milliseconds(),
 	}
 	return fmt.Sprintf("removed %d orphan file(s)", orphanCount), metrics, nil
+}
+
+func cleanupExpiredMetadataFiles(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+) (int, error) {
+	meta, currentMetadataFileName, err := loadCurrentMetadata(ctx, filerClient, bucketName, tablePath)
+	if err != nil {
+		return 0, fmt.Errorf("load metadata: %w", err)
+	}
+
+	referencedFiles := map[string]struct{}{
+		path.Join("metadata", currentMetadataFileName): {},
+	}
+	for entry := range meta.PreviousFiles() {
+		referencedFiles[normalizeIcebergPath(entry.MetadataFile, bucketName, tablePath)] = struct{}{}
+	}
+
+	currentVersion := extractMetadataVersion(currentMetadataFileName)
+	metadataDir := path.Join(s3tables.TablesPath, bucketName, tablePath, "metadata")
+	entries, err := listFilerEntries(ctx, filerClient, metadataDir, "")
+	if err != nil {
+		return 0, fmt.Errorf("list metadata dir: %w", err)
+	}
+
+	deleted := 0
+	for _, entry := range entries {
+		if entry == nil || entry.IsDirectory || !strings.HasSuffix(entry.Name, ".metadata.json") {
+			continue
+		}
+
+		relPath := path.Join("metadata", entry.Name)
+		if _, ok := referencedFiles[relPath]; ok {
+			continue
+		}
+		if extractMetadataVersion(entry.Name) >= currentVersion {
+			continue
+		}
+		if err := deleteFilerFile(ctx, filerClient, metadataDir, entry.Name); err != nil {
+			glog.Warningf("iceberg maintenance: failed to delete expired metadata file %s/%s: %v", metadataDir, entry.Name, err)
+			continue
+		}
+		deleted++
+	}
+
+	return deleted, nil
 }
 
 func collectOrphanCandidates(

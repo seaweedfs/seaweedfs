@@ -23,15 +23,18 @@ const (
 	defaultOperations             = "all"
 
 	// Metric keys returned by maintenance operations.
-	MetricFilesMerged        = "files_merged"
-	MetricFilesWritten       = "files_written"
-	MetricBins               = "bins"
-	MetricSnapshotsExpired   = "snapshots_expired"
-	MetricFilesDeleted       = "files_deleted"
-	MetricOrphansRemoved     = "orphans_removed"
-	MetricManifestsRewritten = "manifests_rewritten"
-	MetricEntriesTotal       = "entries_total"
-	MetricDurationMs         = "duration_ms"
+	MetricFilesMerged          = "files_merged"
+	MetricFilesWritten         = "files_written"
+	MetricBins                 = "bins"
+	MetricSnapshotsExpired     = "snapshots_expired"
+	MetricSnapshotRefsRemoved  = "snapshot_refs_removed"
+	MetricFilesDeleted         = "files_deleted"
+	MetricOrphansRemoved       = "orphans_removed"
+	MetricOrphansFound         = "orphans_found"
+	MetricMetadataFilesDeleted = "metadata_files_deleted"
+	MetricManifestsRewritten   = "manifests_rewritten"
+	MetricEntriesTotal         = "entries_total"
+	MetricDurationMs           = "duration_ms"
 )
 
 // Config holds parsed worker config values.
@@ -45,6 +48,8 @@ type Config struct {
 	MinManifestsToRewrite  int64
 	Operations             string
 	ApplyDeletes           bool
+	RemoveOrphansDryRun    bool
+	CleanExpiredMetadata   bool
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
@@ -60,6 +65,8 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:             readStringConfig(values, "operations", defaultOperations),
 		ApplyDeletes:           readBoolConfig(values, "apply_deletes", true),
+		RemoveOrphansDryRun:    readBoolConfig(values, "remove_orphans_dry_run", false),
+		CleanExpiredMetadata:   readBoolConfig(values, "clean_expired_metadata", false),
 	}
 
 	// Clamp to safe minimums using the default constants

@@ -263,24 +263,6 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	t.Helper()
 
 	meta := buildTestMetadata(t, setup.Snapshots)
-	fullMetadataJSON, err := json.Marshal(meta)
-	if err != nil {
-		t.Fatalf("marshal metadata: %v", err)
-	}
-
-	// Build internal metadata xattr
-	const metadataVersion = 1
-	internalMeta := map[string]interface{}{
-		"metadataVersion":  metadataVersion,
-		"metadataLocation": path.Join("metadata", fmt.Sprintf("v%d.metadata.json", metadataVersion)),
-		"metadata": map[string]interface{}{
-			"fullMetadata": json.RawMessage(fullMetadataJSON),
-		},
-	}
-	xattr, err := json.Marshal(internalMeta)
-	if err != nil {
-		t.Fatalf("marshal xattr: %v", err)
-	}
 
 	bucketsPath := s3tables.TablesPath // "/buckets"
 	bucketPath := path.Join(bucketsPath, setup.BucketName)
@@ -306,10 +288,9 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	fs.putEntry(nsPath, setup.TableName, &filer_pb.Entry{
 		Name:        setup.TableName,
 		IsDirectory: true,
-		Extended: map[string][]byte{
-			s3tables.ExtendedKeyMetadata: xattr,
-		},
+		Extended:    map[string][]byte{},
 	})
+	setTableMetadataForTest(t, fs, setup, meta, 1, path.Join("metadata", "v1.metadata.json"))
 
 	// Create metadata/ and data/ directory placeholders
 	metaDir := path.Join(tableFilerPath, "metadata")
@@ -396,6 +377,39 @@ func populateTable(t *testing.T, fs *fakeFilerServer, setup tableSetup) table.Me
 	}
 
 	return meta
+}
+
+func setTableMetadataForTest(t *testing.T, fs *fakeFilerServer, setup tableSetup, meta table.Metadata, metadataVersion int, metadataLocation string) {
+	t.Helper()
+
+	fullMetadataJSON, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+
+	internalMeta := map[string]interface{}{
+		"metadataVersion":  metadataVersion,
+		"metadataLocation": metadataLocation,
+		"metadata": map[string]interface{}{
+			"fullMetadata": json.RawMessage(fullMetadataJSON),
+		},
+	}
+	xattr, err := json.Marshal(internalMeta)
+	if err != nil {
+		t.Fatalf("marshal xattr: %v", err)
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	entry := fs.getEntry(tableDir, setup.TableName)
+	if entry == nil {
+		t.Fatalf("table entry not found: %s/%s", tableDir, setup.TableName)
+	}
+	updatedEntry := cloneEntryForTest(t, entry)
+	if updatedEntry.Extended == nil {
+		updatedEntry.Extended = make(map[string][]byte)
+	}
+	updatedEntry.Extended[s3tables.ExtendedKeyMetadata] = xattr
+	fs.putEntry(tableDir, setup.TableName, updatedEntry)
 }
 
 func writeCurrentSnapshotManifests(t *testing.T, fs *fakeFilerServer, setup tableSetup, meta table.Metadata, manifestEntries [][]iceberg.ManifestEntry) {
@@ -571,6 +585,118 @@ func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	}
 }
 
+func TestExpireSnapshotsPreservesTaggedSnapshot(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now - 3_000},
+			{SnapshotID: 2, TimestampMs: now - 2_000},
+			{SnapshotID: 3, TimestampMs: now - 1_000},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+
+	builder, err := table.MetadataBuilderFromBase(meta, "s3://test-bucket/test-table")
+	if err != nil {
+		t.Fatalf("metadata builder: %v", err)
+	}
+	if err := builder.SetSnapshotRef("audit-tag", 1, table.TagRef, table.WithMaxRefAgeMs(24*3600*1000)); err != nil {
+		t.Fatalf("set snapshot ref: %v", err)
+	}
+	taggedMeta, err := builder.Build()
+	if err != nil {
+		t.Fatalf("build tagged metadata: %v", err)
+	}
+	setTableMetadataForTest(t, fs, setup, taggedMeta, 1, path.Join("metadata", "v1.metadata.json"))
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 0,
+		MaxSnapshotsToKeep:     1,
+		MaxCommitRetries:       3,
+	}
+
+	result, _, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	if !strings.Contains(result, "expired 1 snapshot") {
+		t.Fatalf("expected one snapshot to expire, got %q", result)
+	}
+
+	currentMeta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	if currentMeta.SnapshotByID(1) == nil {
+		t.Fatal("expected tagged snapshot 1 to be preserved")
+	}
+	if currentMeta.SnapshotByID(2) != nil {
+		t.Fatal("expected unreferenced snapshot 2 to expire")
+	}
+	refs := snapshotRefs(currentMeta)
+	if ref, ok := refs["audit-tag"]; !ok || ref.SnapshotID != 1 {
+		t.Fatalf("expected audit-tag to remain on snapshot 1, got %+v", refs["audit-tag"])
+	}
+}
+
+func TestExpireSnapshotsCleansExpiredMetadata(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "v1.metadata.json", &filer_pb.Entry{
+		Name:       "v1.metadata.json",
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Add(-time.Hour).Unix()},
+		Content:    []byte(`{"current":true}`),
+	})
+	fs.putEntry(metaDir, "v0.metadata.json", &filer_pb.Entry{
+		Name:       "v0.metadata.json",
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Add(-2 * time.Hour).Unix()},
+		Content:    []byte(`{"stale":true}`),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		SnapshotRetentionHours: 24 * 365,
+		MaxSnapshotsToKeep:     10,
+		MaxCommitRetries:       3,
+		CleanExpiredMetadata:   true,
+	}
+
+	result, metrics, err := handler.expireSnapshots(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("expireSnapshots failed: %v", err)
+	}
+	if !strings.Contains(result, "deleted 1 expired metadata file") {
+		t.Fatalf("expected expired metadata cleanup, got %q", result)
+	}
+	if got := metrics[MetricMetadataFilesDeleted]; got != 1 {
+		t.Fatalf("expected one expired metadata file deleted, got %d", got)
+	}
+	if fs.getEntry(metaDir, "v0.metadata.json") != nil {
+		t.Fatal("expected stale metadata file to be deleted")
+	}
+	if fs.getEntry(metaDir, "v1.metadata.json") == nil {
+		t.Fatal("expected current metadata file to be preserved")
+	}
+}
+
 func TestRemoveOrphansExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -629,6 +755,52 @@ func TestRemoveOrphansExecution(t *testing.T) {
 	// Recent orphan should still exist
 	if fs.getEntry(dataDir, "recent-orphan.parquet") == nil {
 		t.Error("recent-orphan.parquet should NOT have been deleted (within safety window)")
+	}
+}
+
+func TestRemoveOrphansDryRun(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro"},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	dataDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "data")
+	oldTime := time.Now().Add(-200 * time.Hour).Unix()
+	fs.putEntry(dataDir, "orphan-data.parquet", &filer_pb.Entry{
+		Name:       "orphan-data.parquet",
+		Attributes: &filer_pb.FuseAttributes{Mtime: oldTime},
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		OrphanOlderThanHours: 72,
+		MaxCommitRetries:     3,
+		RemoveOrphansDryRun:  true,
+	}
+
+	result, metrics, err := handler.removeOrphans(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("removeOrphans failed: %v", err)
+	}
+	if !strings.Contains(result, "dry run") {
+		t.Fatalf("expected dry-run summary, got %q", result)
+	}
+	if got := metrics[MetricOrphansFound]; got != 1 {
+		t.Fatalf("expected one orphan found, got %d", got)
+	}
+	if got := metrics[MetricOrphansRemoved]; got != 0 {
+		t.Fatalf("expected zero orphan deletions, got %d", got)
+	}
+	if fs.getEntry(dataDir, "orphan-data.parquet") == nil {
+		t.Fatal("expected orphan file to remain during dry run")
 	}
 }
 
