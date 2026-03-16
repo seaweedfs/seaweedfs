@@ -11,7 +11,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::{error, info, warn};
 
-use super::grpc_client::build_grpc_endpoint;
+use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
 use super::volume_server::VolumeServerState;
 use crate::pb::master_pb;
 use crate::pb::master_pb::seaweed_client::SeaweedClient;
@@ -222,7 +222,9 @@ async fn try_get_master_configuration(
         .timeout(Duration::from_secs(10))
         .connect()
         .await?;
-    let mut client = SeaweedClient::new(channel);
+    let mut client = SeaweedClient::new(channel)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .get_master_configuration(master_pb::GetMasterConfigurationRequest {})
         .await?;
@@ -247,7 +249,9 @@ async fn do_heartbeat(
         .connect()
         .await?;
 
-    let mut client = SeaweedClient::new(channel);
+    let mut client = SeaweedClient::new(channel)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
     let (tx, rx) = tokio::sync::mpsc::channel::<master_pb::Heartbeat>(32);
 

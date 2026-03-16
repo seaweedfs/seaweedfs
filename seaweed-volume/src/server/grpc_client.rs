@@ -1,10 +1,16 @@
 use std::error::Error;
 use std::fmt;
+use std::time::Duration;
 
 use hyper::http::Uri;
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint, Identity};
 
 use crate::config::VolumeServerConfig;
+
+pub const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
+const GRPC_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(60);
+const GRPC_KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(20);
+const GRPC_INITIAL_WINDOW_SIZE: u32 = 16 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct OutgoingGrpcTlsConfig {
@@ -71,7 +77,13 @@ pub fn build_grpc_endpoint(
 ) -> Result<Endpoint, GrpcClientError> {
     let uri = grpc_endpoint_uri(grpc_host_port, tls);
     let mut endpoint = Channel::from_shared(uri.clone())
-        .map_err(|e| GrpcClientError(format!("invalid gRPC endpoint {}: {}", uri, e)))?;
+        .map_err(|e| GrpcClientError(format!("invalid gRPC endpoint {}: {}", uri, e)))?
+        .http2_keep_alive_interval(GRPC_KEEPALIVE_INTERVAL)
+        .keep_alive_timeout(GRPC_KEEPALIVE_TIMEOUT)
+        .keep_alive_while_idle(false)
+        .initial_stream_window_size(Some(GRPC_INITIAL_WINDOW_SIZE))
+        .initial_connection_window_size(Some(GRPC_INITIAL_WINDOW_SIZE))
+        .http2_adaptive_window(false);
 
     if let Some(tls) = tls {
         let parsed = uri

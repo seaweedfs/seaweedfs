@@ -19,7 +19,7 @@ use crate::pb::volume_server_pb::volume_server_server::VolumeServer;
 use crate::storage::needle::needle::{self, Needle};
 use crate::storage::types::*;
 
-use super::grpc_client::build_grpc_endpoint;
+use super::grpc_client::{build_grpc_endpoint, GRPC_MAX_MESSAGE_SIZE};
 use super::volume_server::VolumeServerState;
 
 type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, Status>> + Send + 'static>>;
@@ -59,7 +59,9 @@ impl VolumeGrpcService {
             .connect()
             .await
             .map_err(|e| Status::internal(format!("connect to master {}: {}", master_url, e)))?;
-        let mut client = SeaweedClient::new(channel);
+        let mut client = SeaweedClient::new(channel)
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
         client
             .volume_mark_readonly(master_pb::VolumeMarkReadonlyRequest {
                 ip: info.ip.clone(),
@@ -856,7 +858,9 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Get file status from source
         let vol_info = client
@@ -1577,7 +1581,9 @@ impl VolumeServer for VolumeGrpcService {
             .await
             .map_err(|e| Status::internal(format!("connect to {}: {}", grpc_addr, e)))?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Call VolumeTailSender on source
         let mut stream = client
@@ -1841,7 +1847,9 @@ impl VolumeServer for VolumeGrpcService {
                 ))
             })?;
 
-        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+        let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+            .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+            .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
 
         // Copy each shard
         for &shard_id in &req.shard_ids {
@@ -3258,7 +3266,9 @@ async fn ping_volume_server_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel);
+    let mut client = volume_server_pb::volume_server_client::VolumeServerClient::new(channel)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(volume_server_pb::PingRequest {
             target: String::new(),
@@ -3280,7 +3290,9 @@ async fn ping_master_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = master_pb::seaweed_client::SeaweedClient::new(channel);
+    let mut client = master_pb::seaweed_client::SeaweedClient::new(channel)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(master_pb::PingRequest {
             target: String::new(),
@@ -3302,7 +3314,9 @@ async fn ping_filer_target(
         .map_err(|_| "connection timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
-    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::new(channel);
+    let mut client = filer_pb::seaweed_filer_client::SeaweedFilerClient::new(channel)
+        .max_decoding_message_size(GRPC_MAX_MESSAGE_SIZE)
+        .max_encoding_message_size(GRPC_MAX_MESSAGE_SIZE);
     let resp = client
         .ping(filer_pb::PingRequest::default())
         .await
