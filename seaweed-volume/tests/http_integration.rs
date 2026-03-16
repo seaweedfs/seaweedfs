@@ -42,7 +42,15 @@ fn test_state_with_signing_key(signing_key: Vec<u8>) -> (Arc<VolumeServerState>,
         )
         .expect("failed to add location");
     store
-        .add_volume(VolumeId(1), "", None, None, 0, DiskType::HardDrive, Version::current())
+        .add_volume(
+            VolumeId(1),
+            "",
+            None,
+            None,
+            0,
+            DiskType::HardDrive,
+            Version::current(),
+        )
         .expect("failed to create volume");
 
     let guard = Guard::new(&[], SigningKey(signing_key), 0, SigningKey(vec![]), 0);
@@ -179,7 +187,7 @@ async fn status_returns_json_with_version_and_volumes() {
 }
 
 #[tokio::test]
-async fn admin_router_exposes_metrics() {
+async fn admin_router_does_not_expose_metrics() {
     let (state, _tmp) = test_state();
     let app = build_admin_router(state);
 
@@ -193,7 +201,7 @@ async fn admin_router_exposes_metrics() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

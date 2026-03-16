@@ -241,7 +241,10 @@ fn public_options_response() -> Response {
 /// matching Go's `if signingKey == "" || enableUiAccess` check.
 pub fn build_admin_router(state: Arc<VolumeServerState>) -> Router {
     let guard = state.guard.read().unwrap();
-    let ui_enabled = guard.signing_key.0.is_empty() && !guard.has_read_signing_key();
+    // This helper can only derive the default Go behavior from the guard state:
+    // UI stays enabled when the write signing key is empty. The explicit
+    // `access.ui` override is handled by `build_admin_router_with_ui(...)`.
+    let ui_enabled = guard.signing_key.0.is_empty();
     drop(guard);
     build_admin_router_with_ui(state, ui_enabled)
 }
@@ -251,7 +254,6 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
     let mut router = Router::new()
         .route("/status", get(handlers::status_handler))
         .route("/healthz", get(handlers::healthz_handler))
-        .route("/metrics", get(handlers::metrics_handler))
         .route("/favicon.ico", get(handlers::favicon_handler))
         .route(
             "/seaweedfsstatic/*path",
