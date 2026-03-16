@@ -888,14 +888,10 @@ func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
 func TestParseConfigRewriteStrategy(t *testing.T) {
 	config := ParseConfig(map[string]*plugin_pb.ConfigValue{
 		"rewrite_strategy":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "sort"}},
-		"sort_fields":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "id:desc:nulls-last"}},
 		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 64}},
 	})
 	if config.RewriteStrategy != "sort" {
 		t.Fatalf("expected sort rewrite strategy, got %q", config.RewriteStrategy)
-	}
-	if config.SortFields != "id:desc:nulls-last" {
-		t.Fatalf("expected sort_fields to round-trip, got %q", config.SortFields)
 	}
 	if config.SortMaxInputBytes != 64*1024*1024 {
 		t.Fatalf("expected SortMaxInputBytes=64MB, got %d", config.SortMaxInputBytes)

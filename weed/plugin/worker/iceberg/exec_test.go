@@ -2922,11 +2922,21 @@ func TestCompactDataFilesWithMixedDeletes(t *testing.T) {
 	}
 }
 
-func TestCompactDataFilesSortStrategyUsesConfiguredFields(t *testing.T) {
+func TestCompactDataFilesSortStrategyUsesAscendingTableSortOrder(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceID:  1,
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+
 	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
-	populateTableWithDeleteFiles(t, fs, setup,
+	populateTableWithDeleteFilesAndSortOrder(t, fs, setup,
 		[]struct {
 			Name string
 			Rows []struct {
@@ -2945,6 +2955,7 @@ func TestCompactDataFilesSortStrategyUsesConfiguredFields(t *testing.T) {
 		},
 		nil,
 		nil,
+		sortOrder,
 	)
 
 	handler := NewHandler(nil)
@@ -2954,7 +2965,6 @@ func TestCompactDataFilesSortStrategyUsesConfiguredFields(t *testing.T) {
 		MaxCommitRetries:    3,
 		ApplyDeletes:        true,
 		RewriteStrategy:     "sort",
-		SortFields:          "id",
 	}
 
 	result, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
@@ -3048,22 +3058,38 @@ func TestCompactDataFilesSortStrategyUsesTableSortOrder(t *testing.T) {
 func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
-	setup := tableSetup{
-		BucketName: "test-bucket",
-		Namespace:  "analytics",
-		TableName:  "events",
-		Snapshots: []table.Snapshot{
-			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
-		},
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceID:  1,
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
 	}
-	meta := populateTable(t, fs, setup)
-	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
-		makeManifestEntries(t, []testEntrySpec{
-			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
-			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
-		}, 1),
-	})
+
+	setup := tableSetup{BucketName: "test-bucket", Namespace: "analytics", TableName: "events"}
+	populateTableWithDeleteFilesAndSortOrder(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"small-1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alpha"}}},
+			{"small-2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{2, "bravo"}}},
+		},
+		nil,
+		nil,
+		sortOrder,
+	)
 
 	handler := NewHandler(nil)
 	config := Config{
@@ -3071,8 +3097,7 @@ func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
 		MinInputFiles:       2,
 		Operations:          "compact",
 		RewriteStrategy:     "sort",
-		SortFields:          "id",
-		SortMaxInputBytes:   1024,
+		SortMaxInputBytes:   1,
 	}
 
 	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
@@ -3081,6 +3106,46 @@ func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
 	}
 	if len(tables) != 0 {
 		t.Fatalf("expected no sort compaction candidates above the input cap, got %d", len(tables))
+	}
+}
+
+func TestCompactDataFilesSortStrategyRequiresTableSortOrder(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{3, "charlie"}, {1, "alice"}}},
+			{"d2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{4, "delta"}, {2, "bravo"}}},
+		},
+		nil,
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 256 * 1024 * 1024,
+		MinInputFiles:       2,
+		MaxCommitRetries:    3,
+		ApplyDeletes:        true,
+		RewriteStrategy:     "sort",
+	}
+
+	_, _, err := handler.compactDataFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config, nil)
+	if err == nil || !strings.Contains(err.Error(), "table sort order") {
+		t.Fatalf("expected missing table sort order error, got %v", err)
 	}
 }
 

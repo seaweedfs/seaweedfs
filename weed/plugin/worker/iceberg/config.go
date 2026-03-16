@@ -61,7 +61,6 @@ type Config struct {
 	ApplyDeletes                bool
 	Where                       string
 	RewriteStrategy             string
-	SortFields                  string
 	SortMaxInputBytes           int64
 }
 
@@ -84,7 +83,6 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
 		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
 		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
-		SortFields:                  strings.TrimSpace(readStringConfig(values, "sort_fields", "")),
 		SortMaxInputBytes:           readInt64Config(values, "sort_max_input_mb", 0) * 1024 * 1024,
 	}
 
