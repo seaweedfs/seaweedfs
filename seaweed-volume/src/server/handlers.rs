@@ -88,7 +88,7 @@ const DEFAULT_STREAMING_CHUNK_SIZE: usize = 64 * 1024; // 64 KB
 /// A body that streams needle data from the dat file in chunks using pread,
 /// avoiding loading the entire payload into memory at once.
 struct StreamingBody {
-    dat_file: std::fs::File,
+    source: crate::storage::volume::NeedleStreamSource,
     data_offset: u64,
     data_size: u32,
     pos: usize,
@@ -185,8 +185,8 @@ impl http_body::Body for StreamingBody {
             let chunk_len = std::cmp::min(self.chunk_size, total - self.pos);
             let file_offset = self.data_offset + self.pos as u64;
 
-            let file_clone = match self.dat_file.try_clone() {
-                Ok(f) => f,
+            let source_clone = match self.source.clone_for_read() {
+                Ok(source) => source,
                 Err(e) => return std::task::Poll::Ready(Some(Err(e))),
             };
             let data_file_access_control = self.data_file_access_control.clone();
@@ -199,16 +199,7 @@ impl http_body::Body for StreamingBody {
                     Some(data_file_access_control.read_lock())
                 };
                 let mut buf = vec![0u8; chunk_len];
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::FileExt;
-                    file_clone.read_exact_at(&mut buf, file_offset)?;
-                }
-                #[cfg(windows)]
-                {
-                    use std::os::windows::fs::FileExt;
-                    file_clone.seek_read(&mut buf, file_offset)?;
-                }
+                source_clone.read_exact_at(&mut buf, file_offset)?;
                 Ok::<bytes::Bytes, std::io::Error>(bytes::Bytes::from(buf))
             });
 
@@ -1086,7 +1077,7 @@ async fn get_or_head_handler_inner(
             };
 
             let streaming = StreamingBody {
-                dat_file: info.dat_file,
+                source: info.source,
                 data_offset: info.data_file_offset,
                 data_size: info.data_size,
                 pos: 0,

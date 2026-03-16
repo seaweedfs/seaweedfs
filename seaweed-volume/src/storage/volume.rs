@@ -328,9 +328,45 @@ impl Drop for DataFileWriteLease {
 
 /// Information needed to stream needle data directly from the dat file
 /// without loading the entire payload into memory.
+pub(crate) enum NeedleStreamSource {
+    Local(File),
+    Remote(RemoteDatFile),
+}
+
+impl NeedleStreamSource {
+    pub(crate) fn clone_for_read(&self) -> io::Result<Self> {
+        match self {
+            NeedleStreamSource::Local(file) => Ok(NeedleStreamSource::Local(file.try_clone()?)),
+            NeedleStreamSource::Remote(remote) => Ok(NeedleStreamSource::Remote(remote.clone())),
+        }
+    }
+
+    pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        match self {
+            NeedleStreamSource::Local(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::FileExt;
+                    file.read_exact_at(buf, offset)?;
+                }
+                #[cfg(windows)]
+                {
+                    read_exact_at(file, buf, offset)?;
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    compile_error!("Platform not supported: only unix and windows are supported");
+                }
+                Ok(())
+            }
+            NeedleStreamSource::Remote(remote) => remote.read_exact_at(buf, offset),
+        }
+    }
+}
+
 pub struct NeedleStreamInfo {
-    /// Cloned file handle for the dat file.
-    pub dat_file: File,
+    /// Stream source for the dat file, local or remote.
+    pub(crate) source: NeedleStreamSource,
     /// Absolute byte offset within the dat file where needle data starts.
     pub data_file_offset: u64,
     /// Size of the data payload in bytes.
@@ -348,7 +384,7 @@ pub struct NeedleStreamInfo {
 }
 
 #[derive(Clone)]
-struct RemoteDatFile {
+pub(crate) struct RemoteDatFile {
     backend: Arc<crate::remote_storage::s3_tier::S3TierBackend>,
     key: String,
     file_size: u64,
@@ -356,7 +392,7 @@ struct RemoteDatFile {
 }
 
 impl RemoteDatFile {
-    fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+    pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
         let data = self
             .backend
             .read_range_blocking(&self.key, offset, buf.len())
@@ -1077,13 +1113,16 @@ impl Volume {
             offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
         };
 
-        let cloned_file = match self.dat_file.as_ref() {
-            Some(dat_file) => dat_file.try_clone().map_err(VolumeError::Io)?,
-            None => return Err(VolumeError::StreamingUnsupported),
+        let source = match (self.dat_file.as_ref(), self.remote_dat_file.as_ref()) {
+            (Some(dat_file), _) => NeedleStreamSource::Local(
+                dat_file.try_clone().map_err(VolumeError::Io)?,
+            ),
+            (None, Some(remote_dat_file)) => NeedleStreamSource::Remote(remote_dat_file.clone()),
+            (None, None) => return Err(VolumeError::StreamingUnsupported),
         };
 
         Ok(NeedleStreamInfo {
-            dat_file: cloned_file,
+            source,
             data_file_offset,
             data_size: n.data_size,
             data_file_access_control: self.data_file_access_control.clone(),
@@ -3310,10 +3349,13 @@ mod tests {
             id: NeedleId(7),
             ..Needle::default()
         };
-        match v.read_needle_stream_info(&mut meta, false) {
-            Ok(_) => panic!("expected remote-backed volume stream info to require fallback"),
-            Err(err) => assert!(matches!(err, VolumeError::StreamingUnsupported)),
-        }
+        let info = v.read_needle_stream_info(&mut meta, false).unwrap();
+        assert!(matches!(info.source, NeedleStreamSource::Remote(_)));
+        let mut streamed = vec![0u8; info.data_size as usize];
+        info.source
+            .read_exact_at(&mut streamed, info.data_file_offset)
+            .unwrap();
+        assert_eq!(streamed, b"remote-only");
         assert_eq!(meta.data_size, 11);
 
         let _ = shutdown_tx.send(());
