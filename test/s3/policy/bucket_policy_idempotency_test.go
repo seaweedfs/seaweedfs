@@ -8,14 +8,21 @@ package policy
 import (
 	"encoding/json"
 	"testing"
-	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/stretchr/testify/require"
 )
+
+func waitForClusterReady(t *testing.T, s3Client *s3.S3) {
+	t.Helper()
+	// ListBuckets is a lightweight call that confirms the S3 API is serving.
+	_, err := s3Client.ListBuckets(&s3.ListBucketsInput{})
+	require.NoError(t, err, "S3 endpoint not ready")
+}
 
 func newS3ClientForCluster(t *testing.T, cluster *TestCluster) *s3.S3 {
 	t.Helper()
@@ -42,9 +49,8 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	defer cluster.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	s3Client := newS3ClientForCluster(t, cluster)
+	waitForClusterReady(t, s3Client)
 	bucket := uniqueName("policy-rt")
 
 	_, err = s3Client.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(bucket)})
@@ -143,8 +149,10 @@ func TestBucketPolicyRoundTrip(t *testing.T) {
 			// The returned policy must not contain fields that were not submitted.
 			// This is the exact issue from #8657: NotResource:null was being added.
 			returnedJSON := *getOut.Policy
+			var returnedPolicy map[string]interface{}
+			require.NoError(t, json.Unmarshal([]byte(returnedJSON), &returnedPolicy))
 			if !hasKey(tc.policy, "NotResource") {
-				require.NotContains(t, returnedJSON, "NotResource",
+				require.False(t, hasKey(returnedPolicy, "NotResource"),
 					"returned policy must not contain NotResource when it was not submitted")
 			}
 
@@ -166,9 +174,8 @@ func TestBucketPolicyIdempotentPut(t *testing.T) {
 	require.NoError(t, err)
 	defer cluster.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	s3Client := newS3ClientForCluster(t, cluster)
+	waitForClusterReady(t, s3Client)
 	bucket := uniqueName("policy-idem")
 
 	_, err = s3Client.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(bucket)})
@@ -224,9 +231,8 @@ func TestBucketPolicyDeleteAndRecreate(t *testing.T) {
 	require.NoError(t, err)
 	defer cluster.Stop()
 
-	time.Sleep(500 * time.Millisecond)
-
 	s3Client := newS3ClientForCluster(t, cluster)
+	waitForClusterReady(t, s3Client)
 	bucket := uniqueName("policy-del")
 
 	_, err = s3Client.CreateBucket(&s3.CreateBucketInput{Bucket: aws.String(bucket)})
@@ -255,11 +261,14 @@ func TestBucketPolicyDeleteAndRecreate(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// GET should fail (no policy)
+	// GET should fail with NoSuchBucketPolicy
 	_, err = s3Client.GetBucketPolicy(&s3.GetBucketPolicyInput{
 		Bucket: aws.String(bucket),
 	})
 	require.Error(t, err)
+	awsErr, ok := err.(awserr.Error)
+	require.True(t, ok, "expected AWS error, got %T: %v", err, err)
+	require.Equal(t, "NoSuchBucketPolicy", awsErr.Code())
 
 	// Re-PUT same policy
 	_, err = s3Client.PutBucketPolicy(&s3.PutBucketPolicyInput{
@@ -273,25 +282,39 @@ func TestBucketPolicyDeleteAndRecreate(t *testing.T) {
 		Bucket: aws.String(bucket),
 	})
 	require.NoError(t, err)
-	require.NotContains(t, *getOut.Policy, `"NotResource"`,
+	var recreatedPolicy map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(*getOut.Policy), &recreatedPolicy))
+	require.False(t, hasKey(recreatedPolicy, "NotResource"),
 		"recreated policy must not contain spurious NotResource")
 }
 
 // hasKey checks whether any Statement in the policy map contains the given key.
+// Handles both single-statement objects and arrays of statements.
 func hasKey(policy map[string]interface{}, key string) bool {
-	stmts, ok := policy["Statement"].([]interface{})
+	stmtsRaw, ok := policy["Statement"]
 	if !ok {
 		return false
 	}
-	for _, s := range stmts {
-		stmt, ok := s.(map[string]interface{})
-		if !ok {
-			continue
-		}
-		if _, exists := stmt[key]; exists {
-			return true
+
+	// Single statement object
+	if stmt, ok := stmtsRaw.(map[string]interface{}); ok {
+		_, exists := stmt[key]
+		return exists
+	}
+
+	// Array of statements
+	if stmts, ok := stmtsRaw.([]interface{}); ok {
+		for _, s := range stmts {
+			stmt, ok := s.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if _, exists := stmt[key]; exists {
+				return true
+			}
 		}
 	}
+
 	return false
 }
 
