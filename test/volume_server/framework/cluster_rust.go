@@ -40,6 +40,12 @@ type RustCluster struct {
 	cleanupOnce sync.Once
 }
 
+var (
+	rustBinaryOnce sync.Once
+	rustBinaryPath string
+	rustBinaryErr  error
+)
+
 // StartRustVolumeCluster starts a Go master + Rust volume server.
 func StartRustVolumeCluster(t testing.TB, profile matrix.Profile) *RustCluster {
 	t.Helper()
@@ -221,47 +227,47 @@ func FindOrBuildRustBinary() (string, error) {
 		return "", fmt.Errorf("RUST_VOLUME_BINARY is set but not executable: %s", fromEnv)
 	}
 
-	// Derive the Rust volume crate directory from this source file's location.
-	rustCrateDir := ""
-	if _, file, _, ok := runtime.Caller(0); ok {
-		repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-		for _, candidate := range []string{"seaweed-volume", "weed-volume"} {
-			dir := filepath.Join(repoRoot, candidate)
-			if isDir(dir) && isFile(filepath.Join(dir, "Cargo.toml")) {
-				rustCrateDir = dir
-				break
+	rustBinaryOnce.Do(func() {
+		// Derive the Rust volume crate directory from this source file's location.
+		rustCrateDir := ""
+		if _, file, _, ok := runtime.Caller(0); ok {
+			repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+			for _, candidate := range []string{"seaweed-volume", "weed-volume"} {
+				dir := filepath.Join(repoRoot, candidate)
+				if isDir(dir) && isFile(filepath.Join(dir, "Cargo.toml")) {
+					rustCrateDir = dir
+					break
+				}
 			}
 		}
-	}
-	if rustCrateDir == "" {
-		return "", fmt.Errorf("unable to detect Rust volume crate directory")
-	}
+		if rustCrateDir == "" {
+			rustBinaryErr = fmt.Errorf("unable to detect Rust volume crate directory")
+			return
+		}
 
-	// Check for a pre-built release binary.
-	releaseBin := filepath.Join(rustCrateDir, "target", "release", "weed-volume")
-	if isExecutableFile(releaseBin) {
-		return releaseBin, nil
-	}
+		releaseBin := filepath.Join(rustCrateDir, "target", "release", "weed-volume")
 
-	// Check for a pre-built debug binary.
-	debugBin := filepath.Join(rustCrateDir, "target", "debug", "weed-volume")
-	if isExecutableFile(debugBin) {
-		return debugBin, nil
-	}
+		// Always rebuild once per test process so the harness uses current source and features.
+		cmd := exec.Command("cargo", "build", "--release")
+		cmd.Dir = rustCrateDir
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			rustBinaryErr = fmt.Errorf("build rust volume binary: %w\n%s", err, out.String())
+			return
+		}
+		if !isExecutableFile(releaseBin) {
+			rustBinaryErr = fmt.Errorf("built rust volume binary is not executable: %s", releaseBin)
+			return
+		}
+		rustBinaryPath = releaseBin
+	})
 
-	// Build with cargo.
-	cmd := exec.Command("cargo", "build", "--release")
-	cmd.Dir = rustCrateDir
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build rust volume binary: %w\n%s", err, out.String())
+	if rustBinaryErr != nil {
+		return "", rustBinaryErr
 	}
-	if !isExecutableFile(releaseBin) {
-		return "", fmt.Errorf("built rust volume binary is not executable: %s", releaseBin)
-	}
-	return releaseBin, nil
+	return rustBinaryPath, nil
 }
 
 func isDir(path string) bool {
