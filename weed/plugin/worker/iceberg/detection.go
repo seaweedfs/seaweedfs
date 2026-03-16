@@ -224,6 +224,9 @@ func (h *Handler) tableNeedsMaintenance(
 
 	for _, op := range ops {
 		switch op {
+		case "expire_snapshots":
+			// Handled by the metadata-only check above.
+			continue
 		case "compact":
 			manifests, err := getCurrentManifests()
 			if err != nil {
