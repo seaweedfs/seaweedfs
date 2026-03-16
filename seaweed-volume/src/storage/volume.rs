@@ -548,7 +548,7 @@ impl Volume {
             self.load_index()?;
         }
 
-        self.load_vif();
+        self.load_vif()?;
 
         Ok(())
     }
@@ -1444,11 +1444,11 @@ impl Volume {
 
     /// Load volume info from .vif file.
     /// Supports both the protobuf-JSON format (Go-compatible) and legacy JSON.
-    fn load_vif(&mut self) {
+    fn load_vif(&mut self) -> Result<(), VolumeError> {
         let path = self.vif_path();
         if let Ok(content) = fs::read_to_string(&path) {
             if content.trim().is_empty() {
-                return;
+                return Ok(());
             }
             // Try protobuf-JSON (Go-compatible VolumeInfo via VifVolumeInfo)
             if let Ok(vif_info) = serde_json::from_str::<VifVolumeInfo>(&content) {
@@ -1464,15 +1464,28 @@ impl Volume {
                 if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
                     self.volume_info.bytes_offset = OFFSET_SIZE as u32;
                 }
-                return;
+                if self.volume_info.bytes_offset != 0
+                    && self.volume_info.bytes_offset != OFFSET_SIZE as u32
+                {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "bytes_offset mismatch in {}: found {}, expected {}",
+                            path, self.volume_info.bytes_offset, OFFSET_SIZE
+                        ),
+                    )));
+                }
+                return Ok(());
             }
             // Fall back to legacy format
             if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
                 if info.read_only {
                     self.no_write_or_delete = true;
                 }
+                return Ok(());
             }
         }
+        Ok(())
     }
 
     /// Save volume info to .vif file in protobuf-JSON format (Go-compatible).
@@ -2990,6 +3003,47 @@ mod tests {
 
         assert_eq!(v.volume_info.version, VERSION_2.0 as u32);
         assert_eq!(v.version(), VERSION_2);
+    }
+
+    #[test]
+    fn test_load_vif_rejects_bytes_offset_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            let vif = VifVolumeInfo {
+                version: Version::current().0 as u32,
+                bytes_offset: (OFFSET_SIZE as u32) + 1,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let result = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+
+        match result {
+            Ok(_) => panic!("expected bytes_offset mismatch to fail"),
+            Err(VolumeError::Io(io_err)) => {
+                assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+                assert!(io_err.to_string().contains("bytes_offset mismatch"));
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
     }
 
     /// Volume destroy removes .vif alongside the primary data files.
