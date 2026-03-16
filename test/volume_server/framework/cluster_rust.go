@@ -185,24 +185,24 @@ func (rc *RustCluster) startRustVolume(dataDir string) error {
 	}
 
 	args := []string{
-		"-port", strconv.Itoa(rc.volumePort),
-		"-port.grpc", strconv.Itoa(rc.volumeGrpcPort),
-		"-port.public", strconv.Itoa(rc.volumePubPort),
-		"-ip", "127.0.0.1",
-		"-ip.bind", "127.0.0.1",
-		"-dir", dataDir,
-		"-max", "16",
-		"-master", "127.0.0.1:" + strconv.Itoa(rc.masterPort),
-		"-securityFile", filepath.Join(rc.configDir, "security.toml"),
-		"-concurrentUploadLimitMB", strconv.Itoa(rc.profile.ConcurrentUploadLimitMB),
-		"-concurrentDownloadLimitMB", strconv.Itoa(rc.profile.ConcurrentDownloadLimitMB),
-		"-preStopSeconds", "0",
+		"--port", strconv.Itoa(rc.volumePort),
+		"--port.grpc", strconv.Itoa(rc.volumeGrpcPort),
+		"--port.public", strconv.Itoa(rc.volumePubPort),
+		"--ip", "127.0.0.1",
+		"--ip.bind", "127.0.0.1",
+		"--dir", dataDir,
+		"--max", "16",
+		"--master", "127.0.0.1:" + strconv.Itoa(rc.masterPort),
+		"--securityFile", filepath.Join(rc.configDir, "security.toml"),
+		"--concurrentUploadLimitMB", strconv.Itoa(rc.profile.ConcurrentUploadLimitMB),
+		"--concurrentDownloadLimitMB", strconv.Itoa(rc.profile.ConcurrentDownloadLimitMB),
+		"--preStopSeconds", "0",
 	}
 	if rc.profile.InflightUploadTimeout > 0 {
-		args = append(args, "-inflightUploadDataTimeout", rc.profile.InflightUploadTimeout.String())
+		args = append(args, "--inflightUploadDataTimeout", rc.profile.InflightUploadTimeout.String())
 	}
 	if rc.profile.InflightDownloadTimeout > 0 {
-		args = append(args, "-inflightDownloadDataTimeout", rc.profile.InflightDownloadTimeout.String())
+		args = append(args, "--inflightDownloadDataTimeout", rc.profile.InflightDownloadTimeout.String())
 	}
 
 	rc.volumeCmd = exec.Command(rc.rustVolumeBinary, args...)
