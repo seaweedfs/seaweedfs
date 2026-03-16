@@ -4,7 +4,8 @@
 //! matching the Go SeaweedFS S3 backend behavior.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::future::Future;
+use std::sync::{Arc, OnceLock, RwLock};
 
 use aws_sdk_s3::config::{BehaviorVersion, Credentials, Region};
 use aws_sdk_s3::types::{CompletedMultipartUpload, CompletedPart};
@@ -377,6 +378,22 @@ impl S3TierBackend {
             .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
         Ok(())
     }
+
+    pub fn delete_file_blocking(&self, key: &str) -> Result<(), String> {
+        let client = self.client.clone();
+        let bucket = self.bucket.clone();
+        let key = key.to_string();
+        block_on_tier_future(async move {
+            client
+                .delete_object()
+                .bucket(&bucket)
+                .key(&key)
+                .send()
+                .await
+                .map_err(|e| format!("failed to delete object {}: {}", key, e))?;
+            Ok(())
+        })
+    }
 }
 
 /// Parse a backend name like "s3" or "s3.default" into (backend_type, backend_id).
@@ -417,4 +434,30 @@ impl S3TierRegistry {
     pub fn names(&self) -> Vec<String> {
         self.backends.keys().cloned().collect()
     }
+
+    pub fn clear(&mut self) {
+        self.backends.clear();
+    }
+}
+
+static GLOBAL_S3_TIER_REGISTRY: OnceLock<RwLock<S3TierRegistry>> = OnceLock::new();
+
+pub fn global_s3_tier_registry() -> &'static RwLock<S3TierRegistry> {
+    GLOBAL_S3_TIER_REGISTRY.get_or_init(|| RwLock::new(S3TierRegistry::new()))
+}
+
+fn block_on_tier_future<F, T>(future: F) -> Result<T, String>
+where
+    F: Future<Output = Result<T, String>> + Send + 'static,
+    T: Send + 'static,
+{
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| format!("failed to build tokio runtime: {}", e))?;
+        runtime.block_on(future)
+    })
+    .join()
+    .map_err(|_| "tier runtime thread panicked".to_string())?
 }

@@ -478,6 +478,9 @@ fn apply_storage_backends(
     }
 
     let mut registry = state.s3_tier_registry.write().unwrap();
+    let mut global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+        .write()
+        .unwrap();
     for backend in storage_backends {
         if backend.r#type != "s3" {
             continue;
@@ -505,13 +508,23 @@ fn apply_storage_backends(
         } else {
             backend.id.as_str()
         };
-        let qualified_name = format!("{}.{}", backend.r#type, backend_id);
-        if registry.get(&qualified_name).is_none() {
-            registry.register(qualified_name, S3TierBackend::new(&config));
-        }
-        if backend_id == "default" && registry.get(&backend.r#type).is_none() {
-            registry.register(backend.r#type.clone(), S3TierBackend::new(&config));
-        }
+        register_s3_backend(&mut registry, backend, backend_id, &config);
+        register_s3_backend(&mut global_registry, backend, backend_id, &config);
+    }
+}
+
+fn register_s3_backend(
+    registry: &mut crate::remote_storage::s3_tier::S3TierRegistry,
+    backend: &master_pb::StorageBackend,
+    backend_id: &str,
+    config: &S3TierConfig,
+) {
+    let qualified_name = format!("{}.{}", backend.r#type, backend_id);
+    if registry.get(&qualified_name).is_none() {
+        registry.register(qualified_name, S3TierBackend::new(config));
+    }
+    if backend_id == "default" && registry.get(&backend.r#type).is_none() {
+        registry.register(backend.r#type.clone(), S3TierBackend::new(config));
     }
 }
 
@@ -821,6 +834,10 @@ mod tests {
     #[test]
     fn test_apply_storage_backends_registers_s3_default_aliases() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .clear();
 
         apply_storage_backends(
             &state,
@@ -842,11 +859,20 @@ mod tests {
         let registry = state.s3_tier_registry.read().unwrap();
         assert!(registry.get("s3.default").is_some());
         assert!(registry.get("s3").is_some());
+        let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .read()
+            .unwrap();
+        assert!(global_registry.get("s3.default").is_some());
+        assert!(global_registry.get("s3").is_some());
     }
 
     #[test]
     fn test_apply_storage_backends_ignores_unsupported_types() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .clear();
 
         apply_storage_backends(
             &state,
@@ -859,6 +885,10 @@ mod tests {
 
         let registry = state.s3_tier_registry.read().unwrap();
         assert!(registry.names().is_empty());
+        let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .read()
+            .unwrap();
+        assert!(global_registry.names().is_empty());
     }
 
     #[test]

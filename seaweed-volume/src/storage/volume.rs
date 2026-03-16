@@ -2143,6 +2143,31 @@ impl Volume {
                 format!("volume {} is compacting", self.id),
             )));
         }
+
+        let (storage_name, storage_key) = self.remote_storage_name_key();
+        if self.has_remote_file && !storage_name.is_empty() && !storage_key.is_empty() {
+            let backend = crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .read()
+                .unwrap()
+                .get(&storage_name);
+            if let Some(backend) = backend {
+                if let Err(e) = backend.delete_file_blocking(&storage_key) {
+                    warn!(
+                        volume_id = self.id.0,
+                        storage_name,
+                        storage_key,
+                        error = %e,
+                        "failed to delete remote tier file during destroy"
+                    );
+                }
+            } else {
+                warn!(
+                    volume_id = self.id.0,
+                    storage_name, storage_key, "remote tier backend not found during destroy"
+                );
+            }
+        }
+
         self.close();
         remove_volume_files(&self.data_file_name());
         remove_volume_files(&self.index_file_name());
