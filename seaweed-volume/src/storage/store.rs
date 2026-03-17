@@ -377,6 +377,7 @@ impl Store {
         for loc in &mut self.locations {
             loc.delete_collection(collection);
         }
+        crate::metrics::delete_collection_metrics(collection);
     }
 
     // ---- Metrics ----

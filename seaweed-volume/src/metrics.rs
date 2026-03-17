@@ -237,6 +237,14 @@ pub fn gather_metrics() -> String {
     String::from_utf8(buffer).expect("metrics are valid UTF-8")
 }
 
+pub fn delete_collection_metrics(collection: &str) {
+    let _ = VOLUME_GAUGE.remove_label_values(&[collection, "volume"]);
+    let _ = VOLUME_GAUGE.remove_label_values(&[collection, "ec_shards"]);
+    let _ = READ_ONLY_VOLUME_GAUGE.remove_label_values(&[collection, "volume"]);
+    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, "normal"]);
+    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, "deleted_bytes"]);
+}
+
 pub fn build_pushgateway_url(address: &str, job: &str, instance: &str) -> String {
     let base = if address.starts_with("http://") || address.starts_with("https://") {
         address.to_string()
@@ -339,5 +347,30 @@ mod tests {
         assert!(body.contains("SeaweedFS_volumeServer_request_total"));
 
         server.abort();
+    }
+
+    #[test]
+    fn test_delete_collection_metrics_removes_collection_labelsets() {
+        register_metrics();
+
+        VOLUME_GAUGE.with_label_values(&["pics", "volume"]).set(2.0);
+        VOLUME_GAUGE.with_label_values(&["pics", "ec_shards"]).set(3.0);
+        READ_ONLY_VOLUME_GAUGE
+            .with_label_values(&["pics", "volume"])
+            .set(1.0);
+        DISK_SIZE_GAUGE
+            .with_label_values(&["pics", "normal"])
+            .set(10.0);
+        DISK_SIZE_GAUGE
+            .with_label_values(&["pics", "deleted_bytes"])
+            .set(4.0);
+
+        delete_collection_metrics("pics");
+
+        let output = gather_metrics();
+        assert!(!output.contains("collection=\"pics\",type=\"volume\""));
+        assert!(!output.contains("collection=\"pics\",type=\"ec_shards\""));
+        assert!(!output.contains("collection=\"pics\",type=\"normal\""));
+        assert!(!output.contains("collection=\"pics\",type=\"deleted_bytes\""));
     }
 }
