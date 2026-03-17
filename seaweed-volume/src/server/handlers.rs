@@ -2310,12 +2310,6 @@ pub async fn post_handler(
                 resp
             }
         }
-        Err(crate::storage::volume::VolumeError::NotFound) => {
-            json_error_with_query(StatusCode::NOT_FOUND, "volume not found", Some(&query))
-        }
-        Err(crate::storage::volume::VolumeError::ReadOnly) => {
-            json_error_with_query(StatusCode::FORBIDDEN, "volume is read-only", Some(&query))
-        }
         Err(e) => {
             metrics::HANDLER_COUNTER
                 .with_label_values(&[metrics::ERROR_WRITE_TO_LOCAL_DISK])
