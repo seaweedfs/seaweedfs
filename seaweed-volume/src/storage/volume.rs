@@ -1091,6 +1091,13 @@ impl Volume {
         offset: i64,
         size: Size,
     ) -> Result<(), VolumeError> {
+        // Sanity check: reject metadata sizes > 128KB (matching Go's ReadNeedleMeta guard)
+        if size.0 > 128 * 1024 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("metadata size {} exceeds 128KB limit", size.0),
+            )));
+        }
         let version = self.version();
         let actual_size = get_actual_size(size, version);
         let mut buf = vec![0u8; actual_size as usize];
@@ -1274,20 +1281,18 @@ impl Volume {
             return Ok((0, Size(n.data_size as i32), true));
         }
 
-        // Cookie validation for existing needle
+        // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
         if let Some(nm) = &self.nm {
             if let Some(nv) = nm.get(n.id) {
-                if !nv.offset.is_zero() && nv.size.is_valid() {
-                    let mut existing = Needle::default();
-                    // Read only the header to check cookie
-                    self.read_needle_header_unlocked(&mut existing, nv.offset.to_actual_offset())?;
+                let mut existing = Needle::default();
+                // Read only the header to check cookie
+                self.read_needle_header_unlocked(&mut existing, nv.offset.to_actual_offset())?;
 
-                    if n.cookie.0 == 0 && !check_cookie {
-                        n.cookie = existing.cookie;
-                    }
-                    if existing.cookie != n.cookie {
-                        return Err(VolumeError::CookieMismatch(n.cookie.0));
-                    }
+                if n.cookie.0 == 0 && !check_cookie {
+                    n.cookie = existing.cookie;
+                }
+                if existing.cookie != n.cookie {
+                    return Err(VolumeError::CookieMismatch(n.cookie.0));
                 }
             }
         }
@@ -1296,10 +1301,10 @@ impl Volume {
         n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
 
         // Append to .dat file
-        let (offset, size, _actual_size) = self.append_needle(n)?;
+        let (offset, _body_size, _actual_size) = self.append_needle(n)?;
         self.last_append_at_ns = n.append_at_ns;
 
-        // Update needle map
+        // Update needle map (uses n.size = full body size, matching Go's nm.Put)
         let should_update = if let Some(nm) = &self.nm {
             match nm.get(n.id) {
                 Some(nv) => (nv.offset.to_actual_offset() as u64) < offset,
@@ -1319,7 +1324,8 @@ impl Volume {
             self.last_modified_ts_seconds = n.last_modified;
         }
 
-        Ok((offset, size, false))
+        // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
+        Ok((offset, Size(n.data_size as i32), false))
     }
 
     fn read_needle_header_unlocked(&self, n: &mut Needle, offset: i64) -> Result<(), VolumeError> {
