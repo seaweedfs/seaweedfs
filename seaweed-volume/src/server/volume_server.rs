@@ -196,7 +196,7 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
 async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Request) -> Response {
     let start = std::time::Instant::now();
     let method = request.method().clone();
-    let method_str = method.as_str().to_string();
+    let mut method_str = method.as_str().to_string();
     let request_bytes = request
         .headers()
         .get(header::CONTENT_LENGTH)
@@ -234,6 +234,7 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
         _ => {
             let method_name = request.method().to_string();
             let query = request.uri().query().map(|q| q.to_string());
+            method_str = "INVALID".to_string();
             handlers::json_error_with_query(
                 StatusCode::BAD_REQUEST,
                 format!("unsupported method {}", method_name),
