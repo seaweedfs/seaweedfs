@@ -1029,7 +1029,7 @@ async fn get_or_head_handler_inner(
 
     // Chunk manifest expansion (needs full data) — after conditional checks, before response
     if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method) {
+        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method, &path, &query) {
             return resp;
         }
         // If manifest expansion fails (invalid JSON etc.), fall through to raw data
@@ -2880,6 +2880,8 @@ fn try_expand_chunk_manifest(
     n: &Needle,
     _headers: &HeaderMap,
     method: &Method,
+    path: &str,
+    query: &ReadQueryParams,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
         use flate2::read::GzDecoder;
@@ -2953,15 +2955,66 @@ fn try_expand_chunk_manifest(
         }
     }
 
-    let content_type = if !manifest.mime.is_empty() {
-        manifest.mime.clone()
-    } else {
-        "application/octet-stream".to_string()
+    // Determine filename: URL path filename, then needle name, then manifest name
+    let mut filename = extract_filename_from_path(path);
+    if filename.is_empty() && n.name_size > 0 {
+        filename = String::from_utf8_lossy(&n.name).to_string();
+    }
+    if filename.is_empty() && !manifest.name.is_empty() {
+        filename = manifest.name.clone();
+    }
+
+    // Determine MIME type: manifest mime, but fall back to extension detection
+    // if empty or application/octet-stream (matching Go behavior)
+    let content_type = {
+        let mime_str = &manifest.mime;
+        if !mime_str.is_empty() && !mime_str.starts_with("application/octet-stream") {
+            mime_str.clone()
+        } else {
+            // Try to detect from filename extension
+            let ext = if !filename.is_empty() {
+                if let Some(dot_pos) = filename.rfind('.') {
+                    filename[dot_pos..].to_lowercase()
+                } else {
+                    String::new()
+                }
+            } else {
+                String::new()
+            };
+            if !ext.is_empty() {
+                mime_guess::from_ext(ext.trim_start_matches('.'))
+                    .first()
+                    .map(|m| m.to_string())
+                    .unwrap_or_else(|| "application/octet-stream".to_string())
+            } else if !mime_str.is_empty() {
+                mime_str.clone()
+            } else {
+                "application/octet-stream".to_string()
+            }
+        }
     };
 
     let mut response_headers = HeaderMap::new();
     response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
+    response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+
+    // Content-Disposition
+    if !filename.is_empty() {
+        let disposition_type = if let Some(ref dl_val) = query.dl {
+            if parse_go_bool(dl_val).unwrap_or(false) {
+                "attachment"
+            } else {
+                "inline"
+            }
+        } else {
+            "inline"
+        };
+        let disposition = format_content_disposition(disposition_type, &filename);
+        if let Ok(hval) = disposition.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
+    }
 
     if *method == Method::HEAD {
         response_headers.insert(
