@@ -241,6 +241,12 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	})
 	chunksMu.Unlock()
 	if err != nil {
+		// Clean up any chunks that were successfully written before the error.
+		// Without this, partial downloads leave orphaned needles in volume servers
+		// that accumulate across retry cycles and cannot be reclaimed by vacuum.
+		if len(chunks) > 0 {
+			fs.filer.DeleteUncommittedChunks(ctx, chunks)
+		}
 		return nil, err
 	}
 
