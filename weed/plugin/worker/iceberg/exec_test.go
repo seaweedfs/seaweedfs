@@ -1255,6 +1255,349 @@ func TestDetectSchedulesManifestRewriteWithoutSnapshotPressure(t *testing.T) {
 	}
 }
 
+func TestDetectUsesPlanningIndexForRepeatedCompactionScans(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-3.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 compaction candidate, got %d", len(tables))
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	tableEntry := fs.getEntry(tableDir, setup.TableName)
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	var envelope struct {
+		PlanningIndex *planningIndex `json:"planningIndex,omitempty"`
+	}
+	if err := json.Unmarshal(tableEntry.Extended[s3tables.ExtendedKeyMetadata], &envelope); err != nil {
+		t.Fatalf("parse table metadata xattr: %v", err)
+	}
+	if envelope.PlanningIndex == nil || envelope.PlanningIndex.Compaction == nil {
+		t.Fatal("expected persisted compaction planning index after first scan")
+	}
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "snap-1.avro", &filer_pb.Entry{
+		Name: "snap-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	tables, err = handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance with cached planning index failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected cached planning index to preserve 1 compaction candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectInvalidatesPlanningIndexWhenCompactionConfigChanges(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	initialConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       3,
+		Operations:          "compact",
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, initialConfig, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("initial scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 0 {
+		t.Fatalf("expected no compaction candidates with min_input_files=3, got %d", len(tables))
+	}
+
+	updatedConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+
+	tables, err = handler.scanTablesForMaintenance(context.Background(), client, updatedConfig, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("updated scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected planning index invalidation to yield 1 compaction candidate, got %d", len(tables))
+	}
+}
+
+func TestDetectPlanningIndexPreservesUnscannedSections(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	handler := NewHandler(nil)
+	compactConfig := Config{
+		TargetFileSizeBytes: 4096,
+		MinInputFiles:       2,
+		Operations:          "compact",
+	}
+	if _, err := handler.scanTablesForMaintenance(context.Background(), client, compactConfig, "", "", "", 0); err != nil {
+		t.Fatalf("compact scanTablesForMaintenance failed: %v", err)
+	}
+
+	rewriteConfig := Config{
+		MinManifestsToRewrite: 5,
+		Operations:            "rewrite_manifests",
+	}
+	if _, err := handler.scanTablesForMaintenance(context.Background(), client, rewriteConfig, "", "", "", 0); err != nil {
+		t.Fatalf("rewrite scanTablesForMaintenance failed: %v", err)
+	}
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.Namespace)
+	tableEntry := fs.getEntry(tableDir, setup.TableName)
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	var envelope struct {
+		PlanningIndex *planningIndex `json:"planningIndex,omitempty"`
+	}
+	if err := json.Unmarshal(tableEntry.Extended[s3tables.ExtendedKeyMetadata], &envelope); err != nil {
+		t.Fatalf("parse table metadata xattr: %v", err)
+	}
+	if envelope.PlanningIndex == nil {
+		t.Fatal("expected persisted planning index")
+	}
+	if envelope.PlanningIndex.Compaction == nil {
+		t.Fatal("expected compaction section to be preserved")
+	}
+	if envelope.PlanningIndex.RewriteManifests == nil {
+		t.Fatal("expected rewrite_manifests section to be added")
+	}
+}
+
+func TestTableNeedsMaintenanceCachesPlanningIndexBuildError(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "snap-1.avro", &filer_pb.Entry{
+		Name: "snap-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes:   4096,
+		MinInputFiles:         2,
+		MinManifestsToRewrite: 2,
+		Operations:            "compact,rewrite_manifests",
+	}
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		t.Fatalf("parseOperations: %v", err)
+	}
+
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	if err == nil {
+		t.Fatal("expected planning-index build error")
+	}
+	if needsWork {
+		t.Fatal("expected no maintenance result on planning-index build error")
+	}
+	if strings.Count(err.Error(), "parse manifest list") != 1 {
+		t.Fatalf("expected planning-index build error to be reported once, got %q", err)
+	}
+}
+
+func TestTableNeedsMaintenanceScopesPlanningIndexBuildErrorsPerOperation(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "detect-manifest-1.avro", &filer_pb.Entry{
+		Name: "detect-manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes:   4096,
+		MinInputFiles:         2,
+		MinManifestsToRewrite: 2,
+		Operations:            "compact,rewrite_manifests",
+	}
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		t.Fatalf("parseOperations: %v", err)
+	}
+
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	if err != nil {
+		t.Fatalf("expected rewrite_manifests planning to survive compaction planning error, got %v", err)
+	}
+	if !needsWork {
+		t.Fatal("expected rewrite_manifests maintenance despite compaction planning error")
+	}
+}
+
+func TestPersistPlanningIndexUsesMetadataXattrCASGuard(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
+	tableEntry := fs.getEntry(path.Dir(tableDir), path.Base(tableDir))
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	observedExpectedExtended := make(chan map[string][]byte, 1)
+	fs.beforeUpdate = func(_ *fakeFilerServer, req *filer_pb.UpdateEntryRequest) error {
+		cloned := make(map[string][]byte, len(req.ExpectedExtended))
+		for key, value := range req.ExpectedExtended {
+			cloned[key] = append([]byte(nil), value...)
+		}
+		observedExpectedExtended <- cloned
+		return nil
+	}
+
+	err := persistPlanningIndex(context.Background(), client, setup.BucketName, setup.tablePath(), &planningIndex{
+		SnapshotID:   1,
+		ManifestList: "metadata/snap-1.avro",
+		UpdatedAtMs:  time.Now().UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("persistPlanningIndex: %v", err)
+	}
+
+	var expectedExtended map[string][]byte
+	select {
+	case expectedExtended = <-observedExpectedExtended:
+	default:
+		t.Fatal("expected persistPlanningIndex to issue an UpdateEntry request")
+	}
+
+	if got := expectedExtended[s3tables.ExtendedKeyMetadata]; !bytes.Equal(got, tableEntry.Extended[s3tables.ExtendedKeyMetadata]) {
+		t.Fatal("expected metadata xattr to be included in ExpectedExtended")
+	}
+	if got := expectedExtended[s3tables.ExtendedKeyMetadataVersion]; !bytes.Equal(got, tableEntry.Extended[s3tables.ExtendedKeyMetadataVersion]) {
+		t.Fatal("expected metadata version xattr to be preserved in ExpectedExtended")
+	}
+}
+
 func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
