@@ -1622,19 +1622,17 @@ impl VolumeServer for VolumeGrpcService {
                     }
                     sent_any = true;
                     // Send body in chunks of BUFFER_SIZE_LIMIT
-                    // Go sends needle_header only in the first chunk per needle
+                    // Go sends needle_header on every chunk
                     let mut i = 0;
-                    let mut first_chunk = true;
                     while i < body.len() {
                         let end = std::cmp::min(i + BUFFER_SIZE_LIMIT, body.len());
                         let is_last_chunk = end >= body.len();
                         let msg = volume_server_pb::VolumeTailSenderResponse {
-                            needle_header: if first_chunk { header.clone() } else { vec![] },
+                            needle_header: header.clone(),
                             needle_body: body[i..end].to_vec(),
                             is_last_chunk,
                             version,
                         };
-                        first_chunk = false;
                         if tx.send(Ok(msg)).await.is_err() {
                             return;
                         }
