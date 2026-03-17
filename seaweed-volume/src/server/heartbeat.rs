@@ -20,6 +20,9 @@ use crate::remote_storage::s3_tier::{S3TierBackend, S3TierConfig};
 use crate::storage::store::Store;
 use crate::storage::types::NeedleId;
 
+const DUPLICATE_UUID_RETRY_MESSAGE: &str = "duplicate UUIDs detected, retrying connection";
+const MAX_DUPLICATE_UUID_RETRIES: u32 = 3;
+
 /// Configuration for the heartbeat client.
 pub struct HeartbeatConfig {
     pub ip: String,
@@ -103,16 +106,16 @@ pub async fn run_heartbeat_with_state(
                     drop(e);
                     warn!("Heartbeat to {} error: {}", grpc_addr, err_msg);
 
-                    if err_msg.contains("duplicate") && err_msg.contains("UUID") {
-                        duplicate_retry_count += 1;
-                        if duplicate_retry_count >= 3 {
+                    if err_msg.contains(DUPLICATE_UUID_RETRY_MESSAGE) {
+                        if duplicate_retry_count >= MAX_DUPLICATE_UUID_RETRIES {
                             error!("Shut down Volume Server due to persistent duplicate volume directories after 3 retries");
                             error!(
                                 "Please check if another volume server is using the same directory"
                             );
                             std::process::exit(1);
                         }
-                        let retry_delay = Duration::from_secs(2u64.pow(duplicate_retry_count));
+                        let retry_delay = duplicate_uuid_retry_delay(duplicate_retry_count);
+                        duplicate_retry_count += 1;
                         warn!(
                             "Waiting {:?} before retrying due to duplicate UUID detection (attempt {}/3)...",
                             retry_delay, duplicate_retry_count
@@ -241,6 +244,23 @@ fn is_stopping(state: &VolumeServerState) -> bool {
     *state.is_stopping.read().unwrap()
 }
 
+fn duplicate_uuid_retry_delay(retry_count: u32) -> Duration {
+    Duration::from_secs((1u64 << retry_count) * 2)
+}
+
+fn duplicate_directories(store: &Store, duplicated_uuids: &[String]) -> Vec<String> {
+    let mut duplicate_dirs = Vec::new();
+    for loc in &store.locations {
+        if duplicated_uuids
+            .iter()
+            .any(|uuid| uuid == &loc.directory_uuid)
+        {
+            duplicate_dirs.push(loc.directory.clone());
+        }
+    }
+    duplicate_dirs
+}
+
 /// Perform one heartbeat session with a master server.
 async fn do_heartbeat(
     config: &HeartbeatConfig,
@@ -329,7 +349,19 @@ async fn do_heartbeat(
                             return Ok(Some(hb_resp.leader));
                         }
                         if !hb_resp.duplicated_uuids.is_empty() {
-                            error!("Master reported duplicate volume directory UUIDs: {:?}", hb_resp.duplicated_uuids);
+                            let duplicate_dirs = {
+                                let store = state.store.read().unwrap();
+                                duplicate_directories(&store, &hb_resp.duplicated_uuids)
+                            };
+                            error!(
+                                "Master reported duplicate volume directories: {:?}",
+                                duplicate_dirs
+                            );
+                            return Err(format!(
+                                "{}: {:?}",
+                                DUPLICATE_UUID_RETRY_MESSAGE, duplicate_dirs
+                            )
+                            .into());
                         }
                     }
                     Ok(None) => return Ok(None),
@@ -1118,5 +1150,40 @@ mod tests {
         }
 
         assert!(!apply_metrics_push_settings(&state, "pushgateway:9091", 15,));
+    }
+
+    #[test]
+    fn test_duplicate_uuid_retry_delay_matches_go_backoff() {
+        assert_eq!(duplicate_uuid_retry_delay(0), Duration::from_secs(2));
+        assert_eq!(duplicate_uuid_retry_delay(1), Duration::from_secs(4));
+        assert_eq!(duplicate_uuid_retry_delay(2), Duration::from_secs(8));
+    }
+
+    #[test]
+    fn test_duplicate_directories_maps_master_uuids_to_paths() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                1,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        let duplicate_dirs = duplicate_directories(
+            &store,
+            &[
+                store.locations[0].directory_uuid.clone(),
+                "missing-uuid".to_string(),
+            ],
+        );
+
+        assert_eq!(duplicate_dirs, vec![dir.to_string()]);
     }
 }
