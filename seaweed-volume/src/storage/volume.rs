@@ -2026,18 +2026,19 @@ impl Volume {
     }
 
     /// Mark this volume as read-only, optionally persisting to .vif.
-    pub fn set_read_only_persist(&mut self, persist: bool) {
+    pub fn set_read_only_persist(&mut self, persist: bool) -> Result<(), VolumeError> {
         self.no_write_or_delete = true;
         if persist {
-            let _ = self.save_vif();
+            self.save_vif()?;
         }
+        Ok(())
     }
 
     /// Mark this volume as writable (allow writes and deletes).
-    pub fn set_writable(&mut self) {
+    pub fn set_writable(&mut self) -> Result<(), VolumeError> {
         self.no_write_or_delete = false;
         self.no_write_can_delete = self.has_remote_file;
-        let _ = self.save_vif();
+        self.save_vif()
     }
 
     /// Recompute the Go-style write/delete mode from the current remote tier state.
