@@ -232,12 +232,20 @@ impl CompactNeedleMap {
     }
 
     /// Remove from map during loading (handle deletions in idx walk).
+    /// Matches Go's doLoading else branch: always increments DeletionCounter,
+    /// and adds old size bytes to DeletionByteCounter.
     fn delete_from_map(&mut self, key: NeedleId) {
         self.metric.maybe_set_max_file_key(key);
-        if let Some(old) = self.map.get(key) {
-            if old.size.is_valid() {
-                self.metric.on_delete(&old);
-            }
+        // Go's CompactMap.Delete returns old size (0 if not found or already deleted).
+        // Go's doLoading always does DeletionCounter++ and DeletionByteCounter += uint64(oldSize).
+        let old_size = self.map.get(key).map(|nv| nv.size).unwrap_or(Size(0));
+        // Go unconditionally increments DeletionCounter
+        self.metric.deletion_count.fetch_add(1, Ordering::Relaxed);
+        // Go adds uint64(oldSize) which for valid sizes adds the value, for 0/negative adds 0
+        if old_size.0 > 0 {
+            self.metric
+                .deletion_byte_count
+                .fetch_add(old_size.0 as u64, Ordering::Relaxed);
         }
         self.map.remove(key);
     }
@@ -507,13 +515,13 @@ impl RedbNeedleMap {
 
         if stored_idx_size < idx_size {
             // .idx grew — replay new entries incrementally
-            reader.seek(io::SeekFrom::Start(stored_idx_size))?;
+            let start_entry = stored_idx_size / NEEDLE_MAP_ENTRY_SIZE as u64;
             let txn = Self::begin_write_no_fsync(&nm.db)?;
             {
                 let mut table = txn.open_table(NEEDLE_TABLE).map_err(|e| {
                     io::Error::new(io::ErrorKind::Other, format!("redb open_table: {}", e))
                 })?;
-                idx::walk_index_file(reader, stored_idx_size, |key, offset, size| {
+                idx::walk_index_file(reader, start_entry, |key, offset, size| {
                     let key_u64: u64 = key.into();
                     if offset.is_zero() || size.is_deleted() {
                         // Delete: look up old value for metric update, then
