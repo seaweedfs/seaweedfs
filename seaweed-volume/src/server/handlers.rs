@@ -712,7 +712,12 @@ async fn get_or_head_handler_inner(
             .unwrap()
             .check_jwt_for_file(token.as_deref(), &file_id, false)
     {
-        return (StatusCode::UNAUTHORIZED, "wrong jwt".to_string()).into_response();
+        let body = serde_json::json!({"error": "wrong jwt"});
+        return Response::builder()
+            .status(StatusCode::UNAUTHORIZED)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
     }
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
@@ -879,7 +884,7 @@ async fn get_or_head_handler_inner(
         let store = state.store.read().unwrap();
         match store.read_volume_needle_opt(vid, &mut n_full, read_deleted) {
             Ok(count) => {
-                if count <= 0 {
+                if count < 0 {
                     return StatusCode::NOT_FOUND.into_response();
                 }
             }
@@ -927,7 +932,12 @@ async fn get_or_head_handler_inner(
                     chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
                 {
                     if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
-                        return StatusCode::NOT_MODIFIED.into_response();
+                        let mut resp = StatusCode::NOT_MODIFIED.into_response();
+                        if let Some(ref lm) = last_modified_str {
+                            resp.headers_mut()
+                                .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+                        }
+                        return resp;
                     }
                 }
             }
@@ -938,7 +948,12 @@ async fn get_or_head_handler_inner(
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(inm) = if_none_match.to_str() {
             if inm == etag {
-                return StatusCode::NOT_MODIFIED.into_response();
+                let mut resp = StatusCode::NOT_MODIFIED.into_response();
+                if let Some(ref lm) = last_modified_str {
+                    resp.headers_mut()
+                        .insert(header::LAST_MODIFIED, lm.parse().unwrap());
+                }
+                return resp;
             }
         }
     }
@@ -1709,14 +1724,20 @@ fn encode_image(img: &image::DynamicImage, ext: &str) -> Option<Vec<u8>> {
 
 #[derive(Serialize)]
 struct UploadResult {
+    #[serde(skip_serializing_if = "String::is_empty")]
     name: String,
+    #[serde(skip_serializing_if = "is_zero_u32")]
     size: u32,
-    #[serde(rename = "eTag")]
+    #[serde(rename = "eTag", skip_serializing_if = "String::is_empty")]
     etag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     mime: Option<String>,
     #[serde(rename = "contentMd5", skip_serializing_if = "Option::is_none")]
     content_md5: Option<String>,
+}
+
+fn is_zero_u32(v: &u32) -> bool {
+    *v == 0
 }
 
 pub async fn post_handler(
@@ -2241,7 +2262,7 @@ pub async fn post_handler(
                 .inc();
             json_error_with_query(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("write error: {}", e),
+                format!("{}", e),
                 Some(&query),
             )
         }
@@ -2266,6 +2287,8 @@ pub async fn delete_handler(
 ) -> Response {
     let path = request.uri().path().to_string();
     let del_query = request.uri().query().unwrap_or("").to_string();
+    let del_params: ReadQueryParams =
+        serde_urlencoded::from_str(&del_query).unwrap_or_default();
     let headers = request.headers().clone();
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
@@ -2328,7 +2351,7 @@ pub async fn delete_handler(
             Ok(_) => {}
             Err(_) => {
                 let result = DeleteResult { size: 0 };
-                return (StatusCode::NOT_FOUND, axum::Json(result)).into_response();
+                return json_response_with_params(StatusCode::NOT_FOUND, &result, Some(&del_params));
             }
         }
     }
@@ -2412,7 +2435,7 @@ pub async fn delete_handler(
             let result = DeleteResult {
                 size: manifest.size as i64,
             };
-            return (StatusCode::ACCEPTED, axum::Json(result)).into_response();
+            return json_response_with_params(StatusCode::ACCEPTED, &result, Some(&del_params));
         }
     }
 
@@ -2456,11 +2479,11 @@ pub async fn delete_handler(
             let result = DeleteResult {
                 size: size.0 as i64,
             };
-            (StatusCode::ACCEPTED, axum::Json(result)).into_response()
+            json_response_with_params(StatusCode::ACCEPTED, &result, Some(&del_params))
         }
         Err(crate::storage::volume::VolumeError::NotFound) => {
             let result = DeleteResult { size: 0 };
-            (StatusCode::NOT_FOUND, axum::Json(result)).into_response()
+            json_response_with_params(StatusCode::NOT_FOUND, &result, Some(&del_params))
         }
         Err(e) => json_error_with_query(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -2872,10 +2895,10 @@ fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::
     disk_statuses
 }
 
-/// Serialize to JSON with 1-space indent (matches Go's `json.MarshalIndent(obj, "", " ")`).
-fn to_pretty_json_1space<T: Serialize>(value: &T) -> String {
+/// Serialize to JSON with 2-space indent (matches Go's `json.MarshalIndent(obj, "", "  ")`).
+fn to_pretty_json<T: Serialize>(value: &T) -> String {
     let mut buf = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"  ");
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
     value.serialize(&mut ser).unwrap();
     String::from_utf8(buf).unwrap()
@@ -2895,7 +2918,7 @@ fn json_response_with_params<T: Serialize>(
         .cloned();
 
     let json_body = if is_pretty {
-        to_pretty_json_1space(body)
+        to_pretty_json(body)
     } else {
         serde_json::to_string(body).unwrap()
     };
@@ -2939,7 +2962,7 @@ fn json_error_with_query(
     };
 
     let json_body = if is_pretty {
-        to_pretty_json_1space(&body)
+        to_pretty_json(&body)
     } else {
         serde_json::to_string(&body).unwrap()
     };
