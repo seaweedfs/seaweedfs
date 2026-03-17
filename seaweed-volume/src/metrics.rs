@@ -46,13 +46,13 @@ lazy_static::lazy_static! {
 
     /// Vacuuming compact counter with label `success` (true/false).
     pub static ref VACUUMING_COMPACT_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_vacuuming_compact_total", "Volume vacuuming compact operations"),
+        Opts::new("SeaweedFS_volumeServer_vacuuming_compact_count", "Counter of volume vacuuming Compact counter"),
         &["success"],
     ).expect("metric can be created");
 
     /// Vacuuming commit counter with label `success` (true/false).
     pub static ref VACUUMING_COMMIT_COUNTER: IntCounterVec = IntCounterVec::new(
-        Opts::new("SeaweedFS_volumeServer_vacuuming_commit_total", "Volume vacuuming commit operations"),
+        Opts::new("SeaweedFS_volumeServer_vacuuming_commit_count", "Counter of volume vacuuming commit counter"),
         &["success"],
     ).expect("metric can be created");
 
@@ -75,7 +75,7 @@ lazy_static::lazy_static! {
 
     /// Read-only volumes per collection and type.
     pub static ref READ_ONLY_VOLUME_GAUGE: GaugeVec = GaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_readOnly_volumes", "Number of read-only volumes"),
+        Opts::new("SeaweedFS_volumeServer_read_only_volumes", "Number of read-only volumes."),
         &["collection", "type"],
     ).expect("metric can be created");
 
@@ -105,7 +105,7 @@ lazy_static::lazy_static! {
 
     /// In-flight requests per HTTP method.
     pub static ref INFLIGHT_REQUESTS_GAUGE: IntGaugeVec = IntGaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_inFlight_requests", "In-flight requests by type"),
+        Opts::new("SeaweedFS_volumeServer_in_flight_requests", "Current number of in-flight requests being handled by volume server."),
         &["type"],
     ).expect("metric can be created");
 
@@ -123,14 +123,14 @@ lazy_static::lazy_static! {
 
     /// Current in-flight download bytes.
     pub static ref INFLIGHT_DOWNLOAD_SIZE: IntGauge = IntGauge::new(
-        "SeaweedFS_volumeServer_inFlight_download_size",
-        "Current in-flight total download size in bytes",
+        "SeaweedFS_volumeServer_in_flight_download_size",
+        "In flight total download size.",
     ).expect("metric can be created");
 
     /// Current in-flight upload bytes.
     pub static ref INFLIGHT_UPLOAD_SIZE: IntGauge = IntGauge::new(
-        "SeaweedFS_volumeServer_inFlight_upload_size",
-        "Current in-flight total upload size in bytes",
+        "SeaweedFS_volumeServer_in_flight_upload_size",
+        "In flight total upload size.",
     ).expect("metric can be created");
 
     // ---- Legacy aliases for backward compat with existing code ----
@@ -179,15 +179,24 @@ fn exponential_buckets(start: f64, factor: f64, count: usize) -> Vec<f64> {
 
 // Handler counter type constants (matches Go's metrics_names.go).
 pub const WRITE_TO_LOCAL_DISK: &str = "writeToLocalDisk";
-pub const ERROR_WRITE_TO_LOCAL_DISK: &str = "errorWriteToLocalDisk";
-pub const ERROR_WRITE_TO_REPLICAS: &str = "errorWriteToReplicas";
-pub const ERROR_GET_NOT_FOUND: &str = "errorGetNotFound";
-pub const ERROR_GET_INTERNAL: &str = "errorGetInternal";
-pub const ERROR_CRC: &str = "errorCRC";
-pub const ERROR_SIZE_MISMATCH: &str = "errorSizeMismatch";
-pub const ERROR_INDEX_OUT_OF_RANGE: &str = "errorIndexOutOfRange";
+pub const WRITE_TO_REPLICAS: &str = "writeToReplicas";
 pub const DOWNLOAD_LIMIT_COND: &str = "downloadLimitCondition";
 pub const UPLOAD_LIMIT_COND: &str = "uploadLimitCondition";
+pub const READ_PROXY_REQ: &str = "readProxyRequest";
+pub const READ_REDIRECT_REQ: &str = "readRedirectRequest";
+pub const EMPTY_READ_PROXY_LOC: &str = "emptyReadProxyLocaction";
+pub const FAILED_READ_PROXY_REQ: &str = "failedReadProxyRequest";
+
+// Error metric name constants.
+pub const ERROR_SIZE_MISMATCH_OFFSET_SIZE: &str = "errorSizeMismatchOffsetSize";
+pub const ERROR_SIZE_MISMATCH: &str = "errorSizeMismatch";
+pub const ERROR_CRC: &str = "errorCRC";
+pub const ERROR_INDEX_OUT_OF_RANGE: &str = "errorIndexOutOfRange";
+pub const ERROR_GET_NOT_FOUND: &str = "errorGetNotFound";
+pub const ERROR_GET_INTERNAL: &str = "errorGetInternal";
+pub const ERROR_WRITE_TO_LOCAL_DISK: &str = "errorWriteToLocalDisk";
+pub const ERROR_UNMARSHAL_PAIRS: &str = "errorUnmarshalPairs";
+pub const ERROR_WRITE_TO_REPLICAS: &str = "errorWriteToReplicas";
 
 static REGISTER_METRICS: Once = Once::new();
 
