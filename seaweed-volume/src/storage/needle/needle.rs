@@ -231,13 +231,14 @@ impl Needle {
     }
 
     /// Read the version 2/3 body data from bytes (size bytes starting after header).
+    /// Tolerates EOF/truncated data (matching Go's readNeedleDataVersion2 which tolerates io.EOF).
     pub fn read_body_v2(&mut self, bytes: &[u8]) -> Result<(), NeedleError> {
         let len_bytes = bytes.len();
         let mut index = 0;
 
         // DataSize (4 bytes)
         if index + 4 > len_bytes {
-            return Err(NeedleError::IndexOutOfRange(1));
+            return Ok(()); // tolerate EOF
         }
         self.data_size = u32::from_be_bytes([
             bytes[index],
@@ -249,17 +250,20 @@ impl Needle {
 
         // Data
         if index + self.data_size as usize > len_bytes {
-            return Err(NeedleError::IndexOutOfRange(1));
+            // Tolerate truncated data: read what we can
+            self.data = bytes[index..].to_vec();
+            return Ok(());
         }
         self.data = bytes[index..index + self.data_size as usize].to_vec();
         index += self.data_size as usize;
 
-        // Read non-data metadata
+        // Read non-data metadata (also tolerates EOF)
         self.read_body_v2_non_data(&bytes[index..])?;
         Ok(())
     }
 
     /// Read version 2/3 metadata fields (everything after Data).
+    /// Tolerates truncated data (matching Go's readNeedleDataVersion2 EOF tolerance).
     fn read_body_v2_non_data(&mut self, bytes: &[u8]) -> Result<usize, NeedleError> {
         let len_bytes = bytes.len();
         let mut index = 0;
@@ -268,6 +272,8 @@ impl Needle {
         if index < len_bytes {
             self.flags = bytes[index];
             index += 1;
+        } else {
+            return Ok(index);
         }
 
         // Name
@@ -275,7 +281,7 @@ impl Needle {
             self.name_size = bytes[index];
             index += 1;
             if index + self.name_size as usize > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(2));
+                return Ok(index); // tolerate EOF
             }
             self.name = bytes[index..index + self.name_size as usize].to_vec();
             index += self.name_size as usize;
@@ -286,7 +292,7 @@ impl Needle {
             self.mime_size = bytes[index];
             index += 1;
             if index + self.mime_size as usize > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(3));
+                return Ok(index); // tolerate EOF
             }
             self.mime = bytes[index..index + self.mime_size as usize].to_vec();
             index += self.mime_size as usize;
@@ -295,7 +301,7 @@ impl Needle {
         // LastModified (5 bytes)
         if index < len_bytes && self.has_last_modified_date() {
             if index + LAST_MODIFIED_BYTES_LENGTH > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(4));
+                return Ok(index); // tolerate EOF
             }
             self.last_modified = bytes_to_u64_5(&bytes[index..index + LAST_MODIFIED_BYTES_LENGTH]);
             index += LAST_MODIFIED_BYTES_LENGTH;
@@ -304,7 +310,7 @@ impl Needle {
         // TTL (2 bytes)
         if index < len_bytes && self.has_ttl() {
             if index + TTL_BYTES_LENGTH > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(5));
+                return Ok(index); // tolerate EOF
             }
             self.ttl = Some(TTL::from_bytes(&bytes[index..index + TTL_BYTES_LENGTH]));
             index += TTL_BYTES_LENGTH;
@@ -313,12 +319,12 @@ impl Needle {
         // Pairs
         if index < len_bytes && self.has_pairs() {
             if index + 2 > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(6));
+                return Ok(index); // tolerate EOF
             }
             self.pairs_size = u16::from_be_bytes([bytes[index], bytes[index + 1]]);
             index += 2;
             if index + self.pairs_size as usize > len_bytes {
-                return Err(NeedleError::IndexOutOfRange(7));
+                return Ok(index); // tolerate EOF
             }
             self.pairs = bytes[index..index + self.pairs_size as usize].to_vec();
             index += self.pairs_size as usize;
