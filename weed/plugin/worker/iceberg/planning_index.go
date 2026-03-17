@@ -125,12 +125,12 @@ func mergePlanningIndexSections(index, existing *planningIndex) *planningIndex {
 		return index
 	}
 	if index.Compaction == nil && existing.Compaction != nil {
-		copy := *existing.Compaction
-		index.Compaction = &copy
+		compactionCopy := *existing.Compaction
+		index.Compaction = &compactionCopy
 	}
 	if index.RewriteManifests == nil && existing.RewriteManifests != nil {
-		copy := *existing.RewriteManifests
-		index.RewriteManifests = &copy
+		rewriteCopy := *existing.RewriteManifests
+		index.RewriteManifests = &rewriteCopy
 	}
 	return index
 }
