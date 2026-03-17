@@ -447,9 +447,11 @@ impl DiskLocation {
     }
 
     /// Number of free volume slots.
+    /// Matches Go's FindFreeLocation: accounts for both regular volumes
+    /// and EC shards when computing available slots.
     pub fn free_volume_count(&self) -> i32 {
         let max = self.max_volume_count.load(Ordering::Relaxed);
-        let used = self.volumes.len() as i32;
+        let used = self.volumes.len() as i32 + self.ec_volumes.len() as i32;
         if max > used {
             max - used
         } else {
