@@ -130,21 +130,29 @@ impl Store {
     // ---- Volume lifecycle ----
 
     /// Find the location with fewest volumes (load-balance) of the given disk type.
+    /// Matches Go's FindFreeLocation: accounts for EC shards when computing free slots.
     fn find_free_location(&self, disk_type: &DiskType) -> Option<usize> {
-        let mut best: Option<(usize, usize)> = None; // (index, volume_count)
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+
+        let mut best: Option<(usize, i64)> = None; // (index, effective_free)
         for (i, loc) in self.locations.iter().enumerate() {
             if &loc.disk_type != disk_type {
                 continue;
             }
-            if loc.free_volume_count() <= 0 {
+            // Go formula: currentFreeCount = (MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()
+            //             currentFreeCount /= DataShardsCount
+            let max = loc.max_volume_count.load(Ordering::Relaxed) as i64;
+            let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
+                - loc.ec_shard_count() as i64;
+            let effective_free = free_count / DATA_SHARDS_COUNT as i64;
+            if effective_free <= 0 {
                 continue;
             }
             if loc.is_disk_space_low.load(Ordering::Relaxed) {
                 continue;
             }
-            let count = loc.volumes_len();
-            if best.is_none() || count < best.unwrap().1 {
-                best = Some((i, count));
+            if best.is_none() || effective_free > best.unwrap().1 {
+                best = Some((i, effective_free));
             }
         }
         best.map(|(i, _)| i)
