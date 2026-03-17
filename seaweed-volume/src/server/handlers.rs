@@ -1591,6 +1591,15 @@ fn extract_filename_from_path(path: &str) -> String {
     }
 }
 
+fn path_base(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    trimmed
+        .rsplit('/')
+        .find(|s| !s.is_empty())
+        .unwrap_or("")
+        .to_string()
+}
+
 fn parse_go_bool(value: &str) -> Option<bool> {
     match value {
         "1" | "t" | "T" | "TRUE" | "True" | "true" => Some(true),
@@ -1797,6 +1806,7 @@ pub async fn post_handler(
 ) -> Response {
     let path = request.uri().path().to_string();
     let query = request.uri().query().unwrap_or("").to_string();
+    let method = request.method().clone();
     let headers = request.headers().clone();
     let query_fields: Vec<(String, String)> =
         serde_urlencoded::from_str(&query).unwrap_or_default();
@@ -1880,17 +1890,23 @@ pub async fn post_handler(
         None
     };
 
+    let content_type_str = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+
+    // Go only parses multipart form-data for POST requests.
+    let should_parse_multipart =
+        method == Method::POST && (content_type_str.is_empty() || content_type_str.contains("form-data"));
+
     // Validate multipart/form-data has a boundary
-    if let Some(ct) = headers.get(header::CONTENT_TYPE) {
-        if let Ok(ct_str) = ct.to_str() {
-            if ct_str.starts_with("multipart/form-data") && !ct_str.contains("boundary=") {
-                return json_error_with_query(
-                    StatusCode::BAD_REQUEST,
-                    "no multipart boundary param in Content-Type",
-                    Some(&query),
-                );
-            }
-        }
+    if should_parse_multipart && !content_type_str.contains("boundary=") {
+        return json_error_with_query(
+            StatusCode::BAD_REQUEST,
+            "no multipart boundary param in Content-Type",
+            Some(&query),
+        );
     }
 
     let content_md5 = headers
@@ -1911,12 +1927,6 @@ pub async fn post_handler(
     };
 
     // H5: Multipart form-data parsing
-    let content_type_str = headers
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-
     let (
         body_data_raw,
         parsed_filename,
@@ -1924,7 +1934,7 @@ pub async fn post_handler(
         parsed_content_encoding,
         parsed_content_md5,
         multipart_form_fields,
-    ) = if content_type_str.starts_with("multipart/form-data") {
+    ) = if should_parse_multipart {
         // Extract boundary from Content-Type
         let boundary = content_type_str
             .split(';')
@@ -1952,11 +1962,7 @@ pub async fn post_handler(
 
         while let Ok(Some(field)) = multipart.next_field().await {
             let field_name = field.name().map(|s| s.to_string());
-            let fname = field.file_name().map(|s| {
-                // Clean Windows backslashes
-                let cleaned = s.replace('\\', "/");
-                cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
-            });
+            let fname = field.file_name().map(clean_windows_path_base);
             let fct = field.content_type().map(|m| m.to_string());
             let field_headers = field.headers().clone();
             let fce = field_headers
@@ -2031,20 +2037,34 @@ pub async fn post_handler(
         );
     }
 
+    // Check if upload is pre-compressed
+    let is_gzipped = if should_parse_multipart {
+        parsed_content_encoding.as_deref() == Some("gzip")
+    } else {
+        headers
+            .get(header::CONTENT_ENCODING)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s == "gzip")
+            .unwrap_or(false)
+    };
+
+    let uncompressed_data = if is_gzipped {
+        maybe_decompress_gzip(&body_data_raw).unwrap_or_else(|| body_data_raw.clone())
+    } else {
+        body_data_raw.clone()
+    };
+    let original_data_size = uncompressed_data.len() as u32;
+    let original_content_md5 = compute_md5_base64(&uncompressed_data);
+
     // Validate Content-MD5 if provided
     let content_md5 = content_md5.or(parsed_content_md5);
     if let Some(ref expected_md5) = content_md5 {
-        use base64::Engine;
-        use md5::{Digest, Md5};
-        let mut hasher = Md5::new();
-        hasher.update(&body_data_raw);
-        let actual = base64::engine::general_purpose::STANDARD.encode(hasher.finalize());
-        if actual != *expected_md5 {
+        if expected_md5 != &original_content_md5 {
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
                 format!(
                     "Content-MD5 mismatch: expected {} got {}",
-                    expected_md5, actual
+                    expected_md5, original_content_md5
                 ),
                 Some(&query),
             );
@@ -2064,20 +2084,15 @@ pub async fn post_handler(
         now
     };
 
-    // Check if upload is pre-compressed
-    let is_gzipped = if content_type_str.starts_with("multipart/form-data") {
-        parsed_content_encoding.as_deref() == Some("gzip")
-    } else {
-        headers
-            .get(header::CONTENT_ENCODING)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s == "gzip")
-            .unwrap_or(false)
-    };
-
     // Prefer the multipart filename before deriving MIME and other metadata.
     let filename = if !parsed_filename.is_empty() {
         parsed_filename
+    } else if !should_parse_multipart {
+        headers
+            .get(header::CONTENT_DISPOSITION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_content_disposition_filename)
+            .unwrap_or_else(|| path_base(&path))
     } else {
         extract_filename_from_path(&path)
     };
@@ -2086,7 +2101,7 @@ pub async fn post_handler(
     let mime_type = if let Some(ref pct) = parsed_content_type {
         pct.clone()
     } else {
-        let multipart_fallback = if content_type_str.starts_with("multipart/form-data")
+        let multipart_fallback = if should_parse_multipart
             && !filename.is_empty()
             && !is_chunk_manifest
         {
@@ -2101,7 +2116,7 @@ pub async fn post_handler(
             .get(header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
             .map(|ct| {
-                if ct.starts_with("multipart/") {
+                if should_parse_multipart && ct.starts_with("multipart/") {
                     multipart_fallback.clone()
                 } else {
                     ct.to_string()
@@ -2137,24 +2152,10 @@ pub async fn post_handler(
         .collect();
 
     // Fix JPEG orientation from EXIF data before storing (matches Go behavior).
-    // Only for non-compressed uploads that are JPEG files.
-    let body_data =
-        if state.fix_jpg_orientation && !is_gzipped && crate::images::is_jpeg(&mime_type, &path) {
-            crate::images::fix_jpg_orientation(&body_data_raw)
-        } else {
-            body_data_raw
-        };
-
-    // H3: Capture original data size BEFORE auto-compression
-    let original_data_size = body_data.len() as u32;
-
-    // H1: Compute Content-MD5 from uncompressed data BEFORE auto-compression
-    let original_content_md5 = {
-        use base64::Engine;
-        use md5::{Digest, Md5};
-        let mut hasher = Md5::new();
-        hasher.update(&body_data);
-        base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+    let body_data = if state.fix_jpg_orientation && crate::images::is_jpeg(&mime_type, &path) {
+        crate::images::fix_jpg_orientation(&body_data_raw)
+    } else {
+        body_data_raw
     };
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
@@ -3207,6 +3208,59 @@ fn try_gzip_data(data: &[u8]) -> Option<Vec<u8>> {
     encoder.finish().ok()
 }
 
+fn maybe_decompress_gzip(data: &[u8]) -> Option<Vec<u8>> {
+    use flate2::read::GzDecoder;
+    use std::io::Read;
+    let mut decoder = GzDecoder::new(data);
+    let mut decompressed = Vec::new();
+    decoder.read_to_end(&mut decompressed).ok()?;
+    Some(decompressed)
+}
+
+fn compute_md5_base64(data: &[u8]) -> String {
+    use base64::Engine;
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    base64::engine::general_purpose::STANDARD.encode(hasher.finalize())
+}
+
+fn clean_windows_path_base(value: &str) -> String {
+    let cleaned = value.replace('\\', "/");
+    cleaned.rsplit('/').next().unwrap_or(&cleaned).to_string()
+}
+
+fn parse_content_disposition_filename(value: &str) -> Option<String> {
+    let mut filename: Option<String> = None;
+    let mut name: Option<String> = None;
+
+    for segment in value.split(';') {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            continue;
+        }
+        let lower = segment.to_ascii_lowercase();
+        if lower.starts_with("filename=") {
+            let raw = segment[9..].trim();
+            let trimmed = raw
+                .strip_prefix('\"')
+                .and_then(|s| s.strip_suffix('\"'))
+                .unwrap_or(raw);
+            filename = Some(clean_windows_path_base(trimmed));
+        } else if lower.starts_with("name=") {
+            let raw = segment[5..].trim();
+            let trimmed = raw
+                .strip_prefix('\"')
+                .and_then(|s| s.strip_suffix('\"'))
+                .unwrap_or(raw);
+            name = Some(clean_windows_path_base(trimmed));
+        }
+    }
+
+    let candidate = filename.or(name);
+    candidate.filter(|s| !s.is_empty())
+}
+
 // ============================================================================
 // Tests
 // ============================================================================
@@ -3394,6 +3448,36 @@ mod tests {
         let mut decompressed = Vec::new();
         decoder.read_to_end(&mut decompressed).unwrap();
         assert_eq!(decompressed, data);
+    }
+
+    #[test]
+    fn test_maybe_decompress_gzip() {
+        let data = b"gzip me";
+        let compressed = try_gzip_data(data).unwrap();
+        let decompressed = maybe_decompress_gzip(&compressed).unwrap();
+        assert_eq!(decompressed, data);
+        assert!(maybe_decompress_gzip(data).is_none());
+    }
+
+    #[test]
+    fn test_parse_content_disposition_filename() {
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"report.txt\""),
+            Some("report.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("inline; name=\"hello.txt\""),
+            Some("hello.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("name=foo.txt"),
+            Some("foo.txt".to_string())
+        );
+        assert_eq!(
+            parse_content_disposition_filename("attachment; filename=\"C:\\\\path\\\\file.jpg\""),
+            Some("file.jpg".to_string())
+        );
+        assert_eq!(parse_content_disposition_filename("inline"), None);
     }
 
     #[test]
