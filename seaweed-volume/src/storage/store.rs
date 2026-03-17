@@ -383,6 +383,12 @@ impl Store {
         vid: VolumeId,
         n: &mut Needle,
     ) -> Result<Size, VolumeError> {
+        // Match Go's DeleteVolumeNeedle: check noWriteOrDelete before proceeding.
+        let (_, vol) = self.find_volume(vid).ok_or(VolumeError::NotFound)?;
+        if vol.is_no_write_or_delete() {
+            return Err(VolumeError::ReadOnly);
+        }
+
         let (_, vol) = self.find_volume_mut(vid).ok_or(VolumeError::NotFound)?;
         vol.delete_needle(n)
     }
