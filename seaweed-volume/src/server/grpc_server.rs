@@ -1332,12 +1332,21 @@ impl VolumeServer for VolumeGrpcService {
                         // Determine file path
                         let path = if info.is_ec_volume {
                             let store = self.state.store.read().unwrap();
+                            // Go prefers a HardDriveType location, then falls back to first
                             let dir = store
                                 .locations
-                                .first()
-                                .map(|loc| loc.directory.clone())
-                                .unwrap_or_default();
+                                .iter()
+                                .find(|loc| loc.disk_type == DiskType::HardDrive)
+                                .or_else(|| store.locations.first())
+                                .map(|loc| loc.directory.clone());
                             drop(store);
+                            let dir = match dir {
+                                Some(d) => d,
+                                None => {
+                                    resp_error = Some("no storage location available".to_string());
+                                    break;
+                                }
+                            };
                             let ec_base = if info.collection.is_empty() {
                                 format!("{}", info.volume_id)
                             } else {
@@ -1367,10 +1376,14 @@ impl VolumeServer for VolumeGrpcService {
                     Some(volume_server_pb::receive_file_request::Data::FileContent(content)) => {
                         if let Some(ref mut f) = target_file {
                             use std::io::Write;
-                            let n = f.write(&content).map_err(|e| {
-                                Status::internal(format!("failed to write file: {}", e))
-                            })?;
-                            bytes_written += n as u64;
+                            match f.write(&content) {
+                                Ok(n) => bytes_written += n as u64,
+                                Err(e) => {
+                                    // Match Go: write failures are response-level errors, not gRPC errors
+                                    resp_error = Some(format!("failed to write file: {}", e));
+                                    break;
+                                }
+                            }
                         } else {
                             // Go returns protocol violations as response-level errors
                             resp_error = Some("file info must be sent first".to_string());
