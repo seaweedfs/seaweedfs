@@ -3117,7 +3117,7 @@ fn json_response_with_params<T: Serialize>(
 /// Return a JSON error response with optional query string for pretty/JSONP support.
 /// Supports `?pretty=<any non-empty value>` for pretty-printed JSON and `?callback=fn` for JSONP,
 /// matching Go's writeJsonError behavior.
-fn json_error_with_query(
+pub(super) fn json_error_with_query(
     status: StatusCode,
     msg: impl Into<String>,
     query: Option<&str>,

@@ -231,11 +231,15 @@ async fn admin_store_handler(state: State<Arc<VolumeServerState>>, request: Requ
             super::server_stats::record_read_request();
             admin_options_response()
         }
-        _ => (
-            StatusCode::BAD_REQUEST,
-            format!("{{\"error\":\"unsupported method {}\"}}", request.method()),
-        )
-            .into_response(),
+        _ => {
+            let method_name = request.method().to_string();
+            let query = request.uri().query().map(|q| q.to_string());
+            handlers::json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                format!("unsupported method {}", method_name),
+                query.as_deref(),
+            )
+        }
     };
     if method == Method::GET {
         if let Some(response_bytes) = response

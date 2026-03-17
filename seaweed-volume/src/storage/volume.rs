@@ -170,6 +170,42 @@ pub struct VifEcShardConfig {
     pub parity_shards: u32,
 }
 
+/// Serde-compatible representation of OldVersionVolumeInfo for legacy .vif JSON deserialization.
+/// Matches Go's protobuf OldVersionVolumeInfo where `DestroyTime` maps to `expire_at_sec`.
+#[derive(serde::Deserialize, Default)]
+struct OldVersionVifVolumeInfo {
+    #[serde(default)]
+    pub files: Vec<VifRemoteFile>,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub replication: String,
+    #[serde(default, alias = "bytesOffset", alias = "BytesOffset")]
+    pub bytes_offset: u32,
+    #[serde(default, alias = "datFileSize", alias = "dat_file_size", with = "string_or_i64")]
+    pub dat_file_size: i64,
+    #[serde(default, alias = "destroyTime", alias = "DestroyTime", with = "string_or_u64")]
+    pub destroy_time: u64,
+    #[serde(default, alias = "readOnly", alias = "read_only")]
+    pub read_only: bool,
+}
+
+impl OldVersionVifVolumeInfo {
+    /// Convert to the standard VifVolumeInfo, mapping destroy_time -> expire_at_sec.
+    fn to_vif(self) -> VifVolumeInfo {
+        VifVolumeInfo {
+            files: self.files,
+            version: self.version,
+            replication: self.replication,
+            bytes_offset: self.bytes_offset,
+            dat_file_size: self.dat_file_size,
+            expire_at_sec: self.destroy_time,
+            read_only: self.read_only,
+            ec_shard_config: None,
+        }
+    }
+}
+
 /// Serde-compatible representation of VolumeInfo for .vif JSON serialization.
 /// Matches Go's protobuf JSON format (jsonpb with EmitUnpopulated=true).
 #[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
@@ -1984,9 +2020,9 @@ impl Volume {
 
     /// Mark this volume as read-only (no writes or deletes).
     /// If `persist` is true, the readonly state is saved to the .vif file.
-    pub fn set_read_only(&mut self) {
+    pub fn set_read_only(&mut self) -> Result<(), VolumeError> {
         self.no_write_or_delete = true;
-        self.save_vif();
+        self.save_vif()
     }
 
     /// Mark this volume as read-only, optionally persisting to .vif.
@@ -2056,6 +2092,35 @@ impl Volume {
                 }
                 return Ok(true);
             }
+            // Fall back to OldVersionVolumeInfo (Go's tryOldVersionVolumeInfo):
+            // maps DestroyTime -> expire_at_sec
+            if let Ok(old_info) = serde_json::from_str::<OldVersionVifVolumeInfo>(&content) {
+                let vif_info = old_info.to_vif();
+                let pb_info = vif_info.to_pb();
+                if pb_info.read_only {
+                    self.no_write_or_delete = true;
+                }
+                self.volume_info = pb_info;
+                self.refresh_remote_write_mode();
+                if self.volume_info.version == 0 {
+                    self.volume_info.version = Version::current().0 as u32;
+                }
+                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                    self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+                }
+                if self.volume_info.bytes_offset != 0
+                    && self.volume_info.bytes_offset != OFFSET_SIZE as u32
+                {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "bytes_offset mismatch in {}: found {}, expected {}",
+                            path, self.volume_info.bytes_offset, OFFSET_SIZE
+                        ),
+                    )));
+                }
+                return Ok(true);
+            }
             // Fall back to legacy format
             if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
                 if info.read_only {
@@ -2068,12 +2133,27 @@ impl Volume {
     }
 
     /// Save volume info to .vif file in protobuf-JSON format (Go-compatible).
-    fn save_vif(&self) {
+    /// Matches Go's SaveVolumeInfo: checks writability before writing and propagates errors.
+    fn save_vif(&self) -> Result<(), VolumeError> {
+        let vif_path = self.vif_path();
+
+        // Match Go: if file exists but is not writable, return an error
+        if vif_path.exists() {
+            let metadata = fs::metadata(&vif_path)?;
+            if metadata.permissions().readonly() {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("failed to check {} not writable", vif_path.display()),
+                )));
+            }
+        }
+
         let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
         vif.read_only = self.no_write_or_delete;
-        if let Ok(content) = serde_json::to_string_pretty(&vif) {
-            let _ = fs::write(&self.vif_path(), content);
-        }
+        let content = serde_json::to_string_pretty(&vif)
+            .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        fs::write(&vif_path, content)?;
+        Ok(())
     }
 
     /// Save full VolumeInfo to .vif file (for tiered storage).
@@ -2807,7 +2887,13 @@ impl Volume {
     }
 
     /// Remove all volume files from disk.
-    pub fn destroy(&mut self) -> Result<(), VolumeError> {
+    pub fn destroy(&mut self, only_empty: bool) -> Result<(), VolumeError> {
+        if only_empty && self.file_count() > 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "volume not empty".to_string(),
+            )));
+        }
         if self.is_compacting {
             return Err(VolumeError::Io(io::Error::new(
                 io::ErrorKind::Other,
