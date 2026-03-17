@@ -3187,15 +3187,16 @@ impl VolumeServer for VolumeGrpcService {
         };
 
         let mut total_volumes: u64 = 0;
-        let total_files: u64 = 0;
+        let mut total_files: u64 = 0;
         let mut broken_volume_ids: Vec<u32> = Vec::new();
         let mut broken_shard_infos: Vec<volume_server_pb::EcShardInfo> = Vec::new();
         let mut details: Vec<String> = Vec::new();
 
         for vid in &vids {
-            let collection = {
+            let (collection, files) = {
                 if let Some(ecv) = store.find_ec_volume(*vid) {
-                    ecv.collection.clone()
+                    let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
+                    (ecv.collection.clone(), files)
                 } else {
                     return Err(Status::not_found(format!(
                         "EC volume id {} not found",
@@ -3212,6 +3213,7 @@ impl VolumeServer for VolumeGrpcService {
             }
 
             total_volumes += 1;
+            total_files += files;
             let (data_shards, parity_shards) =
                 crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
                     &dir, &collection, *vid,
