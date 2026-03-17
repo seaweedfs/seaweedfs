@@ -34,9 +34,21 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteStorageLocation := req.RemoteLocation
 
-	data, ReadRemoteErr := client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
-	if ReadRemoteErr != nil {
-		return nil, fmt.Errorf("read from remote %+v: %v", remoteStorageLocation, ReadRemoteErr)
+	var data []byte
+	var readRemoteErr error
+	if cr, ok := client.(remote_storage.RemoteStorageConcurrentReader); ok {
+		concurrency := int(req.DownloadConcurrency)
+		if concurrency <= 0 {
+			concurrency = 0 // let the implementation choose its default
+		} else if concurrency > 64 {
+			concurrency = 64
+		}
+		data, readRemoteErr = cr.ReadFileWithConcurrency(remoteStorageLocation, req.Offset, req.Size, concurrency)
+	} else {
+		data, readRemoteErr = client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
+	}
+	if readRemoteErr != nil {
+		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
 	}
 
 	var wg sync.WaitGroup

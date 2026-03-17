@@ -89,6 +89,12 @@ type RemoteStorageClient interface {
 	DeleteBucket(name string) (err error)
 }
 
+// RemoteStorageConcurrentReader is an optional interface for remote storage clients
+// that support configurable download concurrency for multipart downloads.
+type RemoteStorageConcurrentReader interface {
+	ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error)
+}
+
 type RemoteStorageClientMaker interface {
 	Make(remoteConf *remote_pb.RemoteConf) (RemoteStorageClient, error)
 	HasBucket() bool
