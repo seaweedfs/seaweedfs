@@ -119,15 +119,21 @@ pub struct ReplicaPlacement {
 
 impl ReplicaPlacement {
     /// Parse from a string like "000", "010", "100".
+    /// Accepts 0-3 character strings, padding with leading zeros to match Go behavior.
+    /// E.g. "" -> "000", "1" -> "001", "01" -> "001", "010" -> "010"
     pub fn from_string(s: &str) -> Result<Self, SuperBlockError> {
         let s = s.trim();
         if s.is_empty() {
             return Ok(ReplicaPlacement::default());
         }
-        if s.len() != 3 {
-            return Err(SuperBlockError::InvalidReplicaPlacement(s.to_string()));
-        }
-        let chars: Vec<char> = s.chars().collect();
+        // Pad with leading zeros to 3 chars, matching Go's NewReplicaPlacementFromString
+        let padded = match s.len() {
+            1 => format!("00{}", s),
+            2 => format!("0{}", s),
+            3 => s.to_string(),
+            _ => return Err(SuperBlockError::InvalidReplicaPlacement(s.to_string())),
+        };
+        let chars: Vec<char> = padded.chars().collect();
         let dc = chars[0]
             .to_digit(10)
             .ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))?
@@ -140,6 +146,11 @@ impl ReplicaPlacement {
             .to_digit(10)
             .ok_or_else(|| SuperBlockError::InvalidReplicaPlacement(s.to_string()))?
             as u8;
+        // Go validates: value = dc*100 + rack*10 + same must fit in a byte
+        let value = dc as u16 * 100 + rack as u16 * 10 + same as u16;
+        if value > 255 {
+            return Err(SuperBlockError::InvalidReplicaPlacement(s.to_string()));
+        }
         Ok(ReplicaPlacement {
             diff_data_center_count: dc,
             diff_rack_count: rack,
