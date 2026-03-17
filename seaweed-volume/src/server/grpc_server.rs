@@ -690,8 +690,7 @@ impl VolumeServer for VolumeGrpcService {
             let (_, vol) = store
                 .find_volume_mut(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_read_only_persist(req.persist)
-                .map_err(|e| Status::internal(e.to_string()))?;
+            vol.set_read_only_persist(req.persist);
         }
         self.state.volume_state_notify.notify_one();
 
@@ -730,8 +729,7 @@ impl VolumeServer for VolumeGrpcService {
             let (_, vol) = store
                 .find_volume_mut(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_writable()
-                .map_err(|e| Status::internal(e.to_string()))?;
+            vol.set_writable();
         }
         self.state.volume_state_notify.notify_one();
 
