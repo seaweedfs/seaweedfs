@@ -910,6 +910,12 @@ impl Volume {
         }
     }
 
+    /// Returns true when the volume has a data backend (local .dat file or
+    /// remote tiered storage).  Mirrors Go's `v.DataBackend != nil` check.
+    pub fn has_data_backend(&self) -> bool {
+        self.dat_file.is_some() || self.remote_dat_file.is_some()
+    }
+
     fn current_dat_file_size(&self) -> io::Result<u64> {
         if let Some(ref f) = self.dat_file {
             Ok(f.metadata()?.len())
@@ -2760,6 +2766,24 @@ impl Volume {
                 format!(
                     "current old dat file's compact revision {} is not the expected one {}",
                     old_super_block.compaction_revision, self.last_compact_revision
+                ),
+            )));
+        }
+
+        // Read the new .cpd file's super block and verify its compaction revision is old + 1
+        let cpd_path_check = self.file_name(".cpd");
+        let mut cpd_file_check = File::open(&cpd_path_check)?;
+        let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
+        cpd_file_check.read_exact(&mut sb_buf)?;
+        let new_super_block = SuperBlock::from_bytes(&sb_buf)?;
+        let old_compact_revision = old_super_block.compaction_revision;
+        let new_compact_revision = new_super_block.compaction_revision;
+        if old_compact_revision + 1 != new_compact_revision {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "old dat file's compact revision {} + 1 does not equal new dat file's compact revision {}",
+                    old_compact_revision, new_compact_revision
                 ),
             )));
         }
