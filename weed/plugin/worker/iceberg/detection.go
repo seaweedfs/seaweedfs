@@ -443,7 +443,8 @@ func hasEligibleCompaction(
 		return false, fmt.Errorf("resolve rewrite strategy: %w", err)
 	}
 
-	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
+	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	return len(bins) > 0, nil
 }

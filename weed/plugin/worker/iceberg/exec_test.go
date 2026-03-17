@@ -3109,6 +3109,108 @@ func TestDetectSkipsSortCompactionBinsAboveCap(t *testing.T) {
 	}
 }
 
+func TestDetectSplitsSortCompactionBinsByCap(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceID:  1,
+		Transform: iceberg.IdentityTransform{},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+
+	setup := tableSetup{BucketName: "test-bucket", Namespace: "analytics", TableName: "events"}
+	populateTableWithDeleteFilesAndSortOrder(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"small-1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alpha"}}},
+			{"small-2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{2, "bravo"}}},
+			{"small-3.parquet", []struct {
+				ID   int64
+				Name string
+			}{{3, "charlie"}}},
+			{"small-4.parquet", []struct {
+				ID   int64
+				Name string
+			}{{4, "delta"}}},
+		},
+		nil,
+		nil,
+		sortOrder,
+	)
+
+	meta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, setup.tablePath(), meta)
+	if err != nil {
+		t.Fatalf("loadCurrentManifests: %v", err)
+	}
+
+	var totalSize int64
+	var maxFileSize int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(context.Background(), client, setup.BucketName, setup.tablePath(), mf.FilePath())
+		if err != nil {
+			t.Fatalf("load data manifest: %v", err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			t.Fatalf("read data manifest: %v", err)
+		}
+		for _, entry := range entries {
+			size := entry.DataFile().FileSizeBytes()
+			totalSize += size
+			if size > maxFileSize {
+				maxFileSize = size
+			}
+		}
+	}
+	if totalSize == 0 || maxFileSize == 0 {
+		t.Fatal("expected data file sizes to be populated")
+	}
+
+	capBytes := totalSize / 2
+	if capBytes <= maxFileSize {
+		capBytes = maxFileSize + 1
+	}
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes: totalSize + 1,
+		MinInputFiles:       2,
+		Operations:          "compact",
+		RewriteStrategy:     "sort",
+		SortMaxInputBytes:   capBytes,
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance failed: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected sort compaction candidate to survive cap-based repartitioning, got %d", len(tables))
+	}
+}
+
 func TestCompactDataFilesSortStrategyRequiresTableSortOrder(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -3512,5 +3614,30 @@ func TestRewritePositionDeleteFilesRebuildsMixedDeleteManifests(t *testing.T) {
 	}
 	if len(eqPaths) != 1 || eqPaths[0] != "data/eq1.parquet" {
 		t.Fatalf("expected equality delete file to be preserved, got %v", eqPaths)
+	}
+}
+
+func TestResolveCompactionRewritePlanFallsBackForUnsupportedSortTransform(t *testing.T) {
+	sortOrder, err := table.NewSortOrder(1, []table.SortField{{
+		SourceID:  1,
+		Transform: iceberg.BucketTransform{NumBuckets: 16},
+		Direction: table.SortASC,
+		NullOrder: table.NullsFirst,
+	}})
+	if err != nil {
+		t.Fatalf("new sort order: %v", err)
+	}
+
+	meta, err := table.NewMetadata(newTestSchema(), iceberg.UnpartitionedSpec, sortOrder, "s3://test-bucket/test-table", nil)
+	if err != nil {
+		t.Fatalf("new metadata: %v", err)
+	}
+
+	plan, err := resolveCompactionRewritePlan(Config{RewriteStrategy: "sort"}, meta)
+	if err != nil {
+		t.Fatalf("resolveCompactionRewritePlan: %v", err)
+	}
+	if plan == nil || plan.strategy != defaultRewriteStrategy {
+		t.Fatalf("expected fallback to %q for unsupported transform, got %+v", defaultRewriteStrategy, plan)
 	}
 }

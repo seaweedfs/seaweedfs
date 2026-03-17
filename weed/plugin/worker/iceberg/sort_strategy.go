@@ -7,6 +7,7 @@ import (
 	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/parquet-go/parquet-go"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 type compactionRewritePlan struct {
@@ -34,6 +35,10 @@ func resolveCompactionRewritePlan(config Config, meta table.Metadata) (*compacti
 
 	sortFields, err := resolveCompactionSortFields(meta)
 	if err != nil {
+		if err == errUnsupportedTableSortOrder {
+			glog.V(2).Infof("iceberg compact: falling back to binpack because the table sort order is not supported")
+			return &compactionRewritePlan{strategy: defaultRewriteStrategy}, nil
+		}
 		return nil, err
 	}
 
@@ -42,6 +47,8 @@ func resolveCompactionRewritePlan(config Config, meta table.Metadata) (*compacti
 		sortFields: sortFields,
 	}, nil
 }
+
+var errUnsupportedTableSortOrder = fmt.Errorf("unsupported table sort order")
 
 func resolveCompactionSortFields(meta table.Metadata) ([]compactionSortField, error) {
 	if meta == nil || meta.CurrentSchema() == nil {
@@ -58,7 +65,7 @@ func resolveCompactionSortFields(meta table.Metadata) ([]compactionSortField, er
 	fields := make([]compactionSortField, 0, sortOrder.Len())
 	for sortField := range sortOrder.Fields() {
 		if _, ok := sortField.Transform.(iceberg.IdentityTransform); !ok {
-			return nil, fmt.Errorf("table sort field %d uses unsupported transform %q", sortField.SourceID, sortField.Transform)
+			return nil, errUnsupportedTableSortOrder
 		}
 
 		field, ok := schema.FindFieldByID(sortField.SourceID)
@@ -90,6 +97,14 @@ func resolveCompactionSortFields(meta table.Metadata) ([]compactionSortField, er
 		return nil, fmt.Errorf("sort rewrite requires at least one sort field")
 	}
 	return fields, nil
+}
+
+func compactionTargetSizeForPlan(config Config, plan *compactionRewritePlan) int64 {
+	targetSize := config.TargetFileSizeBytes
+	if plan != nil && plan.strategy == "sort" && config.SortMaxInputBytes > 0 && config.SortMaxInputBytes < targetSize {
+		return config.SortMaxInputBytes
+	}
+	return targetSize
 }
 
 func filterCompactionBinsByPlan(bins []compactionBin, config Config, plan *compactionRewritePlan) []compactionBin {

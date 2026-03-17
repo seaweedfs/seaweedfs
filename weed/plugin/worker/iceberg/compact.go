@@ -187,7 +187,8 @@ func (h *Handler) compactDataFiles(
 	}
 
 	// Build compaction bins: group small data files by partition.
-	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
+	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
 	initialBinCount := len(bins)
 	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	if len(bins) == 0 {

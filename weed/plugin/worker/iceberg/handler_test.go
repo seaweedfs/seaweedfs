@@ -907,6 +907,14 @@ func TestParseConfigRewriteStrategy(t *testing.T) {
 	if config.SortMaxInputBytes != 0 {
 		t.Fatalf("expected negative sort cap to clamp to 0, got %d", config.SortMaxInputBytes)
 	}
+
+	maxMB := int64(^uint64(0)>>1) / bytesPerMB
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: fmt.Sprintf("%d", maxMB+1)}},
+	})
+	if config.SortMaxInputBytes != maxMB*bytesPerMB {
+		t.Fatalf("expected oversized sort cap to clamp to %d bytes, got %d", maxMB*bytesPerMB, config.SortMaxInputBytes)
+	}
 }
 
 func TestCollectPositionDeletes(t *testing.T) {
