@@ -198,6 +198,15 @@ pub const ERROR_WRITE_TO_LOCAL_DISK: &str = "errorWriteToLocalDisk";
 pub const ERROR_UNMARSHAL_PAIRS: &str = "errorUnmarshalPairs";
 pub const ERROR_WRITE_TO_REPLICAS: &str = "errorWriteToReplicas";
 
+// Go volume heartbeat metric label values.
+pub const READ_ONLY_LABEL_IS_READ_ONLY: &str = "IsReadOnly";
+pub const READ_ONLY_LABEL_NO_WRITE_OR_DELETE: &str = "noWriteOrDelete";
+pub const READ_ONLY_LABEL_NO_WRITE_CAN_DELETE: &str = "noWriteCanDelete";
+pub const READ_ONLY_LABEL_IS_DISK_SPACE_LOW: &str = "isDiskSpaceLow";
+pub const DISK_SIZE_LABEL_NORMAL: &str = "normal";
+pub const DISK_SIZE_LABEL_DELETED_BYTES: &str = "deleted_bytes";
+pub const DISK_SIZE_LABEL_EC: &str = "ec";
+
 static REGISTER_METRICS: Once = Once::new();
 
 /// Register all metrics with the custom registry.

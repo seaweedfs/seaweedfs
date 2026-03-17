@@ -551,6 +551,7 @@ impl DiskLocation {
             .ec_volumes
             .entry(vid)
             .or_insert_with(|| EcVolume::new(&dir, &idx_dir, collection, vid).unwrap());
+        ec_vol.disk_type = self.disk_type.clone();
 
         for &shard_id in shard_ids {
             let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);

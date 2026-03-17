@@ -1563,6 +1563,14 @@ impl Volume {
         self.no_write_or_delete || self.no_write_can_delete
     }
 
+    pub fn is_no_write_or_delete(&self) -> bool {
+        self.no_write_or_delete
+    }
+
+    pub fn is_no_write_can_delete(&self) -> bool {
+        self.no_write_can_delete
+    }
+
     pub fn last_compact_revision(&self) -> u16 {
         self.last_compact_revision
     }
