@@ -2262,6 +2262,7 @@ impl VolumeServer for VolumeGrpcService {
                 ext: ".vif".to_string(),
                 compaction_revision: u32::MAX,
                 stop_offset: i64::MAX as u64,
+                ignore_source_file_not_found: true,
                 ..Default::default()
             };
             let mut stream = client
