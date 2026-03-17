@@ -329,7 +329,15 @@ impl EcVolume {
             return Ok(None);
         }
 
-        let shard_size = self.shard_file_size();
+        // Match Go's LocateEcShardNeedleInterval: shardSize = shard.ecdFileSize - 1
+        // Shards are usually padded to ErasureCodingSmallBlockSize, so subtract 1
+        // to avoid off-by-one in large block row count calculation.
+        // If datFileSize is known, use datFileSize / DataShards instead.
+        let shard_size = if self.dat_file_size > 0 {
+            self.dat_file_size / self.data_shards as i64
+        } else {
+            self.shard_file_size() - 1
+        };
         // Pass the actual on-disk size (header+body+checksum+timestamp+padding)
         // to locate_data, matching Go: types.Size(needle.GetActualSize(size, version))
         let actual = get_actual_size(size, self.version);
