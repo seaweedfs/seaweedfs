@@ -793,9 +793,12 @@ impl VolumeServer for VolumeGrpcService {
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
+        // Go uses v.DataBackend.GetStat() which returns the actual .dat file size
+        let volume_size = vol.dat_file_size().unwrap_or(0);
+
         Ok(Response::new(volume_server_pb::VolumeStatusResponse {
             is_read_only: vol.is_read_only(),
-            volume_size: vol.content_size(),
+            volume_size,
             file_count: vol.file_count() as u64,
             file_deleted_count: vol.deleted_count() as u64,
         }))
@@ -2346,20 +2349,16 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Calculate volume size from shards
-        let volume_size = ec_vol
-            .shards
-            .iter()
-            .filter_map(|s| s.as_ref())
-            .map(|s| s.file_size())
-            .sum::<i64>() as u64;
+        // Walk .ecx index to compute file counts and total size (matching Go's WalkIndex)
+        let (file_count, file_deleted_count, volume_size) =
+            ec_vol.walk_ecx_stats().map_err(|e| Status::internal(e.to_string()))?;
 
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsInfoResponse {
                 ec_shard_infos: shard_infos,
                 volume_size,
-                file_count: 0,
-                file_deleted_count: 0,
+                file_count,
+                file_deleted_count,
             },
         ))
     }
@@ -2664,12 +2663,12 @@ impl VolumeServer for VolumeGrpcService {
             let (all, free) = get_disk_usage(&loc.directory);
             let used = all.saturating_sub(free);
             let percent_free = if all > 0 {
-                (free as f32 / all as f32) * 100.0
+                ((free as f64 / all as f64) * 100.0) as f32
             } else {
                 0.0
             };
             let percent_used = if all > 0 {
-                (used as f32 / all as f32) * 100.0
+                ((used as f64 / all as f64) * 100.0) as f32
             } else {
                 0.0
             };
