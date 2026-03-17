@@ -117,7 +117,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	// adaptive chunk size: target ~32 chunks per file to balance
 	// per-chunk overhead (volume assign, gRPC, needle write) against parallelism
 	chunkSize := int64(5 * 1024 * 1024) // 5MB floor
-	maxChunkSize := int64(fs.option.MaxMB) * 1024 * 1024 / 2
+	maxChunkSize := int64(fs.option.MaxMB) * 1024 * 1024
 	if maxChunkSize < chunkSize {
 		maxChunkSize = chunkSize
 	}
@@ -129,7 +129,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		}
 	}
 	// final safety check: avoid more than 1000 chunks
-	for entry.Remote.RemoteSize/chunkSize+1 > 1000 && chunkSize < maxChunkSize {
+	for entry.Remote.RemoteSize/chunkSize+1 > 1000 {
 		chunkSize *= 2
 	}
 
