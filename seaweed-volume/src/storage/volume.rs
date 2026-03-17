@@ -2314,6 +2314,42 @@ impl Volume {
         needle_blob: &[u8],
         size: Size,
     ) -> Result<(), VolumeError> {
+        // Dedup check: if the same needle already exists with matching content, skip the write.
+        // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
+        if let Some(nm) = &self.nm {
+            if let Some(nv) = nm.get(needle_id) {
+                if nv.size == size {
+                    let version = self.version();
+                    // Read existing needle from disk
+                    let mut old_needle = Needle::default();
+                    let mut ro = ReadOption::default();
+                    if self
+                        .read_needle_data_at_unlocked(
+                            &mut old_needle,
+                            nv.offset.to_actual_offset(),
+                            nv.size,
+                            &mut ro,
+                        )
+                        .is_ok()
+                    {
+                        // Parse the incoming blob into a needle
+                        let mut new_needle = Needle::default();
+                        if new_needle
+                            .read_bytes(needle_blob, nv.offset.to_actual_offset(), size, version)
+                            .is_ok()
+                        {
+                            if old_needle.cookie == new_needle.cookie
+                                && old_needle.checksum == new_needle.checksum
+                                && old_needle.data == new_needle.data
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Check volume size limit
         let content_size = self.content_size();
         if MAX_POSSIBLE_VOLUME_SIZE < content_size + needle_blob.len() as u64 {
