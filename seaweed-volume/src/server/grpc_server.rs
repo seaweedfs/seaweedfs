@@ -814,6 +814,14 @@ impl VolumeServer for VolumeGrpcService {
             .find_volume(vid)
             .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
 
+        // Go checks v.DataBackend != nil before building the response.
+        if !vol.has_data_backend() {
+            return Err(Status::internal(format!(
+                "volume {} data backend not found",
+                vid
+            )));
+        }
+
         // Go uses v.DataBackend.GetStat() which returns the actual .dat file size
         let volume_size = vol.dat_file_size().unwrap_or(0);
 
