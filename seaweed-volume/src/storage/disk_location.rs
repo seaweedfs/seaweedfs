@@ -392,7 +392,7 @@ impl DiskLocation {
         let vids: Vec<VolumeId> = self
             .volumes
             .iter()
-            .filter(|(_, v)| v.collection == collection)
+            .filter(|(_, v)| v.collection == collection && !v.is_compacting())
             .map(|(vid, _)| *vid)
             .collect();
 
@@ -401,7 +401,9 @@ impl DiskLocation {
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&v.collection, "volume"])
                     .dec();
-                v.destroy(false)?;
+                if let Err(e) = v.destroy(false) {
+                    warn!(volume_id = vid.0, error = %e, "delete collection: failed to destroy volume");
+                }
             }
         }
 

@@ -556,6 +556,11 @@ impl Volume {
         Ok(v)
     }
 
+    /// Returns true if the volume is currently being compacted.
+    pub fn is_compacting(&self) -> bool {
+        self.is_compacting
+    }
+
     // ---- File naming (matching Go) ----
 
     /// Base filename: dir/collection_id or dir/id
