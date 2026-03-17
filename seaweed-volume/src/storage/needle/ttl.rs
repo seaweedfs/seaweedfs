@@ -272,4 +272,38 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn test_ttl_normalization_under_256() {
+        // 120 minutes should normalize to 2 hours (matches Go fitTtlCount behavior).
+        // Even though count=120 fits in a byte, Go always normalizes to the coarsest unit.
+        let ttl = TTL::read("120m").unwrap();
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 2,
+                unit: TTL_UNIT_HOUR
+            }
+        );
+
+        // 24 hours should normalize to 1 day
+        let ttl = TTL::read("24h").unwrap();
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_DAY
+            }
+        );
+
+        // 7 days should normalize to 1 week
+        let ttl = TTL::read("7d").unwrap();
+        assert_eq!(
+            ttl,
+            TTL {
+                count: 1,
+                unit: TTL_UNIT_WEEK
+            }
+        );
+    }
 }
