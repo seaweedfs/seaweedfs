@@ -169,10 +169,12 @@ lazy_static::lazy_static! {
 
     // ---- Build info (Go: BuildInfo) ----
 
-    /// Build information gauge with version label, always set to 1.
+    /// Build information gauge, always set to 1. Matches Go:
+    /// Namespace="SeaweedFS", Subsystem="build", Name="info",
+    /// labels: version, commit, sizelimit, goos, goarch.
     pub static ref BUILD_INFO: GaugeVec = GaugeVec::new(
-        Opts::new("SeaweedFS_volumeServer_buildInfo", "SeaweedFS volume server build info"),
-        &["version"],
+        Opts::new("SeaweedFS_build_info", "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built."),
+        &["version", "commit", "sizelimit", "goos", "goarch"],
     ).expect("metric can be created");
 }
 
@@ -254,9 +256,15 @@ pub fn register_metrics() {
             REGISTRY.register(m).expect("metric registered");
         }
 
-        // Set build info gauge to 1 with version label.
+        // Set build info gauge to 1 with version/commit/sizelimit/os/arch labels (matches Go).
         BUILD_INFO
-            .with_label_values(&[version::version()])
+            .with_label_values(&[
+                version::version(),
+                version::commit(),
+                version::size_limit(),
+                std::env::consts::OS,
+                std::env::consts::ARCH,
+            ])
             .set(1.0);
     });
 }
