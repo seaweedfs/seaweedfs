@@ -120,19 +120,15 @@ fn unit_to_seconds(count: u64, unit: u8) -> u64 {
 }
 
 /// Fit a count+unit into a TTL that fits in a single byte count.
-/// Matches Go's readTTL: if count already fits in u8, keep original unit.
-/// Only rescale to a larger unit when count > 255.
+/// Matches Go's fitTtlCount: always convert to seconds first, then find the
+/// coarsest unit that fits in a single byte. This ensures normalization
+/// (e.g., 120m → 2h) for wire-format compatibility with Go.
 fn fit_ttl_count(count: u32, unit: u8) -> TTL {
     if count == 0 || unit == TTL_UNIT_EMPTY {
         return TTL::EMPTY;
     }
 
-    // If count fits in a byte, preserve the caller's unit (matches Go).
-    if count <= 255 {
-        return TTL { count: count as u8, unit };
-    }
-
-    // Count overflows a byte — rescale to a coarser unit.
+    // Always convert to seconds and normalize (matches Go).
     let seconds = unit_to_seconds(count as u64, unit);
 
     const YEAR_SECS: u64 = 3600 * 24 * 365;
