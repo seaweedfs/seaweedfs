@@ -445,7 +445,9 @@ pub struct Volume {
     /// Compaction speed limit in bytes per second (0 = unlimited).
     pub compaction_byte_per_second: i64,
 
-    _last_io_error: Option<io::Error>,
+    /// Tracks the last I/O error (EIO) for volume health monitoring.
+    /// Uses Mutex for interior mutability so reads (&self) can clear/set it.
+    last_io_error: Mutex<Option<String>>,
 
     /// Protobuf VolumeInfo for tiered storage (.vif file).
     pub volume_info: PbVolumeInfo,
@@ -509,7 +511,7 @@ impl Volume {
             last_compact_revision: 0,
             is_compacting: false,
             compaction_byte_per_second: 0,
-            _last_io_error: None,
+            last_io_error: Mutex::new(None),
             volume_info: PbVolumeInfo::default(),
             has_remote_file: false,
         };
@@ -961,7 +963,14 @@ impl Volume {
             return Ok(0);
         }
 
-        self.read_needle_data_at_unlocked(n, nv.offset.to_actual_offset(), read_size, read_option)?;
+        match self.read_needle_data_at_unlocked(n, nv.offset.to_actual_offset(), read_size, read_option) {
+            Ok(()) => self.check_read_write_error(None),
+            Err(VolumeError::Io(ref e)) => {
+                self.check_read_write_error(Some(e));
+                return Err(VolumeError::Io(io::Error::new(e.kind(), e.to_string())));
+            }
+            Err(e) => return Err(e),
+        }
 
         // TTL expiry check
         if n.has_ttl() {
@@ -1091,18 +1100,78 @@ impl Volume {
         offset: i64,
         size: Size,
     ) -> Result<(), VolumeError> {
-        // Sanity check: reject metadata sizes > 128KB (matching Go's ReadNeedleMeta guard)
-        if size.0 > 128 * 1024 {
-            return Err(VolumeError::Io(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("metadata size {} exceeds 128KB limit", size.0),
-            )));
-        }
         let version = self.version();
+
+        // Step 1: Read only the first 20 bytes (header + DataSize).
+        // Matches Go's ReadNeedleMeta which reads NeedleHeaderSize+DataSizeSize first.
+        const HEADER_PREFIX: usize = NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE; // 20
+        let mut header_buf = [0u8; HEADER_PREFIX];
+        self.read_exact_at_backend(&mut header_buf, offset as u64)?;
+
+        // Parse header to get the needle's Size field for validation
+        let (_, _, found_size) = Needle::parse_header(&header_buf);
+        if found_size != size {
+            return Err(VolumeError::Needle(NeedleError::SizeMismatch {
+                offset,
+                id: n.id,
+                found: found_size,
+                expected: size,
+            }));
+        }
+
+        // Step 2: Calculate how much meta tail to read (skip the data payload)
         let actual_size = get_actual_size(size, version);
-        let mut buf = vec![0u8; actual_size as usize];
-        self.read_exact_at_backend(&mut buf, offset as u64)?;
-        n.read_bytes_meta_only(&buf, offset, size, version)?;
+
+        if size.0 == 0 || version == VERSION_1 {
+            // Tombstone or V1: no body data section, tail starts right after header
+            let meta_size = actual_size - NEEDLE_HEADER_SIZE as i64;
+            if meta_size < 0 || meta_size > 128 * 1024 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid needle meta size {}: DataSize=0, size={}, offset={}",
+                        meta_size, size.0, offset
+                    ),
+                )));
+            }
+            let mut meta_buf = vec![0u8; meta_size as usize];
+            self.read_exact_at_backend(
+                &mut meta_buf,
+                (offset + NEEDLE_HEADER_SIZE as i64) as u64,
+            )?;
+            n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
+        } else {
+            // V2/V3: extract DataSize from bytes 16..20
+            let data_size = u32::from_be_bytes([
+                header_buf[NEEDLE_HEADER_SIZE],
+                header_buf[NEEDLE_HEADER_SIZE + 1],
+                header_buf[NEEDLE_HEADER_SIZE + 2],
+                header_buf[NEEDLE_HEADER_SIZE + 3],
+            ]);
+
+            // Skip past: header(16) + DataSize(4) + data(data_size)
+            let start_offset =
+                offset + NEEDLE_HEADER_SIZE as i64 + DATA_SIZE_SIZE as i64 + data_size as i64;
+            let stop_offset = offset + actual_size;
+            let meta_size = stop_offset - start_offset;
+
+            // Sanity check: reject metadata sizes > 128KB (matching Go's ReadNeedleMeta guard)
+            if meta_size < 0 || meta_size > 128 * 1024 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid needle meta size {}: DataSize={}, size={}, offset={}",
+                        meta_size, data_size, size.0, offset
+                    ),
+                )));
+            }
+
+            // Step 3: Read only the meta tail (skip the data payload entirely)
+            let mut meta_buf = vec![0u8; meta_size as usize];
+            self.read_exact_at_backend(&mut meta_buf, start_offset as u64)?;
+            n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
+        }
+
         Ok(())
     }
 
@@ -1395,8 +1464,10 @@ impl Volume {
         if let Err(e) = dat_file.write_all(&bytes) {
             // Truncate back to pre-write position on error (matching Go)
             let _ = dat_file.set_len(offset);
+            self.check_read_write_error(Some(&e));
             return Err(VolumeError::Io(e));
         }
+        self.check_read_write_error(None);
 
         Ok((offset, n.size, actual_size))
     }
@@ -1537,6 +1608,68 @@ impl Volume {
             offset += total_size;
         }
         Ok(needles)
+    }
+
+    /// Scrub the volume index by verifying each needle map entry against the dat file.
+    /// For each entry, reads only the 16-byte needle header at the given offset to verify:
+    /// correct needle ID, correct cookie (non-zero), and valid size.
+    /// Does NOT read/verify the full needle data or CRC.
+    /// Returns (files_checked, broken_needles) tuple.
+    pub fn scrub_index(&self) -> Result<(u64, Vec<String>), VolumeError> {
+        if self.dat_file.is_none() && self.remote_dat_file.is_none() {
+            return Err(VolumeError::NotFound);
+        }
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let dat_size = self.dat_file_size().map_err(VolumeError::Io)?;
+
+        let mut files_checked: u64 = 0;
+        let mut broken = Vec::new();
+
+        for (needle_id, nv) in nm.iter_entries() {
+            if nv.offset.is_zero() || nv.size.is_deleted() {
+                continue;
+            }
+
+            let offset = nv.offset.to_actual_offset();
+            if offset < 0 || offset as u64 >= dat_size {
+                broken.push(format!(
+                    "needle {} offset {} out of range (dat_size={})",
+                    needle_id.0, offset, dat_size
+                ));
+                continue;
+            }
+
+            // Read only the 16-byte needle header to verify ID, cookie, and size
+            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+            match self.read_exact_at_backend(&mut header_buf, offset as u64) {
+                Ok(()) => {
+                    let (cookie, id, size) = Needle::parse_header(&header_buf);
+                    if id != needle_id {
+                        broken.push(format!(
+                            "needle {} header id mismatch: expected {}, got {}",
+                            needle_id.0, needle_id.0, id.0
+                        ));
+                    } else if cookie.0 == 0 {
+                        broken.push(format!(
+                            "needle {} has zero cookie at offset {}",
+                            needle_id.0, offset
+                        ));
+                    } else if size.0 <= 0 && !nv.size.is_deleted() {
+                        broken.push(format!(
+                            "needle {} has invalid size {} at offset {}",
+                            needle_id.0, size.0, offset
+                        ));
+                    }
+                }
+                Err(e) => {
+                    broken.push(format!("needle {} read header error: {}", needle_id.0, e));
+                }
+            }
+
+            files_checked += 1;
+        }
+
+        Ok((files_checked, broken))
     }
 
     /// Scrub the volume by reading and verifying all needles.
@@ -2464,12 +2597,31 @@ impl Volume {
         Ok(())
     }
 
-    #[allow(dead_code)]
-    fn check_read_write_error(&mut self, err: &io::Error) {
-        if err.raw_os_error() == Some(5) {
-            // EIO
-            self._last_io_error = Some(io::Error::new(err.kind(), err.to_string()));
+    /// Check if an I/O error is EIO (errno 5) and record it for health monitoring.
+    /// On success (None), clears any previously recorded EIO error.
+    /// Matches Go's `checkReadWriteError` in volume_write.go.
+    fn check_read_write_error(&self, err: Option<&io::Error>) {
+        if let Some(e) = err {
+            if e.raw_os_error() == Some(5) {
+                // EIO — record it
+                if let Ok(mut guard) = self.last_io_error.lock() {
+                    *guard = Some(e.to_string());
+                }
+            }
+        } else {
+            // Success — clear any previous EIO
+            if let Ok(mut guard) = self.last_io_error.lock() {
+                if guard.is_some() {
+                    *guard = None;
+                }
+            }
         }
+    }
+
+    /// Returns the last recorded I/O error string, if any.
+    #[allow(dead_code)]
+    pub fn last_io_error(&self) -> Option<String> {
+        self.last_io_error.lock().ok()?.clone()
     }
 }
 

@@ -193,6 +193,56 @@ impl Needle {
         Ok(())
     }
 
+    /// Paged meta-only parse: accepts the 20-byte header+DataSize prefix and the
+    /// meta tail bytes (everything after the data payload). This avoids reading
+    /// the data payload from disk at all, matching Go's `ReadNeedleMeta`.
+    pub fn read_paged_meta(
+        &mut self,
+        header_bytes: &[u8],   // first 20 bytes: NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE
+        meta_bytes: &[u8],     // tail: non-data body metadata + checksum + timestamp + padding
+        offset: i64,
+        expected_size: Size,
+        version: Version,
+    ) -> Result<(), NeedleError> {
+        // Parse the 16-byte header
+        self.read_header(header_bytes);
+
+        if self.size != expected_size {
+            return Err(NeedleError::SizeMismatch {
+                offset,
+                id: self.id,
+                found: self.size,
+                expected: expected_size,
+            });
+        }
+
+        if version == VERSION_1 {
+            self.data_size = self.size.0 as u32;
+        } else if self.size.0 == 0 {
+            // Tombstone
+            self.data_size = 0;
+        } else {
+            // Extract DataSize from bytes 16..20
+            self.data_size = u32::from_be_bytes([
+                header_bytes[NEEDLE_HEADER_SIZE],
+                header_bytes[NEEDLE_HEADER_SIZE + 1],
+                header_bytes[NEEDLE_HEADER_SIZE + 2],
+                header_bytes[NEEDLE_HEADER_SIZE + 3],
+            ]);
+
+            // meta_bytes starts with the non-data body metadata (flags, name, mime, etc.)
+            // followed by the tail (checksum + timestamp + padding).
+            // readNeedleDataVersion2NonData returns the index where it stopped.
+            let index = self.read_body_v2_non_data(meta_bytes)?;
+            self.read_tail_meta_only(&meta_bytes[index..], version)?;
+            return Ok(());
+        }
+
+        // For VERSION_1 or tombstones, meta_bytes IS the tail
+        self.read_tail_meta_only(meta_bytes, version)?;
+        Ok(())
+    }
+
     /// Read tail without CRC validation (used when data was not read).
     fn read_tail_meta_only(
         &mut self,
