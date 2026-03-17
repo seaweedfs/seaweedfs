@@ -1798,8 +1798,7 @@ struct UploadResult {
     size: u32,
     #[serde(rename = "eTag", skip_serializing_if = "String::is_empty")]
     etag: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    mime: Option<String>,
+    mime: String,
     #[serde(rename = "contentMd5", skip_serializing_if = "Option::is_none")]
     content_md5: Option<String>,
 }
@@ -2289,11 +2288,7 @@ pub async fn post_handler(
                     name: filename.clone(),
                     size: original_data_size, // H3: use original size, not compressed
                     etag: n.etag(),
-                    mime: if mime_type.is_empty() {
-                        None
-                    } else {
-                        Some(mime_type.clone())
-                    },
+                    mime: mime_type.clone(),
                     content_md5: Some(content_md5_value.clone()),
                 };
                 let etag = n.etag();
