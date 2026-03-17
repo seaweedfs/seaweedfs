@@ -3143,6 +3143,7 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
                 Err(e) => {
+                    total_files += v.file_count().max(0) as u64;
                     broken_volume_ids.push(vid.0);
                     details.push(format!("vol {}: scrub error: {}", vid.0, e));
                 }
