@@ -812,11 +812,12 @@ async fn get_or_head_handler_inner(
     let read_deleted = query.read_deleted.as_deref() == Some("true");
     let has_range = headers.contains_key(header::RANGE);
     let ext = extract_extension_from_path(&path);
-    let is_image = is_image_ext(&ext);
-    let has_image_ops = query.width.is_some()
-        || query.height.is_some()
-        || query.crop_x1.is_some()
-        || query.crop_y1.is_some();
+    // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
+    let has_resize_ops = is_image_resize_ext(&ext)
+        && (query.width.is_some() || query.height.is_some());
+    let has_crop_ops = is_image_crop_ext(&ext)
+        && (query.crop_x1.is_some() || query.crop_y1.is_some());
+    let has_image_ops = has_resize_ops || has_crop_ops;
 
     // Try meta-only read first for potential streaming
     let store = state.store.read().unwrap();
@@ -859,7 +860,7 @@ async fn get_or_head_handler_inner(
     let can_direct_source_read = stream_info.is_some()
         && !n.is_compressed()
         && !(n.is_chunk_manifest() && !bypass_cm)
-        && !(is_image && has_image_ops);
+        && !has_image_ops;
 
     // Determine if we can stream (large, direct-source eligible, no range)
     let can_stream = can_direct_source_read
@@ -1175,8 +1176,8 @@ async fn get_or_head_handler_inner(
     let mut data = n.data;
 
     // Check if image operations are needed — must decompress first regardless of Accept-Encoding
-    let needs_image_ops =
-        is_image && (query.width.is_some() || query.height.is_some() || query.mode.is_some());
+    // Go checks resize (.webp OK) and crop (.webp NOT OK) separately.
+    let needs_image_ops = has_resize_ops || has_crop_ops;
 
     if is_compressed {
         if needs_image_ops {
@@ -1208,9 +1209,12 @@ async fn get_or_head_handler_inner(
         }
     }
 
-    // Image crop and resize (only for supported image formats)
-    if is_image {
+    // Image crop and resize — Go checks extensions separately per operation.
+    // Crop: .png .jpg .jpeg .gif (no .webp). Resize: .png .jpg .jpeg .gif .webp.
+    if is_image_crop_ext(&ext) {
         data = maybe_crop_image(&data, &ext, &query);
+    }
+    if is_image_resize_ext(&ext) {
         data = maybe_resize_image(&data, &ext, &query);
     }
 
@@ -1555,8 +1559,13 @@ fn parse_go_bool(value: &str) -> Option<bool> {
 // Image processing helpers
 // ============================================================================
 
-fn is_image_ext(ext: &str) -> bool {
+fn is_image_resize_ext(ext: &str) -> bool {
     matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif" | ".webp")
+}
+
+/// Go's shouldCropImages only supports these four formats (no .webp).
+fn is_image_crop_ext(ext: &str) -> bool {
+    matches!(ext, ".png" | ".jpg" | ".jpeg" | ".gif")
 }
 
 fn extract_extension_from_path(path: &str) -> String {
@@ -2532,13 +2541,14 @@ pub async fn status_handler(
 // ============================================================================
 
 pub async fn healthz_handler(State(state): State<Arc<VolumeServerState>>) -> Response {
+    // Go's healthzHandler returns only status codes with no body text.
     let is_stopping = *state.is_stopping.read().unwrap();
     if is_stopping {
-        return (StatusCode::SERVICE_UNAVAILABLE, "stopping").into_response();
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     // If not heartbeating, return 503 (matches Go health check behavior)
     if !state.is_heartbeating.load(Ordering::Relaxed) {
-        return (StatusCode::SERVICE_UNAVAILABLE, "lost connection to master").into_response();
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     StatusCode::OK.into_response()
 }
