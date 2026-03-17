@@ -695,6 +695,7 @@ async fn get_or_head_handler_inner(
     request: Request<Body>,
 ) -> Response {
     let path = request.uri().path().to_string();
+    let raw_query = request.uri().query().map(|q| q.to_string());
     let method = request.method().clone();
 
     // JWT check for reads — must happen BEFORE path parsing to match Go behavior.
@@ -792,7 +793,11 @@ async fn get_or_head_handler_inner(
                 metrics::HANDLER_COUNTER
                     .with_label_values(&[metrics::DOWNLOAD_LIMIT_COND])
                     .inc();
-                return (StatusCode::TOO_MANY_REQUESTS, "download limit exceeded").into_response();
+                return json_error_with_query(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "download limit exceeded",
+                    raw_query.as_deref(),
+                );
             }
         }
         // We'll set the actual bytes after reading the needle (once we know the size)
