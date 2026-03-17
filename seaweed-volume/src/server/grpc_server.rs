@@ -2247,7 +2247,10 @@ impl VolumeServer for VolumeGrpcService {
                     crate::storage::volume::volume_file_name(&dest_idx_dir, &req.collection, vid);
                 format!("{}.ecj", base)
             };
-            let mut file = std::fs::File::create(&file_path)
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)
                 .map_err(|e| Status::internal(format!("create {}: {}", file_path, e)))?;
             while let Some(chunk) = stream
                 .message()
