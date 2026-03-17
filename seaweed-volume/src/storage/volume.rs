@@ -560,7 +560,7 @@ impl Volume {
         let dat_path = self.file_name(".dat");
         let mut already_has_super_block = false;
 
-        self.load_vif()?;
+        let has_volume_info_file = self.load_vif()?;
 
         if self.volume_info.read_only && !self.has_remote_file {
             self.no_write_or_delete = true;
@@ -633,6 +633,8 @@ impl Volume {
                     if !self.super_block.version.is_supported() {
                         return Err(VolumeError::UnsupportedVersion(self.super_block.version.0));
                     }
+                    // Match Go: v.volumeInfo.Version = uint32(v.SuperBlock.Version)
+                    self.volume_info.version = self.super_block.version.0 as u32;
                 }
                 Err(e) if self.has_remote_file => {
                     warn!(
@@ -649,6 +651,19 @@ impl Volume {
 
         if also_load_index {
             self.load_index()?;
+        }
+
+        // Match Go: if no .vif file existed, create one with version and bytes_offset
+        if !has_volume_info_file {
+            self.volume_info.version = self.super_block.version.0 as u32;
+            self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+            if let Err(e) = self.save_volume_info() {
+                warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "failed to save volume info"
+                );
+            }
         }
 
         Ok(())
@@ -1253,8 +1268,9 @@ impl Volume {
             n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
         }
 
-        // Dedup check
-        if self.is_file_unchanged(n) {
+        // Dedup check (matches Go: n.DataSize = oldNeedle.DataSize on dedup)
+        if let Some(old_data_size) = self.is_file_unchanged(n) {
+            n.data_size = old_data_size;
             return Ok((0, Size(n.data_size as i32), true));
         }
 
@@ -1314,10 +1330,13 @@ impl Volume {
         Ok(())
     }
 
-    fn is_file_unchanged(&self, n: &Needle) -> bool {
+    /// Check if the needle is unchanged from the existing one on disk.
+    /// Returns `Some(old_data_size)` if unchanged, `None` otherwise.
+    /// Matches Go's isFileUnchanged which also sets n.DataSize = oldNeedle.DataSize.
+    fn is_file_unchanged(&self, n: &Needle) -> Option<u32> {
         // Don't dedup for volumes with TTL
         if self.super_block.ttl != crate::storage::needle::ttl::TTL::EMPTY {
-            return false;
+            return None;
         }
 
         if let Some(nm) = &self.nm {
@@ -1338,13 +1357,13 @@ impl Volume {
                             && old.checksum == n.checksum
                             && old.data == n.data
                         {
-                            return true;
+                            return Some(old.data_size);
                         }
                     }
                 }
             }
         }
-        false
+        None
     }
 
     /// Append a needle to the .dat file. Returns (offset, size, actual_size).
@@ -1669,11 +1688,12 @@ impl Volume {
 
     /// Load volume info from .vif file.
     /// Supports both the protobuf-JSON format (Go-compatible) and legacy JSON.
-    fn load_vif(&mut self) -> Result<(), VolumeError> {
+    /// Returns true if a .vif file was found and successfully loaded.
+    fn load_vif(&mut self) -> Result<bool, VolumeError> {
         let path = self.vif_path();
         if let Ok(content) = fs::read_to_string(&path) {
             if content.trim().is_empty() {
-                return Ok(());
+                return Ok(false);
             }
             // Try protobuf-JSON (Go-compatible VolumeInfo via VifVolumeInfo)
             if let Ok(vif_info) = serde_json::from_str::<VifVolumeInfo>(&content) {
@@ -1700,17 +1720,17 @@ impl Volume {
                         ),
                     )));
                 }
-                return Ok(());
+                return Ok(true);
             }
             // Fall back to legacy format
             if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
                 if info.read_only {
                     self.no_write_or_delete = true;
                 }
-                return Ok(());
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     /// Save volume info to .vif file in protobuf-JSON format (Go-compatible).
@@ -1723,8 +1743,20 @@ impl Volume {
     }
 
     /// Save full VolumeInfo to .vif file (for tiered storage).
+    /// Matches Go's SaveVolumeInfo which computes ExpireAtSec from TTL.
     pub fn save_volume_info(&mut self) -> Result<(), VolumeError> {
         self.volume_info.read_only = self.no_write_or_delete;
+
+        // Compute ExpireAtSec from TTL (matches Go's SaveVolumeInfo)
+        let ttl_seconds = self.super_block.ttl.to_seconds();
+        if ttl_seconds > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            self.volume_info.expire_at_sec = now + ttl_seconds;
+        }
+
         let vif = VifVolumeInfo::from_pb(&self.volume_info);
         let content = serde_json::to_string_pretty(&vif)
             .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
@@ -1979,13 +2011,31 @@ impl Volume {
 
     /// Garbage ratio: deleted_size / content_size (matching Go's garbageLevel).
     /// content_size is the additive-only FileByteCounter.
+    ///
+    /// When DeletedCount > 0 but DeletedSize == 0 (e.g. .sdx converted back to
+    /// normal .idx where deleted entry sizes are missing), falls back to
+    /// computing deleted bytes as (datFileSize - contentSize - SuperBlockSize)
+    /// and uses datFileSize as the denominator.
     pub fn garbage_level(&self) -> f64 {
         let content = self.content_size();
         if content == 0 {
             return 0.0;
         }
-        let deleted = self.deleted_size();
-        deleted as f64 / content as f64
+        let mut deleted = self.deleted_size();
+        let mut file_size = content;
+
+        if self.deleted_count() > 0 && deleted == 0 {
+            // This happens for .sdx converted back to normal .idx
+            // where deleted entry size is missing
+            let dat_file_size = self.dat_file_size().unwrap_or(0);
+            deleted = dat_file_size.saturating_sub(content).saturating_sub(SUPER_BLOCK_SIZE as u64);
+            file_size = dat_file_size;
+        }
+
+        if file_size == 0 {
+            return 0.0;
+        }
+        deleted as f64 / file_size as f64
     }
 
     pub fn dat_file_size(&self) -> io::Result<u64> {
@@ -3298,12 +3348,15 @@ mod tests {
     }
 
     #[test]
-    fn test_version_prefers_vif_version_override() {
+    fn test_version_superblock_overrides_vif_version() {
+        // Go behavior: after reading the superblock, volumeInfo.Version is set
+        // to SuperBlock.Version, overriding whatever was in the .vif file.
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
         {
             let _v = make_test_volume(dir);
+            // Write a .vif with version=2, but the .dat superblock is version=3
             let vif = VifVolumeInfo {
                 version: VERSION_2.0 as u32,
                 bytes_offset: OFFSET_SIZE as u32,
@@ -3329,8 +3382,9 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(v.volume_info.version, VERSION_2.0 as u32);
-        assert_eq!(v.version(), VERSION_2);
+        // Superblock version (3) overrides the .vif version (2)
+        assert_eq!(v.volume_info.version, VERSION_3.0 as u32);
+        assert_eq!(v.version(), VERSION_3);
     }
 
     #[test]
