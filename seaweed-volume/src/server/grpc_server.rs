@@ -944,11 +944,6 @@ impl VolumeServer for VolumeGrpcService {
                     }
                 }
             }
-            // Fallback: use first location if no disk type match
-            if found.is_none() && !store.locations.is_empty() {
-                let loc = &store.locations[0];
-                found = Some((loc.directory.clone(), loc.idx_directory.clone()));
-            }
             found.ok_or_else(|| Status::internal(format!("no space left {}", disk_type)))?
         };
 
