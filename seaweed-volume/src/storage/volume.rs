@@ -1699,8 +1699,12 @@ impl Volume {
         let version = self.super_block.version;
 
         // Check last 10 index entries (matching Go's loop: for i := 1; i <= 10 ...)
+        // Go does NOT break on first success; it tracks healthyIndexSize and only
+        // breaks on ErrorSizeMismatch. After the loop, it returns an error if
+        // healthyIndexSize < indexSize (detecting trailing corrupt entries).
         let mut idx_file = File::open(&idx_path)?;
         let max_entries = std::cmp::min(10, idx_size / NEEDLE_MAP_ENTRY_SIZE as i64);
+        let mut healthy_index_size: i64 = 0;
 
         for i in 1..=max_entries {
             let entry_offset = idx_size - i * NEEDLE_MAP_ENTRY_SIZE as i64;
@@ -1756,16 +1760,16 @@ impl Volume {
                 {
                     let (_, _, alt_size) = Needle::parse_header(&alt_header);
                     if alt_size.0 == size.0 {
-                        continue; // alternative offset worked
+                        // Update healthy_index_size and continue
+                        let pos = entry_offset + NEEDLE_MAP_ENTRY_SIZE as i64;
+                        if pos > healthy_index_size {
+                            healthy_index_size = pos;
+                        }
+                        continue;
                     }
                 }
-                return Err(VolumeError::Io(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "needle size {} does not match index size {} at offset {}",
-                        needle_size.0, size.0, actual_offset
-                    ),
-                )));
+                // Match Go: ErrorSizeMismatch breaks out of the loop
+                break;
             }
 
             // If V3, try to read the append timestamp from the last verified entry
@@ -1780,8 +1784,22 @@ impl Volume {
                 }
             }
 
-            // First successfully verified entry is enough
-            break;
+            // Track the highest verified index position
+            let pos = entry_offset + NEEDLE_MAP_ENTRY_SIZE as i64;
+            if pos > healthy_index_size {
+                healthy_index_size = pos;
+            }
+        }
+
+        // Match Go: if healthyIndexSize < indexSize, trailing entries are corrupt
+        if healthy_index_size < idx_size {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "healthy index size {} is less than expected {}",
+                    healthy_index_size, idx_size
+                ),
+            )));
         }
 
         Ok(())
