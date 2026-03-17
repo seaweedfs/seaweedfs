@@ -2311,6 +2311,8 @@ impl VolumeServer for VolumeGrpcService {
         let vid = VolumeId(req.volume_id);
         let mut store = self.state.store.write().unwrap();
         store.delete_ec_shards(vid, &req.collection, &req.shard_ids);
+        drop(store);
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsDeleteResponse {},
         ))
@@ -2333,6 +2335,8 @@ impl VolumeServer for VolumeGrpcService {
                     Status::internal(format!("mount {}.{}: {}", req.volume_id, shard_id, e))
                 })?;
         }
+        drop(store);
+        self.state.volume_state_notify.notify_one();
 
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsMountResponse {},
@@ -2354,6 +2358,8 @@ impl VolumeServer for VolumeGrpcService {
                 Status::internal(format!("unmount {}.{}: {}", req.volume_id, shard_id, e))
             })?;
         }
+        drop(store);
+        self.state.volume_state_notify.notify_one();
         Ok(Response::new(
             volume_server_pb::VolumeEcShardsUnmountResponse {},
         ))
