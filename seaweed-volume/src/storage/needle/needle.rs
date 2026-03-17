@@ -704,22 +704,39 @@ fn format_needle_id_cookie(key: NeedleId, cookie: Cookie) -> String {
     hex::encode(&bytes[nonzero_index..])
 }
 
-/// Parse "needle_id_cookie_hex" into (NeedleId, Cookie).
-/// Matches Go's ParseNeedleIdCookie: rejects strings that are too short or too long.
+/// Parse "needle_id_cookie_hex" or "needle_id_cookie_hex_delta" into (NeedleId, Cookie).
+/// Matches Go's ParsePath + ParseNeedleIdCookie: supports an optional `_delta` suffix
+/// where delta is a decimal number added to the NeedleId (used for sub-file addressing).
+/// Rejects strings that are too short or too long.
 pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
+    // Go ParsePath: check for "_" suffix containing a decimal delta
+    let (hex_part, delta) = if let Some(underscore_pos) = s.rfind('_') {
+        if underscore_pos > 0 {
+            let delta_str = &s[underscore_pos + 1..];
+            let d: u64 = delta_str
+                .parse()
+                .map_err(|e| format!("Parse delta error: {}", e))?;
+            (&s[..underscore_pos], Some(d))
+        } else {
+            (s, None)
+        }
+    } else {
+        (s, None)
+    };
+
     // Go: len(key_hash_string) <= CookieSize*2 => error (must be > 8 hex chars)
-    if s.len() <= COOKIE_SIZE * 2 {
+    if hex_part.len() <= COOKIE_SIZE * 2 {
         return Err("KeyHash is too short.".to_string());
     }
     // Go: len(key_hash_string) > (NeedleIdSize+CookieSize)*2 => error (must be <= 24 hex chars)
-    if s.len() > (NEEDLE_ID_SIZE + COOKIE_SIZE) * 2 {
+    if hex_part.len() > (NEEDLE_ID_SIZE + COOKIE_SIZE) * 2 {
         return Err("KeyHash is too long.".to_string());
     }
 
     // Split: last CookieSize*2 hex chars are cookie, rest is needle id
-    let split = s.len() - COOKIE_SIZE * 2;
-    let needle_id_hex = &s[..split];
-    let cookie_hex = &s[split..];
+    let split = hex_part.len() - COOKIE_SIZE * 2;
+    let needle_id_hex = &hex_part[..split];
+    let cookie_hex = &hex_part[split..];
 
     let needle_id_bytes = hex::decode(needle_id_hex).map_err(|e| format!("Parse needleId error: {}", e))?;
     let cookie_bytes = hex::decode(cookie_hex).map_err(|e| format!("Parse cookie error: {}", e))?;
@@ -732,8 +749,14 @@ pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
     let start = 8 - needle_id_bytes.len();
     nid_buf[start..].copy_from_slice(&needle_id_bytes);
 
-    let key = NeedleId::from_bytes(&nid_buf[0..8]);
+    let mut key = NeedleId::from_bytes(&nid_buf[0..8]);
     let cookie = Cookie::from_bytes(&cookie_bytes[0..4]);
+
+    // Apply delta if present (Go: n.Id += Uint64ToNeedleId(d))
+    if let Some(d) = delta {
+        key = NeedleId(key.0.wrapping_add(d));
+    }
+
     Ok((key, cookie))
 }
 
