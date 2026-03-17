@@ -177,7 +177,7 @@ func buildPlanningIndexFromManifests(
 	}
 
 	if operationRequested(ops, "compact") {
-		eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
+		eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config, meta, nil)
 		if err != nil {
 			return nil, err
 		}

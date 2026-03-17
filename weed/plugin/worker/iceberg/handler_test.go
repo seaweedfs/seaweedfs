@@ -871,6 +871,12 @@ func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
 	if config.OrphanOlderThanHours != defaultOrphanOlderThanHours {
 		t.Fatalf("expected OrphanOlderThanHours default, got %d", config.OrphanOlderThanHours)
 	}
+	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
+		t.Fatalf("expected SnapshotRetentionHours default, got %d", config.SnapshotRetentionHours)
+	}
+	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
+		t.Fatalf("expected MaxSnapshotsToKeep default, got %d", config.MaxSnapshotsToKeep)
+	}
 }
 
 func TestCollectPositionDeletes(t *testing.T) {

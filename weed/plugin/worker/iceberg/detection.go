@@ -153,7 +153,14 @@ func (h *Handler) scanTablesForMaintenance(
 }
 
 func normalizeDetectionConfig(config Config) Config {
-	return applyThresholdDefaults(config)
+	config = applyThresholdDefaults(config)
+	if config.SnapshotRetentionHours <= 0 {
+		config.SnapshotRetentionHours = defaultSnapshotRetentionHours
+	}
+	if config.MaxSnapshotsToKeep <= 0 {
+		config.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
+	}
+	return config
 }
 
 func (h *Handler) tableNeedsMaintenance(
@@ -167,6 +174,25 @@ func (h *Handler) tableNeedsMaintenance(
 	ops []string,
 ) (bool, error) {
 	config = normalizeDetectionConfig(config)
+
+	var predicate *partitionPredicate
+	if strings.TrimSpace(config.Where) != "" {
+		needsPredicate := false
+		for _, op := range ops {
+			if op == "compact" || op == "rewrite_position_delete_files" || op == "rewrite_manifests" {
+				needsPredicate = true
+				break
+			}
+		}
+		if needsPredicate {
+			var err error
+			predicate, err = parsePartitionPredicate(config.Where, meta)
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+	_ = predicate // used by rewrite_position_delete_files; planning index handles compact/rewrite_manifests
 
 	// Evaluate the metadata-only expiration check first so large tables do not
 	// pay for manifest reads when snapshot expiry already makes them eligible.
@@ -260,7 +286,7 @@ func (h *Handler) tableNeedsMaintenance(
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config)
+			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config, meta, predicate)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -352,6 +378,8 @@ func hasEligibleCompaction(
 	bucketName, tablePath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
+	meta table.Metadata,
+	predicate *partitionPredicate,
 ) (bool, error) {
 	if len(manifests) == 0 {
 		return false, nil
@@ -391,8 +419,79 @@ func hasEligibleCompaction(
 		allEntries = append(allEntries, entries...)
 	}
 
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, minInputFiles)
+	candidateEntries := allEntries
+	if predicate != nil {
+		specsByID := specByID(meta)
+		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
+		for _, entry := range allEntries {
+			spec, ok := specsByID[int(entry.DataFile().SpecID())]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return false, err
+			}
+			if match {
+				candidateEntries = append(candidateEntries, entry)
+			}
+		}
+	}
+
+	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
 	return len(bins) > 0, nil
+}
+
+func countDataManifestsForRewrite(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	manifests []iceberg.ManifestFile,
+	meta table.Metadata,
+	predicate *partitionPredicate,
+) (int64, error) {
+	if predicate == nil {
+		return countDataManifests(manifests), nil
+	}
+
+	specsByID := specByID(meta)
+
+	var count int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			return 0, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			return 0, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		spec, ok := specsByID[int(mf.PartitionSpecID())]
+		if !ok {
+			continue
+		}
+		allMatch := len(entries) > 0
+		for _, entry := range entries {
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return 0, err
+			}
+			if !match {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func compactionMinInputFiles(minInputFiles int64) (int, error) {

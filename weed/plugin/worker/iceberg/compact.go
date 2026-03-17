@@ -48,6 +48,10 @@ func (h *Handler) compactDataFiles(
 	if err != nil {
 		return "", nil, fmt.Errorf("load metadata: %w", err)
 	}
+	predicate, err := parsePartitionPredicate(config.Where, meta)
+	if err != nil {
+		return "", nil, err
+	}
 
 	currentSnap := meta.CurrentSnapshot()
 	if currentSnap == nil || currentSnap.ManifestList == "" {
@@ -95,6 +99,8 @@ func (h *Handler) compactDataFiles(
 		allEntries = append(allEntries, entries...)
 	}
 
+	specsByID := specByID(meta)
+
 	// Collect delete entries if we need to apply deletes
 	var positionDeletes map[string][]int64
 	var eqDeleteGroups []equalityDeleteGroup
@@ -112,9 +118,23 @@ func (h *Handler) compactDataFiles(
 			allDeleteEntries = append(allDeleteEntries, entries...)
 		}
 
-		// Separate position and equality deletes
+		// Separate position and equality deletes, filtering by partition
+		// predicate so out-of-scope deletes don't affect the merge.
 		var posDeleteEntries, eqDeleteEntries []iceberg.ManifestEntry
 		for _, entry := range allDeleteEntries {
+			if predicate != nil {
+				spec, ok := specsByID[int(entry.DataFile().SpecID())]
+				if !ok {
+					continue
+				}
+				match, err := predicate.Matches(spec, entry.DataFile().Partition())
+				if err != nil {
+					return "", nil, err
+				}
+				if !match {
+					continue
+				}
+			}
 			switch entry.DataFile().ContentType() {
 			case iceberg.EntryContentPosDeletes:
 				posDeleteEntries = append(posDeleteEntries, entry)
@@ -138,18 +158,37 @@ func (h *Handler) compactDataFiles(
 		}
 	}
 
-	// Build compaction bins: group small files by partition
-	// MinInputFiles is clamped by ParseConfig to [2, ...] so int conversion is safe.
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, int(config.MinInputFiles))
+	candidateEntries := allEntries
+	if predicate != nil {
+		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
+		for _, entry := range allEntries {
+			spec, ok := specsByID[int(entry.DataFile().SpecID())]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return "", nil, err
+			}
+			if match {
+				candidateEntries = append(candidateEntries, entry)
+			}
+		}
+	}
+
+	minInputFiles, err := compactionMinInputFiles(config.MinInputFiles)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Build compaction bins: group small data files by partition.
+	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
 	if len(bins) == 0 {
 		return "no files eligible for compaction", nil, nil
 	}
 
 	// Build a lookup from spec ID to PartitionSpec for per-bin manifest writing.
-	specByID := make(map[int]iceberg.PartitionSpec)
-	for _, ps := range meta.PartitionSpecs() {
-		specByID[ps.ID()] = ps
-	}
+	specLookup := specsByID
 
 	schema := meta.CurrentSchema()
 	version := meta.Version()
@@ -233,7 +272,7 @@ func (h *Handler) compactDataFiles(
 
 		// Use the partition spec matching this bin's spec ID
 		{
-			binSpec, ok := specByID[int(bin.SpecID)]
+			binSpec, ok := specLookup[int(bin.SpecID)]
 			if !ok {
 				glog.Warningf("iceberg compact: spec %d not found for bin %d, skipping", bin.SpecID, binIdx)
 				_ = deleteFilerFile(ctx, filerClient, dataDir, mergedFileName)
@@ -347,7 +386,7 @@ func (h *Handler) compactDataFiles(
 	var allManifests []iceberg.ManifestFile
 	for _, sid := range sortedSpecIDs {
 		se := specEntriesMap[sid]
-		ps, ok := specByID[int(se.specID)]
+		ps, ok := specLookup[int(se.specID)]
 		if !ok {
 			return "", nil, fmt.Errorf("partition spec %d not found in table metadata", se.specID)
 		}

@@ -498,7 +498,7 @@ func (r *recordingExecutionSender) SendCompleted(c *plugin_pb.JobCompleted) erro
 func TestExpireSnapshotsExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "analytics",
@@ -541,7 +541,7 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "ns",
@@ -1184,26 +1184,30 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 		Namespace:  "analytics",
 		TableName:  "events",
 		Snapshots: []table.Snapshot{
-			{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro", SequenceNumber: 2},
 		},
 	}
 	populateTable(t, fs, setup)
 
+	// Corrupt manifest lists so compaction evaluation fails.
 	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
-	manifestListName := path.Base(setup.Snapshots[0].ManifestList)
-	fs.putEntry(metaDir, manifestListName, &filer_pb.Entry{
-		Name: manifestListName,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    time.Now().Unix(),
-			FileSize: uint64(len("not-a-manifest-list")),
-		},
-		Content: []byte("not-a-manifest-list"),
-	})
+	for _, snap := range setup.Snapshots {
+		manifestListName := path.Base(snap.ManifestList)
+		fs.putEntry(metaDir, manifestListName, &filer_pb.Entry{
+			Name: manifestListName,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				FileSize: uint64(len("not-a-manifest-list")),
+			},
+			Content: []byte("not-a-manifest-list"),
+		})
+	}
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     10,
+		SnapshotRetentionHours: 24 * 365, // very long retention so age doesn't trigger
+		MaxSnapshotsToKeep:     1,         // 2 snapshots > 1 triggers expiry
 		Operations:             "compact,expire_snapshots",
 	}
 
