@@ -631,12 +631,8 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VolumeUnmountResponse>, Status> {
         let vid = VolumeId(request.into_inner().volume_id);
         let mut store = self.state.store.write().unwrap();
-        if !store.unmount_volume(vid) {
-            return Err(Status::not_found(format!(
-                "volume {} not found",
-                vid
-            )));
-        }
+        // Go returns nil when volume is not found (idempotent unmount)
+        store.unmount_volume(vid);
         Ok(Response::new(volume_server_pb::VolumeUnmountResponse {}))
     }
 
