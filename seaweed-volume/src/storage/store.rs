@@ -373,11 +373,13 @@ impl Store {
     // ---- Collection operations ----
 
     /// Delete all volumes in a collection.
-    pub fn delete_collection(&mut self, collection: &str) {
+    pub fn delete_collection(&mut self, collection: &str) -> Result<(), String> {
         for loc in &mut self.locations {
-            loc.delete_collection(collection);
+            loc.delete_collection(collection)
+                .map_err(|e| format!("delete collection {}: {}", collection, e))?;
         }
         crate::metrics::delete_collection_metrics(collection);
+        Ok(())
     }
 
     // ---- Metrics ----
@@ -987,7 +989,7 @@ mod tests {
             .unwrap();
         assert_eq!(store.total_volume_count(), 3);
 
-        store.delete_collection("pics");
+        store.delete_collection("pics").unwrap();
         assert_eq!(store.total_volume_count(), 1);
         assert!(store.has_volume(VolumeId(3)));
     }

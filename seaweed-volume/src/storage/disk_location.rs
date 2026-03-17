@@ -388,7 +388,7 @@ impl DiskLocation {
     }
 
     /// Delete all volumes in a collection.
-    pub fn delete_collection(&mut self, collection: &str) {
+    pub fn delete_collection(&mut self, collection: &str) -> Result<(), VolumeError> {
         let vids: Vec<VolumeId> = self
             .volumes
             .iter()
@@ -401,7 +401,7 @@ impl DiskLocation {
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&v.collection, "volume"])
                     .dec();
-                let _ = v.destroy();
+                v.destroy()?;
             }
         }
 
@@ -422,6 +422,7 @@ impl DiskLocation {
                 ec_vol.destroy();
             }
         }
+        Ok(())
     }
 
     // ---- Metrics ----
@@ -871,7 +872,7 @@ mod tests {
         .unwrap();
         assert_eq!(loc.volumes_len(), 3);
 
-        loc.delete_collection("pics");
+        loc.delete_collection("pics").unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(3)).is_some());
     }
@@ -898,7 +899,7 @@ mod tests {
         assert!(std::path::Path::new(&shard_path).exists());
         assert!(std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());
 
-        loc.delete_collection("pics");
+        loc.delete_collection("pics").unwrap();
 
         assert!(!loc.has_ec_volume(VolumeId(7)));
         assert!(!std::path::Path::new(&shard_path).exists());
