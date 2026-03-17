@@ -1326,6 +1326,7 @@ impl VolumeServer for VolumeGrpcService {
         let mut target_file: Option<std::fs::File> = None;
         let mut file_path: Option<String> = None;
         let mut bytes_written: u64 = 0;
+        let mut resp_error: Option<String> = None;
 
         let result: Result<(), Status> = async {
             while let Some(req) = stream.message().await? {
@@ -1374,13 +1375,14 @@ impl VolumeServer for VolumeGrpcService {
                             })?;
                             bytes_written += n as u64;
                         } else {
-                            return Err(Status::invalid_argument(
-                                "file info must be sent first",
-                            ));
+                            // Go returns protocol violations as response-level errors
+                            resp_error = Some("file info must be sent first".to_string());
+                            break;
                         }
                     }
                     None => {
-                        return Err(Status::invalid_argument("unknown message type"));
+                        resp_error = Some("unknown message type".to_string());
+                        break;
                     }
                 }
             }
@@ -1390,6 +1392,13 @@ impl VolumeServer for VolumeGrpcService {
 
         match result {
             Ok(()) => {
+                // Check for protocol-level errors (returned in response body, not gRPC status)
+                if let Some(err_msg) = resp_error {
+                    return Ok(Response::new(volume_server_pb::ReceiveFileResponse {
+                        error: err_msg,
+                        bytes_written: 0,
+                    }));
+                }
                 if let Some(ref f) = target_file {
                     let _ = f.sync_all();
                 }
