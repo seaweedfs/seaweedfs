@@ -116,6 +116,9 @@ pub struct Guard {
     pub expires_after_sec: i64,
     pub read_signing_key: SigningKey,
     pub read_expires_after_sec: i64,
+    /// Combined flag: true when whitelist is non-empty OR signing key is present.
+    /// Matches Go's `isWriteActive = !isEmptyWhiteList || len(SigningKey) != 0`.
+    is_write_active: bool,
 }
 
 impl Guard {
@@ -133,6 +136,7 @@ impl Guard {
             expires_after_sec,
             read_signing_key,
             read_expires_after_sec,
+            is_write_active: false,
         };
         guard.update_whitelist(whitelist);
         guard
@@ -158,11 +162,19 @@ impl Guard {
                 self.whitelist_ips.insert(entry.to_string());
             }
         }
+
+        // Match Go: isWriteActive = !isEmptyWhiteList || len(SigningKey) != 0
+        let is_empty_whitelist = self.whitelist_ips.is_empty() && self.whitelist_cidrs.is_empty();
+        self.is_write_active = !is_empty_whitelist || !self.signing_key.is_empty();
     }
 
     /// Check if a remote IP is in the whitelist.
-    /// Returns true if whitelist is empty (no restriction) or IP matches.
+    /// Returns true if write security is inactive (no whitelist and no signing key),
+    /// if the whitelist is empty, or if the IP matches.
     pub fn check_whitelist(&self, remote_addr: &str) -> bool {
+        if !self.is_write_active {
+            return true;
+        }
         if self.whitelist_ips.is_empty() && self.whitelist_cidrs.is_empty() {
             return true;
         }
