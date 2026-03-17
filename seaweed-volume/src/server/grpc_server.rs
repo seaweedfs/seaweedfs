@@ -670,7 +670,7 @@ impl VolumeServer for VolumeGrpcService {
             let store = self.state.store.read().unwrap();
             let (loc_idx, vol) = store
                 .find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
@@ -690,7 +690,7 @@ impl VolumeServer for VolumeGrpcService {
             let mut store = self.state.store.write().unwrap();
             let (_, vol) = store
                 .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
             vol.set_read_only_persist(req.persist);
         }
         self.state.volume_state_notify.notify_one();
@@ -713,7 +713,7 @@ impl VolumeServer for VolumeGrpcService {
             let store = self.state.store.read().unwrap();
             let (loc_idx, vol) = store
                 .find_volume(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
             MasterVolumeInfo {
                 volume_id: vid,
                 collection: vol.collection.clone(),
@@ -729,7 +729,7 @@ impl VolumeServer for VolumeGrpcService {
             let mut store = self.state.store.write().unwrap();
             let (_, vol) = store
                 .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("not found volume id {}", vid)))?;
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
             vol.set_writable();
         }
         self.state.volume_state_notify.notify_one();
@@ -981,15 +981,47 @@ impl VolumeServer for VolumeGrpcService {
                 };
                 let mut throttler = WriteThrottler::new(io_byte_per_second);
 
-                // TODO: Go queries the master via GetMasterConfiguration gRPC call to check
-                // VolumePreallocate and VolumeSizeLimitMB, then creates a preallocated .dat file
-                // before copying. The try_get_master_configuration function exists in heartbeat.rs
-                // but is not pub and operates independently. To match Go behavior:
-                // 1. Make try_get_master_configuration (or a similar helper) accessible from here
-                // 2. Call master's GetMasterConfiguration using state.master_url
-                // 3. If resp.volume_preallocate is true, create a preallocated file of
-                //    resp.volume_size_limit_mb * 1024 * 1024 bytes via backend::CreateVolumeFile
-                // 4. Then copy the .dat data into the preallocated file
+                // Query master for preallocation settings (matching Go VolumeCopy behavior).
+                let mut preallocate_size: i64 = 0;
+                if !has_remote_dat {
+                    let grpc_addr = super::heartbeat::to_grpc_address(&state.master_url);
+                    match super::heartbeat::try_get_master_configuration(
+                        &grpc_addr,
+                        state.outgoing_grpc_tls.as_ref(),
+                    )
+                    .await
+                    {
+                        Ok(resp) => {
+                            if resp.volume_preallocate {
+                                preallocate_size =
+                                    resp.volume_size_limit_m_b as i64 * 1024 * 1024;
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                "get master {} configuration: {}",
+                                state.master_url,
+                                e
+                            );
+                        }
+                    }
+
+                    if preallocate_size > 0 {
+                        let dat_path = format!("{}.dat", data_base_name);
+                        let file = std::fs::File::create(&dat_path).map_err(|e| {
+                            Status::internal(format!(
+                                "create preallocated volume file {}: {}",
+                                dat_path, e
+                            ))
+                        })?;
+                        file.set_len(preallocate_size as u64).map_err(|e| {
+                            Status::internal(format!(
+                                "preallocate volume file {}: {}",
+                                dat_path, e
+                            ))
+                        })?;
+                    }
+                }
 
                 // Copy .dat file
                 if !has_remote_dat {
@@ -1378,7 +1410,7 @@ impl VolumeServer for VolumeGrpcService {
 
         let blob = vol
             .read_needle_blob(offset, size)
-            .map_err(|e| Status::internal(format!("read needle blob: {}", e)))?;
+            .map_err(|e| Status::internal(format!("read needle blob offset {} size {}: {}", offset, size.0, e)))?;
 
         Ok(Response::new(volume_server_pb::ReadNeedleBlobResponse {
             needle_blob: blob,
@@ -3208,75 +3240,42 @@ impl VolumeServer for VolumeGrpcService {
                 }
                 Err(_) => {
                     return Err(Status::not_found(format!(
-                        "needle {} not found in volume {}",
-                        needle_id, vid
+                        "needle not found {}",
+                        needle_id
                     )))
                 }
             }
         }
 
-        // Fall back to EC shards
-        // TODO: Go calls vs.store.ReadEcShardNeedle(volumeId, n, nil) which reconstructs the
-        // full needle from EC shards (using erasure coding reconstruction across all shards),
-        // then populates last_modified, crc, ttl from the reconstructed data. The Rust
-        // implementation currently only reads the needle header from a single local shard,
-        // so last_modified, crc, and ttl are not populated for EC volumes. To match Go:
-        // 1. Implement a read_ec_shard_needle method on Store or EcVolume that performs
-        //    full needle reconstruction from EC shards
-        // 2. Use it here to get the complete needle data including last_modified, crc, ttl
+        // Fall back to EC shards — read full needle from local shards
         if let Some(ec_vol) = store.find_ec_volume(vid) {
-            match ec_vol.find_needle_from_ecx(needle_id) {
-                Ok(Some((offset, size))) if !size.is_deleted() && !offset.is_zero() => {
-                    // Read the needle header from EC shards to get cookie
-                    // The needle is at the actual offset in the reconstructed data
-                    let actual_offset = offset.to_actual_offset();
-                    let shard_size = ec_vol
-                        .shards
-                        .iter()
-                        .filter_map(|s| s.as_ref())
-                        .map(|s| s.file_size())
-                        .next()
-                        .unwrap_or(0) as u64;
-
-                    if shard_size > 0 {
-                        // Determine which shard and offset
-                        let shard_id = (actual_offset as u64 / shard_size) as usize;
-                        let shard_offset = actual_offset as u64 % shard_size;
-
-                        if let Some(Some(shard)) = ec_vol.shards.get(shard_id) {
-                            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
-                            if shard.read_at(&mut header_buf, shard_offset).is_ok() {
-                                let (cookie, id, _) = Needle::parse_header(&header_buf);
-                                return Ok(Response::new(
-                                    volume_server_pb::VolumeNeedleStatusResponse {
-                                        needle_id: id.0,
-                                        cookie: cookie.0,
-                                        size: size.0 as u32,
-                                        last_modified: 0,
-                                        crc: 0,
-                                        ttl: String::new(),
-                                    },
-                                ));
-                            }
-                        }
-                    }
-
-                    // Fallback: return index info without cookie
+            match ec_vol.read_ec_shard_needle(needle_id) {
+                Ok(Some(n)) => {
+                    let ttl_str = match &n.ttl {
+                        Some(t) if n.has_ttl() => t.to_string(),
+                        _ => String::new(),
+                    };
                     return Ok(Response::new(
                         volume_server_pb::VolumeNeedleStatusResponse {
-                            needle_id: needle_id.0,
-                            cookie: 0,
-                            size: size.0 as u32,
-                            last_modified: 0,
-                            crc: 0,
-                            ttl: String::new(),
+                            needle_id: n.id.0,
+                            cookie: n.cookie.0,
+                            size: n.size.0 as u32,
+                            last_modified: n.last_modified,
+                            crc: n.checksum.0,
+                            ttl: ttl_str,
                         },
                     ));
                 }
-                _ => {
+                Ok(None) => {
                     return Err(Status::not_found(format!(
-                        "needle {} not found in ec volume {}",
-                        needle_id, vid
+                        "needle not found {}",
+                        needle_id
+                    )));
+                }
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "read ec shard needle {} from volume {}: {}",
+                        needle_id, vid, e
                     )));
                 }
             }
