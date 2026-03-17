@@ -7,6 +7,7 @@ import (
 	"path"
 	"time"
 
+	"github.com/apache/iceberg-go"
 	"github.com/apache/iceberg-go/table"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -151,6 +152,22 @@ func buildPlanningIndex(
 	if err != nil {
 		return nil, err
 	}
+	return buildPlanningIndexFromManifests(ctx, filerClient, bucketName, tablePath, meta, config, ops, manifests)
+}
+
+func buildPlanningIndexFromManifests(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	meta table.Metadata,
+	config Config,
+	ops []string,
+	manifests []iceberg.ManifestFile,
+) (*planningIndex, error) {
+	currentSnap := meta.CurrentSnapshot()
+	if currentSnap == nil || currentSnap.ManifestList == "" {
+		return nil, nil
+	}
 
 	index := &planningIndex{
 		SnapshotID:        currentSnap.SnapshotID,
@@ -229,11 +246,11 @@ func persistPlanningIndex(
 		return fmt.Errorf("marshal updated metadata xattr: %w", err)
 	}
 
-	expectedExtended := make(map[string][]byte, 1)
+	expectedExtended := map[string][]byte{
+		s3tables.ExtendedKeyMetadata: existingXattr,
+	}
 	if expectedVersionXattr, ok := resp.Entry.Extended[s3tables.ExtendedKeyMetadataVersion]; ok && len(expectedVersionXattr) > 0 {
 		expectedExtended[s3tables.ExtendedKeyMetadataVersion] = expectedVersionXattr
-	} else {
-		expectedExtended[s3tables.ExtendedKeyMetadata] = existingXattr
 	}
 	resp.Entry.Extended[s3tables.ExtendedKeyMetadata] = updatedXattr
 	_, err = client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{

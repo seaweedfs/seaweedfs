@@ -1491,6 +1491,113 @@ func TestTableNeedsMaintenanceCachesPlanningIndexBuildError(t *testing.T) {
 	}
 }
 
+func TestTableNeedsMaintenanceScopesPlanningIndexBuildErrorsPerOperation(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	meta := populateTable(t, fs, setup)
+	writeCurrentSnapshotManifests(t, fs, setup, meta, [][]iceberg.ManifestEntry{
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-1.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+		makeManifestEntries(t, []testEntrySpec{
+			{path: "data/small-2.parquet", size: 1024, partition: map[int]any{}},
+		}, 1),
+	})
+
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	fs.putEntry(metaDir, "detect-manifest-1.avro", &filer_pb.Entry{
+		Name: "detect-manifest-1.avro",
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    time.Now().Unix(),
+			FileSize: uint64(len("broken")),
+		},
+		Content: []byte("broken"),
+	})
+
+	handler := NewHandler(nil)
+	config := Config{
+		TargetFileSizeBytes:   4096,
+		MinInputFiles:         2,
+		MinManifestsToRewrite: 2,
+		Operations:            "compact,rewrite_manifests",
+	}
+	ops, err := parseOperations(config.Operations)
+	if err != nil {
+		t.Fatalf("parseOperations: %v", err)
+	}
+
+	needsWork, err := handler.tableNeedsMaintenance(context.Background(), client, setup.BucketName, setup.tablePath(), meta, "v1.metadata.json", nil, config, ops)
+	if err != nil {
+		t.Fatalf("expected rewrite_manifests planning to survive compaction planning error, got %v", err)
+	}
+	if !needsWork {
+		t.Fatal("expected rewrite_manifests maintenance despite compaction planning error")
+	}
+}
+
+func TestPersistPlanningIndexUsesMetadataXattrCASGuard(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	now := time.Now().UnixMilli()
+	setup := tableSetup{
+		BucketName: "test-bucket",
+		Namespace:  "analytics",
+		TableName:  "events",
+		Snapshots: []table.Snapshot{
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+		},
+	}
+	populateTable(t, fs, setup)
+
+	tableDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath())
+	tableEntry := fs.getEntry(path.Dir(tableDir), path.Base(tableDir))
+	if tableEntry == nil {
+		t.Fatal("table entry not found")
+	}
+
+	observedExpectedExtended := make(chan map[string][]byte, 1)
+	fs.beforeUpdate = func(_ *fakeFilerServer, req *filer_pb.UpdateEntryRequest) error {
+		cloned := make(map[string][]byte, len(req.ExpectedExtended))
+		for key, value := range req.ExpectedExtended {
+			cloned[key] = append([]byte(nil), value...)
+		}
+		observedExpectedExtended <- cloned
+		return nil
+	}
+
+	err := persistPlanningIndex(context.Background(), client, setup.BucketName, setup.tablePath(), &planningIndex{
+		SnapshotID:   1,
+		ManifestList: "metadata/snap-1.avro",
+		UpdatedAtMs:  time.Now().UnixMilli(),
+	})
+	if err != nil {
+		t.Fatalf("persistPlanningIndex: %v", err)
+	}
+
+	var expectedExtended map[string][]byte
+	select {
+	case expectedExtended = <-observedExpectedExtended:
+	default:
+		t.Fatal("expected persistPlanningIndex to issue an UpdateEntry request")
+	}
+
+	if got := expectedExtended[s3tables.ExtendedKeyMetadata]; !bytes.Equal(got, tableEntry.Extended[s3tables.ExtendedKeyMetadata]) {
+		t.Fatal("expected metadata xattr to be included in ExpectedExtended")
+	}
+	if got := expectedExtended[s3tables.ExtendedKeyMetadataVersion]; !bytes.Equal(got, tableEntry.Extended[s3tables.ExtendedKeyMetadataVersion]) {
+		t.Fatal("expected metadata version xattr to be preserved in ExpectedExtended")
+	}
+}
+
 func TestDetectDoesNotScheduleManifestRewriteFromDeleteManifestsOnly(t *testing.T) {
 	fs, client := startFakeFiler(t)
 

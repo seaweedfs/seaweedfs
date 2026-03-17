@@ -189,36 +189,53 @@ func (h *Handler) tableNeedsMaintenance(
 		}
 	}
 
-	var computedPlanningIndex *planningIndex
-	var planningIndexLoaded bool
-	var planningIndexErr error
-	getPlanningIndex := func() (*planningIndex, error) {
-		if planningIndexLoaded {
-			return computedPlanningIndex, planningIndexErr
+	var currentManifests []iceberg.ManifestFile
+	var manifestsErr error
+	var manifestsLoaded bool
+	getCurrentManifests := func() ([]iceberg.ManifestFile, error) {
+		if manifestsLoaded {
+			return currentManifests, manifestsErr
 		}
-		planningIndexLoaded = true
+		currentManifests, manifestsErr = loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
+		manifestsLoaded = true
+		return currentManifests, manifestsErr
+	}
 
-		index, err := buildPlanningIndex(ctx, filerClient, bucketName, tablePath, meta, config, ops)
+	computedPlanningIndexes := make(map[string]*planningIndex)
+	planningIndexLoaded := make(map[string]bool)
+	planningIndexErrs := make(map[string]error)
+	getPlanningIndex := func(op string) (*planningIndex, error) {
+		if planningIndexLoaded[op] {
+			return computedPlanningIndexes[op], planningIndexErrs[op]
+		}
+		planningIndexLoaded[op] = true
+
+		manifests, err := getCurrentManifests()
 		if err != nil {
-			planningIndexErr = err
+			planningIndexErrs[op] = err
 			return nil, err
 		}
-		computedPlanningIndex = index
+		index, err := buildPlanningIndexFromManifests(ctx, filerClient, bucketName, tablePath, meta, config, []string{op}, manifests)
+		if err != nil {
+			planningIndexErrs[op] = err
+			return nil, err
+		}
+		computedPlanningIndexes[op] = index
 		if index != nil {
 			if err := persistPlanningIndex(ctx, filerClient, bucketName, tablePath, index); err != nil {
 				glog.V(2).Infof("iceberg maintenance: unable to persist planning index for %s/%s: %v", bucketName, tablePath, err)
 			}
 		}
-		return computedPlanningIndex, nil
+		return index, nil
 	}
-	checkPlanningIndex := func(eligibleFn func(*planningIndex, Config) (bool, bool)) (bool, error) {
+	checkPlanningIndex := func(op string, eligibleFn func(*planningIndex, Config) (bool, bool)) (bool, error) {
 		if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
 			if eligible, ok := eligibleFn(cachedPlanningIndex, config); ok {
 				return eligible, nil
 			}
 		}
 
-		index, err := getPlanningIndex()
+		index, err := getPlanningIndex(op)
 		if err != nil {
 			return false, err
 		}
@@ -239,7 +256,7 @@ func (h *Handler) tableNeedsMaintenance(
 			// Handled by the metadata-only check above.
 			continue
 		case "compact":
-			eligible, err := checkPlanningIndex((*planningIndex).compactionEligible)
+			eligible, err := checkPlanningIndex(op, (*planningIndex).compactionEligible)
 			if err != nil {
 				if !planningIndexErrorReported {
 					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
@@ -251,7 +268,7 @@ func (h *Handler) tableNeedsMaintenance(
 				return true, nil
 			}
 		case "rewrite_manifests":
-			eligible, err := checkPlanningIndex((*planningIndex).rewriteManifestsEligible)
+			eligible, err := checkPlanningIndex(op, (*planningIndex).rewriteManifestsEligible)
 			if err != nil {
 				if !planningIndexErrorReported {
 					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
