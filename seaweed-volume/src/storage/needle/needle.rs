@@ -416,11 +416,10 @@ impl Needle {
     pub fn write_bytes(&mut self, version: Version) -> Vec<u8> {
         let mut buf = Vec::with_capacity(256);
 
-        // Compute sizes and flags
-        if self.name_size >= 255 {
+        // Compute sizes (matching Go writeNeedleCommon)
+        if self.name.len() >= 255 {
             self.name_size = 255;
-        }
-        if self.name.len() < self.name_size as usize {
+        } else {
             self.name_size = self.name.len() as u8;
         }
         self.data_size = self.data.len() as u32;
@@ -635,35 +634,52 @@ impl std::fmt::Display for FileId {
     }
 }
 
-/// Format NeedleId + Cookie as hex, stripping leading zero bytes.
+/// Format NeedleId + Cookie as hex, stripping leading zero bytes from NeedleId only.
+/// Matches Go: strips leading zero bytes up to NeedleIdSize (8), so cookie is always present.
 fn format_needle_id_cookie(key: NeedleId, cookie: Cookie) -> String {
     // Encode 12 bytes: 8 for NeedleId + 4 for Cookie
     let mut bytes = [0u8; 12];
     key.to_bytes(&mut bytes[0..8]);
     cookie.to_bytes(&mut bytes[8..12]);
 
-    // Strip leading zero bytes
-    let first_nonzero = bytes
-        .iter()
-        .position(|&b| b != 0)
-        .unwrap_or(bytes.len() - 1);
-    hex::encode(&bytes[first_nonzero..])
+    // Strip leading zero bytes, but only within NeedleId portion (first 8 bytes)
+    let mut nonzero_index = 0;
+    while nonzero_index < NEEDLE_ID_SIZE && bytes[nonzero_index] == 0 {
+        nonzero_index += 1;
+    }
+    hex::encode(&bytes[nonzero_index..])
 }
 
 /// Parse "needle_id_cookie_hex" into (NeedleId, Cookie).
+/// Matches Go's ParseNeedleIdCookie: rejects strings that are too short or too long.
 pub fn parse_needle_id_cookie(s: &str) -> Result<(NeedleId, Cookie), String> {
-    let decoded = hex::decode(s).map_err(|e| format!("invalid hex: {}", e))?;
-
-    // Pad to 12 bytes (8 NeedleId + 4 Cookie)
-    let mut bytes = [0u8; 12];
-    if decoded.len() > 12 {
-        return Err(format!("hex too long: {}", s));
+    // Go: len(key_hash_string) <= CookieSize*2 => error (must be > 8 hex chars)
+    if s.len() <= COOKIE_SIZE * 2 {
+        return Err("KeyHash is too short.".to_string());
     }
-    let start = 12 - decoded.len();
-    bytes[start..].copy_from_slice(&decoded);
+    // Go: len(key_hash_string) > (NeedleIdSize+CookieSize)*2 => error (must be <= 24 hex chars)
+    if s.len() > (NEEDLE_ID_SIZE + COOKIE_SIZE) * 2 {
+        return Err("KeyHash is too long.".to_string());
+    }
 
-    let key = NeedleId::from_bytes(&bytes[0..8]);
-    let cookie = Cookie::from_bytes(&bytes[8..12]);
+    // Split: last CookieSize*2 hex chars are cookie, rest is needle id
+    let split = s.len() - COOKIE_SIZE * 2;
+    let needle_id_hex = &s[..split];
+    let cookie_hex = &s[split..];
+
+    let needle_id_bytes = hex::decode(needle_id_hex).map_err(|e| format!("Parse needleId error: {}", e))?;
+    let cookie_bytes = hex::decode(cookie_hex).map_err(|e| format!("Parse cookie error: {}", e))?;
+
+    // Pad needle id to 8 bytes
+    let mut nid_buf = [0u8; 8];
+    if needle_id_bytes.len() > 8 {
+        return Err(format!("KeyHash is too long."));
+    }
+    let start = 8 - needle_id_bytes.len();
+    nid_buf[start..].copy_from_slice(&needle_id_bytes);
+
+    let key = NeedleId::from_bytes(&nid_buf[0..8]);
+    let cookie = Cookie::from_bytes(&cookie_bytes[0..4]);
     Ok((key, cookie))
 }
 
