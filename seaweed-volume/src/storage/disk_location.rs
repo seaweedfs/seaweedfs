@@ -546,10 +546,11 @@ impl DiskLocation {
         shard_ids: &[u32],
     ) -> Result<(), VolumeError> {
         let dir = self.directory.clone();
+        let idx_dir = self.idx_directory.clone();
         let ec_vol = self
             .ec_volumes
             .entry(vid)
-            .or_insert_with(|| EcVolume::new(&dir, &dir, collection, vid).unwrap());
+            .or_insert_with(|| EcVolume::new(&dir, &idx_dir, collection, vid).unwrap());
 
         for &shard_id in shard_ids {
             let shard = EcVolumeShard::new(&dir, collection, vid, shard_id as u8);
