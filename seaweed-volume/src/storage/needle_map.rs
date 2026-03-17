@@ -204,9 +204,11 @@ impl CompactNeedleMap {
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file.
+    /// Matches Go's CompactMap.Delete: checks !IsDeleted() (not IsValid()),
+    /// so needles with size==0 can still be deleted.
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
         if let Some(old) = self.map.get(key) {
-            if old.size.is_valid() {
+            if !old.size.is_deleted() {
                 // Persist tombstone to idx file BEFORE mutating in-memory state for crash consistency
                 if let Some(ref mut idx_file) = self.idx_file {
                     idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
