@@ -187,7 +187,7 @@ fn unit_to_char(unit: u8) -> char {
 
 impl fmt::Display for TTL {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.is_empty() {
+        if self.count == 0 || self.unit == TTL_UNIT_EMPTY {
             return write!(f, "");
         }
         write!(f, "{}{}", self.count, unit_to_char(self.unit))
