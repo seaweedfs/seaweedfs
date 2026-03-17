@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
-use crate::storage::erasure_coding::ec_shard::EcVolumeShard;
+use crate::storage::erasure_coding::ec_shard::{EcVolumeShard, MAX_SHARD_COUNT};
 use crate::storage::erasure_coding::ec_volume::EcVolume;
 use crate::storage::needle::needle::Needle;
 use crate::storage::needle_map::NeedleMapKind;
@@ -697,9 +697,10 @@ impl Store {
     }
 
     /// Check if all EC shard files have been deleted for a volume.
+    /// Uses MAX_SHARD_COUNT to support non-standard EC configurations.
     fn check_all_ec_shards_deleted(&self, vid: VolumeId, collection: &str) -> bool {
         for loc in &self.locations {
-            for shard_id in 0..14u8 {
+            for shard_id in 0..MAX_SHARD_COUNT as u8 {
                 let shard = EcVolumeShard::new(&loc.directory, collection, vid, shard_id);
                 if std::path::Path::new(&shard.file_name()).exists() {
                     return false;
