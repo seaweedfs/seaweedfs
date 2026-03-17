@@ -704,6 +704,7 @@ fn build_heartbeat_with_ec_status(
                 delete_vids.push(vol.id);
                 should_delete_volume = true;
             } else if !vol.is_expired(volume_size, volume_size_limit) {
+                let (remote_storage_name, remote_storage_key) = vol.remote_storage_name_key();
                 volumes.push(master_pb::VolumeInformationMessage {
                     id: vol.id.0,
                     size: volume_size,
@@ -719,6 +720,8 @@ fn build_heartbeat_with_ec_status(
                     modified_at_second: vol.last_modified_ts() as i64,
                     disk_type: loc.disk_type.to_string(),
                     disk_id: disk_id as u32,
+                    remote_storage_name,
+                    remote_storage_key,
                     ..Default::default()
                 });
             } else if vol.is_expired_long_enough(MAX_TTL_VOLUME_REMOVAL_DELAY) {
@@ -1259,6 +1262,49 @@ mod tests {
 
         assert!(heartbeat.volumes.is_empty());
         assert!(!store.has_volume(VolumeId(51)));
+    }
+
+    #[test]
+    fn test_build_heartbeat_includes_remote_storage_name_and_key() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(71),
+                "remote_volume_case",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        let (_, volume) = store.find_volume_mut(VolumeId(71)).unwrap();
+        volume.volume_info.files.push(crate::storage::volume::PbRemoteFile {
+            backend_type: "s3".to_string(),
+            backend_id: "archive".to_string(),
+            key: "volumes/71.dat".to_string(),
+            ..Default::default()
+        });
+        volume.refresh_remote_write_mode();
+
+        let heartbeat = build_heartbeat(&test_config(), &mut store);
+
+        assert_eq!(heartbeat.volumes.len(), 1);
+        assert_eq!(heartbeat.volumes[0].remote_storage_name, "s3.archive");
+        assert_eq!(heartbeat.volumes[0].remote_storage_key, "volumes/71.dat");
     }
 
     #[test]
