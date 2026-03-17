@@ -3067,15 +3067,15 @@ fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::
             0.0
         };
 
-        // Match Go protobuf JSON marshaling (lowerCamelCase field names)
+        // Match Go encoding/json on protobuf struct (snake_case json tags)
         disk_statuses.push(serde_json::json!({
             "dir": resolved_dir,
             "all": all,
             "used": used,
             "free": free,
-            "percentFree": percent_free,
-            "percentUsed": percent_used,
-            "diskType": loc.disk_type.to_string(),
+            "percent_free": percent_free,
+            "percent_used": percent_used,
+            "disk_type": loc.disk_type.to_string(),
         }));
     }
     disk_statuses
