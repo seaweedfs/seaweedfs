@@ -398,7 +398,28 @@ impl DiskLocation {
 
         for vid in vids {
             if let Some(mut v) = self.volumes.remove(&vid) {
+                crate::metrics::VOLUME_GAUGE
+                    .with_label_values(&[&v.collection, "volume"])
+                    .dec();
                 let _ = v.destroy();
+            }
+        }
+
+        let ec_vids: Vec<VolumeId> = self
+            .ec_volumes
+            .iter()
+            .filter(|(_, v)| v.collection == collection)
+            .map(|(vid, _)| *vid)
+            .collect();
+
+        for vid in ec_vids {
+            if let Some(mut ec_vol) = self.ec_volumes.remove(&vid) {
+                for _ in 0..ec_vol.shard_count() {
+                    crate::metrics::VOLUME_GAUGE
+                        .with_label_values(&[collection, "ec_shards"])
+                        .dec();
+                }
+                ec_vol.destroy();
             }
         }
     }
@@ -853,6 +874,35 @@ mod tests {
         loc.delete_collection("pics");
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(3)).is_some());
+    }
+
+    #[test]
+    fn test_disk_location_delete_collection_removes_ec_volumes() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut loc = DiskLocation::new(
+            dir,
+            dir,
+            10,
+            DiskType::HardDrive,
+            MinFreeSpace::Percent(1.0),
+            Vec::new(),
+        )
+        .unwrap();
+
+        let shard_path = format!("{}/pics_7.ec00", dir);
+        std::fs::write(&shard_path, b"ec-shard").unwrap();
+
+        loc.mount_ec_shards(VolumeId(7), "pics", &[0]).unwrap();
+        assert!(loc.has_ec_volume(VolumeId(7)));
+        assert!(std::path::Path::new(&shard_path).exists());
+        assert!(std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());
+
+        loc.delete_collection("pics");
+
+        assert!(!loc.has_ec_volume(VolumeId(7)));
+        assert!(!std::path::Path::new(&shard_path).exists());
+        assert!(!std::path::Path::new(&format!("{}/pics_7.ecj", dir)).exists());
     }
 
     #[test]
