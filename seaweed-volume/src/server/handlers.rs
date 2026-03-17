@@ -774,11 +774,7 @@ async fn get_or_head_handler_inner(
 
     // Download throttling
     let download_guard = if state.concurrent_download_limit > 0 {
-        let timeout = if state.inflight_download_data_timeout.is_zero() {
-            std::time::Duration::from_secs(2)
-        } else {
-            state.inflight_download_data_timeout
-        };
+        let timeout = state.inflight_download_data_timeout;
         let deadline = tokio::time::Instant::now() + timeout;
 
         loop {
@@ -1673,7 +1669,7 @@ pub async fn post_handler(
     // JWT check for writes
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state
+    if let Err(_) = state
         .guard
         .read()
         .unwrap()
