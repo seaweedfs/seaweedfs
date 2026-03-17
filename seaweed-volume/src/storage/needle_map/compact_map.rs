@@ -114,6 +114,14 @@ impl Segment {
             size,
         };
 
+        // Match Go panic: don't exceed segment capacity
+        if self.list.len() >= SEGMENT_CHUNK_SIZE as usize {
+            panic!(
+                "attempted to write more than {} entries on CompactMapSegment",
+                SEGMENT_CHUNK_SIZE
+            );
+        }
+
         if self.list.len() == SEGMENT_CHUNK_SIZE as usize - 1 {
             // Pin capacity to exact size when maxing out
             let mut new_list = Vec::with_capacity(SEGMENT_CHUNK_SIZE as usize);
