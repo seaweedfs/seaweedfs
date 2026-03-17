@@ -318,9 +318,12 @@ impl EcVolume {
         }
 
         let shard_size = self.shard_file_size();
+        // Pass the actual on-disk size (header+body+checksum+timestamp+padding)
+        // to locate_data, matching Go: types.Size(needle.GetActualSize(size, version))
+        let actual = get_actual_size(size, self.version);
         let intervals = ec_locate::locate_data(
             offset.to_actual_offset(),
-            size,
+            Size(actual as i32),
             shard_size,
             self.data_shards,
         );
