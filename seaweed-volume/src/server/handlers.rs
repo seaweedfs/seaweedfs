@@ -705,19 +705,19 @@ async fn get_or_head_handler_inner(
     // so invalid paths with JWT enabled return 401, not 400.
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) =
+    if let Err(_) =
         state
             .guard
             .read()
             .unwrap()
             .check_jwt_for_file(token.as_deref(), &file_id, false)
     {
-        return (StatusCode::UNAUTHORIZED, format!("JWT error: {}", e)).into_response();
+        return (StatusCode::UNAUTHORIZED, "wrong jwt".to_string()).into_response();
     }
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
-        None => return (StatusCode::BAD_REQUEST, "invalid URL path").into_response(),
+        None => return StatusCode::BAD_REQUEST.into_response(),
     };
 
     // Check if volume exists locally; if not, proxy/redirect based on read_mode.
@@ -1681,7 +1681,7 @@ pub async fn post_handler(
     {
         return json_error_with_query(
             StatusCode::UNAUTHORIZED,
-            format!("JWT error: {}", e),
+            "wrong jwt",
             Some(&query),
         );
     }
@@ -2216,7 +2216,7 @@ pub async fn delete_handler(
     // JWT check for writes (deletes use write key)
     let file_id = extract_file_id(&path);
     let token = extract_jwt(&headers, request.uri());
-    if let Err(e) = state
+    if let Err(_) = state
         .guard
         .read()
         .unwrap()
@@ -2224,7 +2224,7 @@ pub async fn delete_handler(
     {
         return json_error_with_query(
             StatusCode::UNAUTHORIZED,
-            format!("JWT error: {}", e),
+            "wrong jwt",
             Some(&del_query),
         );
     }
@@ -2398,7 +2398,7 @@ pub async fn delete_handler(
         }
         Err(e) => json_error_with_query(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("delete error: {}", e),
+            format!("Deletion Failed: {}", e),
             Some(&del_query),
         ),
     }
