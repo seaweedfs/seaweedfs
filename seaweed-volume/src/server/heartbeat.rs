@@ -600,8 +600,14 @@ fn collect_heartbeat(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
 ) -> master_pb::Heartbeat {
-    let store = state.store.read().unwrap();
-    build_heartbeat(config, &store)
+    let mut store = state.store.write().unwrap();
+    let (ec_shards, deleted_ec_shards) = store.delete_expired_ec_volumes();
+    build_heartbeat_with_ec_status(
+        config,
+        &store,
+        deleted_ec_shards,
+        ec_shards.is_empty(),
+    )
 }
 
 fn collect_location_metadata(store: &Store) -> (Vec<String>, Vec<master_pb::DiskTag>) {
@@ -622,7 +628,18 @@ fn collect_location_metadata(store: &Store) -> (Vec<String>, Vec<master_pb::Disk
     (location_uuids, disk_tags)
 }
 
+#[cfg(test)]
 fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartbeat {
+    let has_no_ec_shards = collect_live_ec_shards(store, false).is_empty();
+    build_heartbeat_with_ec_status(config, store, Vec::new(), has_no_ec_shards)
+}
+
+fn build_heartbeat_with_ec_status(
+    config: &HeartbeatConfig,
+    store: &Store,
+    deleted_ec_shards: Vec<master_pb::VolumeEcShardInformationMessage>,
+    has_no_ec_shards: bool,
+) -> master_pb::Heartbeat {
     #[derive(Default)]
     struct ReadOnlyCounts {
         is_read_only: u32,
@@ -741,7 +758,9 @@ fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartb
         rack: config.rack.clone(),
         admin_port: config.port as u32,
         volumes,
+        deleted_ec_shards,
         has_no_volumes,
+        has_no_ec_shards,
         max_volume_counts,
         grpc_port: config.grpc_port as u32,
         location_uuids,
@@ -750,44 +769,44 @@ fn build_heartbeat(config: &HeartbeatConfig, store: &Store) -> master_pb::Heartb
     }
 }
 
-/// Collect EC shard information into a Heartbeat message.
-fn collect_ec_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -> master_pb::Heartbeat {
-    let store = state.store.read().unwrap();
-
+fn collect_live_ec_shards(
+    store: &Store,
+    update_metrics: bool,
+) -> Vec<master_pb::VolumeEcShardInformationMessage> {
     let mut ec_shards = Vec::new();
     let mut ec_sizes: HashMap<String, u64> = HashMap::new();
+
     for (disk_id, loc) in store.locations.iter().enumerate() {
-        for (vid, ec_vol) in loc.ec_volumes() {
-            let mut ec_index_bits: u32 = 0;
-            let mut shard_sizes = Vec::new();
-            for shard_opt in &ec_vol.shards {
-                if let Some(shard) = shard_opt {
-                    ec_index_bits |= 1u32 << shard.shard_id;
-                    shard_sizes.push(shard.file_size());
-                    *ec_sizes.entry(ec_vol.collection.clone()).or_insert(0) +=
-                        shard.file_size().max(0) as u64;
+        for (_, ec_vol) in loc.ec_volumes() {
+            for message in ec_vol.to_volume_ec_shard_information_messages(disk_id as u32) {
+                if update_metrics {
+                    let total_size: u64 = message
+                        .shard_sizes
+                        .iter()
+                        .map(|size| (*size).max(0) as u64)
+                        .sum();
+                    *ec_sizes.entry(message.collection.clone()).or_insert(0) += total_size;
                 }
-            }
-            if ec_index_bits > 0 {
-                ec_shards.push(master_pb::VolumeEcShardInformationMessage {
-                    id: vid.0,
-                    collection: ec_vol.collection.clone(),
-                    ec_index_bits,
-                    shard_sizes,
-                    disk_type: ec_vol.disk_type.to_string(),
-                    expire_at_sec: ec_vol.expire_at_sec,
-                    disk_id: disk_id as u32,
-                    ..Default::default()
-                });
+                ec_shards.push(message);
             }
         }
     }
 
-    for (col, size) in &ec_sizes {
-        crate::metrics::DISK_SIZE_GAUGE
-            .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC])
-            .set(*size as f64);
+    if update_metrics {
+        for (col, size) in &ec_sizes {
+            crate::metrics::DISK_SIZE_GAUGE
+                .with_label_values(&[col, crate::metrics::DISK_SIZE_LABEL_EC])
+                .set(*size as f64);
+        }
     }
+
+    ec_shards
+}
+
+/// Collect EC shard information into a Heartbeat message.
+fn collect_ec_heartbeat(config: &HeartbeatConfig, state: &Arc<VolumeServerState>) -> master_pb::Heartbeat {
+    let store = state.store.read().unwrap();
+    let ec_shards = collect_live_ec_shards(&store, true);
 
     let has_no = ec_shards.is_empty();
     master_pb::Heartbeat {
@@ -1075,6 +1094,41 @@ mod tests {
                 .get(),
             8.0
         );
+    }
+
+    #[test]
+    fn test_collect_heartbeat_deletes_expired_ec_volumes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let dir = temp_dir.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                8,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        std::fs::write(format!("{}/expired_heartbeat_ec_31.ec00", dir), b"expired").unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(31), "expired_heartbeat_ec", &[0])
+            .unwrap();
+        store
+            .find_ec_volume_mut(VolumeId(31))
+            .unwrap()
+            .expire_at_sec = 1;
+
+        let state = test_state_with_store(store);
+        let heartbeat = collect_heartbeat(&test_config(), &state);
+
+        assert!(heartbeat.has_no_ec_shards);
+        assert_eq!(heartbeat.deleted_ec_shards.len(), 1);
+        assert_eq!(heartbeat.deleted_ec_shards[0].id, 31);
+        assert!(!state.store.read().unwrap().has_ec_volume(VolumeId(31)));
     }
 
     #[test]

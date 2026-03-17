@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::pb::master_pb;
 use crate::storage::erasure_coding::ec_locate;
 use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::needle::needle::{get_actual_size, Needle};
@@ -206,6 +208,42 @@ impl EcVolume {
     /// Count of locally available shards.
     pub fn shard_count(&self) -> usize {
         self.shards.iter().filter(|s| s.is_some()).count()
+    }
+
+    pub fn is_time_to_destroy(&self) -> bool {
+        self.expire_at_sec > 0
+            && SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                > self.expire_at_sec
+    }
+
+    pub fn to_volume_ec_shard_information_messages(
+        &self,
+        disk_id: u32,
+    ) -> Vec<master_pb::VolumeEcShardInformationMessage> {
+        let mut ec_index_bits: u32 = 0;
+        let mut shard_sizes = Vec::new();
+        for shard in self.shards.iter().flatten() {
+            ec_index_bits |= 1u32 << shard.shard_id;
+            shard_sizes.push(shard.file_size());
+        }
+
+        if ec_index_bits == 0 {
+            return Vec::new();
+        }
+
+        vec![master_pb::VolumeEcShardInformationMessage {
+            id: self.volume_id.0,
+            collection: self.collection.clone(),
+            ec_index_bits,
+            shard_sizes,
+            disk_type: self.disk_type.to_string(),
+            expire_at_sec: self.expire_at_sec,
+            disk_id,
+            ..Default::default()
+        }]
     }
 
     // ---- Shard locations (distributed tracking) ----

@@ -8,6 +8,7 @@ use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::MinFreeSpace;
+use crate::pb::master_pb;
 use crate::storage::disk_location::DiskLocation;
 use crate::storage::erasure_coding::ec_shard::EcVolumeShard;
 use crate::storage::erasure_coding::ec_volume::EcVolume;
@@ -569,6 +570,49 @@ impl Store {
         self.locations.iter().any(|loc| loc.has_ec_volume(vid))
     }
 
+    pub fn delete_expired_ec_volumes(
+        &mut self,
+    ) -> (
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+        Vec<master_pb::VolumeEcShardInformationMessage>,
+    ) {
+        let mut ec_shards = Vec::new();
+        let mut deleted = Vec::new();
+
+        for (disk_id, loc) in self.locations.iter_mut().enumerate() {
+            let mut expired_vids = Vec::new();
+            for (vid, ec_vol) in loc.ec_volumes() {
+                if ec_vol.is_time_to_destroy() {
+                    expired_vids.push(*vid);
+                } else {
+                    ec_shards.extend(
+                        ec_vol.to_volume_ec_shard_information_messages(disk_id as u32),
+                    );
+                }
+            }
+
+            for vid in expired_vids {
+                let messages = loc
+                    .find_ec_volume(vid)
+                    .map(|ec_vol| ec_vol.to_volume_ec_shard_information_messages(disk_id as u32))
+                    .unwrap_or_default();
+                if let Some(mut ec_vol) = loc.remove_ec_volume(vid) {
+                    for _ in 0..ec_vol.shard_count() {
+                        crate::metrics::VOLUME_GAUGE
+                            .with_label_values(&[&ec_vol.collection, "ec_shards"])
+                            .dec();
+                    }
+                    ec_vol.destroy();
+                    deleted.extend(messages);
+                } else {
+                    ec_shards.extend(messages);
+                }
+            }
+        }
+
+        (ec_shards, deleted)
+    }
+
     /// Remove an EC volume from whichever location has it.
     pub fn remove_ec_volume(&mut self, vid: VolumeId) -> Option<EcVolume> {
         for loc in &mut self.locations {
@@ -1041,6 +1085,30 @@ mod tests {
         store.delete_collection("pics").unwrap();
         assert_eq!(store.total_volume_count(), 1);
         assert!(store.has_volume(VolumeId(3)));
+    }
+
+    #[test]
+    fn test_delete_expired_ec_volumes_removes_expired_entries() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut store = make_test_store(&[dir]);
+
+        std::fs::write(format!("{}/expired_ec_case_9.ec00", dir), b"expired").unwrap();
+        store.locations[0]
+            .mount_ec_shards(VolumeId(9), "expired_ec_case", &[0])
+            .unwrap();
+        store
+            .find_ec_volume_mut(VolumeId(9))
+            .unwrap()
+            .expire_at_sec = 1;
+
+        let (ec_shards, deleted) = store.delete_expired_ec_volumes();
+
+        assert!(ec_shards.is_empty());
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].id, 9);
+        assert!(!store.has_ec_volume(VolumeId(9)));
+        assert!(!std::path::Path::new(&format!("{}/expired_ec_case_9.ec00", dir)).exists());
     }
 
     #[test]
