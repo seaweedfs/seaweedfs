@@ -653,7 +653,7 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
         store
-            .delete_volume(vid, false)
+            .delete_volume(vid, req.only_empty)
             .map_err(|e| Status::internal(e.to_string()))?;
         Ok(Response::new(volume_server_pb::VolumeDeleteResponse {}))
     }
