@@ -197,10 +197,10 @@ impl Store {
     }
 
     /// Delete a volume from any location.
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+    pub fn delete_volume(&mut self, vid: VolumeId, only_empty: bool) -> Result<(), VolumeError> {
         for loc in &mut self.locations {
             if loc.find_volume(vid).is_some() {
-                return loc.delete_volume(vid);
+                return loc.delete_volume(vid, only_empty);
             }
         }
         Err(VolumeError::NotFound)

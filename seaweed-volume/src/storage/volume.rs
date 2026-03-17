@@ -2029,7 +2029,7 @@ impl Volume {
     pub fn set_read_only_persist(&mut self, persist: bool) {
         self.no_write_or_delete = true;
         if persist {
-            self.save_vif();
+            let _ = self.save_vif();
         }
     }
 
@@ -2037,7 +2037,7 @@ impl Volume {
     pub fn set_writable(&mut self) {
         self.no_write_or_delete = false;
         self.no_write_can_delete = self.has_remote_file;
-        self.save_vif();
+        let _ = self.save_vif();
     }
 
     /// Recompute the Go-style write/delete mode from the current remote tier state.
@@ -2138,12 +2138,13 @@ impl Volume {
         let vif_path = self.vif_path();
 
         // Match Go: if file exists but is not writable, return an error
-        if vif_path.exists() {
-            let metadata = fs::metadata(&vif_path)?;
+        let path = std::path::Path::new(&vif_path);
+        if path.exists() {
+            let metadata = fs::metadata(path)?;
             if metadata.permissions().readonly() {
                 return Err(VolumeError::Io(io::Error::new(
                     io::ErrorKind::PermissionDenied,
-                    format!("failed to check {} not writable", vif_path.display()),
+                    format!("failed to check {} not writable", vif_path),
                 )));
             }
         }
@@ -3464,7 +3465,7 @@ mod tests {
             dat_path = v.file_name(".dat");
             idx_path = v.file_name(".idx");
             assert!(Path::new(&dat_path).exists());
-            v.destroy().unwrap();
+            v.destroy(false).unwrap();
         }
 
         assert!(!Path::new(&dat_path).exists());
@@ -3811,7 +3812,7 @@ mod tests {
             extension: ".dat".to_string(),
         });
         v.refresh_remote_write_mode();
-        v.set_writable();
+        v.set_writable().unwrap();
 
         assert!(v.is_read_only());
         assert!(!v.no_write_or_delete);
@@ -4072,7 +4073,7 @@ mod tests {
         assert!(std::path::Path::new(&idx_path).exists());
 
         // Destroy the volume
-        v.destroy().unwrap();
+        v.destroy(false).unwrap();
 
         // .dat and .idx should be gone
         assert!(
@@ -4129,7 +4130,7 @@ mod tests {
         assert!(std::path::Path::new(&dat_path).exists());
         assert!(std::path::Path::new(&idx_path).exists());
 
-        v.destroy().unwrap();
+        v.destroy(false).unwrap();
 
         assert!(
             !std::path::Path::new(&dat_path).exists(),

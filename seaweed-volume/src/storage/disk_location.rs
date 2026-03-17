@@ -375,12 +375,12 @@ impl DiskLocation {
     }
 
     /// Remove, close, and delete all files for a volume.
-    pub fn delete_volume(&mut self, vid: VolumeId) -> Result<(), VolumeError> {
+    pub fn delete_volume(&mut self, vid: VolumeId, only_empty: bool) -> Result<(), VolumeError> {
         if let Some(mut v) = self.volumes.remove(&vid) {
             crate::metrics::VOLUME_GAUGE
                 .with_label_values(&[&v.collection, "volume"])
                 .dec();
-            v.destroy()?;
+            v.destroy(only_empty)?;
             Ok(())
         } else {
             Err(VolumeError::NotFound)
@@ -401,7 +401,7 @@ impl DiskLocation {
                 crate::metrics::VOLUME_GAUGE
                     .with_label_values(&[&v.collection, "volume"])
                     .dec();
-                v.destroy()?;
+                v.destroy(false)?;
             }
         }
 
@@ -823,7 +823,7 @@ mod tests {
         .unwrap();
         assert_eq!(loc.volumes_len(), 2);
 
-        loc.delete_volume(VolumeId(1)).unwrap();
+        loc.delete_volume(VolumeId(1), false).unwrap();
         assert_eq!(loc.volumes_len(), 1);
         assert!(loc.find_volume(VolumeId(1)).is_none());
     }

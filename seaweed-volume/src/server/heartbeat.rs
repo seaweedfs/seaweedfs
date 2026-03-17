@@ -845,7 +845,7 @@ fn build_heartbeat_with_ec_status(
         }
 
         for vid in delete_vids {
-            let _ = loc.delete_volume(vid);
+            let _ = loc.delete_volume(vid, false);
         }
     }
 
@@ -1135,7 +1135,7 @@ mod tests {
 
         {
             let (_, volume) = store.find_volume_mut(VolumeId(17)).unwrap();
-            volume.set_read_only();
+            volume.set_read_only().unwrap();
             volume.volume_info.files.push(Default::default());
             volume.refresh_remote_write_mode();
         }
