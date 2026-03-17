@@ -299,6 +299,40 @@ impl EcVolume {
         0
     }
 
+    /// Walk the .ecx index and return (file_count, file_deleted_count, total_size).
+    /// total_size sums size.Raw() for all entries (including deleted), matching Go's WalkIndex.
+    pub fn walk_ecx_stats(&self) -> io::Result<(u64, u64, u64)> {
+        let ecx_file = match self.ecx_file.as_ref() {
+            Some(f) => f,
+            None => return Ok((0, 0, 0)),
+        };
+
+        let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
+        let mut files: u64 = 0;
+        let mut files_deleted: u64 = 0;
+        let mut total_size: u64 = 0;
+        let mut entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+
+        for i in 0..entry_count {
+            let file_offset = (i * NEEDLE_MAP_ENTRY_SIZE) as u64;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
+            }
+            let (_key, _offset, size) = idx_entry_from_bytes(&entry_buf);
+            // Raw size includes the sign bit; match Go's size.Raw() which is uint32
+            total_size += size.0.unsigned_abs() as u64;
+            if size.is_deleted() {
+                files_deleted += 1;
+            } else {
+                files += 1;
+            }
+        }
+
+        Ok((files, files_deleted, total_size))
+    }
+
     // ---- Deletion journal ----
 
     /// Append a deleted needle ID to the .ecj journal.
