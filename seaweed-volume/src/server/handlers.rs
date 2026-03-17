@@ -1028,8 +1028,10 @@ async fn get_or_head_handler_inner(
     }
 
     // Chunk manifest expansion (needs full data) — after conditional checks, before response
+    // Pass ETag so chunk manifest responses include it (matches Go: ETag is set on the
+    // response writer before tryHandleChunkedFile runs).
     if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method, &path, &query) {
+        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method, &path, &query, &etag) {
             return resp;
         }
         // If manifest expansion fails (invalid JSON etc.), fall through to raw data
@@ -1798,6 +1800,7 @@ struct UploadResult {
     size: u32,
     #[serde(rename = "eTag", skip_serializing_if = "String::is_empty")]
     etag: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
     mime: String,
     #[serde(rename = "contentMd5", skip_serializing_if = "Option::is_none")]
     content_md5: Option<String>,
@@ -2065,6 +2068,7 @@ pub async fn post_handler(
 
     // Validate Content-MD5 if provided
     let content_md5 = content_md5.or(parsed_content_md5);
+    let has_request_content_md5 = content_md5.is_some();
     if let Some(ref expected_md5) = content_md5 {
         if expected_md5 != &original_content_md5 {
             return json_error_with_query(
@@ -2284,12 +2288,13 @@ pub async fn post_handler(
             } else {
                 // H2: Use Content-MD5 computed from original uncompressed data
                 let content_md5_value = original_content_md5;
+                // Match Go: only include contentMd5 in response when request provided Content-MD5
                 let result = UploadResult {
                     name: filename.clone(),
                     size: original_data_size, // H3: use original size, not compressed
                     etag: n.etag(),
                     mime: mime_type.clone(),
-                    content_md5: Some(content_md5_value.clone()),
+                    content_md5: if has_request_content_md5 { Some(content_md5_value.clone()) } else { None },
                 };
                 let etag = n.etag();
                 let etag_header = if etag.starts_with('"') {
@@ -2300,8 +2305,10 @@ pub async fn post_handler(
                 let mut resp = (StatusCode::CREATED, axum::Json(result)).into_response();
                 resp.headers_mut()
                     .insert(header::ETAG, etag_header.parse().unwrap());
-                resp.headers_mut()
-                    .insert("Content-MD5", content_md5_value.parse().unwrap());
+                if has_request_content_md5 {
+                    resp.headers_mut()
+                        .insert("Content-MD5", content_md5_value.parse().unwrap());
+                }
                 resp
             }
         }
@@ -2879,6 +2886,7 @@ fn try_expand_chunk_manifest(
     method: &Method,
     path: &str,
     query: &ReadQueryParams,
+    etag: &str,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
         use flate2::read::GzDecoder;
@@ -2992,6 +3000,10 @@ fn try_expand_chunk_manifest(
     };
 
     let mut response_headers = HeaderMap::new();
+    // Preserve ETag from the needle (matches Go: ETag is set before tryHandleChunkedFile)
+    if let Ok(etag_val) = etag.parse() {
+        response_headers.insert(header::ETAG, etag_val);
+    }
     response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
@@ -3055,14 +3067,15 @@ fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::
             0.0
         };
 
+        // Match Go protobuf JSON marshaling (lowerCamelCase field names)
         disk_statuses.push(serde_json::json!({
             "dir": resolved_dir,
             "all": all,
             "used": used,
             "free": free,
-            "percent_free": percent_free,
-            "percent_used": percent_used,
-            "disk_type": loc.disk_type.to_string(),
+            "percentFree": percent_free,
+            "percentUsed": percent_used,
+            "diskType": loc.disk_type.to_string(),
         }));
     }
     disk_statuses
