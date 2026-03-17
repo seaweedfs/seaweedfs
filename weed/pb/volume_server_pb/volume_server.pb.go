@@ -5422,7 +5422,7 @@ type FetchAndWriteNeedleRequest struct {
 	Size                int64                                 `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`
 	Replicas            []*FetchAndWriteNeedleRequest_Replica `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
 	Auth                string                                `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
-	DownloadConcurrency int32                                 `protobuf:"varint,8,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // S3 multipart download concurrency, 0 = default (5)
+	DownloadConcurrency int32                                 `protobuf:"varint,8,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // multipart download concurrency if supported by the remote storage client; for S3, 0 = default (5)
 	// remote conf
 	RemoteConf     *remote_pb.RemoteConf            `protobuf:"bytes,15,opt,name=remote_conf,json=remoteConf,proto3" json:"remote_conf,omitempty"`
 	RemoteLocation *remote_pb.RemoteStorageLocation `protobuf:"bytes,16,opt,name=remote_location,json=remoteLocation,proto3" json:"remote_location,omitempty"`

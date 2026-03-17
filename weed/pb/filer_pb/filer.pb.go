@@ -3628,7 +3628,7 @@ type CacheRemoteObjectToLocalClusterRequest struct {
 	Directory           string                 `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
 	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
 	ChunkConcurrency    int32                  `protobuf:"varint,3,opt,name=chunk_concurrency,json=chunkConcurrency,proto3" json:"chunk_concurrency,omitempty"`          // parallel chunk downloads per file, 0 = default (8)
-	DownloadConcurrency int32                  `protobuf:"varint,4,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // S3 multipart download concurrency per chunk, 0 = default (5)
+	DownloadConcurrency int32                  `protobuf:"varint,4,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // multipart download concurrency per chunk (if supported by remote storage), 0 = default (5 for S3)
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }

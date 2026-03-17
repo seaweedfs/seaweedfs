@@ -636,7 +636,7 @@ message FetchAndWriteNeedleRequest {
     }
     repeated Replica replicas = 6;
     string auth = 7;
-    int32 download_concurrency = 8; // S3 multipart download concurrency, 0 = default (5)
+    int32 download_concurrency = 8; // multipart download concurrency if supported by the remote storage client; for S3, 0 = default (5)
     // remote conf
     remote_pb.RemoteConf remote_conf = 15;
     remote_pb.RemoteStorageLocation remote_location = 16;

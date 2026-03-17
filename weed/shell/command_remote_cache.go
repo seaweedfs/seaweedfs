@@ -39,8 +39,8 @@ func (c *commandRemoteCache) Help() string {
 	remote.cache -dir=/xxx -cacheContent=false            # sync metadata and cleanup only, no caching
 	remote.cache -dir=/xxx -deleteLocalExtra=false        # skip removal of local files missing from remote
 	remote.cache -dir=/xxx -concurrent=32                 # with custom file-level concurrency
-	remote.cache -dir=/xxx -chunkConcurrency=16           # parallel chunk downloads per file (0 = server default)
-	remote.cache -dir=/xxx -downloadConcurrency=10        # S3 multipart download concurrency per chunk (0 = server default)
+	remote.cache -dir=/xxx -chunkConcurrency=16           # parallel chunk downloads per file (0 = server default 8)
+	remote.cache -dir=/xxx -downloadConcurrency=10        # S3 multipart download concurrency per chunk (0 = server default 5)
 	remote.cache -dir=/xxx -include=*.pdf                 # only sync PDF files
 	remote.cache -dir=/xxx -exclude=*.tmp                 # exclude temporary files
 	remote.cache -dir=/xxx -dryRun=true                   # show what would be done without making changes
@@ -67,8 +67,8 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	cache := remoteCacheCommand.Bool("cacheContent", true, "cache file content from remote")
 	deleteLocalExtra := remoteCacheCommand.Bool("deleteLocalExtra", true, "delete local files that no longer exist on remote")
 	concurrency := remoteCacheCommand.Int("concurrent", 16, "concurrent file operations")
-	chunkConcurrency := remoteCacheCommand.Int("chunkConcurrency", 0, "parallel chunk downloads per file (0 = server default)")
-	downloadConcurrency := remoteCacheCommand.Int("downloadConcurrency", 0, "S3 multipart download concurrency per chunk (0 = server default)")
+	chunkConcurrency := remoteCacheCommand.Int("chunkConcurrency", 0, "parallel chunk downloads per file (0 = server default 8)")
+	downloadConcurrency := remoteCacheCommand.Int("downloadConcurrency", 0, "S3 multipart download concurrency per chunk (0 = server default 5)")
 	dryRun := remoteCacheCommand.Bool("dryRun", false, "show what would be done without making changes")
 	fileFiler := newFileFilter(remoteCacheCommand)
 

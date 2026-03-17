@@ -129,7 +129,7 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		}
 	}
 	// final safety check: ensure no more than 1000 chunks
-	if entry.Remote.RemoteSize/chunkSize+1 > 1000 {
+	if (entry.Remote.RemoteSize+chunkSize-1)/chunkSize > 1000 {
 		chunkSize = (entry.Remote.RemoteSize + 999) / 1000
 	}
 
@@ -143,8 +143,15 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	chunkConcurrency := int(req.ChunkConcurrency)
 	if chunkConcurrency <= 0 {
 		chunkConcurrency = 8
+	} else if chunkConcurrency > 1024 {
+		glog.V(0).Infof("capping chunkConcurrency from %d to 1024", chunkConcurrency)
+		chunkConcurrency = 1024
 	}
 	downloadConcurrency := req.DownloadConcurrency
+	if downloadConcurrency > 1024 {
+		glog.V(0).Infof("capping downloadConcurrency from %d to 1024", downloadConcurrency)
+		downloadConcurrency = 1024
+	}
 
 	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(chunkConcurrency)
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
