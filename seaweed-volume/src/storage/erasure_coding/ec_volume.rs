@@ -169,6 +169,14 @@ impl EcVolume {
         format!("{}.ecj", self.idx_base_name())
     }
 
+    /// Sync the EC volume's journal file to disk (matching Go's ecv.SyncToDisk()).
+    pub fn sync_to_disk(&self) -> io::Result<()> {
+        if let Some(ref ecj_file) = self.ecj_file {
+            ecj_file.sync_all()?;
+        }
+        Ok(())
+    }
+
     // ---- Shard management ----
 
     /// Add a shard to this volume.

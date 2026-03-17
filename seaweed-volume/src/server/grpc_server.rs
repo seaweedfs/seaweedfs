@@ -1215,6 +1215,14 @@ impl VolumeServer for VolumeGrpcService {
             file_name = v.file_name(&req.ext);
             drop(store);
         } else {
+            // Sync EC volume journal to disk before copying (matching Go's ecv.SyncToDisk())
+            {
+                let store = self.state.store.read().unwrap();
+                if let Some(ecv) = store.find_ec_volume(vid) {
+                    let _ = ecv.sync_to_disk();
+                }
+            }
+
             // EC volume: search disk locations for the file
             let store = self.state.store.read().unwrap();
             let mut found_path = None;
