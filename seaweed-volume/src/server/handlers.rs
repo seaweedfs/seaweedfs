@@ -1070,7 +1070,7 @@ async fn get_or_head_handler_inner(
         } else {
             "inline"
         };
-        let disposition = format!("{}; filename=\"{}\"", disposition_type, filename);
+        let disposition = format_content_disposition(disposition_type, &filename);
         if let Ok(hval) = disposition.parse() {
             response_headers.insert(header::CONTENT_DISPOSITION, hval);
         }
@@ -1540,6 +1540,76 @@ fn parse_go_bool(value: &str) -> Option<bool> {
         _ => None,
     }
 }
+
+/// Format Content-Disposition header value per RFC 6266.
+///
+/// Matches Go's `mime.FormatMediaType(dispositionType, map[string]string{"filename": filename})`:
+/// - Simple ASCII names (alphanumeric, hyphen, underscore, dot): `attachment; filename=file.txt`
+/// - ASCII names with spaces/special chars: `attachment; filename="my file.txt"`
+/// - Non-ASCII names: `attachment; filename*=utf-8''percent-encoded-name`
+fn format_content_disposition(disposition_type: &str, filename: &str) -> String {
+    let is_ascii = filename.bytes().all(|b| b.is_ascii());
+    if is_ascii {
+        // Check if the filename is a simple "token" (no quoting needed).
+        // RFC 2616 token chars: any CHAR except CTLs or separators.
+        // Go's mime.FormatMediaType uses needsQuoting which checks for non-token chars.
+        let is_token = !filename.is_empty()
+            && filename.bytes().all(|b| {
+                b > 0x20
+                    && b < 0x7f
+                    && !matches!(
+                        b,
+                        b'(' | b')'
+                            | b'<'
+                            | b'>'
+                            | b'@'
+                            | b','
+                            | b';'
+                            | b':'
+                            | b'\\'
+                            | b'"'
+                            | b'/'
+                            | b'['
+                            | b']'
+                            | b'?'
+                            | b'='
+                            | b' '
+                    )
+            });
+        if is_token {
+            format!("{}; filename={}", disposition_type, filename)
+        } else {
+            // Quote the filename, escaping backslashes and quotes
+            let escaped = filename.replace('\\', "\\\\").replace('"', "\\\"");
+            format!("{}; filename=\"{}\"", disposition_type, escaped)
+        }
+    } else {
+        // Non-ASCII: use RFC 2231 encoding with filename* parameter
+        let encoded = percent_encode_rfc2231(filename);
+        format!(
+            "{}; filename*=utf-8''{}",
+            disposition_type, encoded
+        )
+    }
+}
+
+/// Percent-encode a string for RFC 2231 filename* parameter.
+/// Encodes all bytes except unreserved chars (ALPHA / DIGIT / "-" / "." / "_" / "~").
+fn percent_encode_rfc2231(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for byte in s.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(byte as char);
+        } else {
+            out.push('%');
+            out.push(char::from(HEX_UPPER[byte as usize >> 4]));
+            out.push(char::from(HEX_UPPER[byte as usize & 0x0f]));
+        }
+    }
+    out
+}
+
+const HEX_UPPER: [u8; 16] = *b"0123456789ABCDEF";
 
 // ============================================================================
 // Image processing helpers
