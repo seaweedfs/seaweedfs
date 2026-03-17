@@ -2131,9 +2131,30 @@ impl Volume {
             )));
         }
 
+        // Patch appendAtNs timestamp into V3 blobs (matches Go WriteNeedleBlob L64-77)
+        let mut blob_buf;
+        let blob_to_write = if self.version() == VERSION_3 {
+            let ts_offset =
+                NEEDLE_HEADER_SIZE + size.0 as usize + NEEDLE_CHECKSUM_SIZE;
+            if ts_offset + TIMESTAMP_SIZE <= needle_blob.len() {
+                blob_buf = needle_blob.to_vec();
+                let now_ns = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_nanos() as u64;
+                blob_buf[ts_offset..ts_offset + TIMESTAMP_SIZE]
+                    .copy_from_slice(&now_ns.to_be_bytes());
+                &blob_buf[..]
+            } else {
+                needle_blob
+            }
+        } else {
+            needle_blob
+        };
+
         // Append blob at end of dat file
         let dat_size = self.dat_file_size()? as i64;
-        self.write_needle_blob(dat_size, needle_blob)?;
+        self.write_needle_blob(dat_size, blob_to_write)?;
 
         // Update needle map index
         let offset = Offset::from_actual_offset(dat_size);
@@ -2519,12 +2540,6 @@ impl Volume {
                 dst_idx.write_all(&idx_entry_buf)?;
 
                 dat_offset += bytes.len() as u64;
-            }
-
-            let padding = NEEDLE_PADDING_SIZE as u64 - (dat_offset % NEEDLE_PADDING_SIZE as u64);
-            if padding != NEEDLE_PADDING_SIZE as u64 {
-                dat_offset += padding;
-                dst_dat.seek(SeekFrom::Start(dat_offset))?;
             }
         }
 
