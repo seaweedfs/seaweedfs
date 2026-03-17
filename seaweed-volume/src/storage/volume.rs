@@ -951,9 +951,8 @@ impl Volume {
 
         // Match Go: if volumeInfo.Replication is set, override super block's ReplicaPlacement
         if !self.volume_info.replication.is_empty() {
-            if let Ok(rp) = ReplicaPlacement::from_string(&self.volume_info.replication) {
-                self.super_block.replica_placement = rp;
-            }
+            let rp = ReplicaPlacement::from_string(&self.volume_info.replication)?;
+            self.super_block.replica_placement = rp;
         }
 
         Ok(())
