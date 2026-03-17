@@ -1320,95 +1320,121 @@ async fn get_or_head_handler_inner(
 }
 
 /// Handle HTTP Range requests. Returns 206 Partial Content or 416 Range Not Satisfiable.
+#[derive(Clone, Copy)]
+struct HttpRange {
+    start: i64,
+    length: i64,
+}
+
+fn parse_range_header(s: &str, size: i64) -> Result<Vec<HttpRange>, &'static str> {
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    const PREFIX: &str = "bytes=";
+    if !s.starts_with(PREFIX) {
+        return Err("invalid range");
+    }
+    let mut ranges = Vec::new();
+    for part in s[PREFIX.len()..].split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let Some(pos) = part.find('-') else {
+            return Err("invalid range");
+        };
+        let start_str = part[..pos].trim();
+        let end_str = part[pos + 1..].trim();
+        let mut r = HttpRange { start: 0, length: 0 };
+        if start_str.is_empty() {
+            let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i > size {
+                i = size;
+            }
+            r.start = size - i;
+            r.length = size - r.start;
+        } else {
+            let i = start_str.parse::<i64>().map_err(|_| "invalid range")?;
+            if i > size || i < 0 {
+                return Err("invalid range");
+            }
+            r.start = i;
+            if end_str.is_empty() {
+                r.length = size - r.start;
+            } else {
+                let mut i = end_str.parse::<i64>().map_err(|_| "invalid range")?;
+                if r.start > i {
+                    return Err("invalid range");
+                }
+                if i >= size {
+                    i = size - 1;
+                }
+                r.length = i - r.start + 1;
+            }
+        }
+        ranges.push(r);
+    }
+    Ok(ranges)
+}
+
+fn sum_ranges_size(ranges: &[HttpRange]) -> i64 {
+    ranges.iter().map(|r| r.length).sum()
+}
+
+fn range_content_range(r: HttpRange, total: i64) -> String {
+    format!("bytes {}-{}/{}", r.start, r.start + r.length - 1, total)
+}
+
+fn range_error_response(mut headers: HeaderMap, msg: &str) -> Response {
+    if !headers.contains_key(header::CONTENT_TYPE) {
+        headers.insert(
+            header::CONTENT_TYPE,
+            "text/plain; charset=utf-8".parse().unwrap(),
+        );
+    }
+    let mut response = Response::new(Body::from(msg.to_string()));
+    *response.status_mut() = StatusCode::RANGE_NOT_SATISFIABLE;
+    *response.headers_mut() = headers;
+    response
+}
+
 fn handle_range_request(
     range_str: &str,
     data: &[u8],
     mut headers: HeaderMap,
     state: Option<Arc<VolumeServerState>>,
 ) -> Response {
-    let total = data.len();
-
-    // Parse "bytes=start-end"
-    let range_spec = match range_str.strip_prefix("bytes=") {
-        Some(s) => s,
-        None => return (StatusCode::OK, headers, data.to_vec()).into_response(),
+    let total = data.len() as i64;
+    let ranges = match parse_range_header(range_str, total) {
+        Ok(r) => r,
+        Err(msg) => return range_error_response(headers, msg),
     };
 
-    // Parse individual ranges
-    let ranges: Vec<(usize, usize)> = range_spec
-        .split(',')
-        .filter_map(|part| {
-            let part = part.trim();
-            if let Some(pos) = part.find('-') {
-                let start_str = &part[..pos];
-                let end_str = &part[pos + 1..];
-
-                if start_str.is_empty() {
-                    // Suffix range: -N means last N bytes
-                    let mut suffix: usize = end_str.parse().ok()?;
-                    // Go clamps suffix to file size
-                    if suffix > total {
-                        suffix = total;
-                    }
-                    Some((total - suffix, total - 1))
-                } else {
-                    let start: usize = start_str.parse().ok()?;
-                    let end = if end_str.is_empty() {
-                        total - 1
-                    } else {
-                        end_str.parse().ok()?
-                    };
-                    Some((start, end))
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
     if ranges.is_empty() {
-        return (StatusCode::OK, headers, data.to_vec()).into_response();
-    }
-
-    // Clamp range ends and validate (Go clamps end to size-1 instead of returning 416)
-    let ranges: Vec<(usize, usize)> = ranges
-        .into_iter()
-        .map(|(start, mut end)| {
-            if end >= total {
-                end = total - 1;
-            }
-            (start, end)
-        })
-        .collect();
-    for &(start, end) in &ranges {
-        if start >= total || start > end {
-            headers.insert(
-                "Content-Range",
-                format!("bytes */{}", total).parse().unwrap(),
-            );
-            return (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response();
-        }
+        return (StatusCode::OK, headers).into_response();
     }
 
     // If combined range bytes exceed content size, ignore the range (return 200 empty)
-    let combined_bytes: usize = ranges.iter().map(|&(s, e)| e - s + 1).sum();
-    if combined_bytes > total {
+    if sum_ranges_size(&ranges) > total {
         return (StatusCode::OK, headers).into_response();
     }
 
     if ranges.len() == 1 {
-        let (start, end) = ranges[0];
-        let slice = &data[start..=end];
+        let r = ranges[0];
         headers.insert(
             "Content-Range",
-            format!("bytes {}-{}/{}", start, end, total)
-                .parse()
-                .unwrap(),
+            range_content_range(r, total).parse().unwrap(),
         );
         headers.insert(
             header::CONTENT_LENGTH,
-            slice.len().to_string().parse().unwrap(),
+            r.length.max(0).to_string().parse().unwrap(),
         );
+        if r.length <= 0 {
+            return (StatusCode::PARTIAL_CONTENT, headers).into_response();
+        }
+        let start = r.start as usize;
+        let end = (r.start + r.length) as usize;
+        let slice = &data[start..end];
         finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, slice.to_vec(), state)
     } else {
         // Multi-range: build multipart/byteranges response
@@ -1420,7 +1446,7 @@ fn handle_range_request(
             .to_string();
 
         let mut body = Vec::new();
-        for (i, &(start, end)) in ranges.iter().enumerate() {
+        for (i, r) in ranges.iter().enumerate() {
             // First boundary has no leading CRLF per RFC 2046
             if i == 0 {
                 body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
@@ -1429,9 +1455,13 @@ fn handle_range_request(
             }
             body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
             body.extend_from_slice(
-                format!("Content-Range: bytes {}-{}/{}\r\n\r\n", start, end, total).as_bytes(),
+                format!("Content-Range: {}\r\n\r\n", range_content_range(*r, total)).as_bytes(),
             );
-            body.extend_from_slice(&data[start..=end]);
+            if r.length > 0 {
+                let start = r.start as usize;
+                let end = (r.start + r.length) as usize;
+                body.extend_from_slice(&data[start..end]);
+            }
         }
         body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
 
@@ -1441,10 +1471,12 @@ fn handle_range_request(
                 .parse()
                 .unwrap(),
         );
-        headers.insert(
-            header::CONTENT_LENGTH,
-            body.len().to_string().parse().unwrap(),
-        );
+        if !headers.contains_key(header::CONTENT_ENCODING) {
+            headers.insert(
+                header::CONTENT_LENGTH,
+                body.len().to_string().parse().unwrap(),
+            );
+        }
         finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, body, state)
     }
 }
@@ -1455,91 +1487,33 @@ fn handle_range_request_from_source(
     mut headers: HeaderMap,
     state: Option<Arc<VolumeServerState>>,
 ) -> Response {
-    let total = info.data_size as usize;
-
-    let range_spec = match range_str.strip_prefix("bytes=") {
-        Some(s) => s,
-        None => {
-            headers.insert(
-                header::CONTENT_LENGTH,
-                info.data_size.to_string().parse().unwrap(),
-            );
-            return (StatusCode::OK, headers).into_response();
-        }
+    let total = info.data_size as i64;
+    let ranges = match parse_range_header(range_str, total) {
+        Ok(r) => r,
+        Err(msg) => return range_error_response(headers, msg),
     };
 
-    let ranges: Vec<(usize, usize)> = range_spec
-        .split(',')
-        .filter_map(|part| {
-            let part = part.trim();
-            if let Some(pos) = part.find('-') {
-                let start_str = &part[..pos];
-                let end_str = &part[pos + 1..];
-
-                if start_str.is_empty() {
-                    let mut suffix: usize = end_str.parse().ok()?;
-                    if suffix > total {
-                        suffix = total;
-                    }
-                    Some((total - suffix, total - 1))
-                } else {
-                    let start: usize = start_str.parse().ok()?;
-                    let end = if end_str.is_empty() {
-                        total - 1
-                    } else {
-                        end_str.parse().ok()?
-                    };
-                    Some((start, end))
-                }
-            } else {
-                None
-            }
-        })
-        .collect();
-
     if ranges.is_empty() {
-        headers.insert(
-            header::CONTENT_LENGTH,
-            info.data_size.to_string().parse().unwrap(),
-        );
         return (StatusCode::OK, headers).into_response();
     }
 
-    let ranges: Vec<(usize, usize)> = ranges
-        .into_iter()
-        .map(|(start, mut end)| {
-            if end >= total {
-                end = total - 1;
-            }
-            (start, end)
-        })
-        .collect();
+    if sum_ranges_size(&ranges) > total {
+        return (StatusCode::OK, headers).into_response();
+    }
 
-    for &(start, end) in &ranges {
-        if start >= total || start > end {
-            headers.insert(
-                "Content-Range",
-                format!("bytes */{}", total).parse().unwrap(),
-            );
-            return (StatusCode::RANGE_NOT_SATISFIABLE, headers).into_response();
+    let read_slice = |start: i64, length: i64| -> Result<Vec<u8>, std::io::Error> {
+        if length <= 0 {
+            return Ok(Vec::new());
         }
-    }
-
-    let combined_bytes: usize = ranges.iter().map(|&(s, e)| e - s + 1).sum();
-    if combined_bytes > total {
-        return (StatusCode::OK, headers).into_response();
-    }
-
-    let read_slice = |start: usize, end: usize| -> Result<Vec<u8>, std::io::Error> {
-        let mut buf = vec![0u8; end - start + 1];
+        let mut buf = vec![0u8; length as usize];
         info.source
             .read_exact_at(&mut buf, info.data_file_offset + start as u64)?;
         Ok(buf)
     };
 
     if ranges.len() == 1 {
-        let (start, end) = ranges[0];
-        let slice = match read_slice(start, end) {
+        let r = ranges[0];
+        let slice = match read_slice(r.start, r.length) {
             Ok(slice) => slice,
             Err(err) => {
                 return (
@@ -1551,9 +1525,7 @@ fn handle_range_request_from_source(
         };
         headers.insert(
             "Content-Range",
-            format!("bytes {}-{}/{}", start, end, total)
-                .parse()
-                .unwrap(),
+            range_content_range(r, total).parse().unwrap(),
         );
         headers.insert(
             header::CONTENT_LENGTH,
@@ -1570,8 +1542,8 @@ fn handle_range_request_from_source(
         .to_string();
 
     let mut body = Vec::new();
-    for (i, &(start, end)) in ranges.iter().enumerate() {
-        let slice = match read_slice(start, end) {
+    for (i, r) in ranges.iter().enumerate() {
+        let slice = match read_slice(r.start, r.length) {
             Ok(slice) => slice,
             Err(err) => {
                 return (
@@ -1588,7 +1560,7 @@ fn handle_range_request_from_source(
         }
         body.extend_from_slice(format!("Content-Type: {}\r\n", content_type).as_bytes());
         body.extend_from_slice(
-            format!("Content-Range: bytes {}-{}/{}\r\n\r\n", start, end, total).as_bytes(),
+            format!("Content-Range: {}\r\n\r\n", range_content_range(*r, total)).as_bytes(),
         );
         body.extend_from_slice(&slice);
     }
@@ -1600,10 +1572,12 @@ fn handle_range_request_from_source(
             .parse()
             .unwrap(),
     );
-    headers.insert(
-        header::CONTENT_LENGTH,
-        body.len().to_string().parse().unwrap(),
-    );
+    if !headers.contains_key(header::CONTENT_ENCODING) {
+        headers.insert(
+            header::CONTENT_LENGTH,
+            body.len().to_string().parse().unwrap(),
+        );
+    }
     finalize_bytes_response(StatusCode::PARTIAL_CONTENT, headers, body, state)
 }
 
