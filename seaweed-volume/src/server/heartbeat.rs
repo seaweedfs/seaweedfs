@@ -168,7 +168,7 @@ pub async fn run_heartbeat_with_state(
 
 /// Convert a master address "host:port" to a gRPC host:port target.
 /// The Go master uses port + 10000 for gRPC by default.
-fn to_grpc_address(master_addr: &str) -> String {
+pub fn to_grpc_address(master_addr: &str) -> String {
     if let Some((host, port_str)) = master_addr.rsplit_once(':') {
         if let Ok(port) = port_str.parse::<u16>() {
             let grpc_port = port + 10000;
@@ -216,7 +216,7 @@ pub async fn prime_master_configuration(config: &HeartbeatConfig, state: &Arc<Vo
     check_with_master(config, state).await;
 }
 
-async fn try_get_master_configuration(
+pub async fn try_get_master_configuration(
     grpc_addr: &str,
     tls: Option<&super::grpc_client::OutgoingGrpcTlsConfig>,
 ) -> Result<master_pb::GetMasterConfigurationResponse, Box<dyn std::error::Error>> {
