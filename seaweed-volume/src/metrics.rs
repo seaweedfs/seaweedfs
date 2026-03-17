@@ -8,6 +8,8 @@ use prometheus::{
 };
 use std::sync::Once;
 
+use crate::version;
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct PushGatewayConfig {
     pub address: String,
@@ -164,6 +166,14 @@ lazy_static::lazy_static! {
         "volume_server_volume_file_count",
         "Total number of files stored across all volumes",
     ).expect("metric can be created");
+
+    // ---- Build info (Go: BuildInfo) ----
+
+    /// Build information gauge with version label, always set to 1.
+    pub static ref BUILD_INFO: GaugeVec = GaugeVec::new(
+        Opts::new("SeaweedFS_volumeServer_buildInfo", "SeaweedFS volume server build info"),
+        &["version"],
+    ).expect("metric can be created");
 }
 
 /// Generate exponential bucket boundaries for histograms.
@@ -237,10 +247,17 @@ pub fn register_metrics() {
             Box::new(DISK_FREE_BYTES.clone()),
             Box::new(INFLIGHT_REQUESTS.clone()),
             Box::new(VOLUME_FILE_COUNT.clone()),
+            // Build info
+            Box::new(BUILD_INFO.clone()),
         ];
         for m in metrics {
             REGISTRY.register(m).expect("metric registered");
         }
+
+        // Set build info gauge to 1 with version label.
+        BUILD_INFO
+            .with_label_values(&[version::version()])
+            .set(1.0);
     });
 }
 

@@ -212,6 +212,14 @@ pub fn record_request_close() {
     SERVER_STATS.update(|inner| inner.requests.add_now(-1));
 }
 
+pub fn record_connection_open() {
+    SERVER_STATS.update(|inner| inner.connections.add_now(1));
+}
+
+pub fn record_connection_close() {
+    SERVER_STATS.update(|inner| inner.connections.add_now(-1));
+}
+
 pub fn record_read_request() {
     SERVER_STATS.update(|inner| inner.read_requests.add_now(1));
 }
