@@ -1753,8 +1753,16 @@ fn maybe_resize_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8
 }
 
 fn maybe_crop_image(data: &[u8], ext: &str, query: &ReadQueryParams) -> Vec<u8> {
-    let (x1, y1, x2, y2) = match (query.crop_x1, query.crop_y1, query.crop_x2, query.crop_y2) {
-        (Some(x1), Some(y1), Some(x2), Some(y2)) if x2 > x1 && y2 > y1 => (x1, y1, x2, y2),
+    let (x1, y1, x2, y2) = match (query.crop_x2, query.crop_y2) {
+        (Some(x2), Some(y2)) => {
+            let x1 = query.crop_x1.unwrap_or(0);
+            let y1 = query.crop_y1.unwrap_or(0);
+            if x2 > x1 && y2 > y1 {
+                (x1, y1, x2, y2)
+            } else {
+                return data.to_vec();
+            }
+        }
         _ => return data.to_vec(),
     };
 
