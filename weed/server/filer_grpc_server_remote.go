@@ -114,12 +114,23 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	}
 	assignRequest, altRequest := so.ToAssignRequests(1)
 
-	// find a good chunk size
-	chunkSize := int64(5 * 1024 * 1024)
-	chunkCount := entry.Remote.RemoteSize/chunkSize + 1
-	for chunkCount > 1000 && chunkSize < int64(fs.option.MaxMB)*1024*1024/2 {
+	// adaptive chunk size: target ~32 chunks per file to balance
+	// per-chunk overhead (volume assign, gRPC, needle write) against parallelism
+	chunkSize := int64(5 * 1024 * 1024) // 5MB floor
+	maxChunkSize := int64(fs.option.MaxMB) * 1024 * 1024 / 2
+	if maxChunkSize < chunkSize {
+		maxChunkSize = chunkSize
+	}
+	targetChunks := int64(32)
+	if entry.Remote.RemoteSize/targetChunks > chunkSize {
+		chunkSize = entry.Remote.RemoteSize / targetChunks
+		if chunkSize > maxChunkSize {
+			chunkSize = maxChunkSize
+		}
+	}
+	// final safety check: avoid more than 1000 chunks
+	for entry.Remote.RemoteSize/chunkSize+1 > 1000 && chunkSize < maxChunkSize {
 		chunkSize *= 2
-		chunkCount = entry.Remote.RemoteSize/chunkSize + 1
 	}
 
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
@@ -129,7 +140,13 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 	var fetchAndWriteErr error
 	var wg sync.WaitGroup
 
-	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(8)
+	chunkConcurrency := int(req.ChunkConcurrency)
+	if chunkConcurrency <= 0 {
+		chunkConcurrency = 8
+	}
+	downloadConcurrency := req.DownloadConcurrency
+
+	limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(chunkConcurrency)
 	for offset := int64(0); offset < entry.Remote.RemoteSize; offset += chunkSize {
 		localOffset := offset
 
@@ -183,14 +200,15 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
-					VolumeId:   uint32(fileId.VolumeId),
-					NeedleId:   uint64(fileId.Key),
-					Cookie:     uint32(fileId.Cookie),
-					Offset:     localOffset,
-					Size:       size,
-					Replicas:   replicas,
-					Auth:       string(assignResult.Auth),
-					RemoteConf: storageConf,
+					VolumeId:             uint32(fileId.VolumeId),
+					NeedleId:             uint64(fileId.Key),
+					Cookie:               uint32(fileId.Cookie),
+					Offset:               localOffset,
+					Size:                 size,
+					Replicas:             replicas,
+					Auth:                 string(assignResult.Auth),
+					DownloadConcurrency:  downloadConcurrency,
+					RemoteConf:           storageConf,
 					RemoteLocation: &remote_pb.RemoteStorageLocation{
 						Name:   remoteStorageMountedLocation.Name,
 						Bucket: remoteStorageMountedLocation.Bucket,

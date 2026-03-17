@@ -3624,11 +3624,13 @@ func (x *FilerConf) GetLocations() []*FilerConf_PathConf {
 // Remote Storage related
 // ///////////////////////
 type CacheRemoteObjectToLocalClusterRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Directory     string                 `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Directory           string                 `protobuf:"bytes,1,opt,name=directory,proto3" json:"directory,omitempty"`
+	Name                string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	ChunkConcurrency    int32                  `protobuf:"varint,3,opt,name=chunk_concurrency,json=chunkConcurrency,proto3" json:"chunk_concurrency,omitempty"`          // parallel chunk downloads per file, 0 = default (8)
+	DownloadConcurrency int32                  `protobuf:"varint,4,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // S3 multipart download concurrency per chunk, 0 = default (5)
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
 }
 
 func (x *CacheRemoteObjectToLocalClusterRequest) Reset() {
@@ -3673,6 +3675,20 @@ func (x *CacheRemoteObjectToLocalClusterRequest) GetName() string {
 		return x.Name
 	}
 	return ""
+}
+
+func (x *CacheRemoteObjectToLocalClusterRequest) GetChunkConcurrency() int32 {
+	if x != nil {
+		return x.ChunkConcurrency
+	}
+	return 0
+}
+
+func (x *CacheRemoteObjectToLocalClusterRequest) GetDownloadConcurrency() int32 {
+	if x != nil {
+		return x.DownloadConcurrency
+	}
+	return 0
 }
 
 type CacheRemoteObjectToLocalClusterResponse struct {
@@ -4785,10 +4801,12 @@ const file_filer_proto_rawDesc = "" +
 	"\x16disable_chunk_deletion\x18\r \x01(\bR\x14disableChunkDeletion\x12\x12\n" +
 	"\x04worm\x18\x0e \x01(\bR\x04worm\x129\n" +
 	"\x19worm_grace_period_seconds\x18\x0f \x01(\x04R\x16wormGracePeriodSeconds\x12=\n" +
-	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\"Z\n" +
+	"\x1bworm_retention_time_seconds\x18\x10 \x01(\x04R\x18wormRetentionTimeSeconds\"\xba\x01\n" +
 	"&CacheRemoteObjectToLocalClusterRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12\x12\n" +
-	"\x04name\x18\x02 \x01(\tR\x04name\"\x9c\x01\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12+\n" +
+	"\x11chunk_concurrency\x18\x03 \x01(\x05R\x10chunkConcurrency\x121\n" +
+	"\x14download_concurrency\x18\x04 \x01(\x05R\x13downloadConcurrency\"\x9c\x01\n" +
 	"'CacheRemoteObjectToLocalClusterResponse\x12%\n" +
 	"\x05entry\x18\x01 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12J\n" +
 	"\x0emetadata_event\x18\x02 \x01(\v2#.filer_pb.SubscribeMetadataResponseR\rmetadataEvent\"\x9b\x01\n" +

@@ -91,6 +91,12 @@ func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	return nil
 }
 
+func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
+	if concurrency > 0 {
+		fs.executor = util.NewLimitedConcurrentExecutor(concurrency)
+	}
+}
+
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()

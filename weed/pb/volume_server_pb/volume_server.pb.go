@@ -5414,14 +5414,15 @@ func (*VolumeServerLeaveResponse) Descriptor() ([]byte, []int) {
 
 // remote storage
 type FetchAndWriteNeedleRequest struct {
-	state    protoimpl.MessageState                `protogen:"open.v1"`
-	VolumeId uint32                                `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
-	NeedleId uint64                                `protobuf:"varint,2,opt,name=needle_id,json=needleId,proto3" json:"needle_id,omitempty"`
-	Cookie   uint32                                `protobuf:"varint,3,opt,name=cookie,proto3" json:"cookie,omitempty"`
-	Offset   int64                                 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
-	Size     int64                                 `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`
-	Replicas []*FetchAndWriteNeedleRequest_Replica `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
-	Auth     string                                `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
+	state               protoimpl.MessageState                `protogen:"open.v1"`
+	VolumeId            uint32                                `protobuf:"varint,1,opt,name=volume_id,json=volumeId,proto3" json:"volume_id,omitempty"`
+	NeedleId            uint64                                `protobuf:"varint,2,opt,name=needle_id,json=needleId,proto3" json:"needle_id,omitempty"`
+	Cookie              uint32                                `protobuf:"varint,3,opt,name=cookie,proto3" json:"cookie,omitempty"`
+	Offset              int64                                 `protobuf:"varint,4,opt,name=offset,proto3" json:"offset,omitempty"`
+	Size                int64                                 `protobuf:"varint,5,opt,name=size,proto3" json:"size,omitempty"`
+	Replicas            []*FetchAndWriteNeedleRequest_Replica `protobuf:"bytes,6,rep,name=replicas,proto3" json:"replicas,omitempty"`
+	Auth                string                                `protobuf:"bytes,7,opt,name=auth,proto3" json:"auth,omitempty"`
+	DownloadConcurrency int32                                 `protobuf:"varint,8,opt,name=download_concurrency,json=downloadConcurrency,proto3" json:"download_concurrency,omitempty"` // S3 multipart download concurrency, 0 = default (5)
 	// remote conf
 	RemoteConf     *remote_pb.RemoteConf            `protobuf:"bytes,15,opt,name=remote_conf,json=remoteConf,proto3" json:"remote_conf,omitempty"`
 	RemoteLocation *remote_pb.RemoteStorageLocation `protobuf:"bytes,16,opt,name=remote_location,json=remoteLocation,proto3" json:"remote_location,omitempty"`
@@ -5506,6 +5507,13 @@ func (x *FetchAndWriteNeedleRequest) GetAuth() string {
 		return x.Auth
 	}
 	return ""
+}
+
+func (x *FetchAndWriteNeedleRequest) GetDownloadConcurrency() int32 {
+	if x != nil {
+		return x.DownloadConcurrency
+	}
+	return 0
 }
 
 func (x *FetchAndWriteNeedleRequest) GetRemoteConf() *remote_pb.RemoteConf {
@@ -7119,7 +7127,7 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x04rack\x18\x05 \x01(\tR\x04rack\x129\n" +
 	"\x05state\x18\x06 \x01(\v2#.volume_server_pb.VolumeServerStateR\x05state\"\x1a\n" +
 	"\x18VolumeServerLeaveRequest\"\x1b\n" +
-	"\x19VolumeServerLeaveResponse\"\xdc\x03\n" +
+	"\x19VolumeServerLeaveResponse\"\x8f\x04\n" +
 	"\x1aFetchAndWriteNeedleRequest\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x1b\n" +
 	"\tneedle_id\x18\x02 \x01(\x04R\bneedleId\x12\x16\n" +
@@ -7127,7 +7135,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x06offset\x18\x04 \x01(\x03R\x06offset\x12\x12\n" +
 	"\x04size\x18\x05 \x01(\x03R\x04size\x12P\n" +
 	"\breplicas\x18\x06 \x03(\v24.volume_server_pb.FetchAndWriteNeedleRequest.ReplicaR\breplicas\x12\x12\n" +
-	"\x04auth\x18\a \x01(\tR\x04auth\x126\n" +
+	"\x04auth\x18\a \x01(\tR\x04auth\x121\n" +
+	"\x14download_concurrency\x18\b \x01(\x05R\x13downloadConcurrency\x126\n" +
 	"\vremote_conf\x18\x0f \x01(\v2\x15.remote_pb.RemoteConfR\n" +
 	"remoteConf\x12I\n" +
 	"\x0fremote_location\x18\x10 \x01(\v2 .remote_pb.RemoteStorageLocationR\x0eremoteLocation\x1aW\n" +
