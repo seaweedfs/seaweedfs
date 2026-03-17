@@ -684,19 +684,25 @@ impl VolumeServer for VolumeGrpcService {
         // Step 1: stop master from redirecting traffic here
         self.notify_master_volume_readonly(&info, true).await?;
 
-        // Step 2: mark local volume as readonly
-        {
+        // Step 2: mark local volume as readonly (save result; Go continues on error)
+        let mark_result = {
             let mut store = self.state.store.write().unwrap();
-            let (_, vol) = store
+            let res = store
                 .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_read_only_persist(req.persist)
-                .map_err(|e| Status::internal(e.to_string()))?;
-        }
-        self.state.volume_state_notify.notify_one();
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))
+                .and_then(|(_, vol)| {
+                    vol.set_read_only_persist(req.persist)
+                        .map_err(|e| Status::internal(e.to_string()))
+                });
+            if res.is_ok() {
+                self.state.volume_state_notify.notify_one();
+            }
+            res
+        };
 
-        // Step 3: tell master again to cover race with heartbeat
+        // Step 3: tell master again to cover race with heartbeat (always, even on error)
         self.notify_master_volume_readonly(&info, true).await?;
+        mark_result?;
         Ok(Response::new(
             volume_server_pb::VolumeMarkReadonlyResponse {},
         ))
@@ -725,18 +731,25 @@ impl VolumeServer for VolumeGrpcService {
             }
         };
 
-        {
+        // Step 1: mark local volume as writable (save result; Go continues on error)
+        let mark_result = {
             let mut store = self.state.store.write().unwrap();
-            let (_, vol) = store
+            let res = store
                 .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            vol.set_writable()
-                .map_err(|e| Status::internal(e.to_string()))?;
-        }
-        self.state.volume_state_notify.notify_one();
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))
+                .and_then(|(_, vol)| {
+                    vol.set_writable()
+                        .map_err(|e| Status::internal(e.to_string()))
+                });
+            if res.is_ok() {
+                self.state.volume_state_notify.notify_one();
+            }
+            res
+        };
 
-        // enable master to redirect traffic here
+        // Step 2: enable master to redirect traffic here (always, even on error)
         self.notify_master_volume_readonly(&info, false).await?;
+        mark_result?;
         Ok(Response::new(
             volume_server_pb::VolumeMarkWritableResponse {},
         ))
