@@ -782,7 +782,7 @@ async fn get_or_head_handler_inner(
 
         loop {
             let current = state.inflight_download_bytes.load(Ordering::Relaxed);
-            if current < state.concurrent_download_limit {
+            if current <= state.concurrent_download_limit {
                 break;
             }
             if tokio::time::timeout_at(deadline, state.download_notify.notified())
@@ -1855,7 +1855,7 @@ pub async fn post_handler(
 
         loop {
             let current = state.inflight_upload_bytes.load(Ordering::Relaxed);
-            if current < state.concurrent_upload_limit {
+            if current <= state.concurrent_upload_limit {
                 break;
             }
             // Wait for notification or timeout
@@ -3029,10 +3029,10 @@ fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::
     disk_statuses
 }
 
-/// Serialize to JSON with 2-space indent (matches Go's `json.MarshalIndent(obj, "", "  ")`).
+/// Serialize to JSON with 1-space indent (matches Go's `json.MarshalIndent(obj, "", " ")`).
 fn to_pretty_json<T: Serialize>(value: &T) -> String {
     let mut buf = Vec::new();
-    let formatter = serde_json::ser::PrettyFormatter::with_indent(b"  ");
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
     let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
     value.serialize(&mut ser).unwrap();
     String::from_utf8(buf).unwrap()
