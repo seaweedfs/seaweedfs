@@ -1579,6 +1579,39 @@ impl Volume {
         self.last_modified_ts_seconds
     }
 
+    pub fn is_expired(&self, volume_size: u64, volume_size_limit: u64) -> bool {
+        if volume_size_limit == 0 {
+            return false;
+        }
+        if volume_size <= SUPER_BLOCK_SIZE as u64 {
+            return false;
+        }
+        let ttl_minutes = self.super_block.ttl.minutes();
+        if ttl_minutes == 0 {
+            return false;
+        }
+        let lived_minutes = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(self.last_modified_ts_seconds)
+            / 60;
+        (ttl_minutes as u64) < lived_minutes
+    }
+
+    pub fn is_expired_long_enough(&self, max_delay_minutes: u32) -> bool {
+        let ttl_minutes = self.super_block.ttl.minutes();
+        if ttl_minutes == 0 {
+            return false;
+        }
+        let removal_delay = std::cmp::min(ttl_minutes / 10, max_delay_minutes);
+        ((ttl_minutes + removal_delay) as u64) * 60 + self.last_modified_ts_seconds
+            < SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+    }
+
     /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
     pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
         let _guard = self.data_file_access_control.read_lock();
@@ -2773,6 +2806,18 @@ impl Volume {
     #[allow(dead_code)]
     pub fn last_io_error(&self) -> Option<String> {
         self.last_io_error.lock().ok()?.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_io_error_for_test(&self, err: Option<&str>) {
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            *guard = err.map(|value| value.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_modified_ts_for_test(&mut self, ts_seconds: u64) {
+        self.last_modified_ts_seconds = ts_seconds;
     }
 }
 
