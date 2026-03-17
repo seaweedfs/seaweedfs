@@ -317,6 +317,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 			var wg sync.WaitGroup
 			limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(concurrency)
 			var executionErr error
+			var execErrMu sync.Mutex
 
 			for _, pathToCache := range filesToCache {
 				wg.Add(1)
@@ -357,9 +358,11 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 
 					if _, err := filer.CacheRemoteObjectToLocalCluster(commandEnv, util.FullPath(dir), localEntry, chunkConcurrency, downloadConcurrency); err != nil {
 						fmt.Fprintf(writer, "failed: %v\n", err)
+						execErrMu.Lock()
 						if executionErr == nil {
 							executionErr = err
 						}
+						execErrMu.Unlock()
 						return
 					}
 					fmt.Fprintf(writer, "done\n")

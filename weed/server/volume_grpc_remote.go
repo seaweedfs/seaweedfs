@@ -48,7 +48,7 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 		data, readRemoteErr = client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
 	}
 	if readRemoteErr != nil {
-		return nil, fmt.Errorf("read from remote %+v: %v", remoteStorageLocation, readRemoteErr)
+		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
 	}
 
 	var wg sync.WaitGroup
