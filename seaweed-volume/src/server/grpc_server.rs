@@ -1389,7 +1389,7 @@ impl VolumeServer for VolumeGrpcService {
             flags: 0x08,
             ..Needle::default()
         };
-        vol.read_needle_data_at(&mut n, offset, size)
+        vol.read_needle_meta_at(&mut n, offset, size)
             .map_err(|e| Status::internal(format!("read needle meta: {}", e)))?;
 
         let ttl_str = n.ttl.as_ref().map_or(String::new(), |t| t.to_string());

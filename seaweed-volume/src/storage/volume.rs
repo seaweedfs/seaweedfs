@@ -1032,6 +1032,58 @@ impl Volume {
         Ok(buf)
     }
 
+    /// Read needle metadata at a specific offset without loading the data payload.
+    ///
+    /// Matches Go's `readNeedleMetaAt`, including the tombstone path where a
+    /// deleted idx entry passes a negative size and the tombstone record itself
+    /// is read as size 0 metadata.
+    pub fn read_needle_meta_at(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        self.read_needle_meta_at_unlocked(n, offset, size)
+    }
+
+    fn read_needle_meta_at_unlocked(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let normalized_size = if size.is_deleted() { Size(0) } else { size };
+        match self.read_needle_meta_blob_and_parse(n, offset, normalized_size) {
+            Ok(()) => Ok(()),
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                self.read_needle_meta_blob_and_parse(
+                    n,
+                    offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                    normalized_size,
+                )
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_needle_meta_blob_and_parse(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let version = self.version();
+        let actual_size = get_actual_size(size, version);
+        let mut buf = vec![0u8; actual_size as usize];
+        self.read_exact_at_backend(&mut buf, offset as u64)?;
+        n.read_bytes_meta_only(&buf, offset, size, version)?;
+        Ok(())
+    }
+
     /// Read needle metadata (header + flags/name/mime/etc) without loading the data payload,
     /// and return a `NeedleStreamInfo` that can be used to stream data directly from the dat file.
     ///

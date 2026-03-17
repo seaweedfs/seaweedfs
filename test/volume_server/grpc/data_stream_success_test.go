@@ -3,6 +3,7 @@ package volume_server_grpc_test
 import (
 	"context"
 	"io"
+	"net/http"
 	"reflect"
 	"strings"
 	"testing"
@@ -296,6 +297,74 @@ func TestReadAllNeedlesPreservesDatOrderAcrossOverwrite(t *testing.T) {
 	}
 }
 
+func TestReadNeedleMetaDeletedEntryUsesTombstoneMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(87)
+	const needleID = uint64(444661)
+	const cookie = uint32(0xAB12CD34)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, needleID, cookie)
+	uploadResp := framework.UploadBytes(t, client, clusterHarness.VolumeAdminURL(), fid, []byte("read-meta-delete"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	deleteReq, err := http.NewRequest(http.MethodDelete, clusterHarness.VolumeAdminURL()+"/"+fid, nil)
+	if err != nil {
+		t.Fatalf("build delete request: %v", err)
+	}
+	deleteResp := framework.DoRequest(t, client, deleteReq)
+	_ = framework.ReadAllAndClose(t, deleteResp)
+	if deleteResp.StatusCode != http.StatusAccepted {
+		t.Fatalf("delete expected 202, got %d", deleteResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	fileStatus, err := grpcClient.ReadVolumeFileStatus(ctx, &volume_server_pb.ReadVolumeFileStatusRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("ReadVolumeFileStatus after delete failed: %v", err)
+	}
+
+	idxBytes := copyFileBytes(t, grpcClient, &volume_server_pb.CopyFileRequest{
+		VolumeId:           volumeID,
+		Ext:                ".idx",
+		CompactionRevision: fileStatus.GetCompactionRevision(),
+		StopOffset:         fileStatus.GetIdxFileSize(),
+	})
+	offset, size := findLastNeedleOffsetAndSize(t, idxBytes, needleID)
+	if size >= 0 {
+		t.Fatalf("expected deleted idx entry for needle %d, got size %d", needleID, size)
+	}
+
+	metaResp, err := grpcClient.ReadNeedleMeta(ctx, &volume_server_pb.ReadNeedleMetaRequest{
+		VolumeId: volumeID,
+		NeedleId: needleID,
+		Offset:   offset,
+		Size:     size,
+	})
+	if err != nil {
+		t.Fatalf("ReadNeedleMeta deleted-entry failed: %v", err)
+	}
+	if metaResp.GetCookie() != cookie {
+		t.Fatalf("ReadNeedleMeta deleted-entry cookie mismatch: got %d want %d", metaResp.GetCookie(), cookie)
+	}
+	if metaResp.GetAppendAtNs() == 0 {
+		t.Fatalf("ReadNeedleMeta deleted-entry expected non-zero append_at_ns")
+	}
+}
+
 func copyFileBytes(t testing.TB, grpcClient volume_server_pb.VolumeServerClient, req *volume_server_pb.CopyFileRequest) []byte {
 	t.Helper()
 
@@ -336,4 +405,24 @@ func findNeedleOffsetAndSize(t testing.TB, idxBytes []byte, needleID uint64) (of
 
 	t.Fatalf("needle id %d not found in idx entries", needleID)
 	return 0, 0
+}
+
+func findLastNeedleOffsetAndSize(t testing.TB, idxBytes []byte, needleID uint64) (offset int64, size int32) {
+	t.Helper()
+
+	found := false
+	for i := 0; i+types.NeedleMapEntrySize <= len(idxBytes); i += types.NeedleMapEntrySize {
+		key, entryOffset, entrySize := idx.IdxFileEntry(idxBytes[i : i+types.NeedleMapEntrySize])
+		if uint64(key) != needleID {
+			continue
+		}
+		found = true
+		offset = entryOffset.ToActualOffset()
+		size = int32(entrySize)
+	}
+
+	if !found {
+		t.Fatalf("needle id %d not found in idx entries", needleID)
+	}
+	return offset, size
 }

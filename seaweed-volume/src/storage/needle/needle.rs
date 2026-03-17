@@ -181,6 +181,9 @@ impl Needle {
         if version == VERSION_1 {
             // V1 has no metadata — data is the entire body
             self.data_size = self.size.0 as u32;
+        } else if self.size.0 == 0 {
+            // Tombstones have no DataSize/body section; metadata starts at the tail.
+            self.data_size = 0;
         } else {
             self.read_body_v2_meta_only(&bytes[body_start..body_end])?;
         }
@@ -782,6 +785,27 @@ mod tests {
 
         assert_eq!(n2.data, n.data);
         assert_eq!(n2.checksum, n.checksum);
+    }
+
+    #[test]
+    fn test_read_bytes_meta_only_handles_tombstone_v3() {
+        let mut tombstone = Needle::default();
+        tombstone.cookie = Cookie(0x1234abcd);
+        tombstone.id = NeedleId(300);
+        tombstone.append_at_ns = 999_999;
+
+        let bytes = tombstone.write_bytes(VERSION_3);
+
+        let mut meta = Needle::default();
+        meta.read_bytes_meta_only(&bytes, 0, Size(0), VERSION_3)
+            .unwrap();
+
+        assert_eq!(meta.cookie, tombstone.cookie);
+        assert_eq!(meta.id, tombstone.id);
+        assert_eq!(meta.size, Size(0));
+        assert_eq!(meta.data_size, 0);
+        assert_eq!(meta.append_at_ns, tombstone.append_at_ns);
+        assert_eq!(meta.checksum, tombstone.checksum);
     }
 
     #[test]
