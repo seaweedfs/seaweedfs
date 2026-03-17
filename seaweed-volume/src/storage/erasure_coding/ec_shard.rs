@@ -8,6 +8,8 @@ use crate::storage::types::*;
 pub const DATA_SHARDS_COUNT: usize = 10;
 pub const PARITY_SHARDS_COUNT: usize = 4;
 pub const TOTAL_SHARDS_COUNT: usize = DATA_SHARDS_COUNT + PARITY_SHARDS_COUNT;
+pub const MAX_SHARD_COUNT: usize = 32;
+pub const MIN_TOTAL_DISKS: usize = TOTAL_SHARDS_COUNT / PARITY_SHARDS_COUNT + 1;
 pub const ERASURE_CODING_LARGE_BLOCK_SIZE: usize = 1024 * 1024 * 1024; // 1GB
 pub const ERASURE_CODING_SMALL_BLOCK_SIZE: usize = 1024 * 1024; // 1MB
 

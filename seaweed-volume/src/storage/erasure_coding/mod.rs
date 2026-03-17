@@ -10,6 +10,7 @@ pub mod ec_shard;
 pub mod ec_volume;
 
 pub use ec_shard::{
-    EcVolumeShard, ShardId, DATA_SHARDS_COUNT, PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
+    EcVolumeShard, ShardId, DATA_SHARDS_COUNT, MAX_SHARD_COUNT, MIN_TOTAL_DISKS,
+    PARITY_SHARDS_COUNT, TOTAL_SHARDS_COUNT,
 };
 pub use ec_volume::EcVolume;
