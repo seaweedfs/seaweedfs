@@ -5,7 +5,7 @@
 //! Matches Go's storage/store.go.
 
 use std::io;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::config::MinFreeSpace;
 use crate::pb::master_pb;
@@ -22,6 +22,7 @@ use crate::storage::volume::{VifVolumeInfo, VolumeError};
 pub struct Store {
     pub locations: Vec<DiskLocation>,
     pub needle_map_kind: NeedleMapKind,
+    preallocate: AtomicBool,
     pub volume_size_limit: AtomicU64,
     pub id: String,
     pub ip: String,
@@ -37,6 +38,7 @@ impl Store {
         Store {
             locations: Vec::new(),
             needle_map_kind,
+            preallocate: AtomicBool::new(false),
             volume_size_limit: AtomicU64::new(0),
             id: String::new(),
             ip: String::new(),
@@ -404,6 +406,14 @@ impl Store {
         self.locations.iter().map(|loc| loc.volumes_len()).sum()
     }
 
+    pub fn set_preallocate(&self, preallocate: bool) {
+        self.preallocate.store(preallocate, Ordering::Relaxed);
+    }
+
+    pub fn get_preallocate(&self) -> bool {
+        self.preallocate.load(Ordering::Relaxed)
+    }
+
     /// Total max volumes across all locations.
     pub fn max_volume_count(&self) -> i32 {
         self.locations
@@ -433,7 +443,11 @@ impl Store {
                 let current = loc.max_volume_count.load(Ordering::Relaxed);
                 let (_, free) = super::disk_location::get_disk_stats(&loc.directory);
 
-                let unused_space = loc.unused_space(volume_size_limit);
+                let unused_space = if self.get_preallocate() {
+                    0
+                } else {
+                    loc.unused_space(volume_size_limit)
+                };
                 let unclaimed = (free as i64) - (unused_space as i64);
 
                 let vol_count = loc.volumes_len() as i32;
@@ -1085,6 +1099,68 @@ mod tests {
         store.delete_collection("pics").unwrap();
         assert_eq!(store.total_volume_count(), 1);
         assert!(store.has_volume(VolumeId(3)));
+    }
+
+    #[test]
+    fn test_maybe_adjust_volume_max_honors_preallocate_flag() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir,
+                dir,
+                2,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(1.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store.volume_size_limit.store(1024, Ordering::Relaxed);
+        store
+            .add_volume(
+                VolumeId(61),
+                "preallocate_case",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        store
+            .add_volume(
+                VolumeId(62),
+                "preallocate_case",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+        for vid in [VolumeId(61), VolumeId(62)] {
+            let dat_path = store.find_volume(vid).unwrap().1.dat_path();
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(dat_path)
+                .unwrap()
+                .set_len((crate::storage::super_block::SUPER_BLOCK_SIZE + 1) as u64)
+                .unwrap();
+        }
+        store.locations[0].original_max_volume_count = 0;
+        store.locations[0].max_volume_count.store(0, Ordering::Relaxed);
+
+        store.set_preallocate(false);
+        assert!(store.maybe_adjust_volume_max());
+        let without_preallocate = store.locations[0].max_volume_count.load(Ordering::Relaxed);
+
+        store.set_preallocate(true);
+        assert!(store.maybe_adjust_volume_max());
+        let with_preallocate = store.locations[0].max_volume_count.load(Ordering::Relaxed);
+
+        assert!(with_preallocate > without_preallocate);
     }
 
     #[test]

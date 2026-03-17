@@ -261,6 +261,24 @@ fn duplicate_directories(store: &Store, duplicated_uuids: &[String]) -> Vec<Stri
     duplicate_dirs
 }
 
+fn apply_master_volume_options(store: &Store, hb_resp: &master_pb::HeartbeatResponse) -> bool {
+    let mut volume_opts_changed = false;
+    if store.get_preallocate() != hb_resp.preallocate {
+        store.set_preallocate(hb_resp.preallocate);
+        volume_opts_changed = true;
+    }
+    if hb_resp.volume_size_limit > 0
+        && store.volume_size_limit.load(Ordering::Relaxed) != hb_resp.volume_size_limit
+    {
+        store
+            .volume_size_limit
+            .store(hb_resp.volume_size_limit, Ordering::Relaxed);
+        volume_opts_changed = true;
+    }
+
+    volume_opts_changed && store.maybe_adjust_volume_max()
+}
+
 /// Perform one heartbeat session with a master server.
 async fn do_heartbeat(
     config: &HeartbeatConfig,
@@ -320,21 +338,16 @@ async fn do_heartbeat(
             resp = response_stream.message() => {
                 match resp {
                     Ok(Some(hb_resp)) => {
-                        if hb_resp.volume_size_limit > 0 {
-                            let changed = {
-                                let s = state.store.read().unwrap();
-                                s.volume_size_limit.store(
-                                    hb_resp.volume_size_limit,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                );
-                                s.maybe_adjust_volume_max()
-                            };
-                            if changed {
-                                let adjusted_hb = collect_heartbeat(config, state);
-                                last_volumes = adjusted_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
-                                if tx.send(adjusted_hb).await.is_err() {
-                                    return Ok(None);
-                                }
+                        let changed = {
+                            let s = state.store.read().unwrap();
+                            apply_master_volume_options(&s, &hb_resp)
+                        };
+                        if changed {
+                            let adjusted_hb = collect_heartbeat(config, state);
+                            last_volumes =
+                                adjusted_hb.volumes.iter().map(|v| (v.id, v.clone())).collect();
+                            if tx.send(adjusted_hb).await.is_err() {
+                                return Ok(None);
                             }
                         }
                         let metrics_changed = apply_metrics_push_settings(
@@ -1356,5 +1369,24 @@ mod tests {
         );
 
         assert_eq!(duplicate_dirs, vec![dir.to_string()]);
+    }
+
+    #[test]
+    fn test_apply_master_volume_options_updates_preallocate_and_size_limit() {
+        let store = Store::new(NeedleMapKind::InMemory);
+        store.volume_size_limit.store(1024, Ordering::Relaxed);
+
+        let changed = apply_master_volume_options(
+            &store,
+            &master_pb::HeartbeatResponse {
+                volume_size_limit: 2048,
+                preallocate: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(store.get_preallocate());
+        assert_eq!(store.volume_size_limit.load(Ordering::Relaxed), 2048);
+        assert!(!changed);
     }
 }
