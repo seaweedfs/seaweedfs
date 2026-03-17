@@ -247,11 +247,40 @@ pub fn gather_metrics() -> String {
 }
 
 pub fn delete_collection_metrics(collection: &str) {
-    let _ = VOLUME_GAUGE.remove_label_values(&[collection, "volume"]);
-    let _ = VOLUME_GAUGE.remove_label_values(&[collection, "ec_shards"]);
-    let _ = READ_ONLY_VOLUME_GAUGE.remove_label_values(&[collection, "volume"]);
-    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, "normal"]);
-    let _ = DISK_SIZE_GAUGE.remove_label_values(&[collection, "deleted_bytes"]);
+    // Mirrors Go's DeletePartialMatch(prometheus.Labels{"collection": collection})
+    // which removes ALL metric entries matching the collection label, regardless
+    // of other label values (like "type"). We gather the metric families to discover
+    // all type values dynamically, matching Go's partial-match behavior.
+    delete_partial_match_collection(&VOLUME_GAUGE, collection);
+    delete_partial_match_collection(&READ_ONLY_VOLUME_GAUGE, collection);
+    delete_partial_match_collection(&DISK_SIZE_GAUGE, collection);
+}
+
+/// Remove all metric entries from a GaugeVec where the "collection" label matches.
+/// This emulates Go's `DeletePartialMatch(prometheus.Labels{"collection": collection})`.
+fn delete_partial_match_collection(gauge: &GaugeVec, collection: &str) {
+    use prometheus::core::Collector;
+    let families = gauge.collect();
+    for family in &families {
+        for metric in family.get_metric() {
+            let labels = metric.get_label();
+            let mut matches_collection = false;
+            let mut type_value = None;
+            for label in labels {
+                if label.get_name() == "collection" && label.get_value() == collection {
+                    matches_collection = true;
+                }
+                if label.get_name() == "type" {
+                    type_value = Some(label.get_value().to_string());
+                }
+            }
+            if matches_collection {
+                if let Some(ref tv) = type_value {
+                    let _ = gauge.remove_label_values(&[collection, tv]);
+                }
+            }
+        }
+    }
 }
 
 pub fn build_pushgateway_url(address: &str, job: &str, instance: &str) -> String {
