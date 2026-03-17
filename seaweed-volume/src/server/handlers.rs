@@ -2802,6 +2802,15 @@ fn build_disk_statuses(store: &crate::storage::store::Store) -> Vec<serde_json::
     disk_statuses
 }
 
+/// Serialize to JSON with 1-space indent (matches Go's `json.MarshalIndent(obj, "", " ")`).
+fn to_pretty_json_1space<T: Serialize>(value: &T) -> String {
+    let mut buf = Vec::new();
+    let formatter = serde_json::ser::PrettyFormatter::with_indent(b" ");
+    let mut ser = serde_json::Serializer::with_formatter(&mut buf, formatter);
+    value.serialize(&mut ser).unwrap();
+    String::from_utf8(buf).unwrap()
+}
+
 fn json_response_with_params<T: Serialize>(
     status: StatusCode,
     body: &T,
@@ -2816,7 +2825,7 @@ fn json_response_with_params<T: Serialize>(
         .cloned();
 
     let json_body = if is_pretty {
-        serde_json::to_string_pretty(body).unwrap()
+        to_pretty_json_1space(body)
     } else {
         serde_json::to_string(body).unwrap()
     };
@@ -2860,7 +2869,7 @@ fn json_error_with_query(
     };
 
     let json_body = if is_pretty {
-        serde_json::to_string_pretty(&body).unwrap()
+        to_pretty_json_1space(&body)
     } else {
         serde_json::to_string(&body).unwrap()
     };
