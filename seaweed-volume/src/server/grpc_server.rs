@@ -981,6 +981,16 @@ impl VolumeServer for VolumeGrpcService {
                 };
                 let mut throttler = WriteThrottler::new(io_byte_per_second);
 
+                // TODO: Go queries the master via GetMasterConfiguration gRPC call to check
+                // VolumePreallocate and VolumeSizeLimitMB, then creates a preallocated .dat file
+                // before copying. The try_get_master_configuration function exists in heartbeat.rs
+                // but is not pub and operates independently. To match Go behavior:
+                // 1. Make try_get_master_configuration (or a similar helper) accessible from here
+                // 2. Call master's GetMasterConfiguration using state.master_url
+                // 3. If resp.volume_preallocate is true, create a preallocated file of
+                //    resp.volume_size_limit_mb * 1024 * 1024 bytes via backend::CreateVolumeFile
+                // 4. Then copy the .dat data into the preallocated file
+
                 // Copy .dat file
                 if !has_remote_dat {
                     let dat_path = format!("{}.dat", data_base_name);
@@ -2887,9 +2897,13 @@ impl VolumeServer for VolumeGrpcService {
                 .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
             total_volumes += 1;
 
-            // INDEX mode (1) calls scrub_index; LOCAL (3) and FULL (2) call scrub
-            // TODO: implement scrub_index() for INDEX-only mode; currently falls through to full scrub
-            match v.scrub() {
+            // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
+            let scrub_result = if mode == 1 {
+                v.scrub_index()
+            } else {
+                v.scrub()
+            };
+            match scrub_result {
                 Ok((files, broken)) => {
                     total_files += files;
                     if !broken.is_empty() {
@@ -3202,6 +3216,14 @@ impl VolumeServer for VolumeGrpcService {
         }
 
         // Fall back to EC shards
+        // TODO: Go calls vs.store.ReadEcShardNeedle(volumeId, n, nil) which reconstructs the
+        // full needle from EC shards (using erasure coding reconstruction across all shards),
+        // then populates last_modified, crc, ttl from the reconstructed data. The Rust
+        // implementation currently only reads the needle header from a single local shard,
+        // so last_modified, crc, and ttl are not populated for EC volumes. To match Go:
+        // 1. Implement a read_ec_shard_needle method on Store or EcVolume that performs
+        //    full needle reconstruction from EC shards
+        // 2. Use it here to get the complete needle data including last_modified, crc, ttl
         if let Some(ec_vol) = store.find_ec_volume(vid) {
             match ec_vol.find_needle_from_ecx(needle_id) {
                 Ok(Some((offset, size))) if !size.is_deleted() && !offset.is_zero() => {
