@@ -931,12 +931,7 @@ async fn get_or_head_handler_inner(
                     chrono::NaiveDateTime::parse_from_str(ims_str, "%a, %d %b %Y %H:%M:%S GMT")
                 {
                     if (n.last_modified as i64) <= ims_time.and_utc().timestamp() {
-                        let mut not_modified_headers = HeaderMap::new();
-                        not_modified_headers.insert(header::ETAG, etag.parse().unwrap());
-                        if let Some(ref lm) = last_modified_str {
-                            not_modified_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                        }
-                        return (StatusCode::NOT_MODIFIED, not_modified_headers).into_response();
+                        return StatusCode::NOT_MODIFIED.into_response();
                     }
                 }
             }
@@ -947,12 +942,7 @@ async fn get_or_head_handler_inner(
     if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH) {
         if let Ok(inm) = if_none_match.to_str() {
             if inm == etag {
-                let mut not_modified_headers = HeaderMap::new();
-                not_modified_headers.insert(header::ETAG, etag.parse().unwrap());
-                if let Some(ref lm) = last_modified_str {
-                    not_modified_headers.insert(header::LAST_MODIFIED, lm.parse().unwrap());
-                }
-                return (StatusCode::NOT_MODIFIED, not_modified_headers).into_response();
+                return StatusCode::NOT_MODIFIED.into_response();
             }
         }
     }
