@@ -1411,12 +1411,20 @@ fn handle_range_request(
     };
 
     if ranges.is_empty() {
-        return (StatusCode::OK, headers).into_response();
+        headers.insert(
+            header::CONTENT_LENGTH,
+            data.len().to_string().parse().unwrap(),
+        );
+        return finalize_bytes_response(StatusCode::OK, headers, data.to_vec(), state);
     }
 
-    // If combined range bytes exceed content size, ignore the range (return 200 empty)
+    // If combined range bytes exceed content size, ignore the range and return full data
     if sum_ranges_size(&ranges) > total {
-        return (StatusCode::OK, headers).into_response();
+        headers.insert(
+            header::CONTENT_LENGTH,
+            data.len().to_string().parse().unwrap(),
+        );
+        return finalize_bytes_response(StatusCode::OK, headers, data.to_vec(), state);
     }
 
     if ranges.len() == 1 {
