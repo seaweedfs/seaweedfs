@@ -128,9 +128,9 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			chunkSize = maxChunkSize
 		}
 	}
-	// final safety check: avoid more than 1000 chunks
-	for entry.Remote.RemoteSize/chunkSize+1 > 1000 {
-		chunkSize *= 2
+	// final safety check: ensure no more than 1000 chunks
+	if entry.Remote.RemoteSize/chunkSize+1 > 1000 {
+		chunkSize = (entry.Remote.RemoteSize + 999) / 1000
 	}
 
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
