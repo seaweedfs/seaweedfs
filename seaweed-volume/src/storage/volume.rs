@@ -2300,6 +2300,9 @@ impl Volume {
             )));
         }
 
+        // Compute monotonic appendAtNs (matches Go: needle.GetAppendAtNs(v.lastAppendAtNs))
+        let append_at_ns = get_append_at_ns(self.last_append_at_ns);
+
         // Patch appendAtNs timestamp into V3 blobs (matches Go WriteNeedleBlob L64-77)
         let mut blob_buf;
         let blob_to_write = if self.version() == VERSION_3 {
@@ -2307,12 +2310,8 @@ impl Volume {
                 NEEDLE_HEADER_SIZE + size.0 as usize + NEEDLE_CHECKSUM_SIZE;
             if ts_offset + TIMESTAMP_SIZE <= needle_blob.len() {
                 blob_buf = needle_blob.to_vec();
-                let now_ns = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_nanos() as u64;
                 blob_buf[ts_offset..ts_offset + TIMESTAMP_SIZE]
-                    .copy_from_slice(&now_ns.to_be_bytes());
+                    .copy_from_slice(&append_at_ns.to_be_bytes());
                 &blob_buf[..]
             } else {
                 needle_blob
@@ -2324,6 +2323,9 @@ impl Volume {
         // Append blob at end of dat file
         let dat_size = self.dat_file_size()? as i64;
         self.write_needle_blob(dat_size, blob_to_write)?;
+
+        // Update lastAppendAtNs (matches Go L352: v.lastAppendAtNs = appendAtNs)
+        self.last_append_at_ns = append_at_ns;
 
         // Update needle map index
         let offset = Offset::from_actual_offset(dat_size);
