@@ -1032,7 +1032,7 @@ impl Volume {
         if n.has_ttl() {
             if let Some(ref ttl) = n.ttl {
                 let ttl_minutes = ttl.minutes();
-                if ttl_minutes > 0 && n.has_last_modified_date() && n.append_at_ns > 0 {
+                if ttl_minutes > 0 && n.has_last_modified_date() {
                     let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
                     let now_ns = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -1291,7 +1291,7 @@ impl Volume {
         if n.has_ttl() {
             if let Some(ref ttl) = n.ttl {
                 let ttl_minutes = ttl.minutes();
-                if ttl_minutes > 0 && n.has_last_modified_date() && n.append_at_ns > 0 {
+                if ttl_minutes > 0 && n.has_last_modified_date() {
                     let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
                     let now_ns = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
