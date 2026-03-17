@@ -498,7 +498,7 @@ func (r *recordingExecutionSender) SendCompleted(c *plugin_pb.JobCompleted) erro
 func TestExpireSnapshotsExecution(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "analytics",
@@ -541,7 +541,7 @@ func TestExpireSnapshotsExecution(t *testing.T) {
 func TestExpireSnapshotsNothingToExpire(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
-	now := time.Now().UnixMilli()
+	now := time.Now().Add(-10 * time.Second).UnixMilli()
 	setup := tableSetup{
 		BucketName: "test-bucket",
 		Namespace:  "ns",
@@ -1184,26 +1184,30 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 		Namespace:  "analytics",
 		TableName:  "events",
 		Snapshots: []table.Snapshot{
-			{SnapshotID: 1, TimestampMs: now - 1, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 1, TimestampMs: now, ManifestList: "metadata/snap-1.avro", SequenceNumber: 1},
+			{SnapshotID: 2, TimestampMs: now + 1, ManifestList: "metadata/snap-2.avro", SequenceNumber: 2},
 		},
 	}
 	populateTable(t, fs, setup)
 
+	// Corrupt manifest lists so compaction evaluation fails.
 	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
-	manifestListName := path.Base(setup.Snapshots[0].ManifestList)
-	fs.putEntry(metaDir, manifestListName, &filer_pb.Entry{
-		Name: manifestListName,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    time.Now().Unix(),
-			FileSize: uint64(len("not-a-manifest-list")),
-		},
-		Content: []byte("not-a-manifest-list"),
-	})
+	for _, snap := range setup.Snapshots {
+		manifestListName := path.Base(snap.ManifestList)
+		fs.putEntry(metaDir, manifestListName, &filer_pb.Entry{
+			Name: manifestListName,
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime:    time.Now().Unix(),
+				FileSize: uint64(len("not-a-manifest-list")),
+			},
+			Content: []byte("not-a-manifest-list"),
+		})
+	}
 
 	handler := NewHandler(nil)
 	config := Config{
-		SnapshotRetentionHours: 0,
-		MaxSnapshotsToKeep:     10,
+		SnapshotRetentionHours: 24 * 365, // very long retention so age doesn't trigger
+		MaxSnapshotsToKeep:     1,         // 2 snapshots > 1 triggers expiry
 		Operations:             "compact,expire_snapshots",
 	}
 
@@ -2207,6 +2211,120 @@ func populateTableWithDeleteFiles(
 	return meta
 }
 
+func loadLiveDeleteFilePaths(
+	t *testing.T,
+	client filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+) (posPaths, eqPaths []string) {
+	t.Helper()
+
+	meta, _, err := loadCurrentMetadata(context.Background(), client, bucketName, tablePath)
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	manifests, err := loadCurrentManifests(context.Background(), client, bucketName, tablePath, meta)
+	if err != nil {
+		t.Fatalf("loadCurrentManifests: %v", err)
+	}
+
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentDeletes {
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(context.Background(), client, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			t.Fatalf("load delete manifest: %v", err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			t.Fatalf("read delete manifest: %v", err)
+		}
+		for _, entry := range entries {
+			switch entry.DataFile().ContentType() {
+			case iceberg.EntryContentPosDeletes:
+				posPaths = append(posPaths, entry.DataFile().FilePath())
+			case iceberg.EntryContentEqDeletes:
+				eqPaths = append(eqPaths, entry.DataFile().FilePath())
+			}
+		}
+	}
+
+	sort.Strings(posPaths)
+	sort.Strings(eqPaths)
+	return posPaths, eqPaths
+}
+
+func rewriteDeleteManifestsAsMixed(
+	t *testing.T,
+	fs *fakeFilerServer,
+	client filer_pb.SeaweedFilerClient,
+	setup tableSetup,
+) {
+	t.Helper()
+
+	meta, _, err := loadCurrentMetadata(context.Background(), client, setup.BucketName, setup.tablePath())
+	if err != nil {
+		t.Fatalf("loadCurrentMetadata: %v", err)
+	}
+	manifests, err := loadCurrentManifests(context.Background(), client, setup.BucketName, setup.tablePath(), meta)
+	if err != nil {
+		t.Fatalf("loadCurrentManifests: %v", err)
+	}
+
+	var dataManifests []iceberg.ManifestFile
+	var deleteEntries []iceberg.ManifestEntry
+	for _, mf := range manifests {
+		if mf.ManifestContent() == iceberg.ManifestContentData {
+			dataManifests = append(dataManifests, mf)
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(context.Background(), client, setup.BucketName, setup.tablePath(), mf.FilePath())
+		if err != nil {
+			t.Fatalf("load delete manifest: %v", err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			t.Fatalf("read delete manifest: %v", err)
+		}
+		for _, entry := range entries {
+			deleteEntries = append(deleteEntries, entry)
+		}
+	}
+
+	spec := *iceberg.UnpartitionedSpec
+	version := meta.Version()
+	metaDir := path.Join(s3tables.TablesPath, setup.BucketName, setup.tablePath(), "metadata")
+	manifestName := "mixed-delete-manifest-1.avro"
+	manifestPath := path.Join("metadata", manifestName)
+
+	var manifestBuf bytes.Buffer
+	_, err = iceberg.WriteManifest(manifestPath, &manifestBuf, version, spec, meta.CurrentSchema(), 1, deleteEntries)
+	if err != nil {
+		t.Fatalf("write mixed delete manifest: %v", err)
+	}
+	mixedBytes := patchManifestContentToDeletes(t, manifestBuf.Bytes())
+	fs.putEntry(metaDir, manifestName, &filer_pb.Entry{
+		Name: manifestName, Content: mixedBytes,
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(len(mixedBytes))},
+	})
+
+	mixedManifest := iceberg.NewManifestFile(version, manifestPath, int64(len(mixedBytes)), int32(spec.ID()), 1).
+		Content(iceberg.ManifestContentDeletes).
+		AddedFiles(int32(len(deleteEntries))).
+		Build()
+
+	var manifestListBuf bytes.Buffer
+	seqNum := int64(1)
+	allManifests := append(dataManifests, mixedManifest)
+	if err := iceberg.WriteManifestList(version, &manifestListBuf, 1, nil, &seqNum, 0, allManifests); err != nil {
+		t.Fatalf("write mixed manifest list: %v", err)
+	}
+	fs.putEntry(metaDir, "snap-1.avro", &filer_pb.Entry{
+		Name: "snap-1.avro", Content: manifestListBuf.Bytes(),
+		Attributes: &filer_pb.FuseAttributes{Mtime: time.Now().Unix(), FileSize: uint64(manifestListBuf.Len())},
+	})
+}
+
 func TestCompactDataFilesMetrics(t *testing.T) {
 	fs, client := startFakeFiler(t)
 
@@ -2711,5 +2829,371 @@ func TestCompactDataFilesWithMixedDeletes(t *testing.T) {
 		if r.Name == "alice" || r.Name == "eve" {
 			t.Errorf("%q should have been deleted", r.Name)
 		}
+	}
+}
+
+func TestRewritePositionDeleteFilesExecution(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}, {3, "charlie"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}, {"data/d1.parquet", 2}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+
+	result, metrics, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+	if !strings.Contains(result, "rewrote 2 position delete files into 1") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+	if metrics[MetricDeleteFilesRewritten] != 2 {
+		t.Fatalf("expected 2 rewritten files, got %d", metrics[MetricDeleteFilesRewritten])
+	}
+	if metrics[MetricDeleteFilesWritten] != 1 {
+		t.Fatalf("expected 1 written file, got %d", metrics[MetricDeleteFilesWritten])
+	}
+
+	liveDeletePaths, _ := loadLiveDeleteFilePaths(t, client, setup.BucketName, setup.tablePath())
+	if len(liveDeletePaths) != 1 {
+		t.Fatalf("expected 1 live rewritten delete file, got %v", liveDeletePaths)
+	}
+	if !strings.HasPrefix(liveDeletePaths[0], "data/rewrite-delete-") {
+		t.Fatalf("expected rewritten delete file path, got %q", liveDeletePaths[0])
+	}
+}
+
+func TestRewritePositionDeleteFilesDetection(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		Operations:                  "rewrite_position_delete_files",
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+	}
+
+	tables, err := handler.scanTablesForMaintenance(context.Background(), client, config, "", "", "", 0)
+	if err != nil {
+		t.Fatalf("scanTablesForMaintenance: %v", err)
+	}
+	if len(tables) != 1 {
+		t.Fatalf("expected 1 table needing delete rewrite, got %d", len(tables))
+	}
+}
+
+func TestRewritePositionDeleteFilesSkipsSingleFile(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+
+	result, _, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+	if !strings.Contains(result, "no position delete files eligible") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+}
+
+func TestRewritePositionDeleteFilesRespectsMinInputFiles(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         3,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+
+	result, _, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config)
+	if err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+	if !strings.Contains(result, "no position delete files eligible") {
+		t.Fatalf("unexpected result: %q", result)
+	}
+}
+
+func TestRewritePositionDeleteFilesPreservesUnsupportedMultiTargetDeletes(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}, {3, "charlie"}}},
+			{"d2.parquet", []struct {
+				ID   int64
+				Name string
+			}{{4, "diana"}, {5, "eve"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+			{"pd3.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 2}, {"data/d2.parquet", 0}}},
+		},
+		nil,
+	)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+
+	if _, _, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+
+	posPaths, _ := loadLiveDeleteFilePaths(t, client, setup.BucketName, setup.tablePath())
+	if len(posPaths) != 2 {
+		t.Fatalf("expected rewritten file plus untouched multi-target file, got %v", posPaths)
+	}
+	if posPaths[0] != "data/pd3.parquet" && posPaths[1] != "data/pd3.parquet" {
+		t.Fatalf("expected multi-target delete file to be preserved, got %v", posPaths)
+	}
+	if !strings.HasPrefix(posPaths[0], "data/rewrite-delete-") && !strings.HasPrefix(posPaths[1], "data/rewrite-delete-") {
+		t.Fatalf("expected rewritten delete file to remain live, got %v", posPaths)
+	}
+}
+
+func TestRewritePositionDeleteFilesRebuildsMixedDeleteManifests(t *testing.T) {
+	fs, client := startFakeFiler(t)
+
+	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
+	populateTableWithDeleteFiles(t, fs, setup,
+		[]struct {
+			Name string
+			Rows []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"d1.parquet", []struct {
+				ID   int64
+				Name string
+			}{{1, "alice"}, {2, "bob"}, {3, "charlie"}}},
+		},
+		[]struct {
+			Name string
+			Rows []struct {
+				FilePath string
+				Pos      int64
+			}
+		}{
+			{"pd1.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 0}}},
+			{"pd2.parquet", []struct {
+				FilePath string
+				Pos      int64
+			}{{"data/d1.parquet", 1}}},
+		},
+		[]struct {
+			Name     string
+			FieldIDs []int
+			Rows     []struct {
+				ID   int64
+				Name string
+			}
+		}{
+			{"eq1.parquet", []int{1}, []struct {
+				ID   int64
+				Name string
+			}{{3, "charlie"}}},
+		},
+	)
+	rewriteDeleteManifestsAsMixed(t, fs, client, setup)
+
+	handler := NewHandler(nil)
+	config := Config{
+		DeleteTargetFileSizeBytes:   64 * 1024 * 1024,
+		DeleteMinInputFiles:         2,
+		DeleteMaxFileGroupSizeBytes: 128 * 1024 * 1024,
+		DeleteMaxOutputFiles:        4,
+		MaxCommitRetries:            3,
+	}
+
+	if _, _, err := handler.rewritePositionDeleteFiles(context.Background(), client, setup.BucketName, setup.tablePath(), config); err != nil {
+		t.Fatalf("rewritePositionDeleteFiles: %v", err)
+	}
+
+	posPaths, eqPaths := loadLiveDeleteFilePaths(t, client, setup.BucketName, setup.tablePath())
+	if len(posPaths) != 1 || !strings.HasPrefix(posPaths[0], "data/rewrite-delete-") {
+		t.Fatalf("expected only the rewritten position delete file to remain live, got %v", posPaths)
+	}
+	if len(eqPaths) != 1 || eqPaths[0] != "data/eq1.parquet" {
+		t.Fatalf("expected equality delete file to be preserved, got %v", eqPaths)
 	}
 }
