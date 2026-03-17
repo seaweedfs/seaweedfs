@@ -22,6 +22,7 @@ const (
 	defaultDeleteMinInputFiles    = 2
 	defaultDeleteMaxGroupSizeMB   = 256
 	defaultDeleteMaxOutputFiles   = 8
+	defaultRewriteStrategy        = "binpack"
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
@@ -43,6 +44,8 @@ const (
 	MetricDurationMs           = "duration_ms"
 )
 
+const bytesPerMB int64 = 1024 * 1024
+
 // Config holds parsed worker config values.
 type Config struct {
 	SnapshotRetentionHours      int64
@@ -60,7 +63,6 @@ type Config struct {
 	ApplyDeletes                bool
 	Where                       string
 	RewriteStrategy             string
-	SortFields                  string
 	SortMaxInputBytes           int64
 }
 
@@ -72,19 +74,18 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		MaxSnapshotsToKeep:          readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
 		OrphanOlderThanHours:        readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
 		MaxCommitRetries:            readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
-		TargetFileSizeBytes:         readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
+		TargetFileSizeBytes:         readSizeMBConfig(values, "target_file_size_mb", defaultTargetFileSizeMB),
 		MinInputFiles:               readInt64Config(values, "min_input_files", defaultMinInputFiles),
-		DeleteTargetFileSizeBytes:   readInt64Config(values, "delete_target_file_size_mb", defaultDeleteTargetFileSizeMB) * 1024 * 1024,
+		DeleteTargetFileSizeBytes:   readSizeMBConfig(values, "delete_target_file_size_mb", defaultDeleteTargetFileSizeMB),
 		DeleteMinInputFiles:         readInt64Config(values, "delete_min_input_files", defaultDeleteMinInputFiles),
-		DeleteMaxFileGroupSizeBytes: readInt64Config(values, "delete_max_file_group_size_mb", defaultDeleteMaxGroupSizeMB) * 1024 * 1024,
+		DeleteMaxFileGroupSizeBytes: readSizeMBConfig(values, "delete_max_file_group_size_mb", defaultDeleteMaxGroupSizeMB),
 		DeleteMaxOutputFiles:        readInt64Config(values, "delete_max_output_files", defaultDeleteMaxOutputFiles),
 		MinManifestsToRewrite:       readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
 		Operations:                  readStringConfig(values, "operations", defaultOperations),
 		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
 		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
-		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", "binpack"))),
-		SortFields:                  strings.TrimSpace(readStringConfig(values, "sort_fields", "")),
-		SortMaxInputBytes:           readInt64Config(values, "sort_max_input_mb", 0) * 1024 * 1024,
+		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
+		SortMaxInputBytes:           readSizeMBConfig(values, "sort_max_input_mb", 0),
 	}
 
 	// Clamp the fields that are always defaulted by worker config parsing.
@@ -98,15 +99,6 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
 	}
 	cfg = applyThresholdDefaults(cfg)
-	if cfg.RewriteStrategy == "" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
-		cfg.RewriteStrategy = "binpack"
-	}
-	if cfg.SortMaxInputBytes < 0 {
-		cfg.SortMaxInputBytes = 0
-	}
 	return cfg
 }
 
@@ -132,10 +124,32 @@ func applyThresholdDefaults(cfg Config) Config {
 	if cfg.DeleteMaxOutputFiles <= 0 {
 		cfg.DeleteMaxOutputFiles = defaultDeleteMaxOutputFiles
 	}
+	if cfg.RewriteStrategy == "" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.SortMaxInputBytes < 0 {
+		cfg.SortMaxInputBytes = 0
+	}
 	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
 		cfg.MinManifestsToRewrite = minManifestsToRewrite
 	}
 	return cfg
+}
+
+func readSizeMBConfig(values map[string]*plugin_pb.ConfigValue, field string, fallbackMB int64) int64 {
+	mb := readInt64Config(values, field, fallbackMB)
+	if mb <= 0 {
+		return 0
+	}
+	maxMB := int64(^uint64(0)>>1) / bytesPerMB
+	if mb > maxMB {
+		glog.V(1).Infof("readSizeMBConfig: clamping %q from %d MB to %d MB", field, mb, maxMB)
+		mb = maxMB
+	}
+	return mb * bytesPerMB
 }
 
 // parseOperations returns the ordered list of maintenance operations to execute.

@@ -34,6 +34,12 @@ func TestParseConfig(t *testing.T) {
 	if config.Operations != defaultOperations {
 		t.Errorf("expected Operations=%q, got %q", defaultOperations, config.Operations)
 	}
+	if config.RewriteStrategy != defaultRewriteStrategy {
+		t.Errorf("expected RewriteStrategy=%q, got %q", defaultRewriteStrategy, config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 0 {
+		t.Errorf("expected SortMaxInputBytes=0, got %d", config.SortMaxInputBytes)
+	}
 }
 
 func TestParseOperations(t *testing.T) {
@@ -876,6 +882,38 @@ func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
 	}
 	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
 		t.Fatalf("expected MaxSnapshotsToKeep default, got %d", config.MaxSnapshotsToKeep)
+	}
+}
+
+func TestParseConfigRewriteStrategy(t *testing.T) {
+	config := ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"rewrite_strategy":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "sort"}},
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 64}},
+	})
+	if config.RewriteStrategy != "sort" {
+		t.Fatalf("expected sort rewrite strategy, got %q", config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 64*1024*1024 {
+		t.Fatalf("expected SortMaxInputBytes=64MB, got %d", config.SortMaxInputBytes)
+	}
+
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"rewrite_strategy":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "invalid"}},
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -1}},
+	})
+	if config.RewriteStrategy != defaultRewriteStrategy {
+		t.Fatalf("expected invalid rewrite strategy to fall back to %q, got %q", defaultRewriteStrategy, config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 0 {
+		t.Fatalf("expected negative sort cap to clamp to 0, got %d", config.SortMaxInputBytes)
+	}
+
+	maxMB := int64(^uint64(0)>>1) / bytesPerMB
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: fmt.Sprintf("%d", maxMB+1)}},
+	})
+	if config.SortMaxInputBytes != maxMB*bytesPerMB {
+		t.Fatalf("expected oversized sort cap to clamp to %d bytes, got %d", maxMB*bytesPerMB, config.SortMaxInputBytes)
 	}
 }
 

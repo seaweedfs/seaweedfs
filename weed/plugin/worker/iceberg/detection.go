@@ -438,7 +438,14 @@ func hasEligibleCompaction(
 		}
 	}
 
-	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
+	rewritePlan, err := resolveCompactionRewritePlan(config, meta)
+	if err != nil {
+		return false, fmt.Errorf("resolve rewrite strategy: %w", err)
+	}
+
+	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	return len(bins) > 0, nil
 }
 

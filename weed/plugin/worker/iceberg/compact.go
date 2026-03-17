@@ -58,6 +58,11 @@ func (h *Handler) compactDataFiles(
 		return "no current snapshot", nil, nil
 	}
 
+	rewritePlan, err := resolveCompactionRewritePlan(config, meta)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve rewrite strategy: %w", err)
+	}
+
 	// Read manifest list
 	manifestListData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, currentSnap.ManifestList)
 	if err != nil {
@@ -182,9 +187,12 @@ func (h *Handler) compactDataFiles(
 	}
 
 	// Build compaction bins: group small data files by partition.
-	bins := buildCompactionBins(candidateEntries, config.TargetFileSizeBytes, minInputFiles)
+	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	initialBinCount := len(bins)
+	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	if len(bins) == 0 {
-		return "no files eligible for compaction", nil, nil
+		return compactionNoEligibleMessage(config, rewritePlan, initialBinCount), nil, nil
 	}
 
 	// Build a lookup from spec ID to PartitionSpec for per-bin manifest writing.
@@ -256,7 +264,13 @@ func (h *Handler) compactDataFiles(
 		mergedFileName := fmt.Sprintf("compact-%d-%d-%s-%d.parquet", snapshotID, newSnapID, artifactSuffix, binIdx)
 		mergedFilePath := path.Join("data", mergedFileName)
 
-		mergedData, recordCount, err := mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
+		var mergedData []byte
+		var recordCount int64
+		if rewritePlan != nil && rewritePlan.strategy == "sort" {
+			mergedData, recordCount, err = mergeParquetFilesSorted(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema, rewritePlan)
+		} else {
+			mergedData, recordCount, err = mergeParquetFiles(ctx, filerClient, bucketName, tablePath, bin.Entries, positionDeletes, eqDeleteGroups, schema)
+		}
 		if err != nil {
 			glog.Warningf("iceberg compact: failed to merge bin %d (%d files): %v", binIdx, len(bin.Entries), err)
 			goto binDone
@@ -473,16 +487,20 @@ func (h *Handler) compactDataFiles(
 			Summary: &table.Summary{
 				Operation: table.OpReplace,
 				Properties: map[string]string{
-					"maintenance":     "compact_data_files",
-					"merged-files":    fmt.Sprintf("%d", totalMerged),
-					"new-files":       fmt.Sprintf("%d", len(newManifestEntries)),
-					"compaction-bins": fmt.Sprintf("%d", len(bins)),
+					"maintenance":      "compact_data_files",
+					"merged-files":     fmt.Sprintf("%d", totalMerged),
+					"new-files":        fmt.Sprintf("%d", len(newManifestEntries)),
+					"compaction-bins":  fmt.Sprintf("%d", len(bins)),
+					"rewrite-strategy": rewritePlan.strategy,
 				},
 			},
 			SchemaID: func() *int {
 				id := schema.ID
 				return &id
 			}(),
+		}
+		if rewritePlan != nil && rewritePlan.strategy == "sort" {
+			newSnapshot.Summary.Properties["sort-fields"] = rewritePlan.summaryLabel()
 		}
 		if err := builder.AddSnapshot(newSnapshot); err != nil {
 			return err
@@ -500,7 +518,11 @@ func (h *Handler) compactDataFiles(
 		MetricBins:         int64(len(bins)),
 		MetricDurationMs:   time.Since(start).Milliseconds(),
 	}
-	return fmt.Sprintf("compacted %d files into %d (across %d bins)", totalMerged, len(newManifestEntries), len(bins)), metrics, nil
+	result := fmt.Sprintf("compacted %d files into %d (across %d bins)", totalMerged, len(newManifestEntries), len(bins))
+	if rewritePlan != nil && rewritePlan.strategy == "sort" {
+		result = fmt.Sprintf("%s using %s", result, rewritePlan.summaryLabel())
+	}
+	return result, metrics, nil
 }
 
 // buildCompactionBins groups small data files by partition for bin-packing.
@@ -922,109 +944,28 @@ func mergeParquetFiles(
 		return nil, 0, fmt.Errorf("no parquet schema found in %s", entries[0].DataFile().FilePath())
 	}
 
-	// Resolve equality delete column indices for each group.
-	type resolvedEqGroup struct {
-		colIndices []int
-		keys       map[string]struct{}
-	}
-	var resolvedEqGroups []resolvedEqGroup
-	if len(eqDeleteGroups) > 0 && icebergSchema != nil {
-		for _, g := range eqDeleteGroups {
-			indices, resolveErr := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
-			if resolveErr != nil {
-				firstReader.Close()
-				return nil, 0, fmt.Errorf("resolve equality columns: %w", resolveErr)
-			}
-			resolvedEqGroups = append(resolvedEqGroups, resolvedEqGroup{colIndices: indices, keys: g.Keys})
-		}
+	resolvedEqGroups, err := resolveEqualityDeleteGroupsForSchema(parquetSchema, eqDeleteGroups, icebergSchema)
+	if err != nil {
+		firstReader.Close()
+		return nil, 0, fmt.Errorf("resolve equality columns: %w", err)
 	}
 
 	var outputBuf bytes.Buffer
 	writer := parquet.NewWriter(&outputBuf, parquetSchema)
 
-	var totalRows int64
-	rows := make([]parquet.Row, 256)
-	hasEqDeletes := len(resolvedEqGroups) > 0
-
-	// drainReader streams rows from reader into writer, filtering out deleted
-	// rows. source is the data file path (used for error messages and
-	// position delete lookups).
-	drainReader := func(reader *parquet.Reader, source string) error {
-		defer reader.Close()
-
-		// Normalize source path so it matches the normalized keys in positionDeletes.
-		normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
-		posDeletes := positionDeletes[normalizedSource]
-		posDeleteIdx := 0
-		var absolutePos int64
-
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
+	drainReader := func(reader *parquet.Reader, source string) (int64, error) {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+			if _, err := writer.WriteRows(filtered); err != nil {
+				return fmt.Errorf("write rows from %s: %w", source, err)
 			}
-			n, readErr := reader.ReadRows(rows)
-			if n > 0 {
-				// Filter rows if we have any deletes
-				if len(posDeletes) > 0 || hasEqDeletes {
-					writeIdx := 0
-					for i := 0; i < n; i++ {
-						rowPos := absolutePos + int64(i)
-
-						// Check position deletes (sorted, so advance index)
-						if len(posDeletes) > 0 {
-							for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
-								posDeleteIdx++
-							}
-							if posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] == rowPos {
-								posDeleteIdx++
-								continue // skip this row
-							}
-						}
-
-						// Check equality deletes — each group independently
-						deleted := false
-						for _, g := range resolvedEqGroups {
-							key := buildEqualityKey(rows[i], g.colIndices)
-							if _, ok := g.keys[key]; ok {
-								deleted = true
-								break
-							}
-						}
-						if deleted {
-							continue // skip this row
-						}
-
-						rows[writeIdx] = rows[i]
-						writeIdx++
-					}
-					absolutePos += int64(n)
-					if writeIdx > 0 {
-						if _, writeErr := writer.WriteRows(rows[:writeIdx]); writeErr != nil {
-							return fmt.Errorf("write rows from %s: %w", source, writeErr)
-						}
-						totalRows += int64(writeIdx)
-					}
-				} else {
-					if _, writeErr := writer.WriteRows(rows[:n]); writeErr != nil {
-						return fmt.Errorf("write rows from %s: %w", source, writeErr)
-					}
-					totalRows += int64(n)
-				}
-			}
-			if readErr != nil {
-				if readErr == io.EOF {
-					return nil
-				}
-				return fmt.Errorf("read rows from %s: %w", source, readErr)
-			}
-		}
+			return nil
+		})
 	}
 
 	// Drain the first file.
 	firstSource := entries[0].DataFile().FilePath()
-	if err := drainReader(firstReader, firstSource); err != nil {
+	totalRows, err := drainReader(firstReader, firstSource)
+	if err != nil {
 		writer.Close()
 		return nil, 0, err
 	}
@@ -1052,13 +993,211 @@ func mergeParquetFiles(
 			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
 		}
 
-		if err := drainReader(reader, entry.DataFile().FilePath()); err != nil {
+		rowsWritten, err := drainReader(reader, entry.DataFile().FilePath())
+		if err != nil {
 			writer.Close()
 			return nil, 0, err
 		}
+		totalRows += rowsWritten
 		// data goes out of scope here, eligible for GC before next iteration.
 	}
 
+	if err := writer.Close(); err != nil {
+		return nil, 0, fmt.Errorf("close writer: %w", err)
+	}
+
+	return outputBuf.Bytes(), totalRows, nil
+}
+
+type resolvedEqDeleteGroup struct {
+	colIndices []int
+	keys       map[string]struct{}
+}
+
+func resolveEqualityDeleteGroupsForSchema(
+	parquetSchema *parquet.Schema,
+	eqDeleteGroups []equalityDeleteGroup,
+	icebergSchema *iceberg.Schema,
+) ([]resolvedEqDeleteGroup, error) {
+	if len(eqDeleteGroups) == 0 || icebergSchema == nil {
+		return nil, nil
+	}
+
+	resolved := make([]resolvedEqDeleteGroup, 0, len(eqDeleteGroups))
+	for _, g := range eqDeleteGroups {
+		indices, err := resolveEqualityColIndices(parquetSchema, g.FieldIDs, icebergSchema)
+		if err != nil {
+			return nil, err
+		}
+		resolved = append(resolved, resolvedEqDeleteGroup{colIndices: indices, keys: g.Keys})
+	}
+	return resolved, nil
+}
+
+func visitFilteredParquetRows(
+	ctx context.Context,
+	reader *parquet.Reader,
+	source, bucketName, tablePath string,
+	positionDeletes map[string][]int64,
+	resolvedEqGroups []resolvedEqDeleteGroup,
+	onRows func([]parquet.Row) error,
+) (int64, error) {
+	defer reader.Close()
+
+	rows := make([]parquet.Row, 256)
+	filteredRows := make([]parquet.Row, 0, len(rows))
+	normalizedSource := normalizeIcebergPath(source, bucketName, tablePath)
+	posDeletes := positionDeletes[normalizedSource]
+	posDeleteIdx := 0
+	var absolutePos int64
+	var totalRows int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return totalRows, ctx.Err()
+		default:
+		}
+
+		n, readErr := reader.ReadRows(rows)
+		if n > 0 {
+			filteredRows = filteredRows[:0]
+			for i := 0; i < n; i++ {
+				rowPos := absolutePos + int64(i)
+				for posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] < rowPos {
+					posDeleteIdx++
+				}
+				if posDeleteIdx < len(posDeletes) && posDeletes[posDeleteIdx] == rowPos {
+					posDeleteIdx++
+					continue
+				}
+
+				deleted := false
+				for _, g := range resolvedEqGroups {
+					key := buildEqualityKey(rows[i], g.colIndices)
+					if _, ok := g.keys[key]; ok {
+						deleted = true
+						break
+					}
+				}
+				if deleted {
+					continue
+				}
+
+				filteredRows = append(filteredRows, rows[i])
+			}
+			absolutePos += int64(n)
+			if len(filteredRows) > 0 {
+				if err := onRows(filteredRows); err != nil {
+					return totalRows, err
+				}
+				totalRows += int64(len(filteredRows))
+			}
+		}
+
+		if readErr != nil {
+			if readErr == io.EOF {
+				return totalRows, nil
+			}
+			return totalRows, fmt.Errorf("read rows from %s: %w", source, readErr)
+		}
+	}
+}
+
+func mergeParquetFilesSorted(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	entries []iceberg.ManifestEntry,
+	positionDeletes map[string][]int64,
+	eqDeleteGroups []equalityDeleteGroup,
+	icebergSchema *iceberg.Schema,
+	rewritePlan *compactionRewritePlan,
+) ([]byte, int64, error) {
+	if len(entries) == 0 {
+		return nil, 0, fmt.Errorf("no entries to merge")
+	}
+	if rewritePlan == nil || rewritePlan.strategy != "sort" {
+		return nil, 0, fmt.Errorf("sorted merge requires sort rewrite plan")
+	}
+
+	firstData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entries[0].DataFile().FilePath())
+	if err != nil {
+		return nil, 0, fmt.Errorf("read parquet file %s: %w", entries[0].DataFile().FilePath(), err)
+	}
+	firstReader := parquet.NewReader(bytes.NewReader(firstData))
+	parquetSchema := firstReader.Schema()
+	if parquetSchema == nil {
+		firstReader.Close()
+		return nil, 0, fmt.Errorf("no parquet schema found in %s", entries[0].DataFile().FilePath())
+	}
+
+	sortingColumns, err := rewritePlan.parquetSortingColumns(parquetSchema)
+	if err != nil {
+		firstReader.Close()
+		return nil, 0, fmt.Errorf("resolve parquet sorting columns: %w", err)
+	}
+
+	resolvedEqGroups, err := resolveEqualityDeleteGroupsForSchema(parquetSchema, eqDeleteGroups, icebergSchema)
+	if err != nil {
+		firstReader.Close()
+		return nil, 0, fmt.Errorf("resolve equality columns: %w", err)
+	}
+
+	comparator := parquetSchema.Comparator(sortingColumns...)
+	var allRows []parquet.Row
+
+	collectRows := func(reader *parquet.Reader, source string) (int64, error) {
+		return visitFilteredParquetRows(ctx, reader, source, bucketName, tablePath, positionDeletes, resolvedEqGroups, func(filtered []parquet.Row) error {
+			for _, row := range filtered {
+				allRows = append(allRows, row.Clone())
+			}
+			return nil
+		})
+	}
+
+	totalRows, err := collectRows(firstReader, entries[0].DataFile().FilePath())
+	if err != nil {
+		return nil, 0, err
+	}
+
+	for _, entry := range entries[1:] {
+		select {
+		case <-ctx.Done():
+			return nil, 0, ctx.Err()
+		default:
+		}
+
+		data, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, entry.DataFile().FilePath())
+		if err != nil {
+			return nil, 0, fmt.Errorf("read parquet file %s: %w", entry.DataFile().FilePath(), err)
+		}
+
+		reader := parquet.NewReader(bytes.NewReader(data))
+		if !schemasEqual(parquetSchema, reader.Schema()) {
+			reader.Close()
+			return nil, 0, fmt.Errorf("schema mismatch in %s: cannot merge files with different schemas", entry.DataFile().FilePath())
+		}
+
+		rowsCollected, err := collectRows(reader, entry.DataFile().FilePath())
+		if err != nil {
+			return nil, 0, err
+		}
+		totalRows += rowsCollected
+	}
+
+	sort.SliceStable(allRows, func(i, j int) bool {
+		return comparator(allRows[i], allRows[j]) < 0
+	})
+
+	var outputBuf bytes.Buffer
+	writer := parquet.NewWriter(&outputBuf, parquetSchema)
+	if len(allRows) > 0 {
+		if _, err := writer.WriteRows(allRows); err != nil {
+			writer.Close()
+			return nil, 0, fmt.Errorf("write sorted rows: %w", err)
+		}
+	}
 	if err := writer.Close(); err != nil {
 		return nil, 0, fmt.Errorf("close writer: %w", err)
 	}
