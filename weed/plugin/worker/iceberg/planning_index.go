@@ -105,7 +105,9 @@ func (idx *planningIndex) rewriteManifestsEligible(config Config) (bool, bool) {
 }
 
 func compactionPlanningConfigHash(config Config) string {
-	return fmt.Sprintf("target=%d|min=%d", config.TargetFileSizeBytes, config.MinInputFiles)
+	return fmt.Sprintf("target=%d|min=%d|strategy=%s|sortcap=%d",
+		config.TargetFileSizeBytes, config.MinInputFiles,
+		config.RewriteStrategy, config.SortMaxInputBytes)
 }
 
 func operationRequested(ops []string, wanted string) bool {

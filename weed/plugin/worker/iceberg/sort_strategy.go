@@ -123,7 +123,7 @@ func filterCompactionBinsByPlan(bins []compactionBin, config Config, plan *compa
 
 func compactionNoEligibleMessage(config Config, plan *compactionRewritePlan, initialBinCount int) string {
 	if plan != nil && plan.strategy == "sort" && config.SortMaxInputBytes > 0 && initialBinCount > 0 {
-		return fmt.Sprintf("no files eligible for sorted compaction within %d MB sort input cap", config.SortMaxInputBytes/(1024*1024))
+		return fmt.Sprintf("no files eligible for sorted compaction within %d MB sort input cap", config.SortMaxInputBytes/bytesPerMB)
 	}
 	return "no files eligible for compaction"
 }
