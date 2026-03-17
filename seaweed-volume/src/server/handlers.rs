@@ -1896,9 +1896,9 @@ pub async fn post_handler(
         .unwrap_or("")
         .to_string();
 
-    // Go only parses multipart form-data for POST requests.
+    // Go only parses multipart form-data for POST requests with form-data content type.
     let should_parse_multipart =
-        method == Method::POST && (content_type_str.is_empty() || content_type_str.contains("form-data"));
+        method == Method::POST && content_type_str.contains("form-data");
 
     // Validate multipart/form-data has a boundary
     if should_parse_multipart && !content_type_str.contains("boundary=") {
