@@ -936,7 +936,8 @@ async fn get_or_head_handler_inner(
             && !has_range
             && method != Method::HEAD;
 
-        can_handle_head_from_meta = can_direct_source_read && method == Method::HEAD;
+        // Go uses meta-only reads for all HEAD requests, regardless of compression/chunked files.
+        can_handle_head_from_meta = stream_info.is_some() && method == Method::HEAD;
         can_handle_range_from_source = can_direct_source_read && has_range;
 
         // For chunk manifest or any non-streaming path, we need the full data.
