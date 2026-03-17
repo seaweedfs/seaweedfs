@@ -1923,14 +1923,19 @@ impl Volume {
         let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
 
         let dat_size = self.dat_file_size().map_err(|e| VolumeError::Io(e))?;
+        let version = self.version();
 
         let mut files_checked: u64 = 0;
         let mut broken = Vec::new();
+        let mut total_read: i64 = 0;
 
         for (needle_id, nv) in nm.iter_entries() {
             if nv.offset.is_zero() || nv.size.is_deleted() {
                 continue;
             }
+
+            // Accumulate actual needle size (matches Go's totalRead += GetActualSize)
+            total_read += get_actual_size(nv.size, version);
 
             let offset = nv.offset.to_actual_offset();
             if offset < 0 || offset as u64 >= dat_size {
@@ -1954,6 +1959,20 @@ impl Volume {
             }
 
             files_checked += 1;
+        }
+
+        // Validate total data size against .dat file size (matches Go's scrubVolumeData)
+        let expected_size = total_read + SUPER_BLOCK_SIZE as i64;
+        if (dat_size as i64) < expected_size {
+            broken.push(format!(
+                "dat file size {} is smaller than expected {} (total_read {} + super_block {})",
+                dat_size, expected_size, total_read, SUPER_BLOCK_SIZE
+            ));
+        } else if dat_size as i64 != expected_size {
+            broken.push(format!(
+                "warning: dat file size {} does not match expected {} (total_read {} + super_block {})",
+                dat_size, expected_size, total_read, SUPER_BLOCK_SIZE
+            ));
         }
 
         Ok((files_checked, broken))
@@ -2676,7 +2695,20 @@ impl Volume {
     }
 
     /// Commit a previously completed compaction: swap .cpd/.cpx to .dat/.idx and reload.
+    /// Matches Go's isCompactionInProgress CompareAndSwap guard.
     pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
+        if self.is_compacting {
+            return Ok(()); // already compacting, silently skip (matches Go)
+        }
+        self.is_compacting = true;
+
+        let result = self.do_commit_compact();
+
+        self.is_compacting = false;
+        result
+    }
+
+    fn do_commit_compact(&mut self) -> Result<(), VolumeError> {
         self.makeup_diff().map_err(|e| {
             warn!("makeup_diff failed: {}", e);
             e
