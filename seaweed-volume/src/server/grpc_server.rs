@@ -3220,8 +3220,15 @@ impl VolumeServer for VolumeGrpcService {
             }
         }
 
-        // Await local write
-        match local_handle.await {
+        // Await ALL writes before checking errors (matches Go's wg.Wait())
+        let local_result = local_handle.await;
+        let mut replica_results = Vec::new();
+        for handle in handles {
+            replica_results.push(handle.await);
+        }
+
+        // Check local write result
+        match local_result {
             Ok(Ok(())) => {}
             Ok(Err(e)) => return Err(Status::internal(e)),
             Err(e) => return Err(Status::internal(format!("local write task failed: {}", e))),
@@ -3229,9 +3236,9 @@ impl VolumeServer for VolumeGrpcService {
 
         let e_tag = n.etag();
 
-        // Await replica writes
-        for handle in handles {
-            match handle.await {
+        // Check replica write results
+        for result in replica_results {
+            match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => return Err(Status::internal(e)),
                 Err(e) => return Err(Status::internal(format!("replication task failed: {}", e))),
