@@ -747,6 +747,9 @@ async fn run(
         let _ = h.await;
     }
 
+    // Close all volumes (flush and release file handles) matching Go's Shutdown()
+    state.store.write().unwrap().close();
+
     if let Some(cpu_profile) = cpu_profile {
         cpu_profile.finish().map_err(std::io::Error::other)?;
     }
