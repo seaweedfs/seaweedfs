@@ -61,6 +61,10 @@ impl http_body::Body for TrackedBody {
         let data = std::mem::take(&mut self.data);
         std::task::Poll::Ready(Some(Ok(http_body::Frame::data(bytes::Bytes::from(data)))))
     }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        http_body::SizeHint::with_exact(self.data.len() as u64)
+    }
 }
 
 impl Drop for TrackedBody {
