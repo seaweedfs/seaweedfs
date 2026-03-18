@@ -12,6 +12,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::{Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -470,6 +471,10 @@ pub struct Volume {
     no_write_or_delete: bool,
     no_write_can_delete: bool,
 
+    /// Shared flag from the parent DiskLocation indicating low disk space.
+    /// Matches Go's `v.location.isDiskSpaceLow` checked in `IsReadOnly()`.
+    pub location_disk_space_low: Arc<AtomicBool>,
+
     last_modified_ts_seconds: u64,
     last_append_at_ns: u64,
 
@@ -541,6 +546,7 @@ impl Volume {
             },
             no_write_or_delete: false,
             no_write_can_delete: false,
+            location_disk_space_low: Arc::new(AtomicBool::new(false)),
             last_modified_ts_seconds: 0,
             last_append_at_ns: 0,
             last_compact_index_offset: 0,
@@ -1614,7 +1620,9 @@ impl Volume {
     }
 
     pub fn is_read_only(&self) -> bool {
-        self.no_write_or_delete || self.no_write_can_delete
+        self.no_write_or_delete
+            || self.no_write_can_delete
+            || self.location_disk_space_low.load(Ordering::Relaxed)
     }
 
     pub fn is_no_write_or_delete(&self) -> bool {

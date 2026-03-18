@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
+use std::sync::Arc;
 
 use tracing::{info, warn};
 
@@ -33,7 +34,7 @@ pub struct DiskLocation {
     pub original_max_volume_count: i32,
     volumes: HashMap<VolumeId, Volume>,
     ec_volumes: HashMap<VolumeId, EcVolume>,
-    pub is_disk_space_low: AtomicBool,
+    pub is_disk_space_low: Arc<AtomicBool>,
     pub available_space: AtomicU64,
     pub min_free_space: MinFreeSpace,
 }
@@ -69,7 +70,7 @@ impl DiskLocation {
             original_max_volume_count: max_volume_count,
             volumes: HashMap::new(),
             ec_volumes: HashMap::new(),
-            is_disk_space_low: AtomicBool::new(false),
+            is_disk_space_low: Arc::new(AtomicBool::new(false)),
             available_space: AtomicU64::new(0),
             min_free_space,
         })
@@ -188,7 +189,8 @@ impl DiskLocation {
                 0,    // no preallocate on load
                 Version::current(),
             ) {
-                Ok(v) => {
+                Ok(mut v) => {
+                    v.location_disk_space_low = self.is_disk_space_low.clone();
                     crate::metrics::VOLUME_GAUGE
                         .with_label_values(&[&collection, "volume"])
                         .inc();
@@ -343,7 +345,7 @@ impl DiskLocation {
         preallocate: u64,
         version: Version,
     ) -> Result<(), VolumeError> {
-        let v = Volume::new(
+        let mut v = Volume::new(
             &self.directory,
             &self.idx_directory,
             collection,
@@ -354,6 +356,7 @@ impl DiskLocation {
             preallocate,
             version,
         )?;
+        v.location_disk_space_low = self.is_disk_space_low.clone();
         crate::metrics::VOLUME_GAUGE
             .with_label_values(&[collection, "volume"])
             .inc();
