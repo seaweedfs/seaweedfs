@@ -3477,15 +3477,13 @@ impl VolumeServer for VolumeGrpcService {
                         }
                     }
 
-                    // Build output record: {"selection":value,...} (Go's ToJson format)
+                    // Build output record: {selection:value,...} (Go's ToJson format — unquoted keys)
                     records.push(b'{');
                     for (i, sel) in req.selections.iter().enumerate() {
                         if i > 0 {
                             records.push(b',');
                         }
-                        records.push(b'"');
                         records.extend_from_slice(sel.as_bytes());
-                        records.push(b'"');
                         records.push(b':');
                         let val = &parsed[sel];
                         let raw = if val.is_null() {
