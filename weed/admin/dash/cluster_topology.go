@@ -12,6 +12,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+var dirStatusClient = &http.Client{
+	Timeout: 5 * time.Second,
+}
+
 // GetClusterTopology returns the current cluster topology with caching
 func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	now := time.Now()
@@ -47,12 +51,17 @@ func (s *AdminServer) fetchPublicUrlMap() map[string]string {
 	}
 
 	url := fmt.Sprintf("http://%s/dir/status", currentMaster.ToHttpAddress())
-	resp, err := http.Get(url)
+	resp, err := dirStatusClient.Get(url)
 	if err != nil {
 		glog.V(1).Infof("Failed to fetch /dir/status from %s: %v", currentMaster, err)
 		return nil
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		glog.V(1).Infof("Non-OK response from /dir/status: %d", resp.StatusCode)
+		return nil
+	}
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
