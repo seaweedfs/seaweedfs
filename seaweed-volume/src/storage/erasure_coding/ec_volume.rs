@@ -77,20 +77,25 @@ impl EcVolume {
             shards.push(None);
         }
 
-        // Read expire_at_sec from .vif if present
-        let expire_at_sec = {
+        // Read expire_at_sec and version from .vif if present (matches Go's MaybeLoadVolumeInfo)
+        let (expire_at_sec, vif_version) = {
             let base = crate::storage::volume::volume_file_name(dir, collection, volume_id);
             let vif_path = format!("{}.vif", base);
             if let Ok(vif_content) = std::fs::read_to_string(&vif_path) {
                 if let Ok(vif_info) =
                     serde_json::from_str::<crate::storage::volume::VifVolumeInfo>(&vif_content)
                 {
-                    vif_info.expire_at_sec
+                    let ver = if vif_info.version > 0 {
+                        Version(vif_info.version as u8)
+                    } else {
+                        Version::current()
+                    };
+                    (vif_info.expire_at_sec, ver)
                 } else {
-                    0
+                    (0, Version::current())
                 }
             } else {
-                0
+                (0, Version::current())
             }
         };
 
@@ -99,7 +104,7 @@ impl EcVolume {
             collection: collection.to_string(),
             dir: dir.to_string(),
             dir_idx: dir_idx.to_string(),
-            version: Version::current(),
+            version: vif_version,
             shards,
             dat_file_size: 0,
             data_shards,
