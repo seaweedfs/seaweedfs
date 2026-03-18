@@ -1500,6 +1500,14 @@ allInOne:
     # Set to the name of an existing kubernetes Secret with the SSH keys
     existingSshConfigSecret: null
 
+  # Admin server configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global admin.* settings. Set explicit values here to override for allInOne only.
+  admin:
+    enabled: true  # Whether to enable admin server in allInOne mode
+    port: null  # Admin port (null inherits from admin.port)
+    grpcPort: null  # Admin gRPC port (null inherits from admin.grpcPort)
+
   # Service settings
   service:
     annotations: {}  # Annotations for the service

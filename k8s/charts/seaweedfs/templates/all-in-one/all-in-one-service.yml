@@ -74,6 +74,18 @@ spec:
     protocol: TCP
   {{- end }}
   
+  # Admin ports (if enabled)
+  {{- if .Values.allInOne.admin.enabled }}
+  - name: "swfs-admin"
+    port: {{ .Values.allInOne.admin.port | default .Values.admin.port }}
+    targetPort: {{ .Values.allInOne.admin.port | default .Values.admin.port }}
+    protocol: TCP
+  - name: "swfs-admin-grpc"
+    port: {{ .Values.allInOne.admin.grpcPort | default .Values.admin.grpcPort }}
+    targetPort: {{ .Values.allInOne.admin.grpcPort | default .Values.admin.grpcPort }}
+    protocol: TCP
+  {{- end }}
+  
   # Server metrics port (single metrics endpoint for all services)
   {{- if .Values.allInOne.metricsPort }}
   - name: "server-metrics"
