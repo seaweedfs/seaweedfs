@@ -1,13 +1,18 @@
 package dash
 
-import "context"
+import (
+	"context"
+
+	"github.com/a-h/templ"
+)
 
 type contextKey string
 
 const (
-	contextUsernameKey contextKey = "admin.username"
-	contextRoleKey     contextKey = "admin.role"
-	contextCSRFKey     contextKey = "admin.csrf"
+	contextUsernameKey  contextKey = "admin.username"
+	contextRoleKey      contextKey = "admin.role"
+	contextCSRFKey      contextKey = "admin.csrf"
+	contextURLPrefixKey contextKey = "admin.urlprefix"
 )
 
 // WithAuthContext stores auth metadata on the request context.
@@ -55,4 +60,32 @@ func CSRFTokenFromContext(ctx context.Context) string {
 		return value
 	}
 	return ""
+}
+
+// WithURLPrefix stores the URL prefix on the context.
+func WithURLPrefix(ctx context.Context, prefix string) context.Context {
+	return context.WithValue(ctx, contextURLPrefixKey, prefix)
+}
+
+// URLPrefixFromContext retrieves the URL prefix from context.
+func URLPrefixFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if value, ok := ctx.Value(contextURLPrefixKey).(string); ok {
+		return value
+	}
+	return ""
+}
+
+// P returns the URL prefix prepended to the given path.
+// Use in Go handlers for redirect URLs.
+func P(ctx context.Context, path string) string {
+	return URLPrefixFromContext(ctx) + path
+}
+
+// PUrl returns the URL prefix prepended to the given path as a templ.SafeURL.
+// Use in templ templates for href attributes.
+func PUrl(ctx context.Context, path string) templ.SafeURL {
+	return templ.SafeURL(URLPrefixFromContext(ctx) + path)
 }

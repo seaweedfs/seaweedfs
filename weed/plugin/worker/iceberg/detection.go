@@ -3,7 +3,6 @@ package iceberg
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"path"
 	"strings"
@@ -121,30 +120,14 @@ func (h *Handler) scanTablesForMaintenance(
 					continue
 				}
 
-				// Parse the internal metadata to get FullMetadata
-				var internalMeta struct {
-					MetadataLocation string `json:"metadataLocation,omitempty"`
-					Metadata         *struct {
-						FullMetadata json.RawMessage `json:"fullMetadata,omitempty"`
-					} `json:"metadata,omitempty"`
-				}
-				if err := json.Unmarshal(metadataBytes, &internalMeta); err != nil {
-					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse metadata: %v", bucketName, nsName, tblName, err)
-					continue
-				}
-				if internalMeta.Metadata == nil || len(internalMeta.Metadata.FullMetadata) == 0 {
-					continue
-				}
-
-				icebergMeta, err := table.ParseMetadataBytes(internalMeta.Metadata.FullMetadata)
+				icebergMeta, metadataFileName, planningIndex, err := parseTableMetadataEnvelope(metadataBytes)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot parse iceberg metadata: %v", bucketName, nsName, tblName, err)
 					continue
 				}
 
 				tablePath := path.Join(nsName, tblName)
-				metadataFileName := metadataFileNameFromLocation(internalMeta.MetadataLocation, bucketName, tablePath)
-				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, config, ops)
+				needsWork, err := h.tableNeedsMaintenance(ctx, filerClient, bucketName, tablePath, icebergMeta, metadataFileName, planningIndex, config, ops)
 				if err != nil {
 					glog.V(2).Infof("iceberg maintenance: skipping %s/%s/%s: cannot evaluate maintenance need: %v", bucketName, nsName, tblName, err)
 					continue
@@ -170,20 +153,14 @@ func (h *Handler) scanTablesForMaintenance(
 }
 
 func normalizeDetectionConfig(config Config) Config {
-	normalized := config
-	if normalized.TargetFileSizeBytes <= 0 {
-		normalized.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
+	config = applyThresholdDefaults(config)
+	if config.SnapshotRetentionHours <= 0 {
+		config.SnapshotRetentionHours = defaultSnapshotRetentionHours
 	}
-	if normalized.MinInputFiles < 2 {
-		normalized.MinInputFiles = defaultMinInputFiles
+	if config.MaxSnapshotsToKeep <= 0 {
+		config.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
 	}
-	if normalized.MinManifestsToRewrite < minManifestsToRewrite {
-		normalized.MinManifestsToRewrite = minManifestsToRewrite
-	}
-	if normalized.OrphanOlderThanHours <= 0 {
-		normalized.OrphanOlderThanHours = defaultOrphanOlderThanHours
-	}
-	return normalized
+	return config
 }
 
 func (h *Handler) tableNeedsMaintenance(
@@ -192,10 +169,30 @@ func (h *Handler) tableNeedsMaintenance(
 	bucketName, tablePath string,
 	meta table.Metadata,
 	metadataFileName string,
+	cachedPlanningIndex *planningIndex,
 	config Config,
 	ops []string,
 ) (bool, error) {
 	config = normalizeDetectionConfig(config)
+
+	var predicate *partitionPredicate
+	if strings.TrimSpace(config.Where) != "" {
+		needsPredicate := false
+		for _, op := range ops {
+			if op == "compact" || op == "rewrite_position_delete_files" || op == "rewrite_manifests" {
+				needsPredicate = true
+				break
+			}
+		}
+		if needsPredicate {
+			var err error
+			predicate, err = parsePartitionPredicate(config.Where, meta)
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+	_ = predicate // used by rewrite_position_delete_files; planning index handles compact/rewrite_manifests
 
 	// Evaluate the metadata-only expiration check first so large tables do not
 	// pay for manifest reads when snapshot expiry already makes them eligible.
@@ -205,22 +202,66 @@ func (h *Handler) tableNeedsMaintenance(
 		}
 	}
 
-	loadManifests := func() ([]iceberg.ManifestFile, error) {
-		return loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
-	}
-
 	var currentManifests []iceberg.ManifestFile
 	var manifestsErr error
-	manifestsLoaded := false
+	var manifestsLoaded bool
 	getCurrentManifests := func() ([]iceberg.ManifestFile, error) {
 		if manifestsLoaded {
 			return currentManifests, manifestsErr
 		}
-		currentManifests, manifestsErr = loadManifests()
+		currentManifests, manifestsErr = loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
 		manifestsLoaded = true
 		return currentManifests, manifestsErr
 	}
+
+	computedPlanningIndexes := make(map[string]*planningIndex)
+	planningIndexLoaded := make(map[string]bool)
+	planningIndexErrs := make(map[string]error)
+	getPlanningIndex := func(op string) (*planningIndex, error) {
+		if planningIndexLoaded[op] {
+			return computedPlanningIndexes[op], planningIndexErrs[op]
+		}
+		planningIndexLoaded[op] = true
+
+		manifests, err := getCurrentManifests()
+		if err != nil {
+			planningIndexErrs[op] = err
+			return nil, err
+		}
+		index, err := buildPlanningIndexFromManifests(ctx, filerClient, bucketName, tablePath, meta, config, []string{op}, manifests)
+		if err != nil {
+			planningIndexErrs[op] = err
+			return nil, err
+		}
+		computedPlanningIndexes[op] = index
+		if index != nil {
+			if err := persistPlanningIndex(ctx, filerClient, bucketName, tablePath, index); err != nil {
+				glog.V(2).Infof("iceberg maintenance: unable to persist planning index for %s/%s: %v", bucketName, tablePath, err)
+			}
+		}
+		return index, nil
+	}
+	checkPlanningIndex := func(op string, eligibleFn func(*planningIndex, Config) (bool, bool)) (bool, error) {
+		if cachedPlanningIndex != nil && cachedPlanningIndex.matchesSnapshot(meta) {
+			if eligible, ok := eligibleFn(cachedPlanningIndex, config); ok {
+				return eligible, nil
+			}
+		}
+
+		index, err := getPlanningIndex(op)
+		if err != nil {
+			return false, err
+		}
+		if index == nil {
+			return false, nil
+		}
+
+		eligible, _ := eligibleFn(index, config)
+		return eligible, nil
+	}
+
 	var opEvalErrors []string
+	planningIndexErrorReported := false
 
 	for _, op := range ops {
 		switch op {
@@ -228,12 +269,24 @@ func (h *Handler) tableNeedsMaintenance(
 			// Handled by the metadata-only check above.
 			continue
 		case "compact":
+			eligible, err := checkPlanningIndex(op, (*planningIndex).compactionEligible)
+			if err != nil {
+				if !planningIndexErrorReported {
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					planningIndexErrorReported = true
+				}
+				continue
+			}
+			if eligible {
+				return true, nil
+			}
+		case "rewrite_position_delete_files":
 			manifests, err := getCurrentManifests()
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
 			}
-			eligible, err := hasEligibleCompaction(ctx, filerClient, bucketName, tablePath, manifests, config)
+			eligible, err := hasEligibleDeleteRewrite(ctx, filerClient, bucketName, tablePath, manifests, config, meta, predicate)
 			if err != nil {
 				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
 				continue
@@ -242,12 +295,15 @@ func (h *Handler) tableNeedsMaintenance(
 				return true, nil
 			}
 		case "rewrite_manifests":
-			manifests, err := getCurrentManifests()
+			eligible, err := checkPlanningIndex(op, (*planningIndex).rewriteManifestsEligible)
 			if err != nil {
-				opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+				if !planningIndexErrorReported {
+					opEvalErrors = append(opEvalErrors, fmt.Sprintf("%s: %v", op, err))
+					planningIndexErrorReported = true
+				}
 				continue
 			}
-			if countDataManifests(manifests) >= config.MinManifestsToRewrite {
+			if eligible {
 				return true, nil
 			}
 		case "remove_orphans":
@@ -322,6 +378,8 @@ func hasEligibleCompaction(
 	bucketName, tablePath string,
 	manifests []iceberg.ManifestFile,
 	config Config,
+	meta table.Metadata,
+	predicate *partitionPredicate,
 ) (bool, error) {
 	if len(manifests) == 0 {
 		return false, nil
@@ -361,8 +419,86 @@ func hasEligibleCompaction(
 		allEntries = append(allEntries, entries...)
 	}
 
-	bins := buildCompactionBins(allEntries, config.TargetFileSizeBytes, minInputFiles)
+	candidateEntries := allEntries
+	if predicate != nil {
+		specsByID := specByID(meta)
+		candidateEntries = make([]iceberg.ManifestEntry, 0, len(allEntries))
+		for _, entry := range allEntries {
+			spec, ok := specsByID[int(entry.DataFile().SpecID())]
+			if !ok {
+				continue
+			}
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return false, err
+			}
+			if match {
+				candidateEntries = append(candidateEntries, entry)
+			}
+		}
+	}
+
+	rewritePlan, err := resolveCompactionRewritePlan(config, meta)
+	if err != nil {
+		return false, fmt.Errorf("resolve rewrite strategy: %w", err)
+	}
+
+	targetSize := compactionTargetSizeForPlan(config, rewritePlan)
+	bins := buildCompactionBins(candidateEntries, targetSize, minInputFiles)
+	bins = filterCompactionBinsByPlan(bins, config, rewritePlan)
 	return len(bins) > 0, nil
+}
+
+func countDataManifestsForRewrite(
+	ctx context.Context,
+	filerClient filer_pb.SeaweedFilerClient,
+	bucketName, tablePath string,
+	manifests []iceberg.ManifestFile,
+	meta table.Metadata,
+	predicate *partitionPredicate,
+) (int64, error) {
+	if predicate == nil {
+		return countDataManifests(manifests), nil
+	}
+
+	specsByID := specByID(meta)
+
+	var count int64
+	for _, mf := range manifests {
+		if mf.ManifestContent() != iceberg.ManifestContentData {
+			continue
+		}
+		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
+		if err != nil {
+			return 0, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
+		}
+		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
+		if err != nil {
+			return 0, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		spec, ok := specsByID[int(mf.PartitionSpecID())]
+		if !ok {
+			continue
+		}
+		allMatch := len(entries) > 0
+		for _, entry := range entries {
+			match, err := predicate.Matches(spec, entry.DataFile().Partition())
+			if err != nil {
+				return 0, err
+			}
+			if !match {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func compactionMinInputFiles(minInputFiles int64) (int, error) {
@@ -403,13 +539,13 @@ func needsMaintenance(meta table.Metadata, config Config) bool {
 }
 
 // buildMaintenanceProposal creates a JobProposal for a table needing maintenance.
-func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress string) *plugin_pb.JobProposal {
+func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress, resourceGroup string) *plugin_pb.JobProposal {
 	dedupeKey := fmt.Sprintf("iceberg_maintenance:%s/%s/%s", t.BucketName, t.Namespace, t.TableName)
 
 	snapshotCount := len(t.Metadata.Snapshots())
 	summary := fmt.Sprintf("Maintain %s/%s/%s (%d snapshots)", t.BucketName, t.Namespace, t.TableName, snapshotCount)
 
-	return &plugin_pb.JobProposal{
+	proposal := &plugin_pb.JobProposal{
 		ProposalId: fmt.Sprintf("iceberg-%s-%s-%s-%d", t.BucketName, t.Namespace, t.TableName, time.Now().UnixMilli()),
 		DedupeKey:  dedupeKey,
 		JobType:    jobType,
@@ -428,4 +564,9 @@ func (h *Handler) buildMaintenanceProposal(t tableInfo, filerAddress string) *pl
 			"table":     t.TableName,
 		},
 	}
+	if resourceGroup != "" {
+		proposal.Parameters["resource_group"] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_StringValue{StringValue: resourceGroup}}
+		proposal.Labels["resource_group"] = resourceGroup
+	}
+	return proposal
 }

@@ -13,7 +13,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
                     <div>
                         <nav aria-label="breadcrumb">
                             <ol class="breadcrumb">
-                                <li class="breadcrumb-item"><a href="/mq/topics">Topics</a></li>
+                                <li class="breadcrumb-item"><a href={ dash.PUrl(ctx, "/mq/topics") }>Topics</a></li>
                                 <li class="breadcrumb-item active" aria-current="page">{data.TopicName}</li>
                             </ol>
                         </nav>
@@ -597,7 +597,7 @@ templ TopicDetails(data dash.TopicDetailsData) {
             updateButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Updating...';
 
             // Send API request
-            fetch('/api/mq/topics/retention/update', {
+            fetch((window.__BASE_PATH__ || '') + '/api/mq/topics/retention/update', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

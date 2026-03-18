@@ -213,6 +213,7 @@ message UpdateEntryRequest {
     Entry entry = 2;
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
+    map<string, bytes> expected_extended = 5;
 }
 message UpdateEntryResponse {
     SubscribeMetadataResponse metadata_event = 1;
@@ -471,6 +472,8 @@ message FilerConf {
 message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
+    int32 chunk_concurrency = 3; // parallel chunk downloads per file, 0 = default (8)
+    int32 download_concurrency = 4; // multipart download concurrency per chunk (if supported by remote storage), 0 = default (5 for S3)
 }
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;

@@ -29,7 +29,7 @@ func (a *AuthHandlers) ShowLogin(w http.ResponseWriter, r *http.Request) {
 	var csrfToken string
 	if err == nil {
 		if authenticated, _ := session.Values["authenticated"].(bool); authenticated {
-			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			http.Redirect(w, r, dash.P(r.Context(), "/admin"), http.StatusSeeOther)
 			return
 		}
 	} else {

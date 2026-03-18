@@ -18,62 +18,93 @@ const (
 	defaultMaxCommitRetries       = 5
 	defaultTargetFileSizeMB       = 256
 	defaultMinInputFiles          = 5
+	defaultDeleteTargetFileSizeMB = 64
+	defaultDeleteMinInputFiles    = 2
+	defaultDeleteMaxGroupSizeMB   = 256
+	defaultDeleteMaxOutputFiles   = 8
+	defaultRewriteStrategy        = "binpack"
 	defaultMinManifestsToRewrite  = 5
 	minManifestsToRewrite         = 2
 	defaultOperations             = "all"
 
 	// Metric keys returned by maintenance operations.
-	MetricFilesMerged        = "files_merged"
-	MetricFilesWritten       = "files_written"
-	MetricBins               = "bins"
-	MetricSnapshotsExpired   = "snapshots_expired"
-	MetricFilesDeleted       = "files_deleted"
-	MetricOrphansRemoved     = "orphans_removed"
-	MetricManifestsRewritten = "manifests_rewritten"
-	MetricEntriesTotal       = "entries_total"
-	MetricDurationMs         = "duration_ms"
+	MetricFilesMerged          = "files_merged"
+	MetricFilesWritten         = "files_written"
+	MetricBins                 = "bins"
+	MetricSnapshotsExpired     = "snapshots_expired"
+	MetricFilesDeleted         = "files_deleted"
+	MetricOrphansRemoved       = "orphans_removed"
+	MetricManifestsRewritten   = "manifests_rewritten"
+	MetricDeleteFilesRewritten = "delete_files_rewritten"
+	MetricDeleteFilesWritten   = "delete_files_written"
+	MetricDeleteBytesRewritten = "delete_bytes_rewritten"
+	MetricDeleteGroupsPlanned  = "delete_groups_planned"
+	MetricDeleteGroupsSkipped  = "delete_groups_skipped"
+	MetricEntriesTotal         = "entries_total"
+	MetricDurationMs           = "duration_ms"
 )
+
+const bytesPerMB int64 = 1024 * 1024
 
 // Config holds parsed worker config values.
 type Config struct {
-	SnapshotRetentionHours int64
-	MaxSnapshotsToKeep     int64
-	OrphanOlderThanHours   int64
-	MaxCommitRetries       int64
-	TargetFileSizeBytes    int64
-	MinInputFiles          int64
-	MinManifestsToRewrite  int64
-	Operations             string
-	ApplyDeletes           bool
+	SnapshotRetentionHours      int64
+	MaxSnapshotsToKeep          int64
+	OrphanOlderThanHours        int64
+	MaxCommitRetries            int64
+	TargetFileSizeBytes         int64
+	MinInputFiles               int64
+	DeleteTargetFileSizeBytes   int64
+	DeleteMinInputFiles         int64
+	DeleteMaxFileGroupSizeBytes int64
+	DeleteMaxOutputFiles        int64
+	MinManifestsToRewrite       int64
+	Operations                  string
+	ApplyDeletes                bool
+	Where                       string
+	RewriteStrategy             string
+	SortMaxInputBytes           int64
 }
 
 // ParseConfig extracts an iceberg maintenance Config from plugin config values.
 // Values are clamped to safe minimums to prevent misconfiguration.
 func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	cfg := Config{
-		SnapshotRetentionHours: readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
-		MaxSnapshotsToKeep:     readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
-		OrphanOlderThanHours:   readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
-		MaxCommitRetries:       readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
-		TargetFileSizeBytes:    readInt64Config(values, "target_file_size_mb", defaultTargetFileSizeMB) * 1024 * 1024,
-		MinInputFiles:          readInt64Config(values, "min_input_files", defaultMinInputFiles),
-		MinManifestsToRewrite:  readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
-		Operations:             readStringConfig(values, "operations", defaultOperations),
-		ApplyDeletes:           readBoolConfig(values, "apply_deletes", true),
+		SnapshotRetentionHours:      readInt64Config(values, "snapshot_retention_hours", defaultSnapshotRetentionHours),
+		MaxSnapshotsToKeep:          readInt64Config(values, "max_snapshots_to_keep", defaultMaxSnapshotsToKeep),
+		OrphanOlderThanHours:        readInt64Config(values, "orphan_older_than_hours", defaultOrphanOlderThanHours),
+		MaxCommitRetries:            readInt64Config(values, "max_commit_retries", defaultMaxCommitRetries),
+		TargetFileSizeBytes:         readSizeMBConfig(values, "target_file_size_mb", defaultTargetFileSizeMB),
+		MinInputFiles:               readInt64Config(values, "min_input_files", defaultMinInputFiles),
+		DeleteTargetFileSizeBytes:   readSizeMBConfig(values, "delete_target_file_size_mb", defaultDeleteTargetFileSizeMB),
+		DeleteMinInputFiles:         readInt64Config(values, "delete_min_input_files", defaultDeleteMinInputFiles),
+		DeleteMaxFileGroupSizeBytes: readSizeMBConfig(values, "delete_max_file_group_size_mb", defaultDeleteMaxGroupSizeMB),
+		DeleteMaxOutputFiles:        readInt64Config(values, "delete_max_output_files", defaultDeleteMaxOutputFiles),
+		MinManifestsToRewrite:       readInt64Config(values, "min_manifests_to_rewrite", defaultMinManifestsToRewrite),
+		Operations:                  readStringConfig(values, "operations", defaultOperations),
+		ApplyDeletes:                readBoolConfig(values, "apply_deletes", true),
+		Where:                       strings.TrimSpace(readStringConfig(values, "where", "")),
+		RewriteStrategy:             strings.TrimSpace(strings.ToLower(readStringConfig(values, "rewrite_strategy", defaultRewriteStrategy))),
+		SortMaxInputBytes:           readSizeMBConfig(values, "sort_max_input_mb", 0),
 	}
 
-	// Clamp to safe minimums using the default constants
+	// Clamp the fields that are always defaulted by worker config parsing.
 	if cfg.SnapshotRetentionHours <= 0 {
 		cfg.SnapshotRetentionHours = defaultSnapshotRetentionHours
 	}
 	if cfg.MaxSnapshotsToKeep <= 0 {
 		cfg.MaxSnapshotsToKeep = defaultMaxSnapshotsToKeep
 	}
-	if cfg.OrphanOlderThanHours <= 0 {
-		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
-	}
 	if cfg.MaxCommitRetries <= 0 {
 		cfg.MaxCommitRetries = defaultMaxCommitRetries
+	}
+	cfg = applyThresholdDefaults(cfg)
+	return cfg
+}
+
+func applyThresholdDefaults(cfg Config) Config {
+	if cfg.OrphanOlderThanHours <= 0 {
+		cfg.OrphanOlderThanHours = defaultOrphanOlderThanHours
 	}
 	if cfg.TargetFileSizeBytes <= 0 {
 		cfg.TargetFileSizeBytes = defaultTargetFileSizeMB * 1024 * 1024
@@ -81,27 +112,62 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	if cfg.MinInputFiles < 2 {
 		cfg.MinInputFiles = defaultMinInputFiles
 	}
+	if cfg.DeleteTargetFileSizeBytes <= 0 {
+		cfg.DeleteTargetFileSizeBytes = defaultDeleteTargetFileSizeMB * 1024 * 1024
+	}
+	if cfg.DeleteMinInputFiles < 2 {
+		cfg.DeleteMinInputFiles = defaultDeleteMinInputFiles
+	}
+	if cfg.DeleteMaxFileGroupSizeBytes <= 0 {
+		cfg.DeleteMaxFileGroupSizeBytes = defaultDeleteMaxGroupSizeMB * 1024 * 1024
+	}
+	if cfg.DeleteMaxOutputFiles <= 0 {
+		cfg.DeleteMaxOutputFiles = defaultDeleteMaxOutputFiles
+	}
+	if cfg.RewriteStrategy == "" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.RewriteStrategy != "binpack" && cfg.RewriteStrategy != "sort" {
+		cfg.RewriteStrategy = defaultRewriteStrategy
+	}
+	if cfg.SortMaxInputBytes < 0 {
+		cfg.SortMaxInputBytes = 0
+	}
 	if cfg.MinManifestsToRewrite < minManifestsToRewrite {
 		cfg.MinManifestsToRewrite = minManifestsToRewrite
 	}
-
 	return cfg
 }
 
+func readSizeMBConfig(values map[string]*plugin_pb.ConfigValue, field string, fallbackMB int64) int64 {
+	mb := readInt64Config(values, field, fallbackMB)
+	if mb <= 0 {
+		return 0
+	}
+	maxMB := int64(^uint64(0)>>1) / bytesPerMB
+	if mb > maxMB {
+		glog.V(1).Infof("readSizeMBConfig: clamping %q from %d MB to %d MB", field, mb, maxMB)
+		mb = maxMB
+	}
+	return mb * bytesPerMB
+}
+
 // parseOperations returns the ordered list of maintenance operations to execute.
-// Order follows Iceberg best practices: compact → expire_snapshots → remove_orphans → rewrite_manifests.
+// Order follows Iceberg best practices: compact → rewrite_position_delete_files
+// → expire_snapshots → remove_orphans → rewrite_manifests.
 // Returns an error if any unknown operation is specified or the result would be empty.
 func parseOperations(ops string) ([]string, error) {
 	ops = strings.TrimSpace(strings.ToLower(ops))
 	if ops == "" || ops == "all" {
-		return []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, nil
+		return []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, nil
 	}
 
 	validOps := map[string]struct{}{
-		"compact":           {},
-		"expire_snapshots":  {},
-		"remove_orphans":    {},
-		"rewrite_manifests": {},
+		"compact":                       {},
+		"rewrite_position_delete_files": {},
+		"expire_snapshots":              {},
+		"remove_orphans":                {},
+		"rewrite_manifests":             {},
 	}
 
 	requested := make(map[string]struct{})
@@ -111,13 +177,14 @@ func parseOperations(ops string) ([]string, error) {
 			continue
 		}
 		if _, ok := validOps[op]; !ok {
-			return nil, fmt.Errorf("unknown maintenance operation %q (valid: compact, expire_snapshots, remove_orphans, rewrite_manifests)", op)
+			return nil, fmt.Errorf("unknown maintenance operation %q (valid: compact, rewrite_position_delete_files, expire_snapshots, remove_orphans, rewrite_manifests)", op)
 		}
 		requested[op] = struct{}{}
 	}
 
-	// Return in canonical order: compact → expire_snapshots → remove_orphans → rewrite_manifests
-	canonicalOrder := []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}
+	// Return in canonical order: compact → rewrite_position_delete_files →
+	// expire_snapshots → remove_orphans → rewrite_manifests
+	canonicalOrder := []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}
 	var result []string
 	for _, op := range canonicalOrder {
 		if _, ok := requested[op]; ok {

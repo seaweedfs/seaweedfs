@@ -53,7 +53,7 @@ func testPolicyOperations(t *testing.T, ctx context.Context, credentialManager *
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}
@@ -91,7 +91,7 @@ func testPolicyOperations(t *testing.T, ctx context.Context, credentialManager *
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject", "s3:PutObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::test-bucket/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
 			},
 		},
 	}

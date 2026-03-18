@@ -48,7 +48,7 @@ func (h *Handler) Capability() *plugin_pb.JobTypeCapability {
 		MaxDetectionConcurrency: 1,
 		MaxExecutionConcurrency: 4,
 		DisplayName:             "Iceberg Maintenance",
-		Description:             "Compacts, expires snapshots, removes orphans, and rewrites manifests for Iceberg tables in S3 table buckets",
+		Description:             "Compacts data, rewrites delete files, expires snapshots, removes orphans, and rewrites manifests for Iceberg tables in S3 table buckets",
 		Weight:                  50,
 	}
 }
@@ -57,7 +57,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 	return &plugin_pb.JobTypeDescriptor{
 		JobType:           jobType,
 		DisplayName:       "Iceberg Maintenance",
-		Description:       "Automated maintenance for Iceberg tables: snapshot expiration, orphan removal, manifest rewriting",
+		Description:       "Automated maintenance for Iceberg tables: data compaction, delete-file rewrite, snapshot expiration, orphan removal, and manifest rewriting",
 		Icon:              "fas fa-snowflake",
 		DescriptorVersion: 1,
 		AdminConfigForm: &plugin_pb.ConfigForm{
@@ -96,11 +96,36 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						},
 					},
 				},
+				{
+					SectionId:   "resources",
+					Title:       "Resource Groups",
+					Description: "Controls for fair proposal distribution across buckets or namespaces.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "resource_group_by",
+							Label:       "Group Proposals By",
+							Description: "When set, detection emits proposals in round-robin order across the selected resource group.",
+							Placeholder: "none, bucket, namespace, or bucket_namespace",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "max_tables_per_resource_group",
+							Label:       "Max Tables Per Group",
+							Description: "Optional cap on how many proposals a single resource group can receive in one detection run. Zero disables the cap.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+					},
+				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"bucket_filter":    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"namespace_filter": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
-				"table_filter":     {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"bucket_filter":                 {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"namespace_filter":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"table_filter":                  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"resource_group_by":             {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: resourceGroupNone}},
+				"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 			},
 		},
 		WorkerConfigForm: &plugin_pb.ConfigForm{
@@ -134,7 +159,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				{
 					SectionId:   "compaction",
 					Title:       "Data Compaction",
-					Description: "Controls for bin-packing small Parquet data files.",
+					Description: "Controls for bin-packing or sorting small Parquet data files.",
 					Fields: []*plugin_pb.ConfigField{
 						{
 							Name:        "target_file_size_mb",
@@ -158,6 +183,61 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Description: "When true, compaction applies position and equality deletes to data files. When false, tables with delete manifests are skipped.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_BOOL,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TOGGLE,
+						},
+						{
+							Name:        "rewrite_strategy",
+							Label:       "Rewrite Strategy",
+							Description: "binpack keeps the existing row order; sort rewrites each compaction bin using the Iceberg table sort order.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+							Placeholder: "binpack or sort",
+						},
+						{
+							Name:        "sort_max_input_mb",
+							Label:       "Sort Max Input (MB)",
+							Description: "Optional hard cap for the total bytes in a sorted compaction bin. Zero = no extra cap beyond binning.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+						},
+					},
+				},
+				{
+					SectionId:   "delete_rewrite",
+					Title:       "Delete Rewrite",
+					Description: "Controls for rewriting small position-delete files into fewer larger files.",
+					Fields: []*plugin_pb.ConfigField{
+						{
+							Name:        "delete_target_file_size_mb",
+							Label:       "Delete Target File Size (MB)",
+							Description: "Target size for rewritten position-delete files.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+						{
+							Name:        "delete_min_input_files",
+							Label:       "Delete Min Input Files",
+							Description: "Minimum number of position-delete files in a group before rewrite is triggered.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+						},
+						{
+							Name:        "delete_max_file_group_size_mb",
+							Label:       "Delete Max Group Size (MB)",
+							Description: "Skip rewriting delete groups larger than this bound.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+						},
+						{
+							Name:        "delete_max_output_files",
+							Label:       "Delete Max Output Files",
+							Description: "Maximum number of rewritten delete files a single group may produce.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
+							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 					},
 				},
@@ -208,23 +288,38 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "operations",
 							Label:       "Operations",
-							Description: "Comma-separated list of operations to run: compact, expire_snapshots, remove_orphans, rewrite_manifests, or 'all'.",
+							Description: "Comma-separated list of operations to run: compact, rewrite_position_delete_files, expire_snapshots, remove_orphans, rewrite_manifests, or 'all'.",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "where",
+							Label:       "Where Filter",
+							Description: "Optional partition filter for compact, rewrite_position_delete_files, and rewrite_manifests. Supports field = literal, field IN (...), and AND.",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+							Placeholder: "region = 'us' AND dt IN ('2026-03-15')",
 						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
-				"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
-				"min_manifests_to_rewrite": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
-				"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
-				"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
-				"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
-				"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
-				"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
-				"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+				"target_file_size_mb":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+				"min_input_files":               {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+				"delete_target_file_size_mb":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
+				"delete_min_input_files":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
+				"delete_max_file_group_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxGroupSizeMB}},
+				"delete_max_output_files":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
+				"min_manifests_to_rewrite":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinManifestsToRewrite}},
+				"snapshot_retention_hours":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+				"max_snapshots_to_keep":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+				"orphan_older_than_hours":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+				"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+				"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+				"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+				"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultRewriteStrategy}},
+				"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+				"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -239,14 +334,21 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"target_file_size_mb":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
-			"min_input_files":          {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
-			"snapshot_retention_hours": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
-			"max_snapshots_to_keep":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
-			"orphan_older_than_hours":  {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
-			"max_commit_retries":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
-			"operations":               {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
-			"apply_deletes":            {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+			"target_file_size_mb":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},
+			"min_input_files":               {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMinInputFiles}},
+			"delete_target_file_size_mb":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteTargetFileSizeMB}},
+			"delete_min_input_files":        {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMinInputFiles}},
+			"delete_max_file_group_size_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxGroupSizeMB}},
+			"delete_max_output_files":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultDeleteMaxOutputFiles}},
+			"snapshot_retention_hours":      {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultSnapshotRetentionHours}},
+			"max_snapshots_to_keep":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxSnapshotsToKeep}},
+			"orphan_older_than_hours":       {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultOrphanOlderThanHours}},
+			"max_commit_retries":            {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultMaxCommitRetries}},
+			"operations":                    {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultOperations}},
+			"apply_deletes":                 {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: true}},
+			"rewrite_strategy":              {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: defaultRewriteStrategy}},
+			"sort_max_input_mb":             {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
+			"where":                         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
 }
@@ -263,8 +365,12 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	}
 
 	workerConfig := ParseConfig(request.GetWorkerConfigValues())
-	if _, err := parseOperations(workerConfig.Operations); err != nil {
+	ops, err := parseOperations(workerConfig.Operations)
+	if err != nil {
 		return fmt.Errorf("invalid operations config: %w", err)
+	}
+	if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
+		return fmt.Errorf("invalid where config: %w", err)
 	}
 
 	// Detection interval is managed by the scheduler via AdminRuntimeDefaults.DetectionIntervalSeconds.
@@ -283,6 +389,10 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	bucketFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "bucket_filter", ""))
 	namespaceFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "namespace_filter", ""))
 	tableFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "table_filter", ""))
+	resourceGroups, err := readResourceGroupConfig(request.GetAdminConfigValues())
+	if err != nil {
+		return fmt.Errorf("invalid admin resource group config: %w", err)
+	}
 
 	// Connect to filer — try each address until one succeeds.
 	filerAddress, conn, err := h.connectToFiler(ctx, filerAddresses)
@@ -293,7 +403,11 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 	filerClient := filer_pb.NewSeaweedFilerClient(conn)
 
 	maxResults := int(request.MaxResults)
-	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, maxResults)
+	scanLimit := maxResults
+	if resourceGroups.enabled() {
+		scanLimit = 0
+	}
+	tables, err := h.scanTablesForMaintenance(ctx, filerClient, workerConfig, bucketFilter, namespaceFilter, tableFilter, scanLimit)
 	if err != nil {
 		_ = sender.SendActivity(pluginworker.BuildDetectorActivity("scan_error", fmt.Sprintf("error scanning tables: %v", err), nil))
 		return fmt.Errorf("scan tables: %w", err)
@@ -305,15 +419,11 @@ func (h *Handler) Detect(ctx context.Context, request *plugin_pb.RunDetectionReq
 			"tables_found": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(tables))}},
 		}))
 
-	hasMore := false
-	if maxResults > 0 && len(tables) > maxResults {
-		hasMore = true
-		tables = tables[:maxResults]
-	}
+	tables, hasMore := selectTablesByResourceGroup(tables, resourceGroups, maxResults)
 
 	proposals := make([]*plugin_pb.JobProposal, 0, len(tables))
 	for _, t := range tables {
-		proposal := h.buildMaintenanceProposal(t, filerAddress)
+		proposal := h.buildMaintenanceProposal(t, filerAddress, resourceGroupKey(t, resourceGroups.GroupBy))
 		proposals = append(proposals, proposal)
 	}
 
@@ -378,6 +488,9 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	if opsErr != nil {
 		return fmt.Errorf("invalid operations config: %w", opsErr)
 	}
+	if err := validateWhereOperations(workerConfig.Where, ops); err != nil {
+		return fmt.Errorf("invalid where config: %w", err)
+	}
 
 	// Send initial progress
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -408,8 +521,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 	completedOps := 0
 	allMetrics := make(map[string]int64)
 
-	// Execute operations in correct Iceberg maintenance order:
-	// expire_snapshots → remove_orphans → rewrite_manifests
+	// Execute operations in canonical maintenance order as defined by
+	// parseOperations.
 	for _, op := range ops {
 		select {
 		case <-ctx.Done():
@@ -449,6 +562,8 @@ func (h *Handler) Execute(ctx context.Context, request *plugin_pb.ExecuteJobRequ
 					Message:         fmt.Sprintf("compacting bin %d of %d", binIdx+1, totalBins),
 				})
 			})
+		case "rewrite_position_delete_files":
+			opResult, opMetrics, opErr = h.rewritePositionDeleteFiles(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "expire_snapshots":
 			opResult, opMetrics, opErr = h.expireSnapshots(ctx, filerClient, bucketName, tablePath, workerConfig)
 		case "remove_orphans":

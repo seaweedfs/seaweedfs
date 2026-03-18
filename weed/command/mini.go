@@ -1034,7 +1034,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, ""); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()

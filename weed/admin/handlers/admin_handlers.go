@@ -68,7 +68,7 @@ func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser,
 
 	// Favicon route (no auth required) - redirect to static version
 	r.HandleFunc("/favicon.ico", func(w http.ResponseWriter, req *http.Request) {
-		http.Redirect(w, req, "/static/favicon.ico", http.StatusMovedPermanently)
+		http.Redirect(w, req, dash.P(req.Context(), "/static/favicon.ico"), http.StatusMovedPermanently)
 	}).Methods(http.MethodGet)
 
 	// Skip UI routes if UI is not enabled
@@ -445,20 +445,20 @@ func (h *AdminHandlers) getUsername(r *http.Request) string {
 
 // ShowIcebergCatalog redirects legacy Iceberg catalog URL to the merged S3 Tables buckets page.
 func (h *AdminHandlers) ShowIcebergCatalog(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/object-store/s3tables/buckets", http.StatusMovedPermanently)
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets"), http.StatusMovedPermanently)
 }
 
 // ShowIcebergNamespaces redirects legacy Iceberg namespaces URL to the merged S3 Tables namespaces page.
 func (h *AdminHandlers) ShowIcebergNamespaces(w http.ResponseWriter, r *http.Request) {
 	catalogName := mux.Vars(r)["catalog"]
-	http.Redirect(w, r, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces", http.StatusMovedPermanently)
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces"), http.StatusMovedPermanently)
 }
 
 // ShowIcebergTables redirects legacy Iceberg tables URL to the merged S3 Tables tables page.
 func (h *AdminHandlers) ShowIcebergTables(w http.ResponseWriter, r *http.Request) {
 	catalogName := mux.Vars(r)["catalog"]
 	namespace := mux.Vars(r)["namespace"]
-	http.Redirect(w, r, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables", http.StatusMovedPermanently)
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables"), http.StatusMovedPermanently)
 }
 
 // ShowIcebergTableDetails redirects legacy Iceberg table details URL to the merged S3 Tables details page.
@@ -466,7 +466,7 @@ func (h *AdminHandlers) ShowIcebergTableDetails(w http.ResponseWriter, r *http.R
 	catalogName := mux.Vars(r)["catalog"]
 	namespace := mux.Vars(r)["namespace"]
 	tableName := mux.Vars(r)["table"]
-	http.Redirect(w, r, "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables/"+url.PathEscape(tableName), http.StatusMovedPermanently)
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables/"+url.PathEscape(tableName)), http.StatusMovedPermanently)
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket

@@ -12,7 +12,7 @@ script changePageSize(path string, lastFileName string, pageSizeSelectId string)
 	if (pageSizeSelect == null) {
 		return
 	}
-	window.location.href = '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + pageSizeSelect.value
+	window.location.href = (window.__BASE_PATH__ || '') + '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + pageSizeSelect.value
 }
 
 templ FileBrowser(data dash.FileBrowserData) {
@@ -29,11 +29,11 @@ templ FileBrowser(data dash.FileBrowserData) {
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
 			if data.IsTableBucketPath && data.TableBucketName != "" {
-				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-outline-secondary">
+				<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
 				</a>
 			} else if data.IsBucketPath && data.BucketName != "" {
-				<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
+				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-secondary">
 					<i class="fas fa-arrow-left me-1"></i>Back to Buckets
 				</a>
 			}
@@ -59,13 +59,13 @@ templ FileBrowser(data dash.FileBrowserData) {
 			for i, crumb := range data.Breadcrumbs {
 				if i == len(data.Breadcrumbs)-1 {
 					<li class="breadcrumb-item active" aria-current="page">
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
 							{ crumb.Name }
 						</a>
 					</li>
 				} else {
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
 							if crumb.Name == "Root" {
 								<i class="fas fa-home me-1"></i>
 							}
@@ -83,14 +83,14 @@ templ FileBrowser(data dash.FileBrowserData) {
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="fas fa-folder-open me-2"></i>
 			if data.CurrentPath == "/" {
-				<a href="/files?path=/" class="text-decoration-none text-primary">Root Directory</a>
+				<a href={ dash.PUrl(ctx, "/files?path=/") } class="text-decoration-none text-primary">Root Directory</a>
 			} else if data.CurrentPath == "/buckets" {
-										<a href="/files?path=/buckets" class="text-decoration-none text-primary">Object Store Buckets Directory</a>
-				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
+										<a href={ dash.PUrl(ctx, "/files?path=/buckets") } class="text-decoration-none text-primary">Object Store Buckets Directory</a>
+				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-primary ms-2">
 					<i class="fas fa-cube me-1"></i>Manage Buckets
 				</a>
 		} else {
-				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
+				<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
 			}
 			</h6>
 			
@@ -107,7 +107,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				</div>
 				<div class="btn-group btn-group-sm" role="group">
 					if data.HasNextPage {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary" title="Next page">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary" title="Next page">
 							Next <i class="fas fa-angle-right"></i>
 						</a>
 					} else {
@@ -116,7 +116,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 						</button>
 					}
 					if data.ParentPath != data.CurrentPath {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-outline-secondary" title="Go up one directory">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-outline-secondary" title="Go up one directory">
 							<i class="fas fa-arrow-up"></i> Up
 						</a>
 					}
@@ -150,7 +150,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 										<div class="d-flex align-items-center">
 											if entry.IsDirectory {
 												<i class="fas fa-folder text-warning me-2"></i>
-												<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", entry.FullPath)) } class="text-decoration-none">
+												<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", entry.FullPath)) } class="text-decoration-none">
 													{ entry.Name }
 												</a>
 											} else {
@@ -238,7 +238,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 				<div class="btn-group btn-group-sm" role="group">
 
 					if data.HasNextPage {
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary">
 							Next <i class="fas fa-angle-right ms-1"></i>
 						</a>
 					} else {
@@ -392,17 +392,17 @@ templ FileBrowser(data dash.FileBrowserData) {
 	// File browser specific functions
 	function downloadFile(path) {
 		// Open download URL in new tab
-		window.open('/api/files/download?path=' + encodeURIComponent(path), '_blank');
+		window.open((window.__BASE_PATH__ || '') + '/api/files/download?path=' + encodeURIComponent(path), '_blank');
 	}
-	
+
 	function viewFile(path) {
 		// Open file viewer in new tab
-		window.open('/api/files/view?path=' + encodeURIComponent(path), '_blank');
+		window.open((window.__BASE_PATH__ || '') + '/api/files/view?path=' + encodeURIComponent(path), '_blank');
 	}
-	
+
 	function showFileProperties(path) {
 		// Fetch file properties and show in modal
-		fetch('/api/files/properties?path=' + encodeURIComponent(path))
+		fetch((window.__BASE_PATH__ || '') + '/api/files/properties?path=' + encodeURIComponent(path))
 			.then(response => response.json())
 			.then(data => {
 				if (data.error) {

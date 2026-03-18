@@ -91,6 +91,16 @@ func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,
 	return nil
 }
 
+// SetChunkConcurrency replaces the chunk replication executor with one using the
+// given concurrency limit. Must be called during initialization, before any
+// replication goroutines start, since it replaces fs.executor without
+// synchronization.
+func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
+	if concurrency > 0 {
+		fs.executor = util.NewLimitedConcurrentExecutor(concurrency)
+	}
+}
+
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {
 
 	dir, name := util.FullPath(key).DirAndName()

@@ -10,24 +10,25 @@ import (
 
 // ShowLogin displays the login page.
 func (s *AdminServer) ShowLogin(w http.ResponseWriter, r *http.Request) {
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, P(r.Context(), "/login"), http.StatusSeeOther)
 }
 
 // HandleLogin handles login form submission.
 func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword, readOnlyUser, readOnlyPassword string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		prefix := URLPrefixFromContext(r.Context())
 		if err := r.ParseForm(); err != nil {
-			http.Redirect(w, r, "/login?error=Invalid form submission", http.StatusSeeOther)
+			http.Redirect(w, r, prefix+"/login?error=Invalid form submission", http.StatusSeeOther)
 			return
 		}
 		session, err := store.Get(r, sessionName)
 		if err != nil {
-			http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
+			http.Redirect(w, r, prefix+"/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
 			return
 		}
 
 		if err := ValidateSessionCSRFToken(session, r); err != nil {
-			http.Redirect(w, r, "/login?error=Invalid CSRF token", http.StatusSeeOther)
+			http.Redirect(w, r, prefix+"/login?error=Invalid CSRF token", http.StatusSeeOther)
 			return
 		}
 
@@ -56,31 +57,32 @@ func (s *AdminServer) HandleLogin(store sessions.Store, adminUser, adminPassword
 			session.Values["role"] = role
 			csrfToken, err := generateCSRFToken()
 			if err != nil {
-				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
+				http.Redirect(w, r, prefix+"/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
 				return
 			}
 			session.Values[sessionCSRFTokenKey] = csrfToken
 			if err := session.Save(r, w); err != nil {
 				// Log the detailed error server-side for diagnostics.
 				glog.Errorf("Failed to save session for user %s: %v", loginUsername, err)
-				http.Redirect(w, r, "/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
+				http.Redirect(w, r, prefix+"/login?error=Unable to create session. Please try again or contact administrator.", http.StatusSeeOther)
 				return
 			}
 
-			http.Redirect(w, r, "/admin", http.StatusSeeOther)
+			http.Redirect(w, r, prefix+"/admin", http.StatusSeeOther)
 			return
 		}
 
 		// Authentication failed.
-		http.Redirect(w, r, "/login?error=Invalid credentials", http.StatusSeeOther)
+		http.Redirect(w, r, prefix+"/login?error=Invalid credentials", http.StatusSeeOther)
 	}
 }
 
 // HandleLogout handles user logout.
 func (s *AdminServer) HandleLogout(store sessions.Store, w http.ResponseWriter, r *http.Request) {
+	prefix := URLPrefixFromContext(r.Context())
 	session, err := store.Get(r, sessionName)
 	if err != nil {
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, prefix+"/login", http.StatusSeeOther)
 		return
 	}
 	for key := range session.Values {
@@ -90,5 +92,5 @@ func (s *AdminServer) HandleLogout(store sessions.Store, w http.ResponseWriter, 
 	if err := session.Save(r, w); err != nil {
 		glog.Warningf("Failed to save session during logout: %v", err)
 	}
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	http.Redirect(w, r, prefix+"/login", http.StatusSeeOther)
 }

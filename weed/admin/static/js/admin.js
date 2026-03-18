@@ -1,5 +1,10 @@
 // SeaweedFS Dashboard JavaScript
 
+// URL prefix helper for subdirectory deployment
+function basePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
 // Global variables
 let bucketToDelete = '';
 
@@ -11,7 +16,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFileManagerEventHandlers();
 
     // Initialize delete button visibility on file browser page
-    if (window.location.pathname === '/files') {
+    if (window.location.pathname === basePath('/files')) {
         updateDeleteSelectedButton();
     }
 });
@@ -66,7 +71,7 @@ function initializeTooltips() {
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
     setInterval(function () {
-        if (window.location.pathname === '/dashboard') {
+        if (window.location.pathname === basePath('/dashboard')) {
             htmx.trigger('#dashboard-content', 'refresh');
         }
     }, 30000);
@@ -466,7 +471,7 @@ async function handleCreateBucket(event) {
     };
 
     try {
-        const response = await fetch('/api/s3/buckets', {
+        const response = await fetch(basePath('/api/s3/buckets'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -530,7 +535,7 @@ async function deleteBucket() {
     }
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketToDelete}`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketToDelete}`), {
             method: 'DELETE'
         });
 
@@ -885,7 +890,7 @@ function confirmDeleteCollection(button) {
 // Delete collection
 async function deleteCollection(collectionName) {
     try {
-        const response = await fetch(`/api/collections/${collectionName}`, {
+        const response = await fetch(basePath(`/api/collections/${collectionName}`), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1021,7 +1026,7 @@ async function deleteSelectedFiles(filePaths) {
     deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
 
     try {
-        const response = await fetch('/api/files/delete-multiple', {
+        const response = await fetch(basePath('/api/files/delete-multiple'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1109,7 +1114,7 @@ async function submitCreateFolder() {
     submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
 
     try {
-        const response = await fetch('/api/files/create-folder', {
+        const response = await fetch(basePath('/api/files/create-folder'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1322,7 +1327,7 @@ function downloadFile(filePath) {
 // View file
 async function viewFile(filePath) {
     try {
-        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/view?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
@@ -1342,7 +1347,7 @@ async function viewFile(filePath) {
 // Show file properties
 async function showProperties(filePath) {
     try {
-        const response = await fetch(`/api/files/properties?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/properties?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
@@ -1373,7 +1378,7 @@ function confirmDelete(filePath) {
 // Delete file/folder
 async function deleteFile(filePath) {
     try {
-        const response = await fetch('/api/files/delete', {
+        const response = await fetch(basePath('/api/files/delete'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1694,7 +1699,7 @@ async function handleUpdateQuota(event) {
     };
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketName}/quota`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketName}/quota`), {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',

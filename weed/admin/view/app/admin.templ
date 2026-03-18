@@ -12,7 +12,7 @@ templ Admin(data dash.AdminData) {
         </h1>
         <div class="btn-toolbar mb-2 mb-md-0">
             <div class="btn-group me-2">
-                 				<a href="/object-store/buckets" class="btn btn-sm btn-primary">
+                 				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-primary">
 					<i class="fas fa-cube me-1"></i>Object Store Buckets
                 </a>
 
@@ -256,8 +256,8 @@ templ Admin(data dash.AdminData) {
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="/volumes">View Details</a>
-                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/volumes") }>View Details</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/cluster") }>Topology View</a>
                             </div>
                         </div>
                     </div>
@@ -338,8 +338,8 @@ templ Admin(data dash.AdminData) {
                             </a>
                             <div class="dropdown-menu dropdown-menu-right shadow animated--fade-in">
                                 <div class="dropdown-header">Actions:</div>
-                                <a class="dropdown-item" href="/filer">File Browser</a>
-                                <a class="dropdown-item" href="/cluster">Topology View</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/filer") }>File Browser</a>
+                                <a class="dropdown-item" href={ dash.PUrl(ctx, "/cluster") }>Topology View</a>
                             </div>
                         </div>
                     </div>
