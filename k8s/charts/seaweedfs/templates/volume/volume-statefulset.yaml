@@ -86,7 +86,7 @@ spec:
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
           {{- end }}
-          {{- with $volume.resources }}
+          {{- with $volume.idxVolMoveResources }}
           resources:
             {{- toYaml . | nindent 12 }}
           {{- end }}
