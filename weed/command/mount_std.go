@@ -223,13 +223,21 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	// Ensure target mount point availability
-	if isValid := checkMountPointAvailable(dir, *option.hasAutofs); !isValid {
+	skipAutofs := option.hasAutofs != nil && *option.hasAutofs
+	if isValid := checkMountPointAvailable(dir, skipAutofs); !isValid {
 		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 
 	serverFriendlyName := strings.ReplaceAll(*option.filer, ",", "+")
-	// HACK: FsName must be "fuse" so util-linux/mount can recogize it as a pseudo filesystem.
+
+	// When autofs/systemd-mount is used, FsName must be "fuse" so util-linux/mount can recognize
+	// it as a pseudo filesystem. Otherwise, preserve the descriptive name for mount/df output.
+	fsName := serverFriendlyName + ":" + filerMountRootPath
+	if skipAutofs {
+		fsName = "fuse"
+	}
+
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
 		AllowOther:               *option.allowOthers,
@@ -239,7 +247,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
 		RememberInodes:           false,
-		FsName:                   "fuse",
+		FsName:                   fsName,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
