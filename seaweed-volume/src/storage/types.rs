@@ -625,7 +625,7 @@ mod tests {
     #[test]
     fn test_disk_type() {
         assert_eq!(DiskType::from_string(""), DiskType::HardDrive);
-        assert_eq!(DiskType::from_string("hdd"), DiskType::Hdd);
+        assert_eq!(DiskType::from_string("hdd"), DiskType::HardDrive);
         assert_eq!(DiskType::from_string("SSD"), DiskType::Ssd);
         assert_eq!(
             DiskType::from_string("nvme"),
