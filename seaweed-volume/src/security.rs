@@ -93,6 +93,8 @@ pub fn decode_jwt(signing_key: &SigningKey, token: &str) -> Result<FileIdClaims,
     // But if exp IS present, it must be valid (not expired).
     validation.required_spec_claims.clear();
     validation.validate_exp = true;
+    // Go's jwt-go/v5 validates nbf when present
+    validation.validate_nbf = true;
     validation.leeway = 0;
 
     let data = decode::<FileIdClaims>(
