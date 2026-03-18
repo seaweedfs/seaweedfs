@@ -450,13 +450,17 @@ impl DiskLocation {
     }
 
     /// Number of free volume slots.
-    /// Matches Go's FindFreeLocation: accounts for both regular volumes
-    /// and EC shards when computing available slots.
+    /// Matches Go's FindFreeLocation formula:
+    ///   free = ((MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()) / DataShardsCount
     pub fn free_volume_count(&self) -> i32 {
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
         let max = self.max_volume_count.load(Ordering::Relaxed);
-        let used = self.volumes.len() as i32 + self.ec_volumes.len() as i32;
-        if max > used {
-            max - used
+        let free_count = (max as i64 - self.volumes.len() as i64)
+            * DATA_SHARDS_COUNT as i64
+            - self.ec_shard_count() as i64;
+        let effective_free = free_count / DATA_SHARDS_COUNT as i64;
+        if effective_free > 0 {
+            effective_free as i32
         } else {
             0
         }
