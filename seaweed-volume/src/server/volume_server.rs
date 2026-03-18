@@ -180,6 +180,7 @@ async fn common_headers_middleware(request: Request, next: Next) -> Response {
     }
 
     if let Ok(val) = HeaderValue::from_str(&request_id) {
+        headers.insert("X-Request-Id", val.clone());
         headers.insert("x-amz-request-id", val);
     }
 
