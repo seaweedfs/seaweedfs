@@ -3279,6 +3279,25 @@ fn try_expand_chunk_manifest(
         }
     }
 
+    // Go's tryHandleChunkedFile applies crop then resize to expanded chunk data
+    // (L344-345: conditionallyCropImages, conditionallyResizeImages).
+    let cm_ext = if !filename.is_empty() {
+        if let Some(dot_pos) = filename.rfind('.') {
+            filename[dot_pos..].to_lowercase()
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let mut result = result;
+    if is_image_crop_ext(&cm_ext) {
+        result = maybe_crop_image(&result, &cm_ext, query);
+    }
+    if is_image_resize_ext(&cm_ext) {
+        result = maybe_resize_image(&result, &cm_ext, query);
+    }
+
     if *method == Method::HEAD {
         response_headers.insert(
             header::CONTENT_LENGTH,
