@@ -2888,7 +2888,11 @@ impl VolumeServer for VolumeGrpcService {
                             )));
                         }
 
-                        // Optionally remove local .dat file
+                        // Close local dat file handle (matches Go's v.LoadRemoteFile
+                        // which closes DataBackend before switching to remote)
+                        vol.close_local_dat_backend();
+
+                        // Optionally remove local .dat file from disk
                         if !keep_local {
                             let dat = vol.dat_path();
                             let _ = std::fs::remove_file(&dat);
