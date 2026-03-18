@@ -2263,17 +2263,22 @@ pub async fn post_handler(
         body_data_raw.clone()
     };
     let original_data_size = uncompressed_data.len() as u32;
-    let original_content_md5 = compute_md5_base64(&uncompressed_data);
 
-    // Validate Content-MD5 if provided
+    // Only compute and validate Content-MD5 when the client provided one
+    // (Go only computes MD5 when Content-MD5 header/field is present)
     let content_md5 = content_md5.or(parsed_content_md5);
-    if let Some(ref expected_md5) = content_md5 {
-        if expected_md5 != &original_content_md5 {
+    let original_content_md5 = if content_md5.is_some() {
+        Some(compute_md5_base64(&uncompressed_data))
+    } else {
+        None
+    };
+    if let (Some(ref expected_md5), Some(ref actual_md5)) = (&content_md5, &original_content_md5) {
+        if expected_md5 != actual_md5 {
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "Content-MD5 mismatch: expected {} got {}",
-                    expected_md5, original_content_md5
+                    "Content-MD5 mismatch: expected {} got {} size {}",
+                    expected_md5, actual_md5, original_data_size
                 ),
                 Some(&query),
             );
@@ -2517,10 +2522,7 @@ pub async fn post_handler(
                 let etag = format!("\"{}\"", n.etag());
                 (StatusCode::NO_CONTENT, [(header::ETAG, etag)]).into_response()
             } else {
-                // H2: Use Content-MD5 computed from original uncompressed data
-                let content_md5_value = original_content_md5;
-                // Match Go: always include contentMd5 in response JSON and header
-                // Go only sets ret.Name when reqNeedle.HasName()
+                // Go only includes contentMd5 when the client provided Content-MD5
                 let result = UploadResult {
                     name: if n.has_name() {
                         filename.clone()
@@ -2530,7 +2532,7 @@ pub async fn post_handler(
                     size: original_data_size, // H3: use original size, not compressed
                     etag: n.etag(),
                     mime: mime_type.clone(),
-                    content_md5: Some(content_md5_value.clone()),
+                    content_md5: original_content_md5.clone(),
                 };
                 let etag = n.etag();
                 let etag_header = if etag.starts_with('"') {
@@ -2541,8 +2543,10 @@ pub async fn post_handler(
                 let mut resp = json_result_with_query(StatusCode::CREATED, &result, &query);
                 resp.headers_mut()
                     .insert(header::ETAG, etag_header.parse().unwrap());
-                resp.headers_mut()
-                    .insert("Content-MD5", content_md5_value.parse().unwrap());
+                if let Some(ref md5_value) = original_content_md5 {
+                    resp.headers_mut()
+                        .insert("Content-MD5", md5_value.parse().unwrap());
+                }
                 resp
             }
         }
