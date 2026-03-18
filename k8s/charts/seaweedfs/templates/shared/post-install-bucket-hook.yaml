@@ -189,7 +189,7 @@ spec:
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
-        {{- with .Values.s3.createBucketsHook.resources }}
+        {{- with coalesce .Values.allInOne.s3.createBucketsHook.resources .Values.s3.createBucketsHook.resources .Values.filer.s3.createBucketsHook.resources }}
         resources:
           {{- toYaml . | nindent 10 }}
         {{- end }}
