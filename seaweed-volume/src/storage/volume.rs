@@ -1645,7 +1645,7 @@ impl Volume {
         if volume_size_limit == 0 {
             return false;
         }
-        if volume_size < SUPER_BLOCK_SIZE as u64 {
+        if volume_size <= SUPER_BLOCK_SIZE as u64 {
             return false;
         }
         let ttl_minutes = self.super_block.ttl.minutes();
