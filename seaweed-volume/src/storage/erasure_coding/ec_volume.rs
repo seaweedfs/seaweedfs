@@ -749,6 +749,10 @@ impl EcVolume {
             }
             *shard = None;
         }
+        // Sync .ecx before closing to flush in-place deletion marks (matches Go's ev.ecxFile.Sync())
+        if let Some(ref ecx_file) = self.ecx_file {
+            let _ = ecx_file.sync_all();
+        }
         self.ecx_file = None;
         self.ecj_file = None;
     }
