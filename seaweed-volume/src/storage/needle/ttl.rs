@@ -132,6 +132,9 @@ fn fit_ttl_count(count: u32, unit: u8) -> TTL {
 
     // Always convert to seconds and normalize (matches Go).
     let seconds = unit_to_seconds(count as u64, unit);
+    if seconds == 0 {
+        return TTL::EMPTY;
+    }
 
     const YEAR_SECS: u64 = 3600 * 24 * 365;
     const MONTH_SECS: u64 = 3600 * 24 * 30;
