@@ -3901,7 +3901,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::MOVED_PERMANENTLY);
         assert_eq!(
             response.headers().get(header::LOCATION).unwrap(),
-            "https://volume.public:8080/3,01637037d6?collection=photos&proxied=true"
+            "https://volume.internal:8080/3,01637037d6?collection=photos&proxied=true"
         );
     }
 }

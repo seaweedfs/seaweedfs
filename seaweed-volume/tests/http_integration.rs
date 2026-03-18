@@ -114,6 +114,7 @@ fn test_state_with_guard(
         read_buffer_size_bytes: 1024 * 1024,
         security_file: String::new(),
         cli_white_list: vec![],
+        state_file_path: String::new(),
     });
     (state, tmp)
 }
