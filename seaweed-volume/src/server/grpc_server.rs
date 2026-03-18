@@ -3359,8 +3359,9 @@ impl VolumeServer for VolumeGrpcService {
                 .map_err(|e| Status::internal(e.to_string()))?;
             drop(store);
 
-            // Cookie mismatch: return empty stream (matching Go behavior where err is nil)
+            // Cookie mismatch: log and return empty stream (matching Go behavior where err is nil)
             if n.cookie != original_cookie {
+                tracing::info!("volume query failed to read fid cookie {}: cookie mismatch", fid_str);
                 let stream = tokio_stream::iter(stripes);
                 return Ok(Response::new(Box::pin(stream)));
             }
