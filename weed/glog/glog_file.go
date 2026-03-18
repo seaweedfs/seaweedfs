@@ -61,8 +61,8 @@ var logMaxFiles = flag.Int("log_max_files", 5, "Maximum number of log files to k
 // When non-zero, each log file is rotated after the given number of hours
 // regardless of its size. This prevents log files from accumulating in
 // long-running deployments even when log volume is low.
-// A value of 0 (the default) disables time-based rotation.
-var logRotateHours = flag.Int("log_rotate_hours", 0, "If non-zero, rotate log files after this many hours (0 = disabled)")
+// The default is 168 hours (7 days). Set to 0 to disable time-based rotation.
+var logRotateHours = flag.Int("log_rotate_hours", 168, "Rotate log files after this many hours (default: 168 = 7 days, 0 = disabled)")
 
 func createLogDirs() {
 	// Apply flag values now that flags have been parsed.
