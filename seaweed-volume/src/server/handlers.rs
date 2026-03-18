@@ -2205,7 +2205,7 @@ pub async fn post_handler(
         n.set_is_compressed();
     }
 
-    if !mime_type.is_empty() {
+    if !mime_type.is_empty() && mime_type.len() < 256 {
         n.mime = mime_type.as_bytes().to_vec();
         n.set_has_mime();
     }
