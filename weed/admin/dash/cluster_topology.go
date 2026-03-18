@@ -65,6 +65,7 @@ func (s *AdminServer) fetchPublicUrlMap() map[string]string {
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		glog.V(1).Infof("Failed to read /dir/status response body: %v", err)
 		return nil
 	}
 
