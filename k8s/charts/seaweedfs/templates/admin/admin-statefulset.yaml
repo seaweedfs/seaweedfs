@@ -84,6 +84,10 @@ spec:
           image: {{ template "admin.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
           {{- $adminAuthEnabled := or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword }}
+          {{- $urlPrefix := .Values.admin.urlPrefix }}
+          {{- if and (not $urlPrefix) .Values.admin.ingress.enabled (ne .Values.admin.ingress.path "/") }}
+          {{- $urlPrefix = trimSuffix "/" .Values.admin.ingress.path }}
+          {{- end }}
           {{- if and .Values.admin.secret.existingSecret (not .Values.admin.secret.userKey) -}}
           {{-   fail "admin.secret.userKey must be set when admin.secret.existingSecret is provided" -}}
           {{- end -}}
@@ -154,11 +158,14 @@ spec:
               -dataDir={{ .Values.admin.dataDir }} \
               {{- end }}
               {{- if .Values.admin.masters }}
-              -masters={{ .Values.admin.masters }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ .Values.admin.masters }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
               {{- else if .Values.global.masterServer }}
-              -masters={{ .Values.global.masterServer }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ .Values.global.masterServer }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
               {{- else }}
-              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{- if .Values.admin.extraArgs }} \{{ end }}
+              -masters={{ range $index := until (.Values.master.replicas | int) }}${SEAWEEDFS_FULLNAME}-master-{{ $index }}.${SEAWEEDFS_FULLNAME}-master.{{ $.Release.Namespace }}:{{ $.Values.master.port }}{{ if lt $index (sub ($.Values.master.replicas | int) 1) }},{{ end }}{{ end }}{{- if or $urlPrefix .Values.admin.extraArgs }} \{{ end }}
+              {{- end }}
+              {{- if $urlPrefix }}
+              -urlPrefix={{ $urlPrefix }}{{- if .Values.admin.extraArgs }} \{{ end }}
               {{- end }}
               {{- range $index, $arg := .Values.admin.extraArgs }}
               {{ $arg }}{{- if lt $index (sub (len $.Values.admin.extraArgs) 1) }} \{{ end }}
@@ -205,7 +212,7 @@ spec:
           {{- if .Values.admin.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
-              path: {{ .Values.admin.readinessProbe.httpGet.path }}
+              path: {{ if $urlPrefix }}{{ $urlPrefix }}{{ end }}{{ .Values.admin.readinessProbe.httpGet.path }}
               port: http
               scheme: {{ .Values.admin.readinessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.admin.readinessProbe.initialDelaySeconds }}
@@ -217,7 +224,7 @@ spec:
           {{- if .Values.admin.livenessProbe.enabled }}
           livenessProbe:
             httpGet:
-              path: {{ .Values.admin.livenessProbe.httpGet.path }}
+              path: {{ if $urlPrefix }}{{ $urlPrefix }}{{ end }}{{ .Values.admin.livenessProbe.httpGet.path }}
               port: http
               scheme: {{ .Values.admin.livenessProbe.httpGet.scheme }}
             initialDelaySeconds: {{ .Values.admin.livenessProbe.initialDelaySeconds }}
