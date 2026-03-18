@@ -486,6 +486,10 @@ async fn run(
             info!("Received shutdown signal...");
         }
         *state_shutdown.is_stopping.write().unwrap() = true;
+        // Wake heartbeat loop immediately so it sends deregister heartbeat
+        // before the pre_stop delay (matches Go: StopHeartbeat() closes stopChan
+        // before sleeping preStopSeconds)
+        state_shutdown.volume_state_notify.notify_one();
 
         // Graceful drain: wait pre_stop_seconds before shutting down servers
         let pre_stop = state_shutdown.pre_stop_seconds;
