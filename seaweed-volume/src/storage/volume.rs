@@ -2185,6 +2185,17 @@ impl Volume {
 
         let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
         vif.read_only = self.no_write_or_delete;
+
+        // Match Go's SaveVolumeInfo: compute ExpireAtSec from TTL
+        let ttl_seconds = self.super_block.ttl.to_seconds();
+        if ttl_seconds > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            vif.expire_at_sec = now + ttl_seconds;
+        }
+
         let content = serde_json::to_string_pretty(&vif)
             .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
         fs::write(&vif_path, content)?;
