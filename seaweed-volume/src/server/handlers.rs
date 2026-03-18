@@ -1037,7 +1037,7 @@ async fn get_or_head_handler_inner(
     // Pass ETag so chunk manifest responses include it (matches Go: ETag is set on the
     // response writer before tryHandleChunkedFile runs).
     if n.is_chunk_manifest() && !bypass_cm {
-        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method, &path, &query, &etag) {
+        if let Some(resp) = try_expand_chunk_manifest(&state, &n, &headers, &method, &path, &query, &etag, &last_modified_str) {
             return resp;
         }
         // If manifest expansion fails (invalid JSON etc.), fall through to raw data
@@ -2936,6 +2936,7 @@ fn try_expand_chunk_manifest(
     path: &str,
     query: &ReadQueryParams,
     etag: &str,
+    last_modified_str: &Option<String>,
 ) -> Option<Response> {
     let data = if n.is_compressed() {
         use flate2::read::GzDecoder;
@@ -3054,6 +3055,56 @@ fn try_expand_chunk_manifest(
     response_headers.insert(header::CONTENT_TYPE, content_type.parse().unwrap());
     response_headers.insert("X-File-Store", "chunked".parse().unwrap());
     response_headers.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+
+    // Last-Modified — Go sets this on the response writer before tryHandleChunkedFile
+    if let Some(ref lm) = last_modified_str {
+        if let Ok(hval) = lm.parse() {
+            response_headers.insert(header::LAST_MODIFIED, hval);
+        }
+    }
+
+    // Pairs — Go sets needle pairs on the response writer before tryHandleChunkedFile
+    if n.has_pairs() && !n.pairs.is_empty() {
+        if let Ok(pair_map) =
+            serde_json::from_slice::<std::collections::HashMap<String, String>>(&n.pairs)
+        {
+            for (k, v) in &pair_map {
+                if let (Ok(hname), Ok(hval)) = (
+                    axum::http::HeaderName::from_bytes(k.as_bytes()),
+                    axum::http::HeaderValue::from_str(v),
+                ) {
+                    response_headers.insert(hname, hval);
+                }
+            }
+        }
+    }
+
+    // S3 response passthrough headers — Go sets these via AdjustPassthroughHeaders
+    if let Some(ref cc) = query.response_cache_control {
+        if let Ok(hval) = cc.parse() {
+            response_headers.insert(header::CACHE_CONTROL, hval);
+        }
+    }
+    if let Some(ref ce) = query.response_content_encoding {
+        if let Ok(hval) = ce.parse() {
+            response_headers.insert(header::CONTENT_ENCODING, hval);
+        }
+    }
+    if let Some(ref exp) = query.response_expires {
+        if let Ok(hval) = exp.parse() {
+            response_headers.insert(header::EXPIRES, hval);
+        }
+    }
+    if let Some(ref cl) = query.response_content_language {
+        if let Ok(hval) = cl.parse() {
+            response_headers.insert("Content-Language", hval);
+        }
+    }
+    if let Some(ref cd) = query.response_content_disposition {
+        if let Ok(hval) = cd.parse() {
+            response_headers.insert(header::CONTENT_DISPOSITION, hval);
+        }
+    }
 
     // Content-Disposition
     if !filename.is_empty() {
