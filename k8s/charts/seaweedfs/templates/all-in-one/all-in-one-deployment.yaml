@@ -169,7 +169,7 @@ spec:
               -disableHttp={{ .Values.allInOne.disableHttp }} \
               {{- end }}
               {{- with (first .Values.volume.dataDirs) }}
-              {{- if hasKey . "maxVolumes" }}
+              {{- if and (hasKey . "maxVolumes") (ne .maxVolumes nil) }}
               -volume.max={{ .maxVolumes }} \
               {{- end }}
               {{- end }}
