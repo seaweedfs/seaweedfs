@@ -22,12 +22,16 @@ type TestCluster interface {
 	Stop()
 }
 
+func useRustVolumeServer() bool {
+	return os.Getenv("VOLUME_SERVER_IMPL") == "rust"
+}
+
 // StartVolumeCluster starts a single-volume cluster using either the Go or
 // Rust volume server, depending on the VOLUME_SERVER_IMPL environment variable.
 // Set VOLUME_SERVER_IMPL=rust to use the Rust volume server.
 func StartVolumeCluster(t testing.TB, profile matrix.Profile) TestCluster {
 	t.Helper()
-	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+	if useRustVolumeServer() {
 		return StartRustVolumeCluster(t, profile)
 	}
 	return StartSingleVolumeCluster(t, profile)
@@ -52,7 +56,7 @@ type MultiCluster interface {
 // Set VOLUME_SERVER_IMPL=rust to use Rust volume servers.
 func StartMultiVolumeClusterAuto(t testing.TB, profile matrix.Profile, count int) MultiCluster {
 	t.Helper()
-	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+	if useRustVolumeServer() {
 		return StartRustMultiVolumeCluster(t, profile, count)
 	}
 	return StartMultiVolumeCluster(t, profile, count)
