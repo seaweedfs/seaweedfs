@@ -1819,9 +1819,15 @@ impl Volume {
                 break;
             }
 
-            // If V3, try to read the append timestamp from the last verified entry
-            if version == VERSION_3 && !size.is_deleted() && size.0 > 0 {
-                let ts_offset = actual_offset + NEEDLE_HEADER_SIZE as u64 + size.0 as u64 + 4; // skip checksum
+            // If V3, try to read the append timestamp from the last verified entry.
+            // Go reads AppendAtNs from both live and deleted (tombstone) entries
+            // via verifyNeedleIntegrity and verifyDeletedNeedleIntegrity.
+            if version == VERSION_3 {
+                // For tombstones (deleted), body size on disk is 0.
+                // For live entries, body size is size.0.
+                let body_size = if size.is_deleted() { 0u64 } else { size.0 as u64 };
+                let ts_offset =
+                    actual_offset + NEEDLE_HEADER_SIZE as u64 + body_size + 4; // skip checksum
                 let mut ts_buf = [0u8; 8];
                 if self.read_exact_at_backend(&mut ts_buf, ts_offset).is_ok() {
                     let ts = u64::from_be_bytes(ts_buf);
