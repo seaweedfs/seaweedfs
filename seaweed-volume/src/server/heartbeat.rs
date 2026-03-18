@@ -405,6 +405,23 @@ async fn do_heartbeat(
             resp = response_stream.message() => {
                 match resp {
                     Ok(Some(hb_resp)) => {
+                        // Match Go ordering: DuplicatedUuids first, then volume
+                        // options, then leader redirect.
+                        if !hb_resp.duplicated_uuids.is_empty() {
+                            let duplicate_dirs = {
+                                let store = state.store.read().unwrap();
+                                duplicate_directories(&store, &hb_resp.duplicated_uuids)
+                            };
+                            error!(
+                                "Master reported duplicate volume directories: {:?}",
+                                duplicate_dirs
+                            );
+                            return Err(format!(
+                                "{}: {:?}",
+                                DUPLICATE_UUID_RETRY_MESSAGE, duplicate_dirs
+                            )
+                            .into());
+                        }
                         let changed = {
                             let s = state.store.read().unwrap();
                             apply_master_volume_options(&s, &hb_resp)
@@ -428,23 +445,6 @@ async fn do_heartbeat(
                         );
                         if metrics_changed {
                             state.metrics_notify.notify_waiters();
-                        }
-                        // Match Go ordering: check duplicated_uuids BEFORE leader redirect.
-                        // Go processes DuplicatedUuids first, then volume options, then leader.
-                        if !hb_resp.duplicated_uuids.is_empty() {
-                            let duplicate_dirs = {
-                                let store = state.store.read().unwrap();
-                                duplicate_directories(&store, &hb_resp.duplicated_uuids)
-                            };
-                            error!(
-                                "Master reported duplicate volume directories: {:?}",
-                                duplicate_dirs
-                            );
-                            return Err(format!(
-                                "{}: {:?}",
-                                DUPLICATE_UUID_RETRY_MESSAGE, duplicate_dirs
-                            )
-                            .into());
                         }
                         // Match Go: only redirect if leader is non-empty AND
                         // different from the current master we're connected to.
