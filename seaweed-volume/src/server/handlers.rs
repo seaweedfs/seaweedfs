@@ -763,7 +763,7 @@ fn redirect_request(info: &ProxyRequestInfo, target: &VolumeLocation, scheme: &s
 
     let raw_target = format!(
         "{}/{},{}?{}",
-        target.public_url, &info.vid_str, &info.fid_str, query
+        target.url, &info.vid_str, &info.fid_str, query
     );
     let location = match normalize_outgoing_http_url(scheme, &raw_target) {
         Ok(url) => url,
