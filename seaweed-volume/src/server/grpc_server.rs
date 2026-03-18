@@ -2587,6 +2587,15 @@ impl VolumeServer for VolumeGrpcService {
         // Use EC context data shard count from the volume
         let data_shards = ec_vol.data_shards as usize;
 
+        // Validate data shard count range (matches Go's VolumeEcShardsToVolume)
+        let max_shard_count = crate::storage::erasure_coding::ec_shard::MAX_SHARD_COUNT;
+        if data_shards == 0 || data_shards > max_shard_count {
+            return Err(Status::invalid_argument(format!(
+                "invalid data shard count {} for volume {} (must be 1..{})",
+                data_shards, req.volume_id, max_shard_count
+            )));
+        }
+
         // Check that all data shards are present
         for shard_id in 0..data_shards {
             if ec_vol
