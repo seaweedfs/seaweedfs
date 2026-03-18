@@ -2979,10 +2979,7 @@ impl Volume {
     /// Remove all volume files from disk.
     pub fn destroy(&mut self, only_empty: bool) -> Result<(), VolumeError> {
         if only_empty && self.file_count() > 0 {
-            return Err(VolumeError::Io(io::Error::new(
-                io::ErrorKind::Other,
-                "volume not empty".to_string(),
-            )));
+            return Err(VolumeError::NotEmpty);
         }
         if self.is_compacting {
             return Err(VolumeError::Io(io::Error::new(
