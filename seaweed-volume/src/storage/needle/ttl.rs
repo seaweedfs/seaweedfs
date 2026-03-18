@@ -73,6 +73,8 @@ impl TTL {
 
     /// Parse from string like "3m", "4h", "5d", "6w", "7M", "8y".
     /// If the string is all digits (no unit suffix), defaults to minutes.
+    /// Matches Go's ReadTTL which calls fitTtlCount to normalize:
+    /// e.g. "120m" -> 2h, "7d" -> 1w, "24h" -> 1d.
     pub fn read(s: &str) -> Result<Self, String> {
         let s = s.trim();
         if s.is_empty() {
@@ -97,15 +99,8 @@ impl TTL {
             b'y' => TTL_UNIT_YEAR,
             _ => return Err(format!("unknown TTL unit: {}", unit_byte as char)),
         };
-        // Match Go's ReadTTL: preserve original unit, error on overflow.
-        // Go does NOT normalize (e.g., 7d stays 7d, not 1w).
-        if count == 0 {
-            return Ok(TTL::EMPTY);
-        }
-        if count > 255 {
-            return Err(format!("ttl {} overflow, max count is 255", s));
-        }
-        Ok(TTL { count: count as u8, unit })
+        // Match Go's ReadTTL: normalize via fitTtlCount
+        Ok(fit_ttl_count(count, unit))
     }
 
     /// Minutes representation.
@@ -129,9 +124,7 @@ fn unit_to_seconds(count: u64, unit: u8) -> u64 {
 
 /// Fit a count+unit into a TTL that fits in a single byte count.
 /// Converts to seconds first, then finds the coarsest unit that fits.
-/// Not used by TTL::read (Go's ReadTTL doesn't normalize), but kept
-/// for potential internal use cases that need normalization.
-#[allow(dead_code)]
+/// Matches Go's fitTtlCount called from ReadTTL.
 fn fit_ttl_count(count: u32, unit: u8) -> TTL {
     if count == 0 || unit == TTL_UNIT_EMPTY {
         return TTL::EMPTY;
@@ -226,8 +219,10 @@ mod tests {
 
     #[test]
     fn test_ttl_parse_hours() {
+        // 24h normalizes to 1d via fitTtlCount
         let ttl = TTL::read("24h").unwrap();
         assert_eq!(ttl.to_seconds(), 86400);
+        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
     }
 
     #[test]
@@ -270,23 +265,35 @@ mod tests {
     }
 
     #[test]
-    fn test_ttl_overflow_error() {
-        // Go's ReadTTL errors on count > 255
-        assert!(TTL::read("300m").is_err());
-        assert!(TTL::read("256h").is_err());
+    fn test_ttl_overflow_normalizes() {
+        // Go's ReadTTL calls fitTtlCount: 300m = 18000s = 5h (exact fit)
+        let ttl = TTL::read("300m").unwrap();
+        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_HOUR });
+
+        // 256h = 921600s. Doesn't fit in hours (256 >= 256), doesn't fit exact in days.
+        // Second pass: 921600/86400 = 10 (truncated) < 256 -> 10d
+        let ttl = TTL::read("256h").unwrap();
+        assert_eq!(ttl, TTL { count: 10, unit: TTL_UNIT_DAY });
     }
 
     #[test]
-    fn test_ttl_preserves_unit() {
-        // Go's ReadTTL preserves the original unit (no normalization).
-        // 120m stays 120m, 7d stays 7d, etc.
+    fn test_ttl_normalizes_unit() {
+        // Go's ReadTTL calls fitTtlCount which normalizes to coarsest unit.
+        // 120m -> 2h, 7d -> 1w, 24h -> 1d.
         let ttl = TTL::read("120m").unwrap();
-        assert_eq!(ttl, TTL { count: 120, unit: TTL_UNIT_MINUTE });
+        assert_eq!(ttl, TTL { count: 2, unit: TTL_UNIT_HOUR });
 
         let ttl = TTL::read("7d").unwrap();
-        assert_eq!(ttl, TTL { count: 7, unit: TTL_UNIT_DAY });
+        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_WEEK });
 
         let ttl = TTL::read("24h").unwrap();
-        assert_eq!(ttl, TTL { count: 24, unit: TTL_UNIT_HOUR });
+        assert_eq!(ttl, TTL { count: 1, unit: TTL_UNIT_DAY });
+
+        // Values that don't simplify stay as-is
+        let ttl = TTL::read("5d").unwrap();
+        assert_eq!(ttl, TTL { count: 5, unit: TTL_UNIT_DAY });
+
+        let ttl = TTL::read("3m").unwrap();
+        assert_eq!(ttl, TTL { count: 3, unit: TTL_UNIT_MINUTE });
     }
 }
