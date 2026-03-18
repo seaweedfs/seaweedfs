@@ -462,6 +462,103 @@ impl EcVolume {
         Ok((files, files_deleted, total_size))
     }
 
+    /// ScrubIndex verifies index integrity of an EC volume.
+    /// Matches Go's `(ev *EcVolume) ScrubIndex()` → `idx.CheckIndexFile()`.
+    /// Returns (entry_count, errors).
+    pub fn scrub_index(&self) -> (u64, Vec<String>) {
+        let ecx_file = match self.ecx_file.as_ref() {
+            Some(f) => f,
+            None => {
+                return (
+                    0,
+                    vec![format!(
+                        "no ECX file associated with EC volume {}",
+                        self.volume_id.0
+                    )],
+                )
+            }
+        };
+
+        if self.ecx_file_size == 0 {
+            return (
+                0,
+                vec![format!(
+                    "zero-size ECX file for EC volume {}",
+                    self.volume_id.0
+                )],
+            );
+        }
+
+        let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
+        let mut entries: Vec<(usize, NeedleId, i64, Size)> = Vec::with_capacity(entry_count);
+        let mut errs: Vec<String> = Vec::new();
+        let mut entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+
+        // Walk all entries
+        for i in 0..entry_count {
+            let file_offset = (i * NEEDLE_MAP_ENTRY_SIZE) as u64;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                if let Err(e) = ecx_file.read_exact_at(&mut entry_buf, file_offset) {
+                    errs.push(format!("read ecx entry {}: {}", i, e));
+                    continue;
+                }
+            }
+            let (key, offset, size) = idx_entry_from_bytes(&entry_buf);
+            entries.push((i, key, offset.to_actual_offset(), size));
+        }
+
+        // Sort by offset, then size
+        entries.sort_by(|a, b| a.2.cmp(&b.2).then(a.3 .0.cmp(&b.3 .0)));
+
+        // Check for overlapping needles
+        for i in 1..entries.len() {
+            let (idx, id, offset, size) = entries[i];
+            let (_, last_id, last_offset, last_size) = entries[i - 1];
+
+            let actual_size =
+                crate::storage::needle::needle::get_actual_size(size, self.version);
+            let end = if actual_size != 0 {
+                offset + actual_size - 1
+            } else {
+                offset
+            };
+
+            let last_actual_size =
+                crate::storage::needle::needle::get_actual_size(last_size, self.version);
+            let last_end = if last_actual_size != 0 {
+                last_offset + last_actual_size - 1
+            } else {
+                last_offset
+            };
+
+            if offset <= last_end {
+                errs.push(format!(
+                    "needle {} (#{}) at [{}-{}] overlaps needle {} at [{}-{}]",
+                    id.0,
+                    idx + 1,
+                    offset,
+                    end,
+                    last_id.0,
+                    last_offset,
+                    last_end
+                ));
+            }
+        }
+
+        // Verify file size matches entry count
+        let expected_size = entry_count as i64 * NEEDLE_MAP_ENTRY_SIZE as i64;
+        if expected_size != self.ecx_file_size {
+            errs.push(format!(
+                "expected an index file of size {}, got {}",
+                expected_size, self.ecx_file_size
+            ));
+        }
+
+        (entries.len() as u64, errs)
+    }
+
     // ---- Deletion ----
 
     /// Mark a needle as deleted in the .ecx file in-place.

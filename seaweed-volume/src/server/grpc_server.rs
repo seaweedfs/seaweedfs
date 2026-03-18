@@ -3269,59 +3269,73 @@ impl VolumeServer for VolumeGrpcService {
         let mut details: Vec<String> = Vec::new();
 
         for vid in &vids {
-            let (collection, files) = {
-                if let Some(ecv) = store.find_ec_volume(*vid) {
-                    let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
-                    (ecv.collection.clone(), files)
-                } else {
-                    return Err(Status::not_found(format!(
-                        "EC volume id {} not found",
-                        vid.0
-                    )));
-                }
-            };
+            let ecv = store.find_ec_volume(*vid).ok_or_else(|| {
+                Status::not_found(format!("EC volume id {} not found", vid.0))
+            })?;
+            let collection = ecv.collection.clone();
 
-            let dir = store
-                .find_ec_dir(*vid, &collection)
-                .unwrap_or_else(|| String::from(""));
-            if dir.is_empty() {
-                continue;
-            }
-
-            total_volumes += 1;
-            total_files += files;
-            let (data_shards, parity_shards) =
-                crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
-                    &dir, &collection, *vid,
-                );
-
-            match crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
-                &dir,
-                &collection,
-                *vid,
-                data_shards as usize,
-                parity_shards as usize,
-            ) {
-                Ok((broken, msgs)) => {
-                    if !broken.is_empty() {
+            match mode {
+                1 => {
+                    // INDEX mode: check ecx index integrity only, no shard verification
+                    // Matches Go's v.ScrubIndex() → idx.CheckIndexFile()
+                    let (count, errs) = ecv.scrub_index();
+                    total_volumes += 1;
+                    total_files += count;
+                    if !errs.is_empty() {
                         broken_volume_ids.push(vid.0);
-                        for b in broken {
-                            broken_shard_infos.push(volume_server_pb::EcShardInfo {
-                                volume_id: vid.0,
-                                collection: collection.clone(),
-                                shard_id: b,
-                                ..Default::default()
-                            });
+                        for msg in errs {
+                            details.push(format!("ecvol {}: {}", vid.0, msg));
                         }
                     }
-                    for msg in msgs {
-                        details.push(format!("ecvol {}: {}", vid.0, msg));
+                }
+                2 | 3 => {
+                    // LOCAL (2) / FULL (3): verify EC shard data
+                    let files = ecv.walk_ecx_stats().map(|(f, _, _)| f).unwrap_or(0);
+
+                    let dir = store
+                        .find_ec_dir(*vid, &collection)
+                        .unwrap_or_else(|| String::from(""));
+                    if dir.is_empty() {
+                        continue;
+                    }
+
+                    total_volumes += 1;
+                    total_files += files;
+                    let (data_shards, parity_shards) =
+                        crate::storage::erasure_coding::ec_volume::read_ec_shard_config(
+                            &dir, &collection, *vid,
+                        );
+
+                    match crate::storage::erasure_coding::ec_encoder::verify_ec_shards(
+                        &dir,
+                        &collection,
+                        *vid,
+                        data_shards as usize,
+                        parity_shards as usize,
+                    ) {
+                        Ok((broken, msgs)) => {
+                            if !broken.is_empty() {
+                                broken_volume_ids.push(vid.0);
+                                for b in broken {
+                                    broken_shard_infos.push(volume_server_pb::EcShardInfo {
+                                        volume_id: vid.0,
+                                        collection: collection.clone(),
+                                        shard_id: b,
+                                        ..Default::default()
+                                    });
+                                }
+                            }
+                            for msg in msgs {
+                                details.push(format!("ecvol {}: {}", vid.0, msg));
+                            }
+                        }
+                        Err(e) => {
+                            broken_volume_ids.push(vid.0);
+                            details.push(format!("ecvol {}: scrub error: {}", vid.0, e));
+                        }
                     }
                 }
-                Err(e) => {
-                    broken_volume_ids.push(vid.0);
-                    details.push(format!("ecvol {}: scrub error: {}", vid.0, e));
-                }
+                _ => unreachable!(), // validated above
             }
         }
 
