@@ -2090,6 +2090,12 @@ impl Volume {
         self.dat_file = None;
     }
 
+    /// Close the remote dat file backend (matches Go's v.DataBackend.Close(); v.DataBackend = nil).
+    /// Called after tier-download when the remote backend is being replaced by local storage.
+    pub fn close_remote_dat_backend(&mut self) {
+        self.remote_dat_file = None;
+    }
+
     /// Path to .vif file.
     fn vif_path(&self) -> String {
         format!("{}.vif", self.data_file_name())

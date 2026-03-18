@@ -3029,6 +3029,10 @@ impl VolumeServer for VolumeGrpcService {
                                     vid, e
                                 )));
                             }
+
+                            // Close old remote backend (matches Go: v.DataBackend.Close(); v.DataBackend = nil)
+                            // This forces the next read to discover and open the local .dat file.
+                            vol.close_remote_dat_backend();
                         }
                     }
                 }
