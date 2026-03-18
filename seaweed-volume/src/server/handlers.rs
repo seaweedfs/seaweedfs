@@ -2338,7 +2338,7 @@ pub async fn post_handler(
                 } else {
                     format!("\"{}\"", etag)
                 };
-                let mut resp = (StatusCode::CREATED, axum::Json(result)).into_response();
+                let mut resp = json_result_with_query(StatusCode::CREATED, &result, &query);
                 resp.headers_mut()
                     .insert(header::ETAG, etag_header.parse().unwrap());
                 resp.headers_mut()
@@ -3183,6 +3183,42 @@ pub(super) fn json_error_with_query(
         to_pretty_json(&body)
     } else {
         serde_json::to_string(&body).unwrap()
+    };
+
+    if let Some(cb) = callback {
+        let jsonp = format!("{}({})", cb, json_body);
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/javascript")
+            .body(Body::from(jsonp))
+            .unwrap()
+    } else {
+        Response::builder()
+            .status(status)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json_body))
+            .unwrap()
+    }
+}
+
+/// Return a JSON response with optional pretty/JSONP support from raw query string.
+/// Matches Go's writeJsonQuiet behavior for write success responses.
+fn json_result_with_query<T: Serialize>(status: StatusCode, body: &T, query: &str) -> Response {
+    let (is_pretty, callback) = {
+        let pretty = query
+            .split('&')
+            .any(|p| p.starts_with("pretty=") && p.len() > "pretty=".len());
+        let cb = query
+            .split('&')
+            .find_map(|p| p.strip_prefix("callback="))
+            .map(|s| s.to_string());
+        (pretty, cb)
+    };
+
+    let json_body = if is_pretty {
+        to_pretty_json(body)
+    } else {
+        serde_json::to_string(body).unwrap()
     };
 
     if let Some(cb) = callback {
