@@ -2070,7 +2070,6 @@ impl Volume {
     /// Mark this volume as writable (allow writes and deletes).
     pub fn set_writable(&mut self) -> Result<(), VolumeError> {
         self.no_write_or_delete = false;
-        self.no_write_can_delete = self.has_remote_file;
         self.save_vif()
     }
 
