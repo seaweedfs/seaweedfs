@@ -42,6 +42,12 @@ impl SuperBlock {
         header[4..6].copy_from_slice(&self.compaction_revision.to_be_bytes());
 
         if !self.extra_data.is_empty() {
+            // Go checks extraSize > 256*256-2 and calls glog.Fatalf; guard against u16 overflow.
+            assert!(
+                self.extra_data.len() <= 65534,
+                "super block extra data too large: {} > 65534",
+                self.extra_data.len()
+            );
             let extra_size = self.extra_data.len() as u16;
             header[6..8].copy_from_slice(&extra_size.to_be_bytes());
             header.extend_from_slice(&self.extra_data);
