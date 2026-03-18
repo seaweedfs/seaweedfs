@@ -1266,7 +1266,13 @@ async fn get_or_head_handler_inner(
                 .get(header::ACCEPT_ENCODING)
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("");
-            if accept_encoding.contains("gzip") {
+            if accept_encoding.contains("gzip")
+                && data.len() >= 2
+                && data[0] == 0x1f
+                && data[1] == 0x8b
+            {
+                // Go checks IsGzippedContent (magic bytes 0x1f 0x8b) before
+                // setting Content-Encoding: gzip
                 response_headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
             } else {
                 // Decompress for client
