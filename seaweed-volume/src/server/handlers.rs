@@ -1986,6 +1986,7 @@ pub async fn post_handler(
         );
 
         let mut file_data: Option<Vec<u8>> = None;
+        let mut first_part_data: Option<Vec<u8>> = None;
         let mut file_name: Option<String> = None;
         let mut file_content_type: Option<String> = None;
         let mut file_content_encoding: Option<String> = None;
@@ -2007,8 +2008,14 @@ pub async fn post_handler(
                 .map(|s| s.to_string());
 
             if let Ok(data) = field.bytes().await {
+                // Go reads the first part's data unconditionally, then looks for
+                // a part with a filename. If no part has a filename, Go uses the
+                // first part's data (with empty filename).
+                if first_part_data.is_none() {
+                    first_part_data = Some(data.to_vec());
+                }
                 if file_data.is_none() && fname.is_some() {
-                    // First file field
+                    // Found a file field — use this part's data
                     file_data = Some(data.to_vec());
                     file_name = fname;
                     file_content_type = fct;
@@ -2031,9 +2038,12 @@ pub async fn post_handler(
                 file_content_md5,
                 form_fields,
             )
+        } else if let Some(data) = first_part_data {
+            // No file field found, use first part's data (matching Go behavior)
+            (data, String::new(), None, None, None, form_fields)
         } else {
-            // No file field found, use raw body
-            (body.to_vec(), String::new(), None, None, None, form_fields)
+            // No parts at all
+            (Vec::new(), String::new(), None, None, None, form_fields)
         }
     } else {
         (
