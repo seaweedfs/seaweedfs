@@ -204,24 +204,34 @@ impl CompactNeedleMap {
     }
 
     /// Mark a needle as deleted. Appends tombstone to .idx file.
-    /// Matches Go's CompactMap.Delete: checks !IsDeleted() (not IsValid()),
-    /// so needles with size==0 can still be deleted.
+    /// Matches Go's NeedleMap.Delete: ALWAYS writes tombstone to idx and
+    /// increments deletion counter, even if needle doesn't exist or is
+    /// already deleted (important for replication).
     pub fn delete(&mut self, key: NeedleId, offset: Offset) -> io::Result<Option<Size>> {
-        if let Some(old) = self.map.get(key) {
-            if !old.size.is_deleted() {
-                // Persist tombstone to idx file BEFORE mutating in-memory state for crash consistency
-                if let Some(ref mut idx_file) = self.idx_file {
-                    idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
-                    self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
-                }
+        // Go unconditionally calls nm.m.Delete(), nm.logDelete(), nm.appendToIndexFile()
+        let deleted_bytes = self.map.delete(key).unwrap_or(Size(0));
 
-                self.metric.on_delete(&old);
-                // Mark as deleted in compact map (negates size in-place)
-                self.map.delete(key);
-                return Ok(Some(old.size));
-            }
+        // Match Go's logDelete -> LogDeletionCounter: only increment when oldSize > 0.
+        // Go does NOT decrement FileCounter/FileByteCounter in Delete;
+        // live counts are computed as FileCounter - DeletionCounter.
+        if deleted_bytes.0 > 0 {
+            self.metric.deletion_count.fetch_add(1, Ordering::Relaxed);
+            self.metric
+                .deletion_byte_count
+                .fetch_add(deleted_bytes.0 as u64, Ordering::Relaxed);
         }
-        Ok(None)
+
+        // Always write tombstone to idx file (matching Go)
+        if let Some(ref mut idx_file) = self.idx_file {
+            idx::write_index_entry(idx_file, key, offset, TOMBSTONE_FILE_SIZE)?;
+            self.idx_file_offset += NEEDLE_MAP_ENTRY_SIZE as u64;
+        }
+
+        if deleted_bytes.0 > 0 {
+            Ok(Some(deleted_bytes))
+        } else {
+            Ok(None)
+        }
     }
 
     // ---- Internal helpers ----
