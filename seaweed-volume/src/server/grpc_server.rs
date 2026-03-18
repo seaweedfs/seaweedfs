@@ -852,8 +852,15 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
 
         if let Some(new_state) = &req.state {
-            // Match Go: simply apply the state without version checking.
-            // Go's SetState calls vs.store.State.Update(req.GetState()) unconditionally.
+            // Go's State.Update checks version: if incoming version != stored version → error.
+            let current_version = self.state.state_version.load(Ordering::Relaxed);
+            if new_state.version != current_version {
+                return Err(Status::failed_precondition(format!(
+                    "version mismatch for VolumeServerState (got {}, want {})",
+                    new_state.version, current_version
+                )));
+            }
+
             self.state
                 .maintenance
                 .store(new_state.maintenance, Ordering::Relaxed);
