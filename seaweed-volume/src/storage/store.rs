@@ -146,8 +146,7 @@ impl Store {
             } else {
                 // Go formula: currentFreeCount = (MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()
                 //             currentFreeCount /= DataShardsCount
-                let free_count = (max - loc.volumes_len() as i64)
-                    * DATA_SHARDS_COUNT as i64
+                let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
                     - loc.ec_shard_count() as i64;
                 free_count / DATA_SHARDS_COUNT as i64
             };
@@ -165,17 +164,37 @@ impl Store {
     }
 
     /// Find a free location matching a predicate.
-    /// Matches Go's Store.FindFreeLocation: finds first location passing the filter.
+    /// Matches Go's Store.FindFreeLocation: picks the matching location with the
+    /// most remaining volume capacity, while skipping low-disk locations.
     pub fn find_free_location_predicate<F>(&self, pred: F) -> Option<usize>
     where
         F: Fn(&DiskLocation) -> bool,
     {
+        use crate::storage::erasure_coding::ec_shard::DATA_SHARDS_COUNT;
+
+        let mut best: Option<(usize, i64)> = None;
         for (i, loc) in self.locations.iter().enumerate() {
-            if pred(loc) {
-                return Some(i);
+            if !pred(loc) || loc.is_disk_space_low.load(Ordering::Relaxed) {
+                continue;
+            }
+
+            let max = loc.max_volume_count.load(Ordering::Relaxed) as i64;
+            let effective_free = if max == 0 {
+                i64::MAX
+            } else {
+                let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
+                    - loc.ec_shard_count() as i64;
+                free_count / DATA_SHARDS_COUNT as i64
+            };
+            if effective_free <= 0 {
+                continue;
+            }
+
+            if best.is_none() || effective_free > best.unwrap().1 {
+                best = Some((i, effective_free));
             }
         }
-        None
+        best.map(|(i, _)| i)
     }
 
     /// Create a new volume, placing it on the location with the most free space.
@@ -619,9 +638,8 @@ impl Store {
                 if ec_vol.is_time_to_destroy() {
                     expired_vids.push(*vid);
                 } else {
-                    ec_shards.extend(
-                        ec_vol.to_volume_ec_shard_information_messages(disk_id as u32),
-                    );
+                    ec_shards
+                        .extend(ec_vol.to_volume_ec_shard_information_messages(disk_id as u32));
                 }
             }
 
@@ -1173,7 +1191,9 @@ mod tests {
                 .unwrap();
         }
         store.locations[0].original_max_volume_count = 0;
-        store.locations[0].max_volume_count.store(0, Ordering::Relaxed);
+        store.locations[0]
+            .max_volume_count
+            .store(0, Ordering::Relaxed);
 
         store.set_preallocate(false);
         assert!(store.maybe_adjust_volume_max());
@@ -1187,6 +1207,60 @@ mod tests {
     }
 
     #[test]
+    fn test_find_free_location_predicate_prefers_more_capacity_and_skips_low_disk() {
+        let tmp1 = TempDir::new().unwrap();
+        let dir1 = tmp1.path().to_str().unwrap();
+        let tmp2 = TempDir::new().unwrap();
+        let dir2 = tmp2.path().to_str().unwrap();
+
+        let mut store = Store::new(NeedleMapKind::InMemory);
+        store
+            .add_location(
+                dir1,
+                dir1,
+                3,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+        store
+            .add_location(
+                dir2,
+                dir2,
+                5,
+                DiskType::HardDrive,
+                MinFreeSpace::Percent(0.0),
+                Vec::new(),
+            )
+            .unwrap();
+
+        store
+            .add_volume(
+                VolumeId(71),
+                "find_free_location_case",
+                None,
+                None,
+                0,
+                DiskType::HardDrive,
+                Version::current(),
+            )
+            .unwrap();
+
+        let selected =
+            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive);
+        assert_eq!(selected, Some(1));
+
+        store.locations[1]
+            .is_disk_space_low
+            .store(true, Ordering::Relaxed);
+
+        let selected =
+            store.find_free_location_predicate(|loc| loc.disk_type == DiskType::HardDrive);
+        assert_eq!(selected, Some(0));
+    }
+
+    #[test]
     fn test_delete_expired_ec_volumes_removes_expired_entries() {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
@@ -1196,10 +1270,7 @@ mod tests {
         store.locations[0]
             .mount_ec_shards(VolumeId(9), "expired_ec_case", &[0])
             .unwrap();
-        store
-            .find_ec_volume_mut(VolumeId(9))
-            .unwrap()
-            .expire_at_sec = 1;
+        store.find_ec_volume_mut(VolumeId(9)).unwrap().expire_at_sec = 1;
 
         let (ec_shards, deleted) = store.delete_expired_ec_volumes();
 
