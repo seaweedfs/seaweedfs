@@ -2471,17 +2471,28 @@ pub async fn post_handler(
             })
         };
         if needs_replication {
-            if let Err(e) = do_replicated_request(
-                &state,
-                vid.0,
-                Method::POST,
-                &path,
-                &query,
-                &headers,
-                Some(body.clone()),
-            )
-            .await
-            {
+            let state_clone = state.clone();
+            let path_clone = path.clone();
+            let query_clone = query.clone();
+            let headers_clone = headers.clone();
+            let body_clone = body.clone();
+            let replication = tokio::spawn(async move {
+                do_replicated_request(
+                    &state_clone,
+                    vid.0,
+                    Method::POST,
+                    &path_clone,
+                    &query_clone,
+                    &headers_clone,
+                    Some(body_clone),
+                )
+                .await
+            });
+            let replication_result = replication
+                .await
+                .map_err(|e| format!("replication task failed: {}", e))
+                .and_then(|result| result);
+            if let Err(e) = replication_result {
                 tracing::error!("replicated write failed: {}", e);
                 return json_error_with_query(
                     StatusCode::INTERNAL_SERVER_ERROR,
