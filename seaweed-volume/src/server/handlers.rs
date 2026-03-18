@@ -2267,7 +2267,8 @@ pub async fn post_handler(
         n.set_is_compressed();
     }
 
-    if !mime_type.is_empty() && mime_type.len() < 256 {
+    // Go sets HasMime even for empty MIME types: if len(pu.MimeType) < 256
+    if mime_type.len() < 256 {
         n.mime = mime_type.as_bytes().to_vec();
         n.set_has_mime();
     }
@@ -2291,8 +2292,9 @@ pub async fn post_handler(
         }
     }
 
-    // Set filename on needle (matches Go: n.Name = []byte(pu.FileName))
-    if !filename.is_empty() && filename.len() < 256 {
+    // Set filename on needle (matches Go: if len(pu.FileName) < 256)
+    // Go sets HasName even for empty filenames
+    if filename.len() < 256 {
         n.name = filename.as_bytes().to_vec();
         n.name_size = filename.len() as u8;
         n.set_has_name();
