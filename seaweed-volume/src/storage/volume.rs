@@ -2498,14 +2498,20 @@ impl Volume {
         let blob_to_write = if self.version() == VERSION_3 {
             let ts_offset =
                 NEEDLE_HEADER_SIZE + size.0 as usize + NEEDLE_CHECKSUM_SIZE;
-            if ts_offset + TIMESTAMP_SIZE <= needle_blob.len() {
-                blob_buf = needle_blob.to_vec();
-                blob_buf[ts_offset..ts_offset + TIMESTAMP_SIZE]
-                    .copy_from_slice(&append_at_ns.to_be_bytes());
-                &blob_buf[..]
-            } else {
-                needle_blob
+            if ts_offset + TIMESTAMP_SIZE > needle_blob.len() {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "needle blob buffer too small: need {} bytes, have {}",
+                        ts_offset + TIMESTAMP_SIZE,
+                        needle_blob.len()
+                    ),
+                )));
             }
+            blob_buf = needle_blob.to_vec();
+            blob_buf[ts_offset..ts_offset + TIMESTAMP_SIZE]
+                .copy_from_slice(&append_at_ns.to_be_bytes());
+            &blob_buf[..]
         } else {
             needle_blob
         };
