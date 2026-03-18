@@ -2048,11 +2048,14 @@ pub async fn post_handler(
         Some("1" | "t" | "T" | "TRUE" | "True" | "true")
     );
 
-    // Check file size limit
+    // Check file size limit (matches Go: "file over the limited %d bytes")
     if state.file_size_limit_bytes > 0 && body_data_raw.len() as i64 > state.file_size_limit_bytes {
         return json_error_with_query(
             StatusCode::BAD_REQUEST,
-            "file size limit exceeded",
+            format!(
+                "file over the limited {} bytes",
+                state.file_size_limit_bytes
+            ),
             Some(&query),
         );
     }
