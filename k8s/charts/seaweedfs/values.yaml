@@ -1076,6 +1076,9 @@ s3:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  createBucketsHook:
+    resources: {}
+
   ingress:
     enabled: false
     className: ""

@@ -189,6 +189,10 @@ spec:
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
+        {{- with .Values.s3.createBucketsHook.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
