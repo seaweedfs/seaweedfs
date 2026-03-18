@@ -833,19 +833,14 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	}
 	now := time.Now()
 	// Size-based rotation: rotate when the file would exceed MaxSize.
-	if sb.nbytes+uint64(len(p)) >= MaxSize {
+	sizeRotation := sb.nbytes+uint64(len(p)) >= MaxSize
+	// Time-based rotation: rotate when the file is older than --log_rotate_hours.
+	h := LogRotateHours()
+	timeRotation := h > 0 && !sb.createdAt.IsZero() && now.Sub(sb.createdAt) >= time.Duration(h)*time.Hour
+	if sizeRotation || timeRotation {
 		if err := sb.rotateFile(now); err != nil {
 			sb.logger.exit(err)
 			return 0, err
-		}
-	}
-	// Time-based rotation: rotate when the file is older than --log_rotate_hours.
-	if h := LogRotateHours(); h > 0 && !sb.createdAt.IsZero() {
-		if now.Sub(sb.createdAt) >= time.Duration(h)*time.Hour {
-			if err := sb.rotateFile(now); err != nil {
-				sb.logger.exit(err)
-				return 0, err
-			}
 		}
 	}
 	n, err = sb.Writer.Write(p)
