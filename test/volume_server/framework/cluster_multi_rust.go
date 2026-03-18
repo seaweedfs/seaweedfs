@@ -223,26 +223,15 @@ func (c *RustMultiVolumeCluster) startRustVolume(index int, dataDir string) erro
 		return err
 	}
 
-	args := []string{
-		"--port", strconv.Itoa(c.volumePorts[index]),
-		"--port.grpc", strconv.Itoa(c.volumeGrpcPorts[index]),
-		"--port.public", strconv.Itoa(c.volumePubPorts[index]),
-		"--ip", "127.0.0.1",
-		"--ip.bind", "127.0.0.1",
-		"--dir", dataDir,
-		"--max", "16",
-		"--master", "127.0.0.1:" + strconv.Itoa(c.masterPort),
-		"--securityFile", filepath.Join(c.configDir, "security.toml"),
-		"--concurrentUploadLimitMB", strconv.Itoa(c.profile.ConcurrentUploadLimitMB),
-		"--concurrentDownloadLimitMB", strconv.Itoa(c.profile.ConcurrentDownloadLimitMB),
-		"--preStopSeconds", "0",
-	}
-	if c.profile.InflightUploadTimeout > 0 {
-		args = append(args, "--inflightUploadDataTimeout", c.profile.InflightUploadTimeout.String())
-	}
-	if c.profile.InflightDownloadTimeout > 0 {
-		args = append(args, "--inflightDownloadDataTimeout", c.profile.InflightDownloadTimeout.String())
-	}
+	args := rustVolumeArgs(
+		c.profile,
+		c.configDir,
+		c.masterPort,
+		c.volumePorts[index],
+		c.volumeGrpcPorts[index],
+		c.volumePubPorts[index],
+		dataDir,
+	)
 
 	cmd := exec.Command(c.rustVolumeBinary, args...)
 	cmd.Dir = c.baseDir

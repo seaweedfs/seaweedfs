@@ -184,32 +184,54 @@ func (rc *RustCluster) startMaster(dataDir string) error {
 	return rc.masterCmd.Start()
 }
 
+func rustVolumeArgs(
+	profile matrix.Profile,
+	configDir string,
+	masterPort int,
+	volumePort int,
+	volumeGrpcPort int,
+	volumePubPort int,
+	dataDir string,
+) []string {
+	args := []string{
+		"--port", strconv.Itoa(volumePort),
+		"--port.grpc", strconv.Itoa(volumeGrpcPort),
+		"--port.public", strconv.Itoa(volumePubPort),
+		"--ip", "127.0.0.1",
+		"--ip.bind", "127.0.0.1",
+		"--dir", dataDir,
+		"--max", "16",
+		"--master", "127.0.0.1:" + strconv.Itoa(masterPort),
+		"--securityFile", filepath.Join(configDir, "security.toml"),
+		"--readMode", profile.ReadMode,
+		"--concurrentUploadLimitMB", strconv.Itoa(profile.ConcurrentUploadLimitMB),
+		"--concurrentDownloadLimitMB", strconv.Itoa(profile.ConcurrentDownloadLimitMB),
+		"--preStopSeconds", "0",
+	}
+	if profile.InflightUploadTimeout > 0 {
+		args = append(args, "--inflightUploadDataTimeout", profile.InflightUploadTimeout.String())
+	}
+	if profile.InflightDownloadTimeout > 0 {
+		args = append(args, "--inflightDownloadDataTimeout", profile.InflightDownloadTimeout.String())
+	}
+	return args
+}
+
 func (rc *RustCluster) startRustVolume(dataDir string) error {
 	logFile, err := os.Create(filepath.Join(rc.logsDir, "volume.log"))
 	if err != nil {
 		return err
 	}
 
-	args := []string{
-		"--port", strconv.Itoa(rc.volumePort),
-		"--port.grpc", strconv.Itoa(rc.volumeGrpcPort),
-		"--port.public", strconv.Itoa(rc.volumePubPort),
-		"--ip", "127.0.0.1",
-		"--ip.bind", "127.0.0.1",
-		"--dir", dataDir,
-		"--max", "16",
-		"--master", "127.0.0.1:" + strconv.Itoa(rc.masterPort),
-		"--securityFile", filepath.Join(rc.configDir, "security.toml"),
-		"--concurrentUploadLimitMB", strconv.Itoa(rc.profile.ConcurrentUploadLimitMB),
-		"--concurrentDownloadLimitMB", strconv.Itoa(rc.profile.ConcurrentDownloadLimitMB),
-		"--preStopSeconds", "0",
-	}
-	if rc.profile.InflightUploadTimeout > 0 {
-		args = append(args, "--inflightUploadDataTimeout", rc.profile.InflightUploadTimeout.String())
-	}
-	if rc.profile.InflightDownloadTimeout > 0 {
-		args = append(args, "--inflightDownloadDataTimeout", rc.profile.InflightDownloadTimeout.String())
-	}
+	args := rustVolumeArgs(
+		rc.profile,
+		rc.configDir,
+		rc.masterPort,
+		rc.volumePort,
+		rc.volumeGrpcPort,
+		rc.volumePubPort,
+		dataDir,
+	)
 
 	rc.volumeCmd = exec.Command(rc.rustVolumeBinary, args...)
 	rc.volumeCmd.Dir = rc.baseDir
