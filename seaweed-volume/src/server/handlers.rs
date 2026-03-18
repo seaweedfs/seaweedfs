@@ -1704,9 +1704,17 @@ fn is_image_crop_ext(ext: &str) -> bool {
 fn extract_extension_from_path(path: &str) -> String {
     let parts: Vec<&str> = path.trim_start_matches('/').split('/').collect();
     if parts.len() >= 3 {
+        // 3-segment path: /vid/fid/filename.ext
         let filename = parts[2];
         if let Some(dot_pos) = filename.rfind('.') {
             return filename[dot_pos..].to_lowercase();
+        }
+    } else if parts.len() >= 1 {
+        // 2-segment path: /vid,fid.ext or /vid/fid.ext
+        // Go's parseURLPath extracts ext from the full path for all formats
+        let last = parts[parts.len() - 1];
+        if let Some(dot_pos) = last.rfind('.') {
+            return last[dot_pos..].to_lowercase();
         }
     }
     String::new()
