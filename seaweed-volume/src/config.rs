@@ -957,13 +957,13 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::JwtSigningRead => match key {
                     "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
                     "expires_after_seconds" => {
-                        cfg.jwt_read_signing_expires = value.parse().unwrap_or(0)
+                        cfg.jwt_read_signing_expires = value.parse().unwrap_or(60)
                     }
                     _ => {}
                 },
                 Section::JwtSigning => match key {
                     "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
-                    "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(0),
+                    "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(10),
                     _ => {}
                 },
                 Section::HttpsClient => match key {
@@ -1019,6 +1019,15 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::None => {}
             }
         }
+    }
+
+    // Match Go's v.SetDefault: when a signing key is present but
+    // expires_after_seconds was never specified, apply Go's defaults.
+    if !cfg.jwt_signing_key.is_empty() && cfg.jwt_signing_expires == 0 {
+        cfg.jwt_signing_expires = 10;
+    }
+    if !cfg.jwt_read_signing_key.is_empty() && cfg.jwt_read_signing_expires == 0 {
+        cfg.jwt_read_signing_expires = 60;
     }
 
     // Override with WEED_ environment variables (matches Go's Viper convention:
