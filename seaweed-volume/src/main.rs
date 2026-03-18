@@ -303,7 +303,8 @@ async fn run(
         rack: config.rack.clone(),
         file_size_limit_bytes: config.file_size_limit_bytes,
         maintenance_byte_per_second: config.maintenance_byte_per_second,
-        is_heartbeating: std::sync::atomic::AtomicBool::new(config.masters.is_empty()),
+        // Go sets isHeartbeating: true unconditionally at startup
+        is_heartbeating: std::sync::atomic::AtomicBool::new(true),
         has_master: !config.masters.is_empty(),
         pre_stop_seconds: config.pre_stop_seconds,
         volume_state_notify: tokio::sync::Notify::new(),
