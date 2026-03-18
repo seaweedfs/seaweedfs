@@ -1418,21 +1418,13 @@ fn handle_range_request(
         Err(msg) => return range_error_response(headers, msg),
     };
 
+    // Go's ProcessRangeRequest returns nil (empty body) for empty or oversized ranges
     if ranges.is_empty() {
-        headers.insert(
-            header::CONTENT_LENGTH,
-            data.len().to_string().parse().unwrap(),
-        );
-        return finalize_bytes_response(StatusCode::OK, headers, data.to_vec(), state);
+        return (StatusCode::OK, headers).into_response();
     }
 
-    // If combined range bytes exceed content size, ignore the range and return full data
     if sum_ranges_size(&ranges) > total {
-        headers.insert(
-            header::CONTENT_LENGTH,
-            data.len().to_string().parse().unwrap(),
-        );
-        return finalize_bytes_response(StatusCode::OK, headers, data.to_vec(), state);
+        return (StatusCode::OK, headers).into_response();
     }
 
     if ranges.len() == 1 {
