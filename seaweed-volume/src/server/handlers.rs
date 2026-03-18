@@ -1006,6 +1006,9 @@ async fn get_or_head_handler_inner(
                             resp.headers_mut()
                                 .insert(header::LAST_MODIFIED, lm.parse().unwrap());
                         }
+                        // Go sets ETag before conditional checks, so 304 includes it
+                        resp.headers_mut()
+                            .insert(header::ETAG, etag.parse().unwrap());
                         return resp;
                     }
                 }
@@ -1022,6 +1025,9 @@ async fn get_or_head_handler_inner(
                     resp.headers_mut()
                         .insert(header::LAST_MODIFIED, lm.parse().unwrap());
                 }
+                // Go sets ETag before conditional checks, so 304 includes it
+                resp.headers_mut()
+                    .insert(header::ETAG, etag.parse().unwrap());
                 return resp;
             }
         }
