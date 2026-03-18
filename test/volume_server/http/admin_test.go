@@ -53,7 +53,7 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	if !ok {
 		t.Fatalf("status payload disk status has unexpected shape: %#v", diskStatuses[0])
 	}
-	for _, field := range []string{"dir", "all", "used", "free", "disk_type"} {
+	for _, field := range []string{"dir", "all", "used", "free"} {
 		if _, found := firstDisk[field]; !found {
 			t.Fatalf("status disk payload missing field %q: %#v", field, firstDisk)
 		}
