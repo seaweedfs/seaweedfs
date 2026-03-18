@@ -382,7 +382,7 @@ func convertSingleAction(action string) (*PolicyStatement, error) {
 	return &PolicyStatement{
 		Effect:   PolicyEffectAllow,
 		Action:   NewStringOrStringSlice(s3Actions...),
-		Resource: NewStringOrStringSlice(resources...),
+		Resource: NewStringOrStringSlicePtr(resources...),
 	}, nil
 }
 
@@ -615,7 +615,7 @@ func CreatePolicyFromLegacyIdentity(identityName string, actions []string) (*Pol
 			Sid:      fmt.Sprintf("%s-%s", identityName, strings.ReplaceAll(resourcePattern, "/", "-")),
 			Effect:   PolicyEffectAllow,
 			Action:   NewStringOrStringSlice(s3Actions...),
-			Resource: NewStringOrStringSlice(resources...),
+			Resource: NewStringOrStringSlicePtr(resources...),
 		}
 
 		statements = append(statements, statement)

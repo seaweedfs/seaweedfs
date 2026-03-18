@@ -67,7 +67,7 @@ require (
 	github.com/rcrowley/go-metrics v0.0.0-20201227073835-cf1acfcdf475 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/seaweedfs/goexif v1.0.3
-	github.com/seaweedfs/raft v1.1.6
+	github.com/seaweedfs/raft v1.1.7
 	github.com/sirupsen/logrus v1.9.4-0.20230606125235-dd1b4c2e81af // indirect
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
@@ -96,7 +96,7 @@ require (
 	golang.org/x/exp v0.0.0-20251023183803-a4bb9ffd2546
 	golang.org/x/image v0.36.0
 	golang.org/x/net v0.49.0
-	golang.org/x/oauth2 v0.35.0
+	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
 	golang.org/x/text v0.34.0 // indirect
 	golang.org/x/tools v0.41.0 // indirect
@@ -124,9 +124,9 @@ require (
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
-	github.com/aws/aws-sdk-go-v2 v1.41.3
+	github.com/aws/aws-sdk-go-v2 v1.41.4
 	github.com/aws/aws-sdk-go-v2/config v1.32.7
-	github.com/aws/aws-sdk-go-v2/credentials v1.19.7
+	github.com/aws/aws-sdk-go-v2/credentials v1.19.12
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.95.0
 	github.com/cognusion/imaging v1.0.2
 	github.com/fluent/fluent-logger-golang v1.10.1
@@ -151,7 +151,7 @@ require (
 	github.com/schollz/progressbar/v3 v3.19.0
 	github.com/seaweedfs/go-fuse/v2 v2.9.1
 	github.com/shirou/gopsutil/v4 v4.26.2
-	github.com/tarantool/go-tarantool/v2 v2.4.1
+	github.com/tarantool/go-tarantool/v2 v2.4.2
 	github.com/testcontainers/testcontainers-go v0.39.0
 	github.com/tikv/client-go/v2 v2.0.7
 	github.com/xeipuuv/gojsonschema v1.2.0
@@ -183,7 +183,7 @@ require (
 	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/apache/arrow-go/v18 v18.4.1 // indirect
 	github.com/apache/thrift v0.22.0 // indirect
-	github.com/aws/aws-sdk-go-v2/service/signin v1.0.5 // indirect
+	github.com/aws/aws-sdk-go-v2/service/signin v1.0.8 // indirect
 	github.com/bahlo/generic-list-go v0.2.0 // indirect
 	github.com/bazelbuild/rules_go v0.46.0 // indirect
 	github.com/biogo/store v0.0.0-20201120204734-aad293a2328f // indirect
@@ -326,21 +326,21 @@ require (
 	github.com/appscode/go-querystring v0.0.0-20170504095604-0126cfb3f1dc // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.4 // indirect
-	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.17 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.20 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/s3/manager v1.20.12 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.17 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.17 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.20 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.20 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.4 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.16 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.17 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.20 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sns v1.39.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.17 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sso v1.30.9 // indirect
-	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.13 // indirect
-	github.com/aws/aws-sdk-go-v2/service/sts v1.41.6
+	github.com/aws/aws-sdk-go-v2/service/sso v1.30.13 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.17 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sts v1.41.9
 	github.com/aws/smithy-go v1.24.2
 	github.com/boltdb/bolt v1.3.1 // indirect
 	github.com/bradenaw/juniper v0.15.3 // indirect
@@ -443,7 +443,7 @@ require (
 	github.com/pelletier/go-toml/v2 v2.2.4 // indirect
 	github.com/pengsrc/go-shared v0.2.1-0.20190131101655-1999055a4a14 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
-	github.com/pierrec/lz4/v4 v4.1.25
+	github.com/pierrec/lz4/v4 v4.1.26
 	github.com/pingcap/errors v0.11.5-0.20211224045212-9687c2b0f87c // indirect
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c // indirect
 	github.com/pingcap/kvproto v0.0.0-20230403051650-e166ae588106 // indirect

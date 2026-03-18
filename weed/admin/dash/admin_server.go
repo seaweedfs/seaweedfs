@@ -882,11 +882,6 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 
 	// Convert IAM identities to ObjectStoreUser format
 	for _, identity := range s3cfg.Identities {
-		// Skip anonymous identity
-		if identity.Name == "anonymous" {
-			continue
-		}
-
 		// Skip service accounts - they should not be parent users
 		if strings.HasPrefix(identity.Name, serviceAccountPrefix) {
 			continue

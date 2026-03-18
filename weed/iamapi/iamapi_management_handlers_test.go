@@ -46,7 +46,7 @@ func TestGetActionsUserPath(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:Put*", "s3:PutBucketAcl", "s3:Get*", "s3:GetBucketAcl", "s3:List*", "s3:Tagging*", "s3:DeleteBucket*"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::shared/user-Alice/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::shared/user-Alice/*"),
 			},
 		},
 	}
@@ -73,7 +73,7 @@ func TestGetActionsWildcardPath(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:Get*", "s3:PutBucketAcl"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -94,7 +94,7 @@ func TestGetActionsInvalidAction(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:InvalidAction"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::shared/user-Alice/*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::shared/user-Alice/*"),
 			},
 		},
 	}
@@ -278,7 +278,7 @@ func TestGetPolicy(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -323,7 +323,7 @@ func TestDeletePolicy(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -371,7 +371,7 @@ func TestListPolicies(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -399,7 +399,7 @@ func TestAttachUserPolicy(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -459,7 +459,7 @@ func TestManagedPolicyActionsPreservedAcrossInlineMutations(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}
@@ -514,7 +514,7 @@ func TestDetachUserPolicy(t *testing.T) {
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice("s3:GetObject"),
-				Resource: policy_engine.NewStringOrStringSlice("arn:aws:s3:::*"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::*"),
 			},
 		},
 	}

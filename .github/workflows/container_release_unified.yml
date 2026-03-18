@@ -103,7 +103,7 @@ jobs:
       - name: Docker meta
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
         id: docker_meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: |
             chrislusf/seaweedfs

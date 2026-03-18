@@ -47,6 +47,7 @@ type AdminOptions struct {
 	readOnlyPassword *string
 	dataDir          *string
 	icebergPort      *int
+	urlPrefix        *string
 }
 
 func init() {
@@ -62,6 +63,7 @@ func init() {
 	a.readOnlyUser = cmdAdmin.Flag.String("readOnlyUser", "", "read-only user username (optional, for view-only access)")
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
+	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 }
 
 var cmdAdmin = &Command{
@@ -85,6 +87,7 @@ var cmdAdmin = &Command{
     weed admin -port=23646 -master="localhost:9333" -dataDir="/var/lib/seaweedfs-admin"
     weed admin -port=23646 -port.grpc=33646 -master="localhost:9333" -dataDir="~/seaweedfs-admin"
     weed admin -port=9900 -port.grpc=19900 -master="localhost:9333"
+    weed admin -port=23646 -master="localhost:9333" -urlPrefix="/seaweedfs"
 
   Data Directory:
     - If dataDir is specified, admin configuration and maintenance data is persisted
@@ -130,8 +133,15 @@ var cmdAdmin = &Command{
     - External workers connect with: weed worker -admin=<admin_host:admin_port>
     - Persists plugin metadata under dataDir/plugin when dataDir is configured
 
+  URL Prefix (Subdirectory Deployment):
+    - Use -urlPrefix to run the admin UI behind a reverse proxy under a subdirectory
+    - Example: -urlPrefix="/seaweedfs" makes the UI available at /seaweedfs/admin
+    - The reverse proxy should forward /seaweedfs/* requests to the admin server
+    - All static assets, API endpoints, and navigation links will use the prefix
+    - Session cookies are scoped to the prefix path
+
   Configuration File:
-    - The security.toml file is read from ".", "$HOME/.seaweedfs/", 
+    - The security.toml file is read from ".", "$HOME/.seaweedfs/",
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
     - Generate example security.toml: weed scaffold -config=security
 
@@ -233,8 +243,17 @@ func runAdmin(cmd *Command, args []string) bool {
 		cancel()
 	}()
 
+	// Normalize URL prefix
+	urlPrefix := strings.TrimRight(*a.urlPrefix, "/")
+	if urlPrefix != "" && !strings.HasPrefix(urlPrefix, "/") {
+		urlPrefix = "/" + urlPrefix
+	}
+	if urlPrefix != "" {
+		fmt.Printf("URL Prefix: %s\n", urlPrefix)
+	}
+
 	// Start the admin server with all masters (UI enabled by default)
-	err := startAdminServer(ctx, a, true, *a.icebergPort)
+	err := startAdminServer(ctx, a, true, *a.icebergPort, urlPrefix)
 	if err != nil {
 		fmt.Printf("Admin server error: %v\n", err)
 		return false
@@ -245,11 +264,21 @@ func runAdmin(cmd *Command, args []string) bool {
 }
 
 // startAdminServer starts the actual admin server
-func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int) error {
+func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, icebergPort int, urlPrefix string) error {
 	// Create router
 	r := mux.NewRouter()
 	r.Use(loggingMiddleware)
 	r.Use(recoveryMiddleware)
+
+	// Inject URL prefix into request context for use by handlers and templates
+	if urlPrefix != "" {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				ctx := dash.WithURLPrefix(r.Context(), urlPrefix)
+				next.ServeHTTP(w, r.WithContext(ctx))
+			})
+		})
+	}
 
 	// Create data directory first if specified (needed for session key storage)
 	var dataDir string
@@ -283,8 +312,12 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	store := sessions.NewCookieStore(authKey, encKey)
 
 	// Configure session options to ensure cookies are properly saved
+	cookiePath := "/"
+	if urlPrefix != "" {
+		cookiePath = urlPrefix + "/"
+	}
 	store.Options = &sessions.Options{
-		Path:     "/",
+		Path:     cookiePath,
 		MaxAge:   3600 * 24,    // 24 hours
 		HttpOnly: true,         // Prevent JavaScript access
 		Secure:   cookieSecure, // Set based on actual TLS configuration
@@ -332,9 +365,13 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 	// Server configuration
 	addr := fmt.Sprintf(":%d", *options.port)
+	var handler http.Handler = r
+	if urlPrefix != "" {
+		handler = http.StripPrefix(urlPrefix, r)
+	}
 	server := &http.Server{
 		Addr:    addr,
-		Handler: r,
+		Handler: handler,
 	}
 
 	// Start server

@@ -82,14 +82,22 @@ func (s StringOrStringSlice) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.values)
 }
 
-// Strings returns the slice of strings
-func (s StringOrStringSlice) Strings() []string {
+// Strings returns the slice of strings. Nil-safe for pointer receivers.
+func (s *StringOrStringSlice) Strings() []string {
+	if s == nil {
+		return nil
+	}
 	return s.values
 }
 
 // NewStringOrStringSlice creates a new StringOrStringSlice from strings
 func NewStringOrStringSlice(values ...string) StringOrStringSlice {
 	return StringOrStringSlice{values: values}
+}
+
+// NewStringOrStringSlicePtr creates a new *StringOrStringSlice from strings
+func NewStringOrStringSlicePtr(values ...string) *StringOrStringSlice {
+	return &StringOrStringSlice{values: values}
 }
 
 // PolicyConditions represents policy conditions with proper typing
@@ -138,8 +146,8 @@ type PolicyStatement struct {
 	Effect      PolicyEffect         `json:"Effect"`
 	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
 	Action      StringOrStringSlice  `json:"Action"`
-	Resource    StringOrStringSlice  `json:"Resource,omitempty"`
-	NotResource StringOrStringSlice  `json:"NotResource,omitempty"`
+	Resource    *StringOrStringSlice `json:"Resource,omitempty"`
+	NotResource *StringOrStringSlice `json:"NotResource,omitempty"`
 	Condition   PolicyConditions     `json:"Condition,omitempty"`
 }
 
@@ -296,8 +304,16 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	}
 
 	// Deep clone Resource/NotResource into the internal statement as well for completeness
-	compiled.Statement.Resource.values = slices.Clone(stmt.Resource.values)
-	compiled.Statement.NotResource.values = slices.Clone(stmt.NotResource.values)
+	if stmt.Resource != nil {
+		resourceClone := *stmt.Resource
+		resourceClone.values = slices.Clone(stmt.Resource.values)
+		compiled.Statement.Resource = &resourceClone
+	}
+	if stmt.NotResource != nil {
+		notResourceClone := *stmt.NotResource
+		notResourceClone.values = slices.Clone(stmt.NotResource.values)
+		compiled.Statement.NotResource = &notResourceClone
+	}
 	compiled.Statement.Action.values = slices.Clone(stmt.Action.values)
 
 	// Deep clone Condition map
@@ -447,6 +463,8 @@ func normalizeToStringSliceWithError(value interface{}) ([]string, error) {
 		}
 		return result, nil
 	case StringOrStringSlice:
+		return v.Strings(), nil
+	case *StringOrStringSlice:
 		return v.Strings(), nil
 	default:
 		return nil, fmt.Errorf("unexpected type for policy value: %T", v)

@@ -48,8 +48,9 @@ type SyncOptions struct {
 	bProxyByFiler   *bool
 	metricsHttpIp   *string
 	metricsHttpPort *int
-	concurrency     *int
-	aDoDeleteFiles  *bool
+	concurrency      *int
+	chunkConcurrency *int
+	aDoDeleteFiles   *bool
 	bDoDeleteFiles  *bool
 	clientId        int32
 	clientEpoch     atomic.Int32
@@ -104,6 +105,7 @@ func init() {
 	syncOptions.aFromTsMs = cmdFilerSynchronize.Flag.Int64("a.fromTsMs", 0, "synchronization from timestamp on filer A. The unit is millisecond")
 	syncOptions.bFromTsMs = cmdFilerSynchronize.Flag.Int64("b.fromTsMs", 0, "synchronization from timestamp on filer B. The unit is millisecond")
 	syncOptions.concurrency = cmdFilerSynchronize.Flag.Int("concurrency", DefaultConcurrencyLimit, "The maximum number of files that will be synced concurrently.")
+	syncOptions.chunkConcurrency = cmdFilerSynchronize.Flag.Int("chunkConcurrency", 32, "The maximum number of chunks that will be replicated concurrently per file.")
 	syncCpuProfile = cmdFilerSynchronize.Flag.String("cpuprofile", "", "cpu profile output file")
 	syncMemProfile = cmdFilerSynchronize.Flag.String("memprofile", "", "memory profile output file")
 	syncOptions.metricsHttpIp = cmdFilerSynchronize.Flag.String("metricsIp", "", "metrics listen ip")
@@ -210,6 +212,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				*syncOptions.bDiskType,
 				*syncOptions.bDebug,
 				*syncOptions.concurrency,
+				*syncOptions.chunkConcurrency,
 				*syncOptions.bDoDeleteFiles,
 				aFilerSignature,
 				bFilerSignature,
@@ -249,6 +252,7 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					*syncOptions.aDiskType,
 					*syncOptions.aDebug,
 					*syncOptions.concurrency,
+					*syncOptions.chunkConcurrency,
 					*syncOptions.aDoDeleteFiles,
 					bFilerSignature,
 					aFilerSignature,
@@ -281,7 +285,7 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 }
 
 func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceExcludePaths []string, sourceReadChunkFromFiler bool, targetFiler pb.ServerAddress, targetPath string,
-	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState]) error {
+	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, chunkConcurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState]) error {
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
@@ -297,6 +301,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, sourceReadChunkFromFiler)
 	filerSink := &filersink.FilerSink{}
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, grpcDialOption, sinkWriteChunkByFiler)
+	filerSink.SetChunkConcurrency(chunkConcurrency)
 	filerSink.SetSourceFiler(filerSource)
 
 	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, filerSink, doDeleteFiles, debug)

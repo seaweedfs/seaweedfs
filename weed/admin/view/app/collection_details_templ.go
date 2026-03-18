@@ -48,90 +48,116 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"/admin\" class=\"text-decoration-none\">Dashboard</a></li><li class=\"breadcrumb-item\"><a href=\"/storage/collections\" class=\"text-decoration-none\">Collections</a></li><li class=\"breadcrumb-item active\" aria-current=\"page\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 2, "</h1><nav aria-label=\"breadcrumb\"><ol class=\"breadcrumb\"><li class=\"breadcrumb-item\"><a href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var3 string
-		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
+		var templ_7745c5c3_Var3 templ.SafeURL
+		templ_7745c5c3_Var3, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/admin"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 19, Col: 80}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 17, Col: 67}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var3))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"fas fa-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"fas fa-refresh me-1\"></i>Refresh</button></div></div></div><!-- Collection Summary --><div class=\"row mb-4\"><div class=\"col-md-3\"><div class=\"card text-bg-primary\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Regular Volumes</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\" class=\"text-decoration-none\">Dashboard</a></li><li class=\"breadcrumb-item\"><a href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var4 string
-		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
+		var templ_7745c5c3_Var4 templ.SafeURL
+		templ_7745c5c3_Var4, templ_7745c5c3_Err = templ.JoinURLErrs(dash.PUrl(ctx, "/storage/collections"))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 43, Col: 61}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 18, Col: 81}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var4))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "</h4><small>Traditional volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-database fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-info\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">EC Volumes</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 4, "\" class=\"text-decoration-none\">Collections</a></li><li class=\"breadcrumb-item active\" aria-current=\"page\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var5 string
-		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcVolumes))
+		templ_7745c5c3_Var5, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 59, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 19, Col: 80}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var5))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</h4><small>Erasure coded volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-th-large fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-success\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Files</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 5, "</li></ol></nav></div><div class=\"btn-toolbar mb-2 mb-md-0\"><div class=\"btn-group me-2\"><button type=\"button\" class=\"btn btn-sm btn-outline-secondary\" onclick=\"history.back()\"><i class=\"fas fa-arrow-left me-1\"></i>Back</button> <button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"window.location.reload()\"><i class=\"fas fa-refresh me-1\"></i>Refresh</button></div></div></div><!-- Collection Summary --><div class=\"row mb-4\"><div class=\"col-md-3\"><div class=\"card text-bg-primary\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Regular Volumes</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var6 string
-		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalFiles))
+		templ_7745c5c3_Var6, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 75, Col: 59}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 43, Col: 61}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var6))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h4><small>Files stored</small></div><div class=\"align-self-center\"><i class=\"fas fa-file fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-warning\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Size (Logical)</h6><h4 class=\"mb-0\">")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 6, "</h4><small>Traditional volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-database fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-info\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">EC Volumes</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var7 string
-		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(data.TotalSize)))
+		templ_7745c5c3_Var7, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 91, Col: 74}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 59, Col: 63}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var7))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</h4><small>Data stored (regular volumes only)</small></div><div class=\"align-self-center\"><i class=\"fas fa-hdd fa-2x\"></i></div></div></div></div></div></div><!-- Size Information Note --><div class=\"alert alert-info\" role=\"alert\"><i class=\"fas fa-info-circle me-2\"></i> <strong>Size Information:</strong> Logical size represents the actual data stored (regular volumes only).  EC volumes show shard counts instead of size - physical storage for EC volumes is approximately 1.4x the original data due to erasure coding redundancy.</div><!-- Pagination Info --><div class=\"d-flex justify-content-between align-items-center mb-3\"><div class=\"d-flex align-items-center\"><span class=\"me-3\">Showing ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "</h4><small>Erasure coded volumes</small></div><div class=\"align-self-center\"><i class=\"fas fa-th-large fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-success\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Files</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var8 string
-		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", (data.Page-1)*data.PageSize+1))
+		templ_7745c5c3_Var8, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalFiles))
 		if templ_7745c5c3_Err != nil {
-			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 115, Col: 63}
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 75, Col: 59}
 		}
 		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var8))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, " to ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 8, "</h4><small>Files stored</small></div><div class=\"align-self-center\"><i class=\"fas fa-file fa-2x\"></i></div></div></div></div></div><div class=\"col-md-3\"><div class=\"card text-bg-warning\"><div class=\"card-body\"><div class=\"d-flex justify-content-between\"><div><h6 class=\"card-title\">Total Size (Logical)</h6><h4 class=\"mb-0\">")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		var templ_7745c5c3_Var9 string
-		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", func() int {
+		templ_7745c5c3_Var9, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(uint64(data.TotalSize)))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 91, Col: 74}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, "</h4><small>Data stored (regular volumes only)</small></div><div class=\"align-self-center\"><i class=\"fas fa-hdd fa-2x\"></i></div></div></div></div></div></div><!-- Size Information Note --><div class=\"alert alert-info\" role=\"alert\"><i class=\"fas fa-info-circle me-2\"></i> <strong>Size Information:</strong> Logical size represents the actual data stored (regular volumes only).  EC volumes show shard counts instead of size - physical storage for EC volumes is approximately 1.4x the original data due to erasure coding redundancy.</div><!-- Pagination Info --><div class=\"d-flex justify-content-between align-items-center mb-3\"><div class=\"d-flex align-items-center\"><span class=\"me-3\">Showing ")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var10 string
+		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", (data.Page-1)*data.PageSize+1))
+		if templ_7745c5c3_Err != nil {
+			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 115, Col: 63}
+		}
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, " to ")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		var templ_7745c5c3_Var11 string
+		templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", func() int {
 			end := data.Page * data.PageSize
 			totalItems := data.TotalVolumes + data.TotalEcVolumes
 			if end > totalItems {
@@ -142,440 +168,440 @@ func CollectionDetails(data dash.CollectionDetailsData) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 122, Col: 8}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var9))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 9, " of ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, " of ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		var templ_7745c5c3_Var10 string
-		templ_7745c5c3_Var10, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes+data.TotalEcVolumes))
+		var templ_7745c5c3_Var12 string
+		templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalVolumes+data.TotalEcVolumes))
 		if templ_7745c5c3_Err != nil {
 			return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 122, Col: 72}
 		}
-		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var10))
+		_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 10, " items</span><div class=\"d-flex align-items-center\"><label for=\"pageSize\" class=\"form-label me-2 mb-0\">Show:</label> <select id=\"pageSize\" class=\"form-select form-select-sm\" style=\"width: auto;\" onchange=\"changePageSize(this.value)\"><option value=\"10\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, " items</span><div class=\"d-flex align-items-center\"><label for=\"pageSize\" class=\"form-label me-2 mb-0\">Show:</label> <select id=\"pageSize\" class=\"form-select form-select-sm\" style=\"width: auto;\" onchange=\"changePageSize(this.value)\"><option value=\"10\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.PageSize == 10 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, " selected")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 12, ">10</option> <option value=\"25\"")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		if data.PageSize == 25 {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 13, " selected")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, ">25</option> <option value=\"50\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 14, ">10</option> <option value=\"25\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.PageSize == 50 {
+		if data.PageSize == 25 {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 15, " selected")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, ">50</option> <option value=\"100\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 16, ">25</option> <option value=\"50\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		if data.PageSize == 100 {
+		if data.PageSize == 50 {
 			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 17, " selected")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, ">100</option></select> <span class=\"ms-2\">per page</span></div></div></div><!-- Volumes Table --><div class=\"table-responsive\"><table class=\"table table-striped table-hover\" id=\"volumesTable\"><thead><tr><th><a href=\"#\" onclick=\"sortBy('volume_id')\" class=\"text-dark text-decoration-none\">Volume ID ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 18, ">50</option> <option value=\"100\"")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if data.PageSize == 100 {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, " selected")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, ">100</option></select> <span class=\"ms-2\">per page</span></div></div></div><!-- Volumes Table --><div class=\"table-responsive\"><table class=\"table table-striped table-hover\" id=\"volumesTable\"><thead><tr><th><a href=\"#\" onclick=\"sortBy('volume_id')\" class=\"text-dark text-decoration-none\">Volume ID ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.SortBy == "volume_id" {
 			if data.SortOrder == "asc" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 19, "<i class=\"fas fa-sort-up ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"fas fa-sort-up ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 20, "<i class=\"fas fa-sort-down ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "<i class=\"fas fa-sort-down ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 21, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 22, "</a></th><th><a href=\"#\" onclick=\"sortBy('type')\" class=\"text-dark text-decoration-none\">Type ")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "</a></th><th><a href=\"#\" onclick=\"sortBy('type')\" class=\"text-dark text-decoration-none\">Type ")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		if data.SortBy == "type" {
 			if data.SortOrder == "asc" {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 23, "<i class=\"fas fa-sort-up ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<i class=\"fas fa-sort-up ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 24, "<i class=\"fas fa-sort-down ms-1\"></i>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "<i class=\"fas fa-sort-down ms-1\"></i>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 		} else {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 25, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<i class=\"fas fa-sort ms-1 text-muted\"></i>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 26, "</a></th><th class=\"text-dark\">Logical Size / Shard Count</th><th class=\"text-dark\">Files</th><th class=\"text-dark\">Status</th><th class=\"text-dark\">Actions</th></tr></thead> <tbody>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</a></th><th class=\"text-dark\">Logical Size / Shard Count</th><th class=\"text-dark\">Files</th><th class=\"text-dark\">Status</th><th class=\"text-dark\">Actions</th></tr></thead> <tbody>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
 		for _, volume := range data.RegularVolumes {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 27, "<tr><td><strong>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var11 string
-			templ_7745c5c3_Var11, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 182, Col: 44}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var11))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 28, "</strong></td><td><span class=\"badge bg-primary\"><i class=\"fas fa-database me-1\"></i>Regular</span></td><td>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			var templ_7745c5c3_Var12 string
-			templ_7745c5c3_Var12, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(volume.Size))
-			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 190, Col: 46}
-			}
-			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var12))
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "</td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 29, "<tr><td><strong>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var13 string
-			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.FileCount))
+			templ_7745c5c3_Var13, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 193, Col: 43}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 182, Col: 44}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var13))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</td><td>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			if volume.ReadOnly {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "<span class=\"badge bg-warning\">Read Only</span>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "<span class=\"badge bg-success\">Read/Write</span>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "</td><td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"showVolumeDetails(event)\" data-volume-id=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 30, "</strong></td><td><span class=\"badge bg-primary\"><i class=\"fas fa-database me-1\"></i>Regular</span></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var14 string
-			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
+			templ_7745c5c3_Var14, templ_7745c5c3_Err = templ.JoinStringErrs(util.BytesToHumanReadable(volume.Size))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 206, Col: 55}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 190, Col: 46}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var14))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "\" data-server=\"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 31, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var15 string
-			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Server)
+			templ_7745c5c3_Var15, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.FileCount))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 207, Col: 37}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 193, Col: 43}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var15))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "\" title=\"View volume details\"><i class=\"fas fa-info-circle\"></i></button></div></td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 32, "</td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-		}
-		for _, ecVolume := range data.EcVolumes {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "<tr><td><strong>")
+			if volume.ReadOnly {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 33, "<span class=\"badge bg-warning\">Read Only</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 34, "<span class=\"badge bg-success\">Read/Write</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 35, "</td><td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-primary\" onclick=\"showVolumeDetails(event)\" data-volume-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var16 string
-			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
+			templ_7745c5c3_Var16, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", volume.Id))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 220, Col: 52}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 206, Col: 55}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var16))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "</strong></td><td><span class=\"badge bg-info\"><i class=\"fas fa-th-large me-1\"></i>EC</span></td><td><span class=\"badge bg-primary\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 36, "\" data-server=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var17 string
-			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/14", ecVolume.TotalShards))
+			templ_7745c5c3_Var17, templ_7745c5c3_Err = templ.JoinStringErrs(volume.Server)
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 228, Col: 81}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 207, Col: 37}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var17))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "</span></td><td><span class=\"text-muted\">-</span></td><td>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 37, "\" title=\"View volume details\"><i class=\"fas fa-info-circle\"></i></button></div></td></tr>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if ecVolume.IsComplete {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Complete</span>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-			} else {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i> Missing ")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				var templ_7745c5c3_Var18 string
-				templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(ecVolume.MissingShards)))
-				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 241, Col: 64}
-				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, " shards</span>")
-				if templ_7745c5c3_Err != nil {
-					return templ_7745c5c3_Err
-				}
+		}
+		for _, ecVolume := range data.EcVolumes {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 38, "<tr><td><strong>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "</td><td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-info\" onclick=\"showEcVolumeDetails(event)\" data-volume-id=\"")
+			var templ_7745c5c3_Var18 string
+			templ_7745c5c3_Var18, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 220, Col: 52}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var18))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 39, "</strong></td><td><span class=\"badge bg-info\"><i class=\"fas fa-th-large me-1\"></i>EC</span></td><td><span class=\"badge bg-primary\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var19 string
-			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
+			templ_7745c5c3_Var19, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d/14", ecVolume.TotalShards))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 249, Col: 63}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 228, Col: 81}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var19))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, "\" title=\"View EC volume details\"><i class=\"fas fa-info-circle\"></i></button> ")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 40, "</span></td><td><span class=\"text-muted\">-</span></td><td>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			if !ecVolume.IsComplete {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "<button type=\"button\" class=\"btn btn-sm btn-outline-warning\" onclick=\"repairEcVolume(event)\" data-volume-id=\"")
+			if ecVolume.IsComplete {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 41, "<span class=\"badge bg-success\"><i class=\"fas fa-check me-1\"></i>Complete</span>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			} else {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 42, "<span class=\"badge bg-warning\"><i class=\"fas fa-exclamation-triangle me-1\"></i> Missing ")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var20 string
-				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
+				templ_7745c5c3_Var20, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", len(ecVolume.MissingShards)))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 256, Col: 64}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 241, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var20))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" title=\"Repair missing shards\"><i class=\"fas fa-wrench\"></i></button>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 43, " shards</span>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "</div></td></tr>")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-		}
-		if len(data.RegularVolumes) == 0 && len(data.EcVolumes) == 0 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No volumes found for collection \"")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 44, "</td><td><div class=\"btn-group\" role=\"group\"><button type=\"button\" class=\"btn btn-sm btn-outline-info\" onclick=\"showEcVolumeDetails(event)\" data-volume-id=\"")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 			var templ_7745c5c3_Var21 string
-			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
+			templ_7745c5c3_Var21, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
 			if templ_7745c5c3_Err != nil {
-				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 271, Col: 60}
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 249, Col: 63}
 			}
 			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var21))
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "\"</td></tr>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 45, "\" title=\"View EC volume details\"><i class=\"fas fa-info-circle\"></i></button> ")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
-		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "</tbody></table></div><!-- Pagination -->")
-		if templ_7745c5c3_Err != nil {
-			return templ_7745c5c3_Err
-		}
-		if data.TotalPages > 1 {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "<nav aria-label=\"Collection volumes pagination\"><ul class=\"pagination justify-content-center\">")
-			if templ_7745c5c3_Err != nil {
-				return templ_7745c5c3_Err
-			}
-			if data.Page > 1 {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"1\">First</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+			if !ecVolume.IsComplete {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 46, "<button type=\"button\" class=\"btn btn-sm btn-outline-warning\" onclick=\"repairEcVolume(event)\" data-volume-id=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 				var templ_7745c5c3_Var22 string
-				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
+				templ_7745c5c3_Var22, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", ecVolume.VolumeID))
 				if templ_7745c5c3_Err != nil {
-					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 288, Col: 104}
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 256, Col: 64}
 				}
 				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var22))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "\">Previous</a></li>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 47, "\" title=\"Repair missing shards\"><i class=\"fas fa-wrench\"></i></button>")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 48, "</div></td></tr>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		if len(data.RegularVolumes) == 0 && len(data.EcVolumes) == 0 {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 49, "<tr><td colspan=\"6\" class=\"text-center text-muted py-4\"><i class=\"fas fa-info-circle me-2\"></i> No volumes found for collection \"")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			var templ_7745c5c3_Var23 string
+			templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(data.CollectionName)
+			if templ_7745c5c3_Err != nil {
+				return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 271, Col: 60}
+			}
+			_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 50, "\"</td></tr>")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+		}
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 51, "</tbody></table></div><!-- Pagination -->")
+		if templ_7745c5c3_Err != nil {
+			return templ_7745c5c3_Err
+		}
+		if data.TotalPages > 1 {
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 52, "<nav aria-label=\"Collection volumes pagination\"><ul class=\"pagination justify-content-center\">")
+			if templ_7745c5c3_Err != nil {
+				return templ_7745c5c3_Err
+			}
+			if data.Page > 1 {
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"1\">First</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				var templ_7745c5c3_Var24 string
+				templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page-1))
+				if templ_7745c5c3_Err != nil {
+					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 288, Col: 104}
+				}
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
+				if templ_7745c5c3_Err != nil {
+					return templ_7745c5c3_Err
+				}
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "\">Previous</a></li>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
 			for i := 1; i <= data.TotalPages; i++ {
 				if i == data.Page {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 53, "<li class=\"page-item active\"><span class=\"page-link\">")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var23 string
-					templ_7745c5c3_Var23, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 295, Col: 52}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var23))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 54, "</span></li>")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-				} else if i <= 3 || i > data.TotalPages-3 || (i >= data.Page-2 && i <= data.Page+2) {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					var templ_7745c5c3_Var24 string
-					templ_7745c5c3_Var24, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
-					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 95}
-					}
-					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var24))
-					if templ_7745c5c3_Err != nil {
-						return templ_7745c5c3_Err
-					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "\">")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 55, "<li class=\"page-item active\"><span class=\"page-link\">")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 					var templ_7745c5c3_Var25 string
 					templ_7745c5c3_Var25, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
 					if templ_7745c5c3_Err != nil {
-						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 119}
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 295, Col: 52}
 					}
 					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var25))
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "</a></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 56, "</span></li>")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+				} else if i <= 3 || i > data.TotalPages-3 || (i >= data.Page-2 && i <= data.Page+2) {
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 57, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var26 string
+					templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 95}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "\">")
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					var templ_7745c5c3_Var27 string
+					templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", i))
+					if templ_7745c5c3_Err != nil {
+						return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 299, Col: 119}
+					}
+					_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
+					if templ_7745c5c3_Err != nil {
+						return templ_7745c5c3_Err
+					}
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "</a></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if i == 4 && data.Page > 6 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 58, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				} else if i == data.TotalPages-3 && data.Page < data.TotalPages-5 {
-					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 59, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
+					templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "<li class=\"page-item disabled\"><span class=\"page-link\">...</span></li>")
 					if templ_7745c5c3_Err != nil {
 						return templ_7745c5c3_Err
 					}
 				}
 			}
 			if data.Page < data.TotalPages {
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 60, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "<li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var26 string
-				templ_7745c5c3_Var26, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
+				var templ_7745c5c3_Var28 string
+				templ_7745c5c3_Var28, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.Page+1))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 314, Col: 104}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var26))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var28))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 61, "\">Next</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "\">Next</a></li><li class=\"page-item\"><a class=\"page-link\" href=\"#\" onclick=\"goToPage(event)\" data-page=\"")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				var templ_7745c5c3_Var27 string
-				templ_7745c5c3_Var27, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
+				var templ_7745c5c3_Var29 string
+				templ_7745c5c3_Var29, templ_7745c5c3_Err = templ.JoinStringErrs(fmt.Sprintf("%d", data.TotalPages))
 				if templ_7745c5c3_Err != nil {
 					return templ.Error{Err: templ_7745c5c3_Err, FileName: `view/app/collection_details.templ`, Line: 317, Col: 108}
 				}
-				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var27))
+				_, templ_7745c5c3_Err = templ_7745c5c3_Buffer.WriteString(templ.EscapeString(templ_7745c5c3_Var29))
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
-				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 62, "\">Last</a></li>")
+				templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "\">Last</a></li>")
 				if templ_7745c5c3_Err != nil {
 					return templ_7745c5c3_Err
 				}
 			}
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 63, "</ul></nav>")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 65, "</ul></nav>")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 64, "<script>\n\t\t// Sorting functionality\n\t\tfunction sortBy(field) {\n\t\t\tconst currentSort = new URLSearchParams(window.location.search).get('sort_by');\n\t\t\tconst currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n\t\t\t\n\t\t\tlet newOrder = 'asc';\n\t\t\tif (currentSort === field && currentOrder === 'asc') {\n\t\t\t\tnewOrder = 'desc';\n\t\t\t}\n\t\t\t\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('sort_by', field);\n\t\t\turl.searchParams.set('sort_order', newOrder);\n\t\t\turl.searchParams.set('page', '1'); // Reset to first page\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Pagination functionality\n\t\tfunction goToPage(event) {\n\t\t\tevent.preventDefault();\n\t\t\tconst page = event.target.closest('a').getAttribute('data-page');\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('page', page);\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Page size functionality\n\t\tfunction changePageSize(newPageSize) {\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('page_size', newPageSize);\n\t\t\turl.searchParams.set('page', '1'); // Reset to first page when changing page size\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Volume details\n\t\tfunction showVolumeDetails(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n\t\t\tconst server = event.target.closest('button').getAttribute('data-server');\n\t\t\twindow.location.href = `/storage/volumes/${volumeId}/${server}`;\n\t\t}\n\n\t\t// EC Volume details\n\t\tfunction showEcVolumeDetails(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n\t\t\twindow.location.href = `/storage/ec-volumes/${volumeId}`;\n\t\t}\n\n\t\t// Repair EC Volume\n\t\tfunction repairEcVolume(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n   showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {\n\t\t\t\t// TODO: Implement repair functionality\n\t\t\t\tshowAlert('Repair functionality will be implemented soon.', 'info');\n\t\t\t});\n\t\t}\n\t</script>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 66, "<script>\n\t\t// Sorting functionality\n\t\tfunction sortBy(field) {\n\t\t\tconst currentSort = new URLSearchParams(window.location.search).get('sort_by');\n\t\t\tconst currentOrder = new URLSearchParams(window.location.search).get('sort_order') || 'asc';\n\t\t\t\n\t\t\tlet newOrder = 'asc';\n\t\t\tif (currentSort === field && currentOrder === 'asc') {\n\t\t\t\tnewOrder = 'desc';\n\t\t\t}\n\t\t\t\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('sort_by', field);\n\t\t\turl.searchParams.set('sort_order', newOrder);\n\t\t\turl.searchParams.set('page', '1'); // Reset to first page\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Pagination functionality\n\t\tfunction goToPage(event) {\n\t\t\tevent.preventDefault();\n\t\t\tconst page = event.target.closest('a').getAttribute('data-page');\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('page', page);\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Page size functionality\n\t\tfunction changePageSize(newPageSize) {\n\t\t\tconst url = new URL(window.location);\n\t\t\turl.searchParams.set('page_size', newPageSize);\n\t\t\turl.searchParams.set('page', '1'); // Reset to first page when changing page size\n\t\t\twindow.location.href = url.toString();\n\t\t}\n\n\t\t// Volume details\n\t\tfunction showVolumeDetails(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n\t\t\tconst server = event.target.closest('button').getAttribute('data-server');\n\t\t\twindow.location.href = (window.__BASE_PATH__ || '') + `/storage/volumes/${volumeId}/${server}`;\n\t\t}\n\n\t\t// EC Volume details\n\t\tfunction showEcVolumeDetails(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n\t\t\twindow.location.href = (window.__BASE_PATH__ || '') + `/storage/ec-volumes/${volumeId}`;\n\t\t}\n\n\t\t// Repair EC Volume\n\t\tfunction repairEcVolume(event) {\n\t\t\tconst volumeId = event.target.closest('button').getAttribute('data-volume-id');\n   showConfirm(`Are you sure you want to repair missing shards for EC volume ${volumeId}?`, function() {\n\t\t\t\t// TODO: Implement repair functionality\n\t\t\t\tshowAlert('Repair functionality will be implemented soon.', 'info');\n\t\t\t});\n\t\t}\n\t</script>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

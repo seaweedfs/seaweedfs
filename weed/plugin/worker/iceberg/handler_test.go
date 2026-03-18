@@ -34,6 +34,12 @@ func TestParseConfig(t *testing.T) {
 	if config.Operations != defaultOperations {
 		t.Errorf("expected Operations=%q, got %q", defaultOperations, config.Operations)
 	}
+	if config.RewriteStrategy != defaultRewriteStrategy {
+		t.Errorf("expected RewriteStrategy=%q, got %q", defaultRewriteStrategy, config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 0 {
+		t.Errorf("expected SortMaxInputBytes=0, got %d", config.SortMaxInputBytes)
+	}
 }
 
 func TestParseOperations(t *testing.T) {
@@ -42,15 +48,17 @@ func TestParseOperations(t *testing.T) {
 		expected []string
 		wantErr  bool
 	}{
-		{"all", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
-		{"", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"all", []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"", []string{"compact", "rewrite_position_delete_files", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots", []string{"expire_snapshots"}, false},
 		{"compact", []string{"compact"}, false},
+		{"rewrite_position_delete_files", []string{"rewrite_position_delete_files"}, false},
 		{"rewrite_manifests,expire_snapshots", []string{"expire_snapshots", "rewrite_manifests"}, false},
 		{"compact,expire_snapshots", []string{"compact", "expire_snapshots"}, false},
 		{"remove_orphans, rewrite_manifests", []string{"remove_orphans", "rewrite_manifests"}, false},
 		{"expire_snapshots,remove_orphans,rewrite_manifests", []string{"expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
 		{"compact,expire_snapshots,remove_orphans,rewrite_manifests", []string{"compact", "expire_snapshots", "remove_orphans", "rewrite_manifests"}, false},
+		{"compact,rewrite_position_delete_files,rewrite_manifests", []string{"compact", "rewrite_position_delete_files", "rewrite_manifests"}, false},
 		{"unknown_op", nil, true},
 		{"expire_snapshots,bad_op", nil, true},
 	}
@@ -219,7 +227,7 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 		Metadata:   meta,
 	}
 
-	proposal := handler.buildMaintenanceProposal(info, "localhost:8888")
+	proposal := handler.buildMaintenanceProposal(info, "localhost:8888", "my-bucket")
 
 	expectedDedupe := "iceberg_maintenance:my-bucket/analytics/events"
 	if proposal.DedupeKey != expectedDedupe {
@@ -240,6 +248,93 @@ func TestBuildMaintenanceProposal(t *testing.T) {
 	}
 	if readStringConfig(proposal.Parameters, "filer_address", "") != "localhost:8888" {
 		t.Error("expected filer_address=localhost:8888 in parameters")
+	}
+	if readStringConfig(proposal.Parameters, "resource_group", "") != "my-bucket" {
+		t.Error("expected resource_group=my-bucket in parameters")
+	}
+	if proposal.Labels["resource_group"] != "my-bucket" {
+		t.Error("expected resource_group label to be set")
+	}
+}
+
+func TestReadResourceGroupConfig(t *testing.T) {
+	cfg, err := readResourceGroupConfig(nil)
+	if err != nil {
+		t.Fatalf("readResourceGroupConfig(nil): %v", err)
+	}
+	if cfg.GroupBy != resourceGroupNone {
+		t.Fatalf("expected default groupBy=%q, got %q", resourceGroupNone, cfg.GroupBy)
+	}
+
+	cfg, err = readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"resource_group_by":             {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "bucket_namespace"}},
+		"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
+	})
+	if err != nil {
+		t.Fatalf("readResourceGroupConfig(valid): %v", err)
+	}
+	if cfg.GroupBy != resourceGroupBucketNamespace {
+		t.Fatalf("expected bucket_namespace grouping, got %q", cfg.GroupBy)
+	}
+	if cfg.MaxTablesPerGroup != 2 {
+		t.Fatalf("expected max tables per group=2, got %d", cfg.MaxTablesPerGroup)
+	}
+
+	if _, err := readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"resource_group_by": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "invalid"}},
+	}); err == nil {
+		t.Fatal("expected invalid resource_group_by to fail")
+	}
+
+	if _, err := readResourceGroupConfig(map[string]*plugin_pb.ConfigValue{
+		"max_tables_per_resource_group": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
+	}); err == nil {
+		t.Fatal("expected group cap without grouping to fail")
+	}
+}
+
+func TestSelectTablesByResourceGroupRoundRobin(t *testing.T) {
+	tables := []tableInfo{
+		{BucketName: "a", Namespace: "ns1", TableName: "t1"},
+		{BucketName: "a", Namespace: "ns1", TableName: "t2"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t3"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t4"},
+	}
+
+	selected, hasMore := selectTablesByResourceGroup(tables, resourceGroupConfig{
+		GroupBy: resourceGroupBucket,
+	}, 3)
+	if !hasMore {
+		t.Fatal("expected hasMore when maxResults truncates the selection")
+	}
+	if len(selected) != 3 {
+		t.Fatalf("expected 3 selected tables, got %d", len(selected))
+	}
+	if selected[0].BucketName != "a" || selected[1].BucketName != "b" || selected[2].BucketName != "a" {
+		t.Fatalf("expected round-robin bucket order [a, b, a], got [%s, %s, %s]", selected[0].BucketName, selected[1].BucketName, selected[2].BucketName)
+	}
+}
+
+func TestSelectTablesByResourceGroupCap(t *testing.T) {
+	tables := []tableInfo{
+		{BucketName: "a", Namespace: "ns1", TableName: "t1"},
+		{BucketName: "a", Namespace: "ns1", TableName: "t2"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t3"},
+		{BucketName: "b", Namespace: "ns2", TableName: "t4"},
+	}
+
+	selected, hasMore := selectTablesByResourceGroup(tables, resourceGroupConfig{
+		GroupBy:           resourceGroupBucket,
+		MaxTablesPerGroup: 1,
+	}, 0)
+	if !hasMore {
+		t.Fatal("expected hasMore when per-group cap omits tables")
+	}
+	if len(selected) != 2 {
+		t.Fatalf("expected 2 selected tables, got %d", len(selected))
+	}
+	if selected[0].BucketName != "a" || selected[1].BucketName != "b" {
+		t.Fatalf("expected one table per bucket, got [%s, %s]", selected[0].BucketName, selected[1].BucketName)
 	}
 }
 
@@ -758,6 +853,67 @@ func TestParseConfigApplyDeletes(t *testing.T) {
 	})
 	if config.ApplyDeletes {
 		t.Error("expected ApplyDeletes=false when set via string 'false'")
+	}
+}
+
+func TestNormalizeDetectionConfigUsesSharedDefaults(t *testing.T) {
+	config := normalizeDetectionConfig(Config{})
+
+	if config.TargetFileSizeBytes != defaultTargetFileSizeMB*1024*1024 {
+		t.Fatalf("expected TargetFileSizeBytes default, got %d", config.TargetFileSizeBytes)
+	}
+	if config.DeleteTargetFileSizeBytes != defaultDeleteTargetFileSizeMB*1024*1024 {
+		t.Fatalf("expected DeleteTargetFileSizeBytes default, got %d", config.DeleteTargetFileSizeBytes)
+	}
+	if config.DeleteMinInputFiles != defaultDeleteMinInputFiles {
+		t.Fatalf("expected DeleteMinInputFiles default, got %d", config.DeleteMinInputFiles)
+	}
+	if config.DeleteMaxFileGroupSizeBytes != defaultDeleteMaxGroupSizeMB*1024*1024 {
+		t.Fatalf("expected DeleteMaxFileGroupSizeBytes default, got %d", config.DeleteMaxFileGroupSizeBytes)
+	}
+	if config.DeleteMaxOutputFiles != defaultDeleteMaxOutputFiles {
+		t.Fatalf("expected DeleteMaxOutputFiles default, got %d", config.DeleteMaxOutputFiles)
+	}
+	if config.OrphanOlderThanHours != defaultOrphanOlderThanHours {
+		t.Fatalf("expected OrphanOlderThanHours default, got %d", config.OrphanOlderThanHours)
+	}
+	if config.SnapshotRetentionHours != defaultSnapshotRetentionHours {
+		t.Fatalf("expected SnapshotRetentionHours default, got %d", config.SnapshotRetentionHours)
+	}
+	if config.MaxSnapshotsToKeep != defaultMaxSnapshotsToKeep {
+		t.Fatalf("expected MaxSnapshotsToKeep default, got %d", config.MaxSnapshotsToKeep)
+	}
+}
+
+func TestParseConfigRewriteStrategy(t *testing.T) {
+	config := ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"rewrite_strategy":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "sort"}},
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 64}},
+	})
+	if config.RewriteStrategy != "sort" {
+		t.Fatalf("expected sort rewrite strategy, got %q", config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 64*1024*1024 {
+		t.Fatalf("expected SortMaxInputBytes=64MB, got %d", config.SortMaxInputBytes)
+	}
+
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"rewrite_strategy":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: "invalid"}},
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: -1}},
+	})
+	if config.RewriteStrategy != defaultRewriteStrategy {
+		t.Fatalf("expected invalid rewrite strategy to fall back to %q, got %q", defaultRewriteStrategy, config.RewriteStrategy)
+	}
+	if config.SortMaxInputBytes != 0 {
+		t.Fatalf("expected negative sort cap to clamp to 0, got %d", config.SortMaxInputBytes)
+	}
+
+	maxMB := int64(^uint64(0)>>1) / bytesPerMB
+	config = ParseConfig(map[string]*plugin_pb.ConfigValue{
+		"sort_max_input_mb": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: fmt.Sprintf("%d", maxMB+1)}},
+	})
+	if config.SortMaxInputBytes != maxMB*bytesPerMB {
+		t.Fatalf("expected oversized sort cap to clamp to %d bytes, got %d", maxMB*bytesPerMB, config.SortMaxInputBytes)
 	}
 }
 

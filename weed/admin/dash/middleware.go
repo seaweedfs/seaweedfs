@@ -65,10 +65,11 @@ func RequireAuth(store sessions.Store) mux.MiddlewareFunc {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			username, role, csrfToken, err := validateSession(store, w, r)
 			if err != nil {
+				prefix := URLPrefixFromContext(r.Context())
 				if verr, ok := err.(*sessionValidationError); ok && verr.kind == sessionValidationErrorKindUnauthenticated {
-					http.Redirect(w, r, "/login", http.StatusTemporaryRedirect)
+					http.Redirect(w, r, prefix+"/login", http.StatusTemporaryRedirect)
 				} else {
-					http.Redirect(w, r, "/login?error=Unable to initialize session", http.StatusTemporaryRedirect)
+					http.Redirect(w, r, prefix+"/login?error=Unable to initialize session", http.StatusTemporaryRedirect)
 				}
 				return
 			}
@@ -121,7 +122,7 @@ func RequireWriteAccess() mux.MiddlewareFunc {
 						"message": "This operation requires admin access. Read-only users can only view data.",
 					})
 				} else {
-					http.Redirect(w, r, "/admin?error=Insufficient permissions", http.StatusSeeOther)
+					http.Redirect(w, r, URLPrefixFromContext(r.Context())+"/admin?error=Insufficient permissions", http.StatusSeeOther)
 				}
 				return
 			}

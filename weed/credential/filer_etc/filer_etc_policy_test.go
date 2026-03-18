@@ -320,7 +320,7 @@ func testPolicyDocument(action string, resource string) policy_engine.PolicyDocu
 			{
 				Effect:   policy_engine.PolicyEffectAllow,
 				Action:   policy_engine.NewStringOrStringSlice(action),
-				Resource: policy_engine.NewStringOrStringSlice(resource),
+				Resource: policy_engine.NewStringOrStringSlicePtr(resource),
 			},
 		},
 	}
