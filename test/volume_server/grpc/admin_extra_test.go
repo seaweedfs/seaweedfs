@@ -94,8 +94,9 @@ func TestVolumeNeedleStatusIncludesTtlAndLastModified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VolumeNeedleStatus with ttl failed: %v", err)
 	}
-	if statusResp.GetTtl() != "7d" {
-		t.Fatalf("ttl mismatch: got %q want %q", statusResp.GetTtl(), "7d")
+	// Go's ReadTTL normalizes via fitTtlCount: 7d → 1w (7 days = 1 week)
+	if statusResp.GetTtl() != "1w" {
+		t.Fatalf("ttl mismatch: got %q want %q", statusResp.GetTtl(), "1w")
 	}
 	if statusResp.GetLastModified() != 1700000000 {
 		t.Fatalf("last modified mismatch: got %d want %d", statusResp.GetLastModified(), 1700000000)
