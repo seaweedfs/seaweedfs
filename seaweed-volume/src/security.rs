@@ -156,6 +156,8 @@ impl Guard {
                 // CIDR range
                 if let Some((ip, prefix)) = parse_cidr(entry) {
                     self.whitelist_cidrs.push((ip, prefix));
+                } else {
+                    tracing::error!("Parse CIDR {} in whitelist failed", entry);
                 }
             } else {
                 // Exact IP/hostname
