@@ -161,6 +161,9 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							nodeAddr = node.Id
 						}
 						publicUrl := publicUrls[nodeAddr]
+						if publicUrl == "" {
+							publicUrl = nodeAddr
+						}
 
 						vs := VolumeServer{
 							ID:            node.Id,

@@ -444,9 +444,13 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 							if nodeAddr == "" {
 								nodeAddr = node.Id
 							}
+							publicUrl := publicUrls[nodeAddr]
+							if publicUrl == "" {
+								publicUrl = nodeAddr
+							}
 							volumeServerMap[node.Id] = &VolumeServer{
 								Address:        node.Id,
-								PublicURL:      publicUrls[nodeAddr],
+								PublicURL:      publicUrl,
 								DataCenter:     dc.Id,
 								Rack:           rack.Id,
 								Volumes:        0,
