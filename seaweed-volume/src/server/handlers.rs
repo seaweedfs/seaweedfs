@@ -2311,8 +2311,13 @@ pub async fn post_handler(
                 // H2: Use Content-MD5 computed from original uncompressed data
                 let content_md5_value = original_content_md5;
                 // Match Go: always include contentMd5 in response JSON and header
+                // Go only sets ret.Name when reqNeedle.HasName()
                 let result = UploadResult {
-                    name: filename.clone(),
+                    name: if n.has_name() {
+                        filename.clone()
+                    } else {
+                        String::new()
+                    },
                     size: original_data_size, // H3: use original size, not compressed
                     etag: n.etag(),
                     mime: mime_type.clone(),
