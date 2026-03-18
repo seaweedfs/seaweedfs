@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -267,6 +268,19 @@ func runFuse(cmd *Command, args []string) bool {
 				fmt.Fprintf(os.Stderr, "failed to parse 'sys.novncache' value %q: %v\n", parameter.value, err)
 				return false
 			}
+		case "autofs":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.hasAutofs = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'autofs' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "_netdev":
+			// _netdev is used for systemd/fstab parser to signify that this is a network mount but systemd
+			// mount sometimes can't strip them off. Meanwhile, fuse3 would refuse to run with _netdev, we
+			// strip them here if it fails to be stripped by the caller.
+			//(See https://github.com/seaweedfs/seaweedfs/wiki/fstab/948a70df5c0d9d2d27561b96de53bde07a29d2db)
+			glog.V(0).Infof("ignoring _netdev mount option")
 		default:
 			t := parameter.name
 			if parameter.value != "true" {
