@@ -2051,14 +2051,16 @@ pub async fn post_handler(
             if current <= state.concurrent_upload_limit {
                 break;
             }
+            // Go increments UploadLimitCond on every loop iteration (L184),
+            // not just on timeout.
+            metrics::HANDLER_COUNTER
+                .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
+                .inc();
             // Wait for notification or timeout
             if tokio::time::timeout_at(deadline, state.upload_notify.notified())
                 .await
                 .is_err()
             {
-                metrics::HANDLER_COUNTER
-                    .with_label_values(&[metrics::UPLOAD_LIMIT_COND])
-                    .inc();
                 return json_error_with_query(
                     StatusCode::TOO_MANY_REQUESTS,
                     "upload limit exceeded",
