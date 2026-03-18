@@ -831,7 +831,7 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	if sb.Writer == nil {
 		return 0, errors.New("log writer is nil")
 	}
-	now := time.Now()
+	now := timeNow()
 	// Size-based rotation: rotate when the file would exceed MaxSize.
 	sizeRotation := sb.nbytes+uint64(len(p)) >= MaxSize
 	// Time-based rotation: rotate when the file is older than --log_rotate_hours.
