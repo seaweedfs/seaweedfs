@@ -287,7 +287,6 @@ impl fmt::Display for Offset {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DiskType {
     HardDrive,
-    Hdd,
     Ssd,
     Custom(String),
 }
@@ -295,8 +294,7 @@ pub enum DiskType {
 impl DiskType {
     pub fn from_string(s: &str) -> Self {
         match s.to_lowercase().as_str() {
-            "" => DiskType::HardDrive,
-            "hdd" => DiskType::Hdd,
+            "" | "hdd" => DiskType::HardDrive,
             "ssd" => DiskType::Ssd,
             other => DiskType::Custom(other.to_string()),
         }
@@ -305,7 +303,6 @@ impl DiskType {
     pub fn readable_string(&self) -> &str {
         match self {
             DiskType::HardDrive => "hdd",
-            DiskType::Hdd => "hdd",
             DiskType::Ssd => "ssd",
             DiskType::Custom(s) => s,
         }
@@ -316,7 +313,6 @@ impl fmt::Display for DiskType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DiskType::HardDrive => write!(f, ""),
-            DiskType::Hdd => write!(f, "hdd"),
             DiskType::Ssd => write!(f, "ssd"),
             DiskType::Custom(s) => write!(f, "{}", s),
         }
