@@ -101,6 +101,8 @@ pub struct VolumeServerState {
     pub security_file: String,
     /// Original CLI whitelist entries — stored for SIGHUP reload.
     pub cli_white_list: Vec<String>,
+    /// Path to state.pb file for persisting VolumeServerState across restarts.
+    pub state_file_path: String,
 }
 
 impl VolumeServerState {

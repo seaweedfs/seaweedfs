@@ -326,7 +326,27 @@ async fn run(
         read_buffer_size_bytes: (config.read_buffer_size_mb.max(1) as usize) * 1024 * 1024,
         security_file,
         cli_white_list,
+        state_file_path: if config.folders.is_empty() {
+            String::new()
+        } else {
+            std::path::Path::new(&config.folders[0])
+                .join("state.pb")
+                .to_string_lossy()
+                .into_owned()
+        },
     });
+
+    // Load persisted state from disk if it exists (matches Go's State.Load on startup)
+    if let Some(saved) =
+        seaweed_volume::server::grpc_server::load_state_file(&state.state_file_path)
+    {
+        state
+            .maintenance
+            .store(saved.maintenance, std::sync::atomic::Ordering::Relaxed);
+        state
+            .state_version
+            .store(saved.version, std::sync::atomic::Ordering::Relaxed);
+    }
 
     if !config.masters.is_empty() {
         let hb_config = seaweed_volume::server::heartbeat::HeartbeatConfig {

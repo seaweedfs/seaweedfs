@@ -28,6 +28,31 @@ fn volume_is_remote_only(dat_path: &str, has_remote_file: bool) -> bool {
     has_remote_file && !std::path::Path::new(dat_path).exists()
 }
 
+/// Persist VolumeServerState to a state.pb file (matches Go's State.save).
+fn save_state_file(
+    path: &str,
+    state: &volume_server_pb::VolumeServerState,
+) -> Result<(), std::io::Error> {
+    if path.is_empty() {
+        return Ok(());
+    }
+    use prost::Message;
+    let buf = state.encode_to_vec();
+    std::fs::write(path, buf)
+}
+
+/// Load VolumeServerState from a state.pb file (matches Go's State.Load).
+pub fn load_state_file(
+    path: &str,
+) -> Option<volume_server_pb::VolumeServerState> {
+    if path.is_empty() || !std::path::Path::new(path).exists() {
+        return None;
+    }
+    let data = std::fs::read(path).ok()?;
+    use prost::Message;
+    volume_server_pb::VolumeServerState::decode(data.as_slice()).ok()
+}
+
 struct WriteThrottler {
     bytes_per_second: i64,
     last_size_counter: i64,
@@ -876,16 +901,29 @@ impl VolumeServer for VolumeGrpcService {
                 )));
             }
 
+            // Save previous state for rollback on persistence failure (matches Go)
+            let prev_maintenance = self.state.maintenance.load(Ordering::Relaxed);
+            let prev_version = current_version;
+
             self.state
                 .maintenance
                 .store(new_state.maintenance, Ordering::Relaxed);
             let new_version = self.state.state_version.fetch_add(1, Ordering::Relaxed) + 1;
 
+            // Persist to disk (matches Go's State.save)
+            let pb = volume_server_pb::VolumeServerState {
+                maintenance: new_state.maintenance,
+                version: new_version,
+            };
+            if let Err(e) = save_state_file(&self.state.state_file_path, &pb) {
+                // Rollback in-memory state on save failure (matches Go)
+                self.state.maintenance.store(prev_maintenance, Ordering::Relaxed);
+                self.state.state_version.store(prev_version, Ordering::Relaxed);
+                return Err(Status::internal(format!("failed to save state: {}", e)));
+            }
+
             Ok(Response::new(volume_server_pb::SetStateResponse {
-                state: Some(volume_server_pb::VolumeServerState {
-                    maintenance: new_state.maintenance,
-                    version: new_version,
-                }),
+                state: Some(pb),
             }))
         } else {
             // nil state = no-op, return current state
@@ -4282,6 +4320,7 @@ mod tests {
             read_buffer_size_bytes: 1024 * 1024,
             security_file: String::new(),
             cli_white_list: vec![],
+            state_file_path: String::new(),
         });
 
         (
@@ -4383,6 +4422,7 @@ mod tests {
             read_buffer_size_bytes: 1024 * 1024,
             security_file: String::new(),
             cli_white_list: vec![],
+            state_file_path: String::new(),
         });
 
         (VolumeGrpcService { state }, tmp)
