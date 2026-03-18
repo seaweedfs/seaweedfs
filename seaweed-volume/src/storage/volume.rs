@@ -1999,10 +1999,8 @@ impl Volume {
             let body_length = needle::needle_body_length(size, version);
             let total_size = NEEDLE_HEADER_SIZE as u64 + body_length as u64;
 
-            if size.is_deleted() || size.0 <= 0 {
-                offset += total_size;
-                continue;
-            }
+            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
+            // This is critical for incremental copy where tombstones must be propagated.
 
             // Read body bytes
             let mut body = vec![0u8; body_length as usize];
