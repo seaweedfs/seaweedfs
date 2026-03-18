@@ -416,6 +416,15 @@ impl VolumeServer for VolumeGrpcService {
     ) -> Result<Response<volume_server_pb::VacuumVolumeCommitResponse>, Status> {
         self.state.check_maintenance()?;
         let vid = VolumeId(request.into_inner().volume_id);
+
+        // Match Go's store_vacuum.go CommitCompactVolume: skip commit if stopping
+        if *self.state.is_stopping.read().unwrap() {
+            return Err(Status::internal(format!(
+                "volume id {} skips compact commit because volume server is stopping",
+                vid.0
+            )));
+        }
+
         let commit_start = std::time::Instant::now();
         let mut store = self.state.store.write().unwrap();
         let result = store.commit_compact_volume(vid);
