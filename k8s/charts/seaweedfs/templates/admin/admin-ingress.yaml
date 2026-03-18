@@ -1,9 +1,4 @@
-{{- /* Admin ingress works for standalone admin (admin.enabled) and all-in-one mode (allInOne.admin.enabled) */}}
-{{- $adminEnabled := or .Values.admin.enabled (and .Values.allInOne.enabled .Values.allInOne.admin.enabled) }}
-{{- if and $adminEnabled .Values.admin.ingress.enabled }}
-{{- /* Determine service name based on deployment mode */}}
-{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "admin")) .Values.allInOne.enabled }}
-{{- $adminPort := .Values.allInOne.admin.port | default .Values.admin.port }}
+{{- if and .Values.admin.enabled .Values.admin.ingress.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
 {{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
@@ -47,11 +42,11 @@ spec:
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
-            name: {{ $serviceName }}
+            name: {{ include "seaweedfs.componentName" (list . "admin") }}
             port:
-              number: {{ $adminPort }}
+              number: {{ .Values.admin.port }}
 {{- else }}
-          serviceName: {{ $serviceName }}
-          servicePort: {{ $adminPort }}
+          serviceName: {{ include "seaweedfs.componentName" (list . "admin") }}
+          servicePort: {{ .Values.admin.port }}
 {{- end }}
 {{- end }}

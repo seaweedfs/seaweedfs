@@ -188,6 +188,19 @@ func TestDataNodeToDataNodeInfo_IncludeEmptyDiskFromUsage(t *testing.T) {
 	}
 }
 
+func TestDataNodeToDataNodeInfo_IncludesPublicUrl(t *testing.T) {
+	dn := NewDataNode("node-1")
+	dn.Ip = "127.0.0.1"
+	dn.Port = 8080
+	dn.GrpcPort = 18080
+	dn.PublicUrl = "volume.example.com:443"
+
+	info := dn.ToDataNodeInfo()
+	if info.PublicUrl != "volume.example.com:443" {
+		t.Errorf("expected PublicUrl 'volume.example.com:443', got '%s'", info.PublicUrl)
+	}
+}
+
 func assert(t *testing.T, message string, actual, expected int) {
 	if actual != expected {
 		t.Fatalf("unexpected %s: %d, expected: %d", message, actual, expected)

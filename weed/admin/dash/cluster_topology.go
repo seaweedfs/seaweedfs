@@ -90,7 +90,7 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							Address:       node.Id,
 							DataCenter:    dc.Id,
 							Rack:          rack.Id,
-							PublicURL:     node.Id,
+							PublicURL:     node.PublicUrl,
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     totalSize,

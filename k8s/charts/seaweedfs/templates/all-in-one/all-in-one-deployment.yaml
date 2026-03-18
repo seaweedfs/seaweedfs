@@ -380,12 +380,6 @@ spec:
             - containerPort: {{ .Values.allInOne.metricsPort }}
               name: server-metrics
             {{- end }}
-            {{- if .Values.allInOne.admin.enabled }}
-            - containerPort: {{ .Values.allInOne.admin.port | default .Values.admin.port }}
-              name: swfs-admin
-            - containerPort: {{ .Values.allInOne.admin.grpcPort | default .Values.admin.grpcPort }}
-              name: swfs-adm-grpc
-            {{- end }}
           {{- if .Values.allInOne.readinessProbe.enabled }}
           readinessProbe:
             httpGet:
