@@ -448,8 +448,10 @@ impl EcVolume {
                 ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
             }
             let (_key, _offset, size) = idx_entry_from_bytes(&entry_buf);
-            // Raw size includes the sign bit; match Go's size.Raw() which is uint32
-            total_size += size.0.unsigned_abs() as u64;
+            // Match Go's Size.Raw(): tombstone (-1) returns 0, other negatives return abs
+            if !size.is_tombstone() {
+                total_size += size.0.unsigned_abs() as u64;
+            }
             if size.is_deleted() {
                 files_deleted += 1;
             } else {
