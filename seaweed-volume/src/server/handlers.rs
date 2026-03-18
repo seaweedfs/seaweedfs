@@ -977,7 +977,7 @@ async fn get_or_head_handler_inner(
     let ext = extract_extension_from_path(&path);
     // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
     let has_resize_ops =
-        is_image_resize_ext(&ext) && (query.width.is_some() || query.height.is_some());
+        is_image_resize_ext(&ext) && (query.width.unwrap_or(0) > 0 || query.height.unwrap_or(0) > 0);
     // Go's shouldCropImages (L410) requires x2 > x1 && y2 > y1 (x1/y1 default 0).
     // Only disable streaming when a real crop will actually happen.
     let has_crop_ops = is_image_crop_ext(&ext) && {
