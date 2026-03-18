@@ -2287,6 +2287,9 @@ impl Volume {
     }
 
     /// Read the append_at_ns timestamp from a needle at the given offset in the .dat file.
+    /// Go reads the full needle body for ALL entries including tombstones to get the
+    /// actual AppendAtNs timestamp, which is needed for correct binary search during
+    /// incremental copy.
     fn read_append_at_ns(&self, offset: Offset) -> Result<u64, VolumeError> {
         let actual_offset = offset.to_actual_offset() as u64;
         let version = self.version();
@@ -2295,11 +2298,11 @@ impl Volume {
         self.read_exact_at_backend(&mut header_buf, actual_offset)?;
 
         let (_cookie, _id, size) = Needle::parse_header(&header_buf);
-        if size.0 <= 0 {
-            return Ok(0);
-        }
 
         let actual_size = get_actual_size(size, version);
+        if actual_size <= 0 {
+            return Ok(0);
+        }
         let mut buf = vec![0u8; actual_size as usize];
         self.read_exact_at_backend(&mut buf, actual_offset)?;
 
