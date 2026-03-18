@@ -139,12 +139,18 @@ impl Store {
             if &loc.disk_type != disk_type {
                 continue;
             }
-            // Go formula: currentFreeCount = (MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()
-            //             currentFreeCount /= DataShardsCount
+            // Go treats MaxVolumeCount == 0 as unlimited (hasFreeDiskLocation)
             let max = loc.max_volume_count.load(Ordering::Relaxed) as i64;
-            let free_count = (max - loc.volumes_len() as i64) * DATA_SHARDS_COUNT as i64
-                - loc.ec_shard_count() as i64;
-            let effective_free = free_count / DATA_SHARDS_COUNT as i64;
+            let effective_free = if max == 0 {
+                i64::MAX // unlimited
+            } else {
+                // Go formula: currentFreeCount = (MaxVolumeCount - VolumesLen()) * DataShardsCount - EcShardCount()
+                //             currentFreeCount /= DataShardsCount
+                let free_count = (max - loc.volumes_len() as i64)
+                    * DATA_SHARDS_COUNT as i64
+                    - loc.ec_shard_count() as i64;
+                free_count / DATA_SHARDS_COUNT as i64
+            };
             if effective_free <= 0 {
                 continue;
             }
