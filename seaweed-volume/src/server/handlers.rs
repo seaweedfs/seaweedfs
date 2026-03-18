@@ -2983,11 +2983,9 @@ fn try_expand_chunk_manifest(
         }
     }
 
-    // Determine filename: URL path filename, then needle name, then manifest name
+    // Determine filename: URL path filename, then manifest name
+    // (Go's tryHandleChunkedFile does NOT fall back to needle name)
     let mut filename = extract_filename_from_path(path);
-    if filename.is_empty() && n.name_size > 0 {
-        filename = String::from_utf8_lossy(&n.name).to_string();
-    }
     if filename.is_empty() && !manifest.name.is_empty() {
         filename = manifest.name.clone();
     }
