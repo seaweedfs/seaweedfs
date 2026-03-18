@@ -178,10 +178,14 @@ impl EcVolume {
         format!("{}.ecj", self.idx_base_name())
     }
 
-    /// Sync the EC volume's journal file to disk (matching Go's ecv.SyncToDisk()).
+    /// Sync the EC volume's journal and index files to disk (matching Go's ecv.Sync()).
+    /// Go flushes both .ecj and .ecx to ensure in-place deletion marks are persisted.
     pub fn sync_to_disk(&self) -> io::Result<()> {
         if let Some(ref ecj_file) = self.ecj_file {
             ecj_file.sync_all()?;
+        }
+        if let Some(ref ecx_file) = self.ecx_file {
+            ecx_file.sync_all()?;
         }
         Ok(())
     }
