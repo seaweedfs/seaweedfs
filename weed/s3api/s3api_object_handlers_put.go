@@ -141,8 +141,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 
 		// Read any content through dataReader (handles chunked encoding properly)
 		var dirContent []byte
-		if r.ContentLength > 0 {
-			dirContent, _ = io.ReadAll(dataReader)
+		if r.ContentLength != 0 {
+			var readErr error
+			dirContent, readErr = io.ReadAll(dataReader)
+			if readErr != nil {
+				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
 		}
 
 		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
