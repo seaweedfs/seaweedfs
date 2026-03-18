@@ -1813,8 +1813,17 @@ pub async fn post_handler(
     let query = request.uri().query().unwrap_or("").to_string();
     let method = request.method().clone();
     let headers = request.headers().clone();
-    let query_fields: Vec<(String, String)> =
-        serde_urlencoded::from_str(&query).unwrap_or_default();
+    let query_fields: Vec<(String, String)> = match serde_urlencoded::from_str(&query) {
+        Ok(fields) => fields,
+        Err(e) => {
+            // Go's r.ParseForm() returns 400 on malformed query strings
+            return json_error_with_query(
+                StatusCode::BAD_REQUEST,
+                &format!("form parse error: {}", e),
+                Some(&query),
+            )
+        }
+    };
 
     let (vid, needle_id, cookie) = match parse_url_path(&path) {
         Some(parsed) => parsed,
