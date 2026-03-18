@@ -1794,9 +1794,7 @@ fn encode_image(img: &image::DynamicImage, ext: &str) -> Option<Vec<u8>> {
 
 #[derive(Serialize)]
 struct UploadResult {
-    #[serde(skip_serializing_if = "String::is_empty")]
     name: String,
-    #[serde(skip_serializing_if = "is_zero_u32")]
     size: u32,
     #[serde(rename = "eTag", skip_serializing_if = "String::is_empty")]
     etag: String,
@@ -1806,9 +1804,6 @@ struct UploadResult {
     content_md5: Option<String>,
 }
 
-fn is_zero_u32(v: &u32) -> bool {
-    *v == 0
-}
 
 pub async fn post_handler(
     State(state): State<Arc<VolumeServerState>>,
