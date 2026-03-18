@@ -811,11 +811,12 @@ func (l *loggingT) exit(err error) {
 // file rotation. There are conflicting methods, so the file cannot be embedded.
 // l.mu is held for all its methods.
 type syncBuffer struct {
-	logger *loggingT
+	logger    *loggingT
 	*bufio.Writer
-	file   *os.File
-	sev    severity
-	nbytes uint64 // The number of bytes written to this file
+	file      *os.File
+	sev       severity
+	nbytes    uint64    // The number of bytes written to this file
+	createdAt time.Time // When the current log file was opened (used for time-based rotation)
 }
 
 func (sb *syncBuffer) Sync() error {
@@ -830,8 +831,14 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 	if sb.Writer == nil {
 		return 0, errors.New("log writer is nil")
 	}
-	if sb.nbytes+uint64(len(p)) >= MaxSize {
-		if err := sb.rotateFile(time.Now()); err != nil {
+	now := timeNow()
+	// Size-based rotation: rotate when the file would exceed MaxSize.
+	sizeRotation := sb.nbytes+uint64(len(p)) >= MaxSize
+	// Time-based rotation: rotate when the file is older than --log_rotate_hours.
+	h := LogRotateHours()
+	timeRotation := h > 0 && !sb.createdAt.IsZero() && now.Sub(sb.createdAt) >= time.Duration(h)*time.Hour
+	if sizeRotation || timeRotation {
+		if err := sb.rotateFile(now); err != nil {
 			sb.logger.exit(err)
 			return 0, err
 		}
@@ -853,6 +860,7 @@ func (sb *syncBuffer) rotateFile(now time.Time) error {
 	var err error
 	sb.file, _, err = create(severityName[sb.sev], now)
 	sb.nbytes = 0
+	sb.createdAt = now
 	if err != nil {
 		return err
 	}

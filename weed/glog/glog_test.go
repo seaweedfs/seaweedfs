@@ -371,6 +371,56 @@ func TestRollover(t *testing.T) {
 	}
 }
 
+func TestTimeBasedRollover(t *testing.T) {
+	setFlags()
+	var err error
+	defer func(previous func(error)) { logExitFunc = previous }(logExitFunc)
+	logExitFunc = func(e error) {
+		err = e
+	}
+
+	// Disable size-based rotation by setting a very large MaxSize.
+	defer func(previous uint64) { MaxSize = previous }(MaxSize)
+	MaxSize = 1024 * 1024 * 1024
+
+	// Enable time-based rotation with a 1-hour interval.
+	defer func(previous int) { *logRotateHours = previous }(*logRotateHours)
+	*logRotateHours = 1
+
+	Info("x") // Create initial file.
+	info, ok := logging.file[infoLog].(*syncBuffer)
+	if !ok {
+		t.Fatal("info wasn't created")
+	}
+	if err != nil {
+		t.Fatalf("info has initial error: %v", err)
+	}
+	fname0 := info.file.Name()
+	createdAt := info.createdAt
+
+	// Mock time to 30 minutes after file creation — should NOT rotate.
+	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
+	timeNow = func() time.Time { return createdAt.Add(30 * time.Minute) }
+	Info("still within interval")
+	if err != nil {
+		t.Fatalf("error after write within interval: %v", err)
+	}
+	if info.file.Name() != fname0 {
+		t.Error("file rotated before interval elapsed")
+	}
+
+	// Advance mock time past the 1-hour interval — should rotate.
+	timeNow = func() time.Time { return createdAt.Add(61 * time.Minute) }
+	Info("past interval")
+	if err != nil {
+		t.Fatalf("error after time-based rotation: %v", err)
+	}
+	fname1 := info.file.Name()
+	if fname0 == fname1 {
+		t.Error("file did not rotate after interval elapsed")
+	}
+}
+
 func TestLogBacktraceAt(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
