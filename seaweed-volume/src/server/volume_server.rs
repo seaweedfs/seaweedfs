@@ -107,7 +107,11 @@ impl VolumeServerState {
     /// Check if the server is in maintenance mode; return gRPC error if so.
     pub fn check_maintenance(&self) -> Result<(), tonic::Status> {
         if self.maintenance.load(Ordering::Relaxed) {
-            return Err(tonic::Status::unavailable("maintenance mode"));
+            let id = self.store.read().unwrap().id.clone();
+            return Err(tonic::Status::unavailable(format!(
+                "volume server {} is in maintenance mode",
+                id
+            )));
         }
         Ok(())
     }
