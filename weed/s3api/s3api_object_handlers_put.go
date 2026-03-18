@@ -139,6 +139,16 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			fullDirPath = fullDirPath + "/" + dirName
 		}
 
+		// Read any content through dataReader (handles chunked encoding properly)
+		var dirContent []byte
+		if r.ContentLength > 0 {
+			dirContent, _ = io.ReadAll(dataReader)
+		}
+
+		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
+		dirMd5 := md5.Sum(dirContent)
+		dirEtag := fmt.Sprintf("%x", dirMd5)
+
 		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
 			bucket, object, objectContentType, r.ContentLength)
 		if err := s3a.mkdir(
@@ -147,10 +157,17 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				if objectContentType == "" {
 					objectContentType = s3_constants.FolderMimeType
 				}
-				if r.ContentLength > 0 {
-					entry.Content, _ = io.ReadAll(r.Body)
+				if len(dirContent) > 0 {
+					entry.Content = dirContent
 				}
 				entry.Attributes.Mime = objectContentType
+				entry.Attributes.Md5 = dirMd5[:]
+
+				// Store ETag in extended attributes for consistency with regular objects
+				if entry.Extended == nil {
+					entry.Extended = make(map[string][]byte)
+				}
+				entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
 
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)
@@ -158,6 +175,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 			return
 		}
+		setEtag(w, dirEtag)
 	} else {
 		// Get detailed versioning state for the bucket
 		versioningState, err := s3a.getVersioningState(bucket)
