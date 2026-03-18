@@ -915,6 +915,8 @@ filer:
     #     versioning: Enabled
     #   - name: bucket-b
     #     anonymousRead: false
+    createBucketsHook:
+      resources: {}
 
 s3:
   enabled: false
@@ -1081,6 +1083,9 @@ s3:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 10
+
+  createBucketsHook:
+    resources: {}
 
   ingress:
     enabled: false
@@ -1485,6 +1490,8 @@ allInOne:
     #     versioning: Enabled
     #   - name: bucket-b
     #     anonymousRead: false
+    createBucketsHook:
+      resources: {}
 
   # SFTP server configuration
   # Note: Most parameters below default to null, which means they inherit from

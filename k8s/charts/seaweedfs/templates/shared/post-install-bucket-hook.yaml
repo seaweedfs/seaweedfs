@@ -64,9 +64,11 @@ spec:
       {{- if .Values.filer.podSecurityContext.enabled }}
       securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
       - name: post-install-job
         image: {{ template "master.image" . }}
+        imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "IfNotPresent" }}
         env:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
@@ -187,6 +189,10 @@ spec:
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
+        {{- with coalesce .Values.allInOne.s3.createBucketsHook.resources .Values.s3.createBucketsHook.resources .Values.filer.s3.createBucketsHook.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
