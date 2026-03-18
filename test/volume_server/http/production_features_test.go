@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -165,6 +166,11 @@ func TestUploadWithCustomTimestamp(t *testing.T) {
 func TestMultipartUploadUsesFormFieldsForTimestampAndTTL(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
+	}
+	// Go's r.FormValue() cannot read multipart text fields after r.MultipartReader()
+	// consumes the body, so ts/ttl sent as multipart fields only work with the Rust server.
+	if os.Getenv("VOLUME_SERVER_IMPL") != "rust" {
+		t.Skip("skipping: multipart form field extraction for ts/ttl is Rust-only")
 	}
 
 	cluster := framework.StartVolumeCluster(t, matrix.P1())
