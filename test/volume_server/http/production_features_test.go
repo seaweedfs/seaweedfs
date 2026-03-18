@@ -230,8 +230,9 @@ func TestMultipartUploadUsesFormFieldsForTimestampAndTTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("VolumeNeedleStatus after multipart upload failed: %v", err)
 	}
-	if got := statusResp.GetTtl(); got != "7d" {
-		t.Fatalf("multipart upload TTL mismatch: got %q want %q", got, "7d")
+	// Go's ReadTTL normalizes via fitTtlCount: 7d → 1w (7 days = 1 week)
+	if got := statusResp.GetTtl(); got != "1w" {
+		t.Fatalf("multipart upload TTL mismatch: got %q want %q", got, "1w")
 	}
 }
 
