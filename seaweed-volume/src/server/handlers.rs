@@ -978,8 +978,15 @@ async fn get_or_head_handler_inner(
     // Go checks resize and crop extensions separately: resize supports .webp, crop does not.
     let has_resize_ops =
         is_image_resize_ext(&ext) && (query.width.is_some() || query.height.is_some());
-    let has_crop_ops =
-        is_image_crop_ext(&ext) && (query.crop_x1.is_some() || query.crop_y1.is_some());
+    // Go's shouldCropImages (L410) requires x2 > x1 && y2 > y1 (x1/y1 default 0).
+    // Only disable streaming when a real crop will actually happen.
+    let has_crop_ops = is_image_crop_ext(&ext) && {
+        let x1 = query.crop_x1.unwrap_or(0);
+        let y1 = query.crop_y1.unwrap_or(0);
+        let x2 = query.crop_x2.unwrap_or(0);
+        let y2 = query.crop_y2.unwrap_or(0);
+        x2 > x1 && y2 > y1
+    };
     let has_image_ops = has_resize_ops || has_crop_ops;
 
     // Stream info is only available for regular volumes, not EC volumes.
