@@ -168,8 +168,12 @@ spec:
               {{- if .Values.allInOne.disableHttp }}
               -disableHttp={{ .Values.allInOne.disableHttp }} \
               {{- end }}
-              {{- if and (.Values.volume.dataDirs) (index .Values.volume.dataDirs 0 "maxVolumes") }}
-              -volume.max={{ index .Values.volume.dataDirs 0 "maxVolumes" }} \
+              {{- if .Values.volume.dataDirs }}
+              {{- with (first .Values.volume.dataDirs) }}
+              {{- if and (hasKey . "maxVolumes") (ne .maxVolumes nil) }}
+              -volume.max={{ .maxVolumes }} \
+              {{- end }}
+              {{- end }}
               {{- end }}
               -master.port={{ .Values.master.port }} \
               {{- if .Values.global.enableReplication }}
