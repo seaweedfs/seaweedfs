@@ -2139,14 +2139,36 @@ pub async fn post_handler(
     };
 
     // Extract Seaweed-* custom metadata headers (pairs)
+    // Go's net/http canonicalizes header names to Title-Case, so after stripping
+    // the "Seaweed-" prefix, keys are Title-Case (e.g., "Foo-Bar"). Rust's http
+    // crate lowercases all header names, so we must convert the stripped key to
+    // Title-Case to match Go's behavior.
+    fn to_title_case(s: &str) -> String {
+        let mut result = String::with_capacity(s.len());
+        let mut capitalize_next = true;
+        for c in s.chars() {
+            if c == '-' {
+                result.push('-');
+                capitalize_next = true;
+            } else if capitalize_next {
+                for uc in c.to_uppercase() {
+                    result.push(uc);
+                }
+                capitalize_next = false;
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
     let pair_map: std::collections::HashMap<String, String> = headers
         .iter()
         .filter_map(|(k, v)| {
             let key = k.as_str();
             if key.len() > 8 && key[..8].eq_ignore_ascii_case("seaweed-") {
                 if let Ok(val) = v.to_str() {
-                    // Store with the prefix stripped (matching Go's trimmedPairMap)
-                    Some((key[8..].to_string(), val.to_string()))
+                    // Store with the prefix stripped and Title-Cased (matching Go's trimmedPairMap)
+                    Some((to_title_case(&key[8..]), val.to_string()))
                 } else {
                     None
                 }
