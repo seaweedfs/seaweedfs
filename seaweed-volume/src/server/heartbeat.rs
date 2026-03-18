@@ -89,7 +89,7 @@ pub async fn run_heartbeat_with_state(
                 SleepDuplicate(Duration),
                 SleepPulse,
             }
-            let action = match do_heartbeat(&config, &state, &grpc_addr, pulse, &mut shutdown_rx)
+            let action = match do_heartbeat(&config, &state, &grpc_addr, &target_addr, pulse, &mut shutdown_rx)
                 .await
             {
                 Ok(Some(leader)) => {
@@ -346,6 +346,7 @@ async fn do_heartbeat(
     config: &HeartbeatConfig,
     state: &Arc<VolumeServerState>,
     grpc_addr: &str,
+    current_master: &str,
     pulse: Duration,
     shutdown_rx: &mut broadcast::Receiver<()>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -428,9 +429,8 @@ async fn do_heartbeat(
                         if metrics_changed {
                             state.metrics_notify.notify_waiters();
                         }
-                        if !hb_resp.leader.is_empty() {
-                            return Ok(Some(hb_resp.leader));
-                        }
+                        // Match Go ordering: check duplicated_uuids BEFORE leader redirect.
+                        // Go processes DuplicatedUuids first, then volume options, then leader.
                         if !hb_resp.duplicated_uuids.is_empty() {
                             let duplicate_dirs = {
                                 let store = state.store.read().unwrap();
@@ -445,6 +445,11 @@ async fn do_heartbeat(
                                 DUPLICATE_UUID_RETRY_MESSAGE, duplicate_dirs
                             )
                             .into());
+                        }
+                        // Match Go: only redirect if leader is non-empty AND
+                        // different from the current master we're connected to.
+                        if !hb_resp.leader.is_empty() && current_master != hb_resp.leader {
+                            return Ok(Some(hb_resp.leader));
                         }
                     }
                     Ok(None) => return Ok(None),
