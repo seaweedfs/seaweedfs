@@ -768,7 +768,8 @@ impl EcVolume {
             }
             *shard = None;
         }
-        // Remove .ecx/.ecj from ecx_actual_dir (where they were found)
+        // Remove .ecx/.ecj/.vif from ecx_actual_dir (where they were found)
+        // Go's Destroy() removes .ecx, .ecj, and .vif files.
         let actual_base = crate::storage::volume::volume_file_name(
             &self.ecx_actual_dir,
             &self.collection,
@@ -776,10 +777,17 @@ impl EcVolume {
         );
         let _ = fs::remove_file(format!("{}.ecx", actual_base));
         let _ = fs::remove_file(format!("{}.ecj", actual_base));
+        let _ = fs::remove_file(format!("{}.vif", actual_base));
         // Also try the configured idx dir and data dir in case files exist in either
         if self.ecx_actual_dir != self.dir_idx {
             let _ = fs::remove_file(self.ecx_file_name());
             let _ = fs::remove_file(self.ecj_file_name());
+            let idx_base = crate::storage::volume::volume_file_name(
+                &self.dir_idx,
+                &self.collection,
+                self.volume_id,
+            );
+            let _ = fs::remove_file(format!("{}.vif", idx_base));
         }
         if self.ecx_actual_dir != self.dir && self.dir_idx != self.dir {
             let data_base = crate::storage::volume::volume_file_name(
@@ -789,6 +797,7 @@ impl EcVolume {
             );
             let _ = fs::remove_file(format!("{}.ecx", data_base));
             let _ = fs::remove_file(format!("{}.ecj", data_base));
+            let _ = fs::remove_file(format!("{}.vif", data_base));
         }
         self.ecx_file = None;
         self.ecj_file = None;
