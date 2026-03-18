@@ -989,7 +989,7 @@ pub fn parse_security_config(path: &str) -> SecurityConfig {
                 Section::GrpcVolume => match key {
                     "cert" => cfg.grpc_cert_file = value.to_string(),
                     "key" => cfg.grpc_key_file = value.to_string(),
-                    "ca" => cfg.grpc_ca_file = value.to_string(),
+                    // Go only reads CA from [grpc], not [grpc.volume]
                     "allowed_commonNames" => {
                         cfg.grpc_volume_allowed_common_names =
                             value.split(',').map(|name| name.to_string()).collect();
