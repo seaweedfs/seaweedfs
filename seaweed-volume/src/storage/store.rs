@@ -780,16 +780,18 @@ impl Store {
         let dir = self.locations[loc_idx].directory.clone();
         let (_, free) = crate::storage::disk_location::get_disk_stats(&dir);
 
-        // Compute required space from current volume sizes
-        let required_space = {
+        // Compute required space: use the larger of preallocate or estimated volume size
+        // matching Go's CompactVolume space check
+        let space_needed = {
             let (_, v) = self.find_volume(vid).unwrap();
-            v.dat_file_size().unwrap_or(0) + v.idx_file_size()
+            let estimated = v.dat_file_size().unwrap_or(0) + v.idx_file_size();
+            std::cmp::max(preallocate, estimated)
         };
 
-        if free < required_space {
+        if free < space_needed {
             return Err(format!(
                 "not enough free space to compact volume {}. Required: {}, Free: {}",
-                vid.0, required_space, free
+                vid.0, space_needed, free
             ));
         }
 
