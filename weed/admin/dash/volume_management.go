@@ -413,6 +413,9 @@ func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
 	var volumeServerMap map[string]*VolumeServer
 
+	// Fetch public URL mapping from master HTTP API
+	publicUrls := s.fetchPublicUrlMap()
+
 	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
@@ -436,8 +439,14 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 					for _, node := range rack.DataNodeInfos {
 						// Initialize volume server if not exists
 						if volumeServerMap[node.Id] == nil {
+							// Look up PublicUrl from master HTTP API
+							nodeAddr := node.Address
+							if nodeAddr == "" {
+								nodeAddr = node.Id
+							}
 							volumeServerMap[node.Id] = &VolumeServer{
 								Address:        node.Id,
+								PublicURL:      publicUrls[nodeAddr],
 								DataCenter:     dc.Id,
 								Rack:           rack.Id,
 								Volumes:        0,

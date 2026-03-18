@@ -73,8 +73,7 @@ spec:
     targetPort: {{ .Values.allInOne.sftp.port | default .Values.sftp.port }}
     protocol: TCP
   {{- end }}
-  
-  
+
   # Server metrics port (single metrics endpoint for all services)
   {{- if .Values.allInOne.metricsPort }}
   - name: "server-metrics"

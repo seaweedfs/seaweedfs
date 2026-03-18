@@ -276,7 +276,6 @@ func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 		DiskInfos: dn.diskUsages.ToDiskInfo(),
 		GrpcPort:  uint32(dn.GrpcPort),
 		Address:   dn.Url(), // ip:port for connecting to the volume server
-		PublicUrl: dn.PublicUrl,
 	}
 	if m.DiskInfos == nil {
 		m.DiskInfos = make(map[string]*master_pb.DiskInfo)

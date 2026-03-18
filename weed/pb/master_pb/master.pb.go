@@ -2126,7 +2126,6 @@ type DataNodeInfo struct {
 	DiskInfos     map[string]*DiskInfo   `protobuf:"bytes,2,rep,name=diskInfos,proto3" json:"diskInfos,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	GrpcPort      uint32                 `protobuf:"varint,3,opt,name=grpc_port,json=grpcPort,proto3" json:"grpc_port,omitempty"`
 	Address       string                 `protobuf:"bytes,4,opt,name=address,proto3" json:"address,omitempty"` // ip:port for connecting to the volume server
-	PublicUrl     string                 `protobuf:"bytes,5,opt,name=public_url,json=publicUrl,proto3" json:"public_url,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2185,13 +2184,6 @@ func (x *DataNodeInfo) GetGrpcPort() uint32 {
 func (x *DataNodeInfo) GetAddress() string {
 	if x != nil {
 		return x.Address
-	}
-	return ""
-}
-
-func (x *DataNodeInfo) GetPublicUrl() string {
-	if x != nil {
-		return x.PublicUrl
 	}
 	return ""
 }

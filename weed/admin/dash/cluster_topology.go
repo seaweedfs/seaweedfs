@@ -2,7 +2,10 @@ package dash
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -35,8 +38,65 @@ func (s *AdminServer) GetClusterTopology() (*ClusterTopology, error) {
 	return topology, nil
 }
 
+// fetchPublicUrlMap queries the master's /dir/status HTTP endpoint and returns
+// a map from data node ID (ip:port) to its PublicUrl.
+func (s *AdminServer) fetchPublicUrlMap() map[string]string {
+	currentMaster := s.masterClient.GetMaster(context.Background())
+	if currentMaster == "" {
+		return nil
+	}
+
+	url := fmt.Sprintf("http://%s/dir/status", currentMaster.ToHttpAddress())
+	resp, err := http.Get(url)
+	if err != nil {
+		glog.V(1).Infof("Failed to fetch /dir/status from %s: %v", currentMaster, err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+
+	// Parse the JSON response to extract PublicUrl for each data node
+	var status struct {
+		Topology struct {
+			DataCenters []struct {
+				Racks []struct {
+					DataNodes []struct {
+						Url       string `json:"Url"`
+						PublicUrl string `json:"PublicUrl"`
+					} `json:"DataNodes"`
+				} `json:"Racks"`
+			} `json:"DataCenters"`
+		} `json:"Topology"`
+	}
+
+	if err := json.Unmarshal(body, &status); err != nil {
+		glog.V(1).Infof("Failed to parse /dir/status response: %v", err)
+		return nil
+	}
+
+	publicUrls := make(map[string]string)
+	for _, dc := range status.Topology.DataCenters {
+		for _, rack := range dc.Racks {
+			for _, dn := range rack.DataNodes {
+				if dn.PublicUrl != "" {
+					publicUrls[dn.Url] = dn.PublicUrl
+				}
+			}
+		}
+	}
+	return publicUrls
+}
+
 // getTopologyViaGRPC gets topology using gRPC (original method)
 func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
+	// Fetch public URL mapping from master HTTP API
+	// The gRPC DataNodeInfo does not include PublicUrl, so we supplement it.
+	publicUrls := s.fetchPublicUrlMap()
+
 	// Get cluster status from master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
@@ -85,12 +145,20 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 							}
 						}
 
+						// Look up PublicUrl from master HTTP API
+						// Use node.Address (ip:port) as the key, matching the Url field in /dir/status
+						nodeAddr := node.Address
+						if nodeAddr == "" {
+							nodeAddr = node.Id
+						}
+						publicUrl := publicUrls[nodeAddr]
+
 						vs := VolumeServer{
 							ID:            node.Id,
 							Address:       node.Id,
 							DataCenter:    dc.Id,
 							Rack:          rack.Id,
-							PublicURL:     node.PublicUrl,
+							PublicURL:     publicUrl,
 							Volumes:       int(totalVolumes),
 							MaxVolumes:    int(totalMaxVolumes),
 							DiskUsage:     totalSize,
