@@ -250,24 +250,6 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 	iam.stopChan = make(chan struct{})
 	iam.grpcDialOption = option.GrpcDialOption
 
-	// Initialize default anonymous identity
-	// This ensures consistent behavior for anonymous access:
-	// 1. In simple auth mode (no IAM integration):
-	//    - lookupAnonymous returns this identity
-	//    - VerifyActionPermission checks actions (which are empty) -> Denies access
-	//    - This preserves the secure-by-default behavior for simple auth
-	// 2. In advanced IAM mode (with Policy Engine):
-	//    - lookupAnonymous returns this identity
-	//    - VerifyActionPermission proceeds to Policy Engine
-	//    - Policy Engine evaluates against policies (DefaultEffect=Allow if no config)
-	//    - This enables the flexible "Open by Default" for zero-config startup
-	iam.identityAnonymous = &Identity{
-		Name:     "anonymous",
-		Account:  &AccountAnonymous,
-		Actions:  []Action{},
-		IsStatic: true,
-	}
-
 	// First, try to load configurations from file or filer
 	startConfigFile := option.Config
 	if startConfigFile == "" {
@@ -657,16 +639,6 @@ func (iam *IdentityAccessManagement) ReplaceS3ApiConfiguration(config *iam_pb.S3
 		}
 	}
 
-	// Ensure anonymous identity exists
-	if identityAnonymous == nil {
-		identityAnonymous = &Identity{
-			Name:     "anonymous",
-			Account:  accounts[AccountAnonymous.Id],
-			Actions:  []Action{},
-			IsStatic: true,
-		}
-	}
-
 	// atomically switch
 	iam.identities = identities
 	iam.identityAnonymous = identityAnonymous
@@ -921,6 +893,35 @@ func (iam *IdentityAccessManagement) MergeS3ApiConfiguration(config *iam_pb.S3Ap
 		glog.V(3).Infof("Loaded service account %s for dynamic parent %s (expiration: %d)", sa.Id, sa.ParentUser, sa.Expiration)
 	}
 
+	// If the anonymous identity was carried over from the previous state but is
+	// no longer present in the credential-manager snapshot, clear it so that
+	// deleted anonymous users do not persist across merges.
+	if identityAnonymous != nil && !identityAnonymous.IsStatic {
+		stillPresent := false
+		for _, ident := range config.Identities {
+			if ident.Name == s3_constants.AccountAnonymousId {
+				stillPresent = true
+				break
+			}
+		}
+		if !stillPresent {
+			// Remove from identities slice and maps
+			for i, ident := range identities {
+				if ident == identityAnonymous {
+					identities = append(identities[:i], identities[i+1:]...)
+					break
+				}
+			}
+			delete(nameToIdentity, identityAnonymous.Name)
+			for _, cred := range identityAnonymous.Credentials {
+				if accessKeyIdent[cred.AccessKey] == identityAnonymous {
+					delete(accessKeyIdent, cred.AccessKey)
+				}
+			}
+			identityAnonymous = nil
+		}
+	}
+
 	for _, policy := range config.Policies {
 		policies[policy.Name] = policy
 	}
@@ -1131,11 +1132,11 @@ func (iam *IdentityAccessManagement) LookupByAccessKey(accessKey string) (identi
 	return iam.lookupByAccessKey(accessKey)
 }
 
-// LookupAnonymous returns the anonymous identity if it exists
+// LookupAnonymous returns the anonymous identity if it exists and is not disabled.
 func (iam *IdentityAccessManagement) LookupAnonymous() (identity *Identity, found bool) {
 	iam.m.RLock()
 	defer iam.m.RUnlock()
-	if iam.identityAnonymous != nil {
+	if iam.identityAnonymous != nil && !iam.identityAnonymous.Disabled {
 		return iam.identityAnonymous, true
 	}
 	return nil, false
@@ -1450,8 +1451,10 @@ func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identi
 			return identity, s3err.ErrNotImplemented
 		}
 	case authTypeAnonymous:
-		// Anonymous users can be authenticated, but authorization is handled separately
-		return iam.identityAnonymous, s3err.ErrNone
+		if ident, found := iam.LookupAnonymous(); found {
+			return ident, s3err.ErrNone
+		}
+		return nil, s3err.ErrAccessDenied
 	default:
 		return identity, s3err.ErrNotImplemented
 	}
