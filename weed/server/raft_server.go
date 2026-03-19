@@ -147,6 +147,10 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
+		// clear persisted vote state (currentTerm/votedFor) so that stale
+		// terms from previous runs cannot cause election conflicts when the
+		// log has been wiped.
+		os.Remove(path.Join(s.dataDir, "state"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), os.ModePerm); err != nil {
 		return nil, err
