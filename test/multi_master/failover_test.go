@@ -3,6 +3,8 @@ package multi_master
 import (
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 const (
@@ -132,7 +134,10 @@ func TestTwoMastersDownAndRestart(t *testing.T) {
 	if leaderIdx < 0 {
 		t.Fatal("no leader found")
 	}
-	topologyId, _ := mc.GetTopologyId(leaderIdx)
+	topologyId, err := mc.GetTopologyId(leaderIdx)
+	if err != nil || topologyId == "" {
+		t.Fatalf("failed to get initial TopologyId: %v", err)
+	}
 	t.Logf("initial TopologyId: %s", topologyId)
 
 	// Determine which 2 nodes to stop (stop the leader + one follower).
@@ -145,6 +150,8 @@ func TestTwoMastersDownAndRestart(t *testing.T) {
 	mc.StopNode(down2)
 
 	// The surviving node alone cannot form a quorum — no leader expected.
+	// Wait long enough for any stale leadership to expire (election timeout
+	// is 3s in our config, quorum check fires every election timeout).
 	time.Sleep(5 * time.Second)
 	soloLeaderIdx, _ := mc.FindLeader()
 	if soloLeaderIdx >= 0 {
@@ -153,7 +160,10 @@ func TestTwoMastersDownAndRestart(t *testing.T) {
 		time.Sleep(5 * time.Second)
 		soloLeaderIdx, _ = mc.FindLeader()
 	}
-	t.Logf("leader with only 1 of 3 nodes: %d (expected -1 or unstable)", soloLeaderIdx)
+	if soloLeaderIdx >= 0 {
+		mc.DumpLogs()
+		t.Fatalf("expected no leader with only 1 of 3 nodes, but node %d claims leadership", soloLeaderIdx)
+	}
 
 	// Restart both downed nodes.
 	mc.StartNode(down1)
@@ -267,8 +277,11 @@ func TestLeaderConsistencyAcrossNodes(t *testing.T) {
 			if cs.IsLeader {
 				t.Errorf("node %d should not be leader but IsLeader=true", i)
 			}
-			if cs.Leader == "" {
-				t.Errorf("node %d reports empty leader", i)
+			// cs.Leader is a ServerAddress like "127.0.0.1:10000.20000";
+			// convert to HTTP address for comparison with leaderAddr.
+			leaderHttp := pb.ServerAddress(cs.Leader).ToHttpAddress()
+			if leaderHttp != leaderAddr {
+				t.Errorf("node %d reports leader %q (http: %s), expected %q", i, cs.Leader, leaderHttp, leaderAddr)
 			}
 		}
 	}
