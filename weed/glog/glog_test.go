@@ -333,10 +333,13 @@ func TestRollover(t *testing.T) {
 	logExitFunc = func(e error) {
 		err = e
 	}
+
+	Info("x") // Be sure we have a file (also triggers createLogDirs via sync.Once).
+
+	// Set MaxSize after the first Info call so that createLogDirs (which
+	// overwrites MaxSize from the flag default) has already executed.
 	defer func(previous uint64) { MaxSize = previous }(MaxSize)
 	MaxSize = 512
-
-	Info("x") // Be sure we have a file.
 	info, ok := logging.file[infoLog].(*syncBuffer)
 	if !ok {
 		t.Fatal("info wasn't created")
