@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -257,12 +258,27 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
 	if !*masterOption.raftHashicorp && !isSingleMaster {
 		go func() {
-			time.Sleep(raftJoinCheckDelay)
+			// Stagger bootstrap by peer index so masters don't all check
+			// simultaneously. Peer 0 waits ~1.5s, peer 1 ~3s, etc.
+			idx := peerIndex(myMasterAddress, peers)
+			delay := time.Duration(float64(raftJoinCheckDelay) * (rand.Float64()*0.25 + 1) * float64(idx+1))
+			glog.V(0).Infof("bootstrap check in %v (peer index %d of %d)", delay, idx, len(peers))
+			time.Sleep(delay)
 
 			ms.Topo.RaftServerAccessLock.RLock()
 			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
-			if isEmptyMaster && isTheFirstOne(myMasterAddress, peers) && ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-				raftServer.DoJoinCommand()
+			isFirst := idx == 0
+			if isEmptyMaster && isFirst {
+				existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress)
+				if existingLeader == "" {
+					raftServer.DoJoinCommand()
+				} else {
+					glog.V(0).Infof("skip bootstrap: existing leader %s found from peers", existingLeader)
+				}
+			} else if !isEmptyMaster {
+				glog.V(0).Infof("skip bootstrap: leader=%q logEmpty=%v", ms.Topo.RaftServer.Leader(), ms.Topo.RaftServer.IsLogEmpty())
+			} else {
+				glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
 			}
 			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
@@ -385,14 +401,18 @@ func normalizeMasterPeerAddress(peer pb.ServerAddress, self pb.ServerAddress) pb
 	return pb.NewServerAddressWithGrpcPort(peer.ToHttpAddress(), grpcPortValue)
 }
 
-func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
+// peerIndex returns the 0-based position of self in the sorted peer list.
+// Peer 0 is the designated bootstrap node. Returns 0 if self is not found.
+func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
 		return strings.Compare(a.ToHttpAddress(), b.ToHttpAddress())
 	})
-	if len(peers) <= 0 {
-		return true
+	for i, peer := range peers {
+		if peer.ToHttpAddress() == self.ToHttpAddress() {
+			return i
+		}
 	}
-	return self.ToHttpAddress() == peers[0].ToHttpAddress()
+	return 0
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {
