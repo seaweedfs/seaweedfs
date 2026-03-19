@@ -156,17 +156,28 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 			"all objects including nested empty directory markers should be listed")
 	})
 
-	// Test 6: Empty directory marker alongside files in the same directory.
-	t.Run("ListV2_EmptyDirWithSiblingFiles", func(t *testing.T) {
+	// Test 6: Directory marker with a child object, paginated with MaxKeys=1.
+	// This exercises the emit-marker-then-recurse path under truncation:
+	// the marker is emitted, maxKeys drops to 0, and the child must be
+	// picked up on a subsequent page.
+	t.Run("ListV2_MarkerWithChild_Paginated", func(t *testing.T) {
 		siblingBucket := createTestBucket(t, cluster, "test-sibling-dirs-")
 
 		// Create:
-		//   docs/           (empty dir marker at top level)
-		//   readme.txt      (file at top level)
+		//   docs/            (directory key object)
+		//   docs/readme.txt  (child file inside the marker)
+		//   readme.txt       (sibling file at top level)
 		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
 			Bucket: aws.String(siblingBucket),
 			Key:    aws.String("docs/"),
 			Body:   bytes.NewReader([]byte{}),
+		})
+		require.NoError(t, err)
+
+		_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(siblingBucket),
+			Key:    aws.String("docs/readme.txt"),
+			Body:   bytes.NewReader([]byte("inside docs")),
 		})
 		require.NoError(t, err)
 
@@ -177,6 +188,7 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 		})
 		require.NoError(t, err)
 
+		// Unpaginated: all three keys should appear.
 		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
 			Bucket: aws.String(siblingBucket),
 		})
@@ -185,8 +197,29 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 		keys := collectKeys(resp.Contents)
 		sort.Strings(keys)
 
-		assert.Equal(t, []string{"docs/", "readme.txt"}, keys,
-			"top-level empty directory marker should be listed alongside files")
+		assert.Equal(t, []string{"docs/", "docs/readme.txt", "readme.txt"}, keys,
+			"directory marker, its child, and sibling file should all be listed")
+
+		// Paginated with MaxKeys=1: collect all keys across pages.
+		var allKeys []string
+		var token *string
+		for {
+			pageResp, pageErr := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+				Bucket:            aws.String(siblingBucket),
+				MaxKeys:           aws.Int64(1),
+				ContinuationToken: token,
+			})
+			require.NoError(t, pageErr)
+			allKeys = append(allKeys, collectKeys(pageResp.Contents)...)
+			if !aws.BoolValue(pageResp.IsTruncated) {
+				break
+			}
+			token = pageResp.NextContinuationToken
+		}
+		sort.Strings(allKeys)
+
+		assert.Equal(t, []string{"docs/", "docs/readme.txt", "readme.txt"}, allKeys,
+			"paginated listing should return all keys including marker and its child")
 	})
 }
 
