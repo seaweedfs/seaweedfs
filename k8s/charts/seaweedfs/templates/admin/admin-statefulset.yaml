@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.admin.enabled }}
 {{- if gt (.Values.admin.replicas | int) 1 }}
 {{- fail "admin.replicas must be 0 or 1" -}}

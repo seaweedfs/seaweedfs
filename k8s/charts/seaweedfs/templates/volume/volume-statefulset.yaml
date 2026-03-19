@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{ $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume)  }}
 {{- range $vname, $volume := $volumes }}
 {{- $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}

@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.admin.enabled }}
 {{- if .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1

@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.worker.enabled }}
 {{- if and (not .Values.worker.adminServer) (not .Values.admin.enabled) }}
 {{- fail "worker.adminServer must be set if admin.enabled is false within the same release" -}}

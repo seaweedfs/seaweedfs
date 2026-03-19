@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.master.enabled }}
 {{- if .Values.master.metricsPort }}
 {{- if .Values.global.seaweedfs.monitoring.enabled }}

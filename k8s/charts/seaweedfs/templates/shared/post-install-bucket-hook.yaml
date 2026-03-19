@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
 {{- $createBuckets := list }}
 {{- $s3Enabled := false }}

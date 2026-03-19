@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.global.seaweedfs.enableSecurity }}
 apiVersion: v1
 kind: ConfigMap

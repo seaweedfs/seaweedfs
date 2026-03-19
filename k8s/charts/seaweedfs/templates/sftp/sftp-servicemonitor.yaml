@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.sftp.enabled }}
 {{- if .Values.sftp.metricsPort }}
 {{- if .Values.global.seaweedfs.monitoring.enabled }}

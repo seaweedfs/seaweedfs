@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.s3.enabled }}
 apiVersion: apps/v1
 kind: Deployment

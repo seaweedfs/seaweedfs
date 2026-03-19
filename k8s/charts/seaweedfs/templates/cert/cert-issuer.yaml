@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if and .Values.global.seaweedfs.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
 apiVersion: cert-manager.io/v1{{ if .Values.global.seaweedfs.certificates.alphacrds }}alpha1{{ end }}
 kind: Issuer
