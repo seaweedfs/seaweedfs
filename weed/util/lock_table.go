@@ -85,7 +85,7 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 				entry.cond.Wait()
 			}
 		} else {
-			for !lock.isDeleted && (len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 {
+			for !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0) {
 				entry.cond.Wait()
 			}
 		}
