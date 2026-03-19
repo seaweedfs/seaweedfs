@@ -52,12 +52,16 @@ func (lt *LockTable[T]) NewActiveLock(intention string, lockType LockType) *Acti
 	return l
 }
 
+func isNotFirstWaiter(lock *ActiveLock, entry *LockEntry) bool {
+	return len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID
+}
+
 func shouldWaitForExclusiveLock(lock *ActiveLock, entry *LockEntry) bool {
-	return !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 || entry.activeSharedLockOwnerCount > 0)
+	return !lock.isDeleted && (isNotFirstWaiter(lock, entry) || entry.activeExclusiveLockOwnerCount > 0 || entry.activeSharedLockOwnerCount > 0)
 }
 
 func shouldWaitForSharedLock(lock *ActiveLock, entry *LockEntry) bool {
-	return !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0)
+	return !lock.isDeleted && (isNotFirstWaiter(lock, entry) || entry.activeExclusiveLockOwnerCount > 0)
 }
 
 func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) (lock *ActiveLock) {
