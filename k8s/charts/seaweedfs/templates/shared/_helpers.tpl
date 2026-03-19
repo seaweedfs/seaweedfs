@@ -143,9 +143,9 @@ Inject extra environment vars in the format key:value, if populated
 
 {{/* Computes the container image name for all components (if they are not overridden) */}}
 {{- define "common.image" -}}
-{{- $registryName := default .Values.image.registry .Values.global.registry | toString -}}
-{{- $repositoryName := default .Values.image.repository .Values.global.repository | toString -}}
-{{- $name := .Values.global.imageName | toString -}}
+{{- $registryName := default .Values.image.registry .Values.global.imageRegistry | toString -}}
+{{- $repositoryName := default .Values.image.repository .Values.global.seaweedfs.image.repository | toString -}}
+{{- $name := .Values.global.seaweedfs.image.name | toString -}}
 {{- $tag := default .Chart.AppVersion .Values.image.tag  | toString -}}
 {{- if .Values.image.repository -}}
 {{-   $name = $repositoryName -}}
@@ -318,8 +318,8 @@ Generate master server argument value, using global.masterServer if set, otherwi
 Usage: {{ include "seaweedfs.masterServerArg" . }}
 */}}
 {{- define "seaweedfs.masterServerArg" -}}
-{{- if .Values.global.masterServer -}}
-{{- .Values.global.masterServer -}}
+{{- if .Values.global.seaweedfs.masterServer -}}
+{{- .Values.global.seaweedfs.masterServer -}}
 {{- else -}}
 {{- include "seaweedfs.masterServers" . -}}
 {{- end -}}
@@ -329,7 +329,7 @@ Usage: {{ include "seaweedfs.masterServerArg" . }}
 Create the name of the service account to use
 */}}
 {{- define "seaweedfs.serviceAccountName" -}}
-{{- .Values.global.serviceAccountName | default "seaweedfs" -}}
+{{- .Values.global.seaweedfs.serviceAccountName | default "seaweedfs" -}}
 {{- end -}}
 
 {{/* S3 TLS cert/key arguments, using custom secret if s3.tlsSecret is set */}}
