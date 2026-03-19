@@ -402,7 +402,7 @@ func normalizeMasterPeerAddress(peer pb.ServerAddress, self pb.ServerAddress) pb
 }
 
 // peerIndex returns the 0-based position of self in the sorted peer list.
-// Peer 0 is the designated bootstrap node. Returns 0 if self is not found.
+// Peer 0 is the designated bootstrap node. Returns -1 if self is not found.
 func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
 		return strings.Compare(a.ToHttpAddress(), b.ToHttpAddress())
@@ -412,7 +412,8 @@ func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
 			return i
 		}
 	}
-	return 0
+	glog.Warningf("peerIndex: self %s not found in peers %v", self, peers)
+	return -1
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {

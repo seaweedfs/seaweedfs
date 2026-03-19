@@ -73,7 +73,10 @@ func TestLeaderDownSlowRecover(t *testing.T) {
 	if leaderIdx < 0 {
 		t.Fatal("no leader found")
 	}
-	topologyId, _ := mc.GetTopologyId(leaderIdx)
+	topologyId, err := mc.GetTopologyId(leaderIdx)
+	if err != nil || topologyId == "" {
+		t.Fatalf("failed to get initial TopologyId: %v", err)
+	}
 	t.Logf("initial leader: node %d, TopologyId: %s", leaderIdx, topologyId)
 
 	// Stop the leader.

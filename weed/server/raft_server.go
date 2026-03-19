@@ -228,8 +228,8 @@ func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
 	if err != nil {
 		return
 	}
+	defer dir.Close()
 	filenames, err := dir.Readdirnames(-1)
-	dir.Close()
 	if err != nil || len(filenames) == 0 {
 		return
 	}
