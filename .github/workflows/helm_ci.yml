@@ -212,7 +212,7 @@ jobs:
           if errors:
               for e in errors:
                   print(f"FAIL: {e}", file=sys.stderr)
-              print("Rendered with: global.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
+              print("Rendered with: global.seaweedfs.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
               sys.exit(1)
           print("✓ No blank lines in security+S3 command blocks")
           PYEOF

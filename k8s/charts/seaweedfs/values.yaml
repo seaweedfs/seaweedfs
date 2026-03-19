@@ -10,7 +10,7 @@ global:
   seaweedfs:
     createClusterRole: true
     image:
-      # if repository is set, it overrides the namespace part of imageName
+      # if repository is set, it overrides the namespace part of image.name
       repository: ""
       name: chrislusf/seaweedfs
     imagePullPolicy: IfNotPresent
