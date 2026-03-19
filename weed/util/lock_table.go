@@ -52,6 +52,14 @@ func (lt *LockTable[T]) NewActiveLock(intention string, lockType LockType) *Acti
 	return l
 }
 
+func shouldWaitForExclusiveLock(lock *ActiveLock, entry *LockEntry) bool {
+	return !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 || entry.activeSharedLockOwnerCount > 0)
+}
+
+func shouldWaitForSharedLock(lock *ActiveLock, entry *LockEntry) bool {
+	return !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0)
+}
+
 func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) (lock *ActiveLock) {
 	lt.mu.Lock()
 	// Get or create the lock entry for the key
@@ -81,11 +89,11 @@ func (lt *LockTable[T]) AcquireLock(intention string, key T, lockType LockType) 
 		}
 		entry.waiters = append(entry.waiters, lock)
 		if lockType == ExclusiveLock {
-			for !lock.isDeleted && ((len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 || entry.activeSharedLockOwnerCount > 0) {
+			for shouldWaitForExclusiveLock(lock, entry) {
 				entry.cond.Wait()
 			}
 		} else {
-			for !lock.isDeleted && (len(entry.waiters) > 0 && lock.ID != entry.waiters[0].ID) || entry.activeExclusiveLockOwnerCount > 0 {
+			for shouldWaitForSharedLock(lock, entry) {
 				entry.cond.Wait()
 			}
 		}
