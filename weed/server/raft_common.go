@@ -1,12 +1,30 @@
 package weed_server
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
+
+// recoverTopologyIdFromState restores the TopologyId from serialized FSM
+// state bytes (JSON-encoded MaxVolumeIdCommand). Both raft implementations
+// call this after reading their snapshot in their own format.
+func recoverTopologyIdFromState(fsmState []byte, topo *topology.Topology) {
+	if topo.GetTopologyId() != "" {
+		return
+	}
+	var cmd topology.MaxVolumeIdCommand
+	if err := json.Unmarshal(fsmState, &cmd); err != nil {
+		return
+	}
+	if cmd.TopologyId != "" {
+		topo.SetTopologyId(cmd.TopologyId)
+		glog.V(0).Infof("Recovered TopologyId from snapshot: %s", cmd.TopologyId)
+	}
+}
 
 // EnsureTopologyId ensures that a TopologyId is generated and persisted if it's currently missing.
 // It uses the provided checkLeaderFn to verify leadership and persistFn to save the new ID.
