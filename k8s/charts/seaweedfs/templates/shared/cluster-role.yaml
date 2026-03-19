@@ -1,4 +1,4 @@
-{{- if .Values.global.createClusterRole }}
+{{- if .Values.global.seaweedfs.createClusterRole }}
 #hack for delete pod master after migration
 ---
 kind: ClusterRole

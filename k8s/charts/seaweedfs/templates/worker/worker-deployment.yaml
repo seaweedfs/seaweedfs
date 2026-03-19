@@ -45,7 +45,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.worker.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.worker.restartPolicy }}
       {{- if .Values.worker.affinity }}
       affinity:
         {{ tpl .Values.worker.affinity . | nindent 8 | trim }}
@@ -77,7 +77,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "worker.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -94,7 +94,7 @@ spec:
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.worker "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -118,7 +118,7 @@ spec:
               {{- if .Values.worker.loggingOverrideLevel }}
               -v={{ .Values.worker.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               worker \
               {{- if .Values.worker.adminServer }}
@@ -148,7 +148,7 @@ spec:
             - name: worker-logs
               mountPath: /logs
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -251,7 +251,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ .Values.worker.logs.claimName }}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

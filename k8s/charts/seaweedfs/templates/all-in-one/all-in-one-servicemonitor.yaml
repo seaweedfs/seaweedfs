@@ -1,5 +1,5 @@
 {{- if .Values.allInOne.enabled }}
-{{- if .Values.global.monitoring.enabled }}
+{{- if .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -11,7 +11,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: all-in-one
-    {{- with .Values.global.monitoring.additionalLabels }}
+    {{- with .Values.global.seaweedfs.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:

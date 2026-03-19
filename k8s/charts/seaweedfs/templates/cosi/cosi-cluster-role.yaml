@@ -60,7 +60,7 @@ metadata:
     app.kubernetes.io/instance: {{ .Release.Name }}
 subjects:
   - kind: ServiceAccount
-    name: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+    name: {{ .Values.global.seaweedfs.serviceAccountName }}-objectstorage-provisioner
     namespace: {{ .Release.Namespace }}
 roleRef:
   kind: ClusterRole

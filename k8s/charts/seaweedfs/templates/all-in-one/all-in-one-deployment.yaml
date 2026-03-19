@@ -44,7 +44,7 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.allInOne.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.allInOne.restartPolicy }}
       {{- if .Values.allInOne.affinity }}
       affinity:
         {{ tpl .Values.allInOne.affinity . | nindent 8 | trim }}
@@ -77,10 +77,10 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "master.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
-            {{- $envMerged := merge (.Values.global.extraEnvironmentVars | default dict) (.Values.allInOne.extraEnvironmentVars | default dict) }}
+            {{- $envMerged := merge (.Values.global.seaweedfs.extraEnvironmentVars | default dict) (.Values.allInOne.extraEnvironmentVars | default dict) }}
             {{- $clusterDefault := default "sw" (index $envMerged "WEED_CLUSTER_DEFAULT") }}
             {{- $clusterUpper := upper $clusterDefault }}
             {{- $clusterMasterKey := printf "WEED_CLUSTER_%s_MASTER" $clusterUpper }}
@@ -112,8 +112,8 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
+            {{- if .Values.global.seaweedfs.extraEnvironmentVars }}
+            {{- range $key, $value := .Values.global.seaweedfs.extraEnvironmentVars }}
             {{- if and (ne $key $clusterMasterKey) (ne $key $clusterFilerKey) }}
             - name: {{ $key }}
               {{- if kindIs "string" $value }}
@@ -145,7 +145,7 @@ spec:
               {{- if .Values.allInOne.loggingOverrideLevel }}
               -v={{ .Values.allInOne.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               server \
               -dir=/data \
@@ -176,8 +176,8 @@ spec:
               {{- end }}
               {{- end }}
               -master.port={{ .Values.master.port }} \
-              {{- if .Values.global.enableReplication }}
-              -master.defaultReplication={{ .Values.global.replicationPlacement }} \
+              {{- if .Values.global.seaweedfs.enableReplication }}
+              -master.defaultReplication={{ .Values.global.seaweedfs.replicationPlacement }} \
               {{- else }}
               -master.defaultReplication={{ .Values.master.defaultReplication }} \
               {{- end }}
@@ -215,8 +215,8 @@ spec:
               -filer.disableDirListing \
               {{- end }}
               -filer.dirListLimit={{ .Values.filer.dirListLimit }} \
-              {{- if .Values.global.enableReplication }}
-              -filer.defaultReplicaPlacement={{ .Values.global.replicationPlacement }} \
+              {{- if .Values.global.seaweedfs.enableReplication }}
+              -filer.defaultReplicaPlacement={{ .Values.global.seaweedfs.replicationPlacement }} \
               {{- else }}
               -filer.defaultReplicaPlacement={{ .Values.filer.defaultReplicaPlacement }} \
               {{- end }}
@@ -242,7 +242,7 @@ spec:
               {{- if $domainName }}
               -s3.domainName={{ $domainName }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- $httpsPort := .Values.allInOne.s3.httpsPort | default .Values.s3.httpsPort }}
               {{- if $httpsPort }}
               -s3.port.https={{ $httpsPort }} \
@@ -329,7 +329,7 @@ spec:
               mountPath: /etc/seaweedfs/master.toml
               subPath: master.toml
               readOnly: true
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               mountPath: /etc/seaweedfs/security.toml
               subPath: security.toml
@@ -460,7 +460,7 @@ spec:
         - name: master-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-master-config
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

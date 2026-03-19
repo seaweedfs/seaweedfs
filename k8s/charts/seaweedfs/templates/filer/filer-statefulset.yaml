@@ -56,7 +56,7 @@ spec:
         checksum/s3config: {{ include (print .Template.BasePath "/s3/s3-secret.yaml") . | sha256sum }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.filer.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.filer.restartPolicy }}
       {{- if .Values.filer.affinity }}
       affinity:
         {{ tpl .Values.filer.affinity . | nindent 8 | trim }}
@@ -86,7 +86,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "filer.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -115,7 +115,7 @@ spec:
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.filer "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -145,7 +145,7 @@ spec:
               {{- if .Values.filer.loggingOverrideLevel }}
               -v={{ .Values.filer.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               filer \
               -port={{ .Values.filer.port }} \
@@ -165,8 +165,8 @@ spec:
               -disableDirListing \
               {{- end }}
               -dirListLimit={{ .Values.filer.dirListLimit }} \
-              {{- if .Values.global.enableReplication }}
-              -defaultReplicaPlacement={{ .Values.global.replicationPlacement }} \
+              {{- if .Values.global.seaweedfs.enableReplication }}
+              -defaultReplicaPlacement={{ .Values.global.seaweedfs.replicationPlacement }} \
               {{- else }}
               -defaultReplicaPlacement={{ .Values.filer.defaultReplicaPlacement }} \
               {{- end }}
@@ -196,7 +196,7 @@ spec:
               {{- if .Values.filer.s3.domainName }}
               -s3.domainName={{ .Values.filer.s3.domainName }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- if .Values.filer.s3.httpsPort }}
               -s3.port.https={{ .Values.filer.s3.httpsPort }} \
               {{- end }}
@@ -233,7 +233,7 @@ spec:
               mountPath: /etc/seaweedfs/notification.toml
               subPath: notification.toml
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -273,7 +273,7 @@ spec:
               name: swfs-s3-tls
             {{- end }}
             {{- end }}
-          {{- $isJwtEnabled := or .Values.global.securityConfig.jwtSigning.filerWrite .Values.global.securityConfig.jwtSigning.filerRead }}
+          {{- $isJwtEnabled := or .Values.global.seaweedfs.securityConfig.jwtSigning.filerWrite .Values.global.seaweedfs.securityConfig.jwtSigning.filerRead }}
           {{- if .Values.filer.readinessProbe.enabled }}
           readinessProbe:
           {{- if or $isJwtEnabled .Values.filer.readinessProbe.tcpSocket }}
@@ -367,7 +367,7 @@ spec:
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-notification-config
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

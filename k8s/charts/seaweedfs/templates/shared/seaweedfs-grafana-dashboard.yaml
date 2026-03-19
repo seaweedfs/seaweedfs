@@ -1,4 +1,4 @@
-{{- if .Values.global.monitoring.enabled }}
+{{- if .Values.global.seaweedfs.monitoring.enabled }}
 {{- $files := .Files.Glob "dashboards/*.json" }}
 {{- if $files }}
 {{- range $path, $file := $files }}
