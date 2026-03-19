@@ -86,6 +86,10 @@ spec:
             - name: {{ $dir.name }}
               mountPath: /{{ $dir.name }}
           {{- end }}
+          {{- with $volume.idxVolMoveResources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
           {{- if $volume.containerSecurityContext.enabled }}
           securityContext: {{- omit $volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
