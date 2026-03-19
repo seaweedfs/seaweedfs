@@ -62,3 +62,25 @@ func TestShouldWaitForSharedLock(t *testing.T) {
 		t.Fatal("deleted shared lock should stop waiting even if an exclusive owner is active")
 	}
 }
+
+func TestShouldWaitForExclusiveLock(t *testing.T) {
+	lock := &ActiveLock{ID: 2, lockType: ExclusiveLock}
+	entry := &LockEntry{
+		waiters: []*ActiveLock{{ID: 1}, lock},
+	}
+
+	if !shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("exclusive lock should wait behind earlier waiters")
+	}
+
+	entry.waiters = []*ActiveLock{lock}
+	entry.activeSharedLockOwnerCount = 1
+	if !shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("exclusive lock should wait while shared owners are active")
+	}
+
+	lock.isDeleted = true
+	if shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("deleted exclusive lock should stop waiting even if shared owners are active")
+	}
+}
