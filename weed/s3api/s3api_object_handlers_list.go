@@ -684,8 +684,7 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 					}
 				} else if entry.IsDirectoryKeyObject() {
 					// Directory key objects (created via PutObject with trailing "/")
-					// must appear as regular keys in recursive listing mode,
-					// matching AWS S3 behavior (issue #8698).
+					// must appear as regular keys in recursive listing mode.
 					eachEntryFn(dir, entry)
 				}
 				// Recurse into subdirectory to list any children
