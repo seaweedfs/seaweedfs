@@ -269,6 +269,14 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 			wantChanged: true,
 		},
 		{
+			name:        "version file at absolute root",
+			dir:         "/file.xml" + s3_constants.VersionsFolder,
+			entryName:   "v_abc123",
+			wantDir:     "/",
+			wantName:    "file.xml",
+			wantChanged: true,
+		},
+		{
 			name:        "non-version file in .versions dir",
 			dir:         "/buckets/bucket/file.xml" + s3_constants.VersionsFolder,
 			entryName:   "some_other_file",

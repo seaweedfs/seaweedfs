@@ -144,16 +144,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if isDeleteMarker(message.NewEntry) {
 				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
 					dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
-					glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-					if err := client.DeleteFile(dest); err != nil {
-						return err
-					}
-					// Mark the delete-marker entry as synced so that
-					// replaying the same event is a no-op.
-					return updateLocalEntry(option, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
-						StorageName: dest.Name,
-						RemoteMtime: message.NewEntry.Attributes.GetMtime(),
-					})
+					return syncDeleteMarker(client, option, message, dest)
 				}
 				return nil
 			}
@@ -339,6 +330,24 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
 }
 
+// syncDeleteMarker propagates a delete marker to the remote storage and
+// persists a local sync marker so that replaying the same event is a no-op.
+func syncDeleteMarker(
+	client remote_storage.RemoteStorageClient,
+	filerClient filer_pb.FilerClient,
+	message *filer_pb.EventNotification,
+	dest *remote_pb.RemoteStorageLocation,
+) error {
+	glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+	if err := client.DeleteFile(dest); err != nil {
+		return err
+	}
+	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
+		StorageName: dest.Name,
+		RemoteMtime: message.NewEntry.Attributes.GetMtime(),
+	})
+}
+
 // isVersionedPath returns true if the dir/name refers to an internal
 // versioning path (.versions directory or a version file inside it).
 // These paths are SeaweedFS-internal and must not be synced to remote
@@ -384,5 +393,9 @@ func rewriteVersionedSourcePath(dir string, name string) (string, string, bool) 
 	if lastSlash < 0 {
 		return dir, name, false
 	}
-	return originalObjectPath[:lastSlash], originalObjectPath[lastSlash+1:], true
+	newDir := originalObjectPath[:lastSlash]
+	if lastSlash == 0 {
+		newDir = "/"
+	}
+	return newDir, originalObjectPath[lastSlash+1:], true
 }

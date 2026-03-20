@@ -224,16 +224,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 						return err
 					}
 					dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
-					glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-					if err := client.DeleteFile(dest); err != nil {
-						return err
-					}
-					// Mark the delete-marker entry as synced so that
-					// replaying the same event is a no-op.
-					return updateLocalEntry(option, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
-						StorageName: dest.Name,
-						RemoteMtime: message.NewEntry.Attributes.GetMtime(),
-					})
+					return syncDeleteMarker(client, option, message, dest)
 				}
 				return nil
 			}
