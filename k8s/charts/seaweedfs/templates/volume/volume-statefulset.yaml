@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{ $volumes := deepCopy .Values.volumes | mergeOverwrite (dict "" .Values.volume)  }}
 {{- range $vname, $volume := $volumes }}
 {{- $volumeName := trimSuffix "-" (printf "volume-%s" $vname) }}
@@ -58,7 +59,7 @@ spec:
       topologySpreadConstraints:
         {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.topologySpreadConstraints) $ | nindent 8 | trim }}
       {{- end }}
-      restartPolicy: {{ default $.Values.global.restartPolicy $volume.restartPolicy }}
+      restartPolicy: {{ default $.Values.global.seaweedfs.restartPolicy $volume.restartPolicy }}
       {{- if $volume.tolerations }}
       tolerations:
         {{ tpl (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.tolerations) $ | indent 8 | trim }}
@@ -76,7 +77,7 @@ spec:
         {{- if $volume.idx }}
         - name: seaweedfs-vol-move-idx
           image: {{ template "volume.image" $ }}
-          imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "IfNotPresent" }}
+          imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
           args: [ '{{range $dir :=  $volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
           volumeMounts:
@@ -104,7 +105,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "volume.image" $ }}
-          imagePullPolicy: {{ default "IfNotPresent" $.Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" $.Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_NAME
               valueFrom:
@@ -121,7 +122,7 @@ spec:
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" $ }}"
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" $.Values.global "component" $volume "target" $mergedExtraEnvironmentVars) }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" $.Values.global.seaweedfs "component" $volume "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -145,7 +146,7 @@ spec:
                 {{- if $volume.loggingOverrideLevel }}
                 -v={{ $volume.loggingOverrideLevel }} \
                 {{- else }}
-                -v={{ $.Values.global.loggingLevel }} \
+                -v={{ $.Values.global.seaweedfs.loggingLevel }} \
                 {{- end }}
                 volume \
                 -port={{ $volume.port }} \
@@ -210,7 +211,7 @@ spec:
             - name: idx
               mountPath: "/idx/"
             {{- end }}
-            {{- if $.Values.global.enableSecurity }}
+            {{- if $.Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -332,7 +333,7 @@ spec:
           emptyDir: {}
        {{- end }}
      {{- end }}
-     {{- if $.Values.global.enableSecurity }}
+     {{- if $.Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" $ }}-security-config

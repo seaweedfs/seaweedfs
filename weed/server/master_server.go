@@ -297,11 +297,28 @@ func (ms *MasterServer) ensureTopologyId() {
 	currentId := ms.Topo.GetTopologyId()
 	glog.V(1).Infof("ensureTopologyId: current TopologyId after barrier: %s", currentId)
 
+	prevId := ms.Topo.GetTopologyId()
+
 	EnsureTopologyId(ms.Topo, func() bool {
 		return ms.Topo.IsLeader()
 	}, func(topologyId string) error {
 		return ms.syncRaftForTopologyId(topologyId)
 	})
+
+	// If a new TopologyId was generated, take a snapshot so it survives
+	// raft state cleanup on future non-resume restarts.
+	if prevId == "" && ms.Topo.GetTopologyId() != "" {
+		ms.Topo.RaftServerAccessLock.RLock()
+		if ms.Topo.RaftServer != nil {
+			if err := ms.Topo.RaftServer.TakeSnapshot(); err != nil {
+				glog.Warningf("snapshot after TopologyId generation: %v", err)
+			} else {
+				glog.V(0).Infof("snapshot taken to persist TopologyId %s", ms.Topo.GetTopologyId())
+			}
+		}
+		// Hashicorp raft snapshots are handled automatically.
+		ms.Topo.RaftServerAccessLock.RUnlock()
+	}
 }
 
 func (ms *MasterServer) proxyToLeader(f http.HandlerFunc) http.HandlerFunc {
