@@ -145,7 +145,15 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
 					dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
 					glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
-					return client.DeleteFile(dest)
+					if err := client.DeleteFile(dest); err != nil {
+						return err
+					}
+					// Mark the delete-marker entry as synced so that
+					// replaying the same event is a no-op.
+					return updateLocalEntry(option, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
+						StorageName: dest.Name,
+						RemoteMtime: message.NewEntry.Attributes.GetMtime(),
+					})
 				}
 				return nil
 			}
