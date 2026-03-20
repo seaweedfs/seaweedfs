@@ -68,6 +68,10 @@ var logRotateHours = flag.Int("log_rotate_hours", 168, "Rotate log files after t
 // Useful for integration with ELK, Loki, Datadog, and other log aggregation systems.
 var logJSON = flag.Bool("log_json", false, "Output logs in JSON format instead of glog text format")
 
+// logCompress enables gzip compression of rotated log files.
+// Compressed files get a .gz suffix. Compression runs in the background.
+var logCompress = flag.Bool("log_compress", false, "Gzip-compress rotated log files to save disk space")
+
 func createLogDirs() {
 	// Apply flag values now that flags have been parsed.
 	if *logMaxSizeMB > 0 {
@@ -75,6 +79,10 @@ func createLogDirs() {
 	}
 	if *logMaxFiles > 0 {
 		MaxFileCount = *logMaxFiles
+	}
+
+	if *logCompress {
+		SetCompressRotated(true)
 	}
 
 	if *logDir != "" {
@@ -164,21 +172,31 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 	var lastErr error
 	for _, dir := range logDirs {
 
-		// remove old logs
+		// remove old logs (including .gz compressed rotated files)
+		// Deduplicate .log/.log.gz pairs so concurrent compression
+		// doesn't cause double-counting against MaxFileCount.
 		entries, _ := os.ReadDir(dir)
-		var previousLogs []string
+		previousLogs := make(map[string][]string) // bare name -> actual file names
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), logPrefix) {
-				previousLogs = append(previousLogs, entry.Name())
+			name := entry.Name()
+			bare := strings.TrimSuffix(name, ".gz")
+			if strings.HasPrefix(bare, logPrefix) {
+				previousLogs[bare] = append(previousLogs[bare], name)
 			}
 		}
 		if len(previousLogs) >= MaxFileCount {
-			sort.Strings(previousLogs)
-			for i, entry := range previousLogs {
-				if i > len(previousLogs)-MaxFileCount {
+			var keys []string
+			for bare := range previousLogs {
+				keys = append(keys, bare)
+			}
+			sort.Strings(keys)
+			for i, bare := range keys {
+				if i > len(keys)-MaxFileCount {
 					break
 				}
-				os.Remove(filepath.Join(dir, entry))
+				for _, name := range previousLogs[bare] {
+					os.Remove(filepath.Join(dir, name))
+				}
 			}
 		}
 

@@ -210,6 +210,24 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
 			}
+			// Propagate delete markers as deletions on the remote.
+			// Delete markers are zero-content version entries, so they
+			// would be filtered out by the HasData check below.
+			if isDeleteMarker(message.NewEntry) {
+				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
+					bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(newParent)
+					if !ok {
+						return nil
+					}
+					client, err := remote_storage.GetRemoteStorage(remoteStorage)
+					if err != nil {
+						return err
+					}
+					dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+					return syncDeleteMarker(client, option, message, dest)
+				}
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
@@ -226,7 +244,16 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				glog.V(2).Infof("skipping creating: %+v", resp)
 				return nil
 			}
-			dest := toRemoteStorageLocation(bucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			// Rewrite internal versioning paths to the original S3 key
+			// to prevent double-versioning when central also has versioning enabled
+			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+			isRewrittenVersion := false
+			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
+				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
+				parentPath, entryName = newParent, newName
+				isRewrittenVersion = true
+			}
+			dest := toRemoteStorageLocation(bucket, util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
@@ -236,11 +263,25 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if writeErr != nil {
 				return writeErr
 			}
+			// Skip updateLocalEntry for versioned rewrites: the logical
+			// object (e.g. file.xml) has no filer entry in versioned
+			// buckets, and stamping the internal v_* entry with a
+			// RemoteEntry for the logical key is semantically wrong.
+			// Replay is safe because S3 PutObject is idempotent.
+			if isRewrittenVersion {
+				return nil
+			}
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
 				return handleDeleteBucket(message.OldEntry)
+			}
+			// Skip deletion of internal version files; individual version
+			// deletes should not propagate to the remote object
+			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+				return nil
 			}
 			bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(resp.Directory)
 			if !ok {
@@ -274,6 +315,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				}
 			}
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
+			// Skip updates to internal version paths
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
 			oldBucket, oldRemoteStorageMountLocation, oldRemoteStorage, oldOk := option.detectBucketInfo(resp.Directory)
