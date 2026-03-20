@@ -169,22 +169,30 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 	for _, dir := range logDirs {
 
 		// remove old logs (including .gz compressed rotated files)
+		// Deduplicate .log/.log.gz pairs so concurrent compression
+		// doesn't cause double-counting against MaxFileCount.
 		entries, _ := os.ReadDir(dir)
-		var previousLogs []string
+		previousLogs := make(map[string][]string) // bare name -> actual file names
 		for _, entry := range entries {
 			name := entry.Name()
 			bare := strings.TrimSuffix(name, ".gz")
 			if strings.HasPrefix(bare, logPrefix) {
-				previousLogs = append(previousLogs, name)
+				previousLogs[bare] = append(previousLogs[bare], name)
 			}
 		}
 		if len(previousLogs) >= MaxFileCount {
-			sort.Strings(previousLogs)
-			for i, entry := range previousLogs {
-				if i > len(previousLogs)-MaxFileCount {
+			var keys []string
+			for bare := range previousLogs {
+				keys = append(keys, bare)
+			}
+			sort.Strings(keys)
+			for i, bare := range keys {
+				if i > len(keys)-MaxFileCount {
 					break
 				}
-				os.Remove(filepath.Join(dir, entry))
+				for _, name := range previousLogs[bare] {
+					os.Remove(filepath.Join(dir, name))
+				}
 			}
 		}
 
