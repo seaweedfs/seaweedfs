@@ -226,7 +226,14 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				glog.V(2).Infof("skipping creating: %+v", resp)
 				return nil
 			}
-			dest := toRemoteStorageLocation(bucket, util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			// Rewrite internal versioning paths to the original S3 key
+			// to prevent double-versioning when central also has versioning enabled
+			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
+				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
+				parentPath, entryName = newParent, newName
+			}
+			dest := toRemoteStorageLocation(bucket, util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
@@ -241,6 +248,12 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 		if filer_pb.IsDelete(resp) {
 			if resp.Directory == option.bucketsDir {
 				return handleDeleteBucket(message.OldEntry)
+			}
+			// Skip deletion of internal version files; individual version
+			// deletes should not propagate to the remote object
+			if isVersionedPath(resp.Directory, message.OldEntry.Name) {
+				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+				return nil
 			}
 			bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(resp.Directory)
 			if !ok {
@@ -274,6 +287,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				}
 			}
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
+			// Skip updates to internal version paths
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name) {
+				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
 			oldBucket, oldRemoteStorageMountLocation, oldRemoteStorage, oldOk := option.detectBucketInfo(resp.Directory)

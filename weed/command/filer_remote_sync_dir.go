@@ -146,7 +146,14 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				glog.V(2).Infof("skipping creating: %+v", resp)
 				return nil
 			}
-			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			// Rewrite internal versioning paths to the original S3 key
+			// to prevent double-versioning when central also has versioning enabled
+			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
+				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
+				parentPath, entryName = newParent, newName
+			}
+			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
@@ -159,6 +166,12 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
+			// Skip deletion of internal version files; individual version
+			// deletes should not propagate to the remote object
+			if isVersionedPath(resp.Directory, message.OldEntry.Name) {
+				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+				return nil
+			}
 			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			if message.OldEntry.IsDirectory {
@@ -170,6 +183,11 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
+			// Skip updates to internal version paths
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name) {
+				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
@@ -291,4 +309,52 @@ func isMultipartUploadFile(dir string, name string) bool {
 func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
 		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
+}
+
+// isVersionedPath returns true if the dir/name refers to an internal
+// versioning path (.versions directory or a version file inside it).
+// These paths are SeaweedFS-internal and must not be synced to remote
+// storage as-is, because the remote S3 endpoint may apply its own
+// versioning, leading to double-versioned paths.
+func isVersionedPath(dir string, name string) bool {
+	if strings.HasSuffix(dir, s3_constants.VersionsFolder) {
+		return true
+	}
+	if strings.Contains(dir, s3_constants.VersionsFolder+"/") {
+		return true
+	}
+	if strings.HasSuffix(name, s3_constants.VersionsFolder) {
+		return true
+	}
+	return false
+}
+
+// rewriteVersionedSourcePath rewrites an internal versioning path to the
+// original S3 object key. When a file is uploaded to a versioned bucket,
+// SeaweedFS stores it internally as:
+//
+//	/buckets/{bucket}/{key}.versions/v_{versionId}
+//
+// This function strips the ".versions/v_{versionId}" suffix and returns
+// the original parent directory and object name, so the remote destination
+// points to the logical S3 key rather than the internal version storage path.
+//
+// Returns (newDir, newName, true) if the path was rewritten, or
+// (dir, name, false) if the path is not a versioned path.
+func rewriteVersionedSourcePath(dir string, name string) (string, string, bool) {
+	if !strings.HasSuffix(dir, s3_constants.VersionsFolder) {
+		return dir, name, false
+	}
+	if !strings.HasPrefix(name, "v_") {
+		return dir, name, false
+	}
+	// dir  = "/buckets/bucket/path/to/file.xml.versions"
+	// name = "v_abc123"
+	// Original object: dir without ".versions" suffix → "/buckets/bucket/path/to/file.xml"
+	originalObjectPath := dir[:len(dir)-len(s3_constants.VersionsFolder)]
+	lastSlash := strings.LastIndex(originalObjectPath, "/")
+	if lastSlash < 0 {
+		return dir, name, false
+	}
+	return originalObjectPath[:lastSlash], originalObjectPath[lastSlash+1:], true
 }
