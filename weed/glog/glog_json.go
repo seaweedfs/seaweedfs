@@ -139,7 +139,7 @@ func jsonEscapeString(s string) string {
 			i++
 		default:
 			r, size := utf8.DecodeRuneInString(s[i:])
-			if r == utf8.RuneError {
+			if r == utf8.RuneError && size == 1 {
 				b.WriteString(`\ufffd`)
 				i++
 			} else {
