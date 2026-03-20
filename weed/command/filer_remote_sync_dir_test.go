@@ -167,6 +167,22 @@ func TestIsVersionedPath(t *testing.T) {
 			isDir:    false,
 			expected: false,
 		},
+		// Non-bucket mount: .versions dir should not match
+		{
+			label:    ".versions dir outside /buckets/",
+			dir:      "/mnt/remote/path/to",
+			name:     "file.xml" + s3_constants.VersionsFolder,
+			isDir:    true,
+			expected: false,
+		},
+		// Non-bucket mount: v_ file should not match
+		{
+			label:    "v_ file outside /buckets/",
+			dir:      "/data/archive/file.xml" + s3_constants.VersionsFolder,
+			name:     "v_abc123",
+			isDir:    false,
+			expected: false,
+		},
 	}
 
 	for _, tt := range tests {
@@ -269,12 +285,20 @@ func TestRewriteVersionedSourcePath(t *testing.T) {
 			wantChanged: true,
 		},
 		{
-			name:        "version file at absolute root",
+			name:        "non-bucket path not rewritten",
 			dir:         "/file.xml" + s3_constants.VersionsFolder,
 			entryName:   "v_abc123",
-			wantDir:     "/",
-			wantName:    "file.xml",
-			wantChanged: true,
+			wantDir:     "/file.xml" + s3_constants.VersionsFolder,
+			wantName:    "v_abc123",
+			wantChanged: false,
+		},
+		{
+			name:        "non-bucket mount not rewritten",
+			dir:         "/mnt/remote/file.xml" + s3_constants.VersionsFolder,
+			entryName:   "v_abc123",
+			wantDir:     "/mnt/remote/file.xml" + s3_constants.VersionsFolder,
+			wantName:    "v_abc123",
+			wantChanged: false,
 		},
 		{
 			name:        "non-version file in .versions dir",

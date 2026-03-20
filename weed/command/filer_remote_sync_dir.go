@@ -370,6 +370,9 @@ func syncDeleteMarker(
 // VersionsFolder and the file name has the "v_" prefix used by
 // the internal version file naming convention.
 func isVersionedPath(dir string, name string, isDir bool) bool {
+	if !strings.HasPrefix(dir, "/buckets/") {
+		return false
+	}
 	if isDir {
 		return strings.HasSuffix(name, s3_constants.VersionsFolder)
 	}
@@ -389,6 +392,9 @@ func isVersionedPath(dir string, name string, isDir bool) bool {
 // Returns (newDir, newName, true) if the path was rewritten, or
 // (dir, name, false) if the path is not a versioned path.
 func rewriteVersionedSourcePath(dir string, name string) (string, string, bool) {
+	if !strings.HasPrefix(dir, "/buckets/") {
+		return dir, name, false
+	}
 	if !strings.HasSuffix(dir, s3_constants.VersionsFolder) {
 		return dir, name, false
 	}
