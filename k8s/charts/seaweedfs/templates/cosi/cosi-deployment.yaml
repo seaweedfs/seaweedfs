@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.cosi.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -38,7 +39,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.cosi.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.cosi.restartPolicy }}
       {{- if .Values.cosi.affinity }}
       affinity:
         {{ tpl .Values.cosi.affinity . | nindent 8 | trim }}
@@ -68,7 +69,7 @@ spec:
       containers:
         - name: seaweedfs-cosi-driver
           image: "{{ .Values.cosi.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: DRIVERNAME
               value: "{{ .Values.cosi.driverName }}"
@@ -88,7 +89,7 @@ spec:
             {{- end }}
             - name: SEAWEEDFS_FILER
               value: "{{ include "seaweedfs.componentName" (list . "filer") }}:{{ .Values.filer.grpcPort }}"
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: WEED_GRPC_CLIENT_KEY
               value: /usr/local/share/ca-certificates/client/tls.key
             - name: WEED_GRPC_CLIENT_CERT
@@ -97,7 +98,7 @@ spec:
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.cosi "target" $mergedExtraEnvironmentVars) }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.cosi "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -116,7 +117,7 @@ spec:
               name: config-users
               readOnly: true
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -144,7 +145,7 @@ spec:
           {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           args:
             - {{ printf "--v=%s" (default "5" .Values.cosi.sidecar.logLevel) }}
           env:
@@ -178,7 +179,7 @@ spec:
             secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

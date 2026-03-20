@@ -64,15 +64,15 @@ jobs:
           echo "✓ All-in-one deployment renders correctly"
           
           echo "=== Testing with security enabled ==="
-          helm template test $CHART_DIR --set global.enableSecurity=true > /tmp/security.yaml
+          helm template test $CHART_DIR --set global.seaweedfs.enableSecurity=true > /tmp/security.yaml
           grep -q "security-config" /tmp/security.yaml
           echo "✓ Security configuration renders correctly"
-          
+
           echo "=== Testing with monitoring enabled ==="
           helm template test $CHART_DIR \
-            --set global.monitoring.enabled=true \
-            --set global.monitoring.gatewayHost=prometheus \
-            --set global.monitoring.gatewayPort=9091 > /tmp/monitoring.yaml
+            --set global.seaweedfs.monitoring.enabled=true \
+            --set global.seaweedfs.monitoring.gatewayHost=prometheus \
+            --set global.seaweedfs.monitoring.gatewayPort=9091 > /tmp/monitoring.yaml
           echo "✓ Monitoring configuration renders correctly"
           
           echo "=== Testing with PVC storage ==="
@@ -124,7 +124,7 @@ jobs:
           # --- Normal mode: master + filer-client services vs helper-produced addresses ---
           helm template "$LONG_RELEASE" $CHART_DIR \
             --set s3.enabled=true \
-            --set global.createBuckets[0].name=test > /tmp/longname.yaml
+            --set global.seaweedfs.createBuckets[0].name=test > /tmp/longname.yaml
 
           # Extract Service names from metadata
           MASTER_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname.yaml \
@@ -161,7 +161,7 @@ jobs:
           # --- All-in-one mode: all-in-one service vs both helper addresses ---
           helm template "$LONG_RELEASE" $CHART_DIR \
             --set allInOne.enabled=true \
-            --set global.createBuckets[0].name=test > /tmp/longname-aio.yaml
+            --set global.seaweedfs.createBuckets[0].name=test > /tmp/longname-aio.yaml
 
           AIO_SVC=$(awk '/kind: Service/{found=1} found && /^ *name:/{print $2; found=0}' /tmp/longname-aio.yaml \
             | grep -- '-all-in-one$')
@@ -183,11 +183,11 @@ jobs:
           # Render the three manifests that include seaweedfs.s3.tlsArgs:
           #   filer-statefulset, s3-deployment, all-in-one-deployment
           helm template test $CHART_DIR \
-            --set global.enableSecurity=true \
+            --set global.seaweedfs.enableSecurity=true \
             --set filer.s3.enabled=true \
             --set s3.enabled=true > /tmp/security-s3.yaml
           helm template test $CHART_DIR \
-            --set global.enableSecurity=true \
+            --set global.seaweedfs.enableSecurity=true \
             --set allInOne.enabled=true \
             --set allInOne.s3.enabled=true > /tmp/security-aio.yaml
 
@@ -212,7 +212,7 @@ jobs:
           if errors:
               for e in errors:
                   print(f"FAIL: {e}", file=sys.stderr)
-              print("Rendered with: global.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
+              print("Rendered with: global.seaweedfs.enableSecurity=true, filer.s3.enabled=true, s3.enabled=true, allInOne.enabled=true", file=sys.stderr)
               sys.exit(1)
           print("✓ No blank lines in security+S3 command blocks")
           PYEOF

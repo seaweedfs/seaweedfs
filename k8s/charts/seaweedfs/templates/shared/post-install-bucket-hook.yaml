@@ -1,10 +1,11 @@
+{{- include "seaweedfs.compat" . -}}
 {{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
 {{- $createBuckets := list }}
 {{- $s3Enabled := false }}
 {{- $enableAuth := false }}
 {{- $existingConfigSecret := "" }}
 {{- $bucketsFolder := "/buckets" }}
-{{- $bucketEnvVars := merge (dict) (.Values.global.extraEnvironmentVars | default dict) }}
+{{- $bucketEnvVars := merge (dict) (.Values.global.seaweedfs.extraEnvironmentVars | default dict) }}
 {{- if .Values.allInOne.enabled }}
   {{- $bucketEnvVars = merge (.Values.allInOne.extraEnvironmentVars | default dict) $bucketEnvVars }}
 {{- else }}
@@ -68,7 +69,7 @@ spec:
       containers:
       - name: post-install-job
         image: {{ template "master.image" . }}
-        imagePullPolicy: {{ $.Values.global.imagePullPolicy | default "IfNotPresent" }}
+        imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
@@ -183,7 +184,7 @@ spec:
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
-          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          {{- if and .Values.global.seaweedfs.monitoring.enabled .Values.master.metricsPort }}
           - containerPort: {{ .Values.master.metricsPort }}
             name: metrics
           {{- end }}

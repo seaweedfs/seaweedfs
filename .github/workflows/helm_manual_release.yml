@@ -6,6 +6,7 @@ on:
 permissions:
   contents: write
   pages: write
+  packages: write
 
 jobs:
   helm-release:
@@ -15,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Publish Helm charts
+      - name: Publish Helm charts to github pages
         uses: stefanprodan/helm-gh-pages@v1.7.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -23,3 +24,15 @@ jobs:
           target_dir: helm
           branch: gh-pages
           helm_version: "3.18.4"
+
+      - name: Publish Helm charts to github container registry (ghcr.io)
+        uses: bitdeps/helm-oci-charts-releaser@v0.1.5
+        with:
+          charts_dir: k8s/charts
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          oci_registry: ghcr.io/${{ github.repository_owner }}
+          oci_username: github-actions
+          oci_password: ${{ secrets.GITHUB_TOKEN }}
+          skip_dependencies: true
+          skip_helm_install: true
+          skip_gh_release: true

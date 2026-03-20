@@ -6,7 +6,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
-func TestIsTheFirstOneIgnoresGrpcPort(t *testing.T) {
+func TestPeerIndexIgnoresGrpcPort(t *testing.T) {
 	self := pb.ServerAddress("127.0.0.1:9000.19000")
 	peers := []pb.ServerAddress{
 		"127.0.0.1:9000",
@@ -14,8 +14,8 @@ func TestIsTheFirstOneIgnoresGrpcPort(t *testing.T) {
 		"127.0.0.1:9003.19003",
 	}
 
-	if !isTheFirstOne(self, peers) {
-		t.Fatalf("expected first peer match by HTTP address between %q and %+v", self, peers)
+	if idx := peerIndex(self, peers); idx != 0 {
+		t.Fatalf("expected peer index 0 for %q among %+v, got %d", self, peers, idx)
 	}
 }
 
