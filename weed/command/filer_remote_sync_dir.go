@@ -179,7 +179,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		if filer_pb.IsDelete(resp) {
 			// Skip deletion of internal version files; individual version
 			// deletes should not propagate to the remote object
-			if isVersionedPath(resp.Directory, message.OldEntry.Name) {
+			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
 				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 				return nil
 			}
@@ -197,7 +197,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				return nil
 			}
 			// Skip updates to internal version paths
-			if isVersionedPath(message.NewParentPath, message.NewEntry.Name) {
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
 				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
@@ -336,17 +336,17 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 // These paths are SeaweedFS-internal and must not be synced to remote
 // storage as-is, because the remote S3 endpoint may apply its own
 // versioning, leading to double-versioned paths.
-func isVersionedPath(dir string, name string) bool {
-	if strings.HasSuffix(dir, s3_constants.VersionsFolder) {
-		return true
+//
+// For directories: matches only when the entry name ends with the
+// VersionsFolder suffix (e.g. "file.xml.versions").
+// For files: matches only when the parent directory ends with
+// VersionsFolder and the file name has the "v_" prefix used by
+// the internal version file naming convention.
+func isVersionedPath(dir string, name string, isDir bool) bool {
+	if isDir {
+		return strings.HasSuffix(name, s3_constants.VersionsFolder)
 	}
-	if strings.Contains(dir, s3_constants.VersionsFolder+"/") {
-		return true
-	}
-	if strings.HasSuffix(name, s3_constants.VersionsFolder) {
-		return true
-	}
-	return false
+	return strings.HasSuffix(dir, s3_constants.VersionsFolder) && strings.HasPrefix(name, "v_")
 }
 
 // rewriteVersionedSourcePath rewrites an internal versioning path to the

@@ -79,10 +79,10 @@ func TestVersionedFilePathRewrittenForRemote(t *testing.T) {
 	}
 }
 
-// TestVersionedDirectoryNotFilteredByHasData verifies that the .versions
-// directory creation event IS correctly filtered (no data), so only
+// TestVersionsDirectoryFilteredByHasData verifies that the .versions
+// directory creation event is correctly filtered out (no data), so only
 // the version file event needs path rewriting.
-func TestVersionedDirectoryNotFilteredByHasData(t *testing.T) {
+func TestVersionsDirectoryFilteredByHasData(t *testing.T) {
 	bucket := "/buckets/devicetransaction"
 	objectPath := "9e149757-2363-11f1-bfa6-11c8ff31b539/transactionlog-2026-03-19-16-30-00.xml"
 
@@ -104,42 +104,79 @@ func TestVersionedDirectoryNotFilteredByHasData(t *testing.T) {
 
 func TestIsVersionedPath(t *testing.T) {
 	tests := []struct {
+		label    string
 		dir      string
 		name     string
+		isDir    bool
 		expected bool
 	}{
+		// Version file inside .versions directory (file, v_ prefix)
 		{
+			label:    "version file in .versions dir",
 			dir:      "/buckets/mybucket/path/to/file.xml" + s3_constants.VersionsFolder,
 			name:     "v_6761c63812bd9b64704acf08a3ba5800",
+			isDir:    false,
 			expected: true,
 		},
+		// Regular file (not versioned)
 		{
+			label:    "regular file",
 			dir:      "/buckets/mybucket/path/to",
 			name:     "file.xml",
+			isDir:    false,
 			expected: false,
 		},
+		// .versions directory entry itself
 		{
-			dir:      "/buckets/mybucket/deep/path/doc.pdf" + s3_constants.VersionsFolder,
-			name:     "v_abc123",
-			expected: true,
-		},
-		{
-			dir:      "/buckets/mybucket/" + s3_constants.MultipartUploadsFolder + "/abc",
-			name:     "part001.part",
-			expected: false,
-		},
-		{
+			label:    ".versions directory entry",
 			dir:      "/buckets/mybucket/path/to",
 			name:     "file.xml" + s3_constants.VersionsFolder,
+			isDir:    true,
 			expected: true,
+		},
+		// Non-version file inside .versions dir (no v_ prefix) — not internal
+		{
+			label:    "non-version file in .versions dir",
+			dir:      "/buckets/mybucket/file.xml" + s3_constants.VersionsFolder,
+			name:     "some_other_file",
+			isDir:    false,
+			expected: false,
+		},
+		// User-created directory whose name ends with .versions — not
+		// treated as versioned when isDir=false (file inside it)
+		{
+			label:    "file in user dir ending with .versions but no v_ prefix",
+			dir:      "/buckets/mybucket/my" + s3_constants.VersionsFolder,
+			name:     "data.txt",
+			isDir:    false,
+			expected: false,
+		},
+		// Regular directory (not .versions)
+		{
+			label:    "regular directory",
+			dir:      "/buckets/mybucket/path/to",
+			name:     "subdir",
+			isDir:    true,
+			expected: false,
+		},
+		// Entry whose name ends with .versions but is a file, not a dir
+		{
+			label:    "file named like .versions dir",
+			dir:      "/buckets/mybucket/path/to",
+			name:     "file.xml" + s3_constants.VersionsFolder,
+			isDir:    false,
+			expected: false,
 		},
 	}
 
 	for _, tt := range tests {
-		got := isVersionedPath(tt.dir, tt.name)
-		if got != tt.expected {
-			t.Errorf("isVersionedPath(%q, %q) = %v, want %v", tt.dir, tt.name, got, tt.expected)
-		}
+		t.Run(tt.label, func(t *testing.T) {
+			got := isVersionedPath(tt.dir, tt.name, tt.isDir)
+			if got != tt.expected {
+				t.Errorf("isVersionedPath(%q, %q, %v) = %v, want %v",
+					tt.dir, tt.name, tt.isDir, got, tt.expected)
+			}
+		})
 	}
 }
 

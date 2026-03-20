@@ -270,7 +270,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			}
 			// Skip deletion of internal version files; individual version
 			// deletes should not propagate to the remote object
-			if isVersionedPath(resp.Directory, message.OldEntry.Name) {
+			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
 				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
 				return nil
 			}
@@ -309,7 +309,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				return nil
 			}
 			// Skip updates to internal version paths
-			if isVersionedPath(message.NewParentPath, message.NewEntry.Name) {
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
 				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
