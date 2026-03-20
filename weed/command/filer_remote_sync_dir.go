@@ -159,9 +159,11 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			// Rewrite internal versioning paths to the original S3 key
 			// to prevent double-versioning when central also has versioning enabled
 			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+			isRewrittenVersion := false
 			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
 				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
 				parentPath, entryName = newParent, newName
+				isRewrittenVersion = true
 			}
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
@@ -172,6 +174,14 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			remoteEntry, writeErr := retriedWriteFile(client, filerSource, message.NewEntry, dest)
 			if writeErr != nil {
 				return writeErr
+			}
+			// Skip updateLocalEntry for versioned rewrites: the logical
+			// object (e.g. file.xml) has no filer entry in versioned
+			// buckets, and stamping the internal v_* entry with a
+			// RemoteEntry for the logical key is semantically wrong.
+			// Replay is safe because S3 PutObject is idempotent.
+			if isRewrittenVersion {
+				return nil
 			}
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
