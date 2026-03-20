@@ -41,31 +41,46 @@ func compressFile(path string) {
 	if err != nil {
 		return
 	}
+	defer src.Close()
 
 	dstPath := path + ".gz"
-	dst, err := os.Create(dstPath)
+	tmpPath := dstPath + ".tmp"
+	dst, err := os.Create(tmpPath)
 	if err != nil {
-		src.Close()
 		return
 	}
+
+	var success bool
+	defer func() {
+		dst.Close()
+		if !success {
+			os.Remove(tmpPath)
+		}
+	}()
 
 	gz, err := gzip.NewWriterLevel(dst, gzip.BestSpeed)
 	if err != nil {
-		src.Close()
-		dst.Close()
-		os.Remove(dstPath)
 		return
 	}
 
-	_, copyErr := io.Copy(gz, src)
-	gzErr := gz.Close()
-	src.Close()
-	dst.Close()
-
-	if copyErr != nil || gzErr != nil {
-		os.Remove(dstPath) // cleanup corrupt/incomplete file
+	if _, err = io.Copy(gz, src); err != nil {
+		gz.Close()
 		return
 	}
+
+	if err = gz.Close(); err != nil {
+		return
+	}
+
+	if err = dst.Close(); err != nil {
+		return
+	}
+
+	if err = os.Rename(tmpPath, dstPath); err != nil {
+		return
+	}
+
+	success = true
 
 	// Only remove original after successful compression
 	os.Remove(path)
