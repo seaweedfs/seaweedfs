@@ -64,6 +64,10 @@ var logMaxFiles = flag.Int("log_max_files", 5, "Maximum number of log files to k
 // The default is 168 hours (7 days). Set to 0 to disable time-based rotation.
 var logRotateHours = flag.Int("log_rotate_hours", 168, "Rotate log files after this many hours (default: 168 = 7 days, 0 = disabled)")
 
+// logJSON enables JSON-formatted log output (one JSON object per line).
+// Useful for integration with ELK, Loki, Datadog, and other log aggregation systems.
+var logJSON = flag.Bool("log_json", false, "Output logs in JSON format instead of glog text format")
+
 // logCompress enables gzip compression of rotated log files.
 // Compressed files get a .gz suffix. Compression runs in the background.
 var logCompress = flag.Bool("log_compress", false, "Gzip-compress rotated log files to save disk space")

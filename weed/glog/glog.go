@@ -630,7 +630,21 @@ func (buf *buffer) someDigits(i, d int) int {
 	return copy(buf.tmp[i:], buf.tmp[j:])
 }
 
+// logJSON is a helper that formats and outputs a JSON log line.
+// Used by println, printDepth, and printf to avoid code duplication.
+// depth is incremented by 1 to account for this extra call frame.
+func (l *loggingT) logJSON(s severity, depth int, msg string) {
+	buf, file, line := l.formatJSON(s, depth+1)
+	buf.WriteString(jsonEscapeString(strings.TrimRight(msg, "\n")))
+	finishJSON(buf)
+	l.output(s, buf, file, line, false)
+}
+
 func (l *loggingT) println(s severity, args ...interface{}) {
+	if IsJSONMode() {
+		l.logJSON(s, 0, fmt.Sprintln(args...))
+		return
+	}
 	buf, file, line := l.header(s, 0)
 	fmt.Fprintln(buf, args...)
 	l.output(s, buf, file, line, false)
@@ -641,6 +655,10 @@ func (l *loggingT) print(s severity, args ...interface{}) {
 }
 
 func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
+	if IsJSONMode() {
+		l.logJSON(s, depth, fmt.Sprint(args...))
+		return
+	}
 	buf, file, line := l.header(s, depth)
 	fmt.Fprint(buf, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
@@ -650,6 +668,10 @@ func (l *loggingT) printDepth(s severity, depth int, args ...interface{}) {
 }
 
 func (l *loggingT) printf(s severity, format string, args ...interface{}) {
+	if IsJSONMode() {
+		l.logJSON(s, 0, fmt.Sprintf(format, args...))
+		return
+	}
 	buf, file, line := l.header(s, 0)
 	fmt.Fprintf(buf, format, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
@@ -662,6 +684,36 @@ func (l *loggingT) printf(s severity, format string, args ...interface{}) {
 // alsoLogToStderr is true, the log message always appears on standard error; it
 // will also appear in the log file unless --logtostderr is set.
 func (l *loggingT) printWithFileLine(s severity, file string, line int, alsoToStderr bool, args ...interface{}) {
+	if IsJSONMode() {
+		buf := l.getBuffer()
+		now := timeNow()
+		buf.WriteString(`{"ts":"`)
+		buf.WriteString(now.UTC().Format(time.RFC3339Nano))
+		buf.WriteString(`","level":"`)
+		switch {
+		case s == infoLog:
+			buf.WriteString("INFO")
+		case s == warningLog:
+			buf.WriteString("WARNING")
+		case s == errorLog:
+			buf.WriteString("ERROR")
+		case s >= fatalLog:
+			buf.WriteString("FATAL")
+		}
+		buf.WriteString(`","file":"`)
+		buf.WriteString(jsonEscapeString(file))
+		buf.WriteString(`","line":`)
+		if line < 0 {
+			line = 0
+		}
+		buf.WriteString(itoa(line))
+		buf.WriteString(`,"msg":"`)
+		msg := fmt.Sprint(args...)
+		buf.WriteString(jsonEscapeString(strings.TrimRight(msg, "\n")))
+		finishJSON(buf)
+		l.output(s, buf, file, line, alsoToStderr)
+		return
+	}
 	buf := l.formatHeader(s, file, line)
 	fmt.Fprint(buf, args...)
 	if buf.Bytes()[buf.Len()-1] != '\n' {
@@ -872,6 +924,11 @@ func (sb *syncBuffer) rotateFile(now time.Time) error {
 	}
 
 	sb.Writer = bufio.NewWriterSize(sb.file, bufferSize)
+
+	// Skip text header in JSON mode to keep files as valid NDJSON.
+	if IsJSONMode() {
+		return nil
+	}
 
 	// Write header.
 	var buf bytes.Buffer
