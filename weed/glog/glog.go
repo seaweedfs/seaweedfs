@@ -852,10 +852,16 @@ func (sb *syncBuffer) Write(p []byte) (n int, err error) {
 }
 
 // rotateFile closes the syncBuffer's file and starts a new one.
+// If compression is enabled, the old file is gzipped in the background.
 func (sb *syncBuffer) rotateFile(now time.Time) error {
 	if sb.file != nil {
+		oldName := sb.file.Name()
 		sb.Flush()
 		sb.file.Close()
+		// Compress the rotated file in background (non-blocking)
+		if IsCompressRotated() && oldName != "" {
+			go compressFile(oldName)
+		}
 	}
 	var err error
 	sb.file, _, err = create(severityName[sb.sev], now)

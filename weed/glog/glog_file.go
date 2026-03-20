@@ -64,6 +64,10 @@ var logMaxFiles = flag.Int("log_max_files", 5, "Maximum number of log files to k
 // The default is 168 hours (7 days). Set to 0 to disable time-based rotation.
 var logRotateHours = flag.Int("log_rotate_hours", 168, "Rotate log files after this many hours (default: 168 = 7 days, 0 = disabled)")
 
+// logCompress enables gzip compression of rotated log files.
+// Compressed files get a .gz suffix. Compression runs in the background.
+var logCompress = flag.Bool("log_compress", false, "Gzip-compress rotated log files to save disk space")
+
 func createLogDirs() {
 	// Apply flag values now that flags have been parsed.
 	if *logMaxSizeMB > 0 {
@@ -71,6 +75,10 @@ func createLogDirs() {
 	}
 	if *logMaxFiles > 0 {
 		MaxFileCount = *logMaxFiles
+	}
+
+	if *logCompress {
+		SetCompressRotated(true)
 	}
 
 	if *logDir != "" {
@@ -160,12 +168,14 @@ func create(tag string, t time.Time) (f *os.File, filename string, err error) {
 	var lastErr error
 	for _, dir := range logDirs {
 
-		// remove old logs
+		// remove old logs (including .gz compressed rotated files)
 		entries, _ := os.ReadDir(dir)
 		var previousLogs []string
 		for _, entry := range entries {
-			if strings.HasPrefix(entry.Name(), logPrefix) {
-				previousLogs = append(previousLogs, entry.Name())
+			name := entry.Name()
+			bare := strings.TrimSuffix(name, ".gz")
+			if strings.HasPrefix(bare, logPrefix) {
+				previousLogs = append(previousLogs, name)
 			}
 		}
 		if len(previousLogs) >= MaxFileCount {
