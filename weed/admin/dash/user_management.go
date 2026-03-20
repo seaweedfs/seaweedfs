@@ -153,13 +153,6 @@ func (s *AdminServer) DeleteObjectStoreUser(username string) error {
 		return fmt.Errorf("credential manager not available")
 	}
 
-	// Prevent deletion of the anonymous identity — it is a system identity
-	// used for unauthenticated S3 access. Removing it would break anonymous
-	// request handling in the IAM layer.
-	if username == "anonymous" {
-		return fmt.Errorf("cannot delete the system identity 'anonymous'")
-	}
-
 	ctx := context.Background()
 
 	// Delete user using credential manager
