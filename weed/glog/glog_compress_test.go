@@ -98,7 +98,8 @@ func TestCompressFile_AlreadyGz(t *testing.T) {
 
 func TestCompressFile_NonExistent(t *testing.T) {
 	// Should not panic on missing file
-	compressFile("/nonexistent/path/file.log")
+	missing := filepath.Join(t.TempDir(), "does-not-exist.log")
+	compressFile(missing)
 }
 
 func TestCompressFile_EmptyFile(t *testing.T) {
