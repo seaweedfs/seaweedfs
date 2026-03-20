@@ -27,6 +27,8 @@ var jsonFlagOnce sync.Once
 //
 // This is useful for log aggregation systems (ELK, Loki, Datadog, etc).
 func SetJSONMode(enabled bool) {
+	// Prevent lazy flag initialization from overriding this explicit call.
+	jsonFlagOnce.Do(func() {})
 	if enabled {
 		atomic.StoreInt32(&jsonMode, 1)
 	} else {
