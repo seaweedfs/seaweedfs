@@ -210,6 +210,25 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
 			}
+			// Propagate delete markers as deletions on the remote.
+			// Delete markers are zero-content version entries, so they
+			// would be filtered out by the HasData check below.
+			if isDeleteMarker(message.NewEntry) {
+				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
+					bucket, remoteStorageMountLocation, remoteStorage, ok := option.detectBucketInfo(newParent)
+					if !ok {
+						return nil
+					}
+					client, err := remote_storage.GetRemoteStorage(remoteStorage)
+					if err != nil {
+						return err
+					}
+					dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+					glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+					return client.DeleteFile(dest)
+				}
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}

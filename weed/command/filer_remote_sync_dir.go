@@ -138,6 +138,17 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
 			}
+			// Propagate delete markers as deletions on the remote.
+			// Delete markers are zero-content version entries, so they
+			// would be filtered out by the HasData check below.
+			if isDeleteMarker(message.NewEntry) {
+				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
+					dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+					glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+					return client.DeleteFile(dest)
+				}
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
@@ -309,6 +320,15 @@ func isMultipartUploadFile(dir string, name string) bool {
 func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
 		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
+}
+
+// isDeleteMarker returns true if the entry is an S3 delete marker
+// (a zero-content version entry with ExtDeleteMarkerKey set to "true").
+func isDeleteMarker(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
 }
 
 // isVersionedPath returns true if the dir/name refers to an internal

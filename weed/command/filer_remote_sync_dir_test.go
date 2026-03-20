@@ -143,6 +143,61 @@ func TestIsVersionedPath(t *testing.T) {
 	}
 }
 
+// TestDeleteMarkerDetectedBeforeHasDataFilter verifies that a delete marker
+// (zero-content version entry with ExtDeleteMarkerKey="true") is detected
+// and can be propagated as a deletion, rather than being silently dropped
+// by the HasData() check.
+func TestDeleteMarkerDetectedBeforeHasDataFilter(t *testing.T) {
+	bucketsDir := "/buckets"
+	bucketName := "devicetransaction"
+	bucket := util.FullPath(bucketsDir).Child(bucketName)
+
+	objectPath := "docs/report.pdf"
+	versionId := "aabb112233445566"
+	versionFileName := "v_" + versionId
+	versionedParentPath := string(bucket) + "/" + objectPath + s3_constants.VersionsFolder
+
+	// A delete marker CREATE event: has ExtDeleteMarkerKey but no content
+	deleteMarkerEntry := &filer_pb.Entry{
+		Name: versionFileName,
+		Extended: map[string][]byte{
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+			s3_constants.ExtVersionIdKey:    []byte(versionId),
+		},
+		// Content and Chunks are nil → HasData() returns false
+	}
+
+	// Preconditions
+	if filer.HasData(deleteMarkerEntry) {
+		t.Fatal("delete marker should have no data")
+	}
+	if !isDeleteMarker(deleteMarkerEntry) {
+		t.Fatal("should be detected as a delete marker")
+	}
+
+	// The versioned path should be rewritable to the original key
+	newParent, newName, ok := rewriteVersionedSourcePath(versionedParentPath, deleteMarkerEntry.Name)
+	if !ok {
+		t.Fatal("delete marker path should be rewritable")
+	}
+
+	// Verify the rewritten path points to the original object
+	remoteStorageMountLocation := &remote_pb.RemoteStorageLocation{
+		Name:   "central",
+		Bucket: bucketName,
+		Path:   "/",
+	}
+	dest := toRemoteStorageLocation(bucket, util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+
+	expectedPath := "/" + objectPath
+	if dest.Path != expectedPath {
+		t.Errorf("delete marker destination = %q, want %q", dest.Path, expectedPath)
+	}
+	if strings.Contains(dest.Path, s3_constants.VersionsFolder) {
+		t.Errorf("delete marker destination should not contain .versions: %s", dest.Path)
+	}
+}
+
 func TestRewriteVersionedSourcePath(t *testing.T) {
 	tests := []struct {
 		name        string
