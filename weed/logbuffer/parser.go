@@ -21,6 +21,8 @@ var severityFromLevel = map[int32]string{
 	3: "FATAL",
 }
 
+const requestIDPrefix = "request_id:"
+
 // yearForMonth resolves the correct year for a log timestamp.
 // glog does not include the year in its header format (mmdd only).
 // If the parsed month is ahead of the current month, we assume the log
@@ -46,7 +48,7 @@ type jsonLogLine struct {
 // ParseLogLine parses a raw glog line into a LogEntry.
 // It auto-detects the format:
 //   - JSON: {"ts":"...","level":"...","file":"...","line":N,"msg":"..."}
-//   - Text: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg...
+//   - Text: Lmmdd hh:mm:ss.uuuuuu file:line msg (SeaweedFS glog format)
 func ParseLogLine(level int32, raw []byte) LogEntry {
 	entry := LogEntry{
 		Timestamp: time.Now(),
@@ -85,24 +87,18 @@ func parseJSONLine(level int32, raw []byte, entry LogEntry) LogEntry {
 		}
 	}
 
-	// Extract request_id if present in message
-	if strings.HasPrefix(entry.Message, "request_id:") {
-		spaceIdx := strings.Index(entry.Message, " ")
-		if spaceIdx > 0 {
-			entry.RequestID = entry.Message[11:spaceIdx]
-			entry.Message = entry.Message[spaceIdx+1:]
-		}
-	}
-
+	extractRequestID(&entry)
 	return entry
 }
 
-// parseTextLine handles classic glog text format.
+// parseTextLine handles SeaweedFS glog text format.
+// SeaweedFS glog emits: Lmmdd hh:mm:ss.uuuuuu file:line msg
+// (no thread id, no ] bracket — differs from standard glog).
 func parseTextLine(level int32, raw []byte, entry LogEntry) LogEntry {
 	line := string(raw)
 
-	// Minimum valid: "I0318 12:34:56.123456 12345 f:1] m" = 30+ chars
-	if len(line) < 30 {
+	// Minimum valid: "I0318 12:34:56.123456 f:1 m" = 27+ chars
+	if len(line) < 27 {
 		entry.Message = strings.TrimSpace(line)
 		return entry
 	}
@@ -131,43 +127,57 @@ func parseTextLine(level int32, raw []byte, entry LogEntry) LogEntry {
 		)
 	}
 
-	// Find the "] " separator that ends the header
-	bracketIdx := strings.Index(line, "] ")
-	if bracketIdx == -1 {
-		bracketIdx = strings.LastIndex(line, "]")
-		if bracketIdx == -1 {
-			entry.Message = strings.TrimSpace(line)
-			return entry
+	// After the timestamp (22 chars), the rest is "file:line msg"
+	rest := line[22:]
+
+	// SeaweedFS format: file:line msg (no bracket)
+	// Also support standard glog format: threadid file:line] msg
+	if bracketIdx := strings.Index(rest, "] "); bracketIdx >= 0 {
+		// Standard glog format with "]"
+		header := rest[:bracketIdx]
+		lastSpace := strings.LastIndex(header, " ")
+		if lastSpace >= 0 {
+			fileLine := header[lastSpace+1:]
+			colonIdx := strings.LastIndex(fileLine, ":")
+			if colonIdx > 0 {
+				entry.File = fileLine[:colonIdx]
+				entry.Line, _ = strconv.Atoi(fileLine[colonIdx+1:])
+			}
 		}
-	}
-
-	// Parse file:line from the header (between last space before ] and ])
-	header := line[:bracketIdx]
-	lastSpace := strings.LastIndex(header, " ")
-	if lastSpace > 0 {
-		fileLine := header[lastSpace+1:]
-		colonIdx := strings.LastIndex(fileLine, ":")
-		if colonIdx > 0 {
-			entry.File = fileLine[:colonIdx]
-			entry.Line, _ = strconv.Atoi(fileLine[colonIdx+1:])
-		}
-	}
-
-	// Message is everything after "] "
-	if bracketIdx+2 < len(line) {
-		entry.Message = strings.TrimRight(line[bracketIdx+2:], "\n\r")
-	} else if bracketIdx+1 < len(line) {
-		entry.Message = strings.TrimRight(line[bracketIdx+1:], "\n\r")
-	}
-
-	// Extract request_id if present (format: "request_id:XXXXX ...")
-	if strings.HasPrefix(entry.Message, "request_id:") {
-		spaceIdx := strings.Index(entry.Message, " ")
+		entry.Message = strings.TrimRight(rest[bracketIdx+2:], "\n\r")
+	} else {
+		// SeaweedFS format: file:line msg
+		spaceIdx := strings.Index(rest, " ")
 		if spaceIdx > 0 {
-			entry.RequestID = entry.Message[11:spaceIdx]
-			entry.Message = entry.Message[spaceIdx+1:]
+			fileLine := rest[:spaceIdx]
+			colonIdx := strings.LastIndex(fileLine, ":")
+			if colonIdx > 0 {
+				entry.File = fileLine[:colonIdx]
+				entry.Line, _ = strconv.Atoi(fileLine[colonIdx+1:])
+			}
+			entry.Message = strings.TrimRight(rest[spaceIdx+1:], "\n\r")
+		} else {
+			entry.Message = strings.TrimRight(rest, "\n\r")
 		}
 	}
 
+	extractRequestID(&entry)
 	return entry
+}
+
+// extractRequestID extracts request_id prefix from the entry message if present.
+// Format: "request_id:XXXXX rest of message"
+func extractRequestID(entry *LogEntry) {
+	if !strings.HasPrefix(entry.Message, requestIDPrefix) {
+		return
+	}
+	rest := entry.Message[len(requestIDPrefix):]
+	spaceIdx := strings.Index(rest, " ")
+	if spaceIdx > 0 {
+		entry.RequestID = rest[:spaceIdx]
+		entry.Message = rest[spaceIdx+1:]
+	} else if rest != "" {
+		entry.RequestID = strings.TrimSpace(rest)
+		entry.Message = ""
+	}
 }

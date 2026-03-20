@@ -6,9 +6,11 @@ import (
 	"time"
 )
 
-func TestParseLogLine_FullHeader(t *testing.T) {
-	// Standard glog format: I0318 12:34:56.123456 12345 master_server.go:123] some message
-	raw := []byte("I0318 12:34:56.123456 12345 master_server.go:123] some message\n")
+// ---------- SeaweedFS text format tests ----------
+// SeaweedFS glog format: Lmmdd hh:mm:ss.uuuuuu file:line msg (no threadid, no bracket)
+
+func TestParseLogLine_SeaweedFSFormat(t *testing.T) {
+	raw := []byte("I0318 12:34:56.123456 master_server.go:123 some message\n")
 	entry := ParseLogLine(0, raw)
 
 	if entry.Level != "INFO" {
@@ -31,6 +33,25 @@ func TestParseLogLine_FullHeader(t *testing.T) {
 	}
 }
 
+func TestParseLogLine_StandardGlogFormat(t *testing.T) {
+	// Standard glog with threadid and bracket: Lmmdd hh:mm:ss.uuuuuu threadid file:line] msg
+	raw := []byte("I0318 12:34:56.123456 12345 master_server.go:123] some message\n")
+	entry := ParseLogLine(0, raw)
+
+	if entry.Level != "INFO" {
+		t.Errorf("expected level INFO, got %q", entry.Level)
+	}
+	if entry.File != "master_server.go" {
+		t.Errorf("expected file master_server.go, got %q", entry.File)
+	}
+	if entry.Line != 123 {
+		t.Errorf("expected line 123, got %d", entry.Line)
+	}
+	if entry.Message != "some message" {
+		t.Errorf("expected message 'some message', got %q", entry.Message)
+	}
+}
+
 func TestParseLogLine_AllSeverities(t *testing.T) {
 	tests := []struct {
 		level    int32
@@ -44,7 +65,8 @@ func TestParseLogLine_AllSeverities(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		raw := []byte(string(tt.char) + "0318 12:34:56.123456 12345 test.go:1] msg")
+		// SeaweedFS format (no bracket)
+		raw := []byte(string(tt.char) + "0318 12:34:56.123456 test.go:1 msg")
 		entry := ParseLogLine(tt.level, raw)
 		if entry.Level != tt.wantName {
 			t.Errorf("level %d: expected %q, got %q", tt.level, tt.wantName, entry.Level)
@@ -53,7 +75,8 @@ func TestParseLogLine_AllSeverities(t *testing.T) {
 }
 
 func TestParseLogLine_WithRequestID(t *testing.T) {
-	raw := []byte("I0318 12:34:56.123456 12345 server.go:42] request_id:abc-123 operation completed")
+	// SeaweedFS format
+	raw := []byte("I0318 12:34:56.123456 server.go:42 request_id:abc-123 operation completed")
 	entry := ParseLogLine(0, raw)
 
 	if entry.RequestID != "abc-123" {
@@ -61,6 +84,19 @@ func TestParseLogLine_WithRequestID(t *testing.T) {
 	}
 	if entry.Message != "operation completed" {
 		t.Errorf("expected message 'operation completed', got %q", entry.Message)
+	}
+}
+
+func TestParseLogLine_RequestID_OnlyID(t *testing.T) {
+	// Message is only the request_id with no trailing text
+	raw := []byte("I0318 12:34:56.123456 server.go:42 request_id:abc-123")
+	entry := ParseLogLine(0, raw)
+
+	if entry.RequestID != "abc-123" {
+		t.Errorf("expected request_id 'abc-123', got %q", entry.RequestID)
+	}
+	if entry.Message != "" {
+		t.Errorf("expected empty message, got %q", entry.Message)
 	}
 }
 
@@ -86,36 +122,18 @@ func TestParseLogLine_EmptyLine(t *testing.T) {
 	}
 }
 
-func TestParseLogLine_NoBracket(t *testing.T) {
-	raw := []byte("I0318 12:34:56.123456 12345 server.go:42 no bracket here at all")
-	entry := ParseLogLine(0, raw)
-
-	// Should still extract what it can
-	if entry.Level != "INFO" {
-		t.Errorf("expected INFO, got %q", entry.Level)
-	}
-	// Message should be the full line since no ] separator
-	if entry.Message == "" {
-		t.Error("expected non-empty message for bracketless line")
-	}
-}
-
 func TestParseLogLine_LevelFromInt(t *testing.T) {
-	// When the header char doesn't match but level int32 is provided
-	raw := []byte("X0318 12:34:56.123456 12345 test.go:1] msg")
+	// 'X' is not a known severity char, should keep ERROR from level=2
+	raw := []byte("X0318 12:34:56.123456 test.go:1 msg")
 	entry := ParseLogLine(2, raw)
 
-	// Should use the int32 level since 'X' is not a known severity char
-	// The parser first sets from int32, then overrides from char if valid
-	// 'X' is not valid, so it should keep ERROR from level=2
 	if entry.Level != "ERROR" {
 		t.Errorf("expected ERROR from level int, got %q", entry.Level)
 	}
 }
 
-func TestParseLogLine_MultiLineMessage(t *testing.T) {
-	// Stack traces and multi-line messages
-	raw := []byte("E0318 12:34:56.123456 12345 server.go:42] panic: runtime error")
+func TestParseLogLine_ErrorMessage(t *testing.T) {
+	raw := []byte("E0318 12:34:56.123456 server.go:42 panic: runtime error")
 	entry := ParseLogLine(2, raw)
 
 	if entry.Level != "ERROR" {
@@ -127,7 +145,7 @@ func TestParseLogLine_MultiLineMessage(t *testing.T) {
 }
 
 func TestParseLogLine_TimestampParsing(t *testing.T) {
-	raw := []byte("I1225 23:59:59.999999 12345 test.go:1] christmas")
+	raw := []byte("I1225 23:59:59.999999 test.go:1 christmas")
 	entry := ParseLogLine(0, raw)
 
 	if entry.Timestamp.Month() != time.December {
@@ -141,31 +159,6 @@ func TestParseLogLine_TimestampParsing(t *testing.T) {
 	}
 	if entry.Timestamp.Second() != 59 {
 		t.Errorf("expected second 59, got %d", entry.Timestamp.Second())
-	}
-}
-
-func TestLevelPriority(t *testing.T) {
-	tests := []struct {
-		level string
-		want  int
-	}{
-		{"INFO", 1},
-		{"info", 1},
-		{"WARNING", 2},
-		{"warning", 2},
-		{"ERROR", 3},
-		{"error", 3},
-		{"FATAL", 4},
-		{"fatal", 4},
-		{"UNKNOWN", 0},
-		{"", 0},
-	}
-
-	for _, tt := range tests {
-		got := LevelPriority(tt.level)
-		if got != tt.want {
-			t.Errorf("LevelPriority(%q) = %d, want %d", tt.level, got, tt.want)
-		}
 	}
 }
 
@@ -219,7 +212,6 @@ func TestParseLogLine_JSON_Invalid(t *testing.T) {
 	raw := []byte(`{invalid json}`)
 	entry := ParseLogLine(0, raw)
 
-	// Should fallback gracefully
 	if entry.Message == "" {
 		t.Error("expected non-empty message for invalid JSON")
 	}
@@ -231,14 +223,13 @@ func TestParseLogLine_JSON_EmptyObject(t *testing.T) {
 
 	// Should not panic, fields default to zero values
 	if entry.Level != "INFO" {
-		// Level comes from severityFromLevel[level] fallback
 		t.Logf("level after empty JSON: %q (ok)", entry.Level)
 	}
 }
 
 func TestParseLogLine_AutoDetect(t *testing.T) {
-	// Text format
-	textRaw := []byte("E0319 12:00:00.000000 12345 server.go:42] error happened")
+	// Text format (SeaweedFS)
+	textRaw := []byte("E0319 12:00:00.000000 server.go:42 error happened")
 	textEntry := ParseLogLine(2, textRaw)
 	if textEntry.Level != "ERROR" {
 		t.Errorf("text: expected ERROR, got %q", textEntry.Level)

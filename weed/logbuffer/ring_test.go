@@ -175,11 +175,15 @@ func TestRingBuffer_QueryInvalidRegex(t *testing.T) {
 	now := time.Now()
 	rb.Write(makeEntry("INFO", "test", now))
 
-	// Invalid regex should return error or no panic
 	result := rb.Query(Filter{Pattern: "[invalid"})
-	// After fix: should return 0 results with no panic
-	if result.Total < 0 {
-		t.Error("query with invalid regex should not panic")
+	if result.Error == "" {
+		t.Error("expected error for invalid regex pattern")
+	}
+	if result.Total != 0 {
+		t.Errorf("expected 0 results for invalid regex, got %d", result.Total)
+	}
+	if len(result.Entries) != 0 {
+		t.Errorf("expected 0 entries for invalid regex, got %d", len(result.Entries))
 	}
 }
 
@@ -611,6 +615,31 @@ func TestRingBuffer_ErrorRate_OutsideWindow(t *testing.T) {
 	}
 }
 
+func TestLevelPriority(t *testing.T) {
+	tests := []struct {
+		level string
+		want  int
+	}{
+		{"INFO", 1},
+		{"info", 1},
+		{"WARNING", 2},
+		{"warning", 2},
+		{"ERROR", 3},
+		{"error", 3},
+		{"FATAL", 4},
+		{"fatal", 4},
+		{"UNKNOWN", 0},
+		{"", 0},
+	}
+
+	for _, tt := range tests {
+		got := LevelPriority(tt.level)
+		if got != tt.want {
+			t.Errorf("LevelPriority(%q) = %d, want %d", tt.level, got, tt.want)
+		}
+	}
+}
+
 func BenchmarkRingBuffer_Write(b *testing.B) {
 	rb := NewRingBuffer(10000)
 	entry := makeEntry("INFO", "benchmark message", time.Now())
@@ -635,7 +664,7 @@ func BenchmarkRingBuffer_Query(b *testing.B) {
 }
 
 func BenchmarkParseLogLine(b *testing.B) {
-	raw := []byte("I0318 12:34:56.123456 12345 master_server.go:123] request_id:abc123 operation completed successfully\n")
+	raw := []byte("I0318 12:34:56.123456 master_server.go:123 request_id:abc123 operation completed successfully\n")
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		ParseLogLine(0, raw)

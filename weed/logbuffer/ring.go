@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -151,6 +152,21 @@ func (rb *RingBuffer) Stats() BufferStats {
 // Entries are returned in chronological order (oldest first).
 // Returns an error string in QueryResult if the regex pattern is invalid.
 func (rb *RingBuffer) Query(f Filter) QueryResult {
+	// Compile regex and compute filter params before acquiring lock
+	// to avoid blocking writers during regex compilation.
+	minLevel := LevelPriority(f.Level)
+
+	var compiledPattern *regexp.Regexp
+	if f.Pattern != "" {
+		var err error
+		compiledPattern, err = regexp.Compile(f.Pattern)
+		if err != nil {
+			return QueryResult{
+				Error: fmt.Sprintf("invalid regex pattern: %v", err),
+			}
+		}
+	}
+
 	rb.mu.RLock()
 	defer rb.mu.RUnlock()
 
@@ -165,19 +181,6 @@ func (rb *RingBuffer) Query(f Filter) QueryResult {
 	}
 	if limit > rb.count {
 		limit = rb.count
-	}
-
-	minLevel := LevelPriority(f.Level)
-
-	var compiledPattern *regexp.Regexp
-	if f.Pattern != "" {
-		var err error
-		compiledPattern, err = regexp.Compile(f.Pattern)
-		if err != nil {
-			return QueryResult{
-				Error: fmt.Sprintf("invalid regex pattern: %v", err),
-			}
-		}
 	}
 
 	// Iterate from oldest to newest
@@ -290,13 +293,9 @@ func (rb *RingBuffer) TopFiles(n int) []FileCount {
 	for f, c := range counts {
 		sorted = append(sorted, kv{f, c})
 	}
-	for i := 0; i < len(sorted); i++ {
-		for j := i + 1; j < len(sorted); j++ {
-			if sorted[j].count > sorted[i].count {
-				sorted[i], sorted[j] = sorted[j], sorted[i]
-			}
-		}
-	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].count > sorted[j].count
+	})
 
 	if n > len(sorted) {
 		n = len(sorted)
