@@ -321,10 +321,13 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 		isMarker = *state.isDirectoryMarker
 	} else {
 		efc.mu.Unlock()
-		isMarker = efc.isDirectoryMarker(ctx, folder)
+		var cacheable bool
+		isMarker, cacheable = efc.isDirectoryMarker(ctx, folder)
 		efc.mu.Lock()
-		if state, exists := efc.folderCounts[folder]; exists && state != nil {
-			state.isDirectoryMarker = &isMarker
+		if cacheable {
+			if state, exists := efc.folderCounts[folder]; exists && state != nil {
+				state.isDirectoryMarker = &isMarker
+			}
 		}
 	}
 	efc.mu.Unlock()
@@ -361,20 +364,20 @@ func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) 
 	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, 0)
 }
 
-func (efc *EmptyFolderCleaner) isDirectoryMarker(ctx context.Context, folder string) bool {
+func (efc *EmptyFolderCleaner) isDirectoryMarker(ctx context.Context, folder string) (bool, bool) {
 	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
-			return false
+			return false, true
 		}
-		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes for %s, skipping deletion: %v", folder, err)
-		return true
+		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes for %s, allowing deletion: %v", folder, err)
+		return false, false
 	}
 	if attrs == nil {
-		return false
+		return false, true
 	}
 	_, hasMime := attrs[s3_constants.ExtMimeType]
-	return hasMime
+	return hasMime, true
 }
 
 func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {
