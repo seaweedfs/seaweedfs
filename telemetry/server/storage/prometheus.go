@@ -82,7 +82,7 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 
 	// Update Prometheus metrics
 	labels := prometheus.Labels{
-		"cluster_id": data.ClusterId,
+		"cluster_id": data.TopologyId,
 		"version":    data.Version,
 		"os":         data.Os,
 	}
@@ -94,7 +94,7 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.brokerCount.With(labels).Set(float64(data.BrokerCount))
 
 	infoLabels := prometheus.Labels{
-		"cluster_id": data.ClusterId,
+		"cluster_id": data.TopologyId,
 		"version":    data.Version,
 		"os":         data.Os,
 	}
@@ -103,7 +103,7 @@ func (s *PrometheusStorage) StoreTelemetry(data *proto.TelemetryData) error {
 	s.telemetryReceived.Inc()
 
 	// Store in memory for API endpoints
-	s.instances[data.ClusterId] = &telemetryData{
+	s.instances[data.TopologyId] = &telemetryData{
 		TelemetryData: data,
 		ReceivedAt:    time.Now().UTC(),
 	}
@@ -219,7 +219,7 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 
 			// Remove from Prometheus metrics
 			labels := prometheus.Labels{
-				"cluster_id": instance.TelemetryData.ClusterId,
+				"cluster_id": instance.TelemetryData.TopologyId,
 				"version":    instance.TelemetryData.Version,
 				"os":         instance.TelemetryData.Os,
 			}
