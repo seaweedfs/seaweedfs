@@ -47,6 +47,14 @@ jobs:
           echo "=== Running S3 DeleteBucketNotEmpty Tests ==="
           go test -v -timeout=60s -run TestS3DeleteBucketNotEmpty ./...
 
+      - name: Run S3 Empty Directory Marker Tests
+        timeout-minutes: 15
+        working-directory: test/s3/normal
+        run: |
+          set -x
+          echo "=== Running S3 Empty Directory Marker Tests ==="
+          go test -v -timeout=180s -run TestS3ListObjectsEmptyDirectoryMarkers ./...
+
       - name: Run IAM Integration Tests
         timeout-minutes: 15
         working-directory: test/s3/normal
