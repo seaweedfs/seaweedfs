@@ -54,7 +54,7 @@ func (h *Handler) CollectTelemetry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if data.ClusterId == "" || data.Version == "" || data.Os == "" {
+	if data.TopologyId == "" || data.Version == "" || data.Os == "" {
 		http.Error(w, "Missing required fields", http.StatusBadRequest)
 		return
 	}
