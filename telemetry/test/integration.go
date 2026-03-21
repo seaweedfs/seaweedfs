@@ -85,16 +85,25 @@ func startTelemetryServer() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to get working directory: %v", err)
 	}
 
-	// Navigate to the server directory (from main seaweedfs directory)
-	serverDir := filepath.Join(testDir, "telemetry", "server")
-
-	cmd := exec.Command("go", "run", ".",
-		"-port="+serverPort,
+	// Use pre-built binary if available (faster in CI), otherwise fall back to go run
+	args := []string{
+		"-port=" + serverPort,
 		"-dashboard=false",
 		"-cleanup=1m",
-		"-max-age=1h")
+		"-max-age=1h",
+	}
 
-	cmd.Dir = serverDir
+	serverBin := filepath.Join(testDir, "telemetry", "server", "telemetry-server")
+	var cmd *exec.Cmd
+	if _, err := os.Stat(serverBin); err == nil {
+		fmt.Printf("Using pre-built binary: %s\n", serverBin)
+		cmd = exec.Command(serverBin, args...)
+	} else {
+		fmt.Println("No pre-built binary found, using go run")
+		serverDir := filepath.Join(testDir, "telemetry", "server")
+		cmd = exec.Command("go", append([]string{"run", "."}, args...)...)
+		cmd.Dir = serverDir
+	}
 
 	// Create log files for server output
 	logFile, err := os.Create("telemetry-server-test.log")

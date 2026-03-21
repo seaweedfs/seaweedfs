@@ -28,6 +28,9 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
+    - name: Build telemetry server
+      run: go build -o telemetry/server/telemetry-server ./telemetry/server
+
     - name: Run telemetry integration test
       run: go run telemetry/test/integration.go
 
