@@ -175,7 +175,7 @@ func testProtobufMarshaling() error {
 
 	// Verify data
 	if testData2.TopologyId != testData.TopologyId {
-		return fmt.Errorf("protobuf data mismatch: expected %s, got %s",
+		return fmt.Errorf("TopologyId mismatch: expected %s, got %s",
 			testData.TopologyId, testData2.TopologyId)
 	}
 
