@@ -526,40 +526,10 @@ func (s *AdminServer) RunPluginJobTypeAPI(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	type executionResult struct {
-		JobID      string                 `json:"job_id"`
-		Success    bool                   `json:"success"`
-		Error      string                 `json:"error,omitempty"`
-		Completion map[string]interface{} `json:"completion,omitempty"`
-	}
-
-	results := make([]executionResult, 0, len(filteredProposals))
-	successCount := 0
-	errorCount := 0
-
-	for index, proposal := range filteredProposals {
-		job := buildJobSpecFromProposal(jobType, proposal, index)
-		completed, execErr := s.ExecutePluginJob(ctx, job, clusterContext, req.Attempt)
-
-		result := executionResult{
-			JobID:   job.JobId,
-			Success: execErr == nil,
-		}
-
-		if completed != nil {
-			if payload, marshalErr := protoMessageToMap(completed); marshalErr == nil {
-				result.Completion = payload
-			}
-		}
-
-		if execErr != nil {
-			result.Error = execErr.Error()
-			errorCount++
-		} else {
-			successCount++
-		}
-
-		results = append(results, result)
+	successCount, errorCount, canceledCount, dispatchErr := s.DispatchPluginProposals(ctx, jobType, filteredProposals, clusterContext)
+	if dispatchErr != nil {
+		writeJSONError(w, http.StatusInternalServerError, dispatchErr.Error())
+		return
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -567,10 +537,10 @@ func (s *AdminServer) RunPluginJobTypeAPI(w http.ResponseWriter, r *http.Request
 		"detected_count":         detectedCount,
 		"ready_to_execute_count": len(filteredProposals),
 		"skipped_active_count":   skippedActiveCount,
-		"executed_count":         len(results),
+		"executed_count":         successCount + errorCount + canceledCount,
 		"success_count":          successCount,
 		"error_count":            errorCount,
-		"execution_results":      results,
+		"canceled_count":         canceledCount,
 	})
 }
 
