@@ -266,7 +266,9 @@ func compactVolumeOnServer(grpcDialOption grpc.DialOption, writer io.Writer, vid
 		return nil
 	})
 	if err != nil {
-		_ = vacuumVolumeCleanup(grpcDialOption, vid, server)
+		if cleanupErr := vacuumVolumeCleanup(grpcDialOption, vid, server); cleanupErr != nil {
+			fmt.Fprintf(writer, "    cleanup after compaction failure also failed: %v\n", cleanupErr)
+		}
 		return fmt.Errorf("compact: %v", err)
 	}
 
@@ -278,7 +280,9 @@ func compactVolumeOnServer(grpcDialOption grpc.DialOption, writer io.Writer, vid
 		return err
 	})
 	if err != nil {
-		_ = vacuumVolumeCleanup(grpcDialOption, vid, server)
+		if cleanupErr := vacuumVolumeCleanup(grpcDialOption, vid, server); cleanupErr != nil {
+			fmt.Fprintf(writer, "    cleanup after commit failure also failed: %v\n", cleanupErr)
+		}
 		return fmt.Errorf("commit: %v", err)
 	}
 
