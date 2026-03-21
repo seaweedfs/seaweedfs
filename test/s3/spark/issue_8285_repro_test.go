@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -72,7 +73,8 @@ print("WRITE_COUNT=" + str(count))
 	}
 	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 90*time.Second)
 	if len(lingering) > 0 {
-		t.Fatalf("issue #8285 regression detected: lingering temporary directories: %v", lingering)
+		remainingTempDirs := listTemporaryDirectoryMarkers(t, env, "test", "issue-8285/")
+		t.Fatalf("issue #8285 regression detected: lingering temporary directories: %v\nremaining temporary directory markers: %v", lingering, remainingTempDirs)
 	}
 }
 
@@ -97,6 +99,23 @@ func listObjectKeysByPrefix(t *testing.T, env *TestEnvironment, bucketName, pref
 	}
 
 	return keys
+}
+
+func listTemporaryDirectoryMarkers(t *testing.T, env *TestEnvironment, bucketName, prefix string) []string {
+	t.Helper()
+
+	keys := listObjectKeysByPrefix(t, env, bucketName, prefix)
+	var directories []string
+	for _, key := range keys {
+		if !strings.HasSuffix(key, "/") {
+			continue
+		}
+		if hasTemporaryPathSegment(key) {
+			directories = append(directories, key)
+		}
+	}
+	sort.Strings(directories)
+	return directories
 }
 
 func headObjectInfo(t *testing.T, env *TestEnvironment, bucketName, key string) (bool, string, error) {
