@@ -1,0 +1,40 @@
+name: Telemetry Integration Tests
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'telemetry/**'
+      - 'weed/telemetry/**'
+      - '.github/workflows/telemetry-integration.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'telemetry/**'
+      - 'weed/telemetry/**'
+      - '.github/workflows/telemetry-integration.yml'
+
+jobs:
+  telemetry-integration-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Run telemetry integration test
+      run: go run telemetry/test/integration.go
+
+    - name: Upload test logs on failure
+      if: failure()
+      uses: actions/upload-artifact@v7
+      with:
+        name: telemetry-test-logs
+        path: telemetry-server-test.log
+        retention-days: 7
