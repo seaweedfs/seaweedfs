@@ -324,11 +324,14 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 		isMarker = *state.isDirectoryMarker
 	} else {
 		efc.mu.Unlock()
-		isMarker = efc.isDirectoryMarker(ctx, folder)
-		// Cache the result
+		var cacheable bool
+		isMarker, cacheable = efc.isDirectoryMarker(ctx, folder)
+		// Only cache definitive results; transient errors should be retried
 		efc.mu.Lock()
-		if state, exists := efc.folderCounts[folder]; exists && state != nil {
-			state.isDirectoryMarker = &isMarker
+		if cacheable {
+			if state, exists := efc.folderCounts[folder]; exists && state != nil {
+				state.isDirectoryMarker = &isMarker
+			}
 		}
 	}
 	efc.mu.Unlock()
@@ -350,9 +353,13 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	delete(efc.folderCounts, folder)
 	efc.mu.Unlock()
 
-	// Note: No need to recursively check parent folder here.
-	// The deletion of this folder will generate a metadata event,
-	// which will trigger OnDeleteEvent for the parent folder.
+	// Directory deletions don't fire NotifyUpdateEvent (filer_delete_entry.go),
+	// so we must explicitly notify the parent to trigger cascading cleanup.
+	parentDir := folder[:strings.LastIndex(folder, "/")]
+	if parentDir != "" && parentDir != folder {
+		entryName := folder[strings.LastIndex(folder, "/")+1:]
+		efc.OnDeleteEvent(parentDir, entryName, true, time.Now())
+	}
 }
 
 // countItems counts items in a folder (up to maxCountCheck)
@@ -367,31 +374,31 @@ func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) 
 
 // isDirectoryMarker checks if a folder is a directory marker (explicitly created S3 directory key object)
 // Directory markers have a MIME type set in extended attributes (ExtMimeType).
-// Returns true (fail-closed) on transient errors to prevent accidental deletion,
-// but returns false for ErrNotFound (entry doesn't exist, e.g. implicit directories).
-func (efc *EmptyFolderCleaner) isDirectoryMarker(ctx context.Context, folder string) bool {
+// Returns (result, ok) where ok=false means the check failed due to a transient error
+// and the result should NOT be cached.
+func (efc *EmptyFolderCleaner) isDirectoryMarker(ctx context.Context, folder string) (bool, bool) {
 	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
 	if err != nil {
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			// Entry doesn't exist in filer (implicit directory) — not a directory marker
-			return false
+			return false, true
 		}
-		// Fail-closed on transient errors: assume it's a directory marker
-		// to prevent accidental deletion due to temporary attribute read failures.
-		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes for %s, skipping deletion (fail-closed): %v", folder, err)
-		return true
+		// Transient error — return false to allow cleanup to proceed,
+		// but signal that the result should not be cached so it can be retried.
+		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes for %s, allowing deletion (will retry next cycle): %v", folder, err)
+		return false, false
 	}
 
 	if attrs == nil {
-		return false
+		return false, true
 	}
 
 	// Check if MIME type is set in extended attributes (where we store it for directory markers)
 	if _, hasMime := attrs[s3_constants.ExtMimeType]; hasMime {
-		return true
+		return true, true
 	}
 
-	return false
+	return false, true
 }
 
 func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {
