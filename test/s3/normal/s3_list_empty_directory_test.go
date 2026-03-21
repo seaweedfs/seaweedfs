@@ -221,6 +221,42 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 		assert.Equal(t, []string{"docs/", "docs/readme.txt", "readme.txt"}, allKeys,
 			"paginated listing should return all keys including marker and its child")
 	})
+
+	t.Run("ListExplicitDirectoryMarkerWithOctetStreamContentType", func(t *testing.T) {
+		bucketWithContentType := createTestBucket(t, cluster, "test-explicit-dir-")
+		objectKey := "test-content/empty/"
+
+		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket:      aws.String(bucketWithContentType),
+			Key:         aws.String(objectKey),
+			Body:        bytes.NewReader([]byte{}),
+			ContentType: aws.String("application/octet-stream"),
+		})
+		require.NoError(t, err, "failed to create explicit directory marker with octet-stream content type")
+
+		headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+			Bucket: aws.String(bucketWithContentType),
+			Key:    aws.String(objectKey),
+		})
+		require.NoError(t, err, "directory marker should exist via HeadObject")
+		assert.Equal(t, "application/octet-stream", aws.StringValue(headResp.ContentType))
+
+		respV1, err := cluster.s3Client.ListObjects(&s3.ListObjectsInput{
+			Bucket: aws.String(bucketWithContentType),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{objectKey}, collectKeysV1(respV1.Contents),
+			"explicit empty directory markers with octet-stream content type should be listed")
+
+		respV2, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketWithContentType),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+		assert.Equal(t, []string{objectKey}, collectKeys(respV2.Contents),
+			"explicit empty directory markers with octet-stream content type should be listed")
+	})
 }
 
 func collectKeys(contents []*s3.Object) []string {
