@@ -174,9 +174,9 @@ func testProtobufMarshaling() error {
 	}
 
 	// Verify data
-	if testData2.ClusterId != testData.ClusterId {
+	if testData2.TopologyId != testData.TopologyId {
 		return fmt.Errorf("protobuf data mismatch: expected %s, got %s",
-			testData.ClusterId, testData2.ClusterId)
+			testData.TopologyId, testData2.TopologyId)
 	}
 
 	if testData2.VolumeServerCount != testData.VolumeServerCount {
