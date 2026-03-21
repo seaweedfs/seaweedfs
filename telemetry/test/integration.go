@@ -199,6 +199,7 @@ func testProtobufMarshaling() error {
 func testTelemetryClient() error {
 	// Create telemetry client
 	client := telemetry.NewClient(serverURL+"/api/collect", true)
+	client.SetTopologyId("test-topology-12345")
 
 	// Create test data using protobuf format
 	testData := &proto.TelemetryData{
