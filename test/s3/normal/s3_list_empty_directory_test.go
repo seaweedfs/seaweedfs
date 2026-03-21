@@ -223,6 +223,141 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 	})
 }
 
+// TestS3ListObjectsDirectoryMarkerWithContentType reproduces GitHub issue #8712:
+// Directory markers created with an explicit Content-Type (e.g. application/octet-stream)
+// must appear in ListObjects results, just like markers created without Content-Type.
+func TestS3ListObjectsDirectoryMarkerWithContentType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	bucketName := createTestBucket(t, cluster, "test-content-type-dirs-")
+
+	// Create a directory marker with explicit Content-Type (the scenario from #8712)
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String("test-content/empty/"),
+		Body:        bytes.NewReader([]byte{}),
+		ContentType: aws.String("application/octet-stream"),
+	})
+	require.NoError(t, err, "failed to create directory marker with content-type")
+
+	// Verify the directory marker exists via HeadObject
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("test-content/empty/"),
+	})
+	require.NoError(t, err, "directory marker should exist via HeadObject")
+	assert.Equal(t, "application/octet-stream", aws.StringValue(headResp.ContentType),
+		"Content-Type should be preserved")
+
+	// Test 1: ListObjectsV2 with prefix (no delimiter) — the exact scenario from #8712
+	t.Run("ListV2_WithPrefix_NoDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		assert.Equal(t, []string{"test-content/empty/"}, keys,
+			"directory marker with explicit Content-Type should be listed")
+
+		// Verify the directory marker has zero size
+		require.Equal(t, 1, len(resp.Contents), "should have exactly one object in Contents")
+		assert.Equal(t, int64(0), aws.Int64Value(resp.Contents[0].Size),
+			"directory marker should have Size == 0")
+	})
+
+	// Test 2: ListObjectsV1 with prefix
+	t.Run("ListV1_WithPrefix_NoDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjects(&s3.ListObjectsInput{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeysV1(resp.Contents)
+		assert.Equal(t, []string{"test-content/empty/"}, keys,
+			"directory marker with explicit Content-Type should be listed")
+
+		// Verify the directory marker has zero size
+		require.Equal(t, 1, len(resp.Contents), "should have exactly one object in Contents")
+		assert.Equal(t, int64(0), aws.Int64Value(resp.Contents[0].Size),
+			"directory marker should have Size == 0")
+	})
+
+	// Test 3: Without prefix
+	t.Run("ListV2_NoPrefix", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		assert.Contains(t, keys, "test-content/empty/",
+			"directory marker with explicit Content-Type should appear in full listing")
+
+		// Find and verify the directory marker has zero size
+		var dirMarker *s3.Object
+		for _, obj := range resp.Contents {
+			if aws.StringValue(obj.Key) == "test-content/empty/" {
+				dirMarker = obj
+				break
+			}
+		}
+		require.NotNil(t, dirMarker, "directory marker should be in Contents")
+		assert.Equal(t, int64(0), aws.Int64Value(dirMarker.Size),
+			"directory marker should have Size == 0")
+	})
+
+	// Test 4: With delimiter — should appear as CommonPrefix
+	t.Run("ListV2_WithDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket:    aws.String(bucketName),
+			Delimiter: aws.String("/"),
+		})
+		require.NoError(t, err)
+
+		prefixes := collectPrefixes(resp.CommonPrefixes)
+		assert.Contains(t, prefixes, "test-content/",
+			"parent of directory marker should appear as CommonPrefix")
+	})
+
+	// Test 5: Alongside a default-MIME directory marker — both should be listed
+	t.Run("ListV2_MixedMimeTypes", func(t *testing.T) {
+		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String("test-content/default/"),
+			Body:   bytes.NewReader([]byte{}),
+			// No ContentType — defaults to httpd/unix-directory
+		})
+		require.NoError(t, err)
+
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		sort.Strings(keys)
+		assert.Equal(t, []string{"test-content/default/", "test-content/empty/"}, keys,
+			"both directory markers (custom and default MIME) should be listed")
+
+		// Verify both directory markers have zero size
+		require.Equal(t, 2, len(resp.Contents), "should have exactly two objects in Contents")
+		for _, obj := range resp.Contents {
+			assert.Equal(t, int64(0), aws.Int64Value(obj.Size),
+				"directory marker %s should have Size == 0", aws.StringValue(obj.Key))
+		}
+	})
+}
+
 func collectKeys(contents []*s3.Object) []string {
 	keys := make([]string, 0, len(contents))
 	for _, obj := range contents {
