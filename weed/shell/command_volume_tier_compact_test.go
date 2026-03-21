@@ -127,23 +127,31 @@ func TestFindRemoteVolumeInTopology(t *testing.T) {
 			wantFound: false,
 		},
 		{
-			name:       "filter by matching collection",
+			name:       "filter by matching collection exact",
 			vid:        1,
-			collection: "col1",
+			collection: "^col1$",
+			wantFound:  true,
+			wantDest:   "s3.default",
+		},
+		{
+			name:       "filter by matching collection regex",
+			vid:        1,
+			collection: "col.*",
 			wantFound:  true,
 			wantDest:   "s3.default",
 		},
 		{
 			name:       "filter by non-matching collection",
 			vid:        1,
-			collection: "col2",
+			collection: "^col2$",
 			wantFound:  false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rv, found := findRemoteVolumeInTopology(topo, tt.vid, tt.collection)
+			rv, found, err := findRemoteVolumeInTopology(topo, tt.vid, tt.collection)
+			assert.NoError(t, err)
 			assert.Equal(t, tt.wantFound, found)
 			if found {
 				assert.Equal(t, tt.vid, rv.vid)
@@ -151,6 +159,13 @@ func TestFindRemoteVolumeInTopology(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFindRemoteVolumeInTopologyInvalidPattern(t *testing.T) {
+	topo := buildTestTopologyWithRemoteVolumes()
+
+	_, _, err := findRemoteVolumeInTopology(topo, 1, "[invalid")
+	assert.Error(t, err)
 }
 
 func TestCollectRemoteVolumesWithInfo(t *testing.T) {

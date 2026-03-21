@@ -83,7 +83,10 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 	// find remote volumes
 	var remoteVolumes []remoteVolumeInfo
 	if vid != 0 {
-		rv, found := findRemoteVolumeInTopology(topologyInfo, vid, *collection)
+		rv, found, findErr := findRemoteVolumeInTopology(topologyInfo, vid, *collection)
+		if findErr != nil {
+			return findErr
+		}
 		if !found {
 			return fmt.Errorf("remote volume %d not found", vid)
 		}
@@ -102,16 +105,33 @@ func (c *commandVolumeTierCompact) Do(args []string, commandEnv *CommandEnv, wri
 
 	fmt.Fprintf(writer, "found %d remote volume(s) to check for compaction\n", len(remoteVolumes))
 
+	var failedCount int
 	for _, rv := range remoteVolumes {
 		if err = doVolumeTierCompact(commandEnv, writer, rv, *garbageThreshold); err != nil {
 			fmt.Fprintf(writer, "error compacting volume %d: %v\n", rv.vid, err)
+			failedCount++
 		}
 	}
 
+	if failedCount > 0 {
+		return fmt.Errorf("%d of %d volume(s) failed to compact", failedCount, len(remoteVolumes))
+	}
 	return nil
 }
 
-func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collection string) (remoteVolumeInfo, bool) {
+func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.VolumeId, collectionPattern string) (remoteVolumeInfo, bool, error) {
+	// when collectionPattern is provided, compile and use as regex filter
+	var matchesCollection func(string) bool
+	if collectionPattern != "" {
+		collectionRegex, err := compileCollectionPattern(collectionPattern)
+		if err != nil {
+			return remoteVolumeInfo{}, false, fmt.Errorf("invalid collection pattern '%s': %v", collectionPattern, err)
+		}
+		matchesCollection = collectionRegex.MatchString
+	} else {
+		matchesCollection = func(string) bool { return true }
+	}
+
 	var result remoteVolumeInfo
 	found := false
 	eachDataNode(topoInfo, func(dc DataCenterId, rack RackId, dn *master_pb.DataNodeInfo) {
@@ -121,7 +141,7 @@ func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.Vol
 		for _, diskInfo := range dn.DiskInfos {
 			for _, v := range diskInfo.VolumeInfos {
 				if needle.VolumeId(v.Id) == vid && v.RemoteStorageName != "" && v.RemoteStorageKey != "" {
-					if collection != "" && v.Collection != collection {
+					if !matchesCollection(v.Collection) {
 						continue
 					}
 					result = remoteVolumeInfo{
@@ -137,7 +157,7 @@ func findRemoteVolumeInTopology(topoInfo *master_pb.TopologyInfo, vid needle.Vol
 			}
 		}
 	})
-	return result, found
+	return result, found, nil
 }
 
 func collectRemoteVolumesWithInfo(topoInfo *master_pb.TopologyInfo, collectionPattern string) ([]remoteVolumeInfo, error) {
