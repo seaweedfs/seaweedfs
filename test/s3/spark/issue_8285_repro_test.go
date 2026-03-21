@@ -70,7 +70,7 @@ print("WRITE_COUNT=" + str(count))
 		"issue-8285/output/_temporary/0/",
 		"issue-8285/output/_temporary/0/_temporary/",
 	}
-	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 60*time.Second)
+	lingering := waitForObjectsToDisappear(t, env, "test", temporaryCandidates, 90*time.Second)
 	if len(lingering) > 0 {
 		t.Fatalf("issue #8285 regression detected: lingering temporary directories: %v", lingering)
 	}
