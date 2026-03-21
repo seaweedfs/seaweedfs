@@ -1108,7 +1108,11 @@ func (r *Plugin) pruneTrackedJobsLocked() {
 	}
 
 	for i := 0; i < toDelete; i++ {
-		delete(r.jobs, terminalJobs[i].jobID)
+		jobID := terminalJobs[i].jobID
+		delete(r.jobs, jobID)
+		if err := r.store.DeleteJobDetail(jobID); err != nil {
+			glog.V(2).Infof("Plugin failed to delete job detail for pruned job %s: %v", jobID, err)
+		}
 	}
 }
 
