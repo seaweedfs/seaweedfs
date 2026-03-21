@@ -228,6 +228,7 @@ func (s *PrometheusStorage) CleanupOldInstances(maxAge time.Duration) {
 			s.totalVolumeCount.Delete(labels)
 			s.filerCount.Delete(labels)
 			s.brokerCount.Delete(labels)
+			s.clusterInfo.Delete(labels)
 		}
 	}
 
