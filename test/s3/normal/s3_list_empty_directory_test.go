@@ -223,6 +223,116 @@ func TestS3ListObjectsEmptyDirectoryMarkers(t *testing.T) {
 	})
 }
 
+// TestS3ListObjectsDirectoryMarkerWithContentType reproduces GitHub issue #8712:
+// directory markers created with an explicit Content-Type must still appear in listings.
+func TestS3ListObjectsDirectoryMarkerWithContentType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	cluster, err := startMiniCluster(t)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	bucketName := createTestBucket(t, cluster, "test-content-type-dirs-")
+
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String("test-content/empty/"),
+		Body:        bytes.NewReader([]byte{}),
+		ContentType: aws.String("application/octet-stream"),
+	})
+	require.NoError(t, err, "failed to create directory marker with content-type")
+
+	headResp, err := cluster.s3Client.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String("test-content/empty/"),
+	})
+	require.NoError(t, err, "directory marker should exist via HeadObject")
+	assert.Equal(t, "application/octet-stream", aws.StringValue(headResp.ContentType))
+
+	t.Run("ListV2_WithPrefix_NoDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		assert.Equal(t, []string{"test-content/empty/"}, keys)
+		require.Equal(t, 1, len(resp.Contents))
+		assert.Equal(t, int64(0), aws.Int64Value(resp.Contents[0].Size))
+	})
+
+	t.Run("ListV1_WithPrefix_NoDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjects(&s3.ListObjectsInput{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeysV1(resp.Contents)
+		assert.Equal(t, []string{"test-content/empty/"}, keys)
+		require.Equal(t, 1, len(resp.Contents))
+		assert.Equal(t, int64(0), aws.Int64Value(resp.Contents[0].Size))
+	})
+
+	t.Run("ListV2_NoPrefix", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		assert.Contains(t, keys, "test-content/empty/")
+
+		var dirMarker *s3.Object
+		for _, obj := range resp.Contents {
+			if aws.StringValue(obj.Key) == "test-content/empty/" {
+				dirMarker = obj
+				break
+			}
+		}
+		require.NotNil(t, dirMarker)
+		assert.Equal(t, int64(0), aws.Int64Value(dirMarker.Size))
+	})
+
+	t.Run("ListV2_WithDelimiter", func(t *testing.T) {
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket:    aws.String(bucketName),
+			Delimiter: aws.String("/"),
+		})
+		require.NoError(t, err)
+
+		prefixes := collectPrefixes(resp.CommonPrefixes)
+		assert.Contains(t, prefixes, "test-content/")
+	})
+
+	t.Run("ListV2_MixedMimeTypes", func(t *testing.T) {
+		_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+			Bucket: aws.String(bucketName),
+			Key:    aws.String("test-content/default/"),
+			Body:   bytes.NewReader([]byte{}),
+		})
+		require.NoError(t, err)
+
+		resp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+			Bucket: aws.String(bucketName),
+			Prefix: aws.String("test-content"),
+		})
+		require.NoError(t, err)
+
+		keys := collectKeys(resp.Contents)
+		sort.Strings(keys)
+		assert.Equal(t, []string{"test-content/default/", "test-content/empty/"}, keys)
+
+		require.Equal(t, 2, len(resp.Contents))
+		for _, obj := range resp.Contents {
+			assert.Equal(t, int64(0), aws.Int64Value(obj.Size))
+		}
+	})
+}
+
 func collectKeys(contents []*s3.Object) []string {
 	keys := make([]string, 0, len(contents))
 	for _, obj := range contents {

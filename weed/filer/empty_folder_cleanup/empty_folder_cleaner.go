@@ -2,6 +2,7 @@ package empty_folder_cleanup
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"time"
@@ -31,10 +32,11 @@ type FilerOperations interface {
 
 // folderState tracks the state of a folder for empty folder cleanup
 type folderState struct {
-	roughCount  int       // Cached rough count (up to maxCountCheck)
-	lastAddTime time.Time // Last time an item was added
-	lastDelTime time.Time // Last time an item was deleted
-	lastCheck   time.Time // Last time we checked the actual count
+	roughCount        int       // Cached rough count (up to maxCountCheck)
+	lastAddTime       time.Time // Last time an item was added
+	lastDelTime       time.Time // Last time an item was deleted
+	lastCheck         time.Time // Last time we checked the actual count
+	isDirectoryMarker *bool     // nil means not checked yet
 }
 
 type bucketCleanupPolicyState struct {
@@ -312,6 +314,26 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 		return
 	}
 
+	efc.mu.Lock()
+	state := efc.folderCounts[folder]
+	var isMarker bool
+	if state != nil && state.isDirectoryMarker != nil {
+		isMarker = *state.isDirectoryMarker
+	} else {
+		efc.mu.Unlock()
+		isMarker = efc.isDirectoryMarker(ctx, folder)
+		efc.mu.Lock()
+		if state, exists := efc.folderCounts[folder]; exists && state != nil {
+			state.isDirectoryMarker = &isMarker
+		}
+	}
+	efc.mu.Unlock()
+
+	if isMarker {
+		glog.V(3).Infof("EmptyFolderCleaner: skipping deletion of directory marker %s (triggered by %s)", folder, triggeredBy)
+		return
+	}
+
 	// Delete the empty folder
 	glog.Infof("EmptyFolderCleaner: deleting empty folder %s (triggered by %s)", folder, triggeredBy)
 	if err := efc.deleteFolder(ctx, folder); err != nil {
@@ -337,6 +359,22 @@ func (efc *EmptyFolderCleaner) countItems(ctx context.Context, folder string) (i
 // deleteFolder deletes an empty folder
 func (efc *EmptyFolderCleaner) deleteFolder(ctx context.Context, folder string) error {
 	return efc.filer.DeleteEntryMetaAndData(ctx, util.FullPath(folder), false, false, false, false, nil, 0)
+}
+
+func (efc *EmptyFolderCleaner) isDirectoryMarker(ctx context.Context, folder string) bool {
+	attrs, err := efc.filer.GetEntryAttributes(ctx, util.FullPath(folder))
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return false
+		}
+		glog.V(2).Infof("EmptyFolderCleaner: error reading attributes for %s, skipping deletion: %v", folder, err)
+		return true
+	}
+	if attrs == nil {
+		return false
+	}
+	_, hasMime := attrs[s3_constants.ExtMimeType]
+	return hasMime
 }
 
 func (efc *EmptyFolderCleaner) getBucketCleanupPolicy(ctx context.Context, folder string) (bucketPath string, autoRemove bool, source string, attrValue string, err error) {

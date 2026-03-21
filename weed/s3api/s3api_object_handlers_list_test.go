@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	grpc "google.golang.org/grpc"
@@ -282,6 +283,76 @@ func TestAllowUnorderedParameterValidation(t *testing.T) {
 		assert.Equal(t, s3err.ErrNone, errCode, "should not return error for valid parameters")
 		assert.False(t, allowUnordered, "allow-unordered should be false when not set")
 	})
+}
+
+func TestDoListFilerEntries_DirectoryKeyObjectWithCustomMimeType(t *testing.T) {
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{
+			BucketsPath: "/buckets",
+		},
+	}
+
+	tests := []struct {
+		name  string
+		entry *filer_pb.Entry
+	}{
+		{
+			name: "default folder mime",
+			entry: &filer_pb.Entry{
+				Name:        "empty",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{Mime: s3_constants.FolderMimeType},
+			},
+		},
+		{
+			name: "application octet stream mime",
+			entry: &filer_pb.Entry{
+				Name:        "empty",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{Mime: "application/octet-stream"},
+			},
+		},
+		{
+			name: "custom directory mime",
+			entry: &filer_pb.Entry{
+				Name:        "empty",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{Mime: "application/x-directory"},
+			},
+		},
+		{
+			name: "mime stripped but extended marker present",
+			entry: &filer_pb.Entry{
+				Name:        "empty",
+				IsDirectory: true,
+				Attributes:  &filer_pb.FuseAttributes{},
+				Extended:    map[string][]byte{s3_constants.ExtMimeType: []byte("application/octet-stream")},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := &testFilerClient{
+				entriesByDir: map[string][]*filer_pb.Entry{
+					"/buckets/bucket": {
+						{Name: "test-content", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+					},
+					"/buckets/bucket/test-content":       {tt.entry},
+					"/buckets/bucket/test-content/empty": {},
+				},
+			}
+
+			cursor := &ListingCursor{maxKeys: 1000}
+			var seen []string
+			_, err := s3a.doListFilerEntries(client, "/buckets/bucket", "test-content", cursor, "", "", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+				seen = append(seen, entry.Name)
+			})
+
+			assert.NoError(t, err)
+			assert.Contains(t, seen, "empty")
+		})
+	}
 }
 
 func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories(t *testing.T) {

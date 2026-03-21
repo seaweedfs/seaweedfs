@@ -19,6 +19,7 @@ const (
 	ExtLatestVersionOwnerKey       = "Seaweed-X-Amz-Latest-Version-Owner"
 	ExtLatestVersionIsDeleteMarker = "Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"
 	ExtMultipartObjectKey          = "key"
+	ExtMimeType                    = "Seaweed-X-Amz-Mime-Type"
 
 	// Bucket Policy
 	ExtBucketPolicyKey = "Seaweed-X-Amz-Bucket-Policy"

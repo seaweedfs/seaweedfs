@@ -22,7 +22,18 @@ func (entry *Entry) IsInRemoteOnly() bool {
 }
 
 func (entry *Entry) IsDirectoryKeyObject() bool {
-	return entry.IsDirectory && entry.Attributes != nil && entry.Attributes.Mime != ""
+	if !entry.IsDirectory || entry.Attributes == nil {
+		return false
+	}
+	if entry.Attributes.Mime != "" {
+		return true
+	}
+	if entry.Extended != nil {
+		if _, hasMime := entry.Extended[s3_constants.ExtMimeType]; hasMime {
+			return true
+		}
+	}
+	return false
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {
