@@ -122,7 +122,18 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 	defer dataReader.Close()
 
 	objectContentType := r.Header.Get("Content-Type")
-	if strings.HasSuffix(object, "/") && r.ContentLength <= 1024 {
+
+	// For aws-chunked requests, r.ContentLength includes the chunked encoding
+	// overhead (signatures, trailers). Use x-amz-decoded-content-length when
+	// present to get the actual payload size for the directory-marker decision.
+	actualContentLength := r.ContentLength
+	if decodedStr := r.Header.Get("X-Amz-Decoded-Content-Length"); decodedStr != "" {
+		if decoded, parseErr := strconv.ParseInt(decodedStr, 10, 64); parseErr == nil && decoded >= 0 {
+			actualContentLength = decoded
+		}
+	}
+
+	if strings.HasSuffix(object, "/") && actualContentLength >= 0 && actualContentLength <= 1024 {
 		// Split the object into directory path and name
 		objectWithoutSlash := strings.TrimSuffix(object, "/")
 		dirName := path.Dir(objectWithoutSlash)
@@ -139,14 +150,26 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			fullDirPath = fullDirPath + "/" + dirName
 		}
 
-		// Read any content through dataReader (handles chunked encoding properly)
+		// Read any content through dataReader (handles chunked encoding properly).
+		// Use actualContentLength (decoded) to decide whether to read, since
+		// r.ContentLength may include aws-chunked overhead for streaming requests.
+		// Limit reader to prevent OOM from unbounded reads.
 		var dirContent []byte
-		if r.ContentLength != 0 {
+		if actualContentLength != 0 {
 			var readErr error
-			dirContent, readErr = io.ReadAll(dataReader)
+			// Limit the read to 1024+1 bytes to prevent OOM and detect oversized payloads
+			limitedReader := io.LimitReader(dataReader, 1024+1)
+			dirContent, readErr = io.ReadAll(limitedReader)
 			if readErr != nil {
 				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+
+			// Reject directory marker payloads larger than 1024 bytes
+			if len(dirContent) > 1024 {
+				glog.Warningf("PutObjectHandler: directory marker payload exceeds 1024 bytes: %s/%s (size=%d)", bucket, object, len(dirContent))
+				s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
 				return
 			}
 		}
@@ -174,6 +197,14 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 					entry.Extended = make(map[string][]byte)
 				}
 				entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
+
+				// Only store MIME in extended attributes for true zero-byte directory
+				// markers (the filer may not persist the Mime field for directories).
+				// Directories with content (e.g., Spark _temporary dirs) should NOT
+				// get this flag, so the empty-folder cleaner can still remove them.
+				if len(dirContent) == 0 {
+					entry.Extended[s3_constants.ExtMimeType] = []byte(objectContentType)
+				}
 
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)

@@ -22,7 +22,21 @@ func (entry *Entry) IsInRemoteOnly() bool {
 }
 
 func (entry *Entry) IsDirectoryKeyObject() bool {
-	return entry.IsDirectory && entry.Attributes != nil && entry.Attributes.Mime != ""
+	if !entry.IsDirectory || entry.Attributes == nil {
+		return false
+	}
+	// Check if MIME type is set in attributes
+	if entry.Attributes.Mime != "" {
+		return true
+	}
+	// For directory markers with custom MIME types, check extended attributes
+	// (the filer may not persist the Mime field for directories)
+	if entry.Extended != nil {
+		if _, hasMime := entry.Extended[s3_constants.ExtMimeType]; hasMime {
+			return true
+		}
+	}
+	return false
 }
 
 func (entry *Entry) GetExpiryTime() (expiryTime int64) {
