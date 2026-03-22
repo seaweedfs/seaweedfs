@@ -78,6 +78,10 @@ type Option struct {
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
+	// WritebackCache enables async flush on close for improved small file write performance.
+	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
+	WritebackCache bool
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -110,6 +114,16 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+
+	// asyncFlushWg tracks pending background flush goroutines for writebackCache mode.
+	// Must be waited on before unmount cleanup to prevent data loss.
+	asyncFlushWg sync.WaitGroup
+
+	// pendingAsyncFlush tracks in-flight async flush goroutines by inode.
+	// AcquireHandle checks this to wait for a pending flush before reopening
+	// the same inode, preventing stale metadata from overwriting the async flush.
+	pendingAsyncFlushMu sync.Mutex
+	pendingAsyncFlush   map[uint64]chan struct{}
 }
 
 const (
@@ -151,13 +165,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs := &WFS{
-		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
-		option:          option,
-		signature:       util.RandomInt32(),
-		inodeToPath:     NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
-		fhMap:           NewFileHandleToInode(),
-		dhMap:           NewDirectoryHandleToInode(),
-		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
+		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
+		option:            option,
+		signature:         util.RandomInt32(),
+		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
+		fhMap:             NewFileHandleToInode(),
+		dhMap:             NewDirectoryHandleToInode(),
+		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
+		pendingAsyncFlush: make(map[uint64]chan struct{}),
 		fhLockTable:     util.NewLockTable[FileHandleId](),
 		refreshingDirs:  make(map[util.FullPath]struct{}),
 		dirHotWindow:    dirHotWindow,
@@ -204,8 +219,32 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		})
 	grace.OnInterrupt(func() {
+		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
+		// after server.Serve() would never execute.  Drain here first.
+		//
+		// Use a timeout to avoid hanging on Ctrl-C if the filer is
+		// unreachable (metadata retry can take up to 7 seconds).
+		// If the timeout expires, skip the write-cache removal so that
+		// still-running goroutines can finish reading swap files.
+		asyncDrained := true
+		if wfs.option.WritebackCache {
+			done := make(chan struct{})
+			go func() {
+				wfs.asyncFlushWg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				glog.V(0).Infof("all async flushes completed before shutdown")
+			case <-time.After(30 * time.Second):
+				glog.Warningf("timed out waiting for async flushes — swap files preserved for in-flight uploads")
+				asyncDrained = false
+			}
+		}
 		wfs.metaCache.Shutdown()
-		os.RemoveAll(option.getUniqueCacheDirForWrite())
+		if asyncDrained {
+			os.RemoveAll(option.getUniqueCacheDirForWrite())
+		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
@@ -240,6 +279,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 }
 
 func (wfs *WFS) StartBackgroundTasks() error {
+	if wfs.option.WritebackCache {
+		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
+	}
+
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err

@@ -59,7 +59,7 @@ func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
 		return fuse.OK
 	}
 
-	return wfs.doFlush(fh, in.Uid, in.Gid)
+	return wfs.doFlush(fh, in.Uid, in.Gid, true)
 }
 
 /**
@@ -88,17 +88,38 @@ func (wfs *WFS) Fsync(cancel <-chan struct{}, in *fuse.FsyncIn) (code fuse.Statu
 		return fuse.ENOENT
 	}
 
-	return wfs.doFlush(fh, in.Uid, in.Gid)
+	// Fsync is an explicit sync request — always flush synchronously
+	return wfs.doFlush(fh, in.Uid, in.Gid, false)
 
 }
 
-func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
+func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.Status {
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
 	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
+
+	// When writebackCache is enabled and this is a close()-triggered Flush (not fsync),
+	// defer the expensive data upload + metadata flush to a background goroutine.
+	// This allows the calling process (e.g., rsync) to proceed to the next file immediately.
+	// POSIX does not require close() to wait for delayed I/O to complete.
+	if allowAsync && wfs.option.WritebackCache && fh.dirtyMetadata {
+		if wfs.IsOverQuotaWithUncommitted() {
+			return fuse.Status(syscall.ENOSPC)
+		}
+		fh.asyncFlushPending = true
+		fh.asyncFlushUid = uid
+		fh.asyncFlushGid = gid
+		fh.asyncFlushDir = dir
+		fh.asyncFlushName = name
+		glog.V(3).Infof("doFlush async deferred %s fh %d", fileFullPath, fh.fh)
+		return fuse.OK
+	}
+
+	// Synchronous flush path (normal mode, fsync, or no dirty data)
+	fh.asyncFlushPending = false
 
 	// Check quota including uncommitted writes for real-time enforcement
 	isOverQuota := wfs.IsOverQuotaWithUncommitted()
@@ -116,6 +137,23 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 	if isOverQuota {
 		return fuse.Status(syscall.ENOSPC)
 	}
+
+	if err := wfs.flushMetadataToFiler(fh, dir, name, uid, gid); err != nil {
+		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
+		return fuse.EIO
+	}
+
+	if IsDebugFileReadWrite {
+		fh.mirrorFile.Sync()
+	}
+
+	return fuse.OK
+}
+
+// flushMetadataToFiler sends the file's chunk references and attributes to the filer.
+// This is shared between the synchronous doFlush path and the async flush completion.
+func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid uint32) error {
+	fileFullPath := fh.FullPath()
 
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
@@ -144,9 +182,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		}
 
 		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
-		//for i, chunk := range entry.GetChunks() {
-		//	glog.V(4).Infof("%s chunks %d: %v [%d,%d)", fileFullPath, i, chunk.GetFileIdString(), chunk.Offset, chunk.Offset+int64(chunk.Size))
-		//}
 
 		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
@@ -183,14 +218,5 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32) fuse.Status {
 		fh.dirtyMetadata = false
 	}
 
-	if err != nil {
-		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
-		return fuse.EIO
-	}
-
-	if IsDebugFileReadWrite {
-		fh.mirrorFile.Sync()
-	}
-
-	return fuse.OK
+	return err
 }

@@ -161,6 +161,15 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 
+	// If there is an async-draining handle for this file, mark it as deleted
+	// so the background flush skips the metadata write instead of recreating
+	// the just-unlinked entry.  The handle is still in fhMap during drain.
+	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fh.isDeleted = true
+		}
+	}
+
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
 	return fuse.OK

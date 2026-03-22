@@ -349,6 +349,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
 		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
 		DirIdleEvictSec:   *option.dirIdleEvictSec,
+		WritebackCache:    option.writebackCache != nil && *option.writebackCache,
 	})
 
 	// create mount root
@@ -395,6 +396,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 
 	server.Serve()
+
+	// Wait for any pending background flushes (writebackCache async mode)
+	// before clearing caches, to prevent data loss during clean unmount.
+	seaweedFileSystem.WaitForAsyncFlush()
 
 	seaweedFileSystem.ClearCacheDir()
 
