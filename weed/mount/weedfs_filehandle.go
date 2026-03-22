@@ -27,47 +27,45 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 	return
 }
 
+// ReleaseHandle is called from FUSE Release.  For handles with a pending
+// async flush, the map removal and the pendingAsyncFlush registration are
+// done under a single lock hold so that a concurrent AcquireHandle cannot
+// slip through the gap between the two (P1-1 TOCTOU fix).
+//
+// The handle intentionally stays in fhMap during the drain so that rename
+// and unlink can still find it via FindFileHandle (P1-2 fix).  It is
+// removed from fhMap only after the drain completes (RemoveFileHandle).
 func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
+	// Hold pendingAsyncFlushMu across the counter decrement and the
+	// pending-flush registration.  Lock ordering: pendingAsyncFlushMu → fhMap.
+	wfs.pendingAsyncFlushMu.Lock()
 	fhToRelease := wfs.fhMap.ReleaseByHandle(handleId)
-	wfs.finalizeFileHandle(fhToRelease)
-}
+	if fhToRelease != nil && fhToRelease.asyncFlushPending {
+		done := make(chan struct{})
+		wfs.pendingAsyncFlush[fhToRelease.inode] = done
+		wfs.pendingAsyncFlushMu.Unlock()
 
-// finalizeFileHandle either destroys the FileHandle immediately or, if an async
-// flush is pending (writebackCache mode), submits a background goroutine to
-// complete the data upload + metadata flush first.
-func (wfs *WFS) finalizeFileHandle(fh *FileHandle) {
-	if fh == nil {
+		wfs.asyncFlushWg.Add(1)
+		go func() {
+			defer wfs.asyncFlushWg.Done()
+			defer func() {
+				// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
+				wfs.fhMap.RemoveFileHandle(fhToRelease.fh, fhToRelease.inode)
+				// Then signal completion (unblocks waitForPendingAsyncFlush).
+				close(done)
+				wfs.pendingAsyncFlushMu.Lock()
+				delete(wfs.pendingAsyncFlush, fhToRelease.inode)
+				wfs.pendingAsyncFlushMu.Unlock()
+			}()
+			wfs.completeAsyncFlush(fhToRelease)
+		}()
 		return
 	}
-	if fh.asyncFlushPending {
-		wfs.submitAsyncFlush(fh)
-	} else {
-		fh.ReleaseHandle()
-	}
-}
-
-// submitAsyncFlush registers an in-flight async flush for this inode and
-// starts the background goroutine.  The per-inode channel allows
-// AcquireHandle to block if the same inode is reopened before the flush
-// finishes, preventing stale metadata from overwriting the flushed data.
-func (wfs *WFS) submitAsyncFlush(fh *FileHandle) {
-	done := make(chan struct{})
-
-	wfs.pendingAsyncFlushMu.Lock()
-	wfs.pendingAsyncFlush[fh.inode] = done
 	wfs.pendingAsyncFlushMu.Unlock()
 
-	wfs.asyncFlushWg.Add(1)
-	go func() {
-		defer wfs.asyncFlushWg.Done()
-		defer func() {
-			close(done)
-			wfs.pendingAsyncFlushMu.Lock()
-			delete(wfs.pendingAsyncFlush, fh.inode)
-			wfs.pendingAsyncFlushMu.Unlock()
-		}()
-		wfs.completeAsyncFlush(fh)
-	}()
+	if fhToRelease != nil {
+		fhToRelease.ReleaseHandle()
+	}
 }
 
 // waitForPendingAsyncFlush blocks until any in-flight async flush for

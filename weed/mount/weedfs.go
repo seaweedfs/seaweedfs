@@ -219,10 +219,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		})
 	grace.OnInterrupt(func() {
-		// Drain pending async flushes before cleaning up.
-		// grace calls os.Exit(0) after hooks, so WaitForAsyncFlush after
-		// server.Serve() would never run. Do it here with a timeout to
-		// avoid hanging on Ctrl-C if a filer is unreachable.
+		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
+		// after server.Serve() would never execute.  Drain here first.
+		//
+		// Use a timeout to avoid hanging on Ctrl-C if the filer is
+		// unreachable (metadata retry can take up to 7 seconds).
+		// If the timeout expires, skip the write-cache removal so that
+		// still-running goroutines can finish reading swap files.
+		asyncDrained := true
 		if wfs.option.WritebackCache {
 			done := make(chan struct{})
 			go func() {
@@ -232,12 +236,15 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			select {
 			case <-done:
 				glog.V(0).Infof("all async flushes completed before shutdown")
-			case <-time.After(10 * time.Second):
-				glog.Warningf("timed out waiting for async flushes — some data may not be persisted")
+			case <-time.After(30 * time.Second):
+				glog.Warningf("timed out waiting for async flushes — swap files preserved for in-flight uploads")
+				asyncDrained = false
 			}
 		}
 		wfs.metaCache.Shutdown()
-		os.RemoveAll(option.getUniqueCacheDirForWrite())
+		if asyncDrained {
+			os.RemoveAll(option.getUniqueCacheDirForWrite())
+		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
