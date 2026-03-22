@@ -239,12 +239,13 @@ func (f *FuseTestFramework) dumpLog(name string) {
 
 // startMaster starts the SeaweedFS master server
 func (f *FuseTestFramework) startMaster(config *TestConfig) error {
-	masterGrpcPort := freePort(f.t)
+	// Do NOT set -port.grpc explicitly. SeaweedFS convention is gRPC = HTTP + 10000.
+	// Volume/filer discover the master gRPC port by this convention, so overriding
+	// it breaks inter-service communication.
 	args := []string{
 		"master",
 		"-ip=127.0.0.1",
 		"-port=" + strconv.Itoa(f.masterPort),
-		"-port.grpc=" + strconv.Itoa(masterGrpcPort),
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
 	}
 	if config.EnableDebug {
@@ -261,13 +262,11 @@ func (f *FuseTestFramework) startMaster(config *TestConfig) error {
 
 // startVolumeServers starts SeaweedFS volume servers
 func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
-	volumeGrpcPort := freePort(f.t)
 	args := []string{
 		"volume",
 		"-master=127.0.0.1:" + strconv.Itoa(f.masterPort),
 		"-ip=127.0.0.1",
 		"-port=" + strconv.Itoa(f.volumePort),
-		"-port.grpc=" + strconv.Itoa(volumeGrpcPort),
 		"-dir=" + filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	}
@@ -285,13 +284,11 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 
 // startFiler starts the SeaweedFS filer server
 func (f *FuseTestFramework) startFiler(config *TestConfig) error {
-	filerGrpcPort := freePort(f.t)
 	args := []string{
 		"filer",
 		"-master=127.0.0.1:" + strconv.Itoa(f.masterPort),
 		"-ip=127.0.0.1",
 		"-port=" + strconv.Itoa(f.filerPort),
-		"-port.grpc=" + strconv.Itoa(filerGrpcPort),
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
