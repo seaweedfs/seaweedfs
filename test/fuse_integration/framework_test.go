@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -20,6 +21,7 @@ type FuseTestFramework struct {
 	tempDir       string
 	mountPoint    string
 	dataDir       string
+	logDir        string
 	masterProcess *os.Process
 	volumeProcess *os.Process
 	filerProcess  *os.Process
@@ -27,6 +29,9 @@ type FuseTestFramework struct {
 	masterAddr    string
 	volumeAddr    string
 	filerAddr     string
+	masterPort    int
+	volumePort    int
+	filerPort     int
 	weedBinary    string
 	isSetup       bool
 }
@@ -57,7 +62,9 @@ func DefaultTestConfig() *TestConfig {
 	}
 }
 
-// NewFuseTestFramework creates a new FUSE testing framework
+// NewFuseTestFramework creates a new FUSE testing framework.
+// Each instance allocates its own free ports so multiple tests can run
+// sequentially without port conflicts from slow cleanup.
 func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	if config == nil {
 		config = DefaultTestConfig()
@@ -66,17 +73,35 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_fuse_test_")
 	require.NoError(t, err)
 
+	masterPort := freePort(t)
+	volumePort := freePort(t)
+	filerPort := freePort(t)
+
 	return &FuseTestFramework{
 		t:          t,
 		tempDir:    tempDir,
 		mountPoint: filepath.Join(tempDir, "mount"),
 		dataDir:    filepath.Join(tempDir, "data"),
-		masterAddr: "127.0.0.1:19333",
-		volumeAddr: "127.0.0.1:18080",
-		filerAddr:  "127.0.0.1:18888",
+		logDir:     filepath.Join(tempDir, "logs"),
+		masterPort: masterPort,
+		volumePort: volumePort,
+		filerPort:  filerPort,
+		masterAddr: fmt.Sprintf("127.0.0.1:%d", masterPort),
+		volumeAddr: fmt.Sprintf("127.0.0.1:%d", volumePort),
+		filerAddr:  fmt.Sprintf("127.0.0.1:%d", filerPort),
 		weedBinary: findWeedBinary(),
 		isSetup:    false,
 	}
+}
+
+// freePort asks the OS for a free TCP port.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	l.Close()
+	return port
 }
 
 // Setup starts SeaweedFS cluster and mounts FUSE filesystem
@@ -85,8 +110,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 		return fmt.Errorf("framework already setup")
 	}
 
-	// Create directories
-	dirs := []string{f.mountPoint, f.dataDir}
+	// Create all required directories upfront
+	dirs := []string{
+		f.mountPoint,
+		f.logDir,
+		filepath.Join(f.dataDir, "master"),
+		filepath.Join(f.dataDir, "volume"),
+	}
 	for _, dir := range dirs {
 		if err := os.MkdirAll(dir, 0755); err != nil {
 			return fmt.Errorf("failed to create directory %s: %v", dir, err)
@@ -100,6 +130,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for master to be ready
 	if err := f.waitForService(f.masterAddr, 30*time.Second); err != nil {
+		f.dumpLog("master")
 		return fmt.Errorf("master not ready: %v", err)
 	}
 
@@ -110,6 +141,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for volume server to be ready
 	if err := f.waitForService(f.volumeAddr, 30*time.Second); err != nil {
+		f.dumpLog("volume")
 		return fmt.Errorf("volume server not ready: %v", err)
 	}
 
@@ -120,6 +152,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for filer to be ready
 	if err := f.waitForService(f.filerAddr, 30*time.Second); err != nil {
+		f.dumpLog("filer")
 		return fmt.Errorf("filer not ready: %v", err)
 	}
 
@@ -130,6 +163,7 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 
 	// Wait for mount to be ready
 	if err := f.waitForMount(30 * time.Second); err != nil {
+		f.dumpLog("mount")
 		return fmt.Errorf("FUSE mount not ready: %v", err)
 	}
 
@@ -168,36 +202,72 @@ func (f *FuseTestFramework) GetFilerAddr() string {
 	return f.filerAddr
 }
 
+// startProcess is a helper that starts a weed sub-command with output captured
+// to a log file in f.logDir.
+func (f *FuseTestFramework) startProcess(name string, args []string) (*os.Process, error) {
+	logFile, err := os.Create(filepath.Join(f.logDir, name+".log"))
+	if err != nil {
+		return nil, fmt.Errorf("create log file: %v", err)
+	}
+	cmd := exec.Command(f.weedBinary, args...)
+	cmd.Dir = f.tempDir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return nil, err
+	}
+	// Close the file handle — the child process inherited it.
+	logFile.Close()
+	return cmd.Process, nil
+}
+
+// dumpLog prints the last lines of a process log file to the test output
+// for debugging when a service fails to start.
+func (f *FuseTestFramework) dumpLog(name string) {
+	data, err := os.ReadFile(filepath.Join(f.logDir, name+".log"))
+	if err != nil {
+		f.t.Logf("[%s log] (not available: %v)", name, err)
+		return
+	}
+	// Truncate to last 2KB to keep output manageable
+	if len(data) > 2048 {
+		data = data[len(data)-2048:]
+	}
+	f.t.Logf("[%s log tail]\n%s", name, string(data))
+}
+
 // startMaster starts the SeaweedFS master server
 func (f *FuseTestFramework) startMaster(config *TestConfig) error {
+	masterGrpcPort := freePort(f.t)
 	args := []string{
 		"master",
 		"-ip=127.0.0.1",
-		"-port=19333",
+		"-port=" + strconv.Itoa(f.masterPort),
+		"-port.grpc=" + strconv.Itoa(masterGrpcPort),
 		"-mdir=" + filepath.Join(f.dataDir, "master"),
-		"-raftBootstrap",
-		"-peers=none", // Faster startup when no multiple masters needed
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
 	}
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("master", args)
+	if err != nil {
 		return err
 	}
-	f.masterProcess = cmd.Process
+	f.masterProcess = proc
 	return nil
 }
 
 // startVolumeServers starts SeaweedFS volume servers
 func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
+	volumeGrpcPort := freePort(f.t)
 	args := []string{
 		"volume",
-		"-master=" + f.masterAddr,
+		"-master=127.0.0.1:" + strconv.Itoa(f.masterPort),
 		"-ip=127.0.0.1",
-		"-port=18080",
+		"-port=" + strconv.Itoa(f.volumePort),
+		"-port.grpc=" + strconv.Itoa(volumeGrpcPort),
 		"-dir=" + filepath.Join(f.dataDir, "volume"),
 		fmt.Sprintf("-max=%d", config.NumVolumes),
 	}
@@ -205,33 +275,33 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 		args = append(args, "-v=4")
 	}
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("volume", args)
+	if err != nil {
 		return err
 	}
-	f.volumeProcess = cmd.Process
+	f.volumeProcess = proc
 	return nil
 }
 
 // startFiler starts the SeaweedFS filer server
 func (f *FuseTestFramework) startFiler(config *TestConfig) error {
+	filerGrpcPort := freePort(f.t)
 	args := []string{
 		"filer",
-		"-master=" + f.masterAddr,
+		"-master=127.0.0.1:" + strconv.Itoa(f.masterPort),
 		"-ip=127.0.0.1",
-		"-port=18888",
+		"-port=" + strconv.Itoa(f.filerPort),
+		"-port.grpc=" + strconv.Itoa(filerGrpcPort),
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
 	}
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("filer", args)
+	if err != nil {
 		return err
 	}
-	f.filerProcess = cmd.Process
+	f.filerProcess = proc
 	return nil
 }
 
@@ -239,10 +309,11 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	args := []string{
 		"mount",
-		"-filer=" + f.filerAddr,
+		"-filer=127.0.0.1:" + strconv.Itoa(f.filerPort),
 		"-dir=" + f.mountPoint,
 		"-filer.path=/",
 		"-dirAutoCreate",
+		"-allowOthers=false",
 	}
 
 	if config.Collection != "" {
@@ -255,7 +326,7 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 		args = append(args, fmt.Sprintf("-chunkSizeLimitMB=%d", config.ChunkSizeMB))
 	}
 	if config.CacheSizeMB > 0 {
-		args = append(args, fmt.Sprintf("-cacheSizeMB=%d", config.CacheSizeMB))
+		args = append(args, fmt.Sprintf("-cacheCapacityMB=%d", config.CacheSizeMB))
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
@@ -263,12 +334,11 @@ func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 
 	args = append(args, config.MountOptions...)
 
-	cmd := exec.Command(f.weedBinary, args...)
-	cmd.Dir = f.tempDir
-	if err := cmd.Start(); err != nil {
+	proc, err := f.startProcess("mount", args)
+	if err != nil {
 		return err
 	}
-	f.mountProcess = cmd.Process
+	f.mountProcess = proc
 	return nil
 }
 
@@ -281,7 +351,8 @@ func (f *FuseTestFramework) unmountFuse() error {
 	}
 
 	// Also try system unmount as backup
-	exec.Command("umount", f.mountPoint).Run()
+	exec.Command("fusermount3", "-u", f.mountPoint).Run()
+	exec.Command("fusermount", "-u", f.mountPoint).Run()
 	return nil
 }
 
