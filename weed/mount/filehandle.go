@@ -31,6 +31,8 @@ type FileHandle struct {
 	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
 	asyncFlushUid     uint32 // saved uid for deferred metadata flush
 	asyncFlushGid     uint32 // saved gid for deferred metadata flush
+	asyncFlushDir     string // saved directory at defer time (fallback if inode forgotten)
+	asyncFlushName    string // saved file name at defer time (fallback if inode forgotten)
 
 	isDeleted bool
 

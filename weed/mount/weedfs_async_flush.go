@@ -27,16 +27,24 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 		// Data is lost at this point (chunks freed after internal retry exhaustion).
 		// Proceed to cleanup to avoid resource leaks and unmount hangs.
 	} else if fh.dirtyMetadata {
-		// Phase 2: Re-resolve path from inode right before metadata flush.
-		// The file may have been renamed or unlinked after close() returned.
-		// GetPath returns the current path (reflects renames) or ENOENT (unlinked).
-		fileFullPath, status := wfs.inodeToPath.GetPath(fh.inode)
-		if status != fuse.OK {
-			glog.V(3).Infof("completeAsyncFlush inode %d: inode no longer resolvable (file unlinked?), skipping metadata flush", fh.inode)
-		} else {
-			dir, name := fileFullPath.DirAndName()
-			wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath)
+		// Phase 2: Resolve the current path for metadata flush.
+		//
+		// Try GetPath first — it reflects any rename that happened after
+		// close().  If the inode mapping is gone (Forget dropped it after
+		// the kernel's lookup count hit zero), fall back to the dir/name
+		// saved at doFlush time.  Forget does NOT mean the file was
+		// deleted; it only means the kernel evicted its cache entry.  We
+		// must always attempt the metadata flush to avoid orphaning the
+		// chunks that were just uploaded in Phase 1.
+		dir, name := fh.asyncFlushDir, fh.asyncFlushName
+		fileFullPath := util.FullPath(dir).Child(name)
+
+		if resolvedPath, status := wfs.inodeToPath.GetPath(fh.inode); status == fuse.OK {
+			dir, name = resolvedPath.DirAndName()
+			fileFullPath = resolvedPath
 		}
+
+		wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath)
 	}
 
 	glog.V(3).Infof("completeAsyncFlush done inode %d fh %d", fh.inode, fh.fh)
