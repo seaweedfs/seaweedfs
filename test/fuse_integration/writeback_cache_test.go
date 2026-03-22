@@ -308,7 +308,12 @@ func testWritebackConcurrentSmallFiles(t *testing.T, framework *FuseTestFramewor
 					size = 100*1024
 				}
 				content := make([]byte, size)
-				rand.Read(content)
+				if _, err := rand.Read(content); err != nil {
+					mu.Lock()
+					writeErrors = append(writeErrors, fmt.Errorf("worker %d file %d rand: %v", workerID, f, err))
+					mu.Unlock()
+					return
+				}
 
 				if err := os.WriteFile(path, content, 0644); err != nil {
 					mu.Lock()
@@ -329,11 +334,9 @@ func testWritebackConcurrentSmallFiles(t *testing.T, framework *FuseTestFramewor
 	assert.Equal(t, totalFiles, len(records))
 
 	// Phase 2: Wait for async flushes and verify all files
-	var verifyErrors []error
 	for _, rec := range records {
 		waitForFileContent(t, rec.path, rec.content, 60*time.Second)
 	}
-	require.Empty(t, verifyErrors, "verify errors: %v", verifyErrors)
 
 	// Phase 3: Verify directory listing has correct count
 	entries, err := os.ReadDir(filepath.Join(framework.GetMountPoint(), dir))
@@ -511,7 +514,8 @@ func testWritebackFileSizeCorrectness(t *testing.T, framework *FuseTestFramework
 
 		content := make([]byte, size)
 		if size > 0 {
-			rand.Read(content)
+			_, err := rand.Read(content)
+			require.NoError(t, err, "rand.Read failed for size %d", size)
 		}
 
 		require.NoError(t, os.WriteFile(mountPath, content, 0644), "failed to write file of size %d", size)
@@ -628,15 +632,20 @@ func TestWritebackCacheConcurrentMixedOps(t *testing.T) {
 		errors = append(errors, err)
 	}
 
-	// Phase 1: Create initial files
+	// Phase 1: Create initial files and wait for async flushes
+	initialContents := make(map[int][]byte, numFiles)
 	for i := 0; i < numFiles; i++ {
 		path := filepath.Join(framework.GetMountPoint(), dir, fmt.Sprintf("file_%03d.txt", i))
 		content := []byte(fmt.Sprintf("initial content %d", i))
 		require.NoError(t, os.WriteFile(path, content, 0644))
+		initialContents[i] = content
 	}
 
-	// Wait for initial files to be flushed
-	time.Sleep(5 * time.Second)
+	// Poll until initial files are flushed (instead of fixed sleep)
+	for i := 0; i < numFiles; i++ {
+		path := filepath.Join(framework.GetMountPoint(), dir, fmt.Sprintf("file_%03d.txt", i))
+		waitForFileContent(t, path, initialContents[i], 30*time.Second)
+	}
 
 	// Phase 2: Concurrent mixed operations
 	var wg sync.WaitGroup
@@ -696,12 +705,11 @@ func TestWritebackCacheConcurrentMixedOps(t *testing.T) {
 	require.Empty(t, errors, "mixed operation errors: %v", errors)
 	assert.True(t, atomic.LoadInt64(&completedWrites) > 0, "should have completed some writes")
 
-	// Verify new files exist after async flushes complete
-	time.Sleep(5 * time.Second)
+	// Verify new files exist after async flushes complete (poll instead of fixed sleep)
 	for i := 0; i < 20; i++ {
 		path := filepath.Join(framework.GetMountPoint(), dir, fmt.Sprintf("new_file_%03d.txt", i))
-		_, err := os.Stat(path)
-		assert.NoError(t, err, "new file %d should exist", i)
+		expected := []byte(fmt.Sprintf("new file %d", i))
+		waitForFileContent(t, path, expected, 30*time.Second)
 	}
 }
 
@@ -749,13 +757,23 @@ func TestWritebackCacheStressSmallFiles(t *testing.T) {
 				// Ensure subdirectory exists
 				if f == 0 {
 					subDir := filepath.Join(framework.GetMountPoint(), dir, fmt.Sprintf("w%02d", workerID))
-					os.MkdirAll(subDir, 0755)
+					if err := os.MkdirAll(subDir, 0755); err != nil {
+						mu.Lock()
+						writeErrors = append(writeErrors, fmt.Errorf("worker %d mkdir: %v", workerID, err))
+						mu.Unlock()
+						return
+					}
 				}
 
 				// Small file: 1KB-10KB (typical for rsync of config/source files)
 				size := 1024 + (f%10)*1024
 				content := make([]byte, size)
-				rand.Read(content)
+				if _, err := rand.Read(content); err != nil {
+					mu.Lock()
+					writeErrors = append(writeErrors, fmt.Errorf("worker %d file %d rand: %v", workerID, f, err))
+					mu.Unlock()
+					return
+				}
 
 				if err := os.WriteFile(path, content, 0644); err != nil {
 					mu.Lock()

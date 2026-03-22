@@ -63,6 +63,7 @@ jobs:
 
     - name: Run FUSE Integration Tests
       run: |
+        set -o pipefail
         cd test/fuse_integration
         echo "Running full FUSE integration test suite..."
         go test -v -count=1 -timeout=45m ./... 2>&1 | tee /tmp/fuse-test-output.log
