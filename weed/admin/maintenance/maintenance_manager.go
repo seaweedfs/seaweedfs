@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/delete_empty"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
@@ -70,6 +71,15 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 					MinServerCount:     int32(balanceConfig.MinServerCount),
 				},
 			},
+		}
+	}
+
+	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
+		policy.TaskPolicies["delete_empty"] = &worker_pb.TaskPolicy{
+			Enabled:               deConfig.Enabled,
+			MaxConcurrent:         int32(deConfig.MaxConcurrent),
+			RepeatIntervalSeconds: int32(deConfig.ScanIntervalSeconds),
+			CheckIntervalSeconds:  int32(deConfig.ScanIntervalSeconds),
 		}
 	}
 

@@ -181,6 +181,12 @@ message ReplicationTaskParams {
   bool verify_consistency = 2;            // Verify replica consistency after creation
 }
 
+// DeleteEmptyTaskParams for deleting empty volumes
+// NOTE: add field 13 to TaskParams.task_params oneof after proto regeneration
+message DeleteEmptyTaskParams {
+  int32 quiet_for_seconds = 1;            // Minimum quiet time before deletion (default: 86400)
+}
+
 // TaskUpdate reports task progress
 message TaskUpdate {
   string task_id = 1;

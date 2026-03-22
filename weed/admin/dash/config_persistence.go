@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/delete_empty"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -30,6 +31,7 @@ const (
 	ECTaskConfigFile          = "task_erasure_coding.pb"
 	BalanceTaskConfigFile     = "task_balance.pb"
 	ReplicationTaskConfigFile = "task_replication.pb"
+	DeleteEmptyTaskConfigFile = "task_delete_empty.pb"
 
 	// JSON reference files
 	MaintenanceConfigJSONFile     = "maintenance.json"
@@ -37,6 +39,7 @@ const (
 	ECTaskConfigJSONFile          = "task_erasure_coding.json"
 	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
+	DeleteEmptyTaskConfigJSONFile = "task_delete_empty.json"
 
 	// Task persistence subdirectories and settings
 	TasksSubdir       = "tasks"
@@ -626,6 +629,45 @@ func (cp *ConfigPersistence) loadTaskConfig(filename string, config proto.Messag
 	return nil
 }
 
+// SaveDeleteEmptyTaskPolicy saves complete delete_empty task policy to protobuf file
+func (cp *ConfigPersistence) SaveDeleteEmptyTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return cp.saveTaskConfig(DeleteEmptyTaskConfigFile, policy)
+}
+
+// LoadDeleteEmptyTaskPolicy loads the delete_empty task policy from disk.
+// Since delete_empty config is not yet a typed oneof in TaskPolicy proto,
+// we persist only the base policy fields (enabled, concurrency, interval).
+func (cp *ConfigPersistence) LoadDeleteEmptyTaskPolicy() (*worker_pb.TaskPolicy, error) {
+	defaultPolicy := &worker_pb.TaskPolicy{
+		Enabled:               true,
+		MaxConcurrent:         1,
+		RepeatIntervalSeconds: 6 * 3600,
+		CheckIntervalSeconds:  6 * 3600,
+	}
+
+	if cp.dataDir == "" {
+		return defaultPolicy, nil
+	}
+
+	configPath := filepath.Join(cp.dataDir, ConfigSubdir, DeleteEmptyTaskConfigFile)
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return defaultPolicy, nil
+	}
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read delete_empty task config file: %w", err)
+	}
+
+	var policy worker_pb.TaskPolicy
+	if err := proto.Unmarshal(configData, &policy); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal delete_empty task configuration: %w", err)
+	}
+
+	glog.V(1).Infof("Loaded delete_empty task policy from %s", configPath)
+	return &policy, nil
+}
+
 // SaveTaskPolicy generic dispatcher for task persistence
 func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.TaskPolicy) error {
 	switch taskType {
@@ -637,6 +679,8 @@ func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.T
 		return cp.SaveBalanceTaskPolicy(policy)
 	case "replication":
 		return cp.SaveReplicationTaskPolicy(policy)
+	case "delete_empty":
+		return cp.SaveDeleteEmptyTaskPolicy(policy)
 	}
 	return fmt.Errorf("unknown task type: %s", taskType)
 }
@@ -747,6 +791,16 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 					MinServerCount:     int32(balanceConfig.MinServerCount),
 				},
 			},
+		}
+	}
+
+	// Load delete_empty task configuration
+	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
+		policy.TaskPolicies["delete_empty"] = &worker_pb.TaskPolicy{
+			Enabled:               deConfig.Enabled,
+			MaxConcurrent:         int32(deConfig.MaxConcurrent),
+			RepeatIntervalSeconds: int32(deConfig.ScanIntervalSeconds),
+			CheckIntervalSeconds:  int32(deConfig.ScanIntervalSeconds),
 		}
 	}
 
@@ -1094,6 +1148,9 @@ func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.Ma
 
 	// Convert protobuf to maintenance task
 	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
+	if task == nil {
+		return nil, fmt.Errorf("task state file %s has no task data", taskID)
+	}
 
 	glog.V(2).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
 	return task, nil
@@ -1224,6 +1281,9 @@ func (cp *ConfigPersistence) maintenanceTaskToProtobuf(task *maintenance.Mainten
 
 // protobufToMaintenanceTask converts protobuf format to MaintenanceTask
 func (cp *ConfigPersistence) protobufToMaintenanceTask(pbTask *worker_pb.MaintenanceTaskData) *maintenance.MaintenanceTask {
+	if pbTask == nil {
+		return nil
+	}
 	task := &maintenance.MaintenanceTask{
 		ID:              pbTask.Id,
 		Type:            maintenance.MaintenanceTaskType(pbTask.Type),
