@@ -315,27 +315,31 @@ func (f *FuseTestFramework) waitForMount(timeout time.Duration) error {
 	return fmt.Errorf("mount point not ready within timeout")
 }
 
-// findWeedBinary locates the weed binary
+// findWeedBinary locates the weed binary.
+// Checks PATH first (most reliable in CI where the binary is installed to
+// /usr/local/bin), then falls back to relative paths.  Each candidate is
+// verified to be a regular file so that a source directory named "weed"
+// is never mistaken for the binary.
 func findWeedBinary() string {
-	// Try different possible locations
-	candidates := []string{
-		"./weed",
-		"../weed",
-		"../../weed",
-		"weed", // in PATH
+	// PATH lookup first — works in CI and when weed is installed globally.
+	if p, err := exec.LookPath("weed"); err == nil {
+		return p
 	}
 
+	// Relative paths for local development (run from test/fuse_integration/).
+	candidates := []string{
+		"../../weed/weed", // built in-tree: weed/weed
+		"./weed",
+		"../weed",
+	}
 	for _, candidate := range candidates {
-		if _, err := exec.LookPath(candidate); err == nil {
-			return candidate
-		}
-		if _, err := os.Stat(candidate); err == nil {
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
 			abs, _ := filepath.Abs(candidate)
 			return abs
 		}
 	}
 
-	// Default fallback
+	// Default fallback — will fail with a clear "not found" at exec time.
 	return "weed"
 }
 
