@@ -291,7 +291,7 @@ func TestQA_B10_RepeatedEmptyHeartbeats_DuringExpand(t *testing.T) {
 	// 10 empty heartbeats from the primary — each one would delete
 	// the entry without the B-10 guard.
 	for i := 0; i < 10; i++ {
-		ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{})
+		ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{}, "")
 	}
 
 	_, ok := ms.blockRegistry.Lookup("multi-hb")
@@ -322,7 +322,7 @@ func TestQA_B10_ExpandFailed_HeartbeatStillProtected(t *testing.T) {
 	ms.blockRegistry.MarkExpandFailed("fail-hb")
 
 	// Empty heartbeat should not delete — ExpandFailed keeps ExpandInProgress=true.
-	ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{})
+	ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{}, "")
 
 	e, ok := ms.blockRegistry.Lookup("fail-hb")
 	if !ok {
@@ -337,7 +337,7 @@ func TestQA_B10_ExpandFailed_HeartbeatStillProtected(t *testing.T) {
 
 	// After ClearExpandFailed, empty heartbeat should delete normally.
 	ms.blockRegistry.ClearExpandFailed("fail-hb")
-	ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{})
+	ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{}, "")
 
 	_, ok = ms.blockRegistry.Lookup("fail-hb")
 	if ok {
@@ -372,7 +372,7 @@ func TestQA_B10_HeartbeatSizeSuppress_DuringExpand(t *testing.T) {
 			Epoch:      1,
 			Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 		},
-	})
+	}, "")
 
 	entry, _ = ms.blockRegistry.Lookup("size-suppress")
 	if entry.SizeBytes != origSize {
@@ -388,7 +388,7 @@ func TestQA_B10_HeartbeatSizeSuppress_DuringExpand(t *testing.T) {
 			Epoch:      1,
 			Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 		},
-	})
+	}, "")
 
 	entry, _ = ms.blockRegistry.Lookup("size-suppress")
 	if entry.SizeBytes != origSize {
@@ -441,7 +441,7 @@ func TestQA_B10_ConcurrentHeartbeatsAndExpand(t *testing.T) {
 		for i := 0; i < rounds; i++ {
 			if i%5 == 0 {
 				// Every 5th: empty heartbeat (simulates brief restart).
-				ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{})
+				ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{}, "")
 			} else {
 				ms.blockRegistry.UpdateFullHeartbeat(primary, []*master_pb.BlockVolumeInfoMessage{
 					{
@@ -451,7 +451,7 @@ func TestQA_B10_ConcurrentHeartbeatsAndExpand(t *testing.T) {
 						Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 						WalHeadLsn: uint64(100 + i),
 					},
-				})
+				}, "")
 			}
 		}
 	}()
@@ -470,7 +470,7 @@ func TestQA_B10_ConcurrentHeartbeatsAndExpand(t *testing.T) {
 						Role:       blockvol.RoleToWire(blockvol.RoleReplica),
 						WalHeadLsn: uint64(99 + i),
 					},
-				})
+				}, "")
 			}
 		}()
 	}

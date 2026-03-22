@@ -316,7 +316,7 @@ func TestDurability_Heartbeat_ReportsMode(t *testing.T) {
 			VolumeSize:     1 << 30,
 			DurabilityMode: "",
 		},
-	})
+	}, "")
 	entry, ok = ms.blockRegistry.Lookup("hb-vol")
 	if !ok {
 		t.Fatal("volume not in registry after heartbeat")
@@ -332,7 +332,7 @@ func TestDurability_Heartbeat_ReportsMode(t *testing.T) {
 			VolumeSize:     1 << 30,
 			DurabilityMode: "sync_all",
 		},
-	})
+	}, "")
 	entry, ok = ms.blockRegistry.Lookup("hb-vol")
 	if !ok {
 		t.Fatal("volume not in registry after second heartbeat")

@@ -371,5 +371,6 @@ func (vs *VolumeServer) collectBlockVolumeHeartbeat(ip string, port uint32, dc, 
 		Rack:              rack,
 		BlockVolumeInfos:  blockvol.InfoMessagesToProto(msgs),
 		HasNoBlockVolumes: len(msgs) == 0,
+		BlockNvmeAddr:     vs.blockService.NvmeListenAddr(),
 	}
 }

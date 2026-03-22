@@ -111,7 +111,7 @@ func TestQA_NVMe_HeartbeatSetsNvmeFields(t *testing.T) {
 			NvmeAddr:   "10.0.0.1:4420",
 			Nqn:        "nqn.2024-01.com.seaweedfs:vol1",
 		},
-	})
+	}, "")
 
 	entry, ok := r.Lookup("vol1")
 	if !ok {
@@ -152,7 +152,7 @@ func TestQA_NVMe_HeartbeatClearsStaleNvme(t *testing.T) {
 			Role:       1,
 			// NvmeAddr and Nqn intentionally empty.
 		},
-	})
+	}, "")
 
 	entry, _ := r.Lookup("vol1")
 	// After heartbeat with empty NVMe fields, stale NVMe info should be cleared.
@@ -370,7 +370,7 @@ func TestQA_NVMe_FullHeartbeat_MasterRestart(t *testing.T) {
 			NvmeAddr:   "10.0.0.1:4420",
 			Nqn:        "nqn.2024-01.com.seaweedfs:vol1",
 		},
-	})
+	}, "")
 
 	// After heartbeat, volume should be reconstructed with NVMe fields.
 	// Currently the registry uses nameFromPath() to find/create entries.
@@ -596,7 +596,7 @@ func TestIntegration_NVMe_FailoverUpdatesNvmeAddr(t *testing.T) {
 			NvmeAddr:   newPrimaryHost + ":4420",
 			Nqn:        fmt.Sprintf("nqn.2024-01.com.seaweedfs:vol.pvc-failover-nvme"),
 		},
-	})
+	}, "")
 
 	// CSI re-publishes after failover: Lookup must return new NVMe address.
 	lookupResp, err := ms.LookupBlockVolume(ctx, &master_pb.LookupBlockVolumeRequest{Name: "pvc-failover-nvme"})
@@ -651,7 +651,7 @@ func TestIntegration_NVMe_HeartbeatReconstructionAfterMasterRestart(t *testing.T
 			NvmeAddr:   primaryHost + ":4420",
 			Nqn:        "nqn.2024-01.com.seaweedfs:vol.pvc-restart-1",
 		},
-	})
+	}, "")
 
 	// Step 4: CSI calls Lookup — must find NVMe details.
 	lookupResp, err := ms.LookupBlockVolume(ctx, &master_pb.LookupBlockVolumeRequest{Name: "pvc-restart-1"})
@@ -895,7 +895,7 @@ func TestIntegration_NVMe_FullLifecycle_K8s(t *testing.T) {
 			NvmeAddr:   newPrimaryHost + ":4420",
 			Nqn:        "nqn.2024-01.com.seaweedfs:vol.pvc-k8s-data",
 		},
-	})
+	}, "")
 
 	// ── Step 7: CSI re-publishes → node plugin reconnects via NVMe ──
 	lookupResp, err = ms.LookupBlockVolume(ctx, &master_pb.LookupBlockVolumeRequest{Name: "pvc-k8s-data"})
@@ -977,7 +977,7 @@ func TestQA_NVMe_ToggleNvmeOnRunningVS(t *testing.T) {
 			NvmeAddr:   "10.0.0.1:4420",
 			Nqn:        "nqn.2024-01.com.seaweedfs:toggle-vol",
 		},
-	})
+	}, "")
 
 	entry, _ = r.Lookup("toggle-vol")
 	if entry.NvmeAddr != "10.0.0.1:4420" {
@@ -997,7 +997,7 @@ func TestQA_NVMe_ToggleNvmeOnRunningVS(t *testing.T) {
 			Role:       1,
 			// NvmeAddr and Nqn intentionally empty — NVMe disabled.
 		},
-	})
+	}, "")
 
 	entry, _ = r.Lookup("toggle-vol")
 	if entry.NvmeAddr != "" {
@@ -1080,7 +1080,7 @@ func TestQA_NVMe_ToggleNvmeOnRunningVS_ReplicaSide(t *testing.T) {
 			NvmeAddr:    "10.0.0.2:4420",
 			Nqn:         "nqn.2024-01.com.seaweedfs:toggle-replica-vol",
 		},
-	})
+	}, "")
 
 	entry, _ = r.Lookup("toggle-replica-vol")
 	if entry.Replicas[0].NvmeAddr != "10.0.0.2:4420" {
@@ -1101,7 +1101,7 @@ func TestQA_NVMe_ToggleNvmeOnRunningVS_ReplicaSide(t *testing.T) {
 			WalHeadLsn:  100,
 			// NvmeAddr and Nqn intentionally empty — NVMe disabled.
 		},
-	})
+	}, "")
 
 	entry, _ = r.Lookup("toggle-replica-vol")
 	if entry.Replicas[0].NvmeAddr != "" {
@@ -1325,7 +1325,7 @@ func TestQA_NVMe_PromotionThenImmediateLookup(t *testing.T) {
 				NvmeAddr:   "10.0.0.4:4420",
 				Nqn:        "nqn.2024-01.com.seaweedfs:promo-fix-vol",
 			},
-		})
+		}, "")
 
 		// Now Lookup should return the NvmeAddr.
 		entry, ok := r.Lookup("promo-fix-vol")

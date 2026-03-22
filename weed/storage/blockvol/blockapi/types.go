@@ -14,6 +14,7 @@ type CreateVolumeRequest struct {
 	DiskType         string `json:"disk_type"`                  // e.g. "ssd", "hdd"
 	DurabilityMode   string `json:"durability_mode,omitempty"`  // "best_effort", "sync_all", "sync_quorum"
 	ReplicaFactor    int    `json:"replica_factor,omitempty"`   // 1, 2, or 3 (default: 2)
+	Preset           string `json:"preset,omitempty"`           // "database", "general", "throughput", or ""
 }
 
 // VolumeInfo describes a block volume.
@@ -38,8 +39,29 @@ type VolumeInfo struct {
 	HealthScore     float64         `json:"health_score"`
 	ReplicaDegraded bool            `json:"replica_degraded,omitempty"`
 	DurabilityMode  string          `json:"durability_mode"` // CP8-3-1
+	Preset          string          `json:"preset,omitempty"` // CP11B-1: preset used at creation
 	NvmeAddr        string          `json:"nvme_addr,omitempty"`
 	NQN             string          `json:"nqn,omitempty"`
+}
+
+// ResolvedPolicyResponse is the response for POST /block/volume/resolve.
+type ResolvedPolicyResponse struct {
+	Policy    ResolvedPolicyView `json:"policy"`
+	Overrides []string           `json:"overrides,omitempty"`
+	Warnings  []string           `json:"warnings,omitempty"`
+	Errors    []string           `json:"errors,omitempty"`
+}
+
+// ResolvedPolicyView is the fully resolved policy shown to the user.
+type ResolvedPolicyView struct {
+	Preset              string `json:"preset,omitempty"`
+	DurabilityMode      string `json:"durability_mode"`
+	ReplicaFactor       int    `json:"replica_factor"`
+	DiskType            string `json:"disk_type,omitempty"`
+	TransportPreference string `json:"transport_preference"`
+	WorkloadHint        string `json:"workload_hint"`
+	WALSizeRecommended  uint64 `json:"wal_size_recommended"`
+	StorageProfile      string `json:"storage_profile"`
 }
 
 // ReplicaDetail describes one replica in the API response.

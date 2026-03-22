@@ -179,7 +179,7 @@ func TestQA_CP831_HeartbeatEmptyMode_DoesNotOverwriteStrict(t *testing.T) {
 				VolumeSize:     1 << 30,
 				DurabilityMode: "", // empty — must not overwrite
 			},
-		})
+		}, "")
 	}
 
 	entry, ok := ms.blockRegistry.Lookup("hb-strict")
@@ -220,7 +220,7 @@ func TestQA_CP831_HeartbeatNonEmptyMode_DoesUpdate(t *testing.T) {
 			VolumeSize:     1 << 30,
 			DurabilityMode: "sync_all",
 		},
-	})
+	}, "")
 
 	entry, ok := ms.blockRegistry.Lookup("hb-update")
 	if !ok {
@@ -718,7 +718,7 @@ func TestQA_CP831_MasterRestart_AutoRegister_PreservesDurabilityMode(t *testing.
 			VolumeSize:     1 << 30,
 			DurabilityMode: "sync_all",
 		},
-	})
+	}, "")
 
 	entry, ok := ms.blockRegistry.Lookup("strict-vol")
 	if !ok {
@@ -736,7 +736,7 @@ func TestQA_CP831_MasterRestart_AutoRegister_PreservesDurabilityMode(t *testing.
 			VolumeSize: 1 << 30,
 			// DurabilityMode omitted
 		},
-	})
+	}, "")
 
 	entry2, ok := ms2.blockRegistry.Lookup("legacy-vol")
 	if !ok {

@@ -191,6 +191,27 @@ func (c *Client) Preflight(ctx context.Context, name string) (*PreflightResponse
 	return &out, nil
 }
 
+// ResolvePolicy resolves a preset + overrides without creating a volume.
+func (c *Client) ResolvePolicy(ctx context.Context, req CreateVolumeRequest) (*ResolvedPolicyResponse, error) {
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	resp, err := c.doRequest(ctx, http.MethodPost, "/block/volume/resolve", bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if err := checkStatus(resp, http.StatusOK); err != nil {
+		return nil, err
+	}
+	var out ResolvedPolicyResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &out, nil
+}
+
 // ListServers lists all block-capable volume servers.
 func (c *Client) ListServers(ctx context.Context) ([]ServerInfo, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/block/servers", nil)

@@ -464,20 +464,35 @@ func (v *BlockVol) ReadLBA(lba uint64, length uint32) ([]byte, error) {
 
 // readOneBlock reads a single block, checking dirty map first, then extent.
 func (v *BlockVol) readOneBlock(lba uint64) ([]byte, error) {
-	walOff, lsn, _, ok := v.dirtyMap.Get(lba)
-	if ok {
+	for {
+		walOff, lsn, _, ok := v.dirtyMap.Get(lba)
+		if !ok {
+			return v.readBlockFromExtent(lba)
+		}
 		data, stale, err := v.readBlockFromWAL(walOff, lba, lsn)
 		if err != nil {
 			return nil, err
 		}
-		if !stale {
+		if stale {
+			// WAL slot was reused. Extent may not have the latest: a newer write
+			// could have updated dirtyMap after we got our old entry. Re-check
+			// dirtyMap before trusting extent; if a newer entry exists, retry.
+			_, currentLSN, _, stillOk := v.dirtyMap.Get(lba)
+			if stillOk && currentLSN != lsn {
+				continue
+			}
+			return v.readBlockFromExtent(lba)
+		}
+		// Verify no newer write overwrote this LBA while we were reading.
+		// A concurrent WriteLBA could have Put(lba, walOff_new, lsn_new) after
+		// our Get; we would have read old data at walOff. Re-check and retry.
+		_, currentLSN, _, stillOk := v.dirtyMap.Get(lba)
+		if stillOk && currentLSN == lsn {
 			return data, nil
 		}
-		// WAL slot was reused (flusher reclaimed it between our
-		// dirty map read and WAL read). The data is already flushed
-		// to the extent region, so fall through to extent read.
+		// LSN changed (newer write) or flusher removed: retry with fresh dirtyMap state.
+		continue
 	}
-	return v.readBlockFromExtent(lba)
 }
 
 // maxWALEntryDataLen caps the data length we trust from a WAL entry header.

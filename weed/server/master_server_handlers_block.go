@@ -13,6 +13,16 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/blockapi"
 )
 
+// buildEnvironmentInfo constructs a blockvol.EnvironmentInfo from registry state.
+func (ms *MasterServer) buildEnvironmentInfo() blockvol.EnvironmentInfo {
+	return blockvol.EnvironmentInfo{
+		NVMeAvailable:    ms.blockRegistry.HasNVMeCapableServer(),
+		ServerCount:      len(ms.blockRegistry.BlockCapableServers()),
+		WALSizeDefault:   64 << 20, // engine default
+		BlockSizeDefault: 4096,     // engine default
+	}
+}
+
 // blockVolumeCreateHandler handles POST /block/volume.
 func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.Request) {
 	var req blockapi.CreateVolumeRequest
@@ -27,29 +37,32 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		replicaPlacement = "000"
 	}
 
-	// Pre-validate durability_mode (cosmetic — real validation is in gRPC handler).
-	if req.DurabilityMode != "" {
-		if _, perr := blockvol.ParseDurabilityMode(req.DurabilityMode); perr != nil {
-			writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid durability_mode: %w", perr))
-			return
-		}
+	// Resolve preset + overrides.
+	env := ms.buildEnvironmentInfo()
+	resolved := blockvol.ResolvePolicy(blockvol.PresetName(req.Preset),
+		req.DurabilityMode, req.ReplicaFactor, req.DiskType, env)
+	if len(resolved.Errors) > 0 {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("%s", resolved.Errors[0]))
+		return
 	}
 
+	// Use resolved values for the gRPC call.
 	resp, err := ms.CreateBlockVolume(r.Context(), &master_pb.CreateBlockVolumeRequest{
 		Name:           req.Name,
 		SizeBytes:      req.SizeBytes,
-		DiskType:       req.DiskType,
-		DurabilityMode: req.DurabilityMode,
-		ReplicaFactor:  uint32(req.ReplicaFactor),
+		DiskType:       resolved.Policy.DiskType,
+		DurabilityMode: resolved.Policy.DurabilityMode,
+		ReplicaFactor:  uint32(resolved.Policy.ReplicaFactor),
 	})
 	if err != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
 
-	// Store replica_placement on the registry entry.
+	// Store replica_placement and preset on the registry entry.
 	if entry, ok := ms.blockRegistry.Lookup(resp.VolumeId); ok {
 		entry.ReplicaPlacement = replicaPlacement
+		entry.Preset = req.Preset
 	}
 
 	// Look up the full entry to populate all fields.
@@ -65,6 +78,37 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		info = entryToVolumeInfo(entry)
 	}
 	writeJsonQuiet(w, r, http.StatusOK, info)
+}
+
+// blockVolumeResolveHandler handles POST /block/volume/resolve.
+// Diagnostic endpoint: always returns 200, even with errors[].
+func (ms *MasterServer) blockVolumeResolveHandler(w http.ResponseWriter, r *http.Request) {
+	var req blockapi.CreateVolumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+
+	env := ms.buildEnvironmentInfo()
+	resolved := blockvol.ResolvePolicy(blockvol.PresetName(req.Preset),
+		req.DurabilityMode, req.ReplicaFactor, req.DiskType, env)
+
+	resp := blockapi.ResolvedPolicyResponse{
+		Policy: blockapi.ResolvedPolicyView{
+			Preset:              string(resolved.Policy.Preset),
+			DurabilityMode:      resolved.Policy.DurabilityMode,
+			ReplicaFactor:       resolved.Policy.ReplicaFactor,
+			DiskType:            resolved.Policy.DiskType,
+			TransportPreference: resolved.Policy.TransportPref,
+			WorkloadHint:        resolved.Policy.WorkloadHint,
+			WALSizeRecommended:  resolved.Policy.WALSizeRecommended,
+			StorageProfile:      resolved.Policy.StorageProfile,
+		},
+		Overrides: resolved.Overrides,
+		Warnings:  resolved.Warnings,
+		Errors:    resolved.Errors,
+	}
+	writeJsonQuiet(w, r, http.StatusOK, resp)
 }
 
 // blockVolumeDeleteHandler handles DELETE /block/volume/{name}.
@@ -333,6 +377,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 		HealthScore:      e.HealthScore,
 		ReplicaDegraded:  e.ReplicaDegraded,
 		DurabilityMode:   durMode,
+		Preset:           e.Preset,
 		NvmeAddr:         e.NvmeAddr,
 		NQN:              e.NQN,
 	}

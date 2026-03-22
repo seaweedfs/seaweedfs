@@ -1542,7 +1542,7 @@ func TestMaster_ExpandCoordinated_HeartbeatSuppressedAfterPartialCommit(t *testi
 			Epoch:      1,
 			Role:       1,
 		},
-	})
+	}, "")
 
 	// Registry size must still be the OLD size — heartbeat must not leak the new size.
 	entry, _ = ms.blockRegistry.Lookup("hb-vol")
@@ -1778,7 +1778,7 @@ func TestMaster_ExpandCoordinated_B10_HeartbeatDoesNotDeleteDuringExpand(t *test
 	// the entry from the registry.
 	ms.blockRegistry.UpdateFullHeartbeat(primaryServer, []*master_pb.BlockVolumeInfoMessage{
 		// Empty: primary restarted and hasn't loaded this volume yet.
-	})
+	}, "")
 
 	// Entry must still exist — expand is in progress.
 	_, ok := ms.blockRegistry.Lookup("b10-vol")

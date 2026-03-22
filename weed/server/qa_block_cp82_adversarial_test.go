@@ -197,7 +197,7 @@ func TestQA_CP82_ReplicaHeartbeatSpoof_DoesNotDeletePrimary(t *testing.T) {
 			Epoch:      1,
 			Role:       blockvol.RoleToWire(blockvol.RoleReplica),
 		},
-	})
+	}, "")
 
 	entry, ok := ms.blockRegistry.Lookup("vol-spoof")
 	if !ok {
@@ -209,7 +209,7 @@ func TestQA_CP82_ReplicaHeartbeatSpoof_DoesNotDeletePrimary(t *testing.T) {
 
 	// Now simulate a full heartbeat from vs2 with NO volumes at all.
 	// This should remove vs2 as replica but NOT delete the volume.
-	ms.blockRegistry.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{})
+	ms.blockRegistry.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{}, "")
 
 	entry, ok = ms.blockRegistry.Lookup("vol-spoof")
 	if !ok {
@@ -381,7 +381,7 @@ func TestQA_CP82_MasterRestart_ReconstructReplicas_ThenFailover(t *testing.T) {
 			Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 			WalHeadLsn: 500,
 		},
-	})
+	}, "")
 
 	entry, ok := ms.blockRegistry.Lookup("vol-restart")
 	if !ok {
@@ -400,7 +400,7 @@ func TestQA_CP82_MasterRestart_ReconstructReplicas_ThenFailover(t *testing.T) {
 			Role:       blockvol.RoleToWire(blockvol.RoleReplica),
 			WalHeadLsn: 498,
 		},
-	})
+	}, "")
 
 	entry, _ = ms.blockRegistry.Lookup("vol-restart")
 	if len(entry.Replicas) == 0 {
@@ -473,10 +473,10 @@ func TestQA_CP82_RF3_OneReplicaFlaps_UnderWriteLoad(t *testing.T) {
 						Role:       blockvol.RoleToWire(blockvol.RoleReplica),
 						WalHeadLsn: 100,
 					},
-				})
+				}, "")
 			} else {
 				// Replica reports no volumes (simulates disconnect).
-				ms.blockRegistry.UpdateFullHeartbeat("vs3:9333", []*master_pb.BlockVolumeInfoMessage{})
+				ms.blockRegistry.UpdateFullHeartbeat("vs3:9333", []*master_pb.BlockVolumeInfoMessage{}, "")
 			}
 		}
 	}()
@@ -494,7 +494,7 @@ func TestQA_CP82_RF3_OneReplicaFlaps_UnderWriteLoad(t *testing.T) {
 					Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 					WalHeadLsn: uint64(100 + i),
 				},
-			})
+			}, "")
 		}
 	}()
 
@@ -511,7 +511,7 @@ func TestQA_CP82_RF3_OneReplicaFlaps_UnderWriteLoad(t *testing.T) {
 					Role:       blockvol.RoleToWire(blockvol.RoleReplica),
 					WalHeadLsn: uint64(100 + i),
 				},
-			})
+			}, "")
 		}
 	}()
 
@@ -626,7 +626,7 @@ func TestQA_CP82_ScrubConcurrentWrites_NoFalseCorruption(t *testing.T) {
 					WalHeadLsn:  uint64(500 + i),
 					HealthScore: 1.0, // Clean — no false positives
 				},
-			})
+			}, "")
 		}
 	}()
 
@@ -644,7 +644,7 @@ func TestQA_CP82_ScrubConcurrentWrites_NoFalseCorruption(t *testing.T) {
 					WalHeadLsn:  uint64(500 + i),
 					HealthScore: 1.0,
 				},
-			})
+			}, "")
 		}
 	}()
 
@@ -690,7 +690,7 @@ func TestQA_CP82_ScrubDetectsCorruption_HealthDrops_PromotionAvoids(t *testing.T
 			HealthScore: 0.3,
 			ScrubErrors: 5,
 		},
-	})
+	}, "")
 
 	// Trigger failover — vs3 (healthy) should be promoted, not vs2.
 	newEpoch, err := ms.blockRegistry.PromoteBestReplica("vol-corrupt")

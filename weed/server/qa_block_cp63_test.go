@@ -331,7 +331,7 @@ func TestQA_Reg_FullHeartbeatDoesNotClobberReplicaServer(t *testing.T) {
 	// Full heartbeat from vs1 — should NOT clear replica info.
 	r.UpdateFullHeartbeat("vs1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/data/vol1.blk", Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary), VolumeSize: 1 << 30},
-	})
+	}, "")
 
 	e, _ := r.Lookup("vol1")
 	if e.ReplicaServer != "vs2" {

@@ -54,8 +54,10 @@ type Heartbeat struct {
 	NewBlockVolumes     []*BlockVolumeShortInfoMessage `protobuf:"bytes,25,rep,name=new_block_volumes,json=newBlockVolumes,proto3" json:"new_block_volumes,omitempty"`
 	DeletedBlockVolumes []*BlockVolumeShortInfoMessage `protobuf:"bytes,26,rep,name=deleted_block_volumes,json=deletedBlockVolumes,proto3" json:"deleted_block_volumes,omitempty"`
 	HasNoBlockVolumes   bool                           `protobuf:"varint,27,opt,name=has_no_block_volumes,json=hasNoBlockVolumes,proto3" json:"has_no_block_volumes,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// server-level NVMe/TCP target address (empty if NVMe disabled on this VS)
+	BlockNvmeAddr string `protobuf:"bytes,28,opt,name=block_nvme_addr,json=blockNvmeAddr,proto3" json:"block_nvme_addr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -254,6 +256,13 @@ func (x *Heartbeat) GetHasNoBlockVolumes() bool {
 		return x.HasNoBlockVolumes
 	}
 	return false
+}
+
+func (x *Heartbeat) GetBlockNvmeAddr() string {
+	if x != nil {
+		return x.BlockNvmeAddr
+	}
+	return ""
 }
 
 type HeartbeatResponse struct {
@@ -5478,7 +5487,7 @@ var File_master_proto protoreflect.FileDescriptor
 
 const file_master_proto_rawDesc = "" +
 	"\n" +
-	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xbd\n" +
+	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xe5\n" +
 	"\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
@@ -5510,7 +5519,8 @@ const file_master_proto_rawDesc = "" +
 	"\x12block_volume_infos\x18\x18 \x03(\v2!.master_pb.BlockVolumeInfoMessageR\x10blockVolumeInfos\x12R\n" +
 	"\x11new_block_volumes\x18\x19 \x03(\v2&.master_pb.BlockVolumeShortInfoMessageR\x0fnewBlockVolumes\x12Z\n" +
 	"\x15deleted_block_volumes\x18\x1a \x03(\v2&.master_pb.BlockVolumeShortInfoMessageR\x13deletedBlockVolumes\x12/\n" +
-	"\x14has_no_block_volumes\x18\x1b \x01(\bR\x11hasNoBlockVolumes\x1aB\n" +
+	"\x14has_no_block_volumes\x18\x1b \x01(\bR\x11hasNoBlockVolumes\x12&\n" +
+	"\x0fblock_nvme_addr\x18\x1c \x01(\tR\rblockNvmeAddr\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\xa9\x03\n" +

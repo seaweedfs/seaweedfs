@@ -34,7 +34,7 @@ func TestQA_Reg_FullHeartbeatCrossTalk(t *testing.T) {
 	// Full heartbeat from s1 reports vol1 — should NOT affect s2's volumes.
 	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/v1.blk", Epoch: 1},
-	})
+	}, "")
 
 	// vol2 on s2 should still exist.
 	if _, ok := r.Lookup("vol2"); !ok {
@@ -49,7 +49,7 @@ func TestQA_Reg_FullHeartbeatEmptyServer(t *testing.T) {
 	r.Register(&BlockVolumeEntry{Name: "vol2", VolumeServer: "s1", Path: "/v2.blk", Status: StatusActive})
 
 	// Empty heartbeat from s1 (HasNoBlockVolumes=true, zero infos).
-	r.UpdateFullHeartbeat("s1", nil)
+	r.UpdateFullHeartbeat("s1", nil, "")
 
 	if _, ok := r.Lookup("vol1"); ok {
 		t.Error("BUG: vol1 should be removed after empty full heartbeat")
@@ -78,7 +78,7 @@ func TestQA_Reg_ConcurrentHeartbeatAndRegister(t *testing.T) {
 			}()
 			r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
 				{Path: fmt.Sprintf("/v%d.blk", i), Epoch: uint64(i)},
-			})
+			}, "")
 		}(i)
 		go func(i int) {
 			defer wg.Done()

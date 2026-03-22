@@ -79,6 +79,9 @@ type BlockVolumeEntry struct {
 	// CP8-3-1: Durability mode.
 	DurabilityMode  string        // "best_effort", "sync_all", "sync_quorum"
 
+	// CP11B-1: Provisioning preset (control-plane metadata only).
+	Preset          string        // "database", "general", "throughput", or ""
+
 	// Lease tracking for failover (CP6-3 F2).
 	LastLeaseGrant time.Time
 	LeaseTTL       time.Duration
@@ -137,7 +140,7 @@ type BlockVolumeRegistry struct {
 	mu           sync.RWMutex
 	volumes      map[string]*BlockVolumeEntry // keyed by name
 	byServer     map[string]map[string]bool   // server -> set of volume names
-	blockServers map[string]bool              // servers known to support block volumes
+	blockServers map[string]*blockServerInfo  // servers known to support block volumes
 
 	// Promotion eligibility: max WAL LSN lag for replica to be promotable.
 	promotionLSNTolerance uint64
@@ -153,12 +156,18 @@ type BlockVolumeRegistry struct {
 
 type inflightEntry struct{}
 
+// blockServerInfo tracks server-level capabilities reported via heartbeat.
+type blockServerInfo struct {
+	NvmeAddr string // NVMe/TCP listen address; empty if NVMe disabled
+}
+
+
 // NewBlockVolumeRegistry creates an empty registry.
 func NewBlockVolumeRegistry() *BlockVolumeRegistry {
 	return &BlockVolumeRegistry{
 		volumes:               make(map[string]*BlockVolumeEntry),
 		byServer:              make(map[string]map[string]bool),
-		blockServers:          make(map[string]bool),
+		blockServers:          make(map[string]*blockServerInfo),
 		promotionLSNTolerance: DefaultPromotionLSNTolerance,
 	}
 }
@@ -302,12 +311,12 @@ func (r *BlockVolumeRegistry) ListByServer(server string) []*BlockVolumeEntry {
 // Called on the first heartbeat from a volume server.
 // Marks reported volumes as Active, removes entries for this server
 // that are not reported (stale).
-func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage) {
+func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage, nvmeAddr string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Mark server as block-capable since it sent block volume info.
-	r.blockServers[server] = true
+	// Mark server as block-capable and record server-level NVMe capability.
+	r.blockServers[server] = &blockServerInfo{NvmeAddr: nvmeAddr}
 
 	// Build set of reported paths.
 	reported := make(map[string]*master_pb.BlockVolumeInfoMessage, len(infos))
@@ -922,7 +931,7 @@ func (r *BlockVolumeRegistry) evaluatePromotionLocked(entry *BlockVolumeEntry) P
 			continue
 		}
 		// Gate 4: server must be alive (in blockServers set) — B-12 fix.
-		if !r.blockServers[ri.Server] {
+		if r.blockServers[ri.Server] == nil {
 			result.Rejections = append(result.Rejections, PromotionRejection{
 				Server: ri.Server,
 				Reason: "server_dead",
@@ -1073,7 +1082,7 @@ func (r *BlockVolumeRegistry) evaluateManualPromotionLocked(entry *BlockVolumeEn
 	}
 
 	// Primary-alive gate (soft — skipped when force=true).
-	if !force && r.blockServers[entry.VolumeServer] {
+	if !force && r.blockServers[entry.VolumeServer] != nil {
 		result.Reason = "primary_alive"
 		return result
 	}
@@ -1152,7 +1161,7 @@ func (r *BlockVolumeRegistry) evaluateManualPromotionLocked(entry *BlockVolumeEn
 		}
 
 		// Hard gate: server must be alive (in blockServers set).
-		if !r.blockServers[ri.Server] {
+		if r.blockServers[ri.Server] == nil {
 			result.Rejections = append(result.Rejections, PromotionRejection{
 				Server: ri.Server,
 				Reason: "server_dead",
@@ -1227,7 +1236,9 @@ func (r *BlockVolumeRegistry) ManualPromote(name, targetServer string, force boo
 // MarkBlockCapable records that the given server supports block volumes.
 func (r *BlockVolumeRegistry) MarkBlockCapable(server string) {
 	r.mu.Lock()
-	r.blockServers[server] = true
+	if r.blockServers[server] == nil {
+		r.blockServers[server] = &blockServerInfo{}
+	}
 	r.mu.Unlock()
 }
 
@@ -1330,7 +1341,7 @@ func (r *BlockVolumeRegistry) ServerSummaries() []BlockServerSummary {
 func (r *BlockVolumeRegistry) IsBlockCapable(server string) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.blockServers[server]
+	return r.blockServers[server] != nil
 }
 
 // VolumesWithDeadPrimary returns names of volumes where the given server is a replica
@@ -1354,11 +1365,24 @@ func (r *BlockVolumeRegistry) VolumesWithDeadPrimary(replicaServer string) []str
 			continue
 		}
 		// Check if the primary server is dead.
-		if !r.blockServers[entry.VolumeServer] {
+		if r.blockServers[entry.VolumeServer] == nil {
 			orphaned = append(orphaned, name)
 		}
 	}
 	return orphaned
+}
+
+// HasNVMeCapableServer returns true if any registered block-capable server
+// has reported a non-empty NVMe address via heartbeat.
+func (r *BlockVolumeRegistry) HasNVMeCapableServer() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, info := range r.blockServers {
+		if info != nil && info.NvmeAddr != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // BlockCapableServers returns the list of servers known to support block volumes.

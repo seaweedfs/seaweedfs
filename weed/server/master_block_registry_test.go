@@ -93,7 +93,7 @@ func TestRegistry_UpdateFullHeartbeat(t *testing.T) {
 	// Full heartbeat reports only vol1 (vol2 is stale).
 	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/v1.blk", Epoch: 5, Role: 1},
-	})
+	}, "")
 
 	// vol1 should be Active.
 	e1, ok := r.Lookup("vol1")
@@ -149,7 +149,7 @@ func TestRegistry_PendingToActive(t *testing.T) {
 	// Full heartbeat confirms the volume.
 	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/v1.blk", Epoch: 1, Role: 1},
-	})
+	}, "")
 
 	e, _ := r.Lookup("vol1")
 	if e.Status != StatusActive {
@@ -241,7 +241,7 @@ func TestRegistry_FullHeartbeatUpdatesSizeBytes(t *testing.T) {
 	// Heartbeat with updated size (online resize).
 	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/v1.blk", VolumeSize: 2 << 30, Epoch: 1, Role: 1},
-	})
+	}, "")
 
 	e, _ := r.Lookup("vol1")
 	if e.SizeBytes != 2<<30 {
@@ -421,7 +421,7 @@ func TestFullHeartbeat_UpdatesReplicaAddrs(t *testing.T) {
 			ReplicaDataAddr: "10.0.0.2:14260",
 			ReplicaCtrlAddr: "10.0.0.2:14261",
 		},
-	})
+	}, "")
 
 	entry, ok := r.Lookup("vol1")
 	if !ok {
@@ -730,7 +730,7 @@ func TestRegistry_FullHeartbeat_UpdatesHealthScore(t *testing.T) {
 			ScrubErrors: 2,
 			WalHeadLsn:  500,
 		},
-	})
+	}, "")
 
 	e, _ := r.Lookup("vol1")
 	if e.HealthScore != 0.85 {
@@ -757,7 +757,7 @@ func TestRegistry_ReplicaHeartbeat_DoesNotDeleteVolume(t *testing.T) {
 	// Replica sends heartbeat reporting its path.
 	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/data/vol1.blk", Epoch: 1, Role: 2},
-	})
+	}, "")
 
 	// Volume must still exist with primary intact.
 	e, ok := r.Lookup("vol1")
@@ -784,7 +784,7 @@ func TestRegistry_ReplicaHeartbeat_StaleReplicaRemoved(t *testing.T) {
 	})
 
 	// replica1 heartbeat does NOT report vol1 path → stale replica.
-	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{})
+	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{}, "")
 
 	// Volume still exists, but replica1 removed.
 	e, ok := r.Lookup("vol1")
@@ -813,7 +813,7 @@ func TestRegistry_ReplicaHeartbeat_ReconstructsAfterRestart(t *testing.T) {
 	// Replica heartbeat arrives — vol1 exists but has no record of this server.
 	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/data/vol1.blk", Epoch: 1, Role: 2, HealthScore: 0.95, WalHeadLsn: 42},
-	})
+	}, "")
 
 	// vol1 should now have replica1 in Replicas[].
 	e, ok := r.Lookup("vol1")

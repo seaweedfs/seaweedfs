@@ -110,6 +110,8 @@ message Heartbeat {
   repeated BlockVolumeShortInfoMessage new_block_volumes = 25;
   repeated BlockVolumeShortInfoMessage deleted_block_volumes = 26;
   bool has_no_block_volumes = 27;
+  // server-level NVMe/TCP target address (empty if NVMe disabled on this VS)
+  string block_nvme_addr = 28;
 }
 
 message HeartbeatResponse {
