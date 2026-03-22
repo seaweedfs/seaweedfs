@@ -55,7 +55,7 @@ func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *fil
 	return fh
 }
 
-func (i *FileHandleToInode) ReleaseByInode(inode uint64) {
+func (i *FileHandleToInode) ReleaseByInode(inode uint64) *FileHandle {
 	i.Lock()
 	defer i.Unlock()
 	fh, found := i.inode2fh[inode]
@@ -64,30 +64,32 @@ func (i *FileHandleToInode) ReleaseByInode(inode uint64) {
 		if fh.counter <= 0 {
 			delete(i.inode2fh, inode)
 			delete(i.fh2inode, fh.fh)
-			fh.ReleaseHandle()
+			return fh
 		}
 	}
+	return nil
 }
 
-func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) {
+func (i *FileHandleToInode) ReleaseByHandle(fh FileHandleId) *FileHandle {
 	i.Lock()
 	defer i.Unlock()
 
 	inode, found := i.fh2inode[fh]
 	if !found {
-		return // Handle already released or invalid
+		return nil
 	}
 
 	fhHandle, fhFound := i.inode2fh[inode]
 	if !fhFound {
 		delete(i.fh2inode, fh)
-		return
+		return nil
 	}
 
 	fhHandle.counter--
 	if fhHandle.counter <= 0 {
 		delete(i.inode2fh, inode)
 		delete(i.fh2inode, fhHandle.fh)
-		fhHandle.ReleaseHandle()
+		return fhHandle
 	}
+	return nil
 }

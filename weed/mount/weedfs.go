@@ -78,6 +78,10 @@ type Option struct {
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
+	// WritebackCache enables async flush on close for improved small file write performance.
+	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
+	WritebackCache bool
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -110,6 +114,10 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+
+	// asyncFlushWg tracks pending background flush goroutines for writebackCache mode.
+	// Must be waited on before unmount cleanup to prevent data loss.
+	asyncFlushWg sync.WaitGroup
 }
 
 const (
@@ -240,6 +248,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 }
 
 func (wfs *WFS) StartBackgroundTasks() error {
+	if wfs.option.WritebackCache {
+		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
+	}
+
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err

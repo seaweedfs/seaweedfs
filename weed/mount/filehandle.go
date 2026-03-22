@@ -24,10 +24,13 @@ type FileHandle struct {
 	wfs             *WFS
 
 	// cache file has been written to
-	dirtyMetadata bool
-	dirtyPages    *PageWriter
-	reader        *filer.ChunkReadAt
-	contentType   string
+	dirtyMetadata     bool
+	dirtyPages        *PageWriter
+	reader            *filer.ChunkReadAt
+	contentType       string
+	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
+	asyncFlushUid     uint32 // saved uid for deferred metadata flush
+	asyncFlushGid     uint32 // saved gid for deferred metadata flush
 
 	isDeleted bool
 

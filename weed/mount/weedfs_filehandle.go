@@ -21,7 +21,23 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 }
 
 func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
-	wfs.fhMap.ReleaseByHandle(handleId)
+	fhToRelease := wfs.fhMap.ReleaseByHandle(handleId)
+	wfs.finalizeFileHandle(fhToRelease)
+}
+
+// finalizeFileHandle either destroys the FileHandle immediately or, if an async
+// flush is pending (writebackCache mode), submits a background goroutine to
+// complete the data upload + metadata flush first.
+func (wfs *WFS) finalizeFileHandle(fh *FileHandle) {
+	if fh == nil {
+		return
+	}
+	if fh.asyncFlushPending {
+		wfs.asyncFlushWg.Add(1)
+		go wfs.completeAsyncFlush(fh)
+	} else {
+		fh.ReleaseHandle()
+	}
 }
 
 func (wfs *WFS) GetHandle(handleId FileHandleId) *FileHandle {

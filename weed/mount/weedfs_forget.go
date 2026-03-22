@@ -66,5 +66,6 @@ func (wfs *WFS) Forget(nodeid, nlookup uint64) {
 	wfs.inodeToPath.Forget(nodeid, nlookup, func(dir util.FullPath) {
 		wfs.metaCache.DeleteFolderChildren(context.Background(), dir)
 	})
-	wfs.fhMap.ReleaseByInode(nodeid)
+	fhToRelease := wfs.fhMap.ReleaseByInode(nodeid)
+	wfs.finalizeFileHandle(fhToRelease)
 }
