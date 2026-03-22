@@ -118,6 +118,12 @@ type WFS struct {
 	// asyncFlushWg tracks pending background flush goroutines for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
 	asyncFlushWg sync.WaitGroup
+
+	// pendingAsyncFlush tracks in-flight async flush goroutines by inode.
+	// AcquireHandle checks this to wait for a pending flush before reopening
+	// the same inode, preventing stale metadata from overwriting the async flush.
+	pendingAsyncFlushMu sync.Mutex
+	pendingAsyncFlush   map[uint64]chan struct{}
 }
 
 const (
@@ -159,13 +165,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs := &WFS{
-		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
-		option:          option,
-		signature:       util.RandomInt32(),
-		inodeToPath:     NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
-		fhMap:           NewFileHandleToInode(),
-		dhMap:           NewDirectoryHandleToInode(),
-		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
+		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
+		option:            option,
+		signature:         util.RandomInt32(),
+		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
+		fhMap:             NewFileHandleToInode(),
+		dhMap:             NewDirectoryHandleToInode(),
+		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
+		pendingAsyncFlush: make(map[uint64]chan struct{}),
 		fhLockTable:     util.NewLockTable[FileHandleId](),
 		refreshingDirs:  make(map[util.FullPath]struct{}),
 		dirHotWindow:    dirHotWindow,
@@ -212,6 +219,23 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		})
 	grace.OnInterrupt(func() {
+		// Drain pending async flushes before cleaning up.
+		// grace calls os.Exit(0) after hooks, so WaitForAsyncFlush after
+		// server.Serve() would never run. Do it here with a timeout to
+		// avoid hanging on Ctrl-C if a filer is unreachable.
+		if wfs.option.WritebackCache {
+			done := make(chan struct{})
+			go func() {
+				wfs.asyncFlushWg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				glog.V(0).Infof("all async flushes completed before shutdown")
+			case <-time.After(10 * time.Second):
+				glog.Warningf("timed out waiting for async flushes — some data may not be persisted")
+			}
+		}
 		wfs.metaCache.Shutdown()
 		os.RemoveAll(option.getUniqueCacheDirForWrite())
 		os.RemoveAll(option.getUniqueCacheDirForRead())

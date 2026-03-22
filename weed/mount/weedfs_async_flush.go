@@ -3,6 +3,7 @@ package mount
 import (
 	"time"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -15,30 +16,30 @@ const asyncFlushMetadataRetries = 3
 //
 // This enables close() to return immediately for small file workloads (e.g., rsync),
 // while the actual I/O happens concurrently in the background.
+//
+// The caller (submitAsyncFlush) owns asyncFlushWg and the per-inode done channel.
 func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
-	defer wfs.asyncFlushWg.Done()
-
-	fileFullPath := fh.FullPath()
-	dir, name := fileFullPath.DirAndName()
-
-	glog.V(3).Infof("completeAsyncFlush start %s fh %d", fileFullPath, fh.fh)
-
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
 	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
 	// so a failure here indicates a persistent issue; the chunk data has been freed.
 	if err := fh.dirtyPages.FlushData(); err != nil {
-		glog.Errorf("completeAsyncFlush %s: data flush failed: %v", fileFullPath, err)
+		glog.Errorf("completeAsyncFlush inode %d: data flush failed: %v", fh.inode, err)
 		// Data is lost at this point (chunks freed after internal retry exhaustion).
 		// Proceed to cleanup to avoid resource leaks and unmount hangs.
 	} else if fh.dirtyMetadata {
-		// Phase 2: Flush metadata to filer with the uploaded chunk references.
-		// This is retried because the chunks are safely on volume servers — only the
-		// filer metadata reference needs to be persisted. A transient gRPC error here
-		// would otherwise cause uploaded chunks to become orphans.
-		wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath)
+		// Phase 2: Re-resolve path from inode right before metadata flush.
+		// The file may have been renamed or unlinked after close() returned.
+		// GetPath returns the current path (reflects renames) or ENOENT (unlinked).
+		fileFullPath, status := wfs.inodeToPath.GetPath(fh.inode)
+		if status != fuse.OK {
+			glog.V(3).Infof("completeAsyncFlush inode %d: inode no longer resolvable (file unlinked?), skipping metadata flush", fh.inode)
+		} else {
+			dir, name := fileFullPath.DirAndName()
+			wfs.flushMetadataWithRetry(fh, dir, name, fileFullPath)
+		}
 	}
 
-	glog.V(3).Infof("completeAsyncFlush done %s fh %d", fileFullPath, fh.fh)
+	glog.V(3).Infof("completeAsyncFlush done inode %d fh %d", fh.inode, fh.fh)
 
 	// Phase 3: Destroy the upload pipeline and free resources.
 	fh.ReleaseHandle()
