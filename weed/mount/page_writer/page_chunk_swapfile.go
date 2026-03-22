@@ -151,10 +151,6 @@ func (sc *SwapFileChunk) ReadDataAt(p []byte, off int64, tsNs int64) (maxStop in
 				break
 			}
 			maxStop = max(maxStop, logicStop)
-
-			if t.TsNs > tsNs {
-				println("read new data2", t.TsNs-tsNs, "ns")
-			}
 		}
 	}
 	//sc.memChunk.ReadDataAt(memCopy, off, tsNs)
