@@ -468,8 +468,20 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 		}
-		if reExcludeFileName != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
-			return nil
+		if reExcludeFileName != nil {
+			// check if any path component in resp.Directory matches the exclude pattern
+			dirParts := strings.Split(resp.Directory, "/")
+			for _, part := range dirParts {
+				if part != "" && reExcludeFileName.MatchString(part) {
+					return nil
+				}
+			}
+			if message.NewEntry != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
+				return nil
+			}
+			if message.OldEntry != nil && reExcludeFileName.MatchString(message.OldEntry.Name) {
+				return nil
+			}
 		}
 		if dataSink.IsIncremental() {
 			doDeleteFiles = false
