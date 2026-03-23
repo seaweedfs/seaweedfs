@@ -2,8 +2,10 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	nethttp "net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -16,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) {
@@ -174,6 +177,7 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 var (
 	volumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
 	chunkNotFoundPattern  = regexp.MustCompile(`(urls not found|File Not Found)`)
+	httpNotFoundPattern   = regexp.MustCompile(`404 Not Found: not found`)
 )
 
 // isChunkNotFoundError checks if the error indicates that a volume or chunk
@@ -183,8 +187,13 @@ func isChunkNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, util_http.ErrNotFound) || errors.Is(err, nethttp.ErrMissingFile) {
+		return true
+	}
 	errMsg := err.Error()
-	return volumeNotFoundPattern.MatchString(errMsg) || chunkNotFoundPattern.MatchString(errMsg)
+	return volumeNotFoundPattern.MatchString(errMsg) ||
+		chunkNotFoundPattern.MatchString(errMsg) ||
+		httpNotFoundPattern.MatchString(errMsg)
 }
 
 func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
