@@ -130,7 +130,15 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return doDeleteEntry(client, dir, name, true, false)
+			deleteErr := doDeleteEntry(client, dir, name, true, false)
+			if deleteErr != nil && strings.HasSuffix(object, "/") &&
+				strings.Contains(deleteErr.Error(), filer.MsgFailDelNonEmptyFolder) {
+				// Deleting a directory key object (S3 key ending with "/") on a non-empty
+				// directory. Strip the marker metadata so it no longer appears as an S3 object,
+				// matching AWS S3 behavior where only the marker is removed, not child objects.
+				return removeDirectoryKeyObjectMarker(client, dir, name)
+			}
+			return deleteErr
 			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
 			// which listens to metadata events and uses consistent hashing for coordination
 		})
@@ -349,6 +357,11 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				if err == nil {
 					deletedObjects = append(deletedObjects, object)
 				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
+					if strings.HasSuffix(object.Key, "/") {
+						if markerErr := removeDirectoryKeyObjectMarker(client, parentDirectoryPath, entryName); markerErr != nil {
+							glog.Warningf("DeleteMultipleObjectsHandler: failed to remove directory marker %s/%s: %v", parentDirectoryPath, entryName, markerErr)
+						}
+					}
 					deletedObjects = append(deletedObjects, object)
 				} else {
 					deleteErrors = append(deleteErrors, DeleteError{

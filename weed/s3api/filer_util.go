@@ -78,6 +78,43 @@ func doDeleteEntry(client filer_pb.SeaweedFilerClient, parentDirectoryPath strin
 	return nil
 }
 
+// removeDirectoryKeyObjectMarker clears the MIME type and S3-specific metadata from a
+// directory entry so it no longer appears as an object in S3 listings (IsDirectoryKeyObject()
+// returns false). This handles the case where a directory marker (key ending with "/") is
+// deleted on a non-empty directory — matching AWS S3 behavior where deleting the marker
+// only removes that object, not the child objects under the prefix.
+func removeDirectoryKeyObjectMarker(client filer_pb.SeaweedFilerClient, parentDir, entryName string) error {
+	ctx := context.Background()
+	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: parentDir,
+		Name:      entryName,
+	})
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	entry := resp.Entry
+	if entry == nil || !entry.IsDirectory || entry.Attributes == nil || entry.Attributes.Mime == "" {
+		return nil // Not a directory key object, nothing to remove
+	}
+
+	// Clear marker metadata so IsDirectoryKeyObject() returns false
+	entry.Attributes.Mime = ""
+	entry.Attributes.Md5 = nil
+	entry.Content = nil
+	if entry.Extended != nil {
+		delete(entry.Extended, s3_constants.ExtETagKey)
+		delete(entry.Extended, s3_constants.ExtAmzOwnerKey)
+	}
+
+	return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+		Directory: parentDir,
+		Entry:     entry,
+	})
+}
+
 func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isDirectory bool) (exists bool, err error) {
 
 	return filer_pb.Exists(context.Background(), s3a, parentDirectoryPath, entryName, isDirectory)
