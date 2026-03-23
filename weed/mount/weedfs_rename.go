@@ -253,12 +253,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				if entry := fh.GetEntry(); entry != nil {
 					entry.Name = newName
 				}
-				// Keep the saved async-flush path current so the fallback
+				// Keep the saved handle path current so any flush fallback
 				// after Forget uses the post-rename location, not the old one.
-				if fh.asyncFlushPending {
-					fh.asyncFlushDir = string(newParent)
-					fh.asyncFlushName = newName
-				}
+				fh.RememberPath(newPath)
 			}
 			// invalidate attr and data
 			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
