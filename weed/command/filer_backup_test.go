@@ -5,13 +5,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-func init() {
+func TestMain(m *testing.M) {
 	util_http.InitGlobalHttpClient()
+	os.Exit(m.Run())
 }
 
 // readUrlError starts a test HTTP server returning the given status code
