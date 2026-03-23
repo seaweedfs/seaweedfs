@@ -743,12 +743,12 @@ func TestMetadataSubscribeSlowConsumerKeepsProgressing(t *testing.T) {
 
 		payload := bytes.Repeat([]byte("x"), slowConsumerMetadataPayloadSize)
 		startTime := time.Now()
-		require.NoError(t, createMetadataEntries("127.0.0.1:8888", 0, phaseOneEntries, payload))
+		require.NoError(t, createMetadataEntries(ctx, "127.0.0.1:8888", 0, phaseOneEntries, payload))
 		t.Logf("Created phase 1 with %d entries in %v", phaseOneEntries, time.Since(startTime))
 
 		time.Sleep(2 * time.Second)
 
-		require.NoError(t, createMetadataEntries("127.0.0.1:8888", phaseOneEntries, phaseTwoEntries, payload))
+		require.NoError(t, createMetadataEntries(ctx, "127.0.0.1:8888", phaseOneEntries, phaseTwoEntries, payload))
 		t.Logf("Created phase 2 with %d entries", phaseTwoEntries)
 
 		checkTicker := time.NewTicker(2 * time.Second)
@@ -1060,7 +1060,7 @@ func followMetadataSlowly(
 	})
 }
 
-func createMetadataEntries(filerGrpcAddress string, startIndex, total int, payload []byte) error {
+func createMetadataEntries(ctx context.Context, filerGrpcAddress string, startIndex, total int, payload []byte) error {
 	const workers = 10
 
 	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
@@ -1074,10 +1074,16 @@ func createMetadataEntries(filerGrpcAddress string, startIndex, total int, paylo
 
 			err := pb.WithFilerClient(false, 0, pb.ServerAddress(filerGrpcAddress), grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 				for idx := startIndex + workerID; idx < startIndex+total; idx += workers {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+					}
+
 					dir := fmt.Sprintf("/slow-consumer/bucket-%02d", idx%6)
 					name := fmt.Sprintf("entry-%05d", idx)
 
-					_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
+					_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
 						Directory: dir,
 						Entry: &filer_pb.Entry{
 							Name:        name,
