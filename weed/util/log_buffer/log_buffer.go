@@ -606,6 +606,22 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 	return logBuffer.startTime
 }
+
+func (logBuffer *LogBuffer) HasData() bool {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+
+	if logBuffer.pos > 0 {
+		return true
+	}
+	for _, buf := range logBuffer.prevBuffers.buffers {
+		if buf.size > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	return MessagePosition{
 		Time:   logBuffer.startTime,
@@ -771,7 +787,9 @@ func (logBuffer *LogBuffer) ReadFromBuffer(lastReadPosition MessagePosition) (bu
 					glog.Errorf("ReadFromBuffer: buffer corruption in prevBuffer: %v", err)
 					return nil, -1, fmt.Errorf("%w: %v", ErrBufferCorrupted, err)
 				}
-				return copiedBytes(buf.buf[pos:buf.size]), buf.offset, nil
+				if pos < buf.size {
+					return copiedBytes(buf.buf[pos:buf.size]), buf.offset, nil
+				}
 			}
 		}
 		// If current buffer is not empty, return it

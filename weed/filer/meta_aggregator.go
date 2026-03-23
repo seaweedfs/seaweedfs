@@ -74,6 +74,18 @@ func (ma *MetaAggregator) OnPeerUpdate(update *master_pb.ClusterNodeUpdate, star
 	}
 }
 
+func (ma *MetaAggregator) HasRemotePeers() bool {
+	ma.peerChansLock.Lock()
+	defer ma.peerChansLock.Unlock()
+
+	for address := range ma.peerChans {
+		if address != ma.self {
+			return true
+		}
+	}
+	return false
+}
+
 func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddress, peer pb.ServerAddress, startFrom time.Time, stopChan chan struct{}) {
 	lastTsNs := startFrom.UnixNano()
 	for {
