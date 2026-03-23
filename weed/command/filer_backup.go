@@ -34,7 +34,8 @@ type FilerBackupOptions struct {
 }
 
 var (
-	filerBackupOptions FilerBackupOptions
+	filerBackupOptions    FilerBackupOptions
+	ignorable404ErrString = fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())
 )
 
 func init() {
@@ -224,11 +225,7 @@ func isIgnorable404(err error) bool {
 		return true
 	}
 	errStr := err.Error()
-	if strings.Contains(errStr, fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())) {
-		return true
-	}
-	if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
-		return true
-	}
-	return false
+	return strings.Contains(errStr, ignorable404ErrString) ||
+		strings.Contains(errStr, "LookupFileId") ||
+		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
 }
