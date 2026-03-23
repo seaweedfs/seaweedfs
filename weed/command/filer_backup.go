@@ -145,16 +145,8 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			if err == nil {
 				return nil
 			}
-			// ignore HTTP 404 from remote reads
-			errStr := err.Error()
-			if errors.Is(err, http.ErrNotFound) ||
-				strings.Contains(errStr, fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())) {
-				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), errStr)
-				return nil
-			}
-			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
-			if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
-				glog.V(0).Infof("got missing-volume error for %s, ignore it: %s", getSourceKey(resp), errStr)
+			if isIgnorable404(err) {
+				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), err.Error())
 				return nil
 			}
 			return err
@@ -219,4 +211,24 @@ func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
 		return string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 	}
 	return ""
+}
+
+// isIgnorable404 returns true if the error represents a 404/not-found condition
+// that should be silently ignored during backup. This covers:
+//   - errors wrapping http.ErrNotFound (direct volume server 404 via non-S3 sinks)
+//   - errors containing the "404 Not Found: not found" status string (S3 sink path
+//     where AWS SDK breaks the errors.Is unwrap chain)
+//   - LookupFileId or volume-id-not-found errors from the volume id map
+func isIgnorable404(err error) bool {
+	if errors.Is(err, http.ErrNotFound) {
+		return true
+	}
+	errStr := err.Error()
+	if strings.Contains(errStr, fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())) {
+		return true
+	}
+	if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
+		return true
+	}
+	return false
 }
