@@ -606,6 +606,23 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
 	return logBuffer.startTime
 }
+
+// HasData returns true if the buffer (current or previous) contains any data.
+// This is used to distinguish "buffer empty" (no data written yet) from
+// "consumer behind buffer window" (data exists but position is too old).
+func (logBuffer *LogBuffer) HasData() bool {
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+	if logBuffer.pos > 0 {
+		return true
+	}
+	for _, buf := range logBuffer.prevBuffers.buffers {
+		if buf.size > 0 {
+			return true
+		}
+	}
+	return false
+}
 func (logBuffer *LogBuffer) GetEarliestPosition() MessagePosition {
 	return MessagePosition{
 		Time:   logBuffer.startTime,

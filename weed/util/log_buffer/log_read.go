@@ -84,6 +84,14 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				if isDone {
 					return lastReadPosition, isDone, nil
 				}
+			} else if logBuffer.HasData() {
+				// No disk read function, but the buffer has data that the
+				// consumer's position has fallen behind. Return error to caller
+				// so it can read from persisted logs via its own path (e.g.,
+				// SubscribeMetadata reads via ReadPersistedLogBuffer).
+				// Without this, the consumer blocks in waitForDataFn and never
+				// returns to the caller's outer disk-read loop. (#8730)
+				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			// CRITICAL: Check if client is still connected
@@ -273,6 +281,10 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					return lastReadPosition, isDone, nil
 				}
 				// Continue to next iteration after disk read
+			} else if logBuffer.HasData() {
+				// No disk read function, but buffer has data the consumer
+				// has fallen behind. Return to caller for disk read. (#8730)
+				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			// CRITICAL: Check if client is still connected after disk read

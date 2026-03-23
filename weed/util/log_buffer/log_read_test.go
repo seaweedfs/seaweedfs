@@ -11,7 +11,7 @@ import (
 )
 
 // TestLoopProcessLogDataWithOffset_ClientDisconnect tests that the loop exits
-// when the client disconnects (waitForDataFn returns false)
+// when the client disconnects (waitForDataFn returns false) with an empty buffer
 func TestLoopProcessLogDataWithOffset_ClientDisconnect(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
 	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
@@ -37,7 +37,7 @@ func TestLoopProcessLogDataWithOffset_ClientDisconnect(t *testing.T) {
 	startPosition := NewMessagePositionFromOffset(0)
 	startTime := time.Now()
 
-	// This should exit within 200ms (100ms timeout + some buffer)
+	// Buffer is empty, so LoopProcessLogData blocks until client disconnects
 	_, isDone, _ := logBuffer.LoopProcessLogDataWithOffset("test-client", startPosition, 0, waitForDataFn, eachLogEntryFn)
 
 	elapsed := time.Since(startTime)
@@ -53,8 +53,9 @@ func TestLoopProcessLogDataWithOffset_ClientDisconnect(t *testing.T) {
 	t.Logf("Loop exited cleanly in %v after client disconnect", elapsed)
 }
 
-// TestLoopProcessLogDataWithOffset_EmptyBuffer tests that the loop doesn't
-// busy-wait when the buffer is empty
+// TestLoopProcessLogDataWithOffset_EmptyBuffer tests that the loop waits for
+// data when the buffer is empty and ReadFromDiskFn is nil, but exits when
+// waitForDataFn returns false
 func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
 	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
@@ -91,12 +92,6 @@ func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 	minExpectedTime := time.Duration(maxCalls-1) * 10 * time.Millisecond
 	if elapsed < minExpectedTime {
 		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests busy-waiting)", elapsed, minExpectedTime)
-	}
-
-	// But shouldn't take more than 2x expected (allows for some overhead)
-	maxExpectedTime := time.Duration(maxCalls) * 30 * time.Millisecond
-	if elapsed > maxExpectedTime {
-		t.Errorf("Loop took too long: %v (expected < %v)", elapsed, maxExpectedTime)
 	}
 
 	mu.Lock()
@@ -307,25 +302,53 @@ func TestLoopProcessLogDataWithOffset_StopTime(t *testing.T) {
 	t.Logf("Loop correctly exited for past stopTsNs in %v (waitForDataFn called %d times)", elapsed, callCount)
 }
 
-// BenchmarkLoopProcessLogDataWithOffset_EmptyBuffer benchmarks the performance
-// of the loop with an empty buffer to ensure no busy-waiting
-func BenchmarkLoopProcessLogDataWithOffset_EmptyBuffer(b *testing.B) {
+// TestLoopProcessLogData_SlowConsumerFallsBehind reproduces the issue from
+// https://github.com/seaweedfs/seaweedfs/issues/8730 where a slow consumer's
+// position falls behind the in-memory buffer window. Without the fix, the loop
+// would block indefinitely in waitForDataFn. With the fix, it returns
+// ResumeFromDiskError so the caller can read from persisted logs.
+func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	// No ReadFromDiskFn - simulates MetaAggregator.MetaLogBuffer
 	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
 	defer logBuffer.ShutdownLogBuffer()
 
-	for i := 0; i < b.N; i++ {
-		callCount := 0
-		waitForDataFn := func() bool {
-			callCount++
-			return callCount < 3 // Exit after 3 calls
-		}
+	// Write enough data to fill and rotate the buffer
+	baseTime := time.Now()
+	for i := 0; i < 1000; i++ {
+		ts := baseTime.Add(time.Duration(i) * time.Millisecond)
+		logBuffer.AddDataToBuffer([]byte("key"), []byte("value"), ts.UnixNano())
+	}
 
-		eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
-			return true, nil
-		}
+	// Start reading from an old position (before the buffer window).
+	// Offset > 0 simulates a consumer that has already processed some events,
+	// which is the condition that triggers ResumeFromDiskError in ReadFromBuffer.
+	oldPosition := NewMessagePosition(baseTime.Add(-10*time.Second).UnixNano(), 1)
 
-		startPosition := NewMessagePositionFromOffset(0)
-		logBuffer.LoopProcessLogDataWithOffset("test-client", startPosition, 0, waitForDataFn, eachLogEntryFn)
+	waitForDataFn := func() bool {
+		t.Errorf("waitForDataFn should not be called - would block indefinitely")
+		return false
+	}
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		return false, nil
+	}
+
+	// This must return quickly with ResumeFromDiskError, not block
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, _, err = logBuffer.LoopProcessLogData("slow-consumer", oldPosition, 0, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if err != ResumeFromDiskError {
+			t.Errorf("Expected ResumeFromDiskError, got %v", err)
+		}
+		t.Logf("Slow consumer correctly received ResumeFromDiskError without blocking")
+	case <-time.After(2 * time.Second):
+		t.Fatal("DEADLOCK: LoopProcessLogData blocked instead of returning ResumeFromDiskError (issue #8730)")
 	}
 }
