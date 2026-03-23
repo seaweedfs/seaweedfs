@@ -31,7 +31,7 @@ const (
 	ECTaskConfigFile          = "task_erasure_coding.pb"
 	BalanceTaskConfigFile     = "task_balance.pb"
 	ReplicationTaskConfigFile = "task_replication.pb"
-	DeleteEmptyTaskConfigFile = "task_delete_empty.pb"
+	CompactionTaskConfigFile  = "task_compaction.pb"
 
 	// JSON reference files
 	MaintenanceConfigJSONFile     = "maintenance.json"
@@ -39,7 +39,7 @@ const (
 	ECTaskConfigJSONFile          = "task_erasure_coding.json"
 	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
-	DeleteEmptyTaskConfigJSONFile = "task_delete_empty.json"
+	CompactionTaskConfigJSONFile  = "task_compaction.json"
 
 	// Task persistence subdirectories and settings
 	TasksSubdir       = "tasks"
@@ -629,15 +629,15 @@ func (cp *ConfigPersistence) loadTaskConfig(filename string, config proto.Messag
 	return nil
 }
 
-// SaveDeleteEmptyTaskPolicy saves complete delete_empty task policy to protobuf file
-func (cp *ConfigPersistence) SaveDeleteEmptyTaskPolicy(policy *worker_pb.TaskPolicy) error {
-	return cp.saveTaskConfig(DeleteEmptyTaskConfigFile, policy)
+// SaveCompactionTaskPolicy saves the compaction task policy to a protobuf file.
+func (cp *ConfigPersistence) SaveCompactionTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return cp.saveTaskConfig(CompactionTaskConfigFile, policy)
 }
 
-// LoadDeleteEmptyTaskPolicy loads the delete_empty task policy from disk.
-// Since delete_empty config is not yet a typed oneof in TaskPolicy proto,
+// LoadCompactionTaskPolicy loads the compaction task policy from disk.
+// Since compaction config is not yet a typed oneof in TaskPolicy proto,
 // we persist only the base policy fields (enabled, concurrency, interval).
-func (cp *ConfigPersistence) LoadDeleteEmptyTaskPolicy() (*worker_pb.TaskPolicy, error) {
+func (cp *ConfigPersistence) LoadCompactionTaskPolicy() (*worker_pb.TaskPolicy, error) {
 	defaultPolicy := &worker_pb.TaskPolicy{
 		Enabled:               true,
 		MaxConcurrent:         1,
@@ -649,22 +649,22 @@ func (cp *ConfigPersistence) LoadDeleteEmptyTaskPolicy() (*worker_pb.TaskPolicy,
 		return defaultPolicy, nil
 	}
 
-	configPath := filepath.Join(cp.dataDir, ConfigSubdir, DeleteEmptyTaskConfigFile)
+	configPath := filepath.Join(cp.dataDir, ConfigSubdir, CompactionTaskConfigFile)
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		return defaultPolicy, nil
 	}
 
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read delete_empty task config file: %w", err)
+		return nil, fmt.Errorf("failed to read compaction task config file: %w", err)
 	}
 
 	var policy worker_pb.TaskPolicy
 	if err := proto.Unmarshal(configData, &policy); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal delete_empty task configuration: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal compaction task configuration: %w", err)
 	}
 
-	glog.V(1).Infof("Loaded delete_empty task policy from %s", configPath)
+	glog.V(1).Infof("Loaded compaction task policy from %s", configPath)
 	return &policy, nil
 }
 
@@ -679,8 +679,8 @@ func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.T
 		return cp.SaveBalanceTaskPolicy(policy)
 	case "replication":
 		return cp.SaveReplicationTaskPolicy(policy)
-	case "delete_empty":
-		return cp.SaveDeleteEmptyTaskPolicy(policy)
+	case "compaction":
+		return cp.SaveCompactionTaskPolicy(policy)
 	}
 	return fmt.Errorf("unknown task type: %s", taskType)
 }
@@ -794,9 +794,9 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		}
 	}
 
-	// Load delete_empty task configuration
+	// Load compaction task configuration
 	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
-		policy.TaskPolicies["delete_empty"] = &worker_pb.TaskPolicy{
+		policy.TaskPolicies["compaction"] = &worker_pb.TaskPolicy{
 			Enabled:               deConfig.Enabled,
 			MaxConcurrent:         int32(deConfig.MaxConcurrent),
 			RepeatIntervalSeconds: int32(deConfig.ScanIntervalSeconds),

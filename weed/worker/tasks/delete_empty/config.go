@@ -60,17 +60,17 @@ func LoadConfigFromPersistence(configPersistence interface{}) *Config {
 	cfg := NewDefaultConfig()
 
 	if persistence, ok := configPersistence.(interface {
-		LoadDeleteEmptyTaskPolicy() (*worker_pb.TaskPolicy, error)
+		LoadCompactionTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {
-		if policy, err := persistence.LoadDeleteEmptyTaskPolicy(); err == nil && policy != nil {
+		if policy, err := persistence.LoadCompactionTaskPolicy(); err == nil && policy != nil {
 			if err := cfg.FromTaskPolicy(policy); err == nil {
-				glog.V(1).Infof("Loaded delete_empty configuration from persistence")
+				glog.V(1).Infof("Loaded compaction configuration from persistence")
 				return cfg
 			}
 		}
 	}
 
-	glog.V(1).Infof("Using default delete_empty configuration")
+	glog.V(1).Infof("Using default compaction configuration")
 	return cfg
 }
 
