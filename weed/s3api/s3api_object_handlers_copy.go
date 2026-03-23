@@ -372,7 +372,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Check if destination exists and remove it first (S3 copy overwrites)
 		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err := s3a.rm(dstDir, dstName, false, false); err != nil {
+			if err := s3a.rmObject(dstDir, dstName, false, false); err != nil {
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}

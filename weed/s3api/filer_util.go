@@ -11,6 +11,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (s3a *S3ApiServer) mkdir(parentDirectoryPath string, dirName string, fn func(entry *filer_pb.Entry)) error {
@@ -44,6 +46,15 @@ func (s3a *S3ApiServer) list(parentDirectoryPath, prefix, startFrom string, incl
 }
 
 func (s3a *S3ApiServer) rm(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
+
+	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+
+		return doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+	})
+
+}
+
+func (s3a *S3ApiServer) rmObject(parentDirectoryPath, entryName string, isDeleteData, isRecursive bool) error {
 
 	return s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 
@@ -105,10 +116,16 @@ func demoteDirectoryMarkerToImplicitDirectory(client filer_pb.SeaweedFilerClient
 
 	clearDirectoryMarkerMetadata(resp.Entry)
 
-	return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+	if err := filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 		Directory: parentDirectoryPath,
 		Entry:     resp.Entry,
-	})
+	}); err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			return nil
+		}
+		return fmt.Errorf("update entry %s/%s: %w", parentDirectoryPath, entryName, err)
+	}
+	return nil
 }
 
 func clearDirectoryMarkerMetadata(entry *filer_pb.Entry) {
@@ -132,7 +149,7 @@ func clearDirectoryMarkerMetadata(entry *filer_pb.Entry) {
 	filtered := make(map[string][]byte)
 	for k, v := range entry.Extended {
 		lowerKey := strings.ToLower(k)
-		if strings.HasPrefix(lowerKey, "xattr-") || s3_constants.IsSeaweedFSInternalHeader(k) {
+		if strings.HasPrefix(lowerKey, "xattr-") || strings.HasPrefix(lowerKey, s3_constants.SeaweedFSInternalPrefix) {
 			filtered[k] = v
 		}
 	}

@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type deleteObjectEntryTestClient struct {
@@ -112,6 +114,29 @@ func TestDeleteObjectEntryTreatsImplicitDirectoryAsSuccessfulNoop(t *testing.T) 
 	require.NoError(t, err)
 	require.NotNil(t, client.lookupReq)
 	assert.Nil(t, client.updateReq)
+}
+
+func TestDeleteObjectEntryIgnoresConcurrentUpdateNotFound(t *testing.T) {
+	client := &deleteObjectEntryTestClient{
+		deleteResp: &filer_pb.DeleteEntryResponse{
+			Error: filer.MsgFailDelNonEmptyFolder + ": /buckets/test/photos",
+		},
+		lookupResp: &filer_pb.LookupDirectoryEntryResponse{
+			Entry: &filer_pb.Entry{
+				Name:        "photos",
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Mime: "application/octet-stream",
+				},
+			},
+		},
+		updateErr: status.Error(codes.NotFound, "already removed"),
+	}
+
+	err := deleteObjectEntry(client, "/buckets/test", "photos", true, false)
+	require.NoError(t, err)
+	require.NotNil(t, client.lookupReq)
+	require.NotNil(t, client.updateReq)
 }
 
 func TestDeleteObjectEntryPropagatesNonDirectoryDeleteErrors(t *testing.T) {

@@ -759,16 +759,11 @@ func testDeleteObject(t *testing.T, cluster *TestCluster) {
 }
 
 func testDeleteDirectoryMarkerWithChildren(t *testing.T, cluster *TestCluster) {
-	bucketName := "test-delete-dir-marker-" + randomString(8)
+	bucketName := createTestBucket(t, cluster, "test-delete-dir-marker-")
 	childKey := "test-content/file1.txt"
 	directoryMarkerKey := "test-content/"
 
-	_, err := cluster.s3Client.CreateBucket(&s3.CreateBucketInput{
-		Bucket: aws.String(bucketName),
-	})
-	require.NoError(t, err)
-
-	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+	_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
 		Bucket: aws.String(bucketName),
 		Key:    aws.String(childKey),
 		Body:   bytes.NewReader([]byte("child")),
