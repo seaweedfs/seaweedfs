@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
+	nethttp "net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -145,12 +146,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 				return nil
 			}
 			// ignore HTTP 404 from remote reads
-			if errors.Is(err, http.ErrNotFound) {
-				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), err.Error())
+			errStr := err.Error()
+			if errors.Is(err, http.ErrNotFound) ||
+				strings.Contains(errStr, fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())) {
+				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), errStr)
 				return nil
 			}
 			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
-			errStr := err.Error()
 			if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
 				glog.V(0).Infof("got missing-volume error for %s, ignore it: %s", getSourceKey(resp), errStr)
 				return nil
