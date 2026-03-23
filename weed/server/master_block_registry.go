@@ -158,7 +158,20 @@ type inflightEntry struct{}
 
 // blockServerInfo tracks server-level capabilities reported via heartbeat.
 type blockServerInfo struct {
-	NvmeAddr string // NVMe/TCP listen address; empty if NVMe disabled
+	NvmeAddr       string // NVMe/TCP listen address; empty if NVMe disabled
+	DiskType       string // reported via heartbeat (future)
+	AvailableBytes uint64 // reported via heartbeat (future)
+}
+
+// PlacementCandidateInfo is the registry's view of a placement candidate.
+// Used by the placement planner — the single bridge point between registry
+// and the pure evaluateBlockPlacement() function.
+type PlacementCandidateInfo struct {
+	Address        string
+	VolumeCount    int
+	DiskType       string // empty = unknown/any
+	AvailableBytes uint64 // 0 = unknown
+	NvmeCapable    bool
 }
 
 
@@ -1335,6 +1348,32 @@ func (r *BlockVolumeRegistry) ServerSummaries() []BlockServerSummary {
 	}
 	sort.Slice(summaries, func(i, j int) bool { return summaries[i].Address < summaries[j].Address })
 	return summaries
+}
+
+// PlacementCandidates returns enriched candidate information for placement planning.
+// This is the bridge point between the registry and the placement planner.
+// Long-term, this would be replaced by topology-backed candidate gathering.
+func (r *BlockVolumeRegistry) PlacementCandidates() []PlacementCandidateInfo {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	candidates := make([]PlacementCandidateInfo, 0, len(r.blockServers))
+	for addr, info := range r.blockServers {
+		count := 0
+		if names, ok := r.byServer[addr]; ok {
+			count = len(names)
+		}
+		c := PlacementCandidateInfo{
+			Address:     addr,
+			VolumeCount: count,
+		}
+		if info != nil {
+			c.NvmeCapable = info.NvmeAddr != ""
+			c.DiskType = info.DiskType
+			c.AvailableBytes = info.AvailableBytes
+		}
+		candidates = append(candidates, c)
+	}
+	return candidates
 }
 
 // IsBlockCapable returns true if the given server is in the block-capable set (alive).

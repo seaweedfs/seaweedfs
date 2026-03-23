@@ -42,6 +42,8 @@ type VolumeInfo struct {
 	Preset          string          `json:"preset,omitempty"` // CP11B-1: preset used at creation
 	NvmeAddr        string          `json:"nvme_addr,omitempty"`
 	NQN             string          `json:"nqn,omitempty"`
+	// CP11B-4: Operator-facing health state.
+	HealthState     string          `json:"health_state"` // "healthy", "degraded", "rebuilding", "unsafe"
 }
 
 // ResolvedPolicyResponse is the response for POST /block/volume/resolve.
@@ -123,6 +125,12 @@ type BlockStatusResponse struct {
 	FailoversTotal       int64  `json:"failovers_total"`
 	RebuildsTotal        int64  `json:"rebuilds_total"`
 	AssignmentQueueDepth int    `json:"assignment_queue_depth"`
+	// CP11B-4: Operator summary fields.
+	HealthyCount         int    `json:"healthy_count"`
+	DegradedCount        int    `json:"degraded_count"`
+	RebuildingCount      int    `json:"rebuilding_count"`
+	UnsafeCount          int    `json:"unsafe_count"`
+	NvmeCapableServers   int    `json:"nvme_capable_servers"`
 }
 
 // PreflightRejection describes why a specific replica was rejected for promotion.
@@ -142,6 +150,30 @@ type PreflightResponse struct {
 	Rejections      []PreflightRejection  `json:"rejections,omitempty"`
 	PrimaryServer   string                `json:"primary_server"`
 	PrimaryAlive    bool                  `json:"primary_alive"`
+}
+
+// VolumePlanResponse is the response for POST /block/volume/plan.
+type VolumePlanResponse struct {
+	ResolvedPolicy ResolvedPolicyView   `json:"resolved_policy"`
+	Plan           VolumePlanView       `json:"plan"`
+	Warnings       []string             `json:"warnings,omitempty"`
+	Errors         []string             `json:"errors,omitempty"`
+}
+
+// VolumePlanView describes the placement plan.
+// Candidates is the full ordered eligible list and is always present (empty slice, never omitted).
+// ReplicaFactor means total copies including primary: RF=2 → 1 primary + 1 replica.
+type VolumePlanView struct {
+	Primary    string                `json:"primary"`
+	Replicas   []string              `json:"replicas,omitempty"`
+	Candidates []string              `json:"candidates"`
+	Rejections []VolumePlanRejection `json:"rejections,omitempty"`
+}
+
+// VolumePlanRejection explains why a candidate server was not selected.
+type VolumePlanRejection struct {
+	Server string `json:"server"`
+	Reason string `json:"reason"`
 }
 
 // RoleFromString converts a role string to its uint32 wire value.

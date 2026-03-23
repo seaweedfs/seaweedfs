@@ -74,30 +74,22 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		return ms.createBlockVolumeResponseFromEntry(entry), nil
 	}
 
-	// Get candidate servers.
-	servers := ms.blockRegistry.BlockCapableServers()
-	if len(servers) == 0 {
+	// Evaluate placement using the shared planner (parity with /block/volume/plan).
+	candidates := ms.gatherPlacementCandidates()
+	placement := evaluateBlockPlacement(candidates, replicaFactor, req.DiskType, req.SizeBytes, durMode)
+	if len(placement.Candidates) == 0 {
 		return nil, fmt.Errorf("no block volume servers available")
 	}
 
-	// Try up to 3 servers (or all available, whichever is smaller).
-	maxRetries := 3
-	if len(servers) < maxRetries {
-		maxRetries = len(servers)
-	}
-
+	// Try all candidates in planner order; fall back to next on RPC failure.
 	var lastErr error
-	for attempt := 0; attempt < maxRetries; attempt++ {
-		server, err := ms.blockRegistry.PickServer(servers)
-		if err != nil {
-			return nil, err
-		}
+	for attempt := 0; attempt < len(placement.Candidates); attempt++ {
+		server := placement.Candidates[attempt]
 
 		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
 		if err != nil {
 			lastErr = fmt.Errorf("server %s: %w", server, err)
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: attempt %d on %s failed: %v", blockReqID(ctx), req.Name, attempt+1, server, err)
-			servers = removeServer(servers, server)
 			continue
 		}
 
@@ -119,12 +111,19 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			LastLeaseGrant: time.Now(), // R2-F1: set BEFORE Register to avoid stale-lease race
 		}
 
+		// Recompute replica attempt order from Candidates with successful primary removed.
+		replicaCandidates := make([]string, 0, len(placement.Candidates)-1)
+		for _, c := range placement.Candidates {
+			if c != server {
+				replicaCandidates = append(replicaCandidates, c)
+			}
+		}
+
 		// Create replicaFactor-1 replicas on different servers (F4: partial create OK).
-		remaining := removeServer(servers, server)
-		for i := 0; i < replicaFactor-1 && len(remaining) > 0; i++ {
-			replicaServer := ms.tryCreateOneReplica(ctx, req, entry, result, remaining)
+		for i := 0; i < replicaFactor-1 && len(replicaCandidates) > 0; i++ {
+			replicaServer := ms.tryCreateOneReplica(ctx, req, entry, result, replicaCandidates)
 			if replicaServer != "" {
-				remaining = removeServer(remaining, replicaServer)
+				replicaCandidates = removeServer(replicaCandidates, replicaServer)
 			}
 		}
 		if len(entry.Replicas) == 0 && replicaFactor > 1 {

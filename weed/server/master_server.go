@@ -228,6 +228,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		r.HandleFunc("/block/volume/{name}", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeLookupHandler))).Methods("GET")
 		r.HandleFunc("/block/volumes", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeListHandler))).Methods("GET")
 		r.HandleFunc("/block/volume/resolve", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeResolveHandler))).Methods("POST")
+		r.HandleFunc("/block/volume/plan", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumePlanHandler)))).Methods("POST")
 		r.HandleFunc("/block/volume/{name}/expand", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumeExpandHandler)))).Methods("POST")
 		r.HandleFunc("/block/volume/{name}/preflight", ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumePreflightHandler))).Methods("GET")
 		r.HandleFunc("/block/volume/{name}/promote", ms.proxyToLeader(ms.guard.WhiteList(requestIDMiddleware(ms.blockVolumePromoteHandler)))).Methods("POST")
