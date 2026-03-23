@@ -97,6 +97,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 
 	// flush works at fh level
 	fileFullPath := fh.FullPath()
+	fh.RememberPath(fileFullPath)
 	dir, name := fileFullPath.DirAndName()
 	// send the data to the OS
 	glog.V(4).Infof("doFlush %s fh %d", fileFullPath, fh.fh)
@@ -112,8 +113,6 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 		fh.asyncFlushPending = true
 		fh.asyncFlushUid = uid
 		fh.asyncFlushGid = gid
-		fh.asyncFlushDir = dir
-		fh.asyncFlushName = name
 		glog.V(3).Infof("doFlush async deferred %s fh %d", fileFullPath, fh.fh)
 		return fuse.OK
 	}
