@@ -307,6 +307,47 @@ func TestLoopProcessLogDataWithOffset_StopTime(t *testing.T) {
 	t.Logf("Loop correctly exited for past stopTsNs in %v (waitForDataFn called %d times)", elapsed, callCount)
 }
 
+func TestLoopProcessLogData_SlowConsumerFallsBehind(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	baseTime := time.Now()
+	for i := 0; i < 1000; i++ {
+		ts := baseTime.Add(time.Duration(i) * time.Millisecond)
+		if err := logBuffer.AddDataToBuffer([]byte("key"), []byte("value"), ts.UnixNano()); err != nil {
+			t.Fatalf("AddDataToBuffer(%d): %v", i, err)
+		}
+	}
+
+	oldPosition := NewMessagePosition(baseTime.Add(-10*time.Second).UnixNano(), 1)
+
+	waitForDataFn := func() bool {
+		t.Errorf("waitForDataFn should not be called for a slow consumer that has fallen behind")
+		return false
+	}
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
+		return false, nil
+	}
+
+	done := make(chan struct{})
+	var err error
+	go func() {
+		_, _, err = logBuffer.LoopProcessLogData("slow-consumer", oldPosition, 0, waitForDataFn, eachLogEntryFn)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		if err != ResumeFromDiskError {
+			t.Fatalf("expected ResumeFromDiskError, got %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("LoopProcessLogData blocked instead of returning ResumeFromDiskError")
+	}
+}
+
 // BenchmarkLoopProcessLogDataWithOffset_EmptyBuffer benchmarks the performance
 // of the loop with an empty buffer to ensure no busy-waiting
 func BenchmarkLoopProcessLogDataWithOffset_EmptyBuffer(b *testing.B) {
