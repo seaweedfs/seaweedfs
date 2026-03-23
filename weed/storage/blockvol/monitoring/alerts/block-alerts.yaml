@@ -1,0 +1,82 @@
+# SeaweedFS Block Volume — Default Prometheus Alert Rules
+# CP11B-4: Observability Pack
+#
+# All metric names reference exported seaweedfs_blockvol_* metrics
+# from the iSCSI/NVMe target process.
+
+groups:
+  - name: seaweedfs_block_volume
+    rules:
+
+      # 1. Volume unsafe — WAL used fraction critically high with flusher errors.
+      #    Indicates a volume at risk of data loss or write stall.
+      #    Note: role-based alerting (role!=1) is intentionally excluded because
+      #    healthy replicas and rebuilding volumes legitimately have non-primary roles.
+      - alert: BlockVolumeUnsafe
+        expr: seaweedfs_blockvol_wal_used_fraction > 0.95 and rate(seaweedfs_blockvol_flusher_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block volume WAL near full with flusher errors"
+          description: "WAL usage {{ $value }} with active flusher errors. Volume is at risk of write stall or data loss."
+
+      # 2. Replica degraded — WAL shipping has failed replicas.
+      - alert: BlockVolumeReplicaDegraded
+        expr: seaweedfs_blockvol_replica_failed_barriers_total > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block volume has failed replica barriers"
+          description: "{{ $value }} failed barrier requests. Replica may be behind or disconnected."
+
+      # 3. Rebuild in progress — role is rebuilding (4).
+      - alert: BlockVolumeRebuilding
+        expr: seaweedfs_blockvol_role == 4
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block volume is rebuilding"
+          description: "Volume is in rebuild state. I/O continues on primary but redundancy is reduced."
+
+      # 4. WAL pressure high — soft or hard watermark triggered.
+      - alert: BlockVolumeWALPressure
+        expr: seaweedfs_blockvol_wal_pressure_state >= 1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block volume WAL under pressure"
+          description: "WAL pressure state is {{ $value }} (1=soft throttle, 2=hard block). Flusher may be falling behind."
+
+      # 5. WAL pressure critical — hard watermark for sustained period.
+      - alert: BlockVolumeWALPressureCritical
+        expr: seaweedfs_blockvol_wal_pressure_state >= 2
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block volume WAL in hard pressure"
+          description: "WAL at hard watermark for >2m. Writes are blocked. Investigate flusher or disk I/O."
+
+      # 6. Flusher errors — extent flush failures.
+      - alert: BlockVolumeFlusherErrors
+        expr: rate(seaweedfs_blockvol_flusher_errors_total[5m]) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Block volume flusher errors"
+          description: "Flusher is reporting errors. Data durability may be at risk."
+
+      # 7. Scrub errors — data integrity issues detected.
+      - alert: BlockVolumeScrubErrors
+        expr: seaweedfs_blockvol_scrub_errors_total > 0
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Block volume scrub detected errors"
+          description: "{{ $value }} scrub CRC mismatches detected. Investigate data integrity."

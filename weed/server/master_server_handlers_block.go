@@ -75,7 +75,7 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		IQN:              resp.Iqn,
 	}
 	if entry, ok := ms.blockRegistry.Lookup(resp.VolumeId); ok {
-		info = entryToVolumeInfo(entry)
+		info = entryToVolumeInfo(entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer))
 	}
 	writeJsonQuiet(w, r, http.StatusOK, info)
 }
@@ -111,6 +111,19 @@ func (ms *MasterServer) blockVolumeResolveHandler(w http.ResponseWriter, r *http
 	writeJsonQuiet(w, r, http.StatusOK, resp)
 }
 
+// blockVolumePlanHandler handles POST /block/volume/plan.
+// Read-only: no cluster mutation. Proxied to leader for consistent placement state.
+// Always returns 200 with errors[] in body for error conditions.
+func (ms *MasterServer) blockVolumePlanHandler(w http.ResponseWriter, r *http.Request) {
+	var req blockapi.CreateVolumeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("invalid request body: %w", err))
+		return
+	}
+	resp := ms.PlanBlockVolume(&req)
+	writeJsonQuiet(w, r, http.StatusOK, resp)
+}
+
 // blockVolumeDeleteHandler handles DELETE /block/volume/{name}.
 func (ms *MasterServer) blockVolumeDeleteHandler(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["name"]
@@ -142,7 +155,7 @@ func (ms *MasterServer) blockVolumeLookupHandler(w http.ResponseWriter, r *http.
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("block volume %q not found", name))
 		return
 	}
-	writeJsonQuiet(w, r, http.StatusOK, entryToVolumeInfo(entry))
+	writeJsonQuiet(w, r, http.StatusOK, entryToVolumeInfo(entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer)))
 }
 
 // blockVolumeListHandler handles GET /block/volumes.
@@ -150,7 +163,7 @@ func (ms *MasterServer) blockVolumeListHandler(w http.ResponseWriter, r *http.Re
 	entries := ms.blockRegistry.ListAll()
 	infos := make([]blockapi.VolumeInfo, len(entries))
 	for i, e := range entries {
-		infos[i] = entryToVolumeInfo(e)
+		infos[i] = entryToVolumeInfo(e, ms.blockRegistry.IsBlockCapable(e.VolumeServer))
 	}
 	writeJsonQuiet(w, r, http.StatusOK, infos)
 }
@@ -236,17 +249,23 @@ func (ms *MasterServer) blockVolumeExpandHandler(w http.ResponseWriter, r *http.
 	writeJsonQuiet(w, r, http.StatusOK, blockapi.ExpandVolumeResponse{CapacityBytes: resp.CapacityBytes})
 }
 
-// blockStatusHandler handles GET /block/status — returns registry configuration for debugging.
+// blockStatusHandler handles GET /block/status — cluster summary with health counts.
 func (ms *MasterServer) blockStatusHandler(w http.ResponseWriter, r *http.Request) {
-	status := map[string]interface{}{
-		"promotion_lsn_tolerance": ms.blockRegistry.PromotionLSNTolerance(),
-		"volume_count":            len(ms.blockRegistry.ListAll()),
-		"server_count":            len(ms.blockRegistry.BlockCapableServers()),
-		"barrier_lag_lsn":         ms.blockRegistry.MaxBarrierLagLSN(),
-		"promotions_total":        ms.blockRegistry.PromotionsTotal.Load(),
-		"failovers_total":         ms.blockRegistry.FailoversTotal.Load(),
-		"rebuilds_total":          ms.blockRegistry.RebuildsTotal.Load(),
-		"assignment_queue_depth":  ms.blockAssignmentQueue.TotalPending(),
+	healthSummary := ms.blockRegistry.ComputeClusterHealthSummary()
+	status := blockapi.BlockStatusResponse{
+		VolumeCount:           len(ms.blockRegistry.ListAll()),
+		ServerCount:           len(ms.blockRegistry.BlockCapableServers()),
+		PromotionLSNTolerance: ms.blockRegistry.PromotionLSNTolerance(),
+		BarrierLagLSN:         ms.blockRegistry.MaxBarrierLagLSN(),
+		PromotionsTotal:       int64(ms.blockRegistry.PromotionsTotal.Load()),
+		FailoversTotal:        int64(ms.blockRegistry.FailoversTotal.Load()),
+		RebuildsTotal:         int64(ms.blockRegistry.RebuildsTotal.Load()),
+		AssignmentQueueDepth:  ms.blockAssignmentQueue.TotalPending(),
+		HealthyCount:          healthSummary.Healthy,
+		DegradedCount:         healthSummary.Degraded,
+		RebuildingCount:       healthSummary.Rebuilding,
+		UnsafeCount:           healthSummary.Unsafe,
+		NvmeCapableServers:    ms.blockRegistry.NvmeCapableServerCount(),
 	}
 	writeJsonQuiet(w, r, http.StatusOK, status)
 }
@@ -345,7 +364,8 @@ func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http
 }
 
 // entryToVolumeInfo converts a BlockVolumeEntry to a blockapi.VolumeInfo.
-func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
+// primaryAlive indicates whether the primary server is alive (in blockServers set).
+func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeInfo {
 	status := "pending"
 	if e.Status == StatusActive {
 		status = "active"
@@ -380,6 +400,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry) blockapi.VolumeInfo {
 		Preset:           e.Preset,
 		NvmeAddr:         e.NvmeAddr,
 		NQN:              e.NQN,
+		HealthState:      deriveHealthStateWithLiveness(e, primaryAlive),
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

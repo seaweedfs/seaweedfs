@@ -241,7 +241,7 @@ func TestQA_CP11B1_CreateWithPreset_StoresPreset(t *testing.T) {
 	}
 
 	// Verify entryToVolumeInfo propagates preset.
-	info := entryToVolumeInfo(entry)
+	info := entryToVolumeInfo(entry, true)
 	if info.Preset != "general" {
 		t.Errorf("VolumeInfo.Preset = %q, want general", info.Preset)
 	}

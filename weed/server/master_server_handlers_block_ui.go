@@ -41,7 +41,7 @@ func (ms *MasterServer) buildBlockUIData(tab string) blockUIData {
 	var totalSizeMB uint64
 	var activeCount, pendingCount int
 	for i, e := range entries {
-		info := entryToVolumeInfo(e)
+		info := entryToVolumeInfo(e, ms.blockRegistry.IsBlockCapable(e.VolumeServer))
 		mb := info.SizeBytes / (1024 * 1024)
 		var maxLag uint64
 		for _, ri := range e.Replicas {

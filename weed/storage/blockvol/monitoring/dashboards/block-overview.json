@@ -1,0 +1,162 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "title": "Cluster Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "targets": [
+        { "expr": "count(seaweedfs_blockvol_role == 1)", "legendFormat": "Primary" }
+      ]
+    },
+    {
+      "title": "WAL Pressure State",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "targets": [
+        { "expr": "max(seaweedfs_blockvol_wal_pressure_state)", "legendFormat": "Pressure" }
+      ]
+    },
+    {
+      "title": "Volumes by Role",
+      "type": "bargauge",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "targets": [
+        { "expr": "count by (role) (seaweedfs_blockvol_role)", "legendFormat": "Role {{role}}" }
+      ]
+    },
+    {
+      "title": "Active Snapshots",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "targets": [
+        { "expr": "sum(seaweedfs_blockvol_snapshot_count)", "legendFormat": "Snapshots" }
+      ]
+    },
+    {
+      "title": "Write IOPS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_write_ops_total[1m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Read IOPS",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_read_ops_total[1m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Write Latency P99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, rate(seaweedfs_blockvol_write_latency_seconds_bucket[5m]))", "legendFormat": "p99 {{instance}}" }
+      ]
+    },
+    {
+      "title": "Read Latency P99",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "targets": [
+        { "expr": "histogram_quantile(0.99, rate(seaweedfs_blockvol_read_latency_seconds_bucket[5m]))", "legendFormat": "p99 {{instance}}" }
+      ]
+    },
+    {
+      "title": "WAL Used Fraction",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "targets": [
+        { "expr": "seaweedfs_blockvol_wal_used_fraction", "legendFormat": "{{instance}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "max": 1, "min": 0, "unit": "percentunit" }
+      }
+    },
+    {
+      "title": "WAL Pressure State",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "targets": [
+        { "expr": "seaweedfs_blockvol_wal_pressure_state", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Flusher Throughput",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_flusher_bytes_total[1m])", "legendFormat": "{{instance}}" }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps" }
+      }
+    },
+    {
+      "title": "Flusher Errors",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_flusher_errors_total[5m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "WAL Shipped Entries",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_wal_shipped_entries_total[1m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Replica Failed Barriers",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "targets": [
+        { "expr": "rate(seaweedfs_blockvol_replica_failed_barriers_total[5m])", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Scrub Errors",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 44 },
+      "targets": [
+        { "expr": "sum(seaweedfs_blockvol_scrub_errors_total)", "legendFormat": "Errors" }
+      ]
+    },
+    {
+      "title": "Dirty Map Entries",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 6, "y": 44 },
+      "targets": [
+        { "expr": "seaweedfs_blockvol_dirty_map_entries", "legendFormat": "{{instance}}" }
+      ]
+    },
+    {
+      "title": "Epoch",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 44 },
+      "targets": [
+        { "expr": "seaweedfs_blockvol_epoch", "legendFormat": "{{instance}}" }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["seaweedfs", "block", "blockvol"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "",
+  "title": "SeaweedFS Block Volume Overview",
+  "uid": "seaweedfs-block-overview",
+  "version": 1
+}
