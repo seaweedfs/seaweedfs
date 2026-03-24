@@ -112,6 +112,13 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 	fh.invalidateChunkCache()
 }
 
+func (fh *FileHandle) ResetDirtyPages() {
+	fh.dirtyPages.Destroy()
+	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
+	fh.dirtyMetadata = false
+	fh.contentType = ""
+}
+
 func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entry {
 	result := fh.entry.UpdateEntry(fn)
 

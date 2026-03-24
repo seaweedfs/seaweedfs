@@ -63,11 +63,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	fileHandle := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry)
 	fileHandle.RememberPath(entryFullPath)
 	out.Fh = uint64(fileHandle.fh)
-	out.OpenFlags = in.Flags
-	if wfs.option.IsMacOs && in.Flags&fuse.FOPEN_DIRECT_IO != 0 {
-		glog.V(4).Infof("macfuse direct_io mode %v => false\n", in.Flags&fuse.FOPEN_DIRECT_IO != 0)
-		out.OpenFlags &^= fuse.FOPEN_DIRECT_IO
-	}
+	out.OpenFlags = 0
 
 	return fuse.OK
 }
@@ -243,5 +239,18 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 	entry.Attributes.FileSize = 0
 	entry.Attributes.Mtime = time.Now().Unix()
 
-	return wfs.saveEntry(entryFullPath, entry)
+	if code := wfs.saveEntry(entryFullPath, entry); code != fuse.OK {
+		return code
+	}
+
+	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fhActiveLock := fh.wfs.fhLockTable.AcquireLock("truncateEntry", fh.fh, util.ExclusiveLock)
+			fh.ResetDirtyPages()
+			fh.SetEntry(entry)
+			fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+		}
+	}
+
+	return fuse.OK
 }

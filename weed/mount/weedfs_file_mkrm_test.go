@@ -39,7 +39,13 @@ func (s *createEntryTestServer) CreateEntry(ctx context.Context, req *filer_pb.C
 	return &filer_pb.CreateEntryResponse{}, nil
 }
 
-func TestCreateCreatesAndOpensFile(t *testing.T) {
+func (s *createEntryTestServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
+	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
+	t.Helper()
+
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -67,14 +73,15 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 		FilerAddresses: []pb.ServerAddress{
 			pb.NewServerAddressWithGrpcPort("127.0.0.1:1", listener.Addr().(*net.TCPAddr).Port),
 		},
-		GrpcDialOption:     grpc.WithTransportCredentials(insecure.NewCredentials()),
-		FilerMountRootPath: "/",
-		MountUid:           99,
-		MountGid:           100,
-		MountMode:          0o755,
-		MountMtime:         time.Now(),
-		MountCtime:         time.Now(),
-		UidGidMapper:       uidGidMapper,
+		GrpcDialOption:         grpc.WithTransportCredentials(insecure.NewCredentials()),
+		FilerMountRootPath:     "/",
+		MountUid:               99,
+		MountGid:               100,
+		MountMode:              0o755,
+		MountMtime:             time.Now(),
+		MountCtime:             time.Now(),
+		UidGidMapper:           uidGidMapper,
+		uniqueCacheDirForWrite: t.TempDir(),
 	}
 
 	wfs := &WFS{
@@ -102,6 +109,12 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 		wfs.metaCache.Shutdown()
 	})
 
+	return wfs, testServer
+}
+
+func TestCreateCreatesAndOpensFile(t *testing.T) {
+	wfs, testServer := newCreateTestWFS(t)
+
 	out := &fuse.CreateOut{}
 	status := wfs.Create(make(chan struct{}), &fuse.CreateIn{
 		InHeader: fuse.InHeader{
@@ -125,6 +138,9 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 	if out.Fh == 0 {
 		t.Fatal("Create returned zero file handle")
 	}
+	if out.OpenFlags != 0 {
+		t.Fatalf("Create returned OpenFlags = %#x, want 0", out.OpenFlags)
+	}
 
 	fileHandle := wfs.GetHandle(FileHandleId(out.Fh))
 	if fileHandle == nil {
@@ -145,6 +161,56 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 	}
 	if testServer.lastMode != 0o640 {
 		t.Fatalf("CreateEntry mode = %o, want %o", testServer.lastMode, 0o640)
+	}
+}
+
+func TestTruncateEntryClearsDirtyPagesForOpenHandle(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+
+	fullPath := util.FullPath("/truncate.txt")
+	inode := wfs.inodeToPath.Lookup(fullPath, 1, false, false, 0, true)
+	entry := &filer_pb.Entry{
+		Name: "truncate.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0o644,
+			FileSize: 5,
+			Inode:    inode,
+			Crtime:   1,
+			Mtime:    1,
+		},
+	}
+
+	fh := wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
+	fh.RememberPath(fullPath)
+
+	if err := fh.dirtyPages.AddPage(0, []byte("hello"), true, time.Now().UnixNano()); err != nil {
+		t.Fatalf("AddPage: %v", err)
+	}
+	oldDirtyPages := fh.dirtyPages
+
+	truncatedEntry := &filer_pb.Entry{
+		Name: "truncate.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0o644,
+			FileSize: 5,
+			Inode:    inode,
+			Crtime:   1,
+			Mtime:    1,
+		},
+	}
+
+	if status := wfs.truncateEntry(fullPath, truncatedEntry); status != fuse.OK {
+		t.Fatalf("truncateEntry status = %v, want OK", status)
+	}
+	if fh.dirtyPages == oldDirtyPages {
+		t.Fatal("truncateEntry should replace the dirtyPages writer for an open handle")
+	}
+	if got := fh.GetEntry().GetEntry().GetAttributes().GetFileSize(); got != 0 {
+		t.Fatalf("file handle size = %d, want 0", got)
+	}
+	buf := make([]byte, 5)
+	if maxStop := fh.dirtyPages.ReadDirtyDataAt(buf, 0, time.Now().UnixNano()); maxStop != 0 {
+		t.Fatalf("dirty pages maxStop = %d, want 0 after truncate", maxStop)
 	}
 }
 
