@@ -15,7 +15,6 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
 	"time"
 
@@ -360,7 +359,7 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 		entry.Attributes.FileMode = uint32(0700 | os.ModeDir)
 	}); err != nil {
 		// Only ignore "already exists" errors.
-		if !errors.Is(err, filer_pb.ErrEntryAlreadyExists) && !strings.Contains(err.Error(), "file exists") {
+		if !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 			return fmt.Errorf("failed to create KEK directory %s: %w", SSES3KEKDirectory, err)
 		}
 		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)

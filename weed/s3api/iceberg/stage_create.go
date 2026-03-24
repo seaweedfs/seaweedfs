@@ -198,14 +198,7 @@ func (s *Server) writeStageCreateMarker(ctx context.Context, bucketName string, 
 			if createErr != nil {
 				return fmt.Errorf("failed to create %s: %w", errorContext, createErr)
 			}
-			if resp.ErrorCode == filer_pb.FilerError_OK && resp.Error == "" {
-				return nil
-			}
-			if resp.ErrorCode == filer_pb.FilerError_ENTRY_ALREADY_EXISTS {
-				return nil
-			}
-			// Backward compat: old servers without error_code
-			if resp.Error != "" && resp.ErrorCode == filer_pb.FilerError_OK && !strings.Contains(resp.Error, "exist") {
+			if resp.ErrorCode != filer_pb.FilerError_OK && resp.ErrorCode != filer_pb.FilerError_ENTRY_ALREADY_EXISTS {
 				return fmt.Errorf("failed to create %s: %s", errorContext, resp.Error)
 			}
 			return nil
