@@ -12,10 +12,10 @@ func retryMetadataFlush(flush func() error, onRetry func(nextAttempt, totalAttem
 	for attempt := 1; attempt <= totalAttempts; attempt++ {
 		err = flush()
 		if err == nil {
-			return nil
+			break
 		}
 		if attempt == totalAttempts {
-			return err
+			break
 		}
 
 		backoff := time.Duration(1<<uint(attempt-1)) * time.Second
