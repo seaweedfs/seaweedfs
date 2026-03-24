@@ -16,6 +16,7 @@ import (
 type Flusher struct {
 	fd          *os.File
 	super       *Superblock
+	superMu     *sync.Mutex // serializes superblock writes (shared with group commit)
 	wal         *WALWriter
 	dirtyMap    *DirtyMap
 	walOffset   uint64 // absolute file offset of WAL region
@@ -53,6 +54,7 @@ type Flusher struct {
 type FlusherConfig struct {
 	FD          *os.File
 	Super       *Superblock
+	SuperMu     *sync.Mutex      // serializes superblock writes (shared with group commit)
 	WAL         *WALWriter
 	DirtyMap    *DirtyMap
 	Interval    time.Duration    // default 100ms
@@ -75,6 +77,7 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 	return &Flusher{
 		fd:             cfg.FD,
 		super:          cfg.Super,
+		superMu:        cfg.SuperMu,
 		wal:            cfg.WAL,
 		dirtyMap:       cfg.DirtyMap,
 		walOffset:      cfg.Super.WALOffset,
@@ -401,6 +404,8 @@ func (f *Flusher) flushOnceLocked() error {
 	}
 
 	// Update superblock checkpoint.
+	log.Printf("flusher: checkpoint LSN=%d entries=%d WALTail=%d WALHead=%d",
+		maxLSN, len(entries), f.wal.LogicalTail(), f.wal.LogicalHead())
 	f.updateSuperblockCheckpoint(maxLSN, f.wal.Tail())
 
 	// Record metrics.
@@ -413,7 +418,13 @@ func (f *Flusher) flushOnceLocked() error {
 }
 
 // updateSuperblockCheckpoint writes the updated checkpoint to disk.
+// Acquires superMu to serialize against syncWithWALProgress (group commit).
 func (f *Flusher) updateSuperblockCheckpoint(checkpointLSN uint64, walTail uint64) error {
+	if f.superMu != nil {
+		f.superMu.Lock()
+		defer f.superMu.Unlock()
+	}
+
 	f.super.WALCheckpointLSN = checkpointLSN
 	f.super.WALHead = f.wal.LogicalHead()
 	f.super.WALTail = f.wal.LogicalTail()

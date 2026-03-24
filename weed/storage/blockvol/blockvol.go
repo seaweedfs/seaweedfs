@@ -36,6 +36,7 @@ var ErrVolumeClosed = errors.New("blockvol: volume closed")
 type BlockVol struct {
 	mu             sync.RWMutex
 	ioMu           sync.RWMutex // guards local data mutation (WAL/dirtyMap/extent); Lock for restore/import/expand
+	superMu        sync.Mutex   // serializes superblock mutation + persist (group commit vs flusher)
 	fd             *os.File
 	path           string
 	super          Superblock
@@ -170,6 +171,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	v.flusher = NewFlusher(FlusherConfig{
 		FD:       fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      wal,
 		DirtyMap: dm,
 		Interval: cfg.FlushInterval,
@@ -237,15 +239,11 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	dirtyMap := NewDirtyMap(cfg.DirtyMapShards)
 
 	// Run WAL recovery: replay entries from tail to head.
-	log.Printf("blockvol: open %s: WALHead=%d WALTail=%d CheckpointLSN=%d WALOffset=%d WALSize=%d VolumeSize=%d Epoch=%d",
-		path, sb.WALHead, sb.WALTail, sb.WALCheckpointLSN, sb.WALOffset, sb.WALSize, sb.VolumeSize, sb.Epoch)
 	result, err := RecoverWAL(fd, &sb, dirtyMap)
 	if err != nil {
 		fd.Close()
 		return nil, fmt.Errorf("blockvol: recovery: %w", err)
 	}
-	log.Printf("blockvol: recovery %s: replayed=%d highestLSN=%d torn=%d dirtyEntries=%d",
-		path, result.EntriesReplayed, result.HighestLSN, result.TornEntries, dirtyMap.Len())
 
 	nextLSN := sb.WALCheckpointLSN + 1
 	if result.HighestLSN >= nextLSN {
@@ -285,6 +283,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	v.flusher = NewFlusher(FlusherConfig{
 		FD:       fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      wal,
 		DirtyMap: dirtyMap,
 		Interval: cfg.FlushInterval,
@@ -340,6 +339,9 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 // Sequence: update superblock WALHead → pwrite superblock → fd.Sync.
 // The fd.Sync flushes both WAL data and superblock in one syscall.
 func (v *BlockVol) syncWithWALProgress() error {
+	v.superMu.Lock()
+	defer v.superMu.Unlock()
+
 	// Update superblock WALHead from the live WAL writer.
 	// WALTail and CheckpointLSN are updated by the flusher, not here.
 	v.super.WALHead = v.wal.LogicalHead()
@@ -1367,6 +1369,8 @@ func (v *BlockVol) ExpandState() (preparedSize, expandEpoch uint64) {
 
 // persistSuperblock writes the superblock to disk and fsyncs.
 func (v *BlockVol) persistSuperblock() error {
+	v.superMu.Lock()
+	defer v.superMu.Unlock()
 	if _, err := v.fd.Seek(0, 0); err != nil {
 		return fmt.Errorf("blockvol: persist superblock seek: %w", err)
 	}
