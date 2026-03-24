@@ -27,7 +27,8 @@ type inodeLocks struct {
 
 // lockWaiter represents a blocked SetLkw caller.
 type lockWaiter struct {
-	ch chan struct{} // closed when the waiter should re-check
+	requested lockRange   // the lock this waiter is trying to acquire
+	ch        chan struct{} // closed when the waiter should re-check
 }
 
 // PosixLockTable is the per-mount POSIX lock manager.
@@ -183,18 +184,20 @@ func removeLocks(il *inodeLocks, owner uint64, start, end uint64) {
 	il.locks = kept
 }
 
-// wakeWaiters wakes all blocked SetLkw callers so they re-check.
+// wakeEligibleWaiters selectively wakes blocked SetLkw callers that can now
+// succeed given the current lock state. Waiters whose requests still conflict
+// with held locks remain in the queue, avoiding a thundering herd.
 // Caller must hold il.mu.
-func wakeWaiters(il *inodeLocks) {
+func wakeEligibleWaiters(il *inodeLocks) {
+	remaining := il.waiters[:0]
 	for _, w := range il.waiters {
-		select {
-		case <-w.ch:
-			// already closed
-		default:
+		if _, conflicted := findConflict(il.locks, w.requested); !conflicted {
 			close(w.ch)
+		} else {
+			remaining = append(remaining, w)
 		}
 	}
-	il.waiters = nil
+	il.waiters = remaining
 }
 
 // removeWaiter removes a specific waiter from the list.
@@ -241,7 +244,7 @@ func (plt *PosixLockTable) SetLk(inode uint64, lk lockRange) fuse.Status {
 		}
 		il.mu.Lock()
 		removeLocks(il, lk.Owner, lk.Start, lk.End)
-		wakeWaiters(il)
+		wakeEligibleWaiters(il)
 		il.mu.Unlock()
 		plt.maybeCleanupInode(inode, il)
 		return fuse.OK
@@ -273,8 +276,8 @@ func (plt *PosixLockTable) SetLkw(inode uint64, lk lockRange, cancel <-chan stru
 			il.mu.Unlock()
 			return fuse.OK
 		}
-		// Register waiter.
-		waiter := &lockWaiter{ch: make(chan struct{})}
+		// Register waiter with the requested lock details for selective waking.
+		waiter := &lockWaiter{requested: lk, ch: make(chan struct{})}
 		il.waiters = append(il.waiters, waiter)
 		il.mu.Unlock()
 
@@ -302,7 +305,7 @@ func (plt *PosixLockTable) ReleaseOwner(inode uint64, owner uint64) {
 	}
 	il.mu.Lock()
 	removeLocks(il, owner, 0, math.MaxUint64)
-	wakeWaiters(il)
+	wakeEligibleWaiters(il)
 	il.mu.Unlock()
 	plt.maybeCleanupInode(inode, il)
 }

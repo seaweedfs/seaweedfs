@@ -362,6 +362,64 @@ func TestMemoryCleanup(t *testing.T) {
 	}
 }
 
+func TestSelectiveWaking(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	// Owner 1 holds write lock on [0, 99], owner 2 holds write lock on [200, 299].
+	plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	plt.SetLk(inode, lockRange{Start: 200, End: 299, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20})
+
+	// Owner 3 waits for [50, 60] (blocked by owner 1).
+	done3 := make(chan fuse.Status, 1)
+	go func() {
+		cancel := make(chan struct{})
+		s := plt.SetLkw(inode, lockRange{Start: 50, End: 60, Typ: syscall.F_WRLCK, Owner: 3, Pid: 30}, cancel)
+		done3 <- s
+	}()
+	// Owner 4 waits for [250, 260] (blocked by owner 2).
+	done4 := make(chan fuse.Status, 1)
+	go func() {
+		cancel := make(chan struct{})
+		s := plt.SetLkw(inode, lockRange{Start: 250, End: 260, Typ: syscall.F_WRLCK, Owner: 4, Pid: 40}, cancel)
+		done4 <- s
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Release owner 1's lock. Only owner 3 should be woken; owner 4 is still blocked.
+	plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_UNLCK, Owner: 1, Pid: 10})
+
+	select {
+	case s := <-done3:
+		if s != fuse.OK {
+			t.Fatalf("expected OK for owner 3, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner 3 was not woken after owner 1 released")
+	}
+
+	// Owner 4 should still be blocked.
+	select {
+	case s := <-done4:
+		t.Fatalf("owner 4 should still be blocked, but got %v", s)
+	case <-time.After(100 * time.Millisecond):
+		// Expected — still blocked.
+	}
+
+	// Now release owner 2's lock. Owner 4 should wake.
+	plt.SetLk(inode, lockRange{Start: 200, End: 299, Typ: syscall.F_UNLCK, Owner: 2, Pid: 20})
+
+	select {
+	case s := <-done4:
+		if s != fuse.OK {
+			t.Fatalf("expected OK for owner 4, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("owner 4 was not woken after owner 2 released")
+	}
+}
+
 func TestSameOwnerReplaceDifferentType(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)
