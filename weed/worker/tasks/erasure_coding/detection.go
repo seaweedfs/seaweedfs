@@ -826,25 +826,6 @@ func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidat
 	return candidates
 }
 
-// candidatesToDiskInfos converts placement results back to topology.DiskInfo
-func candidatesToDiskInfos(candidates []*placement.DiskCandidate, originalDisks []*topology.DiskInfo) []*topology.DiskInfo {
-	// Create a map for quick lookup
-	diskMap := make(map[string]*topology.DiskInfo)
-	for _, disk := range originalDisks {
-		key := fmt.Sprintf("%s:%d", disk.NodeID, disk.DiskID)
-		diskMap[key] = disk
-	}
-
-	var result []*topology.DiskInfo
-	for _, candidate := range candidates {
-		key := fmt.Sprintf("%s:%d", candidate.NodeID, candidate.DiskID)
-		if disk, ok := diskMap[key]; ok {
-			result = append(result, disk)
-		}
-	}
-	return result
-}
-
 // calculateECScoreCandidate calculates placement score for EC operations.
 // Used for logging and plan metadata.
 func calculateECScoreCandidate(disk *placement.DiskCandidate, sourceRack, sourceDC string) float64 {
