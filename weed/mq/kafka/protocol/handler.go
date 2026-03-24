@@ -879,14 +879,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if err := conn.SetReadDeadline(time.Now().Add(timeoutConfig.ReadTimeout)); err != nil {
 		}
 
-		// Read the message
-		// OPTIMIZATION: Use buffer pool to reduce GC pressure (was 1MB/sec at 1000 req/s)
-		messageBuf := mem.Allocate(int(size))
-		defer mem.Free(messageBuf)
-		if _, err := io.ReadFull(r, messageBuf); err != nil {
+		// Read the message into a pooled buffer, then copy to owned memory
+		// and return the pool buffer immediately.  The previous code used
+		// defer mem.Free which accumulated one deferred free per iteration,
+		// leaking pool buffers for the connection lifetime and risking
+		// use-after-free when the defers ran before processing goroutines
+		// finished draining.
+		poolBuf := mem.Allocate(int(size))
+		if _, err := io.ReadFull(r, poolBuf); err != nil {
+			mem.Free(poolBuf)
 			_ = HandleTimeoutError(err, "read") // errorCode
 			return fmt.Errorf("read message: %w", err)
 		}
+		messageBuf := make([]byte, int(size))
+		copy(messageBuf, poolBuf)
+		mem.Free(poolBuf)
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
