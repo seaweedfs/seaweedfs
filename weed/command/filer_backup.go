@@ -3,7 +3,6 @@ package command
 import (
 	"errors"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -102,19 +101,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
-	var reExcludeFileName *regexp.Regexp
-	if *backupOption.excludeFileName != "" {
-		var err error
-		if reExcludeFileName, err = regexp.Compile(*backupOption.excludeFileName); err != nil {
-			return fmt.Errorf("error compile regexp %v for exclude file name: %+v", *backupOption.excludeFileName, err)
-		}
+	reExcludeFileName, err := compileExcludePattern(*backupOption.excludeFileName, "exclude file name")
+	if err != nil {
+		return err
 	}
-	var reExcludePathPattern *regexp.Regexp
-	if *backupOption.excludePathPattern != "" {
-		var err error
-		if reExcludePathPattern, err = regexp.Compile(*backupOption.excludePathPattern); err != nil {
-			return fmt.Errorf("error compile regexp %v for exclude path pattern: %+v", *backupOption.excludePathPattern, err)
-		}
+	reExcludePathPattern, err := compileExcludePattern(*backupOption.excludePathPattern, "exclude path pattern")
+	if err != nil {
+		return err
 	}
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()

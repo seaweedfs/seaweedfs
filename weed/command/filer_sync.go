@@ -468,27 +468,23 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 		}
-		if reExcludeFileName != nil {
-			if message.NewEntry != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
-				return nil
-			}
-			if message.OldEntry != nil && reExcludeFileName.MatchString(message.OldEntry.Name) {
-				return nil
-			}
+		// Compute per-side exclusion so that rename events crossing an
+		// exclude boundary are handled as delete + create rather than
+		// being entirely skipped.
+		oldExcluded := isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, reExcludePathPattern)
+		newExcluded := isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, reExcludePathPattern)
+
+		if oldExcluded && newExcluded {
+			return nil
 		}
-		if reExcludePathPattern != nil {
-			dirParts := strings.Split(resp.Directory, "/")
-			for _, part := range dirParts {
-				if part != "" && reExcludePathPattern.MatchString(part) {
-					return nil
-				}
-			}
-			if message.NewEntry != nil && reExcludePathPattern.MatchString(message.NewEntry.Name) {
-				return nil
-			}
-			if message.OldEntry != nil && reExcludePathPattern.MatchString(message.OldEntry.Name) {
-				return nil
-			}
+		if oldExcluded {
+			// Old side is excluded — treat as pure create of new entry.
+			message.OldEntry = nil
+		}
+		if newExcluded {
+			// New side is excluded — treat as pure delete of old entry.
+			message.NewEntry = nil
+			sourceNewKey = ""
 		}
 		if dataSink.IsIncremental() {
 			doDeleteFiles = false
@@ -596,4 +592,56 @@ func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification
 	}
 
 	return escapeKey(key)
+}
+
+// isEntryExcluded checks whether a single side (old or new) of an event is excluded
+// by either the filename regexp or the path-pattern regexp.
+func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regexp.Regexp, reExcludePathPattern *regexp.Regexp) bool {
+	if entry == nil {
+		return false
+	}
+	if reExcludeFileName != nil && reExcludeFileName.MatchString(entry.Name) {
+		return true
+	}
+	if reExcludePathPattern != nil {
+		if pathContainsMatch(dir, reExcludePathPattern) {
+			return true
+		}
+		if reExcludePathPattern.MatchString(entry.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// compileExcludePattern compiles a regexp pattern string, returning nil if empty.
+func compileExcludePattern(pattern string, label string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("error compile regexp %v for %s: %+v", pattern, label, err)
+	}
+	return re, nil
+}
+
+// pathContainsMatch checks if any component of the given path matches the regexp,
+// without allocating a slice (unlike strings.Split).
+func pathContainsMatch(path string, re *regexp.Regexp) bool {
+	for path != "" {
+		i := strings.IndexByte(path, '/')
+		var component string
+		if i < 0 {
+			component = path
+			path = ""
+		} else {
+			component = path[:i]
+			path = path[i+1:]
+		}
+		if component != "" && re.MatchString(component) {
+			return true
+		}
+	}
+	return false
 }
