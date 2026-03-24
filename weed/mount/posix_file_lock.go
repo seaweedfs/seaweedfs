@@ -23,15 +23,17 @@ type lockRange struct {
 
 // inodeLocks holds all locks for one inode plus a waiter queue for SetLkw.
 type inodeLocks struct {
-	mu      sync.Mutex
-	locks   []lockRange   // currently held locks, sorted by Start
-	waiters []*lockWaiter // blocked SetLkw callers
+	mu       sync.Mutex
+	locks    []lockRange   // currently held locks, sorted by Start
+	waiters  []*lockWaiter // blocked SetLkw callers
+	wakeRefs int           // woken waiters still retrying on this inodeLocks
 }
 
 // lockWaiter represents a blocked SetLkw caller.
 type lockWaiter struct {
-	requested lockRange     // the lock this waiter is trying to acquire
-	ch        chan struct{} // closed when the waiter should re-check
+	requested   lockRange     // the lock this waiter is trying to acquire
+	ch          chan struct{} // closed when the waiter should re-check
+	wakeRefHeld bool
 }
 
 // PosixLockTable is the per-mount POSIX lock manager.
@@ -65,14 +67,15 @@ func (plt *PosixLockTable) getInodeLocks(inode uint64) *inodeLocks {
 	return plt.inodes[inode]
 }
 
-// maybeCleanupInode removes the inodeLocks entry if it has no locks and no waiters.
+// maybeCleanupInode removes the inodeLocks entry if it has no locks, no waiters,
+// and no woken waiters still retrying against this inodeLocks.
 func (plt *PosixLockTable) maybeCleanupInode(inode uint64, il *inodeLocks) {
 	// Caller must NOT hold il.mu. We acquire both locks in the correct order.
 	plt.mu.Lock()
 	defer plt.mu.Unlock()
 	il.mu.Lock()
 	defer il.mu.Unlock()
-	if len(il.locks) == 0 && len(il.waiters) == 0 {
+	if len(il.locks) == 0 && len(il.waiters) == 0 && il.wakeRefs == 0 {
 		delete(plt.inodes, inode)
 	}
 }
@@ -202,6 +205,16 @@ func (plt *PosixLockTable) releaseMatching(inode uint64, matches func(lockRange)
 	plt.maybeCleanupInode(inode, il)
 }
 
+// releaseWakeRef drops the temporary reference that keeps inodeLocks live while
+// a woken waiter retries its SetLkw acquisition.
+func releaseWakeRef(il *inodeLocks, waiter *lockWaiter) {
+	if waiter == nil || !waiter.wakeRefHeld {
+		return
+	}
+	waiter.wakeRefHeld = false
+	il.wakeRefs--
+}
+
 // wakeEligibleWaiters selectively wakes blocked SetLkw callers that can now
 // succeed given the current lock state. Waiters whose requests still conflict
 // with held locks remain in the queue, avoiding a thundering herd.
@@ -210,6 +223,8 @@ func wakeEligibleWaiters(il *inodeLocks) {
 	remaining := il.waiters[:0]
 	for _, w := range il.waiters {
 		if _, conflicted := findConflict(il.locks, w.requested); !conflicted {
+			w.wakeRefHeld = true
+			il.wakeRefs++
 			close(w.ch)
 		} else {
 			remaining = append(remaining, w)
@@ -289,15 +304,17 @@ func (plt *PosixLockTable) SetLkw(inode uint64, lk lockRange, cancel <-chan stru
 	}
 
 	il := plt.getOrCreateInodeLocks(inode)
+	var waiter *lockWaiter
 	for {
 		il.mu.Lock()
+		releaseWakeRef(il, waiter)
 		if _, found := findConflict(il.locks, lk); !found {
 			insertAndCoalesce(il, lk)
 			il.mu.Unlock()
 			return fuse.OK
 		}
 		// Register waiter with the requested lock details for selective waking.
-		waiter := &lockWaiter{requested: lk, ch: make(chan struct{})}
+		waiter = &lockWaiter{requested: lk, ch: make(chan struct{})}
 		il.waiters = append(il.waiters, waiter)
 		il.mu.Unlock()
 
@@ -309,8 +326,10 @@ func (plt *PosixLockTable) SetLkw(inode uint64, lk lockRange, cancel <-chan stru
 		case <-cancel:
 			// Request cancelled.
 			il.mu.Lock()
+			releaseWakeRef(il, waiter)
 			removeWaiter(il, waiter)
 			il.mu.Unlock()
+			plt.maybeCleanupInode(inode, il)
 			return fuse.EINTR
 		}
 	}

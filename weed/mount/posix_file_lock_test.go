@@ -271,6 +271,48 @@ func TestReleasePosixOwnerDoesNotReleaseFlockLocks(t *testing.T) {
 	}
 }
 
+func TestWakeEligibleWaitersKeepsInodeUntilWakeRefReleased(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+	il := plt.getOrCreateInodeLocks(inode)
+	waiter := &lockWaiter{
+		requested: lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20},
+		ch:        make(chan struct{}),
+	}
+
+	il.mu.Lock()
+	il.waiters = append(il.waiters, waiter)
+	il.mu.Unlock()
+
+	plt.releaseMatching(inode, func(lockRange) bool { return false })
+
+	select {
+	case <-waiter.ch:
+		// Expected.
+	default:
+		t.Fatal("expected waiter to be woken")
+	}
+
+	plt.mu.Lock()
+	_, exists := plt.inodes[inode]
+	plt.mu.Unlock()
+	if !exists {
+		t.Fatal("inodeLocks should remain while a woken waiter still holds a wake ref")
+	}
+
+	il.mu.Lock()
+	releaseWakeRef(il, waiter)
+	il.mu.Unlock()
+	plt.maybeCleanupInode(inode, il)
+
+	plt.mu.Lock()
+	_, exists = plt.inodes[inode]
+	plt.mu.Unlock()
+	if exists {
+		t.Fatal("inodeLocks should be cleaned up after the final wake ref is released")
+	}
+}
+
 func TestReleaseFlockOwnerDoesNotReleasePosixLocks(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)
