@@ -52,18 +52,24 @@ import (
  * [close]: http://pubs.opengroup.org/onlinepubs/9699919799/functions/close.html
  */
 func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
-	if in.LockOwner != 0 {
-		wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
-	}
-
 	fh := wfs.GetHandle(FileHandleId(in.Fh))
 	if fh == nil {
 		// If handle is not found, it might have been already released
 		// This is not an error condition for FLUSH
+		if in.LockOwner != 0 {
+			wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
+		}
 		return fuse.OK
 	}
 
-	return wfs.doFlush(fh, in.Uid, in.Gid, true)
+	// When a closing lock owner is present, flush synchronously before waking any
+	// blocked POSIX lock waiters so write-serialized callers cannot overtake each other.
+	allowAsync := in.LockOwner == 0
+	status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync)
+	if in.LockOwner != 0 {
+		wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
+	}
+	return status
 }
 
 /**
