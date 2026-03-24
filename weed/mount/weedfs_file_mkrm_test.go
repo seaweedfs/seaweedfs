@@ -4,11 +4,13 @@ import (
 	"context"
 	"net"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -19,6 +21,7 @@ import (
 
 type createEntryTestServer struct {
 	filer_pb.UnimplementedSeaweedFilerServer
+	mu            sync.Mutex
 	lastDirectory string
 	lastName      string
 	lastUID       uint32
@@ -26,7 +29,17 @@ type createEntryTestServer struct {
 	lastMode      uint32
 }
 
+type createEntrySnapshot struct {
+	directory string
+	name      string
+	uid       uint32
+	gid       uint32
+	mode      uint32
+}
+
 func (s *createEntryTestServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntryRequest) (*filer_pb.CreateEntryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.lastDirectory = req.GetDirectory()
 	if req.GetEntry() != nil {
 		s.lastName = req.GetEntry().GetName()
@@ -41,6 +54,18 @@ func (s *createEntryTestServer) CreateEntry(ctx context.Context, req *filer_pb.C
 
 func (s *createEntryTestServer) UpdateEntry(ctx context.Context, req *filer_pb.UpdateEntryRequest) (*filer_pb.UpdateEntryResponse, error) {
 	return &filer_pb.UpdateEntryResponse{}, nil
+}
+
+func (s *createEntryTestServer) snapshot() createEntrySnapshot {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return createEntrySnapshot{
+		directory: s.lastDirectory,
+		name:      s.lastName,
+		uid:       s.lastUID,
+		gid:       s.lastGID,
+		mode:      s.lastMode,
+	}
 }
 
 func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
@@ -150,17 +175,18 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 		t.Fatalf("FullPath = %q, want %q", got, "/hello.txt")
 	}
 
-	if testServer.lastDirectory != "/" {
-		t.Fatalf("CreateEntry directory = %q, want %q", testServer.lastDirectory, "/")
+	snapshot := testServer.snapshot()
+	if snapshot.directory != "/" {
+		t.Fatalf("CreateEntry directory = %q, want %q", snapshot.directory, "/")
 	}
-	if testServer.lastName != "hello.txt" {
-		t.Fatalf("CreateEntry name = %q, want %q", testServer.lastName, "hello.txt")
+	if snapshot.name != "hello.txt" {
+		t.Fatalf("CreateEntry name = %q, want %q", snapshot.name, "hello.txt")
 	}
-	if testServer.lastUID != 123 || testServer.lastGID != 456 {
-		t.Fatalf("CreateEntry uid/gid = %d/%d, want 123/456", testServer.lastUID, testServer.lastGID)
+	if snapshot.uid != 123 || snapshot.gid != 456 {
+		t.Fatalf("CreateEntry uid/gid = %d/%d, want 123/456", snapshot.uid, snapshot.gid)
 	}
-	if testServer.lastMode != 0o640 {
-		t.Fatalf("CreateEntry mode = %o, want %o", testServer.lastMode, 0o640)
+	if snapshot.mode != 0o640 {
+		t.Fatalf("CreateEntry mode = %o, want %o", snapshot.mode, 0o640)
 	}
 }
 
@@ -299,5 +325,46 @@ func TestHasAccessUsesSupplementaryGroups(t *testing.T) {
 
 	if got := hasAccess(999, 999, 123, 456, 0o060, fuse.R_OK|fuse.W_OK); !got {
 		t.Fatal("supplementary group membership should grant matching group permissions")
+	}
+}
+
+func TestCreateExistingFileIgnoresQuotaPreflight(t *testing.T) {
+	wfs, _ := newCreateTestWFS(t)
+	wfs.option.Quota = 1
+	wfs.IsOverQuota = true
+
+	entry := &filer_pb.Entry{
+		Name: "existing.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0o644,
+			FileSize: 7,
+			Inode:    101,
+			Crtime:   1,
+			Mtime:    1,
+			Uid:      123,
+			Gid:      456,
+		},
+	}
+	if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry("/", entry)); err != nil {
+		t.Fatalf("InsertEntry: %v", err)
+	}
+	wfs.inodeToPath.Lookup(util.FullPath("/existing.txt"), entry.Attributes.Crtime, false, false, entry.Attributes.Inode, true)
+
+	out := &fuse.CreateOut{}
+	status := wfs.Create(make(chan struct{}), &fuse.CreateIn{
+		InHeader: fuse.InHeader{
+			NodeId: 1,
+			Caller: fuse.Caller{
+				Owner: fuse.Owner{
+					Uid: 123,
+					Gid: 456,
+				},
+			},
+		},
+		Flags: syscall.O_WRONLY | syscall.O_CREAT | syscall.O_EXCL,
+		Mode:  0o644,
+	}, "existing.txt", out)
+	if status != fuse.Status(syscall.EEXIST) {
+		t.Fatalf("Create status = %v, want EEXIST", status)
 	}
 }

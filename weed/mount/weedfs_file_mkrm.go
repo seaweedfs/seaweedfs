@@ -22,10 +22,6 @@ import (
  * will be called instead.
  */
 func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, out *fuse.CreateOut) (code fuse.Status) {
-	if wfs.IsOverQuotaWithUncommitted() {
-		return fuse.Status(syscall.ENOSPC)
-	}
-
 	if s := checkName(name); s != fuse.OK {
 		return s
 	}
@@ -36,24 +32,38 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	}
 
 	entryFullPath := dirFullPath.Child(name)
+	var inode uint64
 
-	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0)
-	if code != fuse.OK {
-		if code != fuse.Status(syscall.EEXIST) || in.Flags&syscall.O_EXCL != 0 {
-			return code
+	newEntry, code := wfs.maybeLoadEntry(entryFullPath)
+	if code == fuse.OK {
+		if in.Flags&syscall.O_EXCL != 0 {
+			return fuse.Status(syscall.EEXIST)
 		}
-
-		newEntry, code = wfs.maybeLoadEntry(entryFullPath)
-		if code != fuse.OK {
-			return code
-		}
-
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
-		if in.Flags&syscall.O_TRUNC != 0 {
+		fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+		if status != fuse.OK {
+			return status
+		}
+		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
 			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
+				wfs.ReleaseHandle(fileHandle.fh)
 				return code
 			}
+			newEntry = fileHandle.GetEntry().GetEntry()
 		}
+
+		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
+		out.Fh = uint64(fileHandle.fh)
+		out.OpenFlags = 0
+		return fuse.OK
+	}
+	if code != fuse.ENOENT {
+		return code
+	}
+
+	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0)
+	if code != fuse.OK {
+		return code
 	} else {
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
 	}
@@ -169,6 +179,11 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	}
 
 	entryFullPath := dirFullPath.Child(name)
+	if _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
+		return 0, nil, fuse.Status(syscall.EEXIST)
+	} else if status != fuse.ENOENT {
+		return 0, nil, status
+	}
 	fileMode := toOsFileMode(mode)
 	now := time.Now().Unix()
 	inode = wfs.inodeToPath.AllocateInode(entryFullPath, now)
