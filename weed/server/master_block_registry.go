@@ -499,28 +499,10 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 					}
 				}
 			} else {
-				// Fix #3: Server reports a volume that exists but has no record of this server.
-				// This happens after master restart: primary heartbeat re-created the entry,
-				// but replica heartbeat arrives and isn't linked. Add as replica.
-				ri := ReplicaInfo{
-					Server:        server,
-					Path:          info.Path,
-					HealthScore:   info.HealthScore,
-					WALHeadLSN:    info.WalHeadLsn,
-					LastHeartbeat: time.Now(),
-					Role:          info.Role,
-					NvmeAddr:      info.NvmeAddr,
-					NQN:           info.Nqn,
-				}
-				existing.Replicas = append(existing.Replicas, ri)
-				r.addToServer(server, existingName)
-				// Sync deprecated scalar fields.
-				if len(existing.Replicas) == 1 {
-					existing.ReplicaServer = ri.Server
-					existing.ReplicaPath = ri.Path
-				}
-				glog.V(0).Infof("block registry: attached replica %s for %q from heartbeat (path=%s)",
-					server, existingName, info.Path)
+				// Server reports a volume that exists but has no record of this server.
+				// This happens after master restart. Use epoch-based reconciliation
+				// to determine if the new server should be primary or replica.
+				r.reconcileOnRestart(existingName, existing, server, info)
 			}
 		} else {
 			// Auto-register volumes reported by heartbeat but not in registry.
@@ -529,7 +511,8 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			if name == "" {
 				continue
 			}
-			if _, dup := r.volumes[name]; !dup {
+			existing, dup := r.volumes[name]
+			if !dup {
 				entry := &BlockVolumeEntry{
 					Name:           name,
 					VolumeServer:   server,
@@ -550,15 +533,128 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				if info.ReplicaCtrlAddr != "" {
 					entry.ReplicaCtrlAddr = info.ReplicaCtrlAddr
 				}
-				// NVMe publication: propagate NVMe fields from heartbeat.
 				entry.NvmeAddr = info.NvmeAddr
 				entry.NQN = info.Nqn
 				r.volumes[name] = entry
 				r.addToServer(server, name)
 				glog.V(0).Infof("block registry: auto-registered %q from heartbeat (server=%s, path=%s, size=%d)",
 					name, server, info.Path, info.VolumeSize)
+			} else {
+				// Reconcile: a second server reports the same volume during restart reconstruction.
+				r.reconcileOnRestart(name, existing, server, info)
 			}
 		}
+	}
+}
+
+// reconcileOnRestart handles the case where a second server reports a volume
+// name that already exists in the registry during master restart reconstruction.
+// Uses epoch-based tie-breaking to determine who is the real primary.
+//
+// Rules:
+//  1. Higher epoch wins as primary — the old entry becomes a replica.
+//  2. Same epoch, both claim primary — higher WALHeadLSN wins (heuristic).
+//     A warning is logged because this is an ambiguous case.
+//  3. Lower epoch — new server is added as replica.
+//
+// Caller must hold r.mu (write lock).
+func (r *BlockVolumeRegistry) reconcileOnRestart(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+	newEpoch := info.Epoch
+	oldEpoch := existing.Epoch
+
+	if newEpoch > oldEpoch {
+		// New server has a higher epoch — it is the authoritative primary.
+		// Demote the current entry to a replica.
+		glog.V(0).Infof("block registry: reconcile %q: new server %s epoch %d > existing %s epoch %d, promoting new",
+			name, newServer, newEpoch, existing.VolumeServer, oldEpoch)
+		r.demoteExistingToReplica(name, existing, newServer, info)
+		return
+	}
+
+	if newEpoch < oldEpoch {
+		// New server has a lower epoch — add as replica.
+		glog.V(0).Infof("block registry: reconcile %q: new server %s epoch %d < existing %s epoch %d, adding as replica",
+			name, newServer, newEpoch, existing.VolumeServer, oldEpoch)
+		r.addServerAsReplica(name, existing, newServer, info)
+		return
+	}
+
+	// Same epoch — ambiguous. Use WALHeadLSN as heuristic tiebreaker.
+	if info.WalHeadLsn > existing.WALHeadLSN {
+		glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d — new server %s LSN %d > existing %s LSN %d, promoting new (heuristic)",
+			name, newEpoch, newServer, info.WalHeadLsn, existing.VolumeServer, existing.WALHeadLSN)
+		r.demoteExistingToReplica(name, existing, newServer, info)
+	} else {
+		glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d — existing %s LSN %d >= new server %s LSN %d, keeping existing (heuristic)",
+			name, newEpoch, existing.VolumeServer, existing.WALHeadLSN, newServer, info.WalHeadLsn)
+		r.addServerAsReplica(name, existing, newServer, info)
+	}
+}
+
+// demoteExistingToReplica swaps the primary: new server becomes primary,
+// old primary becomes a replica. Called during restart reconciliation.
+// Caller must hold r.mu.
+func (r *BlockVolumeRegistry) demoteExistingToReplica(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+	oldServer := existing.VolumeServer
+	oldPath := existing.Path
+
+	// Save old primary as replica.
+	oldReplica := ReplicaInfo{
+		Server:        oldServer,
+		Path:          oldPath,
+		ISCSIAddr:     existing.ISCSIAddr,
+		IQN:           existing.IQN,
+		NvmeAddr:      existing.NvmeAddr,
+		NQN:           existing.NQN,
+		HealthScore:   existing.HealthScore,
+		WALHeadLSN:    existing.WALHeadLSN,
+		LastHeartbeat: existing.LastLeaseGrant,
+		Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+	}
+
+	// Update entry to reflect new primary.
+	existing.VolumeServer = newServer
+	existing.Path = info.Path
+	existing.Epoch = info.Epoch
+	existing.Role = info.Role
+	existing.HealthScore = info.HealthScore
+	existing.WALHeadLSN = info.WalHeadLsn
+	existing.LastLeaseGrant = time.Now()
+	if info.DurabilityMode != "" {
+		existing.DurabilityMode = info.DurabilityMode
+	}
+	existing.NvmeAddr = info.NvmeAddr
+	existing.NQN = info.Nqn
+
+	// Add old primary as replica.
+	existing.Replicas = append(existing.Replicas, oldReplica)
+	r.addToServer(newServer, name)
+
+	// Sync deprecated scalar fields.
+	if len(existing.Replicas) == 1 {
+		existing.ReplicaServer = oldReplica.Server
+		existing.ReplicaPath = oldReplica.Path
+	}
+}
+
+// addServerAsReplica adds the new server as a replica for the existing entry.
+// Caller must hold r.mu.
+func (r *BlockVolumeRegistry) addServerAsReplica(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+	ri := ReplicaInfo{
+		Server:        newServer,
+		Path:          info.Path,
+		HealthScore:   info.HealthScore,
+		WALHeadLSN:    info.WalHeadLsn,
+		LastHeartbeat: time.Now(),
+		Role:          info.Role,
+		NvmeAddr:      info.NvmeAddr,
+		NQN:           info.Nqn,
+	}
+	existing.Replicas = append(existing.Replicas, ri)
+	r.addToServer(newServer, name)
+	if len(existing.Replicas) == 1 {
+		existing.ReplicaServer = ri.Server
+		existing.ReplicaPath = ri.Path
 	}
 }
 

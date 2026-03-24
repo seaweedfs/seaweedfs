@@ -802,15 +802,18 @@ func TestRegistry_ReplicaHeartbeat_StaleReplicaRemoved(t *testing.T) {
 // Fix #3: Replica heartbeat after master restart reconstructs ReplicaInfo.
 func TestRegistry_ReplicaHeartbeat_ReconstructsAfterRestart(t *testing.T) {
 	r := NewBlockVolumeRegistry()
-	// Simulate master restart: primary heartbeat re-created entry without replicas.
+	// Simulate master restart: primary heartbeat re-created entry (epoch 1).
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "primary",
 		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		WALHeadLSN:   100,
 		Status:       StatusActive,
 	})
 
 	// Replica heartbeat arrives — vol1 exists but has no record of this server.
+	// Same epoch, lower LSN, Role=2 (replica) → added as replica.
 	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{
 		{Path: "/data/vol1.blk", Epoch: 1, Role: 2, HealthScore: 0.95, WalHeadLsn: 42},
 	}, "")
@@ -1615,6 +1618,133 @@ func TestRegistry_ManualPromote_Force_StillRejectsDeadServer(t *testing.T) {
 	}
 	if len(pf.Rejections) == 0 || pf.Rejections[0].Reason != "server_dead" {
 		t.Fatalf("expected server_dead rejection, got %+v", pf.Rejections)
+	}
+}
+
+// --- Master restart reconciliation tests ---
+
+func TestMasterRestart_HigherEpochWins(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// First heartbeat from stale primary (epoch 5).
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 not found after first heartbeat")
+	}
+	if entry.VolumeServer != "vs1:9333" {
+		t.Fatalf("expected vs1 as initial primary, got %q", entry.VolumeServer)
+	}
+
+	// Second heartbeat from real primary (epoch 6 — post-failover).
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 6, Role: 1, WalHeadLsn: 150, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ = r.Lookup("vol1")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("expected vs2 (higher epoch) as primary, got %q", entry.VolumeServer)
+	}
+	if entry.Epoch != 6 {
+		t.Fatalf("expected epoch 6, got %d", entry.Epoch)
+	}
+	// Old primary should be a replica.
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs1:9333" {
+		t.Fatalf("expected vs1 demoted to replica, got replicas=%+v", entry.Replicas)
+	}
+}
+
+func TestMasterRestart_LowerEpochBecomesReplica(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// First heartbeat from real primary (epoch 6).
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 6, Role: 1, WalHeadLsn: 150, VolumeSize: 1 << 30},
+	}, "")
+
+	// Second heartbeat from stale server (epoch 5).
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("expected vs2 (higher epoch) to stay primary, got %q", entry.VolumeServer)
+	}
+	if entry.Epoch != 6 {
+		t.Fatalf("expected epoch 6, got %d", entry.Epoch)
+	}
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs1:9333" {
+		t.Fatalf("expected vs1 added as replica, got replicas=%+v", entry.Replicas)
+	}
+}
+
+func TestMasterRestart_SameEpoch_HigherLSNWins(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// First heartbeat: epoch 5, LSN 100.
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	// Second heartbeat: same epoch 5, higher LSN 200 — heuristic: this server is more recent.
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 200, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("expected vs2 (higher LSN) as primary, got %q", entry.VolumeServer)
+	}
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs1:9333" {
+		t.Fatalf("expected vs1 demoted to replica, got replicas=%+v", entry.Replicas)
+	}
+}
+
+func TestMasterRestart_SameEpoch_SameLSN_ExistingWins(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// First heartbeat: epoch 5, LSN 100.
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	// Second heartbeat: same epoch 5, same LSN 100 — existing wins (deterministic).
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs1:9333" {
+		t.Fatalf("expected vs1 (existing, same LSN) to stay primary, got %q", entry.VolumeServer)
+	}
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs2:9333" {
+		t.Fatalf("expected vs2 added as replica, got replicas=%+v", entry.Replicas)
+	}
+}
+
+func TestMasterRestart_ReplicaHeartbeat_AddedCorrectly(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// Primary heartbeat first.
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	// Replica heartbeat: same volume, lower epoch (stale replica never got promoted).
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 4, Role: 2, WalHeadLsn: 90, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs1:9333" {
+		t.Fatalf("primary should be vs1, got %q", entry.VolumeServer)
+	}
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs2:9333" {
+		t.Fatalf("expected vs2 as replica, got %+v", entry.Replicas)
 	}
 }
 
