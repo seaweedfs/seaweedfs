@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	nethttp "net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -73,6 +74,17 @@ func runFilerBackup(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("replication", true)
 
+	// Compile exclude patterns once before the retry loop — these are
+	// configuration errors and must not be retried.
+	reExcludeFileName, err := compileExcludePattern(*filerBackupOptions.excludeFileName, "exclude file name")
+	if err != nil {
+		glog.Fatalf("invalid -filerExcludeFileName: %v", err)
+	}
+	reExcludePathPattern, err := compileExcludePattern(*filerBackupOptions.excludePathPattern, "exclude path pattern")
+	if err != nil {
+		glog.Fatalf("invalid -filerExcludePathPattern: %v", err)
+	}
+
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	clientId := util.RandomInt32()
@@ -80,7 +92,7 @@ func runFilerBackup(cmd *Command, args []string) bool {
 
 	for {
 		clientEpoch++
-		err := doFilerBackup(grpcDialOption, &filerBackupOptions, clientId, clientEpoch)
+		err := doFilerBackup(grpcDialOption, &filerBackupOptions, reExcludeFileName, reExcludePathPattern, clientId, clientEpoch)
 		if err != nil {
 			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
@@ -92,7 +104,7 @@ const (
 	BackupKeyPrefix = "backup."
 )
 
-func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, clientId int32, clientEpoch int32) error {
+func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, reExcludeFileName *regexp.Regexp, reExcludePathPattern *regexp.Regexp, clientId int32, clientEpoch int32) error {
 
 	// find data sink
 	dataSink := findSink(util.GetViper())
@@ -103,14 +115,6 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
-	reExcludeFileName, err := compileExcludePattern(*backupOption.excludeFileName, "exclude file name")
-	if err != nil {
-		return err
-	}
-	reExcludePathPattern, err := compileExcludePattern(*backupOption.excludePathPattern, "exclude path pattern")
-	if err != nil {
-		return err
-	}
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
 	debug := *backupOption.debug
