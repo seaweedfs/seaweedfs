@@ -102,7 +102,7 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 		FilerMountRootPath:     "/",
 		MountUid:               99,
 		MountGid:               100,
-		MountMode:              0o755,
+		MountMode:              0o777,
 		MountMtime:             time.Now(),
 		MountCtime:             time.Now(),
 		UidGidMapper:           uidGidMapper,

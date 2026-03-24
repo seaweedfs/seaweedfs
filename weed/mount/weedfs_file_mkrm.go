@@ -207,6 +207,18 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		return 0, nil, fuse.Status(syscall.ENOSPC)
 	}
 
+	// Verify write+search permission on the parent directory.
+	parentEntry, parentStatus := wfs.maybeLoadEntry(dirFullPath)
+	if parentStatus != fuse.OK {
+		return 0, nil, parentStatus
+	}
+	if parentEntry == nil || parentEntry.Attributes == nil {
+		return 0, nil, fuse.EIO
+	}
+	if !hasAccess(uid, gid, parentEntry.Attributes.Uid, parentEntry.Attributes.Gid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
+		return 0, nil, fuse.Status(syscall.EACCES)
+	}
+
 	entryFullPath := dirFullPath.Child(name)
 	if _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
 		return 0, nil, fuse.Status(syscall.EEXIST)
