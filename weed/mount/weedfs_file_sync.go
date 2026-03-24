@@ -147,9 +147,14 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 		return fuse.Status(syscall.ENOSPC)
 	}
 
-	if err := wfs.flushMetadataToFiler(fh, dir, name, uid, gid); err != nil {
+	if err := retryMetadataFlush(func() error {
+		return wfs.flushMetadataToFiler(fh, dir, name, uid, gid)
+	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		glog.Warningf("%v fh %d flush: retrying metadata flush (attempt %d/%d) after %v: %v",
+			fileFullPath, fh.fh, nextAttempt, totalAttempts, backoff, err)
+	}); err != nil {
 		glog.Errorf("%v fh %d flush: %v", fileFullPath, fh.fh, err)
-		return fuse.EIO
+		return grpcErrorToFuseStatus(err)
 	}
 
 	if IsDebugFileReadWrite {
