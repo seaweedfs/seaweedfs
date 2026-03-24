@@ -217,6 +217,81 @@ func TestReleaseOwner(t *testing.T) {
 	}
 }
 
+func TestDifferentLockKindsDoNotConflict(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	s1 := plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	if s1 != fuse.OK {
+		t.Fatalf("expected POSIX lock OK, got %v", s1)
+	}
+
+	s2 := plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20, IsFlock: true})
+	if s2 != fuse.OK {
+		t.Fatalf("expected flock lock OK in separate namespace, got %v", s2)
+	}
+}
+
+func TestReleasePidReleasesPosixLocksAndWakesWaiters(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+
+	done := make(chan fuse.Status, 1)
+	go func() {
+		cancel := make(chan struct{})
+		done <- plt.SetLkw(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20}, cancel)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	plt.ReleasePid(inode, 10)
+
+	select {
+	case s := <-done:
+		if s != fuse.OK {
+			t.Fatalf("expected OK after ReleasePid, got %v", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("SetLkw did not unblock after ReleasePid")
+	}
+}
+
+func TestReleasePidDoesNotReleaseFlockLocks(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10, IsFlock: true})
+	plt.ReleasePid(inode, 10)
+
+	var out fuse.LkOut
+	plt.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20, IsFlock: true}, &out)
+	if out.Lk.Typ != syscall.F_WRLCK {
+		t.Fatalf("expected flock lock to remain after ReleasePid, got type %d", out.Lk.Typ)
+	}
+}
+
+func TestReleaseFlockOwnerDoesNotReleasePosixLocks(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	plt.SetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, Pid: 10, IsFlock: true})
+
+	plt.ReleaseFlockOwner(inode, 2)
+
+	var out fuse.LkOut
+	plt.GetLk(inode, lockRange{Start: 0, End: 99, Typ: syscall.F_WRLCK, Owner: 3, Pid: 30}, &out)
+	if out.Lk.Typ != syscall.F_WRLCK {
+		t.Fatalf("expected POSIX lock to remain after ReleaseFlockOwner, got type %d", out.Lk.Typ)
+	}
+
+	plt.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 4, Pid: 40, IsFlock: true}, &out)
+	if out.Lk.Typ != syscall.F_UNLCK {
+		t.Fatalf("expected flock lock to be removed after ReleaseFlockOwner, got type %d", out.Lk.Typ)
+	}
+}
+
 func TestReleaseOwnerWakesWaiters(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)

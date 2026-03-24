@@ -11,11 +11,12 @@ import (
 // If no conflict, out.Lk.Typ is set to F_UNLCK.
 func (wfs *WFS) GetLk(cancel <-chan struct{}, in *fuse.LkIn, out *fuse.LkOut) fuse.Status {
 	proposed := lockRange{
-		Start: in.Lk.Start,
-		End:   in.Lk.End,
-		Typ:   in.Lk.Typ,
-		Owner: in.Owner,
-		Pid:   in.Lk.Pid,
+		Start:   in.Lk.Start,
+		End:     in.Lk.End,
+		Typ:     in.Lk.Typ,
+		Owner:   in.Owner,
+		Pid:     in.Lk.Pid,
+		IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
 	}
 	wfs.posixLocks.GetLk(in.NodeId, proposed, out)
 	return fuse.OK
@@ -25,11 +26,12 @@ func (wfs *WFS) GetLk(cancel <-chan struct{}, in *fuse.LkIn, out *fuse.LkOut) fu
 // Returns EAGAIN if the lock conflicts with an existing lock from another owner.
 func (wfs *WFS) SetLk(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 	lk := lockRange{
-		Start: in.Lk.Start,
-		End:   in.Lk.End,
-		Typ:   in.Lk.Typ,
-		Owner: in.Owner,
-		Pid:   in.Lk.Pid,
+		Start:   in.Lk.Start,
+		End:     in.Lk.End,
+		Typ:     in.Lk.Typ,
+		Owner:   in.Owner,
+		Pid:     in.Lk.Pid,
+		IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
 	}
 	return wfs.posixLocks.SetLk(in.NodeId, lk)
 }
@@ -38,11 +40,12 @@ func (wfs *WFS) SetLk(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 // Waits until the lock can be acquired or the request is cancelled.
 func (wfs *WFS) SetLkw(cancel <-chan struct{}, in *fuse.LkIn) fuse.Status {
 	lk := lockRange{
-		Start: in.Lk.Start,
-		End:   in.Lk.End,
-		Typ:   in.Lk.Typ,
-		Owner: in.Owner,
-		Pid:   in.Lk.Pid,
+		Start:   in.Lk.Start,
+		End:     in.Lk.End,
+		Typ:     in.Lk.Typ,
+		Owner:   in.Owner,
+		Pid:     in.Lk.Pid,
+		IsFlock: in.LkFlags&fuse.FUSE_LK_FLOCK != 0,
 	}
 	if lk.Typ == syscall.F_UNLCK {
 		return wfs.posixLocks.SetLk(in.NodeId, lk)

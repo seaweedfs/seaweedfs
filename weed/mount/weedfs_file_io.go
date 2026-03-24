@@ -106,6 +106,11 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
  * @param fi file information
  */
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
-	wfs.posixLocks.ReleaseOwner(in.NodeId, in.LockOwner)
+	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
+		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)
+	}
+	if in.Pid != 0 {
+		wfs.posixLocks.ReleasePid(in.NodeId, in.Pid)
+	}
 	wfs.ReleaseHandle(FileHandleId(in.Fh))
 }
