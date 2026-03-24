@@ -62,7 +62,12 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 	if !isMember {
 		groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
 		if err != nil {
-			return (perm & mask) == mask
+			// Cannot determine group membership; require both group and
+			// other permission classes to satisfy the mask so we never
+			// overgrant when the lookup fails.
+			groupMatch := ((perm >> 3) & mask) == mask
+			otherMatch := (perm & mask) == mask
+			return groupMatch && otherMatch
 		}
 		fileGidStr := strconv.Itoa(int(fileGid))
 		for _, gidStr := range groupIDs {
