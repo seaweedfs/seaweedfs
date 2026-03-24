@@ -1048,8 +1048,6 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Route to appropriate channel based on API key
 		var targetChan chan *kafkaRequest
-		if apiKey == 2 { // ListOffsets
-		}
 		if isDataPlaneAPI(apiKey) {
 			targetChan = dataChan
 		} else {
