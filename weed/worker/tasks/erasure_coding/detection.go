@@ -900,22 +900,6 @@ func calculateECScoreCandidate(disk *placement.DiskCandidate, sourceRack, source
 	return score
 }
 
-// isDiskSuitableForEC checks if a disk is suitable for EC placement
-// Note: This is kept for backward compatibility but the placement package
-// handles filtering internally
-func isDiskSuitableForEC(disk *topology.DiskInfo) bool {
-	if disk.DiskInfo == nil {
-		return false
-	}
-
-	// Check if disk is not overloaded with tasks
-	if disk.LoadCount > topology.MaxTaskLoadForECPlacement {
-		return false
-	}
-
-	return true
-}
-
 // findVolumeReplicaLocations finds all replica locations (server + disk) for the specified volume
 // Uses O(1) indexed lookup for optimal performance on large clusters.
 func findVolumeReplicaLocations(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []topology.VolumeReplica {
