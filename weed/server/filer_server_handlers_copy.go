@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,9 +21,28 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const recentCopyRequestTTL = 2 * time.Minute
+
+type copyRequestPreconditions struct {
+	requestID string
+	srcInode  *uint64
+	srcMtime  *int64
+	srcSize   *int64
+	dstInode  *uint64
+	dstMtime  *int64
+	dstSize   *int64
+}
+
+type recentCopyRequest struct {
+	fingerprint string
+	expiresAt   time.Time
+}
+
 func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
-	src := r.URL.Query().Get("cp.from")
+	src := r.URL.Query().Get(filer.CopyQueryParamFrom)
 	dst := r.URL.Path
+	overwrite := r.URL.Query().Get(filer.CopyQueryParamOverwrite) == "true"
+	dataOnly := r.URL.Query().Get(filer.CopyQueryParamDataOnly) == "true"
 
 	glog.V(2).InfofCtx(ctx, "FilerServer.copy %v to %v", src, dst)
 
@@ -84,15 +105,54 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		finalDstPath = util.FullPath(newDir).Child(newName)
 	}
 
+	if srcPath == finalDstPath {
+		glog.V(2).InfofCtx(ctx, "FilerServer.copy rejected self-copy for %s", finalDstPath)
+		err = fmt.Errorf("source and destination are the same path: %s; choose a different destination file name or directory", finalDstPath)
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
+	preconditions, err := parseCopyRequestPreconditions(r.URL.Query())
+	if err != nil {
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+	copyFingerprint := preconditions.fingerprint(srcPath, finalDstPath)
+	if handled, recentErr := fs.handleRecentCopyRequest(preconditions.requestID, copyFingerprint); handled || recentErr != nil {
+		if recentErr != nil {
+			writeJsonError(w, r, http.StatusConflict, recentErr)
+			return
+		}
+		setCopyResponseHeaders(w, preconditions.requestID)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err = validateCopySourcePreconditions(preconditions, srcEntry); err != nil {
+		writeJsonError(w, r, http.StatusPreconditionFailed, err)
+		return
+	}
+
 	// Check if destination file already exists
-	// TODO: add an overwrite parameter to allow overwriting
+	var existingDstEntry *filer.Entry
 	if dstEntry, err := fs.filer.FindEntry(ctx, finalDstPath); err != nil && err != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to check destination entry %s: %w", finalDstPath, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	} else if dstEntry != nil {
-		err = fmt.Errorf("destination file %s already exists", finalDstPath)
-		writeJsonError(w, r, http.StatusConflict, err)
+		existingDstEntry = dstEntry
+		if dstEntry.IsDirectory() {
+			err = fmt.Errorf("destination file %s is a directory", finalDstPath)
+			writeJsonError(w, r, http.StatusConflict, err)
+			return
+		}
+		if !overwrite {
+			err = fmt.Errorf("destination file %s already exists", finalDstPath)
+			writeJsonError(w, r, http.StatusConflict, err)
+			return
+		}
+	}
+	if err = validateCopyDestinationPreconditions(preconditions, existingDstEntry); err != nil {
+		writeJsonError(w, r, http.StatusPreconditionFailed, err)
 		return
 	}
 
@@ -103,8 +163,13 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
+	if dataOnly && existingDstEntry != nil {
+		preserveDestinationMetadataForDataCopy(existingDstEntry, newEntry)
+	}
 
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, true, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
+	// Pass o_excl = !overwrite so the default copy refuses to replace an
+	// existing destination, while overwrite=true updates the pre-created target.
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, !overwrite, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
 		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -112,11 +177,15 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 
 	glog.V(1).InfofCtx(ctx, "FilerServer.copy completed successfully: src='%s' -> dst='%s' (final_path='%s')", src, dst, finalDstPath)
 
+	fs.rememberRecentCopyRequest(preconditions.requestID, copyFingerprint)
+	setCopyResponseHeaders(w, preconditions.requestID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
 // copyEntry creates a new entry with copied content and chunks
 func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dstPath util.FullPath, so *operation.StorageOption) (*filer.Entry, error) {
+	now := time.Now()
+
 	// Create the base entry structure
 	// Note: For hard links, we copy the actual content but NOT the HardLinkId/HardLinkCounter
 	// This creates an independent copy rather than another hard link to the same content
@@ -126,6 +195,8 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 		Attr: func(a filer.Attr) filer.Attr {
 			a.GroupNames = append([]string(nil), a.GroupNames...)
 			a.Md5 = append([]byte(nil), a.Md5...)
+			a.Crtime = now
+			a.Mtime = now
 			return a
 		}(srcEntry.Attr),
 		Quota: srcEntry.Quota,
@@ -199,6 +270,208 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	}
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: empty file, no content or chunks to copy")
 	return newEntry, nil
+}
+
+func preserveDestinationMetadataForDataCopy(dstEntry, copiedEntry *filer.Entry) {
+	if dstEntry == nil || copiedEntry == nil {
+		return
+	}
+
+	copiedEntry.Mode = dstEntry.Mode
+	copiedEntry.Uid = dstEntry.Uid
+	copiedEntry.Gid = dstEntry.Gid
+	copiedEntry.TtlSec = dstEntry.TtlSec
+	copiedEntry.UserName = dstEntry.UserName
+	copiedEntry.GroupNames = append([]string(nil), dstEntry.GroupNames...)
+	copiedEntry.SymlinkTarget = dstEntry.SymlinkTarget
+	copiedEntry.Rdev = dstEntry.Rdev
+	copiedEntry.Crtime = dstEntry.Crtime
+	copiedEntry.Inode = dstEntry.Inode
+	copiedEntry.Mtime = time.Now()
+	copiedEntry.Extended = cloneEntryExtended(dstEntry.Extended)
+	copiedEntry.Remote = cloneRemoteEntry(dstEntry.Remote)
+	copiedEntry.Quota = dstEntry.Quota
+	copiedEntry.WORMEnforcedAtTsNs = dstEntry.WORMEnforcedAtTsNs
+	copiedEntry.HardLinkId = append(filer.HardLinkId(nil), dstEntry.HardLinkId...)
+	copiedEntry.HardLinkCounter = dstEntry.HardLinkCounter
+}
+
+func cloneEntryExtended(extended map[string][]byte) map[string][]byte {
+	if extended == nil {
+		return nil
+	}
+	cloned := make(map[string][]byte, len(extended))
+	for k, v := range extended {
+		cloned[k] = append([]byte(nil), v...)
+	}
+	return cloned
+}
+
+func cloneRemoteEntry(remote *filer_pb.RemoteEntry) *filer_pb.RemoteEntry {
+	if remote == nil {
+		return nil
+	}
+	return proto.Clone(remote).(*filer_pb.RemoteEntry)
+}
+
+func parseCopyRequestPreconditions(values url.Values) (copyRequestPreconditions, error) {
+	var preconditions copyRequestPreconditions
+	var err error
+
+	preconditions.requestID = values.Get(filer.CopyQueryParamRequestID)
+	if preconditions.srcInode, err = parseOptionalUint64(values, filer.CopyQueryParamSourceInode); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+	if preconditions.srcMtime, err = parseOptionalInt64(values, filer.CopyQueryParamSourceMtime); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+	if preconditions.srcSize, err = parseOptionalInt64(values, filer.CopyQueryParamSourceSize); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+	if preconditions.dstInode, err = parseOptionalUint64(values, filer.CopyQueryParamDestinationInode); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+	if preconditions.dstMtime, err = parseOptionalInt64(values, filer.CopyQueryParamDestinationMtime); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+	if preconditions.dstSize, err = parseOptionalInt64(values, filer.CopyQueryParamDestinationSize); err != nil {
+		return copyRequestPreconditions{}, err
+	}
+
+	return preconditions, nil
+}
+
+func parseOptionalUint64(values url.Values, key string) (*uint64, error) {
+	raw := values.Get(key)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return &value, nil
+}
+
+func parseOptionalInt64(values url.Values, key string) (*int64, error) {
+	raw := values.Get(key)
+	if raw == "" {
+		return nil, nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("invalid %s: %w", key, err)
+	}
+	return &value, nil
+}
+
+func validateCopySourcePreconditions(preconditions copyRequestPreconditions, srcEntry *filer.Entry) error {
+	if srcEntry == nil {
+		return fmt.Errorf("source entry disappeared")
+	}
+	if preconditions.srcInode != nil && srcEntry.Inode != *preconditions.srcInode {
+		return fmt.Errorf("source inode changed from %d to %d", *preconditions.srcInode, srcEntry.Inode)
+	}
+	if preconditions.srcMtime != nil && srcEntry.Mtime.Unix() != *preconditions.srcMtime {
+		return fmt.Errorf("source mtime changed from %d to %d", *preconditions.srcMtime, srcEntry.Mtime.Unix())
+	}
+	if preconditions.srcSize != nil && int64(srcEntry.Size()) != *preconditions.srcSize {
+		return fmt.Errorf("source size changed from %d to %d", *preconditions.srcSize, srcEntry.Size())
+	}
+	return nil
+}
+
+func validateCopyDestinationPreconditions(preconditions copyRequestPreconditions, dstEntry *filer.Entry) error {
+	if preconditions.dstInode == nil && preconditions.dstMtime == nil && preconditions.dstSize == nil {
+		return nil
+	}
+	if dstEntry == nil {
+		return fmt.Errorf("destination entry disappeared")
+	}
+	if preconditions.dstInode != nil && dstEntry.Inode != *preconditions.dstInode {
+		return fmt.Errorf("destination inode changed from %d to %d", *preconditions.dstInode, dstEntry.Inode)
+	}
+	if preconditions.dstMtime != nil && dstEntry.Mtime.Unix() != *preconditions.dstMtime {
+		return fmt.Errorf("destination mtime changed from %d to %d", *preconditions.dstMtime, dstEntry.Mtime.Unix())
+	}
+	if preconditions.dstSize != nil && int64(dstEntry.Size()) != *preconditions.dstSize {
+		return fmt.Errorf("destination size changed from %d to %d", *preconditions.dstSize, dstEntry.Size())
+	}
+	return nil
+}
+
+func (preconditions copyRequestPreconditions) fingerprint(srcPath, dstPath util.FullPath) string {
+	return fmt.Sprintf(
+		"%s|%s|%s|%s|%s|%s|%s|%s|%s",
+		srcPath,
+		dstPath,
+		formatOptionalUint64(preconditions.srcInode),
+		formatOptionalInt64(preconditions.srcMtime),
+		formatOptionalInt64(preconditions.srcSize),
+		formatOptionalUint64(preconditions.dstInode),
+		formatOptionalInt64(preconditions.dstMtime),
+		formatOptionalInt64(preconditions.dstSize),
+		preconditions.requestID,
+	)
+}
+
+func formatOptionalUint64(value *uint64) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatUint(*value, 10)
+}
+
+func formatOptionalInt64(value *int64) string {
+	if value == nil {
+		return ""
+	}
+	return strconv.FormatInt(*value, 10)
+}
+
+func (fs *FilerServer) handleRecentCopyRequest(requestID, fingerprint string) (bool, error) {
+	if requestID == "" {
+		return false, nil
+	}
+
+	fs.recentCopyRequestsMu.Lock()
+	defer fs.recentCopyRequestsMu.Unlock()
+
+	now := time.Now()
+	for id, request := range fs.recentCopyRequests {
+		if now.After(request.expiresAt) {
+			delete(fs.recentCopyRequests, id)
+		}
+	}
+
+	request, found := fs.recentCopyRequests[requestID]
+	if !found {
+		return false, nil
+	}
+	if request.fingerprint != fingerprint {
+		return false, fmt.Errorf("copy request id %q was already used for a different copy", requestID)
+	}
+	return true, nil
+}
+
+func (fs *FilerServer) rememberRecentCopyRequest(requestID, fingerprint string) {
+	if requestID == "" {
+		return
+	}
+
+	fs.recentCopyRequestsMu.Lock()
+	defer fs.recentCopyRequestsMu.Unlock()
+	fs.recentCopyRequests[requestID] = recentCopyRequest{
+		fingerprint: fingerprint,
+		expiresAt:   time.Now().Add(recentCopyRequestTTL),
+	}
+}
+
+func setCopyResponseHeaders(w http.ResponseWriter, requestID string) {
+	w.Header().Set(filer.CopyResponseHeaderCommitted, "true")
+	if requestID != "" {
+		w.Header().Set(filer.CopyResponseHeaderRequestID, requestID)
+	}
 }
 
 // copyChunks creates new chunks by copying data from source chunks using parallel streaming approach
