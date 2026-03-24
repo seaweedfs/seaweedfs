@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -622,6 +623,7 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var errors []error
+	var activeHolders atomic.Int32
 
 	addError := func(err error) {
 		mu.Lock()
@@ -634,7 +636,7 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < writesPerWorker; j++ {
-				f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+				f, err := os.OpenFile(path, os.O_RDWR, 0)
 				if err != nil {
 					addError(fmt.Errorf("worker %d open: %v", id, err))
 					return
@@ -655,14 +657,33 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 					return
 				}
 
+				if holders := activeHolders.Add(1); holders != 1 {
+					activeHolders.Add(-1)
+					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					f.Close()
+					addError(fmt.Errorf("worker %d: flock overlap detected with %d holders", id, holders))
+					return
+				}
+				time.Sleep(5 * time.Millisecond)
+
+				if _, err := f.Seek(0, io.SeekEnd); err != nil {
+					activeHolders.Add(-1)
+					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					f.Close()
+					addError(fmt.Errorf("worker %d seek: %v", id, err))
+					return
+				}
+
 				msg := fmt.Sprintf("worker %d write %d\n", id, j)
 				if _, err := f.WriteString(msg); err != nil {
+					activeHolders.Add(-1)
 					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 					f.Close()
 					addError(fmt.Errorf("worker %d write: %v", id, err))
 					return
 				}
 
+				activeHolders.Add(-1)
 				syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 				f.Close()
 			}
