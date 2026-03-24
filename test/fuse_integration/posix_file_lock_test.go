@@ -61,7 +61,7 @@ func fcntlGetLk(f *os.File, typ int16, start, len int64) (syscall.Flock_t, error
 //
 // Actions:
 //   hold          — acquire F_SETLK, print "LOCKED\n", wait for stdin close, exit
-//   hold-blocking — acquire F_SETLKW, print "LOCKED\n", wait for stdin close, exit
+//   hold-blocking — print "WAITING\n", acquire F_SETLKW, print "LOCKED\n", wait for stdin close, exit
 //   try           — try F_SETLK, print "OK\n" or "EAGAIN\n", exit
 //   getlk         — do F_GETLK, print lock type as integer, exit
 
@@ -72,7 +72,11 @@ func TestFcntlLockHelper(t *testing.T) {
 	}
 
 	filePath := os.Getenv("LOCK_FILE")
-	lockType := parseLockType(os.Getenv("LOCK_TYPE"))
+	lockType, err := parseLockType(os.Getenv("LOCK_TYPE"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lock type: %v\n", err)
+		os.Exit(1)
+	}
 	start, _ := strconv.ParseInt(os.Getenv("LOCK_START"), 10, 64)
 	length, _ := strconv.ParseInt(os.Getenv("LOCK_LEN"), 10, 64)
 
@@ -94,6 +98,8 @@ func TestFcntlLockHelper(t *testing.T) {
 		io.ReadAll(os.Stdin) // block until parent closes pipe
 
 	case "hold-blocking":
+		fmt.Println("WAITING")
+		os.Stdout.Sync()
 		if err := fcntlSetLkw(f, lockType, start, length); err != nil {
 			fmt.Fprintf(os.Stderr, "setlkw: %v\n", err)
 			os.Exit(1)
@@ -132,26 +138,27 @@ func TestFcntlLockHelper(t *testing.T) {
 	os.Exit(0)
 }
 
-func parseLockType(s string) int16 {
+func parseLockType(s string) (int16, error) {
 	switch s {
 	case "F_RDLCK":
-		return syscall.F_RDLCK
+		return syscall.F_RDLCK, nil
 	case "F_WRLCK":
-		return syscall.F_WRLCK
+		return syscall.F_WRLCK, nil
 	default:
-		return syscall.F_WRLCK
+		return 0, fmt.Errorf("unknown lock type %q", s)
 	}
 }
 
 // --- Subprocess coordination helpers ---
 
 // lockHolder is a subprocess holding an fcntl lock. A background goroutine
-// reads stdout and signals the locked channel when "LOCKED" is received,
-// avoiding races between IsLocked and WaitLocked.
+// reads stdout and signals the waiting/locked channels as the subprocess
+// progresses through the lock lifecycle.
 type lockHolder struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	locked chan struct{} // closed when subprocess prints "LOCKED"
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	waiting chan struct{} // closed when subprocess prints "WAITING"
+	locked  chan struct{} // closed when subprocess prints "LOCKED"
 }
 
 // startLockHolder launches a subprocess that acquires an fcntl lock and holds
@@ -189,15 +196,41 @@ func startLockProcess(t *testing.T, action, path, lockType string, start, length
 	cmd.Stderr = os.Stderr
 	require.NoError(t, cmd.Start())
 
+	waiting := make(chan struct{})
 	locked := make(chan struct{})
 	go func() {
 		scanner := bufio.NewScanner(stdoutPipe)
-		if scanner.Scan() && strings.TrimSpace(scanner.Text()) == "LOCKED" {
-			close(locked)
+		for scanner.Scan() {
+			switch strings.TrimSpace(scanner.Text()) {
+			case "WAITING":
+				select {
+				case <-waiting:
+				default:
+					close(waiting)
+				}
+			case "LOCKED":
+				select {
+				case <-locked:
+				default:
+					close(locked)
+				}
+			}
 		}
 	}()
 
-	return &lockHolder{cmd: cmd, stdin: stdin, locked: locked}
+	return &lockHolder{cmd: cmd, stdin: stdin, waiting: waiting, locked: locked}
+}
+
+// WaitWaiting waits for the subprocess to print "WAITING" before trying to
+// assert that a blocking lock request is still blocked.
+func (h *lockHolder) WaitWaiting(t *testing.T, timeout time.Duration) {
+	t.Helper()
+	select {
+	case <-h.waiting:
+		// OK
+	case <-time.After(timeout):
+		t.Fatal("timed out waiting for subprocess to start blocking lock attempt")
+	}
 }
 
 // WaitLocked waits for the subprocess to acquire the lock and signal "LOCKED".
@@ -213,6 +246,15 @@ func (h *lockHolder) WaitLocked(t *testing.T, timeout time.Duration) {
 
 // IsLocked checks whether the subprocess has signaled "LOCKED" within 200ms.
 func (h *lockHolder) IsLocked() bool {
+	select {
+	case <-h.waiting:
+		// The subprocess has reached the blocking lock attempt.
+	case <-h.locked:
+		return true
+	case <-time.After(200 * time.Millisecond):
+		return false
+	}
+
 	select {
 	case <-h.locked:
 		return true
@@ -520,7 +562,8 @@ func testFcntlSetLkwBlocks(t *testing.T, fw *FuseTestFramework) {
 	// Launch subprocess that will block on F_SETLKW.
 	blocker := startBlockingLockHolder(t, path, "F_WRLCK", 0, 0)
 
-	// Verify it hasn't acquired the lock yet (still blocking).
+	// Verify it has reached the blocking lock attempt but has not acquired it yet.
+	blocker.WaitWaiting(t, 5*time.Second)
 	assert.False(t, blocker.IsLocked(), "F_SETLKW should be blocking")
 
 	// Release our lock to unblock the subprocess.
