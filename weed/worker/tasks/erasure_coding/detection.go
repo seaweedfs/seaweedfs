@@ -933,35 +933,3 @@ func findExistingECShards(activeTopology *topology.ActiveTopology, volumeID uint
 	}
 	return activeTopology.GetECShardLocations(volumeID, collection)
 }
-
-// findVolumeReplicas finds all servers that have replicas of the specified volume
-func findVolumeReplicas(activeTopology *topology.ActiveTopology, volumeID uint32, collection string) []string {
-	if activeTopology == nil {
-		return []string{}
-	}
-
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return []string{}
-	}
-
-	var replicaServers []string
-
-	// Iterate through all nodes to find volume replicas
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, nodeInfo := range rack.DataNodeInfos {
-				for _, diskInfo := range nodeInfo.DiskInfos {
-					for _, volumeInfo := range diskInfo.VolumeInfos {
-						if volumeInfo.Id == volumeID && volumeInfo.Collection == collection {
-							replicaServers = append(replicaServers, nodeInfo.Id)
-							break // Found volume on this node, move to next node
-						}
-					}
-				}
-			}
-		}
-	}
-
-	return replicaServers
-}
