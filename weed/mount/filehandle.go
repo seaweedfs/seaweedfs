@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -31,8 +32,8 @@ type FileHandle struct {
 	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
 	asyncFlushUid     uint32 // saved uid for deferred metadata flush
 	asyncFlushGid     uint32 // saved gid for deferred metadata flush
-	asyncFlushDir     string // saved directory at defer time (fallback if inode forgotten)
-	asyncFlushName    string // saved file name at defer time (fallback if inode forgotten)
+	savedDir          string // last known parent path if inode-to-path state is forgotten
+	savedName         string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
 
@@ -73,8 +74,20 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 }
 
 func (fh *FileHandle) FullPath() util.FullPath {
-	fp, _ := fh.wfs.inodeToPath.GetPath(fh.inode)
-	return fp
+	if fp, status := fh.wfs.inodeToPath.GetPath(fh.inode); status == fuse.OK {
+		return fp
+	}
+	if fh.savedName != "" {
+		return util.FullPath(fh.savedDir).Child(fh.savedName)
+	}
+	return ""
+}
+
+func (fh *FileHandle) RememberPath(fullPath util.FullPath) {
+	if fullPath == "" {
+		return
+	}
+	fh.savedDir, fh.savedName = fullPath.DirAndName()
 }
 
 func (fh *FileHandle) GetEntry() *LockedEntry {

@@ -41,12 +41,12 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 			// Try GetPath first — it reflects any rename that happened
 			// after close().  If the inode mapping is gone (Forget
 			// dropped it after the kernel's lookup count hit zero), fall
-			// back to the dir/name saved at doFlush time.  Rename also
-			// updates the saved path, so the fallback is always current.
+			// back to the last path saved on the handle. Rename keeps
+			// that fallback current, so it is always the newest known path.
 			//
 			// Forget does NOT mean the file was deleted — it only means
 			// the kernel evicted its cache entry.
-			dir, name := fh.asyncFlushDir, fh.asyncFlushName
+			dir, name := fh.savedDir, fh.savedName
 			fileFullPath := util.FullPath(dir).Child(name)
 
 			if resolvedPath, status := wfs.inodeToPath.GetPath(fh.inode); status == fuse.OK {

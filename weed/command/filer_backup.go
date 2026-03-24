@@ -3,6 +3,7 @@ package command
 import (
 	"errors"
 	"fmt"
+	nethttp "net/http"
 	"strings"
 	"time"
 
@@ -33,7 +34,8 @@ type FilerBackupOptions struct {
 }
 
 var (
-	filerBackupOptions FilerBackupOptions
+	filerBackupOptions    FilerBackupOptions
+	ignorable404ErrString = fmt.Sprintf("%d %s: %s", nethttp.StatusNotFound, nethttp.StatusText(nethttp.StatusNotFound), http.ErrNotFound.Error())
 )
 
 func init() {
@@ -146,15 +148,8 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			if err == nil {
 				return nil
 			}
-			// ignore HTTP 404 from remote reads
-			if errors.Is(err, http.ErrNotFound) {
+			if isIgnorable404(err) {
 				glog.V(0).Infof("got 404 error for %s, ignore it: %s", getSourceKey(resp), err.Error())
-				return nil
-			}
-			// also ignore missing volume/lookup errors coming from LookupFileId or vid map
-			errStr := err.Error()
-			if strings.Contains(errStr, "LookupFileId") || (strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found")) {
-				glog.V(0).Infof("got missing-volume error for %s, ignore it: %s", getSourceKey(resp), errStr)
 				return nil
 			}
 			return err
@@ -219,4 +214,20 @@ func getSourceKey(resp *filer_pb.SubscribeMetadataResponse) string {
 		return string(util.FullPath(resp.Directory).Child(message.OldEntry.Name))
 	}
 	return ""
+}
+
+// isIgnorable404 returns true if the error represents a 404/not-found condition
+// that should be silently ignored during backup. This covers:
+//   - errors wrapping http.ErrNotFound (direct volume server 404 via non-S3 sinks)
+//   - errors containing the "404 Not Found: not found" status string (S3 sink path
+//     where AWS SDK breaks the errors.Is unwrap chain)
+//   - LookupFileId or volume-id-not-found errors from the volume id map
+func isIgnorable404(err error) bool {
+	if errors.Is(err, http.ErrNotFound) {
+		return true
+	}
+	errStr := err.Error()
+	return strings.Contains(errStr, ignorable404ErrString) ||
+		strings.Contains(errStr, "LookupFileId") ||
+		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
 }

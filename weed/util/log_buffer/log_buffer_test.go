@@ -1,6 +1,7 @@
 package log_buffer
 
 import (
+	"bytes"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -64,6 +65,48 @@ func TestNewLogBufferFirstBuffer(t *testing.T) {
 
 	if receivedMessageCount != messageCount {
 		t.Errorf("expect %d messages, but got %d", messageCount, receivedMessageCount)
+	}
+}
+
+func TestReadFromBufferTimestampBased_AfterFlushReturnsNewerData(t *testing.T) {
+	lb := NewLogBuffer("test", time.Hour, nil, nil, nil)
+	defer lb.ShutdownLogBuffer()
+
+	payload := bytes.Repeat([]byte("x"), 4096)
+	var sealed *MemBuffer
+
+	for i := 0; i < 5000; i++ {
+		if err := lb.AddDataToBuffer([]byte("k"), payload, int64(i+1)); err != nil {
+			t.Fatalf("AddDataToBuffer(%d): %v", i, err)
+		}
+		candidate := lb.prevBuffers.buffers[len(lb.prevBuffers.buffers)-1]
+		if candidate.size > 0 {
+			sealed = &MemBuffer{
+				size:      candidate.size,
+				startTime: candidate.startTime,
+				stopTime:  candidate.stopTime,
+				offset:    candidate.offset,
+			}
+			break
+		}
+	}
+
+	if sealed == nil {
+		t.Fatal("expected first buffer flush to produce a sealed buffer")
+	}
+
+	for i := 5000; i < 5100; i++ {
+		if err := lb.AddDataToBuffer([]byte("k"), payload, int64(i+1)); err != nil {
+			t.Fatalf("AddDataToBuffer(%d): %v", i, err)
+		}
+	}
+
+	buf, _, err := lb.ReadFromBuffer(NewMessagePosition(sealed.stopTime.UnixNano(), sealed.offset))
+	if err != nil {
+		t.Fatalf("ReadFromBuffer returned error: %v", err)
+	}
+	if buf == nil || buf.Len() == 0 {
+		t.Fatalf("expected newer data after the first sealed buffer, got %v", buf)
 	}
 }
 

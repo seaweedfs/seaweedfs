@@ -949,7 +949,7 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 		}
 
 		// Delete the regular file
-		deleteErr := s3a.rm(bucketDir, normalizedObject, true, false)
+		deleteErr := s3a.rmObject(bucketDir, normalizedObject, true, false)
 		if deleteErr != nil {
 			// Check if file was already deleted by another process
 			if _, checkErr := s3a.getEntry(bucketDir, normalizedObject); checkErr != nil {

@@ -3,6 +3,7 @@ package metadata_subscribe
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -26,6 +27,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+const slowConsumerMetadataPayloadSize = 4096
 
 // TestMetadataSubscribeBasic tests basic metadata subscription functionality
 func TestMetadataSubscribeBasic(t *testing.T) {
@@ -680,6 +683,108 @@ func TestMetadataSubscribeMillionUpdates(t *testing.T) {
 	})
 }
 
+func TestMetadataSubscribeSlowConsumerKeepsProgressing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	testDir, err := os.MkdirTemp("", "seaweedfs_slow_consumer_test_")
+	require.NoError(t, err)
+	defer os.RemoveAll(testDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	cluster, err := startSeaweedFSCluster(ctx, testDir)
+	require.NoError(t, err)
+	defer cluster.Stop()
+
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:9333", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8080", 30*time.Second))
+	require.NoError(t, waitForHTTPServer("http://127.0.0.1:8888", 30*time.Second))
+
+	t.Logf("Cluster started for slow consumer regression test")
+
+	t.Run("single_filer_slow_consumer", func(t *testing.T) {
+		var receivedCount int64
+		phaseOneEntries := 6000
+		phaseTwoEntries := 14000
+		totalEntries := phaseOneEntries + phaseTwoEntries
+		minExpected := int64(12000)
+		errChan := make(chan error, 1)
+
+		subCtx, subCancel := context.WithCancel(ctx)
+		defer subCancel()
+
+		go func() {
+			err := followMetadataSlowly(
+				subCtx,
+				"127.0.0.1:8888",
+				"/slow-consumer/",
+				time.Now().Add(-5*time.Second).UnixNano(),
+				time.Millisecond,
+				func(resp *filer_pb.SubscribeMetadataResponse) {
+					if resp.GetEventNotification() == nil {
+						return
+					}
+					entry := resp.GetEventNotification().GetNewEntry()
+					if entry == nil || entry.IsDirectory {
+						return
+					}
+					atomic.AddInt64(&receivedCount, 1)
+				},
+			)
+			if err != nil && !errors.Is(err, context.Canceled) {
+				errChan <- err
+			}
+		}()
+
+		time.Sleep(2 * time.Second)
+
+		payload := bytes.Repeat([]byte("x"), slowConsumerMetadataPayloadSize)
+		startTime := time.Now()
+		require.NoError(t, createMetadataEntries(ctx, "127.0.0.1:8888", 0, phaseOneEntries, payload))
+		t.Logf("Created phase 1 with %d entries in %v", phaseOneEntries, time.Since(startTime))
+
+		time.Sleep(2 * time.Second)
+
+		require.NoError(t, createMetadataEntries(ctx, "127.0.0.1:8888", phaseOneEntries, phaseTwoEntries, payload))
+		t.Logf("Created phase 2 with %d entries", phaseTwoEntries)
+
+		checkTicker := time.NewTicker(2 * time.Second)
+		defer checkTicker.Stop()
+		deadline := time.NewTimer(45 * time.Second)
+		defer deadline.Stop()
+
+		lastReceived := int64(-1)
+		stableChecks := 0
+
+		for {
+			select {
+			case err := <-errChan:
+				t.Fatalf("slow consumer subscription error: %v", err)
+			case <-deadline.C:
+				t.Fatalf("timed out waiting for slow consumer progress, received %d/%d", atomic.LoadInt64(&receivedCount), totalEntries)
+			case <-checkTicker.C:
+				received := atomic.LoadInt64(&receivedCount)
+				t.Logf("Slow consumer progress: %d/%d", received, totalEntries)
+				if received >= minExpected {
+					return
+				}
+				if received == lastReceived {
+					stableChecks++
+					if stableChecks >= 4 {
+						t.Fatalf("slow consumer stalled at %d/%d after writes completed", received, totalEntries)
+					}
+				} else {
+					stableChecks = 0
+				}
+				lastReceived = received
+			}
+		}
+	})
+}
+
 // Helper types and functions
 
 type TestCluster struct {
@@ -914,4 +1019,107 @@ func subscribeToMetadataWithOptions(ctx context.Context, filerGrpcAddress, pathP
 			}
 		}
 	})
+}
+
+func followMetadataSlowly(
+	ctx context.Context,
+	filerGrpcAddress, pathPrefix string,
+	sinceNs int64,
+	delay time.Duration,
+	onEvent func(resp *filer_pb.SubscribeMetadataResponse),
+) error {
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+	if grpcDialOption == nil {
+		grpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+
+	option := &pb.MetadataFollowOption{
+		ClientName:     "slow_consumer_test",
+		ClientId:       util.RandomInt32(),
+		ClientEpoch:    int32(time.Now().Unix()),
+		PathPrefix:     pathPrefix,
+		StartTsNs:      sinceNs,
+		EventErrorType: pb.DontLogError,
+	}
+
+	return pb.FollowMetadata(pb.ServerAddress(filerGrpcAddress), grpcDialOption, option, func(resp *filer_pb.SubscribeMetadataResponse) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		onEvent(resp)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(delay):
+			return nil
+		}
+	})
+}
+
+func createMetadataEntries(ctx context.Context, filerGrpcAddress string, startIndex, total int, payload []byte) error {
+	const workers = 10
+
+	grpcDialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for workerID := 0; workerID < workers; workerID++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+
+			err := pb.WithFilerClient(false, 0, pb.ServerAddress(filerGrpcAddress), grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+				for idx := startIndex + workerID; idx < startIndex+total; idx += workers {
+					select {
+					case <-ctx.Done():
+						return ctx.Err()
+					default:
+					}
+
+					dir := fmt.Sprintf("/slow-consumer/bucket-%02d", idx%6)
+					name := fmt.Sprintf("entry-%05d", idx)
+
+					_, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+						Directory: dir,
+						Entry: &filer_pb.Entry{
+							Name:        name,
+							IsDirectory: false,
+							Attributes: &filer_pb.FuseAttributes{
+								FileSize: uint64(len(payload)),
+								Mtime:    time.Now().Unix(),
+								FileMode: 0644,
+								Uid:      1000,
+								Gid:      1000,
+							},
+							Extended: map[string][]byte{
+								"payload": payload,
+							},
+						},
+					})
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			})
+			if err != nil {
+				errCh <- err
+			}
+		}(workerID)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
@@ -30,27 +31,29 @@ import (
 )
 
 type Option struct {
-	filerIndex         int32 // align memory for atomic read/write
-	FilerAddresses     []pb.ServerAddress
-	MountDirectory     string
-	GrpcDialOption     grpc.DialOption
-	FilerMountRootPath string
-	Collection         string
-	Replication        string
-	TtlSec             int32
-	DiskType           types.DiskType
-	ChunkSizeLimit     int64
-	ConcurrentWriters  int
-	ConcurrentReaders  int
-	CacheDirForRead    string
-	CacheSizeMBForRead int64
-	CacheDirForWrite   string
-	CacheMetaTTlSec    int
-	DataCenter         string
-	Umask              os.FileMode
-	Quota              int64
-	DisableXAttr       bool
-	IsMacOs            bool
+	filerIndex                  int32 // align memory for atomic read/write
+	FilerAddresses              []pb.ServerAddress
+	MountDirectory              string
+	GrpcDialOption              grpc.DialOption
+	FilerSigningKey             security.SigningKey
+	FilerSigningExpiresAfterSec int
+	FilerMountRootPath          string
+	Collection                  string
+	Replication                 string
+	TtlSec                      int32
+	DiskType                    types.DiskType
+	ChunkSizeLimit              int64
+	ConcurrentWriters           int
+	ConcurrentReaders           int
+	CacheDirForRead             string
+	CacheSizeMBForRead          int64
+	CacheDirForWrite            string
+	CacheMetaTTlSec             int
+	DataCenter                  string
+	Umask                       os.FileMode
+	Quota                       int64
+	DisableXAttr                bool
+	IsMacOs                     bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -106,6 +109,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
@@ -173,11 +177,12 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dhMap:             NewDirectoryHandleToInode(),
 		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
 		pendingAsyncFlush: make(map[uint64]chan struct{}),
-		fhLockTable:     util.NewLockTable[FileHandleId](),
-		refreshingDirs:  make(map[util.FullPath]struct{}),
-		dirHotWindow:    dirHotWindow,
-		dirHotThreshold: dirHotThreshold,
-		dirIdleEvict:    dirIdleEvict,
+		fhLockTable:       util.NewLockTable[FileHandleId](),
+		posixLocks:        NewPosixLockTable(),
+		refreshingDirs:    make(map[util.FullPath]struct{}),
+		dirHotWindow:      dirHotWindow,
+		dirHotThreshold:   dirHotThreshold,
+		dirIdleEvict:      dirIdleEvict,
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))

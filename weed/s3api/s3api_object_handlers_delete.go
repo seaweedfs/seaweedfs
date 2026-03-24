@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -130,7 +129,7 @@ func (s3a *S3ApiServer) DeleteObjectHandler(w http.ResponseWriter, r *http.Reque
 		dir, name := target.DirAndName()
 
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-			return doDeleteEntry(client, dir, name, true, false)
+			return deleteObjectEntry(client, dir, name, true, false)
 			// Note: Empty folder cleanup is now handled asynchronously by EmptyFolderCleaner
 			// which listens to metadata events and uses consistent hashing for coordination
 		})
@@ -345,10 +344,8 @@ func (s3a *S3ApiServer) DeleteMultipleObjectsHandler(w http.ResponseWriter, r *h
 				parentDirectoryPath, entryName := target.DirAndName()
 				isDeleteData, isRecursive := true, false
 
-				err := doDeleteEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
+				err := deleteObjectEntry(client, parentDirectoryPath, entryName, isDeleteData, isRecursive)
 				if err == nil {
-					deletedObjects = append(deletedObjects, object)
-				} else if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 					deletedObjects = append(deletedObjects, object)
 				} else {
 					deleteErrors = append(deleteErrors, DeleteError{
