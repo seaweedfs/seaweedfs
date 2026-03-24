@@ -3,6 +3,7 @@ package fuse_test
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -103,7 +104,12 @@ func TestFcntlLockHelper(t *testing.T) {
 
 	case "try":
 		if err := fcntlSetLk(f, lockType, start, length); err != nil {
-			fmt.Println("EAGAIN")
+			if errors.Is(err, syscall.EAGAIN) || errors.Is(err, syscall.EACCES) {
+				fmt.Println("EAGAIN")
+			} else {
+				fmt.Fprintf(os.Stderr, "unexpected setlk error: %v\n", err)
+				os.Exit(1)
+			}
 		} else {
 			fmt.Println("OK")
 		}
@@ -535,7 +541,7 @@ func testFcntlReleaseOnClose(t *testing.T, fw *FuseTestFramework) {
 	holder := startLockHolder(t, path, "F_WRLCK", 0, 0)
 	holder.WaitLocked(t, 5*time.Second)
 
-	// Test process should be blocked.
+	// Another subprocess trying to lock should be denied while holder is active.
 	err := tryLockInSubprocess(t, path, "F_WRLCK", 0, 0)
 	assert.ErrorIs(t, err, syscall.EAGAIN, "lock should be held by subprocess")
 
