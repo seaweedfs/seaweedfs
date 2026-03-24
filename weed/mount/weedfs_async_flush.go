@@ -8,8 +8,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-const asyncFlushMetadataRetries = 3
-
 // completeAsyncFlush is called in a background goroutine when a file handle
 // with pending async flush work is released. It performs the deferred data
 // upload and metadata flush that was skipped in doFlush() for writebackCache mode.
@@ -68,24 +66,17 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 // with exponential backoff on transient errors. The chunk data is already on the
 // volume servers at this point; only the filer metadata reference needs persisting.
 func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFullPath util.FullPath) {
-	for attempt := 0; attempt <= asyncFlushMetadataRetries; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(1<<uint(attempt-1)) * time.Second
-			glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v",
-				fileFullPath, attempt+1, asyncFlushMetadataRetries+1, backoff)
-			time.Sleep(backoff)
-		}
-
-		if err := wfs.flushMetadataToFiler(fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid); err != nil {
-			if attempt == asyncFlushMetadataRetries {
-				glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v — "+
-					"chunks are uploaded but NOT referenced in filer metadata; "+
-					"they will appear as orphans in volume.fsck",
-					fileFullPath, asyncFlushMetadataRetries+1, err)
-			}
-			continue
-		}
-		return // success
+	err := retryMetadataFlush(func() error {
+		return wfs.flushMetadataToFiler(fh, dir, name, fh.asyncFlushUid, fh.asyncFlushGid)
+	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		glog.Warningf("completeAsyncFlush %s: retrying metadata flush (attempt %d/%d) after %v: %v",
+			fileFullPath, nextAttempt, totalAttempts, backoff, err)
+	})
+	if err != nil {
+		glog.Errorf("completeAsyncFlush %s: metadata flush failed after %d attempts: %v - "+
+			"chunks are uploaded but NOT referenced in filer metadata; "+
+			"they will appear as orphans in volume.fsck",
+			fileFullPath, metadataFlushRetries+1, err)
 	}
 }
 
