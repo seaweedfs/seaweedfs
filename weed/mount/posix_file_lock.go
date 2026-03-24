@@ -111,7 +111,7 @@ func insertAndCoalesce(il *inodeLocks, lk lockRange) {
 		}
 		if !rangesOverlap(h.Start, h.End, lk.Start, lk.End) {
 			// Check for adjacency with same type for merging.
-			if h.Typ == lk.Typ && (h.End+1 == lk.Start || lk.End+1 == h.Start) {
+			if h.Typ == lk.Typ && ((h.End < ^uint64(0) && h.End+1 == lk.Start) || (lk.End < ^uint64(0) && lk.End+1 == h.Start)) {
 				// Merge adjacent same-type lock into lk.
 				if h.Start < lk.Start {
 					lk.Start = h.Start

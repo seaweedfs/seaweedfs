@@ -447,3 +447,28 @@ func TestSameOwnerReplaceDifferentType(t *testing.T) {
 		t.Errorf("expected write [61,99], got type=%d [%d,%d]", il.locks[2].Typ, il.locks[2].Start, il.locks[2].End)
 	}
 }
+
+func TestAdjacencyNoOverflowAtMaxUint64(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	// Lock to EOF (End = MaxUint64), then lock [0, 0] same type.
+	// Without the overflow guard, MaxUint64+1 wraps to 0, falsely merging.
+	plt.SetLk(inode, lockRange{Start: 100, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	plt.SetLk(inode, lockRange{Start: 0, End: 0, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+
+	il := plt.getInodeLocks(inode)
+	il.mu.Lock()
+	defer il.mu.Unlock()
+
+	// Should remain 2 separate locks, not merged.
+	ownerLocks := 0
+	for _, lk := range il.locks {
+		if lk.Owner == 1 {
+			ownerLocks++
+		}
+	}
+	if ownerLocks != 2 {
+		t.Fatalf("expected 2 separate locks (no overflow merge), got %d", ownerLocks)
+	}
+}
