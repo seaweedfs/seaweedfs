@@ -439,9 +439,14 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 					}
 				}
 			}
-		} else if !errors.Is(err, filer_pb.ErrNotFound) {
-			// Log unexpected errors (but not "not found" which is normal for non-SSE uploads)
-			glog.V(3).Infof("Could not retrieve upload entry for %s/%s: %v (may be non-SSE upload)", bucket, uploadID, err)
+		} else if errors.Is(err, filer_pb.ErrNotFound) {
+			// Upload directory does not exist - the upload was aborted or never initiated
+			s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
+			return
+		} else {
+			glog.V(3).Infof("Could not retrieve upload entry for %s/%s: %v", bucket, uploadID, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
 		}
 	}
 
