@@ -1,6 +1,7 @@
 package fuse_test
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -212,9 +213,9 @@ func testFcntlWriteLockConflict(t *testing.T, fw *FuseTestFramework) {
 	// f1 locks bytes [0, 10).
 	require.NoError(t, fcntlSetLk(f1, syscall.F_WRLCK, 0, 10))
 
-	// f2 overlapping write lock should fail.
+	// f2 overlapping write lock should fail with EAGAIN.
 	err = fcntlSetLk(f2, syscall.F_WRLCK, 5, 10)
-	assert.Error(t, err, "overlapping write lock should fail")
+	assert.ErrorIs(t, err, syscall.EAGAIN, "overlapping write lock should fail with EAGAIN")
 
 	// Unlock f1.
 	require.NoError(t, fcntlSetLk(f1, syscall.F_UNLCK, 0, 10))
@@ -247,7 +248,7 @@ func testFcntlReadLocksShared(t *testing.T, fw *FuseTestFramework) {
 	require.NoError(t, err)
 	defer f3.Close()
 	err = fcntlSetLk(f3, syscall.F_WRLCK, 0, 10)
-	assert.Error(t, err, "write lock should fail while read locks are held")
+	assert.ErrorIs(t, err, syscall.EAGAIN, "write lock should fail with EAGAIN while read locks are held")
 
 	require.NoError(t, fcntlSetLk(f1, syscall.F_UNLCK, 0, 10))
 	require.NoError(t, fcntlSetLk(f2, syscall.F_UNLCK, 0, 10))
@@ -302,7 +303,7 @@ func testFcntlByteRangePartial(t *testing.T, fw *FuseTestFramework) {
 
 	// f2 trying to extend into f1's range should fail.
 	err = fcntlSetLk(f2, syscall.F_WRLCK, 4, 8)
-	assert.Error(t, err, "extending into another fd's locked range should fail")
+	assert.ErrorIs(t, err, syscall.EAGAIN, "extending into another fd's locked range should fail with EAGAIN")
 
 	require.NoError(t, fcntlSetLk(f1, syscall.F_UNLCK, 0, 8))
 	require.NoError(t, fcntlSetLk(f2, syscall.F_UNLCK, 8, 8))
@@ -337,8 +338,8 @@ func testFcntlSetLkwBlocks(t *testing.T, fw *FuseTestFramework) {
 			return
 		}
 		// Release our lock and signal success.
-		fcntlSetLk(f2, syscall.F_UNLCK, 0, 0)
-		done <- nil
+		err = fcntlSetLk(f2, syscall.F_UNLCK, 0, 0)
+		done <- err
 	}()
 
 	// Give the goroutine time to block.
@@ -408,7 +409,7 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 		go func(id int) {
 			defer wg.Done()
 			for j := 0; j < writesPerWorker; j++ {
-				f, err := os.OpenFile(path, os.O_RDWR, 0)
+				f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
 				if err != nil {
 					addError(fmt.Errorf("worker %d open: %v", id, err))
 					return
@@ -439,8 +440,11 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 	wg.Wait()
 	require.Empty(t, errors, "concurrent lock contention errors: %v", errors)
 
-	// Verify the file is readable.
+	// Verify all writes were preserved.
 	data, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.NotEmpty(t, data, "file should have content from workers")
+	expectedLines := numWorkers * writesPerWorker
+	actualLines := bytes.Count(data, []byte("\n"))
+	assert.Equal(t, expectedLines, actualLines,
+		"file should contain exactly %d lines from all workers", expectedLines)
 }
