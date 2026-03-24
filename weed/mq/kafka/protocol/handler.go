@@ -626,14 +626,19 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					}
 
 					// Send this response
+					var respBody []byte
 					if readyResp.err != nil {
 						glog.Errorf("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
+						// Send a Kafka error response instead of silently dropping it.
+						// Dropping the response leaves the client hanging forever.
+						respBody = BuildErrorResponse(readyResp.correlationID, ErrorCodeUnknownServerError)
 					} else {
-						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
-							glog.Errorf("[%s] Response writer WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
-							correlationQueueMu.Unlock()
-							return
-						}
+						respBody = readyResp.response
+					}
+					if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, respBody, timeoutConfig.WriteTimeout); writeErr != nil {
+						glog.Errorf("[%s] Response writer WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
+						correlationQueueMu.Unlock()
+						return
 					}
 
 					// Remove from pending and advance
@@ -1024,20 +1029,43 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			targetChan = controlChan
 		}
 
-		// Only add to correlation queue AFTER successful channel send
-		// If we add before and the channel blocks, the correlation ID is in the queue
-		// but the request never gets processed, causing response writer deadlock
+		// Add correlation ID BEFORE channel send to prevent race condition:
+		// If we add after, the processor can finish and send the response before the
+		// ID is in the queue. The response writer then can't match the response to a
+		// queue entry, causing a deadlock for sequential clients (e.g., Sarama).
+		// If the channel send fails, we send an error response so the response writer
+		// can advance past this entry.
+		correlationQueueMu.Lock()
+		correlationQueue = append(correlationQueue, correlationID)
+		correlationQueueMu.Unlock()
+
 		select {
 		case targetChan <- req:
-			// Request queued successfully - NOW add to correlation tracking
-			correlationQueueMu.Lock()
-			correlationQueue = append(correlationQueue, correlationID)
-			correlationQueueMu.Unlock()
+			// Request queued successfully
 		case <-ctx.Done():
+			// Context cancelled - send error response so response writer can advance
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: correlationID,
+				apiKey:        apiKey,
+				apiVersion:    apiVersion,
+				err:           ctx.Err(),
+			}:
+			default:
+			}
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
-			// Channel full for too long - this shouldn't happen with proper backpressure
+			// Channel full for too long - send error response so response writer can advance
 			glog.Errorf("[%s] Failed to queue correlation=%d - channel full (10s timeout)", connectionID, correlationID)
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: correlationID,
+				apiKey:        apiKey,
+				apiVersion:    apiVersion,
+				err:           fmt.Errorf("request queue full"),
+			}:
+			default:
+			}
 			return fmt.Errorf("request queue full: correlation=%d", correlationID)
 		}
 	}

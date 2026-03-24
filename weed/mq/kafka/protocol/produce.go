@@ -49,9 +49,12 @@ func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, a
 		return nil, fmt.Errorf("Produce request missing data")
 	}
 
-	// Parse acks and timeout
+	// Parse acks, timeout, and topics count
 	_ = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2])) // acks
 	offset += 2
+
+	_ = binary.BigEndian.Uint32(requestBody[offset : offset+4]) // timeout_ms
+	offset += 4
 
 	topicsCount := binary.BigEndian.Uint32(requestBody[offset : offset+4])
 	offset += 4
