@@ -27,17 +27,19 @@ func TestOffsetManagement(t *testing.T) {
 		t.Logf("Running offset management tests with mock backend - offsets are in-memory only")
 	}
 
-	topic := testutil.GenerateUniqueTopicName("offset-management")
+	topic1 := testutil.GenerateUniqueTopicName("offset-management")
+	topic2 := testutil.GenerateUniqueTopicName("offset-resumption")
 	groupID := testutil.GenerateUniqueGroupID("offset-test-group")
 
-	gateway.AddTestTopic(topic)
+	gateway.AddTestTopic(topic1)
+	gateway.AddTestTopic(topic2)
 
 	t.Run("BasicOffsetCommitFetch", func(t *testing.T) {
-		testBasicOffsetCommitFetch(t, addr, topic, groupID)
+		testBasicOffsetCommitFetch(t, addr, topic1, groupID)
 	})
 
 	t.Run("ConsumerGroupResumption", func(t *testing.T) {
-		testConsumerGroupResumption(t, addr, topic, groupID+"2")
+		testConsumerGroupResumption(t, addr, topic2, groupID+"2")
 	})
 }
 
