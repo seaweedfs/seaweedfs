@@ -22,6 +22,7 @@ import (
 func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.Request, so *operation.StorageOption) {
 	src := r.URL.Query().Get("cp.from")
 	dst := r.URL.Path
+	overwrite := r.URL.Query().Get("overwrite") == "true"
 
 	glog.V(2).InfofCtx(ctx, "FilerServer.copy %v to %v", src, dst)
 
@@ -84,16 +85,28 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		finalDstPath = util.FullPath(newDir).Child(newName)
 	}
 
+	if srcPath == finalDstPath {
+		err = fmt.Errorf("source and destination are the same path: %s", finalDstPath)
+		writeJsonError(w, r, http.StatusBadRequest, err)
+		return
+	}
+
 	// Check if destination file already exists
-	// TODO: add an overwrite parameter to allow overwriting
 	if dstEntry, err := fs.filer.FindEntry(ctx, finalDstPath); err != nil && err != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to check destination entry %s: %w", finalDstPath, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	} else if dstEntry != nil {
-		err = fmt.Errorf("destination file %s already exists", finalDstPath)
-		writeJsonError(w, r, http.StatusConflict, err)
-		return
+		if dstEntry.IsDirectory() {
+			err = fmt.Errorf("destination file %s is a directory", finalDstPath)
+			writeJsonError(w, r, http.StatusConflict, err)
+			return
+		}
+		if !overwrite {
+			err = fmt.Errorf("destination file %s already exists", finalDstPath)
+			writeJsonError(w, r, http.StatusConflict, err)
+			return
+		}
 	}
 
 	// Copy the file content and chunks
@@ -104,7 +117,8 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		return
 	}
 
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, true, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
+	// Use o_excl unless the caller explicitly asked to replace an existing file.
+	if createErr := fs.filer.CreateEntry(ctx, newEntry, !overwrite, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
 		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
@@ -117,6 +131,8 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 
 // copyEntry creates a new entry with copied content and chunks
 func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dstPath util.FullPath, so *operation.StorageOption) (*filer.Entry, error) {
+	now := time.Now()
+
 	// Create the base entry structure
 	// Note: For hard links, we copy the actual content but NOT the HardLinkId/HardLinkCounter
 	// This creates an independent copy rather than another hard link to the same content
@@ -126,6 +142,8 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 		Attr: func(a filer.Attr) filer.Attr {
 			a.GroupNames = append([]string(nil), a.GroupNames...)
 			a.Md5 = append([]byte(nil), a.Md5...)
+			a.Crtime = now
+			a.Mtime = now
 			return a
 		}(srcEntry.Attr),
 		Quota: srcEntry.Quota,

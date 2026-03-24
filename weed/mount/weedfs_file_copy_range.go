@@ -1,14 +1,29 @@
 package mount
 
 import (
+	"context"
+	"fmt"
+	"io"
+	"math"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
+
+var performServerSideWholeFileCopy = func(cancel <-chan struct{}, wfs *WFS, srcPath, dstPath util.FullPath) (*filer_pb.Entry, error) {
+	return wfs.copyEntryViaFiler(cancel, srcPath, dstPath)
+}
+
+const filerCopyRequestTimeout = 60 * time.Second
 
 // CopyFileRange copies data from one file to another from and to specified offsets.
 //
@@ -69,6 +84,10 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 		in.OffIn, in.OffIn+in.Len,
 		in.OffOut, in.OffOut+in.Len,
 	)
+
+	if written, handled, status := wfs.tryServerSideWholeFileCopy(cancel, in, fhIn, fhOut); handled {
+		return written, status
+	}
 
 	// Concurrent copy operations could allocate too much memory, so we want to
 	// throttle our concurrency, scaling with the number of writers the mount
@@ -154,4 +173,178 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 
 	written = uint32(totalCopied)
 	return written, fuse.OK
+}
+
+func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.CopyFileRangeIn, fhIn, fhOut *FileHandle) (written uint32, handled bool, code fuse.Status) {
+	srcPath, dstPath, sourceSize, ok := wholeFileServerCopyCandidate(fhIn, fhOut, in)
+	if !ok {
+		return 0, false, fuse.OK
+	}
+
+	glog.V(1).Infof("CopyFileRange server-side copy %s => %s (%d bytes)", srcPath, dstPath, sourceSize)
+
+	entry, err := performServerSideWholeFileCopy(cancel, wfs, srcPath, dstPath)
+	if err != nil {
+		glog.V(0).Infof("CopyFileRange server-side copy %s => %s fallback to chunk copy: %v", srcPath, dstPath, err)
+		return 0, false, fuse.OK
+	}
+
+	glog.V(1).Infof("CopyFileRange server-side copy %s => %s completed (%d bytes)", srcPath, dstPath, sourceSize)
+
+	fhOut.SetEntry(entry)
+	fhOut.RememberPath(dstPath)
+	if entry.Attributes != nil {
+		fhOut.contentType = entry.Attributes.Mime
+	}
+	fhOut.dirtyMetadata = false
+	wfs.invalidateCopyDestinationCache(fhOut.inode, dstPath)
+
+	return uint32(sourceSize), true, fuse.OK
+}
+
+func wholeFileServerCopyCandidate(fhIn, fhOut *FileHandle, in *fuse.CopyFileRangeIn) (srcPath, dstPath util.FullPath, sourceSize int64, ok bool) {
+	if fhIn == nil || fhOut == nil || in == nil {
+		glog.V(4).Infof("server-side copy: skipped (nil handle or input)")
+		return "", "", 0, false
+	}
+	if fhIn.fh == fhOut.fh {
+		glog.V(4).Infof("server-side copy: skipped (same file handle)")
+		return "", "", 0, false
+	}
+	if fhIn.dirtyMetadata || fhOut.dirtyMetadata {
+		glog.V(4).Infof("server-side copy: skipped (dirty metadata: in=%v out=%v)", fhIn.dirtyMetadata, fhOut.dirtyMetadata)
+		return "", "", 0, false
+	}
+	if in.OffIn != 0 || in.OffOut != 0 {
+		glog.V(4).Infof("server-side copy: skipped (non-zero offsets: in=%d out=%d)", in.OffIn, in.OffOut)
+		return "", "", 0, false
+	}
+
+	srcEntry := fhIn.GetEntry()
+	dstEntry := fhOut.GetEntry()
+	if srcEntry == nil || dstEntry == nil {
+		glog.V(4).Infof("server-side copy: skipped (nil entry: src=%v dst=%v)", srcEntry == nil, dstEntry == nil)
+		return "", "", 0, false
+	}
+	if srcEntry.IsDirectory || dstEntry.IsDirectory {
+		glog.V(4).Infof("server-side copy: skipped (directory)")
+		return "", "", 0, false
+	}
+
+	sourceSize = int64(filer.FileSize(srcEntry.GetEntry()))
+	// go-fuse exposes CopyFileRange's return value as uint32, so the fast path
+	// should only claim copies that can be reported without truncation.
+	if sourceSize <= 0 || sourceSize > math.MaxUint32 || int64(in.Len) < sourceSize {
+		glog.V(4).Infof("server-side copy: skipped (size mismatch: sourceSize=%d len=%d)", sourceSize, in.Len)
+		return "", "", 0, false
+	}
+
+	if filer.FileSize(dstEntry.GetEntry()) != 0 || len(dstEntry.GetChunks()) > 0 || len(dstEntry.Content) > 0 {
+		glog.V(4).Infof("server-side copy: skipped (destination not empty)")
+		return "", "", 0, false
+	}
+
+	srcPath = fhIn.FullPath()
+	dstPath = fhOut.FullPath()
+	if srcPath == "" || dstPath == "" || srcPath == dstPath {
+		glog.V(4).Infof("server-side copy: skipped (invalid paths: src=%q dst=%q)", srcPath, dstPath)
+	}
+
+	return srcPath, dstPath, sourceSize, true
+}
+
+func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, srcPath, dstPath util.FullPath) (*filer_pb.Entry, error) {
+	ctx, cancelFn := context.WithTimeout(context.Background(), filerCopyRequestTimeout)
+	defer cancelFn()
+
+	if cancel != nil {
+		go func() {
+			select {
+			case <-cancel:
+				cancelFn()
+			case <-ctx.Done():
+			}
+		}()
+	}
+
+	httpClient := util_http.GetGlobalHttpClient()
+	if httpClient == nil {
+		var err error
+		httpClient, err = util_http.NewGlobalHttpClient()
+		if err != nil {
+			return nil, fmt.Errorf("create filer copy http client: %w", err)
+		}
+	}
+
+	copyURL := &url.URL{
+		Scheme: httpClient.GetHttpScheme(),
+		Host:   wfs.getCurrentFiler().ToHttpAddress(),
+		Path:   string(dstPath),
+	}
+	query := copyURL.Query()
+	query.Set("cp.from", string(srcPath))
+	query.Set("overwrite", "true")
+	copyURL.RawQuery = query.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, copyURL.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("create filer copy request: %w", err)
+	}
+	if jwt := wfs.filerCopyJWT(); jwt != "" {
+		req.Header.Set("Authorization", "Bearer "+string(jwt))
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("execute filer copy request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("filer copy %s => %s failed: status %d: %s", srcPath, dstPath, resp.StatusCode, string(body))
+	}
+
+	entry, err := filer_pb.GetEntry(ctx, wfs, dstPath)
+	if err != nil {
+		return nil, fmt.Errorf("reload copied entry %s: %w", dstPath, err)
+	}
+	if entry == nil {
+		return nil, fmt.Errorf("reload copied entry %s: not found", dstPath)
+	}
+	if entry.Attributes != nil && wfs.option != nil && wfs.option.UidGidMapper != nil {
+		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
+	}
+
+	if wfs.metaCache != nil {
+		dir, _ := dstPath.DirAndName()
+		event := metadataUpdateEvent(dir, entry)
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("copyEntryViaFiler %s: best-effort metadata apply failed: %v", dstPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
+		}
+	}
+
+	return entry, nil
+}
+
+func (wfs *WFS) filerCopyJWT() security.EncodedJwt {
+	if wfs.option == nil || len(wfs.option.FilerSigningKey) == 0 {
+		return ""
+	}
+	return security.GenJwtForFilerServer(wfs.option.FilerSigningKey, wfs.option.FilerSigningExpiresAfterSec)
+}
+
+func (wfs *WFS) invalidateCopyDestinationCache(inode uint64, fullPath util.FullPath) {
+	if wfs.fuseServer != nil {
+		if status := wfs.fuseServer.InodeNotify(inode, 0, -1); status != fuse.OK {
+			glog.V(4).Infof("CopyFileRange invalidate inode %d: %v", inode, status)
+		}
+		dir, name := fullPath.DirAndName()
+		if parentInode, found := wfs.inodeToPath.GetInode(util.FullPath(dir)); found {
+			if status := wfs.fuseServer.EntryNotify(parentInode, name); status != fuse.OK {
+				glog.V(4).Infof("CopyFileRange invalidate entry %s: %v", fullPath, status)
+			}
+		}
+	}
 }
