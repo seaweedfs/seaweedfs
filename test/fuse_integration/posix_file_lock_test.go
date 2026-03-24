@@ -616,32 +616,51 @@ func testFcntlReleaseOnClose(t *testing.T, fw *FuseTestFramework) {
 // reader goroutines (blocking FUSE SETLKW can starve unlock processing).
 func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 	path := filepath.Join(fw.GetMountPoint(), "lock_contention.txt")
-	require.NoError(t, os.WriteFile(path, []byte(""), 0644))
+	base, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0644)
+	require.NoError(t, err)
+	defer base.Close()
 
 	numWorkers := 8
 	writesPerWorker := 5
 	var wg sync.WaitGroup
 	var mu sync.Mutex
-	var errors []error
+	var errs []error
 	var activeHolders atomic.Int32
 
 	addError := func(err error) {
 		mu.Lock()
 		defer mu.Unlock()
-		errors = append(errors, err)
+		errs = append(errs, err)
+	}
+
+	openWithRetry := func() (*os.File, error) {
+		var openErr error
+		for attempt := 0; attempt < 50; attempt++ {
+			f, err := os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
+			if err == nil {
+				return f, nil
+			}
+			openErr = err
+			if !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOENT) {
+				return nil, err
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return nil, openErr
 	}
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			for j := 0; j < writesPerWorker; j++ {
-				f, err := os.OpenFile(path, os.O_RDWR, 0)
-				if err != nil {
-					addError(fmt.Errorf("worker %d open: %v", id, err))
-					return
-				}
+			f, err := openWithRetry()
+			if err != nil {
+				addError(fmt.Errorf("worker %d open: %v", id, err))
+				return
+			}
+			defer f.Close()
 
+			for j := 0; j < writesPerWorker; j++ {
 				// Non-blocking flock with retry to avoid FUSE server thread starvation.
 				locked := false
 				for attempt := 0; attempt < 3000; attempt++ {
@@ -652,7 +671,6 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 					time.Sleep(10 * time.Millisecond)
 				}
 				if !locked {
-					f.Close()
 					addError(fmt.Errorf("worker %d: failed to acquire flock after retries", id))
 					return
 				}
@@ -660,40 +678,32 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 				if holders := activeHolders.Add(1); holders != 1 {
 					activeHolders.Add(-1)
 					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-					f.Close()
 					addError(fmt.Errorf("worker %d: flock overlap detected with %d holders", id, holders))
 					return
 				}
 				time.Sleep(5 * time.Millisecond)
 
-				if _, err := f.Seek(0, io.SeekEnd); err != nil {
-					activeHolders.Add(-1)
-					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-					f.Close()
-					addError(fmt.Errorf("worker %d seek: %v", id, err))
-					return
-				}
-
 				msg := fmt.Sprintf("worker %d write %d\n", id, j)
 				if _, err := f.WriteString(msg); err != nil {
 					activeHolders.Add(-1)
 					syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-					f.Close()
 					addError(fmt.Errorf("worker %d write: %v", id, err))
 					return
 				}
 
 				activeHolders.Add(-1)
 				syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-				f.Close()
 			}
 		}(i)
 	}
 
 	wg.Wait()
-	require.Empty(t, errors, "concurrent lock contention errors: %v", errors)
+	require.Empty(t, errs, "concurrent lock contention errors: %v", errs)
 
-	data, err := os.ReadFile(path)
+	_, err = base.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+
+	data, err := io.ReadAll(base)
 	require.NoError(t, err)
 	expectedLines := numWorkers * writesPerWorker
 	actualLines := bytes.Count(data, []byte("\n"))
