@@ -16,18 +16,6 @@ func (wfs *WFS) Fallocate(cancel <-chan struct{}, in *fuse.FallocateIn) (code fu
 	return fuse.ENOSYS
 }
 
-func (wfs *WFS) GetLk(cancel <-chan struct{}, in *fuse.LkIn, out *fuse.LkOut) (code fuse.Status) {
-	return fuse.ENOSYS
-}
-
-func (wfs *WFS) SetLk(cancel <-chan struct{}, in *fuse.LkIn) (code fuse.Status) {
-	return fuse.ENOSYS
-}
-
-func (wfs *WFS) SetLkw(cancel <-chan struct{}, in *fuse.LkIn) (code fuse.Status) {
-	return fuse.ENOSYS
-}
-
 /**
  * Check file access permissions
  *
