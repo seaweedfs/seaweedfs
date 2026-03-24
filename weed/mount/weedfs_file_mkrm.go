@@ -8,6 +8,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /**
@@ -21,20 +22,6 @@ import (
  * will be called instead.
  */
 func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, out *fuse.CreateOut) (code fuse.Status) {
-	// if implemented, need to use
-	// 	inode := wfs.inodeToPath.Lookup(entryFullPath)
-	// to ensure nlookup counter
-	return fuse.ENOSYS
-}
-
-/** Create a file node
- *
- * This is called for creation of all non-directory, non-symlink
- * nodes.  If the filesystem defines a create() method, then for
- * regular files that will be called instead.
- */
-func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
-
 	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
@@ -45,68 +32,70 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 
 	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
 	if code != fuse.OK {
-		return
+		return code
 	}
 
 	entryFullPath := dirFullPath.Child(name)
-	fileMode := toOsFileMode(in.Mode)
-	now := time.Now().Unix()
-	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
 
-	newEntry := &filer_pb.Entry{
-		Name:        name,
-		IsDirectory: false,
-		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    now,
-			Crtime:   now,
-			FileMode: uint32(fileMode),
-			Uid:      in.Uid,
-			Gid:      in.Gid,
-			TtlSec:   wfs.option.TtlSec,
-			Rdev:     in.Rdev,
-			Inode:    inode,
-		},
+	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0)
+	if code != fuse.OK {
+		if code != fuse.Status(syscall.EEXIST) || in.Flags&syscall.O_EXCL != 0 {
+			return code
+		}
+
+		newEntry, code = wfs.maybeLoadEntry(entryFullPath)
+		if code != fuse.OK {
+			return code
+		}
+
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
+		if in.Flags&syscall.O_TRUNC != 0 {
+			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
+				return code
+			}
+		}
+	} else {
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
 	}
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
 
-		wfs.mapPbIdFromLocalToFiler(newEntry)
-		defer wfs.mapPbIdFromFilerToLocal(newEntry)
+	fileHandle := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry)
+	fileHandle.RememberPath(entryFullPath)
+	out.Fh = uint64(fileHandle.fh)
+	out.OpenFlags = in.Flags
+	if wfs.option.IsMacOs && in.Flags&fuse.FOPEN_DIRECT_IO != 0 {
+		glog.V(4).Infof("macfuse direct_io mode %v => false\n", in.Flags&fuse.FOPEN_DIRECT_IO != 0)
+		out.OpenFlags &^= fuse.FOPEN_DIRECT_IO
+	}
 
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dirFullPath),
-			Entry:                    newEntry,
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
-		}
+	return fuse.OK
+}
 
-		glog.V(1).Infof("mknod: %v", request)
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
-			return err
-		}
+/** Create a file node
+ *
+ * This is called for creation of all non-directory, non-symlink
+ * nodes.  If the filesystem defines a create() method, then for
+ * regular files that will be called instead.
+ */
+func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataCreateEvent(string(dirFullPath), newEntry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("mknod %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
-		}
-		wfs.inodeToPath.TouchDirectory(dirFullPath)
+	if s := checkName(name); s != fuse.OK {
+		return s
+	}
 
-		return nil
-	})
+	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
 
-	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
-
-	if err != nil {
-		return fuse.EIO
+	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev)
+	if code != fuse.OK {
+		return code
 	}
 
 	// this is to increase nlookup counter
+	entryFullPath := dirFullPath.Child(name)
 	inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, newEntry)
@@ -174,4 +163,85 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	return fuse.OK
 
+}
+
+func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
+	if wfs.IsOverQuotaWithUncommitted() {
+		return 0, nil, fuse.Status(syscall.ENOSPC)
+	}
+
+	entryFullPath := dirFullPath.Child(name)
+	fileMode := toOsFileMode(mode)
+	now := time.Now().Unix()
+	inode = wfs.inodeToPath.AllocateInode(entryFullPath, now)
+
+	newEntry = &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: false,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now,
+			Crtime:   now,
+			FileMode: uint32(fileMode),
+			Uid:      uid,
+			Gid:      gid,
+			TtlSec:   wfs.option.TtlSec,
+			Rdev:     rdev,
+			Inode:    inode,
+		},
+	}
+
+	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		wfs.mapPbIdFromLocalToFiler(newEntry)
+		defer wfs.mapPbIdFromFilerToLocal(newEntry)
+
+		request := &filer_pb.CreateEntryRequest{
+			Directory:                string(dirFullPath),
+			Entry:                    newEntry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
+		}
+
+		glog.V(1).Infof("mknod: %v", request)
+		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+		if err != nil {
+			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
+			return err
+		}
+
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirFullPath), newEntry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("mknod %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
+
+		return nil
+	})
+
+	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
+
+	if err != nil {
+		return 0, nil, grpcErrorToFuseStatus(err)
+	}
+
+	return inode, newEntry, fuse.OK
+}
+
+func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry) fuse.Status {
+	if entry == nil {
+		return fuse.EIO
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+
+	entry.Content = nil
+	entry.Chunks = nil
+	entry.Attributes.FileSize = 0
+	entry.Attributes.Mtime = time.Now().Unix()
+
+	return wfs.saveEntry(entryFullPath, entry)
 }

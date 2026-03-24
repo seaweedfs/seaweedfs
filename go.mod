@@ -149,7 +149,7 @@ require (
 	github.com/rdleal/intervalst v1.5.0
 	github.com/redis/go-redis/v9 v9.18.0
 	github.com/schollz/progressbar/v3 v3.19.0
-	github.com/seaweedfs/go-fuse/v2 v2.9.1
+	github.com/seaweedfs/go-fuse/v2 v2.9.2
 	github.com/shirou/gopsutil/v4 v4.26.2
 	github.com/tarantool/go-tarantool/v2 v2.4.2
 	github.com/testcontainers/testcontainers-go v0.40.0
