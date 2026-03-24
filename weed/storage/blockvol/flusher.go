@@ -420,10 +420,8 @@ func (f *Flusher) flushOnceLocked() error {
 // updateSuperblockCheckpoint writes the updated checkpoint to disk.
 // Acquires superMu to serialize against syncWithWALProgress (group commit).
 func (f *Flusher) updateSuperblockCheckpoint(checkpointLSN uint64, walTail uint64) error {
-	if f.superMu != nil {
-		f.superMu.Lock()
-		defer f.superMu.Unlock()
-	}
+	f.superMu.Lock()
+	defer f.superMu.Unlock()
 
 	f.super.WALCheckpointLSN = checkpointLSN
 	f.super.WALHead = f.wal.LogicalHead()

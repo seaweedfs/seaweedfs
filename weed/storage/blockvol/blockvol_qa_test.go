@@ -1495,6 +1495,7 @@ func testQAFlushCheckpointPersists(t *testing.T) {
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour,
@@ -1586,6 +1587,7 @@ func testQAFlushWALReclaimThenWrite(t *testing.T) {
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour,
@@ -1849,6 +1851,7 @@ func testQARecoverAfterFlushThenCrash(t *testing.T) {
 
 	f := NewFlusher(FlusherConfig{
 		FD: v.fd, Super: &v.super, WAL: v.wal, DirtyMap: v.dirtyMap,
+		SuperMu:  &v.superMu,
 		Interval: 1 * time.Hour,
 	})
 	if err := f.FlushOnce(); err != nil {
@@ -3413,6 +3416,7 @@ func testQAFlushPartialWALWrap(t *testing.T) {
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour, // manual only

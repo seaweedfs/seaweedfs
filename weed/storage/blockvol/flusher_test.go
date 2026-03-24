@@ -48,6 +48,7 @@ func createTestVolWithFlusher(t *testing.T) (*BlockVol, *Flusher) {
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour, // don't auto-flush in tests
@@ -343,6 +344,7 @@ func testFlusherErrorLogged(t *testing.T) {
 	f := NewFlusher(FlusherConfig{
 		FD:       closedFD,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour,

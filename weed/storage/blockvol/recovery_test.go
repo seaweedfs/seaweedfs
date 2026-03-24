@@ -230,6 +230,7 @@ func testRecoverAfterCheckpoint(t *testing.T) {
 	f := NewFlusher(FlusherConfig{
 		FD:       v.fd,
 		Super:    &v.super,
+		SuperMu:  &v.superMu,
 		WAL:      v.wal,
 		DirtyMap: v.dirtyMap,
 		Interval: 1 * time.Hour,
