@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 /**
@@ -48,10 +49,12 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 	if !isMember {
 		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
 		if err != nil {
+			glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
 			return (perm & mask) == mask
 		}
 		groupIDs, err := u.GroupIds()
 		if err != nil {
+			glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
 			return (perm & mask) == mask
 		}
 
