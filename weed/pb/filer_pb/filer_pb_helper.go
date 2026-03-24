@@ -148,13 +148,13 @@ func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 	if resp.ErrorCode != FilerError_OK {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v (code %v)", request.Directory, request.Entry.Name, request.OExcl, resp.Error, resp.ErrorCode)
 		if sentinel := FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
-			return nil, fmt.Errorf("CreateEntry %s: %w", resp.Error, sentinel)
+			return nil, fmt.Errorf("CreateEntry %s/%s: %w", request.Directory, request.Entry.Name, sentinel)
 		}
-		return nil, fmt.Errorf("CreateEntry: %s", resp.Error)
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
 	}
 	if resp.Error != "" {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
-		return nil, fmt.Errorf("CreateEntry: %s", resp.Error)
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
 	}
 	return resp, nil
 }
