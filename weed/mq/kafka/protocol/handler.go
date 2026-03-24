@@ -696,7 +696,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Warningf("[%s] Control plane: timeout sending response correlation=%d", connectionID, req.correlationID)
+					// responseChan stuck — cancel context to tear down connection.
+					// The orphaned correlationID would stall the ordered writer permanently.
+					glog.Warningf("[%s] Control plane: timeout sending response correlation=%d, tearing down connection", connectionID, req.correlationID)
+					cancel()
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
@@ -774,7 +777,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Warningf("[%s] Data plane: timeout sending response correlation=%d", connectionID, req.correlationID)
+					// responseChan stuck — cancel context to tear down connection.
+					// The orphaned correlationID would stall the ordered writer permanently.
+					glog.Warningf("[%s] Data plane: timeout sending response correlation=%d, tearing down connection", connectionID, req.correlationID)
+					cancel()
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
@@ -811,13 +817,18 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}()
 
 	defer func() {
-		// Close channels in correct order to avoid panics
-		// 1. Close input channels to stop accepting new requests
+		// Cancel context FIRST so the response writer (and any worker stuck
+		// in an inner select) sees ctx.Done() and can exit.  Previously
+		// cancel() ran in a separate defer registered earlier (LIFO: later
+		// defer runs first), so wg.Wait() below would deadlock waiting for
+		// the response writer which was itself waiting for ctx.Done().
+		cancel()
+		// Close input channels to stop accepting new requests
 		close(controlChan)
 		close(dataChan)
-		// 2. Wait for worker goroutines to finish processing and sending responses
+		// Wait for worker goroutines to finish processing and sending responses
 		wg.Wait()
-		// 3. NOW close responseChan to signal response writer to exit
+		// NOW close responseChan (safe — all senders have exited)
 		close(responseChan)
 	}()
 
