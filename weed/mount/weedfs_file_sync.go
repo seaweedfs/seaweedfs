@@ -52,6 +52,10 @@ import (
  * [close]: http://pubs.opengroup.org/onlinepubs/9699919799/functions/close.html
  */
 func (wfs *WFS) Flush(cancel <-chan struct{}, in *fuse.FlushIn) fuse.Status {
+	if in.LockOwner != 0 {
+		wfs.posixLocks.ReleasePosixOwner(in.NodeId, in.LockOwner)
+	}
+
 	fh := wfs.GetHandle(FileHandleId(in.Fh))
 	if fh == nil {
 		// If handle is not found, it might have been already released

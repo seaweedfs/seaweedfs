@@ -232,7 +232,7 @@ func TestDifferentLockKindsDoNotConflict(t *testing.T) {
 	}
 }
 
-func TestReleasePidReleasesPosixLocksAndWakesWaiters(t *testing.T) {
+func TestReleasePosixOwnerReleasesPosixLocksAndWakesWaiters(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)
 
@@ -245,29 +245,29 @@ func TestReleasePidReleasesPosixLocksAndWakesWaiters(t *testing.T) {
 	}()
 
 	time.Sleep(50 * time.Millisecond)
-	plt.ReleasePid(inode, 10)
+	plt.ReleasePosixOwner(inode, 1)
 
 	select {
 	case s := <-done:
 		if s != fuse.OK {
-			t.Fatalf("expected OK after ReleasePid, got %v", s)
+			t.Fatalf("expected OK after ReleasePosixOwner, got %v", s)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("SetLkw did not unblock after ReleasePid")
+		t.Fatal("SetLkw did not unblock after ReleasePosixOwner")
 	}
 }
 
-func TestReleasePidDoesNotReleaseFlockLocks(t *testing.T) {
+func TestReleasePosixOwnerDoesNotReleaseFlockLocks(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)
 
 	plt.SetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10, IsFlock: true})
-	plt.ReleasePid(inode, 10)
+	plt.ReleasePosixOwner(inode, 1)
 
 	var out fuse.LkOut
 	plt.GetLk(inode, lockRange{Start: 0, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 2, Pid: 20, IsFlock: true}, &out)
 	if out.Lk.Typ != syscall.F_WRLCK {
-		t.Fatalf("expected flock lock to remain after ReleasePid, got type %d", out.Lk.Typ)
+		t.Fatalf("expected flock lock to remain after ReleasePosixOwner, got type %d", out.Lk.Typ)
 	}
 }
 

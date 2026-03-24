@@ -109,8 +109,5 @@ func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
 		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)
 	}
-	if in.Pid != 0 {
-		wfs.posixLocks.ReleasePid(in.NodeId, in.Pid)
-	}
 	wfs.ReleaseHandle(FileHandleId(in.Fh))
 }

@@ -332,11 +332,11 @@ func (plt *PosixLockTable) ReleaseFlockOwner(inode uint64, owner uint64) {
 	})
 }
 
-// ReleasePid removes POSIX fcntl locks for a process on close.
-// POSIX byte-range locks are process-scoped, so closing any fd for the inode
-// releases all of that process's locks for the inode.
-func (plt *PosixLockTable) ReleasePid(inode uint64, pid uint32) {
+// ReleasePosixOwner removes POSIX fcntl locks for a closing lock owner.
+// FUSE passes the closing fi->owner on FLUSH, which is the correct close-time
+// identity for POSIX byte-range lock cleanup.
+func (plt *PosixLockTable) ReleasePosixOwner(inode uint64, owner uint64) {
 	plt.releaseMatching(inode, func(lk lockRange) bool {
-		return !lk.IsFlock && lk.Pid == pid
+		return !lk.IsFlock && lk.Owner == owner
 	})
 }
