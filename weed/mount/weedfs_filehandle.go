@@ -21,6 +21,12 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		if wormEnforced, _ := wfs.wormEnforcedForEntry(path, entry); wormEnforced && flags&fuse.O_ANYWRITE != 0 {
 			return nil, fuse.EPERM
 		}
+		// Check unix permission bits for the requested access mode.
+		if entry != nil && entry.Attributes != nil {
+			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode, mask) {
+				return nil, fuse.EACCES
+			}
+		}
 		// need to AcquireFileHandle again to ensure correct handle counter
 		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
 		fileHandle.RememberPath(path)

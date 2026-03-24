@@ -3,6 +3,7 @@ package mount
 import (
 	"os/user"
 	"strconv"
+	"syscall"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -83,4 +84,16 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 	}
 
 	return (perm & mask) == mask
+}
+
+// openFlagsToAccessMask converts open(2) flags to an access permission mask.
+func openFlagsToAccessMask(flags uint32) uint32 {
+	switch flags & uint32(syscall.O_ACCMODE) {
+	case syscall.O_WRONLY:
+		return fuse.W_OK
+	case syscall.O_RDWR:
+		return fuse.R_OK | fuse.W_OK
+	default: // O_RDONLY
+		return fuse.R_OK
+	}
 }
