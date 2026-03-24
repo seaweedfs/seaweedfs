@@ -786,40 +786,6 @@ func createECTaskParams(multiPlan *topology.MultiDestinationPlan) *worker_pb.Era
 	}
 }
 
-// selectBestECDestinations selects multiple disks for EC shard placement with diversity
-// Uses the consolidated placement package for proper rack/server/disk spreading
-func selectBestECDestinations(disks []*topology.DiskInfo, sourceRack, sourceDC string, shardsNeeded int) []*topology.DiskInfo {
-	if len(disks) == 0 {
-		return nil
-	}
-
-	// Convert topology.DiskInfo to placement.DiskCandidate
-	candidates := diskInfosToCandidates(disks)
-	if len(candidates) == 0 {
-		return nil
-	}
-
-	// Configure placement for EC shards
-	config := placement.PlacementRequest{
-		ShardsNeeded:           shardsNeeded,
-		MaxShardsPerServer:     0, // No hard limit, but prefer spreading
-		MaxShardsPerRack:       0, // No hard limit, but prefer spreading
-		MaxTaskLoad:            topology.MaxTaskLoadForECPlacement,
-		PreferDifferentServers: true,
-		PreferDifferentRacks:   true,
-	}
-
-	// Use the shared placement algorithm
-	result, err := placement.SelectDestinations(candidates, config)
-	if err != nil {
-		glog.V(2).Infof("EC placement failed: %v", err)
-		return nil
-	}
-
-	// Convert back to topology.DiskInfo
-	return candidatesToDiskInfos(result.SelectedDisks, disks)
-}
-
 // diskInfosToCandidates converts topology.DiskInfo slice to placement.DiskCandidate slice
 func diskInfosToCandidates(disks []*topology.DiskInfo) []*placement.DiskCandidate {
 	var candidates []*placement.DiskCandidate
