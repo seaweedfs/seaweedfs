@@ -51,7 +51,14 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 			if createErr != nil {
 				return fmt.Errorf("failed to create %s: %w", errorContext, createErr)
 			}
-			if resp.Error != "" && !strings.Contains(resp.Error, "exist") {
+			if resp.ErrorCode == filer_pb.FilerError_OK && resp.Error == "" {
+				return nil
+			}
+			if resp.ErrorCode == filer_pb.FilerError_ENTRY_ALREADY_EXISTS {
+				return nil
+			}
+			// Backward compat: old servers without error_code
+			if resp.Error != "" && resp.ErrorCode == filer_pb.FilerError_OK && !strings.Contains(resp.Error, "exist") {
 				return fmt.Errorf("failed to create %s: %s", errorContext, resp.Error)
 			}
 			return nil
@@ -103,6 +110,11 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 		})
 		if err != nil {
 			return fmt.Errorf("failed to write metadata file: %w", err)
+		}
+		if resp.ErrorCode != filer_pb.FilerError_OK {
+			if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+				return fmt.Errorf("failed to write metadata file: %w", sentinel)
+			}
 		}
 		if resp.Error != "" {
 			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
