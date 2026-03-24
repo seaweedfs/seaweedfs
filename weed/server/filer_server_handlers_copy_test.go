@@ -136,3 +136,88 @@ func TestPreserveDestinationMetadataForDataCopy(t *testing.T) {
 		t.Fatalf("remote metadata should be cloned, got %q", copiedEntry.Remote.StorageName)
 	}
 }
+
+func TestValidateCopySourcePreconditions(t *testing.T) {
+	srcInode := uint64(101)
+	srcMtime := int64(200)
+	srcSize := int64(5)
+	preconditions := copyRequestPreconditions{
+		srcInode: &srcInode,
+		srcMtime: &srcMtime,
+		srcSize:  &srcSize,
+	}
+
+	srcEntry := &filer.Entry{
+		FullPath: util.FullPath("/src.txt"),
+		Attr: filer.Attr{
+			Inode:    srcInode,
+			Mtime:    time.Unix(srcMtime, 0),
+			FileSize: uint64(srcSize),
+		},
+		Content: []byte("hello"),
+	}
+
+	if err := validateCopySourcePreconditions(preconditions, srcEntry); err != nil {
+		t.Fatalf("validate source preconditions: %v", err)
+	}
+
+	changedSize := int64(6)
+	preconditions.srcSize = &changedSize
+	if err := validateCopySourcePreconditions(preconditions, srcEntry); err == nil {
+		t.Fatal("expected source size mismatch to fail")
+	}
+}
+
+func TestValidateCopyDestinationPreconditions(t *testing.T) {
+	dstInode := uint64(202)
+	dstMtime := int64(300)
+	dstSize := int64(0)
+	preconditions := copyRequestPreconditions{
+		dstInode: &dstInode,
+		dstMtime: &dstMtime,
+		dstSize:  &dstSize,
+	}
+
+	dstEntry := &filer.Entry{
+		FullPath: util.FullPath("/dst.txt"),
+		Attr: filer.Attr{
+			Inode:    dstInode,
+			Mtime:    time.Unix(dstMtime, 0),
+			FileSize: uint64(dstSize),
+		},
+	}
+
+	if err := validateCopyDestinationPreconditions(preconditions, dstEntry); err != nil {
+		t.Fatalf("validate destination preconditions: %v", err)
+	}
+
+	if err := validateCopyDestinationPreconditions(preconditions, nil); err == nil {
+		t.Fatal("expected missing destination to fail")
+	}
+}
+
+func TestRecentCopyRequestDeduplicatesByRequestID(t *testing.T) {
+	fs := &FilerServer{
+		recentCopyRequests: make(map[string]recentCopyRequest),
+	}
+
+	requestID := "copy-req"
+	fingerprint := "src|dst|1"
+	fs.rememberRecentCopyRequest(requestID, fingerprint)
+
+	handled, err := fs.handleRecentCopyRequest(requestID, fingerprint)
+	if err != nil {
+		t.Fatalf("handle recent copy request: %v", err)
+	}
+	if !handled {
+		t.Fatal("expected recent copy request to be recognized")
+	}
+
+	handled, err = fs.handleRecentCopyRequest(requestID, "different")
+	if err == nil {
+		t.Fatal("expected reused request id with different fingerprint to fail")
+	}
+	if handled {
+		t.Fatal("reused request id with different fingerprint should not be treated as handled")
+	}
+}

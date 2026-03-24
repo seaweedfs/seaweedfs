@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -18,12 +19,35 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	request_id "github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
+
+type serverSideWholeFileCopyOutcome uint8
+
+const (
+	serverSideWholeFileCopyNotCommitted serverSideWholeFileCopyOutcome = iota
+	serverSideWholeFileCopyCommitted
+	serverSideWholeFileCopyAmbiguous
+)
+
+type wholeFileServerCopyRequest struct {
+	srcPath       util.FullPath
+	dstPath       util.FullPath
+	sourceSize    int64
+	srcInode      uint64
+	srcMtime      int64
+	dstInode      uint64
+	dstMtime      int64
+	dstSize       int64
+	sourceMime    string
+	sourceMd5     []byte
+	copyRequestID string
+}
 
 // performServerSideWholeFileCopy is a package-level seam so tests can override
 // the filer call without standing up an HTTP endpoint.
-var performServerSideWholeFileCopy = func(cancel <-chan struct{}, wfs *WFS, srcPath, dstPath util.FullPath) (*filer_pb.Entry, bool, error) {
-	return wfs.copyEntryViaFiler(cancel, srcPath, dstPath)
+var performServerSideWholeFileCopy = func(cancel <-chan struct{}, wfs *WFS, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
+	return wfs.copyEntryViaFiler(cancel, copyRequest)
 }
 
 // filerCopyRequestTimeout bounds the mount->filer POST so a stalled copy does
@@ -185,29 +209,30 @@ func (wfs *WFS) CopyFileRange(cancel <-chan struct{}, in *fuse.CopyFileRangeIn) 
 }
 
 func (wfs *WFS) tryServerSideWholeFileCopy(cancel <-chan struct{}, in *fuse.CopyFileRangeIn, fhIn, fhOut *FileHandle) (written uint32, handled bool, code fuse.Status) {
-	srcPath, dstPath, sourceSize, ok := wholeFileServerCopyCandidate(fhIn, fhOut, in)
+	copyRequest, ok := wholeFileServerCopyCandidate(fhIn, fhOut, in)
 	if !ok {
 		return 0, false, fuse.OK
 	}
 
-	glog.V(1).Infof("CopyFileRange server-side copy %s => %s (%d bytes)", srcPath, dstPath, sourceSize)
+	glog.V(1).Infof("CopyFileRange server-side copy %s => %s (%d bytes)", copyRequest.srcPath, copyRequest.dstPath, copyRequest.sourceSize)
 
-	entry, committed, err := performServerSideWholeFileCopy(cancel, wfs, srcPath, dstPath)
-	if err != nil {
-		if committed {
-			glog.Warningf("CopyFileRange server-side copy %s => %s committed but local refresh failed: %v", srcPath, dstPath, err)
-			wfs.applyServerSideWholeFileCopyResult(fhIn, fhOut, dstPath, entry, sourceSize)
-			return uint32(sourceSize), true, fuse.OK
+	entry, outcome, err := performServerSideWholeFileCopy(cancel, wfs, copyRequest)
+	switch outcome {
+	case serverSideWholeFileCopyCommitted:
+		if err != nil {
+			glog.Warningf("CopyFileRange server-side copy %s => %s committed but local refresh failed: %v", copyRequest.srcPath, copyRequest.dstPath, err)
+		} else {
+			glog.V(1).Infof("CopyFileRange server-side copy %s => %s completed (%d bytes)", copyRequest.srcPath, copyRequest.dstPath, copyRequest.sourceSize)
 		}
-		glog.V(0).Infof("CopyFileRange server-side copy %s => %s fallback to chunk copy: %v", srcPath, dstPath, err)
+		wfs.applyServerSideWholeFileCopyResult(fhIn, fhOut, copyRequest.dstPath, entry, copyRequest.sourceSize)
+		return uint32(copyRequest.sourceSize), true, fuse.OK
+	case serverSideWholeFileCopyAmbiguous:
+		glog.Warningf("CopyFileRange server-side copy %s => %s outcome ambiguous: %v", copyRequest.srcPath, copyRequest.dstPath, err)
+		return 0, true, fuse.EIO
+	default:
+		glog.V(0).Infof("CopyFileRange server-side copy %s => %s fallback to chunk copy: %v", copyRequest.srcPath, copyRequest.dstPath, err)
 		return 0, false, fuse.OK
 	}
-
-	glog.V(1).Infof("CopyFileRange server-side copy %s => %s completed (%d bytes)", srcPath, dstPath, sourceSize)
-
-	wfs.applyServerSideWholeFileCopyResult(fhIn, fhOut, dstPath, entry, sourceSize)
-
-	return uint32(sourceSize), true, fuse.OK
 }
 
 func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstPath util.FullPath, entry *filer_pb.Entry, sourceSize int64) {
@@ -225,7 +250,21 @@ func (wfs *WFS) applyServerSideWholeFileCopyResult(fhIn, fhOut *FileHandle, dstP
 		fhOut.contentType = entry.Attributes.Mime
 	}
 	fhOut.dirtyMetadata = false
+	wfs.updateServerSideWholeFileCopyMetaCache(dstPath, entry)
 	wfs.invalidateCopyDestinationCache(fhOut.inode, dstPath)
+}
+
+func (wfs *WFS) updateServerSideWholeFileCopyMetaCache(dstPath util.FullPath, entry *filer_pb.Entry) {
+	if wfs.metaCache == nil || entry == nil {
+		return
+	}
+
+	dir, _ := dstPath.DirAndName()
+	event := metadataUpdateEvent(dir, entry)
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("CopyFileRange metadata update %s: %v", dstPath, applyErr)
+		wfs.markDirectoryReadThrough(util.FullPath(dir))
+	}
 }
 
 func synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut *FileHandle, sourceSize int64) *filer_pb.Entry {
@@ -254,59 +293,84 @@ func synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut *FileHandle, sou
 	return localEntry
 }
 
-func wholeFileServerCopyCandidate(fhIn, fhOut *FileHandle, in *fuse.CopyFileRangeIn) (srcPath, dstPath util.FullPath, sourceSize int64, ok bool) {
+func wholeFileServerCopyCandidate(fhIn, fhOut *FileHandle, in *fuse.CopyFileRangeIn) (copyRequest wholeFileServerCopyRequest, ok bool) {
 	if fhIn == nil || fhOut == nil || in == nil {
 		glog.V(4).Infof("server-side copy: skipped (nil handle or input)")
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 	if fhIn.fh == fhOut.fh {
 		glog.V(4).Infof("server-side copy: skipped (same file handle)")
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 	if fhIn.dirtyMetadata || fhOut.dirtyMetadata {
 		glog.V(4).Infof("server-side copy: skipped (dirty metadata: in=%v out=%v)", fhIn.dirtyMetadata, fhOut.dirtyMetadata)
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 	if in.OffIn != 0 || in.OffOut != 0 {
 		glog.V(4).Infof("server-side copy: skipped (non-zero offsets: in=%d out=%d)", in.OffIn, in.OffOut)
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 
 	srcEntry := fhIn.GetEntry()
 	dstEntry := fhOut.GetEntry()
 	if srcEntry == nil || dstEntry == nil {
 		glog.V(4).Infof("server-side copy: skipped (nil entry: src=%v dst=%v)", srcEntry == nil, dstEntry == nil)
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 	if srcEntry.IsDirectory || dstEntry.IsDirectory {
 		glog.V(4).Infof("server-side copy: skipped (directory)")
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 
-	sourceSize = int64(filer.FileSize(srcEntry.GetEntry()))
+	srcPbEntry := srcEntry.GetEntry()
+	dstPbEntry := dstEntry.GetEntry()
+	if srcPbEntry == nil || dstPbEntry == nil || srcPbEntry.Attributes == nil || dstPbEntry.Attributes == nil {
+		glog.V(4).Infof("server-side copy: skipped (missing entry attributes)")
+		return wholeFileServerCopyRequest{}, false
+	}
+
+	sourceSize := int64(filer.FileSize(srcPbEntry))
 	// go-fuse exposes CopyFileRange's return value as uint32, so the fast path
 	// should only claim copies that can be reported without truncation.
 	if sourceSize <= 0 || sourceSize > math.MaxUint32 || int64(in.Len) < sourceSize {
 		glog.V(4).Infof("server-side copy: skipped (size mismatch: sourceSize=%d len=%d)", sourceSize, in.Len)
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 
-	if filer.FileSize(dstEntry.GetEntry()) != 0 || len(dstEntry.GetChunks()) > 0 || len(dstEntry.Content) > 0 {
+	dstSize := int64(filer.FileSize(dstPbEntry))
+	if dstSize != 0 || len(dstPbEntry.GetChunks()) > 0 || len(dstPbEntry.Content) > 0 {
 		glog.V(4).Infof("server-side copy: skipped (destination not empty)")
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 
-	srcPath = fhIn.FullPath()
-	dstPath = fhOut.FullPath()
+	srcPath := fhIn.FullPath()
+	dstPath := fhOut.FullPath()
 	if srcPath == "" || dstPath == "" || srcPath == dstPath {
 		glog.V(4).Infof("server-side copy: skipped (invalid paths: src=%q dst=%q)", srcPath, dstPath)
-		return "", "", 0, false
+		return wholeFileServerCopyRequest{}, false
 	}
 
-	return srcPath, dstPath, sourceSize, true
+	if srcPbEntry.Attributes.Inode == 0 || dstPbEntry.Attributes.Inode == 0 {
+		glog.V(4).Infof("server-side copy: skipped (missing inode preconditions: src=%d dst=%d)", srcPbEntry.Attributes.Inode, dstPbEntry.Attributes.Inode)
+		return wholeFileServerCopyRequest{}, false
+	}
+
+	return wholeFileServerCopyRequest{
+		srcPath:       srcPath,
+		dstPath:       dstPath,
+		sourceSize:    sourceSize,
+		srcInode:      srcPbEntry.Attributes.Inode,
+		srcMtime:      srcPbEntry.Attributes.Mtime,
+		dstInode:      dstPbEntry.Attributes.Inode,
+		dstMtime:      dstPbEntry.Attributes.Mtime,
+		dstSize:       dstSize,
+		sourceMime:    srcPbEntry.Attributes.Mime,
+		sourceMd5:     append([]byte(nil), srcPbEntry.Attributes.Md5...),
+		copyRequestID: request_id.New(),
+	}, true
 }
 
-func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, srcPath, dstPath util.FullPath) (*filer_pb.Entry, bool, error) {
+func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, copyRequest wholeFileServerCopyRequest) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
 	baseCtx, baseCancel := context.WithCancel(context.Background())
 	defer baseCancel()
 
@@ -328,24 +392,31 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, srcPath, dstPath util.
 		var err error
 		httpClient, err = util_http.NewGlobalHttpClient()
 		if err != nil {
-			return nil, false, fmt.Errorf("create filer copy http client: %w", err)
+			return nil, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy http client: %w", err)
 		}
 	}
 
 	copyURL := &url.URL{
 		Scheme: httpClient.GetHttpScheme(),
 		Host:   wfs.getCurrentFiler().ToHttpAddress(),
-		Path:   string(dstPath),
+		Path:   string(copyRequest.dstPath),
 	}
 	query := copyURL.Query()
-	query.Set("cp.from", string(srcPath))
-	query.Set("overwrite", "true")
-	query.Set("dataOnly", "true")
+	query.Set(filer.CopyQueryParamFrom, string(copyRequest.srcPath))
+	query.Set(filer.CopyQueryParamOverwrite, "true")
+	query.Set(filer.CopyQueryParamDataOnly, "true")
+	query.Set(filer.CopyQueryParamRequestID, copyRequest.copyRequestID)
+	query.Set(filer.CopyQueryParamSourceInode, fmt.Sprintf("%d", copyRequest.srcInode))
+	query.Set(filer.CopyQueryParamSourceMtime, fmt.Sprintf("%d", copyRequest.srcMtime))
+	query.Set(filer.CopyQueryParamSourceSize, fmt.Sprintf("%d", copyRequest.sourceSize))
+	query.Set(filer.CopyQueryParamDestinationInode, fmt.Sprintf("%d", copyRequest.dstInode))
+	query.Set(filer.CopyQueryParamDestinationMtime, fmt.Sprintf("%d", copyRequest.dstMtime))
+	query.Set(filer.CopyQueryParamDestinationSize, fmt.Sprintf("%d", copyRequest.dstSize))
 	copyURL.RawQuery = query.Encode()
 
 	req, err := http.NewRequestWithContext(postCtx, http.MethodPost, copyURL.String(), nil)
 	if err != nil {
-		return nil, false, fmt.Errorf("create filer copy request: %w", err)
+		return nil, serverSideWholeFileCopyNotCommitted, fmt.Errorf("create filer copy request: %w", err)
 	}
 	if jwt := wfs.filerCopyJWT(); jwt != "" {
 		req.Header.Set("Authorization", "Bearer "+string(jwt))
@@ -353,39 +424,70 @@ func (wfs *WFS) copyEntryViaFiler(cancel <-chan struct{}, srcPath, dstPath util.
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, false, fmt.Errorf("execute filer copy request: %w", err)
+		return wfs.confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx, copyRequest, fmt.Errorf("execute filer copy request: %w", err))
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return nil, false, fmt.Errorf("filer copy %s => %s failed: status %d: %s", srcPath, dstPath, resp.StatusCode, string(body))
+		return nil, serverSideWholeFileCopyNotCommitted, fmt.Errorf("filer copy %s => %s failed: status %d: %s", copyRequest.srcPath, copyRequest.dstPath, resp.StatusCode, string(body))
 	}
 
 	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
 	defer readbackCancel()
 
-	entry, err := filer_pb.GetEntry(readbackCtx, wfs, dstPath)
+	entry, err := filer_pb.GetEntry(readbackCtx, wfs, copyRequest.dstPath)
 	if err != nil {
-		return nil, true, fmt.Errorf("reload copied entry %s: %w", dstPath, err)
+		return nil, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: %w", copyRequest.dstPath, err)
 	}
 	if entry == nil {
-		return nil, true, fmt.Errorf("reload copied entry %s: not found", dstPath)
+		return nil, serverSideWholeFileCopyCommitted, fmt.Errorf("reload copied entry %s: not found", copyRequest.dstPath)
 	}
 	if entry.Attributes != nil && wfs.option != nil && wfs.option.UidGidMapper != nil {
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 	}
 
-	if wfs.metaCache != nil {
-		dir, _ := dstPath.DirAndName()
-		event := metadataUpdateEvent(dir, entry)
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("copyEntryViaFiler %s: best-effort metadata apply failed: %v", dstPath, applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
+	return entry, serverSideWholeFileCopyCommitted, nil
+}
+
+func (wfs *WFS) confirmServerSideWholeFileCopyAfterAmbiguousRequest(baseCtx context.Context, copyRequest wholeFileServerCopyRequest, requestErr error) (*filer_pb.Entry, serverSideWholeFileCopyOutcome, error) {
+	readbackCtx, readbackCancel := context.WithTimeout(baseCtx, filerCopyReadbackTimeout)
+	defer readbackCancel()
+
+	entry, err := filer_pb.GetEntry(readbackCtx, wfs, copyRequest.dstPath)
+	if err == nil && entry != nil && entryMatchesServerSideWholeFileCopy(copyRequest, entry) {
+		if entry.Attributes != nil && wfs.option != nil && wfs.option.UidGidMapper != nil {
+			entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
 		}
+		return entry, serverSideWholeFileCopyCommitted, nil
 	}
 
-	return entry, true, nil
+	if err != nil {
+		return nil, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; post-copy readback failed: %v", requestErr, err)
+	}
+	if entry == nil {
+		return nil, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s was not readable after the ambiguous request", requestErr, copyRequest.dstPath)
+	}
+	return nil, serverSideWholeFileCopyAmbiguous, fmt.Errorf("%w; destination %s did not match the requested copy after the ambiguous request", requestErr, copyRequest.dstPath)
+}
+
+func entryMatchesServerSideWholeFileCopy(copyRequest wholeFileServerCopyRequest, entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Attributes == nil {
+		return false
+	}
+	if copyRequest.dstInode != 0 && entry.Attributes.Inode != copyRequest.dstInode {
+		return false
+	}
+	if entry.Attributes.FileSize != uint64(copyRequest.sourceSize) {
+		return false
+	}
+	if copyRequest.sourceMime != "" && entry.Attributes.Mime != copyRequest.sourceMime {
+		return false
+	}
+	if len(copyRequest.sourceMd5) > 0 && !bytes.Equal(entry.Attributes.Md5, copyRequest.sourceMd5) {
+		return false
+	}
+	return true
 }
 
 func (wfs *WFS) filerCopyJWT() security.EncodedJwt {
