@@ -36,6 +36,9 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 
 	newEntry, code := wfs.maybeLoadEntry(entryFullPath)
 	if code == fuse.OK {
+		if newEntry == nil || newEntry.Attributes == nil {
+			return fuse.EIO
+		}
 		if in.Flags&syscall.O_EXCL != 0 {
 			return fuse.Status(syscall.EEXIST)
 		}
