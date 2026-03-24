@@ -28,28 +28,15 @@ func (h *Handler) handleProduce(ctx context.Context, correlationID uint32, apiVe
 }
 
 func (h *Handler) handleProduceV0V1(ctx context.Context, correlationID uint32, apiVersion uint16, requestBody []byte) ([]byte, error) {
-	// Parse Produce v0/v1 request
-	// Request format: client_id + acks(2) + timeout(4) + topics_array
+	// Parse Produce v0/v1 request body (client_id already stripped in HandleConn)
+	// Body format: acks(INT16) + timeout_ms(INT32) + topics(ARRAY)
 
-	if len(requestBody) < 8 { // client_id_size(2) + acks(2) + timeout(4)
+	if len(requestBody) < 10 { // acks(2) + timeout_ms(4) + topics_count(4)
 		return nil, fmt.Errorf("Produce request too short")
 	}
 
-	// Skip client_id
-	clientIDSize := binary.BigEndian.Uint16(requestBody[0:2])
+	offset := 0
 
-	if len(requestBody) < 2+int(clientIDSize) {
-		return nil, fmt.Errorf("Produce request client_id too short")
-	}
-
-	_ = string(requestBody[2 : 2+int(clientIDSize)]) // clientID
-	offset := 2 + int(clientIDSize)
-
-	if len(requestBody) < offset+10 { // acks(2) + timeout(4) + topics_count(4)
-		return nil, fmt.Errorf("Produce request missing data")
-	}
-
-	// Parse acks, timeout, and topics count
 	_ = int16(binary.BigEndian.Uint16(requestBody[offset : offset+2])) // acks
 	offset += 2
 

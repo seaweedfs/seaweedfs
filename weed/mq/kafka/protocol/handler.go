@@ -629,9 +629,11 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					var respBody []byte
 					if readyResp.err != nil {
 						glog.Errorf("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
-						// Send a Kafka error response instead of silently dropping it.
-						// Dropping the response leaves the client hanging forever.
-						respBody = BuildErrorResponse(readyResp.correlationID, ErrorCodeUnknownServerError)
+						// Build an API-versioned error response so the body matches
+						// the schema the client expects for this API key/version.
+						// A generic 2-byte error code would corrupt the protocol
+						// stream for APIs that start with throttle_time or arrays.
+						respBody = BuildAPIErrorResponse(readyResp.apiKey, readyResp.apiVersion, ErrorCodeUnknownServerError)
 					} else {
 						respBody = readyResp.response
 					}
@@ -903,6 +905,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			if writeErr != nil {
 				return fmt.Errorf("build error response: %w", writeErr)
 			}
+			// Add to correlation queue BEFORE sending to responseChan so the
+			// response writer can match and send it.  Without this the response
+			// sits in pendingResponses forever and the client hangs.
+			correlationQueueMu.Lock()
+			correlationQueue = append(correlationQueue, correlationID)
+			correlationQueueMu.Unlock()
+
 			// Send error response through response queue to maintain sequential ordering
 			select {
 			case responseChan <- &kafkaResponse{
