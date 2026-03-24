@@ -65,7 +65,33 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	}
 
 	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0)
-	if code != fuse.OK {
+	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
+		// Race: another process created the file between our check and create.
+		// Reopen the winner's entry.
+		newEntry, code = wfs.maybeLoadEntry(entryFullPath)
+		if code != fuse.OK {
+			return code
+		}
+		if newEntry == nil || newEntry.Attributes == nil {
+			return fuse.EIO
+		}
+		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, len(newEntry.HardLinkId) > 0, newEntry.Attributes.Inode, true)
+		fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+		if status != fuse.OK {
+			return status
+		}
+		if in.Flags&syscall.O_TRUNC != 0 && in.Flags&fuse.O_ANYWRITE != 0 {
+			if code = wfs.truncateEntry(entryFullPath, newEntry); code != fuse.OK {
+				wfs.ReleaseHandle(fileHandle.fh)
+				return code
+			}
+			newEntry = fileHandle.GetEntry().GetEntry()
+		}
+		wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
+		out.Fh = uint64(fileHandle.fh)
+		out.OpenFlags = 0
+		return fuse.OK
+	} else if code != fuse.OK {
 		return code
 	} else {
 		inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, false, false, inode, true)
