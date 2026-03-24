@@ -108,9 +108,7 @@ func (s *Server) saveMetadataFile(ctx context.Context, bucketName, tablePath, me
 			if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
 				return fmt.Errorf("failed to write metadata file: %w", sentinel)
 			}
-		}
-		if resp.Error != "" {
-			return fmt.Errorf("failed to write metadata file: %s", resp.Error)
+			return fmt.Errorf("failed to write metadata file: code=%v %s", resp.ErrorCode, resp.Error)
 		}
 		return nil
 	})

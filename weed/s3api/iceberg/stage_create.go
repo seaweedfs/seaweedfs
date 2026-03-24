@@ -240,9 +240,7 @@ func (s *Server) writeStageCreateMarker(ctx context.Context, bucketName string, 
 			if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
 				return fmt.Errorf("create stage marker: %w", sentinel)
 			}
-		}
-		if resp.Error != "" {
-			return errors.New(resp.Error)
+			return fmt.Errorf("create stage marker: code=%v %s", resp.ErrorCode, resp.Error)
 		}
 		return nil
 	})
