@@ -145,6 +145,9 @@ const (
 	ErrInvalidStorageClass
 
 	ErrInvalidAttributeName
+
+	// Object key length errors
+	ErrKeyTooLongError
 )
 
 // Error message constants for checksum validation
@@ -606,6 +609,12 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidAttributeName: {
 		Code:           "InvalidArgument",
 		Description:    "Invalid attribute name specified",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrKeyTooLongError: {
+		Code:           "KeyTooLongError",
+		Description:    "Your key is too long.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
