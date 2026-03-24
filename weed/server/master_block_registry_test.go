@@ -1748,6 +1748,60 @@ func TestMasterRestart_ReplicaHeartbeat_AddedCorrectly(t *testing.T) {
 	}
 }
 
+func TestMasterRestart_SameEpoch_RoleTrusted(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// First heartbeat: vs1 claims primary, epoch 5, LSN 50.
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 50, VolumeSize: 1 << 30},
+	}, "")
+
+	// Second heartbeat: vs2 claims replica (Role=2), same epoch 5, HIGHER LSN.
+	// Even though LSN is higher, it reports Role=replica, so it should NOT become primary.
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 2, WalHeadLsn: 200, VolumeSize: 1 << 30},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs1:9333" {
+		t.Fatalf("expected vs1 (claims primary) to stay primary, got %q", entry.VolumeServer)
+	}
+	if len(entry.Replicas) != 1 || entry.Replicas[0].Server != "vs2:9333" {
+		t.Fatalf("expected vs2 as replica, got %+v", entry.Replicas)
+	}
+}
+
+func TestMasterRestart_DuplicateReplicaHeartbeat_NoDuplicate(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// Primary heartbeat.
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 1, WalHeadLsn: 100, VolumeSize: 1 << 30},
+	}, "")
+
+	// Replica heartbeat — first time.
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 2, WalHeadLsn: 90, VolumeSize: 1 << 30, HealthScore: 0.8},
+	}, "")
+
+	// Same replica heartbeat again — should update, not duplicate.
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/data/vol1.blk", Epoch: 5, Role: 2, WalHeadLsn: 95, VolumeSize: 1 << 30, HealthScore: 0.9},
+	}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if len(entry.Replicas) != 1 {
+		t.Fatalf("expected 1 replica (no duplicates), got %d", len(entry.Replicas))
+	}
+	// Should have the updated values from the second heartbeat.
+	if entry.Replicas[0].WALHeadLSN != 95 {
+		t.Fatalf("expected updated LSN 95, got %d", entry.Replicas[0].WALHeadLSN)
+	}
+	if entry.Replicas[0].HealthScore != 0.9 {
+		t.Fatalf("expected updated health 0.9, got %f", entry.Replicas[0].HealthScore)
+	}
+}
+
 // --- Copy semantics tests (pointer escape fix) ---
 
 func TestLookup_ReturnsCopy(t *testing.T) {

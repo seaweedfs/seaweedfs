@@ -575,19 +575,46 @@ func (r *BlockVolumeRegistry) reconcileOnRestart(name string, existing *BlockVol
 		// New server has a lower epoch — add as replica.
 		glog.V(0).Infof("block registry: reconcile %q: new server %s epoch %d < existing %s epoch %d, adding as replica",
 			name, newServer, newEpoch, existing.VolumeServer, oldEpoch)
-		r.addServerAsReplica(name, existing, newServer, info)
+		r.upsertServerAsReplica(name, existing, newServer, info)
 		return
 	}
 
-	// Same epoch — ambiguous. Use WALHeadLSN as heuristic tiebreaker.
-	if info.WalHeadLsn > existing.WALHeadLSN {
-		glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d — new server %s LSN %d > existing %s LSN %d, promoting new (heuristic)",
-			name, newEpoch, newServer, info.WalHeadLsn, existing.VolumeServer, existing.WALHeadLSN)
+	// Same epoch — trust reported roles first.
+	existingIsPrimary := existing.Role == blockvol.RoleToWire(blockvol.RolePrimary)
+	newIsPrimary := info.Role == blockvol.RoleToWire(blockvol.RolePrimary)
+
+	if existingIsPrimary && !newIsPrimary {
+		// Existing claims primary, new claims replica — trust roles.
+		glog.V(0).Infof("block registry: reconcile %q: same epoch %d, existing %s is primary, new %s is replica — keeping existing",
+			name, newEpoch, existing.VolumeServer, newServer)
+		r.upsertServerAsReplica(name, existing, newServer, info)
+		return
+	}
+	if !existingIsPrimary && newIsPrimary {
+		// New claims primary, existing is not — trust roles.
+		glog.V(0).Infof("block registry: reconcile %q: same epoch %d, new %s claims primary, existing %s does not — promoting new",
+			name, newEpoch, newServer, existing.VolumeServer)
 		r.demoteExistingToReplica(name, existing, newServer, info)
+		return
+	}
+
+	// Both claim primary or both claim replica — ambiguous. Use WALHeadLSN as heuristic.
+	if newIsPrimary {
+		// Both claim primary.
+		if info.WalHeadLsn > existing.WALHeadLSN {
+			glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d, both primary — new %s LSN %d > existing %s LSN %d, promoting new (heuristic)",
+				name, newEpoch, newServer, info.WalHeadLsn, existing.VolumeServer, existing.WALHeadLSN)
+			r.demoteExistingToReplica(name, existing, newServer, info)
+		} else {
+			glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d, both primary — existing %s LSN %d >= new %s LSN %d, keeping existing (heuristic)",
+				name, newEpoch, existing.VolumeServer, existing.WALHeadLSN, newServer, info.WalHeadLsn)
+			r.upsertServerAsReplica(name, existing, newServer, info)
+		}
 	} else {
-		glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d — existing %s LSN %d >= new server %s LSN %d, keeping existing (heuristic)",
-			name, newEpoch, existing.VolumeServer, existing.WALHeadLSN, newServer, info.WalHeadLsn)
-		r.addServerAsReplica(name, existing, newServer, info)
+		// Both claim replica — no primary known. Keep existing, log ambiguity.
+		glog.Warningf("block registry: reconcile %q: AMBIGUOUS same epoch %d, neither claims primary — keeping existing %s, adding new %s as replica",
+			name, newEpoch, existing.VolumeServer, newServer)
+		r.upsertServerAsReplica(name, existing, newServer, info)
 	}
 }
 
@@ -637,9 +664,26 @@ func (r *BlockVolumeRegistry) demoteExistingToReplica(name string, existing *Blo
 	}
 }
 
-// addServerAsReplica adds the new server as a replica for the existing entry.
+// upsertServerAsReplica adds or updates the server as a replica for the existing entry.
+// If the server already exists in Replicas[], its fields are updated instead of appending
+// a duplicate. This prevents duplicate replica entries during restart/replay windows.
 // Caller must hold r.mu.
-func (r *BlockVolumeRegistry) addServerAsReplica(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+	// Check for existing replica entry for this server.
+	for i := range existing.Replicas {
+		if existing.Replicas[i].Server == newServer {
+			// Update in place.
+			existing.Replicas[i].Path = info.Path
+			existing.Replicas[i].HealthScore = info.HealthScore
+			existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
+			existing.Replicas[i].LastHeartbeat = time.Now()
+			existing.Replicas[i].Role = info.Role
+			existing.Replicas[i].NvmeAddr = info.NvmeAddr
+			existing.Replicas[i].NQN = info.Nqn
+			return
+		}
+	}
+	// New replica — append.
 	ri := ReplicaInfo{
 		Server:        newServer,
 		Path:          info.Path,
