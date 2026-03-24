@@ -35,38 +35,38 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 		return true
 	}
 
-	mask &= 7
+	mask &= fuse.R_OK | fuse.W_OK | fuse.X_OK
 	if mask == 0 {
 		return true
 	}
 
-	if callerUid == fileUid && perm&(mask<<6) != 0 {
-		return true
-	}
-	if callerGid == fileGid && perm&(mask<<3) != 0 {
-		return true
-	}
-	if perm&mask != 0 {
-		return true
-	}
-	if perm&(mask<<3) == 0 {
-		return false
+	if callerUid == fileUid {
+		return (perm>>6)&mask == mask
 	}
 
-	u, err := user.LookupId(strconv.Itoa(int(callerUid)))
-	if err != nil {
-		return false
-	}
-	groupIDs, err := u.GroupIds()
-	if err != nil {
-		return false
-	}
+	isMember := callerGid == fileGid
+	if !isMember {
+		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+		if err != nil {
+			return (perm & mask) == mask
+		}
+		groupIDs, err := u.GroupIds()
+		if err != nil {
+			return (perm & mask) == mask
+		}
 
-	fileGidStr := strconv.Itoa(int(fileGid))
-	for _, gidStr := range groupIDs {
-		if gidStr == fileGidStr {
-			return true
+		fileGidStr := strconv.Itoa(int(fileGid))
+		for _, gidStr := range groupIDs {
+			if gidStr == fileGidStr {
+				isMember = true
+				break
+			}
 		}
 	}
-	return false
+
+	if isMember {
+		return (perm>>3)&mask == mask
+	}
+
+	return (perm & mask) == mask
 }

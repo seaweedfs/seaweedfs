@@ -201,10 +201,10 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			SkipCheckParentDirectory: true,
 		}
 
-		glog.V(1).Infof("mknod: %v", request)
+		glog.V(1).Infof("createFile: %v", request)
 		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
 		if err != nil {
-			glog.V(0).Infof("mknod %s: %v", entryFullPath, err)
+			glog.V(0).Infof("createFile %s: %v", entryFullPath, err)
 			return err
 		}
 
@@ -213,7 +213,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			event = metadataCreateEvent(string(dirFullPath), newEntry)
 		}
 		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("mknod %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			glog.Warningf("createFile %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
@@ -221,7 +221,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		return nil
 	})
 
-	glog.V(3).Infof("mknod %s: %v", entryFullPath, err)
+	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
 
 	if err != nil {
 		return 0, nil, grpcErrorToFuseStatus(err)

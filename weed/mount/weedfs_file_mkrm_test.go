@@ -193,4 +193,16 @@ func TestAccessChecksPermissions(t *testing.T) {
 	}); status != fuse.EACCES {
 		t.Fatalf("other-user Access status = %v, want EACCES", status)
 	}
+
+	if got := hasAccess(123, 999, 123, 456, 0o400, fuse.R_OK|fuse.W_OK); got {
+		t.Fatal("owner should not get write access from a read-only owner mode")
+	}
+
+	if got := hasAccess(999, 456, 123, 456, 0o040, fuse.R_OK|fuse.W_OK); got {
+		t.Fatal("group member should not get write access from a read-only group mode")
+	}
+
+	if got := hasAccess(999, 999, 123, 456, 0o004, fuse.R_OK|fuse.W_OK); got {
+		t.Fatal("other users should not get write access from a read-only other mode")
+	}
 }
