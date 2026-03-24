@@ -429,6 +429,10 @@ func applyRebuildEntry(vol *BlockVol, payload []byte) error {
 		return fmt.Errorf("decode: %w", err)
 	}
 
+	// ioMu.RLock: protect WAL/dirtyMap mutation against exclusive restore/import.
+	vol.ioMu.RLock()
+	defer vol.ioMu.RUnlock()
+
 	walOff, err := vol.wal.Append(&entry)
 	if errors.Is(err, ErrWALFull) {
 		// Trigger flusher and retry.

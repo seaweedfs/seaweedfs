@@ -70,6 +70,10 @@ func TestBlockVol(t *testing.T) {
 		{name: "close_during_sync_cache", run: testCloseDuringSyncCache},
 		// Review finding: Close timeout if op stuck.
 		{name: "close_timeout_if_op_stuck", run: testCloseTimeoutIfOpStuck},
+		// ER Fix 1: ioMu restore/import guard.
+		{name: "iomu_concurrent_writes_allowed", run: testIoMuConcurrentWritesAllowed},
+		{name: "iomu_restore_blocks_writes", run: testIoMuRestoreBlocksWrites},
+		{name: "iomu_close_with_iomu", run: testIoMuCloseCoordinates},
 		// Phase 4A CP1: Epoch tests.
 		{name: "epoch_persist_roundtrip", run: testEpochPersistRoundtrip},
 		{name: "epoch_in_wal_entry", run: testEpochInWALEntry},
@@ -4925,6 +4929,159 @@ func testStatusStaleNoLease(t *testing.T) {
 	}
 	if st.Epoch != 2 {
 		t.Errorf("Epoch: got %d, want 2", st.Epoch)
+	}
+}
+
+// --- ER Fix 1: ioMu tests ---
+
+// testIoMuConcurrentWritesAllowed verifies that multiple concurrent WriteLBA
+// calls succeed (ioMu.RLock is shared).
+func testIoMuConcurrentWritesAllowed(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(10 * time.Second)
+
+	const goroutines = 8
+	const writes = 50
+	var wg sync.WaitGroup
+	var errCount atomic.Int64
+
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			for w := 0; w < writes; w++ {
+				lba := uint64((id*writes + w) % 256) // within 1MB volume
+				data := makeBlock(byte(id))
+				if err := v.WriteLBA(lba, data); err != nil {
+					errCount.Add(1)
+				}
+			}
+		}(g)
+	}
+	wg.Wait()
+	if errCount.Load() > 0 {
+		t.Fatalf("concurrent writes had %d errors", errCount.Load())
+	}
+}
+
+// testIoMuRestoreBlocksWrites runs a real RestoreSnapshot under write contention.
+// Concurrent writers run before and during restore. After restore completes,
+// verify the volume reflects snapshot state (not corrupted by concurrent writes).
+func testIoMuRestoreBlocksWrites(t *testing.T) {
+	v := createTestVol(t)
+	defer v.Close()
+
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(30 * time.Second)
+
+	// Write known data to LBA 0.
+	if err := v.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Fatalf("WriteLBA(A): %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	// Create snapshot capturing 'A' at LBA 0.
+	snapID := uint32(1)
+	if err := v.CreateSnapshot(snapID); err != nil {
+		t.Fatalf("CreateSnapshot: %v", err)
+	}
+
+	// Overwrite LBA 0 with 'B' after snapshot.
+	if err := v.WriteLBA(0, makeBlock('B')); err != nil {
+		t.Fatalf("WriteLBA(B): %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	// Start concurrent writers on LBAs 1-10 while restore runs.
+	var writerWg sync.WaitGroup
+	stopWriters := make(chan struct{})
+	var writeCount atomic.Int64
+	for g := 0; g < 4; g++ {
+		writerWg.Add(1)
+		go func(id int) {
+			defer writerWg.Done()
+			lba := uint64(1 + id)
+			for {
+				select {
+				case <-stopWriters:
+					return
+				default:
+				}
+				if err := v.WriteLBA(lba, makeBlock(byte('W'+id))); err != nil {
+					return // volume closed or restore draining — expected
+				}
+				writeCount.Add(1)
+			}
+		}(g)
+	}
+
+	// Let writers run for a bit, then restore concurrently.
+	time.Sleep(5 * time.Millisecond)
+
+	// Restore in the main goroutine — this acquires ioMu.Lock(),
+	// draining all in-flight writers before modifying extent/WAL/dirty.
+	if err := v.RestoreSnapshot(snapID); err != nil {
+		close(stopWriters)
+		writerWg.Wait()
+		t.Fatalf("RestoreSnapshot: %v", err)
+	}
+
+	close(stopWriters)
+	writerWg.Wait()
+
+	// Verify: LBA 0 must be 'A' (snapshot data), not 'B' (post-snapshot write).
+	got, err := v.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after restore: %v", err)
+	}
+	if got[0] != 'A' {
+		t.Fatalf("LBA 0: expected 'A' after restore, got %c — restore/write race", got[0])
+	}
+
+	// Sanity: writers did run (not zero iterations).
+	if writeCount.Load() == 0 {
+		t.Log("warning: concurrent writers did not execute any iterations")
+	}
+}
+
+// testIoMuCloseCoordinates verifies that Close still works correctly
+// with the ioMu in the struct (no deadlock).
+func testIoMuCloseCoordinates(t *testing.T) {
+	v := createTestVol(t)
+
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(10 * time.Second)
+
+	// Write some data.
+	if err := v.WriteLBA(0, makeBlock('X')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	// Close should complete without deadlock.
+	done := make(chan error, 1)
+	go func() {
+		done <- v.Close()
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close deadlocked")
 	}
 }
 

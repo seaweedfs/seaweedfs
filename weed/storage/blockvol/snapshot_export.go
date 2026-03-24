@@ -221,6 +221,10 @@ func (v *BlockVol) ImportSnapshot(ctx context.Context, manifest *SnapshotArtifac
 	}
 	defer v.endOp()
 
+	// Exclusive lock: drains all in-flight I/O before modifying extent/WAL/dirtyMap.
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
+
 	if err := ValidateManifest(manifest); err != nil {
 		return err
 	}

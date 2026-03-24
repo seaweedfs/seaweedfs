@@ -4,6 +4,7 @@
 package blockvol
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -34,6 +35,7 @@ var ErrVolumeClosed = errors.New("blockvol: volume closed")
 // BlockVol is the core block volume engine.
 type BlockVol struct {
 	mu             sync.RWMutex
+	ioMu           sync.RWMutex // guards local data mutation (WAL/dirtyMap/extent); Lock for restore/import/expand
 	fd             *os.File
 	path           string
 	super          Superblock
@@ -150,7 +152,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       fd.Sync,
+		SyncFunc:       v.syncWithWALProgress,
 		MaxDelay:       cfg.GroupCommitMaxDelay,
 		MaxBatch:       cfg.GroupCommitMaxBatch,
 		LowWatermark:   cfg.GroupCommitLowWatermark,
@@ -235,11 +237,15 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	dirtyMap := NewDirtyMap(cfg.DirtyMapShards)
 
 	// Run WAL recovery: replay entries from tail to head.
+	log.Printf("blockvol: open %s: WALHead=%d WALTail=%d CheckpointLSN=%d WALOffset=%d WALSize=%d VolumeSize=%d Epoch=%d",
+		path, sb.WALHead, sb.WALTail, sb.WALCheckpointLSN, sb.WALOffset, sb.WALSize, sb.VolumeSize, sb.Epoch)
 	result, err := RecoverWAL(fd, &sb, dirtyMap)
 	if err != nil {
 		fd.Close()
 		return nil, fmt.Errorf("blockvol: recovery: %w", err)
 	}
+	log.Printf("blockvol: recovery %s: replayed=%d highestLSN=%d torn=%d dirtyEntries=%d",
+		path, result.EntriesReplayed, result.HighestLSN, result.TornEntries, dirtyMap.Len())
 
 	nextLSN := sb.WALCheckpointLSN + 1
 	if result.HighestLSN >= nextLSN {
@@ -262,7 +268,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	v.epoch.Store(sb.Epoch)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       fd.Sync,
+		SyncFunc:       v.syncWithWALProgress,
 		MaxDelay:       cfg.GroupCommitMaxDelay,
 		MaxBatch:       cfg.GroupCommitMaxBatch,
 		LowWatermark:   cfg.GroupCommitLowWatermark,
@@ -323,6 +329,34 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 
 // beginOp increments the in-flight ops counter. Returns ErrVolumeClosed if
 // the volume is already closed, so callers must not proceed.
+// syncWithWALProgress persists WAL head pointer in the superblock as part of
+// every GroupCommit fsync. This ensures crash recovery can always find WAL
+// entries that were durable at the time of the sync.
+//
+// Without this, a crash before the first flusher checkpoint leaves
+// WALHead=0 in the superblock, making recovery skip all WAL entries
+// (BUG-RESTART-ZEROS).
+//
+// Sequence: update superblock WALHead → pwrite superblock → fd.Sync.
+// The fd.Sync flushes both WAL data and superblock in one syscall.
+func (v *BlockVol) syncWithWALProgress() error {
+	// Update superblock WALHead from the live WAL writer.
+	// WALTail and CheckpointLSN are updated by the flusher, not here.
+	v.super.WALHead = v.wal.LogicalHead()
+
+	// Rewrite the full superblock at offset 0.
+	var buf bytes.Buffer
+	if _, err := v.super.WriteTo(&buf); err != nil {
+		return fmt.Errorf("blockvol: serialize superblock for WAL progress: %w", err)
+	}
+	if _, err := v.fd.WriteAt(buf.Bytes(), 0); err != nil {
+		return fmt.Errorf("blockvol: persist WAL progress: %w", err)
+	}
+
+	// Single fsync covers both WAL data and superblock.
+	return v.fd.Sync()
+}
+
 func (v *BlockVol) beginOp() error {
 	v.opsOutstanding.Add(1)
 	if v.closed.Load() {
@@ -391,6 +425,8 @@ func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 		return err
 	}
 	defer v.endOp()
+	v.ioMu.RLock()
+	defer v.ioMu.RUnlock()
 	if err := v.writeGate(); err != nil {
 		return err
 	}
@@ -443,6 +479,8 @@ func (v *BlockVol) ReadLBA(lba uint64, length uint32) ([]byte, error) {
 		return nil, err
 	}
 	defer v.endOp()
+	v.ioMu.RLock()
+	defer v.ioMu.RUnlock()
 	if err := ValidateWrite(lba, length, v.super.VolumeSize, v.super.BlockSize); err != nil {
 		return nil, err
 	}
@@ -590,6 +628,8 @@ func (v *BlockVol) Trim(lba uint64, length uint32) error {
 		return err
 	}
 	defer v.endOp()
+	v.ioMu.RLock()
+	defer v.ioMu.RUnlock()
 	if err := v.writeGate(); err != nil {
 		return err
 	}
@@ -689,6 +729,8 @@ func (v *BlockVol) SyncCache() error {
 		return err
 	}
 	defer v.endOp()
+	v.ioMu.RLock()
+	defer v.ioMu.RUnlock()
 	return v.groupCommit.Submit()
 }
 
@@ -718,7 +760,7 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 	// Replace the group committer's sync function with a distributed version.
 	v.groupCommit.Stop()
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:      MakeDistributedSync(v.fd.Sync, v.shipperGroup, v),
+		SyncFunc:      MakeDistributedSync(v.syncWithWALProgress, v.shipperGroup, v),
 		MaxDelay:      v.config.GroupCommitMaxDelay,
 		MaxBatch:      v.config.GroupCommitMaxBatch,
 		LowWatermark:  v.config.GroupCommitLowWatermark,
@@ -1072,6 +1114,10 @@ func (v *BlockVol) RestoreSnapshot(id uint32) error {
 	}
 	defer v.endOp()
 
+	// Exclusive lock: drains all in-flight I/O before modifying extent/WAL/dirtyMap.
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
+
 	v.snapMu.RLock()
 	snap, ok := v.snapshots[id]
 	v.snapMu.RUnlock()
@@ -1203,6 +1249,9 @@ func (v *BlockVol) Expand(newSize uint64) error {
 		return err
 	}
 	defer v.endOp()
+	// Exclusive ioMu: drain I/O before file growth + VolumeSize mutation.
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
 	if err := v.writeGate(); err != nil {
 		return err
 	}
@@ -1230,6 +1279,10 @@ func (v *BlockVol) PrepareExpand(newSize, expandEpoch uint64) error {
 		return err
 	}
 	defer v.endOp()
+
+	// Exclusive ioMu: drain I/O before file growth.
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1262,6 +1315,8 @@ func (v *BlockVol) CommitExpand(expandEpoch uint64) error {
 		return err
 	}
 	defer v.endOp()
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -1287,6 +1342,9 @@ func (v *BlockVol) CancelExpand(expandEpoch uint64) error {
 		return err
 	}
 	defer v.endOp()
+
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
 
 	v.mu.Lock()
 	defer v.mu.Unlock()

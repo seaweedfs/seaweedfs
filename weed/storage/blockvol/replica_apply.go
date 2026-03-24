@@ -194,6 +194,10 @@ func (r *ReplicaReceiver) applyEntry(payload []byte) error {
 		return fmt.Errorf("decode WAL entry: %w", err)
 	}
 
+	// ioMu.RLock: protect WAL/dirtyMap mutation against exclusive restore/import.
+	r.vol.ioMu.RLock()
+	defer r.vol.ioMu.RUnlock()
+
 	// Validate epoch: replicas must NOT accept epoch bumps from WAL stream.
 	// Only the master can change epochs (via SetEpoch in CP3).
 	localEpoch := r.vol.epoch.Load()
