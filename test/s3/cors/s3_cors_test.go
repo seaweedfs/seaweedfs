@@ -590,17 +590,14 @@ func TestCORSCaching(t *testing.T) {
 		Bucket:            aws.String(bucketName),
 		CORSConfiguration: corsConfig1,
 	})
-	assert.NoError(t, err, "Should be able to put initial CORS configuration")
-
-	// Wait for metadata subscription to update cache
-	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, err, "Should be able to put initial CORS configuration")
 
 	// Get the configuration
 	getResp1, err := client.GetBucketCors(context.TODO(), &s3.GetBucketCorsInput{
 		Bucket: aws.String(bucketName),
 	})
-	assert.NoError(t, err, "Should be able to get initial CORS configuration")
-	assert.Len(t, getResp1.CORSRules, 1, "Should have one CORS rule")
+	require.NoError(t, err, "Should be able to get initial CORS configuration")
+	require.Len(t, getResp1.CORSRules, 1, "Should have one CORS rule")
 
 	// Update the configuration
 	corsConfig2 := &types.CORSConfiguration{
@@ -618,17 +615,14 @@ func TestCORSCaching(t *testing.T) {
 		Bucket:            aws.String(bucketName),
 		CORSConfiguration: corsConfig2,
 	})
-	assert.NoError(t, err, "Should be able to update CORS configuration")
-
-	// Wait for metadata subscription to update cache
-	time.Sleep(50 * time.Millisecond)
+	require.NoError(t, err, "Should be able to update CORS configuration")
 
 	// Get the updated configuration (should reflect the changes)
 	getResp2, err := client.GetBucketCors(context.TODO(), &s3.GetBucketCorsInput{
 		Bucket: aws.String(bucketName),
 	})
-	assert.NoError(t, err, "Should be able to get updated CORS configuration")
-	assert.Len(t, getResp2.CORSRules, 1, "Should have one CORS rule")
+	require.NoError(t, err, "Should be able to get updated CORS configuration")
+	require.Len(t, getResp2.CORSRules, 1, "Should have one CORS rule")
 
 	rule := getResp2.CORSRules[0]
 	assert.Equal(t, []string{"Content-Type"}, rule.AllowedHeaders, "Should have updated headers")
