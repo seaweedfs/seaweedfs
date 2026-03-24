@@ -137,17 +137,19 @@ func TestQA_RF3_PrimaryDies_BestReplicaPromoted(t *testing.T) {
 
 	entry, _ := ms.blockRegistry.Lookup("pvc-rf3-promo")
 	primary := resp.VolumeServer
+	expectedPromoted := entry.Replicas[1].Server // higher health score
 
 	// Set different health scores on replicas.
-	for i := range entry.Replicas {
-		if i == 0 {
-			entry.Replicas[i].HealthScore = 0.7
-		} else {
-			entry.Replicas[i].HealthScore = 1.0
+	ms.blockRegistry.UpdateEntry("pvc-rf3-promo", func(e *BlockVolumeEntry) {
+		for i := range e.Replicas {
+			if i == 0 {
+				e.Replicas[i].HealthScore = 0.7
+			} else {
+				e.Replicas[i].HealthScore = 1.0
+			}
 		}
-	}
-	expectedPromoted := entry.Replicas[1].Server // higher health score
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expired
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expired
+	})
 
 	// Kill primary.
 	ms.failoverBlockVolumes(primary)
@@ -275,14 +277,16 @@ func TestQA_RF3_HealthScore_FailoverPreference(t *testing.T) {
 
 	entry, _ := ms.blockRegistry.Lookup("pvc-rf3-health")
 	primary := entry.VolumeServer
+	expectedWinner := entry.Replicas[1].Server
 
 	// Set health scores: replica[0] = 0.3 (low), replica[1] = 0.9 (high).
-	entry.Replicas[0].HealthScore = 0.3
-	entry.Replicas[0].WALHeadLSN = 100
-	entry.Replicas[1].HealthScore = 0.9
-	entry.Replicas[1].WALHeadLSN = 100
-	expectedWinner := entry.Replicas[1].Server
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expired
+	ms.blockRegistry.UpdateEntry("pvc-rf3-health", func(e *BlockVolumeEntry) {
+		e.Replicas[0].HealthScore = 0.3
+		e.Replicas[0].WALHeadLSN = 100
+		e.Replicas[1].HealthScore = 0.9
+		e.Replicas[1].WALHeadLSN = 100
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expired
+	})
 
 	ms.failoverBlockVolumes(primary)
 
@@ -327,7 +331,9 @@ func TestQA_RF3_BackwardCompat_RF2_Unchanged(t *testing.T) {
 
 	// Failover should work identically.
 	primary := resp.VolumeServer
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-rf2-compat", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(primary)
 
 	entry, _ = ms.blockRegistry.Lookup("pvc-rf2-compat")
@@ -365,7 +371,9 @@ func TestQA_RF3_FullLifecycle(t *testing.T) {
 	vs1 := resp.VolumeServer
 	vs2 := entry.Replicas[0].Server
 	vs3 := entry.Replicas[1].Server
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-rf3-lifecycle", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Step 1: Kill vs1 (primary). One of vs2/vs3 promoted.
 	ms.failoverBlockVolumes(vs1)
@@ -387,15 +395,17 @@ func TestQA_RF3_FullLifecycle(t *testing.T) {
 	}
 
 	// Step 3: Kill step1Primary. The surviving replica (step1Replica or vs1) should be promoted.
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
-	// Set health scores: vs1 low (just rebuilt), step1Replica high.
-	for i := range entry.Replicas {
-		if entry.Replicas[i].Server == vs1 {
-			entry.Replicas[i].HealthScore = 0.5
-		} else {
-			entry.Replicas[i].HealthScore = 1.0
+	ms.blockRegistry.UpdateEntry("pvc-rf3-lifecycle", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+		// Set health scores: vs1 low (just rebuilt), step1Replica high.
+		for i := range e.Replicas {
+			if e.Replicas[i].Server == vs1 {
+				e.Replicas[i].HealthScore = 0.5
+			} else {
+				e.Replicas[i].HealthScore = 1.0
+			}
 		}
-	}
+	})
 	ms.failoverBlockVolumes(step1Primary)
 
 	entry, _ = ms.blockRegistry.Lookup("pvc-rf3-lifecycle")

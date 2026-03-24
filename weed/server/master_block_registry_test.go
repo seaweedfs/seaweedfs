@@ -1617,3 +1617,102 @@ func TestRegistry_ManualPromote_Force_StillRejectsDeadServer(t *testing.T) {
 		t.Fatalf("expected server_dead rejection, got %+v", pf.Rejections)
 	}
 }
+
+// --- Copy semantics tests (pointer escape fix) ---
+
+func TestLookup_ReturnsCopy(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "vs1:9333",
+		Path:         "/data/vol1.blk",
+		Epoch:        1,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:       StatusActive,
+	})
+
+	// Get a copy via Lookup.
+	entry, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 not found")
+	}
+
+	// Mutate the copy.
+	entry.Epoch = 999
+	entry.VolumeServer = "mutated:9333"
+
+	// Registry must be unaffected.
+	original, _ := r.Lookup("vol1")
+	if original.Epoch != 1 {
+		t.Fatalf("Lookup copy mutation leaked: Epoch=%d, want 1", original.Epoch)
+	}
+	if original.VolumeServer != "vs1:9333" {
+		t.Fatalf("Lookup copy mutation leaked: VolumeServer=%q", original.VolumeServer)
+	}
+}
+
+func TestLookup_ReplicaSliceCopy(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "vs1:9333",
+		Path:         "/data/vol1.blk",
+		Status:       StatusActive,
+		Replicas:     []ReplicaInfo{{Server: "vs2:9333", HealthScore: 1.0}},
+	})
+
+	entry, _ := r.Lookup("vol1")
+	// Mutate replica slice on the copy.
+	entry.Replicas[0].HealthScore = 0.0
+	entry.Replicas = append(entry.Replicas, ReplicaInfo{Server: "vs3:9333"})
+
+	// Registry must be unaffected.
+	original, _ := r.Lookup("vol1")
+	if len(original.Replicas) != 1 {
+		t.Fatalf("Replica slice mutation leaked: len=%d, want 1", len(original.Replicas))
+	}
+	if original.Replicas[0].HealthScore != 1.0 {
+		t.Fatalf("Replica HealthScore mutation leaked: %f", original.Replicas[0].HealthScore)
+	}
+}
+
+func TestListAll_ReturnsCopies(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1:9333", Path: "/data/vol1.blk", Status: StatusActive,
+	})
+
+	entries := r.ListAll()
+	entries[0].Epoch = 999
+
+	original, _ := r.Lookup("vol1")
+	if original.Epoch != 0 {
+		t.Fatalf("ListAll copy mutation leaked: Epoch=%d", original.Epoch)
+	}
+}
+
+func TestUpdateEntry_MutatesRegistry(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{
+		Name: "vol1", VolumeServer: "vs1:9333", Path: "/data/vol1.blk", Status: StatusActive,
+	})
+
+	r.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.Preset = "database"
+	})
+
+	entry, _ := r.Lookup("vol1")
+	if entry.Preset != "database" {
+		t.Fatalf("UpdateEntry did not mutate: Preset=%q", entry.Preset)
+	}
+}
+
+func TestUpdateEntry_NotFound(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	err := r.UpdateEntry("nonexistent", func(e *BlockVolumeEntry) {
+		e.Epoch = 99
+	})
+	if err == nil {
+		t.Fatal("expected error for nonexistent volume")
+	}
+}

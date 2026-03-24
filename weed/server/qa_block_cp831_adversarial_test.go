@@ -475,19 +475,21 @@ func TestQA_CP831_FailoverPreservesDurabilityMode(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	entry, _ := ms.blockRegistry.Lookup("fo-mode")
-	primary := entry.VolumeServer
+	readEntry, _ := ms.blockRegistry.Lookup("fo-mode")
+	primary := readEntry.VolumeServer
 
 	// Expire the lease so failover will actually promote.
-	entry.LeaseTTL = 5 * time.Second
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("fo-mode", func(entry *BlockVolumeEntry) {
+		entry.LeaseTTL = 5 * time.Second
+		entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
 
-	// Ensure replica has fresh heartbeat for promotion eligibility.
-	if len(entry.Replicas) > 0 {
-		entry.Replicas[0].LastHeartbeat = time.Now()
-		entry.Replicas[0].Role = blockvol.RoleToWire(blockvol.RoleReplica)
-		entry.Replicas[0].WALHeadLSN = entry.WALHeadLSN
-	}
+		// Ensure replica has fresh heartbeat for promotion eligibility.
+		if len(entry.Replicas) > 0 {
+			entry.Replicas[0].LastHeartbeat = time.Now()
+			entry.Replicas[0].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+			entry.Replicas[0].WALHeadLSN = entry.WALHeadLSN
+		}
+	})
 
 	ms.failoverBlockVolumes(primary)
 

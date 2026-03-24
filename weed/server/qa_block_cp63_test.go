@@ -406,18 +406,19 @@ func TestQA_Failover_PromoteIdempotent_NoReplicaAfterFirstSwap(t *testing.T) {
 	ms.recoverBlockVolumes("vs1")
 
 	// Simulate rebuild completion: mark vs1 as a healthy replica.
-	e, _ := ms.blockRegistry.Lookup("vol1")
-	for i := range e.Replicas {
-		if e.Replicas[i].Server == "vs1" {
-			e.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
-			e.Replicas[i].LastHeartbeat = time.Now()
-			e.Replicas[i].HealthScore = 1.0
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		for i := range e.Replicas {
+			if e.Replicas[i].Server == "vs1" {
+				e.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+				e.Replicas[i].LastHeartbeat = time.Now()
+				e.Replicas[i].HealthScore = 1.0
+			}
 		}
-	}
-	e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expire the new lease
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute) // expire the new lease
+	})
 	ms.failoverBlockVolumes("vs2")
 
-	e, _ = ms.blockRegistry.Lookup("vol1")
+	e, _ := ms.blockRegistry.Lookup("vol1")
 	// After double failover: should swap back to vs1 as primary.
 	if e.VolumeServer != "vs1" {
 		t.Fatalf("double failover: primary=%s, want vs1", e.VolumeServer)
@@ -662,14 +663,15 @@ func TestQA_Rebuild_FullCycle_CreateFailoverRecoverRebuild(t *testing.T) {
 	}
 
 	// Expire lease.
-	entry, _ := ms.blockRegistry.Lookup("vol1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("vol1", func(entry *BlockVolumeEntry) {
+		entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Primary disconnects.
 	ms.failoverBlockVolumes(primary)
 
 	// Verify promotion.
-	entry, _ = ms.blockRegistry.Lookup("vol1")
+	entry, _ := ms.blockRegistry.Lookup("vol1")
 	if entry.VolumeServer != replica {
 		t.Fatalf("expected promotion to %s, got %s", replica, entry.VolumeServer)
 	}

@@ -228,9 +228,9 @@ func TestQA_CP11B1_CreateWithPreset_StoresPreset(t *testing.T) {
 	}
 
 	// Simulate what the HTTP handler does after create.
-	if entry, ok := ms.blockRegistry.Lookup("preset-vol"); ok {
-		entry.Preset = "general"
-	}
+	ms.blockRegistry.UpdateEntry("preset-vol", func(e *BlockVolumeEntry) {
+		e.Preset = "general"
+	})
 
 	entry, ok := ms.blockRegistry.Lookup("preset-vol")
 	if !ok {
@@ -241,7 +241,7 @@ func TestQA_CP11B1_CreateWithPreset_StoresPreset(t *testing.T) {
 	}
 
 	// Verify entryToVolumeInfo propagates preset.
-	info := entryToVolumeInfo(entry, true)
+	info := entryToVolumeInfo(&entry, true)
 	if info.Preset != "general" {
 		t.Errorf("VolumeInfo.Preset = %q, want general", info.Preset)
 	}

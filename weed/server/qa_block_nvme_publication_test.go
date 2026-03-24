@@ -572,14 +572,15 @@ func TestIntegration_NVMe_FailoverUpdatesNvmeAddr(t *testing.T) {
 	originalNvmeAddr := createResp.NvmeAddr
 
 	// Expire lease for immediate failover.
-	entry, _ := ms.blockRegistry.Lookup("pvc-failover-nvme")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-failover-nvme", func(entry *BlockVolumeEntry) {
+		entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Primary dies → replica promoted.
 	ms.failoverBlockVolumes(primaryVS)
 
 	// Verify new primary is different.
-	entry, _ = ms.blockRegistry.Lookup("pvc-failover-nvme")
+	entry, _ := ms.blockRegistry.Lookup("pvc-failover-nvme")
 	if entry.VolumeServer == primaryVS {
 		t.Fatal("failover didn't promote replica")
 	}
@@ -874,7 +875,9 @@ func TestIntegration_NVMe_FullLifecycle_K8s(t *testing.T) {
 	})
 
 	// ── Step 5: Primary VS dies ──
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-k8s-data", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(primaryVS)
 
 	entry, _ = ms.blockRegistry.Lookup("pvc-k8s-data")

@@ -76,8 +76,9 @@ func TestQA_T1_WALLag_ExactBoundary(t *testing.T) {
 	}
 
 	// Now set replica at LSN 149 → lag = 51 > tolerance → ineligible.
-	e, _ := r.Lookup("vol1")
-	e.Replicas[0].WALHeadLSN = 149
+	r.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.Replicas[0].WALHeadLSN = 149
+	})
 
 	pf, _ = r.EvaluatePromotion("vol1")
 	if pf.Promotable {
@@ -714,9 +715,10 @@ func TestQA_T2_RF3_OrphanedPrimary_BestReplicaPromoted(t *testing.T) {
 	registerVolumeRF3(t, ms, "vol1", "vs1", "vs2", "vs3", 1, 5*time.Second)
 
 	// Give vs3 higher health.
-	entry, _ := ms.blockRegistry.Lookup("vol1")
-	entry.Replicas[0].HealthScore = 0.7 // vs2
-	entry.Replicas[1].HealthScore = 1.0 // vs3
+	ms.blockRegistry.UpdateEntry("vol1", func(entry *BlockVolumeEntry) {
+		entry.Replicas[0].HealthScore = 0.7 // vs2
+		entry.Replicas[1].HealthScore = 1.0 // vs3
+	})
 
 	// Kill primary without calling failoverBlockVolumes (simulates missed failover).
 	ms.blockRegistry.UnmarkBlockCapable("vs1")
@@ -724,7 +726,7 @@ func TestQA_T2_RF3_OrphanedPrimary_BestReplicaPromoted(t *testing.T) {
 	// vs2 reconnects → orphan detected → best replica (vs3) promoted.
 	ms.reevaluateOrphanedPrimaries("vs2")
 
-	entry, _ = ms.blockRegistry.Lookup("vol1")
+	entry, _ := ms.blockRegistry.Lookup("vol1")
 	if entry.VolumeServer != "vs3" {
 		t.Fatalf("expected vs3 promoted (highest health), got %q", entry.VolumeServer)
 	}
@@ -898,12 +900,13 @@ func TestQA_T3_OrphanDeferredTimer_EpochChanged_NoPromotion(t *testing.T) {
 	ms.reevaluateOrphanedPrimaries("vs2")
 
 	// Before timer fires, bump epoch (simulates admin intervention).
-	e, _ := ms.blockRegistry.Lookup("vol1")
-	e.Epoch = 42
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.Epoch = 42
+	})
 
 	time.Sleep(350 * time.Millisecond)
 
-	e, _ = ms.blockRegistry.Lookup("vol1")
+	e, _ := ms.blockRegistry.Lookup("vol1")
 	if e.Epoch != 42 {
 		t.Fatalf("epoch should remain 42 (timer rejected), got %d", e.Epoch)
 	}
@@ -928,7 +931,9 @@ func TestQA_T4_RebuildAddr_UpdatedByHeartbeat(t *testing.T) {
 	}
 
 	// New primary (vs2) heartbeats with RebuildListenAddr.
-	entry.RebuildListenAddr = "vs2:15000"
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.RebuildListenAddr = "vs2:15000"
+	})
 
 	// vs1 reconnects → rebuild should use the updated addr.
 	ms.recoverBlockVolumes("vs1")

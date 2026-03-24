@@ -411,11 +411,13 @@ func TestQA_CP82_MasterRestart_ReconstructReplicas_ThenFailover(t *testing.T) {
 	}
 
 	// Phase 3: Set lease expired and trigger failover.
-	entry.LeaseTTL = 5 * time.Second
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
-	// Ensure replica is eligible for promotion.
-	entry.Replicas[0].LastHeartbeat = time.Now()
-	entry.Replicas[0].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+	ms.blockRegistry.UpdateEntry("vol-restart", func(e *BlockVolumeEntry) {
+		e.LeaseTTL = 5 * time.Second
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+		// Ensure replica is eligible for promotion.
+		e.Replicas[0].LastHeartbeat = time.Now()
+		e.Replicas[0].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+	})
 
 	ms.failoverBlockVolumes("vs1:9333")
 

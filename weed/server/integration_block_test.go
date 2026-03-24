@@ -84,14 +84,15 @@ func TestIntegration_FailoverCSIPublish(t *testing.T) {
 	}
 
 	// Step 3: Expire lease so failover is immediate.
-	entry, _ := ms.blockRegistry.Lookup("pvc-data-1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-data-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Step 4: Primary VS dies — triggers failover.
 	ms.failoverBlockVolumes(primaryVS)
 
 	// Step 5: Verify registry swap.
-	entry, _ = ms.blockRegistry.Lookup("pvc-data-1")
+	entry, _ := ms.blockRegistry.Lookup("pvc-data-1")
 	if entry.VolumeServer != replicaVS {
 		t.Fatalf("after failover: primary should be %q, got %q", replicaVS, entry.VolumeServer)
 	}
@@ -148,8 +149,9 @@ func TestIntegration_RebuildOnRecovery(t *testing.T) {
 	replicaVS := createResp.ReplicaServer
 
 	// Step 2: Expire lease for immediate failover.
-	entry, _ := ms.blockRegistry.Lookup("pvc-db-1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-db-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Step 3: Primary dies → replica promoted.
 	ms.failoverBlockVolumes(primaryVS)
@@ -203,7 +205,7 @@ func TestIntegration_RebuildOnRecovery(t *testing.T) {
 	}
 
 	// Step 8: Registry shows old primary as new replica.
-	entry, _ = ms.blockRegistry.Lookup("pvc-db-1")
+	entry, _ := ms.blockRegistry.Lookup("pvc-db-1")
 	if entry.ReplicaServer != primaryVS {
 		t.Fatalf("after recovery: replica should be %q (old primary), got %q", primaryVS, entry.ReplicaServer)
 	}
@@ -343,9 +345,10 @@ func TestIntegration_LeaseAwarePromotion(t *testing.T) {
 	primaryVS := resp.VolumeServer
 
 	// Set a short but non-zero lease TTL (lease just granted → not yet expired).
-	entry, _ := ms.blockRegistry.Lookup("pvc-lease-1")
-	entry.LeaseTTL = 300 * time.Millisecond
-	entry.LastLeaseGrant = time.Now()
+	ms.blockRegistry.UpdateEntry("pvc-lease-1", func(e *BlockVolumeEntry) {
+		e.LeaseTTL = 300 * time.Millisecond
+		e.LastLeaseGrant = time.Now()
+	})
 
 	// Primary dies.
 	ms.failoverBlockVolumes(primaryVS)
@@ -418,8 +421,9 @@ func TestIntegration_ReplicaFailureSingleCopy(t *testing.T) {
 	}
 
 	// No failover possible without replica.
-	entry, _ := ms.blockRegistry.Lookup("pvc-single-1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-single-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(primaryVS)
 
 	e, _ := ms.blockRegistry.Lookup("pvc-single-1")
@@ -449,9 +453,10 @@ func TestIntegration_TransientDisconnectNoSplitBrain(t *testing.T) {
 	replicaVS := resp.ReplicaServer
 
 	// Set lease with long TTL (not expired).
-	entry, _ := ms.blockRegistry.Lookup("pvc-transient-1")
-	entry.LeaseTTL = 1 * time.Second
-	entry.LastLeaseGrant = time.Now()
+	ms.blockRegistry.UpdateEntry("pvc-transient-1", func(e *BlockVolumeEntry) {
+		e.LeaseTTL = 1 * time.Second
+		e.LastLeaseGrant = time.Now()
+	})
 
 	// Primary disconnects → deferred promotion timer set.
 	ms.failoverBlockVolumes(primaryVS)
@@ -537,7 +542,9 @@ func TestIntegration_FullLifecycle(t *testing.T) {
 	}
 
 	// --- Phase 4: Expire lease + kill primary ---
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-lifecycle-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(primaryVS)
 
 	// --- Phase 5: Verify failover ---
@@ -629,8 +636,9 @@ func TestIntegration_DoubleFailover(t *testing.T) {
 	vs2 := resp.ReplicaServer
 
 	// First failover: vs1 dies → vs2 promoted.
-	entry, _ := ms.blockRegistry.Lookup("pvc-double-1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-double-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(vs1)
 
 	e1, _ := ms.blockRegistry.Lookup("pvc-double-1")
@@ -648,19 +656,21 @@ func TestIntegration_DoubleFailover(t *testing.T) {
 	// Simulate heartbeat from vs1 that restores iSCSI addr, health score,
 	// role, and heartbeat timestamp (in production this happens when the
 	// VS re-registers after reconnect and completes rebuild).
-	e1, _ = ms.blockRegistry.Lookup("pvc-double-1")
-	for i := range e1.Replicas {
-		if e1.Replicas[i].Server == vs1 {
-			e1.Replicas[i].ISCSIAddr = vs1 + ":3260"
-			e1.Replicas[i].HealthScore = 1.0
-			e1.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
-			e1.Replicas[i].LastHeartbeat = time.Now()
+	ms.blockRegistry.UpdateEntry("pvc-double-1", func(e *BlockVolumeEntry) {
+		for i := range e.Replicas {
+			if e.Replicas[i].Server == vs1 {
+				e.Replicas[i].ISCSIAddr = vs1 + ":3260"
+				e.Replicas[i].HealthScore = 1.0
+				e.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+				e.Replicas[i].LastHeartbeat = time.Now()
+			}
 		}
-	}
+	})
 
 	// Now vs1 is back as replica. Second failover: vs2 dies → vs1 promoted.
-	e1, _ = ms.blockRegistry.Lookup("pvc-double-1")
-	e1.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("pvc-double-1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 	ms.failoverBlockVolumes(vs2)
 
 	e2, _ := ms.blockRegistry.Lookup("pvc-double-1")
@@ -705,10 +715,13 @@ func TestIntegration_MultiVolumeFailoverRebuild(t *testing.T) {
 	// Find which server is primary for each volume.
 	primaryCounts := map[string]int{}
 	for i := 1; i <= 3; i++ {
-		e, _ := ms.blockRegistry.Lookup(fmt.Sprintf("pvc-multi-%d", i))
+		name := fmt.Sprintf("pvc-multi-%d", i)
+		e, _ := ms.blockRegistry.Lookup(name)
 		primaryCounts[e.VolumeServer]++
 		// Expire lease.
-		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+		ms.blockRegistry.UpdateEntry(name, func(entry *BlockVolumeEntry) {
+			entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+		})
 	}
 
 	// Kill the server with the most primaries.

@@ -533,13 +533,14 @@ func TestLifecycle_CreateFailoverRebuild(t *testing.T) {
 	}
 
 	// Update lease so it's expired (simulate time passage).
-	entry, _ := ms.blockRegistry.Lookup("vol1")
-	entry.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.LastLeaseGrant = time.Now().Add(-1 * time.Minute)
+	})
 
 	// Primary dies.
 	ms.failoverBlockVolumes(primary)
 
-	entry, _ = ms.blockRegistry.Lookup("vol1")
+	entry, _ := ms.blockRegistry.Lookup("vol1")
 	if entry.VolumeServer != replica {
 		t.Fatalf("after failover: primary=%q, want %q", entry.VolumeServer, replica)
 	}
@@ -623,13 +624,14 @@ func TestRF3_PrimaryDies_BestReplicaPromoted(t *testing.T) {
 	registerVolumeRF3(t, ms, "vol1", "vs1", "vs2", "vs3", 1, 5*time.Second)
 
 	// Give vs3 a higher health score so it should be promoted.
-	entry, _ := ms.blockRegistry.Lookup("vol1")
-	entry.Replicas[0].HealthScore = 0.8 // vs2
-	entry.Replicas[1].HealthScore = 1.0 // vs3
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.Replicas[0].HealthScore = 0.8 // vs2
+		e.Replicas[1].HealthScore = 1.0 // vs3
+	})
 
 	ms.failoverBlockVolumes("vs1")
 
-	entry, _ = ms.blockRegistry.Lookup("vol1")
+	entry, _ := ms.blockRegistry.Lookup("vol1")
 	if entry.VolumeServer != "vs3" {
 		t.Fatalf("primary should be vs3 (highest health), got %q", entry.VolumeServer)
 	}
@@ -1124,14 +1126,15 @@ func TestT3_DeferredTimer_EpochChanged_NoPromotion(t *testing.T) {
 	ms.failoverBlockVolumes("vs1")
 
 	// Before timer fires, manually bump the epoch (simulating another event).
-	e, _ := ms.blockRegistry.Lookup("vol1")
-	e.Epoch = 99
+	ms.blockRegistry.UpdateEntry("vol1", func(e *BlockVolumeEntry) {
+		e.Epoch = 99
+	})
 
 	// Wait for timer to fire.
 	time.Sleep(350 * time.Millisecond)
 
 	// Timer should have been rejected (epoch mismatch). Epoch stays at 99.
-	e, _ = ms.blockRegistry.Lookup("vol1")
+	e, _ := ms.blockRegistry.Lookup("vol1")
 	if e.Epoch != 99 {
 		t.Fatalf("epoch should remain 99 (timer rejected), got %d", e.Epoch)
 	}

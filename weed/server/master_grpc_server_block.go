@@ -54,10 +54,10 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 
 	// Idempotent: if already registered, return existing entry (validate size + mode + RF).
 	if entry, ok := ms.blockRegistry.Lookup(req.Name); ok {
-		if err := ms.validateIdempotentCreate(entry, req, durMode, replicaFactor); err != nil {
+		if err := ms.validateIdempotentCreate(&entry, req, durMode, replicaFactor); err != nil {
 			return nil, err
 		}
-		return ms.createBlockVolumeResponseFromEntry(entry), nil
+		return ms.createBlockVolumeResponseFromEntry(&entry), nil
 	}
 
 	// Per-name inflight lock prevents concurrent creates for the same name.
@@ -68,10 +68,10 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 
 	// Double-check after acquiring lock (another goroutine may have finished).
 	if entry, ok := ms.blockRegistry.Lookup(req.Name); ok {
-		if err := ms.validateIdempotentCreate(entry, req, durMode, replicaFactor); err != nil {
+		if err := ms.validateIdempotentCreate(&entry, req, durMode, replicaFactor); err != nil {
 			return nil, err
 		}
-		return ms.createBlockVolumeResponseFromEntry(entry), nil
+		return ms.createBlockVolumeResponseFromEntry(&entry), nil
 	}
 
 	// Evaluate placement using the shared planner (parity with /block/volume/plan).
@@ -153,7 +153,7 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 		if err := ms.blockRegistry.Register(entry); err != nil {
 			// Already registered (race condition) — return the existing entry.
 			if existing, ok := ms.blockRegistry.Lookup(req.Name); ok {
-				return ms.createBlockVolumeResponseFromEntry(existing), nil
+				return ms.createBlockVolumeResponseFromEntry(&existing), nil
 			}
 			return nil, fmt.Errorf("register block volume: %w", err)
 		}
@@ -247,7 +247,7 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		return nil, fmt.Errorf("block volume %q not found", req.Name)
 	}
 
-	replicaServers := replicaServerList(entry)
+	replicaServers := replicaServerList(&entry)
 	rf := entry.ReplicaFactor
 	if rf == 0 {
 		rf = 2 // default for pre-CP8-2 entries

@@ -59,11 +59,11 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		return
 	}
 
-	// Store replica_placement and preset on the registry entry.
-	if entry, ok := ms.blockRegistry.Lookup(resp.VolumeId); ok {
-		entry.ReplicaPlacement = replicaPlacement
-		entry.Preset = req.Preset
-	}
+	// Store replica_placement and preset on the registry entry (locked mutation).
+	ms.blockRegistry.UpdateEntry(resp.VolumeId, func(e *BlockVolumeEntry) {
+		e.ReplicaPlacement = replicaPlacement
+		e.Preset = req.Preset
+	})
 
 	// Look up the full entry to populate all fields.
 	info := blockapi.VolumeInfo{
@@ -75,7 +75,7 @@ func (ms *MasterServer) blockVolumeCreateHandler(w http.ResponseWriter, r *http.
 		IQN:              resp.Iqn,
 	}
 	if entry, ok := ms.blockRegistry.Lookup(resp.VolumeId); ok {
-		info = entryToVolumeInfo(entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer))
+		info = entryToVolumeInfo(&entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer))
 	}
 	writeJsonQuiet(w, r, http.StatusOK, info)
 }
@@ -155,15 +155,15 @@ func (ms *MasterServer) blockVolumeLookupHandler(w http.ResponseWriter, r *http.
 		writeJsonError(w, r, http.StatusNotFound, fmt.Errorf("block volume %q not found", name))
 		return
 	}
-	writeJsonQuiet(w, r, http.StatusOK, entryToVolumeInfo(entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer)))
+	writeJsonQuiet(w, r, http.StatusOK, entryToVolumeInfo(&entry, ms.blockRegistry.IsBlockCapable(entry.VolumeServer)))
 }
 
 // blockVolumeListHandler handles GET /block/volumes.
 func (ms *MasterServer) blockVolumeListHandler(w http.ResponseWriter, r *http.Request) {
 	entries := ms.blockRegistry.ListAll()
 	infos := make([]blockapi.VolumeInfo, len(entries))
-	for i, e := range entries {
-		infos[i] = entryToVolumeInfo(e, ms.blockRegistry.IsBlockCapable(e.VolumeServer))
+	for i := range entries {
+		infos[i] = entryToVolumeInfo(&entries[i], ms.blockRegistry.IsBlockCapable(entries[i].VolumeServer))
 	}
 	writeJsonQuiet(w, r, http.StatusOK, infos)
 }

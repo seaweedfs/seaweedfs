@@ -295,26 +295,55 @@ func (r *BlockVolumeRegistry) UpdateSize(name string, newSizeBytes uint64) error
 	return nil
 }
 
-// Lookup returns the entry for the given name.
-func (r *BlockVolumeRegistry) Lookup(name string) (*BlockVolumeEntry, bool) {
+// clone returns a deep copy of the entry. The Replicas slice is copied
+// so the caller cannot mutate registry state through the returned value.
+func (e *BlockVolumeEntry) clone() BlockVolumeEntry {
+	c := *e
+	if len(e.Replicas) > 0 {
+		c.Replicas = make([]ReplicaInfo, len(e.Replicas))
+		copy(c.Replicas, e.Replicas)
+	}
+	return c
+}
+
+// Lookup returns a copy of the entry for the given name.
+// The returned value is safe to read without holding any lock.
+// To mutate registry state, use UpdateEntry instead.
+func (r *BlockVolumeRegistry) Lookup(name string) (BlockVolumeEntry, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	e, ok := r.volumes[name]
-	return e, ok
+	if !ok {
+		return BlockVolumeEntry{}, false
+	}
+	return e.clone(), ok
 }
 
-// ListByServer returns all entries hosted on the given server.
-func (r *BlockVolumeRegistry) ListByServer(server string) []*BlockVolumeEntry {
+// UpdateEntry calls fn with the internal entry under write lock.
+// Use this for any mutation that must be visible to the registry.
+func (r *BlockVolumeRegistry) UpdateEntry(name string, fn func(*BlockVolumeEntry)) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.volumes[name]
+	if !ok {
+		return fmt.Errorf("block volume %q not found", name)
+	}
+	fn(e)
+	return nil
+}
+
+// ListByServer returns copies of all entries hosted on the given server.
+func (r *BlockVolumeRegistry) ListByServer(server string) []BlockVolumeEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	names, ok := r.byServer[server]
 	if !ok {
 		return nil
 	}
-	entries := make([]*BlockVolumeEntry, 0, len(names))
+	entries := make([]BlockVolumeEntry, 0, len(names))
 	for name := range names {
 		if e, ok := r.volumes[name]; ok {
-			entries = append(entries, e)
+			entries = append(entries, e.clone())
 		}
 	}
 	return entries
@@ -1312,12 +1341,12 @@ func (r *BlockVolumeRegistry) LeaseGrants(server string, pendingPaths map[string
 }
 
 // ListAll returns all registered block volume entries, sorted by name.
-func (r *BlockVolumeRegistry) ListAll() []*BlockVolumeEntry {
+func (r *BlockVolumeRegistry) ListAll() []BlockVolumeEntry {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	entries := make([]*BlockVolumeEntry, 0, len(r.volumes))
+	entries := make([]BlockVolumeEntry, 0, len(r.volumes))
 	for _, e := range r.volumes {
-		entries = append(entries, e)
+		entries = append(entries, e.clone())
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name < entries[j].Name })
 	return entries
