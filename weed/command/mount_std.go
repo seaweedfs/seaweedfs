@@ -252,7 +252,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
 		Debug:                    *option.debug,
-		EnableLocks:              false,
+		EnableLocks:              true,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
 		DirectMountFlags:         0,
