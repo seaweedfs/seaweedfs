@@ -18,18 +18,19 @@ import (
 )
 
 type FilerBackupOptions struct {
-	isActivePassive   *bool
-	filer             *string
-	path              *string
-	excludePaths      *string
-	excludeFileName   *string
-	debug             *bool
-	proxyByFiler      *bool
-	doDeleteFiles     *bool
-	disableErrorRetry *bool
-	ignore404Error    *bool
-	timeAgo           *time.Duration
-	retentionDays     *int
+	isActivePassive    *bool
+	filer              *string
+	path               *string
+	excludePaths       *string
+	excludeFileName    *string
+	excludePathPattern *string
+	debug              *bool
+	proxyByFiler       *bool
+	doDeleteFiles      *bool
+	disableErrorRetry  *bool
+	ignore404Error     *bool
+	timeAgo            *time.Duration
+	retentionDays      *int
 }
 
 var (
@@ -42,6 +43,7 @@ func init() {
 	filerBackupOptions.path = cmdFilerBackup.Flag.String("filerPath", "/", "directory to sync on filer")
 	filerBackupOptions.excludePaths = cmdFilerBackup.Flag.String("filerExcludePaths", "", "exclude directories to sync on filer")
 	filerBackupOptions.excludeFileName = cmdFilerBackup.Flag.String("filerExcludeFileName", "", "exclude file names that match the regexp to sync on filer")
+	filerBackupOptions.excludePathPattern = cmdFilerBackup.Flag.String("filerExcludePathPattern", "", "exclude paths where any component matches the regexp")
 	filerBackupOptions.proxyByFiler = cmdFilerBackup.Flag.Bool("filerProxy", false, "read and write file chunks by filer instead of volume servers")
 	filerBackupOptions.doDeleteFiles = cmdFilerBackup.Flag.Bool("doDeleteFiles", false, "delete files on the destination")
 	filerBackupOptions.debug = cmdFilerBackup.Flag.Bool("debug", false, "debug mode to print out received files")
@@ -107,6 +109,13 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return fmt.Errorf("error compile regexp %v for exclude file name: %+v", *backupOption.excludeFileName, err)
 		}
 	}
+	var reExcludePathPattern *regexp.Regexp
+	if *backupOption.excludePathPattern != "" {
+		var err error
+		if reExcludePathPattern, err = regexp.Compile(*backupOption.excludePathPattern); err != nil {
+			return fmt.Errorf("error compile regexp %v for exclude path pattern: %+v", *backupOption.excludePathPattern, err)
+		}
+	}
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
 	debug := *backupOption.debug
@@ -138,7 +147,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
-		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
+		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, reExcludePathPattern, dataSink, *backupOption.doDeleteFiles, debug)
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
 			err := processEventFnGenerated(resp)
 			if err == nil {
@@ -158,7 +167,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return err
 		}
 	} else {
-		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
+		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, reExcludePathPattern, dataSink, *backupOption.doDeleteFiles, debug)
 	}
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {

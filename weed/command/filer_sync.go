@@ -304,7 +304,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSink.SetChunkConcurrency(chunkConcurrency)
 	filerSink.SetSourceFiler(filerSource)
 
-	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, filerSink, doDeleteFiles, debug)
+	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, nil, filerSink, doDeleteFiles, debug)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -439,7 +439,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, reExcludePathPattern *regexp.Regexp, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	// process function
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -469,17 +469,24 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			}
 		}
 		if reExcludeFileName != nil {
-			// check if any path component in resp.Directory matches the exclude pattern
-			dirParts := strings.Split(resp.Directory, "/")
-			for _, part := range dirParts {
-				if part != "" && reExcludeFileName.MatchString(part) {
-					return nil
-				}
-			}
 			if message.NewEntry != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
 				return nil
 			}
 			if message.OldEntry != nil && reExcludeFileName.MatchString(message.OldEntry.Name) {
+				return nil
+			}
+		}
+		if reExcludePathPattern != nil {
+			dirParts := strings.Split(resp.Directory, "/")
+			for _, part := range dirParts {
+				if part != "" && reExcludePathPattern.MatchString(part) {
+					return nil
+				}
+			}
+			if message.NewEntry != nil && reExcludePathPattern.MatchString(message.NewEntry.Name) {
+				return nil
+			}
+			if message.OldEntry != nil && reExcludePathPattern.MatchString(message.OldEntry.Name) {
 				return nil
 			}
 		}
