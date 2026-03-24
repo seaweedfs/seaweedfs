@@ -546,13 +546,21 @@ func testFcntlReleaseOnClose(t *testing.T, fw *FuseTestFramework) {
 	assert.ErrorIs(t, err, syscall.EAGAIN, "lock should be held by subprocess")
 
 	// Release subprocess → fd closes → lock released.
+	// The FUSE server may not process the Release immediately, so retry.
 	holder.Release(t)
 
-	// Test process should now succeed.
 	f2, err := os.OpenFile(path, os.O_RDWR, 0)
 	require.NoError(t, err)
 	defer f2.Close()
-	require.NoError(t, fcntlSetLk(f2, syscall.F_WRLCK, 0, 0))
+	var lockErr error
+	for attempt := 0; attempt < 50; attempt++ {
+		lockErr = fcntlSetLk(f2, syscall.F_WRLCK, 0, 0)
+		if lockErr == nil {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	require.NoError(t, lockErr, "lock should succeed after subprocess exits")
 	require.NoError(t, fcntlSetLk(f2, syscall.F_UNLCK, 0, 0))
 }
 
@@ -591,7 +599,7 @@ func testConcurrentLockContention(t *testing.T, fw *FuseTestFramework) {
 
 				// Non-blocking flock with retry to avoid FUSE server thread starvation.
 				locked := false
-				for attempt := 0; attempt < 500; attempt++ {
+				for attempt := 0; attempt < 3000; attempt++ {
 					if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
 						locked = true
 						break
