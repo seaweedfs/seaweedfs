@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
@@ -101,7 +102,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	}()
 
 	var called bool
-	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, gotSrc, gotDst util.FullPath) (*filer_pb.Entry, error) {
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, gotSrc, gotDst util.FullPath) (*filer_pb.Entry, bool, error) {
 		called = true
 		if gotWFS != wfs {
 			t.Fatalf("wfs = %p, want %p", gotWFS, wfs)
@@ -120,7 +121,7 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 				Mime:     "text/plain; charset=utf-8",
 			},
 			Content: []byte("hello"),
-		}, nil
+		}, true, nil
 	}
 
 	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
@@ -149,6 +150,76 @@ func TestCopyFileRangeUsesServerSideWholeFileCopy(t *testing.T) {
 	}
 	if dstHandle.dirtyMetadata {
 		t.Fatal("server-side whole-file copy should leave destination handle clean")
+	}
+}
+
+func TestCopyFileRangeDoesNotFallbackAfterCommittedServerCopyRefreshFailure(t *testing.T) {
+	wfs := newCopyRangeTestWFS()
+
+	srcPath := util.FullPath("/src.txt")
+	dstPath := util.FullPath("/dst.txt")
+	srcInode := wfs.inodeToPath.Lookup(srcPath, 1, false, false, 0, true)
+	dstInode := wfs.inodeToPath.Lookup(dstPath, 1, false, false, 0, true)
+
+	srcHandle := wfs.fhMap.AcquireFileHandle(wfs, srcInode, &filer_pb.Entry{
+		Name: "src.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0100644,
+			FileSize: 5,
+			Mime:     "text/plain; charset=utf-8",
+			Md5:      []byte("abcde"),
+		},
+		Content: []byte("hello"),
+	})
+	dstHandle := wfs.fhMap.AcquireFileHandle(wfs, dstInode, &filer_pb.Entry{
+		Name: "dst.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			FileMode: 0100600,
+			Inode:    dstInode,
+		},
+	})
+
+	srcHandle.RememberPath(srcPath)
+	dstHandle.RememberPath(dstPath)
+
+	originalCopy := performServerSideWholeFileCopy
+	defer func() {
+		performServerSideWholeFileCopy = originalCopy
+	}()
+
+	performServerSideWholeFileCopy = func(cancel <-chan struct{}, gotWFS *WFS, gotSrc, gotDst util.FullPath) (*filer_pb.Entry, bool, error) {
+		if gotWFS != wfs || gotSrc != srcPath || gotDst != dstPath {
+			t.Fatalf("unexpected server-side copy call: wfs=%p src=%q dst=%q", gotWFS, gotSrc, gotDst)
+		}
+		return nil, true, errors.New("reload copied entry: transient filer read failure")
+	}
+
+	written, status := wfs.CopyFileRange(make(chan struct{}), &fuse.CopyFileRangeIn{
+		FhIn:   uint64(srcHandle.fh),
+		FhOut:  uint64(dstHandle.fh),
+		OffIn:  0,
+		OffOut: 0,
+		Len:    8,
+	})
+	if status != fuse.OK {
+		t.Fatalf("CopyFileRange status = %v, want OK", status)
+	}
+	if written != 5 {
+		t.Fatalf("CopyFileRange wrote %d bytes, want 5", written)
+	}
+	if dstHandle.dirtyMetadata {
+		t.Fatal("committed server-side copy should not fall back to dirty-page copy")
+	}
+
+	gotEntry := dstHandle.GetEntry().GetEntry()
+	if gotEntry.GetAttributes().GetFileSize() != 5 {
+		t.Fatalf("destination size = %d, want 5", gotEntry.GetAttributes().GetFileSize())
+	}
+	if gotEntry.GetAttributes().GetFileMode() != 0100600 {
+		t.Fatalf("destination mode = %#o, want %#o", gotEntry.GetAttributes().GetFileMode(), uint32(0100600))
+	}
+	if string(gotEntry.GetContent()) != "hello" {
+		t.Fatalf("destination content = %q, want %q", string(gotEntry.GetContent()), "hello")
 	}
 }
 

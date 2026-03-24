@@ -23,6 +23,7 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	src := r.URL.Query().Get("cp.from")
 	dst := r.URL.Path
 	overwrite := r.URL.Query().Get("overwrite") == "true"
+	dataOnly := r.URL.Query().Get("dataOnly") == "true"
 
 	glog.V(2).InfofCtx(ctx, "FilerServer.copy %v to %v", src, dst)
 
@@ -86,17 +87,20 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 	}
 
 	if srcPath == finalDstPath {
-		err = fmt.Errorf("source and destination are the same path: %s", finalDstPath)
+		glog.V(2).InfofCtx(ctx, "FilerServer.copy rejected self-copy for %s", finalDstPath)
+		err = fmt.Errorf("source and destination are the same path: %s; choose a different destination file name or directory", finalDstPath)
 		writeJsonError(w, r, http.StatusBadRequest, err)
 		return
 	}
 
 	// Check if destination file already exists
+	var existingDstEntry *filer.Entry
 	if dstEntry, err := fs.filer.FindEntry(ctx, finalDstPath); err != nil && err != filer_pb.ErrNotFound {
 		err = fmt.Errorf("failed to check destination entry %s: %w", finalDstPath, err)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	} else if dstEntry != nil {
+		existingDstEntry = dstEntry
 		if dstEntry.IsDirectory() {
 			err = fmt.Errorf("destination file %s is a directory", finalDstPath)
 			writeJsonError(w, r, http.StatusConflict, err)
@@ -116,8 +120,12 @@ func (fs *FilerServer) copy(ctx context.Context, w http.ResponseWriter, r *http.
 		writeJsonError(w, r, http.StatusInternalServerError, err)
 		return
 	}
+	if dataOnly && existingDstEntry != nil {
+		preserveDestinationMetadataForDataCopy(existingDstEntry, newEntry)
+	}
 
-	// Use o_excl unless the caller explicitly asked to replace an existing file.
+	// Pass o_excl = !overwrite so the default copy refuses to replace an
+	// existing destination, while overwrite=true updates the pre-created target.
 	if createErr := fs.filer.CreateEntry(ctx, newEntry, !overwrite, false, nil, false, fs.filer.MaxFilenameLength); createErr != nil {
 		err = fmt.Errorf("failed to create copied entry from '%s' to '%s': %w", src, dst, createErr)
 		writeJsonError(w, r, http.StatusInternalServerError, err)
@@ -217,6 +225,48 @@ func (fs *FilerServer) copyEntry(ctx context.Context, srcEntry *filer.Entry, dst
 	}
 	glog.V(2).InfofCtx(ctx, "FilerServer.copyEntry: empty file, no content or chunks to copy")
 	return newEntry, nil
+}
+
+func preserveDestinationMetadataForDataCopy(dstEntry, copiedEntry *filer.Entry) {
+	if dstEntry == nil || copiedEntry == nil {
+		return
+	}
+
+	copiedEntry.Mode = dstEntry.Mode
+	copiedEntry.Uid = dstEntry.Uid
+	copiedEntry.Gid = dstEntry.Gid
+	copiedEntry.TtlSec = dstEntry.TtlSec
+	copiedEntry.UserName = dstEntry.UserName
+	copiedEntry.GroupNames = append([]string(nil), dstEntry.GroupNames...)
+	copiedEntry.SymlinkTarget = dstEntry.SymlinkTarget
+	copiedEntry.Rdev = dstEntry.Rdev
+	copiedEntry.Crtime = dstEntry.Crtime
+	copiedEntry.Inode = dstEntry.Inode
+	copiedEntry.Mtime = time.Now()
+	copiedEntry.Extended = cloneEntryExtended(dstEntry.Extended)
+	copiedEntry.Remote = cloneRemoteEntry(dstEntry.Remote)
+	copiedEntry.Quota = dstEntry.Quota
+	copiedEntry.WORMEnforcedAtTsNs = dstEntry.WORMEnforcedAtTsNs
+	copiedEntry.HardLinkId = append(filer.HardLinkId(nil), dstEntry.HardLinkId...)
+	copiedEntry.HardLinkCounter = dstEntry.HardLinkCounter
+}
+
+func cloneEntryExtended(extended map[string][]byte) map[string][]byte {
+	if extended == nil {
+		return nil
+	}
+	cloned := make(map[string][]byte, len(extended))
+	for k, v := range extended {
+		cloned[k] = append([]byte(nil), v...)
+	}
+	return cloned
+}
+
+func cloneRemoteEntry(remote *filer_pb.RemoteEntry) *filer_pb.RemoteEntry {
+	if remote == nil {
+		return nil
+	}
+	return proto.Clone(remote).(*filer_pb.RemoteEntry)
 }
 
 // copyChunks creates new chunks by copying data from source chunks using parallel streaming approach
