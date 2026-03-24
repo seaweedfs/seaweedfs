@@ -448,6 +448,32 @@ func TestSameOwnerReplaceDifferentType(t *testing.T) {
 	}
 }
 
+func TestNonAdjacentRangesNotCoalesced(t *testing.T) {
+	plt := NewPosixLockTable()
+	inode := uint64(1)
+
+	// Lock [5, MaxUint64] then [0, 2] — gap at [3,4] must prevent coalescing.
+	plt.SetLk(inode, lockRange{Start: 5, End: math.MaxUint64, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	s := plt.SetLk(inode, lockRange{Start: 0, End: 2, Typ: syscall.F_WRLCK, Owner: 1, Pid: 10})
+	if s != fuse.OK {
+		t.Fatalf("expected OK, got %v", s)
+	}
+
+	il := plt.getInodeLocks(inode)
+	il.mu.Lock()
+	defer il.mu.Unlock()
+
+	if len(il.locks) != 2 {
+		t.Fatalf("expected 2 separate locks (gap [3,4] prevents coalescing), got %d", len(il.locks))
+	}
+	if il.locks[0].Start != 0 || il.locks[0].End != 2 {
+		t.Errorf("expected first lock [0,2], got [%d,%d]", il.locks[0].Start, il.locks[0].End)
+	}
+	if il.locks[1].Start != 5 || il.locks[1].End != math.MaxUint64 {
+		t.Errorf("expected second lock [5,MaxUint64], got [%d,%d]", il.locks[1].Start, il.locks[1].End)
+	}
+}
+
 func TestAdjacencyNoOverflowAtMaxUint64(t *testing.T) {
 	plt := NewPosixLockTable()
 	inode := uint64(1)
