@@ -372,7 +372,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrNoSuchUpload)
 		return
 	} else if err != nil {
-		glog.V(3).Infof("Could not retrieve upload entry for %s/%s: %v", bucket, uploadID, err)
+		glog.Errorf("Could not retrieve upload entry for %s/%s: %v", bucket, uploadID, err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
@@ -401,11 +401,13 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 			var baseIV []byte
 			if baseIVBytes, exists := uploadEntry.Extended[s3_constants.SeaweedFSSSEKMSBaseIV]; exists {
 				decodedIV, decodeErr := base64.StdEncoding.DecodeString(string(baseIVBytes))
-				if decodeErr == nil && len(decodedIV) == s3_constants.AESBlockSize {
+				if decodeErr != nil {
+					glog.Errorf("Failed to decode base IV for multipart upload %s: %v", uploadID, decodeErr)
+				} else if len(decodedIV) != s3_constants.AESBlockSize {
+					glog.Errorf("Invalid base IV length for multipart upload %s: expected %d bytes, got %d", uploadID, s3_constants.AESBlockSize, len(decodedIV))
+				} else {
 					baseIV = decodedIV
 					glog.V(4).Infof("Using stored base IV %x for multipart upload %s", baseIV[:8], uploadID)
-				} else {
-					glog.Errorf("Failed to decode base IV for multipart upload %s: %v (expected %d bytes, got %d)", uploadID, decodeErr, s3_constants.AESBlockSize, len(decodedIV))
 				}
 			}
 
