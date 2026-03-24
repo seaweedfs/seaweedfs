@@ -323,8 +323,16 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 	} else if !dirEntry.IsDirectory() {
-		glog.ErrorfCtx(ctx, "CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
-		return fmt.Errorf("%s: %w", dirPath, filer_pb.ErrParentIsFile)
+		// S3 allows both "foo/bar" (object) and "foo/bar/xyzzy" (another
+		// object) to coexist because S3 has a flat key space. Promote the
+		// existing file to a directory, preserving its content/chunks so
+		// the original object data remains accessible.
+		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
+		dirEntry.Attr.Mode |= os.ModeDir | 0111
+		if updateErr := f.Store.UpdateEntry(ctx, dirEntry); updateErr != nil {
+			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
+		}
+		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 	}
 
 	return nil
