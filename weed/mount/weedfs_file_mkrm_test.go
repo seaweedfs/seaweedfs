@@ -216,6 +216,13 @@ func TestTruncateEntryClearsDirtyPagesForOpenHandle(t *testing.T) {
 
 func TestAccessChecksPermissions(t *testing.T) {
 	wfs := newCopyRangeTestWFS()
+	oldLookupSupplementaryGroupIDs := lookupSupplementaryGroupIDs
+	lookupSupplementaryGroupIDs = func(uint32) ([]string, error) {
+		return nil, nil
+	}
+	t.Cleanup(func() {
+		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+	})
 
 	fullPath := util.FullPath("/visible.txt")
 	inode := wfs.inodeToPath.Lookup(fullPath, 1, false, false, 0, true)
@@ -270,5 +277,27 @@ func TestAccessChecksPermissions(t *testing.T) {
 
 	if got := hasAccess(999, 999, 123, 456, 0o004, fuse.R_OK|fuse.W_OK); got {
 		t.Fatal("other users should not get write access from a read-only other mode")
+	}
+
+	if got := hasAccess(0, 0, 123, 456, 0o644, fuse.X_OK); got {
+		t.Fatal("root should not get execute access when no execute bit is set")
+	}
+
+	if got := hasAccess(0, 0, 123, 456, 0o755, fuse.R_OK|fuse.X_OK); !got {
+		t.Fatal("root should get execute access when at least one execute bit is set")
+	}
+}
+
+func TestHasAccessUsesSupplementaryGroups(t *testing.T) {
+	oldLookupSupplementaryGroupIDs := lookupSupplementaryGroupIDs
+	lookupSupplementaryGroupIDs = func(uint32) ([]string, error) {
+		return []string{"456"}, nil
+	}
+	t.Cleanup(func() {
+		lookupSupplementaryGroupIDs = oldLookupSupplementaryGroupIDs
+	})
+
+	if got := hasAccess(999, 999, 123, 456, 0o060, fuse.R_OK|fuse.W_OK); !got {
+		t.Fatal("supplementary group membership should grant matching group permissions")
 	}
 }

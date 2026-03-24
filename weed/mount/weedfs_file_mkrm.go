@@ -60,8 +60,10 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 
 	wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
 
-	fileHandle := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry)
-	fileHandle.RememberPath(entryFullPath)
+	fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
+	if status != fuse.OK {
+		return status
+	}
 	out.Fh = uint64(fileHandle.fh)
 	out.OpenFlags = 0
 

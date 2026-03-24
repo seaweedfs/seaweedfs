@@ -8,6 +8,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+var lookupSupplementaryGroupIDs = func(callerUid uint32) ([]string, error) {
+	u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+	if err != nil {
+		glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
+		return nil, err
+	}
+	groupIDs, err := u.GroupIds()
+	if err != nil {
+		glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
+		return nil, err
+	}
+	return groupIDs, nil
+}
+
 /**
  * Check file access permissions
  *
@@ -32,13 +46,12 @@ func (wfs *WFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) (code fuse.
 }
 
 func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask uint32) bool {
-	if callerUid == 0 {
-		return true
-	}
-
 	mask &= fuse.R_OK | fuse.W_OK | fuse.X_OK
 	if mask == 0 {
 		return true
+	}
+	if callerUid == 0 {
+		return mask&fuse.X_OK == 0 || perm&0o111 != 0
 	}
 
 	if callerUid == fileUid {
@@ -47,17 +60,10 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 
 	isMember := callerGid == fileGid
 	if !isMember {
-		u, err := user.LookupId(strconv.Itoa(int(callerUid)))
+		groupIDs, err := lookupSupplementaryGroupIDs(callerUid)
 		if err != nil {
-			glog.Warningf("hasAccess: user.LookupId for uid %d failed: %v", callerUid, err)
 			return (perm & mask) == mask
 		}
-		groupIDs, err := u.GroupIds()
-		if err != nil {
-			glog.Warningf("hasAccess: u.GroupIds for uid %d failed: %v", callerUid, err)
-			return (perm & mask) == mask
-		}
-
 		fileGidStr := strconv.Itoa(int(fileGid))
 		for _, gidStr := range groupIDs {
 			if gidStr == fileGidStr {
