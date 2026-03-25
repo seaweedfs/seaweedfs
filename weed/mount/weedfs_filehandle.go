@@ -53,19 +53,7 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 		wfs.pendingAsyncFlushMu.Unlock()
 
 		wfs.asyncFlushWg.Add(1)
-		go func() {
-			defer wfs.asyncFlushWg.Done()
-			defer func() {
-				// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
-				wfs.fhMap.RemoveFileHandle(fhToRelease.fh, fhToRelease.inode)
-				// Then signal completion (unblocks waitForPendingAsyncFlush).
-				close(done)
-				wfs.pendingAsyncFlushMu.Lock()
-				delete(wfs.pendingAsyncFlush, fhToRelease.inode)
-				wfs.pendingAsyncFlushMu.Unlock()
-			}()
-			wfs.completeAsyncFlush(fhToRelease)
-		}()
+		wfs.asyncFlushCh <- &asyncFlushItem{fh: fhToRelease, done: done}
 		return
 	}
 	wfs.pendingAsyncFlushMu.Unlock()

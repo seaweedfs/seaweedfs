@@ -119,9 +119,14 @@ type WFS struct {
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
 
-	// asyncFlushWg tracks pending background flush goroutines for writebackCache mode.
+	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
 	asyncFlushWg sync.WaitGroup
+
+	// asyncFlushCh is a bounded work queue for background flush operations.
+	// A fixed pool of worker goroutines processes items from this channel,
+	// preventing resource exhaustion from unbounded goroutine creation.
+	asyncFlushCh chan *asyncFlushItem
 
 	// pendingAsyncFlush tracks in-flight async flush goroutines by inode.
 	// AcquireHandle checks this to wait for a pending flush before reopening
@@ -276,6 +281,13 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	if wfs.option.ConcurrentWriters > 0 {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
 		wfs.concurrentCopiersSem = make(chan struct{}, wfs.option.ConcurrentWriters)
+	}
+	if wfs.option.WritebackCache {
+		numWorkers := wfs.option.ConcurrentWriters
+		if numWorkers <= 0 {
+			numWorkers = 128
+		}
+		wfs.startAsyncFlushWorkers(numWorkers)
 	}
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, option.ChunkSizeLimit)
