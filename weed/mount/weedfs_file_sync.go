@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 /**
@@ -186,13 +187,6 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 		entry.Attributes.Mtime = time.Now().Unix()
 	}
 
-	request := &filer_pb.CreateEntryRequest{
-		Directory:                string(dir),
-		Entry:                    entry.GetEntry(),
-		Signatures:               []int32{wfs.signature},
-		SkipCheckParentDirectory: true,
-	}
-
 	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
 
 	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
@@ -205,8 +199,19 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 	}
 	entry.Chunks = append(chunks, manifestChunks...)
 
+	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
+	// does not mutate the file handle's live entry. Without the clone, a concurrent
+	// Lookup can observe filer-side uid/gid on the file handle entry and return it
+	// to the kernel, which caches it and then rejects opens by the local user.
+	requestEntry := proto.Clone(entry.GetEntry()).(*filer_pb.Entry)
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dir),
+		Entry:                    requestEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
+
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
-	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	resp, err := wfs.streamCreateEntry(context.Background(), request)
 	if err != nil {
