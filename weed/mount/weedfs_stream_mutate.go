@@ -347,11 +347,12 @@ func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntr
 }
 
 func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, stop <-chan struct{}, gen uint64) {
+	defer m.drainSendCh()
 	for {
 		select {
 		case req, ok := <-m.sendCh:
 			if !ok {
-				return // Close() was called
+				return // defensive: sendCh should not be closed
 			}
 			if req.gen != gen {
 				req.errCh <- fmt.Errorf("%w: stream generation mismatch", ErrStreamTransport)
@@ -370,7 +371,10 @@ func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntr
 }
 
 func (m *streamMutateMux) recvLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, gen uint64, recvDone chan struct{}) {
-	defer close(recvDone)
+	defer func() {
+		m.failAllPending()
+		close(recvDone)
+	}()
 	for {
 		resp, err := stream.Recv()
 		if err != nil {
@@ -411,9 +415,9 @@ func (m *streamMutateMux) teardownStream(gen uint64) {
 	m.grpcConn = nil
 	m.mu.Unlock()
 
-	// Fail pending outside the lock to avoid holding mu during channel closes.
-	m.failAllPending()
-
+	// Do NOT call failAllPending here — recvLoop is the sole owner of
+	// pending channel teardown. This avoids a race where teardownStream
+	// closes a channel that recvLoop is about to send on.
 	if conn != nil {
 		conn.Close()
 	}
@@ -431,6 +435,23 @@ func (m *streamMutateMux) failAllPending() {
 	})
 	for _, ch := range channels {
 		close(ch)
+	}
+}
+
+// drainSendCh drains buffered requests from sendCh, sending an error to each
+// request's errCh so callers don't block. Called by sendLoop's defer on exit
+// and by Close for any stragglers.
+func (m *streamMutateMux) drainSendCh() {
+	for {
+		select {
+		case req, ok := <-m.sendCh:
+			if !ok {
+				return // defensive: sendCh should not be closed
+			}
+			req.errCh <- fmt.Errorf("%w: stream shutting down", ErrStreamTransport)
+		default:
+			return
+		}
 	}
 }
 
@@ -462,18 +483,24 @@ func (m *streamMutateMux) Close() {
 	}
 	m.mu.Unlock()
 
-	m.failAllPending()
-	close(m.sendCh)
+	// CloseSend triggers EOF on recvLoop; cancel ensures Recv unblocks
+	// even if the transport is broken.
 	if stream != nil {
 		stream.CloseSend()
-		if recvDone != nil {
-			<-recvDone
-		}
 	}
 	if cancel != nil {
 		cancel()
 	}
+	// Wait for recvLoop to finish — it calls failAllPending on exit.
+	if recvDone != nil {
+		<-recvDone
+	}
 	if grpcConn != nil {
 		grpcConn.Close()
 	}
+	// Drain any remaining requests buffered in sendCh. sendLoop's defer
+	// drain handles most items, but stragglers enqueued during shutdown
+	// (between ensureStream and the sendCh send) are caught here.
+	// sendCh is intentionally left open to prevent send-on-closed panics.
+	m.drainSendCh()
 }
