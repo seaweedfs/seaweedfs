@@ -279,7 +279,7 @@ func testQAFrameConcurrentWrites(t *testing.T) {
 // --- QA-4A-CP2-2: WALShipper Adversarial ---
 
 func testQAShipperShipAfterStop(t *testing.T) {
-	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 })
+	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 }, nil)
 	s.Stop()
 
 	// Ship after Stop must not panic, must return nil (silently drop).
@@ -294,7 +294,7 @@ func testQAShipperShipAfterStop(t *testing.T) {
 }
 
 func testQAShipperBarrierAfterDegraded(t *testing.T) {
-	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 })
+	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 }, nil)
 	s.state.Store(uint32(ReplicaDegraded))
 
 	err := s.Barrier(1)
@@ -306,7 +306,7 @@ func testQAShipperBarrierAfterDegraded(t *testing.T) {
 func testQAShipperStaleEpochNoShippedLSN(t *testing.T) {
 	// Ship with epoch != current -> entry silently dropped, shippedLSN unchanged.
 	currentEpoch := uint64(5)
-	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return currentEpoch })
+	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return currentEpoch }, nil)
 
 	entry := &WALEntry{LSN: 10, Epoch: 3, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: makeBlock('X')}
 	err := s.Ship(entry)
@@ -337,7 +337,7 @@ func testQAShipperDegradedPermanent(t *testing.T) {
 		}
 	}()
 
-	s := NewWALShipper(ln.Addr().String(), ln.Addr().String(), func() uint64 { return 1 })
+	s := NewWALShipper(ln.Addr().String(), ln.Addr().String(), func() uint64 { return 1 }, nil)
 	defer s.Stop()
 
 	// Ship triggers connection -> immediate close -> write error -> degraded.
@@ -387,7 +387,7 @@ func testQAShipperConcurrentShipStop(t *testing.T) {
 	}()
 	defer ln.Close()
 
-	s := NewWALShipper(ln.Addr().String(), ln.Addr().String(), func() uint64 { return 1 })
+	s := NewWALShipper(ln.Addr().String(), ln.Addr().String(), func() uint64 { return 1 }, nil)
 
 	var wg sync.WaitGroup
 	// Concurrent shippers.
@@ -949,7 +949,7 @@ func testQADSyncBothFail(t *testing.T) {
 	vol := &BlockVol{}
 	vol.nextLSN.Store(10)
 
-	shipper := NewWALShipper("127.0.0.1:1", "127.0.0.1:1", func() uint64 { return 1 })
+	shipper := NewWALShipper("127.0.0.1:1", "127.0.0.1:1", func() uint64 { return 1 }, nil)
 
 	syncFn := MakeDistributedSync(
 		func() error { return localErr },

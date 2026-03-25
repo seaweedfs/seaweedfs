@@ -58,8 +58,17 @@ func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string, advertisedHost
 	if len(advertisedHost) > 0 {
 		advHost = advertisedHost[0]
 	}
+	// Initialize receivedLSN/flushedLSN from the volume's persisted state.
+	// This handles the case where a ReplicaReceiver is recreated on a
+	// volume that already has data (e.g., after process restart or reconnect).
+	initLSN := uint64(0)
+	if vol.nextLSN.Load() > 1 {
+		initLSN = vol.nextLSN.Load() - 1
+	}
 	r := &ReplicaReceiver{
 		vol:            vol,
+		receivedLSN:    initLSN,
+		flushedLSN:     initLSN,
 		barrierTimeout: defaultBarrierTimeout,
 		advertisedHost: advHost,
 		dataListener:   dataLn,
@@ -184,15 +193,53 @@ func (r *ReplicaReceiver) handleDataConn(conn net.Conn) {
 			return
 		}
 
-		if msgType != MsgWALEntry {
+		switch msgType {
+		case MsgWALEntry:
+			if err := r.applyEntry(payload); err != nil {
+				log.Printf("replica: apply entry error: %v", err)
+			}
+		case MsgResumeShipReq:
+			r.handleResumeShipReq(conn, payload)
+		case MsgCatchupDone:
+			lsn, err := DecodeCatchupDone(payload)
+			if err != nil {
+				log.Printf("replica: decode catchup done: %v", err)
+			} else {
+				log.Printf("replica: catch-up done, snapshot LSN=%d", lsn)
+			}
+		default:
 			log.Printf("replica: unexpected data message type 0x%02x", msgType)
-			continue
-		}
-
-		if err := r.applyEntry(payload); err != nil {
-			log.Printf("replica: apply entry error: %v", err)
 		}
 	}
+}
+
+// handleResumeShipReq processes the reconnect handshake from the primary.
+func (r *ReplicaReceiver) handleResumeShipReq(conn net.Conn, payload []byte) {
+	req, err := DecodeResumeShipReq(payload)
+	if err != nil {
+		log.Printf("replica: decode resume ship req: %v", err)
+		resp := EncodeResumeShipResp(ResumeShipResp{Status: ResumeNeedsRebuild})
+		WriteFrame(conn, MsgResumeShipResp, resp)
+		return
+	}
+
+	// Validate epoch.
+	localEpoch := r.vol.epoch.Load()
+	if req.Epoch != localEpoch {
+		log.Printf("replica: resume ship epoch mismatch: req=%d local=%d", req.Epoch, localEpoch)
+		resp := EncodeResumeShipResp(ResumeShipResp{
+			Status:            ResumeEpochMismatch,
+			ReplicaFlushedLSN: r.FlushedLSN(),
+		})
+		WriteFrame(conn, MsgResumeShipResp, resp)
+		return
+	}
+
+	resp := EncodeResumeShipResp(ResumeShipResp{
+		Status:            ResumeOK,
+		ReplicaFlushedLSN: r.FlushedLSN(),
+	})
+	WriteFrame(conn, MsgResumeShipResp, resp)
 }
 
 // applyEntry decodes and applies a single WAL entry to the local volume.

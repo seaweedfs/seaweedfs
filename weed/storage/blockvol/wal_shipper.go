@@ -55,6 +55,7 @@ type WALShipper struct {
 	dataAddr    string
 	controlAddr string
 	epochFn     func() uint64
+	wal         WALAccess      // primary WAL access for reconnect catch-up
 	metrics     *EngineMetrics
 
 	mu       sync.Mutex // protects dataConn
@@ -67,13 +68,17 @@ type WALShipper struct {
 	replicaFlushedLSN  atomic.Uint64 // authoritative: highest LSN durably persisted on replica
 	hasFlushedProgress atomic.Bool   // true once replica returns a valid (non-zero) FlushedLSN
 	state              atomic.Uint32 // ReplicaState
+	catchupFailures    int           // consecutive catch-up failures; reset on success
 	stopped            atomic.Bool
 }
 
+const maxCatchupRetries = 3
+
 // NewWALShipper creates a WAL shipper. Connections are established lazily on
 // first Ship/Barrier call. epochFn returns the current epoch for validation.
+// wal provides WAL access for reconnect catch-up (nil disables catch-up).
 // metrics is optional; if nil, no metrics are recorded.
-func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, metrics ...*EngineMetrics) *WALShipper {
+func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, walAccess WALAccess, metrics ...*EngineMetrics) *WALShipper {
 	var m *EngineMetrics
 	if len(metrics) > 0 {
 		m = metrics[0]
@@ -82,6 +87,7 @@ func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, metrics 
 		dataAddr:    dataAddr,
 		controlAddr: controlAddr,
 		epochFn:     epochFn,
+		wal:         walAccess,
 		metrics:     m,
 	}
 }
@@ -147,23 +153,17 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 	st := s.State()
 	switch st {
 	case ReplicaInSync:
-		// proceed normally
-	case ReplicaDisconnected:
-		// bootstrap path: attempt connect + barrier
-	case ReplicaDegraded:
-		// recovery path: reset both connections and attempt reconnect + barrier
-		s.mu.Lock()
-		if s.dataConn != nil {
-			s.dataConn.Close()
-			s.dataConn = nil
+		// proceed normally to barrier
+	case ReplicaDisconnected, ReplicaDegraded:
+		if s.hasFlushedProgress.Load() && s.wal != nil {
+			// Previously synced — reconnect handshake + catch-up path.
+			if err := s.doReconnectAndCatchUp(); err != nil {
+				return err
+			}
+		} else {
+			// Fresh bootstrap or no WAL access — reset connections for bare retry.
+			s.resetConnections()
 		}
-		s.mu.Unlock()
-		s.ctrlMu.Lock()
-		if s.ctrlConn != nil {
-			s.ctrlConn.Close()
-			s.ctrlConn = nil
-		}
-		s.ctrlMu.Unlock()
 	default:
 		// Connecting, CatchingUp, NeedsRebuild — reject immediately
 		return ErrReplicaDegraded
@@ -334,7 +334,208 @@ func (s *WALShipper) markDegraded() {
 	log.Printf("wal_shipper: replica degraded (data=%s, ctrl=%s, state=%s)", s.dataAddr, s.controlAddr, s.State())
 }
 
+// resetConnections closes both data and control connections for a clean retry.
+func (s *WALShipper) resetConnections() {
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.Close()
+		s.dataConn = nil
+	}
+	s.mu.Unlock()
+	s.ctrlMu.Lock()
+	if s.ctrlConn != nil {
+		s.ctrlConn.Close()
+		s.ctrlConn = nil
+	}
+	s.ctrlMu.Unlock()
+}
+
+// doReconnectAndCatchUp runs the full reconnect handshake + catch-up protocol.
+// On success, transitions to InSync and resets ctrl connection for barrier.
+func (s *WALShipper) doReconnectAndCatchUp() error {
+	targetState, _, err := s.reconnectWithHandshake()
+	switch targetState {
+	case ReplicaInSync:
+		s.markInSync()
+	case ReplicaCatchingUp:
+		if catchErr := s.runCatchUp(s.replicaFlushedLSN.Load()); catchErr != nil {
+			s.catchupFailures++
+			if s.catchupFailures >= maxCatchupRetries {
+				s.state.Store(uint32(ReplicaNeedsRebuild))
+				return fmt.Errorf("catch-up failed %d times: %w", s.catchupFailures, catchErr)
+			}
+			s.markDegraded()
+			return ErrReplicaDegraded
+		}
+		s.markInSync()
+	case ReplicaNeedsRebuild:
+		s.state.Store(uint32(ReplicaNeedsRebuild))
+		return fmt.Errorf("reconnect: %w", err)
+	default:
+		s.markDegraded()
+		return ErrReplicaDegraded
+	}
+	// Reset ctrl connection so barrier creates a fresh one.
+	s.ctrlMu.Lock()
+	if s.ctrlConn != nil {
+		s.ctrlConn.Close()
+		s.ctrlConn = nil
+	}
+	s.ctrlMu.Unlock()
+	return nil
+}
+
 func (s *WALShipper) markInSync() {
 	s.state.Store(uint32(ReplicaInSync))
+	s.catchupFailures = 0
 	log.Printf("wal_shipper: replica in-sync (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
+}
+
+const catchupTimeout = 30 * time.Second
+
+// reconnectWithHandshake performs the CP13-5 reconnect protocol:
+// connect data channel → send ResumeShipReq → read ResumeShipResp → decide.
+// Returns the target state (InSync, CatchingUp, NeedsRebuild) and replica's flushed LSN.
+// Caller must hold no locks. Must only be called when wal != nil.
+func (s *WALShipper) reconnectWithHandshake() (targetState ReplicaState, replicaFlushedLSN uint64, err error) {
+	s.state.Store(uint32(ReplicaConnecting))
+
+	// Reset and establish data connection.
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.Close()
+		s.dataConn = nil
+	}
+	if err := s.ensureDataConn(); err != nil {
+		s.mu.Unlock()
+		return ReplicaDegraded, 0, fmt.Errorf("reconnect dial: %w", err)
+	}
+	s.dataConn.SetDeadline(time.Now().Add(catchupTimeout))
+	conn := s.dataConn
+	s.mu.Unlock()
+
+	// Gather primary state.
+	retainStart, headLSN := s.wal.RetainedRange()
+	epoch := s.epochFn()
+
+	// Send ResumeShipReq.
+	req := EncodeResumeShipReq(ResumeShipReq{
+		Epoch:          epoch,
+		PrimaryHeadLSN: headLSN,
+		WalRetainStart: retainStart,
+	})
+	if err := WriteFrame(conn, MsgResumeShipReq, req); err != nil {
+		return ReplicaDegraded, 0, fmt.Errorf("reconnect send req: %w", err)
+	}
+
+	// Read ResumeShipResp.
+	msgType, payload, err := ReadFrame(conn)
+	if err != nil {
+		return ReplicaDegraded, 0, fmt.Errorf("reconnect read resp: %w", err)
+	}
+	if msgType != MsgResumeShipResp {
+		return ReplicaDegraded, 0, fmt.Errorf("reconnect: unexpected msg type 0x%02x", msgType)
+	}
+	resp, err := DecodeResumeShipResp(payload)
+	if err != nil {
+		return ReplicaDegraded, 0, err
+	}
+
+	// Clear deadline for catch-up streaming.
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.SetDeadline(time.Time{})
+	}
+	s.mu.Unlock()
+
+	// Decision matrix.
+	switch resp.Status {
+	case ResumeEpochMismatch:
+		return ReplicaNeedsRebuild, resp.ReplicaFlushedLSN, fmt.Errorf("reconnect: epoch mismatch")
+	case ResumeNeedsRebuild:
+		return ReplicaNeedsRebuild, resp.ReplicaFlushedLSN, fmt.Errorf("reconnect: replica requests rebuild")
+	case ResumeOK:
+		// proceed to gap analysis
+	default:
+		return ReplicaDegraded, resp.ReplicaFlushedLSN, fmt.Errorf("reconnect: unknown status 0x%02x", resp.Status)
+	}
+
+	R := resp.ReplicaFlushedLSN
+	H := headLSN
+	S := retainStart
+
+	if R > H {
+		// Impossible: replica ahead of primary.
+		log.Printf("wal_shipper: reconnect %s: impossible progress R=%d > H=%d", s.dataAddr, R, H)
+		return ReplicaNeedsRebuild, R, fmt.Errorf("reconnect: impossible replica progress")
+	}
+	if R == H {
+		// Already caught up.
+		log.Printf("wal_shipper: reconnect %s: already caught up (R=H=%d)", s.dataAddr, R)
+		return ReplicaInSync, R, nil
+	}
+	if R+1 >= S {
+		// Recoverable gap: WAL still has entries from R+1.
+		log.Printf("wal_shipper: reconnect %s: recoverable gap R=%d H=%d S=%d", s.dataAddr, R, H, S)
+		return ReplicaCatchingUp, R, nil
+	}
+	// Gap exceeds retained WAL.
+	log.Printf("wal_shipper: reconnect %s: gap too large R=%d H=%d S=%d", s.dataAddr, R, H, S)
+	return ReplicaNeedsRebuild, R, fmt.Errorf("reconnect: gap exceeds retained WAL")
+}
+
+// runCatchUp streams WAL entries from fromLSN+1 to the replica on the data channel.
+// Sends MsgCatchupDone when complete. Caller must hold no shipper locks.
+func (s *WALShipper) runCatchUp(fromLSN uint64) error {
+	s.state.Store(uint32(ReplicaCatchingUp))
+
+	// Set a deadline for the entire catch-up operation.
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.SetDeadline(time.Now().Add(catchupTimeout))
+	}
+	conn := s.dataConn
+	s.mu.Unlock()
+
+	if conn == nil {
+		return fmt.Errorf("catch-up: no data connection")
+	}
+
+	// Stream entries from WAL.
+	var lastSent uint64
+	err := s.wal.StreamEntries(fromLSN+1, func(entry *WALEntry) error {
+		encoded, encErr := entry.Encode()
+		if encErr != nil {
+			return encErr
+		}
+		if wErr := WriteFrame(conn, MsgWALEntry, encoded); wErr != nil {
+			return wErr
+		}
+		lastSent = entry.LSN
+		return nil
+	})
+
+	if err != nil {
+		if errors.Is(err, ErrWALRecycled) {
+			s.state.Store(uint32(ReplicaNeedsRebuild))
+			return fmt.Errorf("catch-up: WAL recycled: %w", err)
+		}
+		return fmt.Errorf("catch-up: stream error: %w", err)
+	}
+
+	// Send CatchupDone marker.
+	_, headLSN := s.wal.RetainedRange()
+	if err := WriteFrame(conn, MsgCatchupDone, EncodeCatchupDone(headLSN)); err != nil {
+		return fmt.Errorf("catch-up: send done: %w", err)
+	}
+
+	// Clear deadline.
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.SetDeadline(time.Time{})
+	}
+	s.mu.Unlock()
+
+	log.Printf("wal_shipper: catch-up complete %s: from=%d last=%d", s.dataAddr, fromLSN+1, lastSent)
+	return nil
 }

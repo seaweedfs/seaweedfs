@@ -9,7 +9,17 @@ import (
 
 // Data channel message types.
 const (
-	MsgWALEntry byte = 0x01
+	MsgWALEntry       byte = 0x01
+	MsgResumeShipReq  byte = 0x03 // CP13-5: reconnect handshake request
+	MsgResumeShipResp byte = 0x04 // CP13-5: reconnect handshake response
+	MsgCatchupDone    byte = 0x05 // CP13-5: end of catch-up stream
+)
+
+// ResumeShip status codes.
+const (
+	ResumeOK             byte = 0x00
+	ResumeEpochMismatch  byte = 0x01
+	ResumeNeedsRebuild   byte = 0x02
 )
 
 // Control channel message types.
@@ -171,4 +181,74 @@ func DecodeBarrierRequest(buf []byte) (BarrierRequest, error) {
 		LSN:   binary.BigEndian.Uint64(buf[4:12]),
 		Epoch: binary.BigEndian.Uint64(buf[12:20]),
 	}, nil
+}
+
+// --- CP13-5: Reconnect handshake messages ---
+
+// ResumeShipReq is sent by the primary on the data channel after reconnect.
+type ResumeShipReq struct {
+	Epoch          uint64
+	PrimaryHeadLSN uint64
+	WalRetainStart uint64
+}
+
+// EncodeResumeShipReq serializes a ResumeShipReq (8+8+8 = 24 bytes).
+func EncodeResumeShipReq(req ResumeShipReq) []byte {
+	buf := make([]byte, 24)
+	binary.BigEndian.PutUint64(buf[0:8], req.Epoch)
+	binary.BigEndian.PutUint64(buf[8:16], req.PrimaryHeadLSN)
+	binary.BigEndian.PutUint64(buf[16:24], req.WalRetainStart)
+	return buf
+}
+
+// DecodeResumeShipReq deserializes a ResumeShipReq.
+func DecodeResumeShipReq(buf []byte) (ResumeShipReq, error) {
+	if len(buf) < 24 {
+		return ResumeShipReq{}, fmt.Errorf("repl: resume ship req too short: %d bytes", len(buf))
+	}
+	return ResumeShipReq{
+		Epoch:          binary.BigEndian.Uint64(buf[0:8]),
+		PrimaryHeadLSN: binary.BigEndian.Uint64(buf[8:16]),
+		WalRetainStart: binary.BigEndian.Uint64(buf[16:24]),
+	}, nil
+}
+
+// ResumeShipResp is the replica's reply on the data channel.
+type ResumeShipResp struct {
+	Status            byte
+	ReplicaFlushedLSN uint64
+}
+
+// EncodeResumeShipResp serializes a ResumeShipResp (1+8 = 9 bytes).
+func EncodeResumeShipResp(resp ResumeShipResp) []byte {
+	buf := make([]byte, 9)
+	buf[0] = resp.Status
+	binary.BigEndian.PutUint64(buf[1:9], resp.ReplicaFlushedLSN)
+	return buf
+}
+
+// DecodeResumeShipResp deserializes a ResumeShipResp.
+func DecodeResumeShipResp(buf []byte) (ResumeShipResp, error) {
+	if len(buf) < 9 {
+		return ResumeShipResp{}, fmt.Errorf("repl: resume ship resp too short: %d bytes", len(buf))
+	}
+	return ResumeShipResp{
+		Status:            buf[0],
+		ReplicaFlushedLSN: binary.BigEndian.Uint64(buf[1:9]),
+	}, nil
+}
+
+// EncodeCatchupDone serializes the catch-up done marker (8 bytes: snapshotLSN).
+func EncodeCatchupDone(snapshotLSN uint64) []byte {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf[0:8], snapshotLSN)
+	return buf
+}
+
+// DecodeCatchupDone deserializes the catch-up done marker.
+func DecodeCatchupDone(buf []byte) (uint64, error) {
+	if len(buf) < 8 {
+		return 0, fmt.Errorf("repl: catchup done too short: %d bytes", len(buf))
+	}
+	return binary.BigEndian.Uint64(buf[0:8]), nil
 }

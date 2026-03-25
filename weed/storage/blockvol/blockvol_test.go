@@ -2339,7 +2339,7 @@ func testShipSingleEntry(t *testing.T) {
 	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
 
 	epoch := uint64(1)
-	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch }, nil)
 	defer s.Stop()
 
 	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
@@ -2371,7 +2371,7 @@ func testShipBatch(t *testing.T) {
 	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
 
 	epoch := uint64(1)
-	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch }, nil)
 	defer s.Stop()
 
 	for i := uint64(1); i <= 5; i++ {
@@ -2399,7 +2399,7 @@ func testShipEpochMismatchDropped(t *testing.T) {
 	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
 
 	epoch := uint64(2) // shipper epoch is 2
-	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch })
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return epoch }, nil)
 
 	// First ship a valid entry to establish connection.
 	validEntry := &WALEntry{LSN: 1, Epoch: 2, Type: EntryTypeTrim, LBA: 0, Length: 4096}
@@ -2444,7 +2444,7 @@ func testShipDegradedOnError(t *testing.T) {
 
 	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
 	epoch := uint64(1)
-	s := NewWALShipper(ln.Addr().String(), ctrlAddr, func() uint64 { return epoch })
+	s := NewWALShipper(ln.Addr().String(), ctrlAddr, func() uint64 { return epoch }, nil)
 	defer s.Stop()
 
 	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
@@ -2488,7 +2488,7 @@ func testShipDegradedOnError(t *testing.T) {
 
 func testShipNoReplicaNoop(t *testing.T) {
 	// A nil shipper should not be called, but test that a stopped shipper is safe.
-	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 })
+	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 }, nil)
 	s.Stop()
 
 	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
@@ -3000,7 +3000,7 @@ func testDistCommitBothPass(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
 
-	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 }, nil)
 	defer shipper.Stop()
 
 	distSync := MakeDistributedSync(walSync, NewShipperGroup([]*WALShipper{shipper}), v)
@@ -3023,7 +3023,7 @@ func testDistCommitLocalFail(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
 
-	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 }, nil)
 	defer shipper.Stop()
 
 	distSync := MakeDistributedSync(walSync, NewShipperGroup([]*WALShipper{shipper}), v)
@@ -3043,7 +3043,7 @@ func testDistCommitRemoteFailDegrades(t *testing.T) {
 	v := createTestVol(t)
 	defer v.Close()
 
-	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 })
+	shipper := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 0 }, nil)
 	defer shipper.Stop()
 
 	// Set shipper group on vol so degradeReplica can see it.
@@ -3565,7 +3565,7 @@ func testDemoteStopsShipper(t *testing.T) {
 	// Create a shipper group (won't connect but that's fine for this test).
 	shipper := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 {
 		return v.epoch.Load()
-	})
+	}, nil)
 	v.shipperGroup = NewShipperGroup([]*WALShipper{shipper})
 
 	if err := v.HandleAssignment(2, RoleStale, 0); err != nil {

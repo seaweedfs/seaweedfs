@@ -197,7 +197,7 @@ func testQA4b4ShipCtrlOkDataDown(t *testing.T) {
 	recv.dataListener.Close()
 
 	// Create shipper pointed at closed data port, working ctrl port.
-	shipper := NewWALShipper(recv.DataAddr(), ctrlAddr, func() uint64 { return 1 })
+	shipper := NewWALShipper(recv.DataAddr(), ctrlAddr, func() uint64 { return 1 }, nil)
 	defer shipper.Stop()
 
 	// Ship should fail (can't connect data), shipper degrades.

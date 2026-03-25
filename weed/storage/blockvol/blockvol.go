@@ -153,7 +153,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       v.syncWithWALProgress,
+		SyncFunc:       v.fd.Sync,
 		MaxDelay:       cfg.GroupCommitMaxDelay,
 		MaxBatch:       cfg.GroupCommitMaxBatch,
 		LowWatermark:   cfg.GroupCommitLowWatermark,
@@ -266,7 +266,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	v.epoch.Store(sb.Epoch)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       v.syncWithWALProgress,
+		SyncFunc:       v.fd.Sync,
 		MaxDelay:       cfg.GroupCommitMaxDelay,
 		MaxBatch:       cfg.GroupCommitMaxBatch,
 		LowWatermark:   cfg.GroupCommitLowWatermark,
@@ -326,18 +326,14 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	return v, nil
 }
 
-// beginOp increments the in-flight ops counter. Returns ErrVolumeClosed if
-// the volume is already closed, so callers must not proceed.
-// syncWithWALProgress persists WAL head pointer in the superblock as part of
-// every GroupCommit fsync. This ensures crash recovery can always find WAL
-// entries that were durable at the time of the sync.
+// syncWithWALProgress persists the WAL head pointer in the superblock.
+// Called by the flusher during checkpoint (not on every group commit).
 //
-// Without this, a crash before the first flusher checkpoint leaves
-// WALHead=0 in the superblock, making recovery skip all WAL entries
-// (BUG-RESTART-ZEROS).
-//
-// Sequence: update superblock WALHead → pwrite superblock → fd.Sync.
-// The fd.Sync flushes both WAL data and superblock in one syscall.
+// The extended WAL recovery scan (RecoverWAL) makes this advisory:
+// recovery scans past the recorded WALHead using CRC validation, so
+// entries written after the last superblock persist are not lost.
+// Persisting WALHead reduces recovery scan range but is not required
+// for correctness.
 func (v *BlockVol) syncWithWALProgress() error {
 	v.superMu.Lock()
 	defer v.superMu.Unlock()
@@ -359,6 +355,8 @@ func (v *BlockVol) syncWithWALProgress() error {
 	return v.fd.Sync()
 }
 
+// beginOp increments the in-flight ops counter. Returns ErrVolumeClosed if
+// the volume is already closed, so callers must not proceed.
 func (v *BlockVol) beginOp() error {
 	v.opsOutstanding.Add(1)
 	if v.closed.Load() {
@@ -742,6 +740,46 @@ type ReplicaAddr struct {
 	CtrlAddr string
 }
 
+// WALAccess provides the shipper with the minimal WAL interface needed
+// for reconnect handshake and catch-up. Avoids exposing raw WAL internals.
+type WALAccess interface {
+	// RetainedRange returns the current WAL retained LSN range.
+	// walRetainStart is the lowest LSN still in the WAL.
+	// primaryHeadLSN is the highest LSN written.
+	RetainedRange() (walRetainStart, primaryHeadLSN uint64)
+	// StreamEntries streams WAL entries from fromLSN to the current head.
+	// Calls fn for each entry. Returns ErrWALRecycled if fromLSN is no longer retained.
+	StreamEntries(fromLSN uint64, fn func(*WALEntry) error) error
+}
+
+// walAccess implements WALAccess for BlockVol.
+type walAccess struct {
+	vol *BlockVol
+}
+
+func (a *walAccess) RetainedRange() (uint64, uint64) {
+	checkpointLSN := uint64(0)
+	if a.vol.flusher != nil {
+		checkpointLSN = a.vol.flusher.CheckpointLSN()
+	}
+	headLSN := a.vol.nextLSN.Load()
+	if headLSN > 0 {
+		headLSN--
+	}
+	// WAL retain start: entries before checkpoint are eligible for reclaim.
+	// The flusher may have already reclaimed them. Use checkpoint+1 as retain start.
+	retainStart := checkpointLSN + 1
+	return retainStart, headLSN
+}
+
+func (a *walAccess) StreamEntries(fromLSN uint64, fn func(*WALEntry) error) error {
+	checkpointLSN := uint64(0)
+	if a.vol.flusher != nil {
+		checkpointLSN = a.vol.flusher.CheckpointLSN()
+	}
+	return a.vol.wal.ScanFrom(a.vol.fd, a.vol.super.WALOffset, checkpointLSN, fromLSN, fn)
+}
+
 // SetReplicaAddr configures a single replica endpoint. Backward-compatible wrapper
 // around SetReplicaAddrs for RF=2 callers.
 func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
@@ -751,18 +789,19 @@ func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
 // SetReplicaAddrs configures N replica endpoints and creates a ShipperGroup
 // with distributed group commit. Creates fresh shippers (old group is GC'd).
 func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
+	wa := &walAccess{vol: v}
 	shippers := make([]*WALShipper, len(addrs))
 	for i, a := range addrs {
 		shippers[i] = NewWALShipper(a.DataAddr, a.CtrlAddr, func() uint64 {
 			return v.epoch.Load()
-		}, v.Metrics)
+		}, wa, v.Metrics)
 	}
 	v.shipperGroup = NewShipperGroup(shippers)
 
 	// Replace the group committer's sync function with a distributed version.
 	v.groupCommit.Stop()
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:      MakeDistributedSync(v.syncWithWALProgress, v.shipperGroup, v),
+		SyncFunc:      MakeDistributedSync(v.fd.Sync, v.shipperGroup, v),
 		MaxDelay:      v.config.GroupCommitMaxDelay,
 		MaxBatch:      v.config.GroupCommitMaxBatch,
 		LowWatermark:  v.config.GroupCommitLowWatermark,

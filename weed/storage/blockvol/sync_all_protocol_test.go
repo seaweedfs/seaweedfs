@@ -1175,7 +1175,7 @@ func TestBestEffort_FlushSucceeds_ReplicaDown(t *testing.T) {
 // ============================================================
 
 func TestReplicaState_InitialDisconnected(t *testing.T) {
-	s := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 })
+	s := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 }, nil)
 	if s.State() != ReplicaDisconnected {
 		t.Fatalf("initial state: got %s, want disconnected", s.State())
 	}
@@ -1300,7 +1300,7 @@ func TestReplicaState_ShipFailureTransitionsToDegraded(t *testing.T) {
 }
 
 func TestReplicaState_BarrierDegradedReconnectFail_StaysDegraded(t *testing.T) {
-	s := NewWALShipper("127.0.0.1:1", "127.0.0.1:2", func() uint64 { return 1 })
+	s := NewWALShipper("127.0.0.1:1", "127.0.0.1:2", func() uint64 { return 1 }, nil)
 	// Force to Degraded.
 	s.state.Store(uint32(ReplicaDegraded))
 
@@ -1349,8 +1349,8 @@ func TestReplicaState_BarrierDegradedReconnectSuccess_RestoresInSync(t *testing.
 }
 
 func TestShipperGroup_InSyncCount(t *testing.T) {
-	s1 := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 })
-	s2 := NewWALShipper("127.0.0.1:9003", "127.0.0.1:9004", func() uint64 { return 1 })
+	s1 := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 }, nil)
+	s2 := NewWALShipper("127.0.0.1:9003", "127.0.0.1:9004", func() uint64 { return 1 }, nil)
 	group := NewShipperGroup([]*WALShipper{s1, s2})
 
 	// Both disconnected.
@@ -1599,8 +1599,8 @@ func TestShipperGroup_MinReplicaFlushedLSN(t *testing.T) {
 	}
 
 	// Test with shippers that have no progress.
-	s1 := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 })
-	s2 := NewWALShipper("127.0.0.1:9003", "127.0.0.1:9004", func() uint64 { return 1 })
+	s1 := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 }, nil)
+	s2 := NewWALShipper("127.0.0.1:9003", "127.0.0.1:9004", func() uint64 { return 1 }, nil)
 	group := NewShipperGroup([]*WALShipper{s1, s2})
 
 	_, ok = group.MinReplicaFlushedLSN()
