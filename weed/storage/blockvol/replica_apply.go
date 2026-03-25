@@ -24,6 +24,7 @@ type ReplicaReceiver struct {
 
 	mu          sync.Mutex
 	receivedLSN uint64
+	flushedLSN  uint64 // highest LSN durably persisted (fd.Sync completed); updated only in handleBarrier
 	cond        *sync.Cond
 
 	connMu      sync.Mutex // protects activeConns
@@ -300,6 +301,14 @@ func (r *ReplicaReceiver) ReceivedLSN() uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.receivedLSN
+}
+
+// FlushedLSN returns the highest LSN durably persisted on this replica
+// (after successful WAL fd.Sync). Updated only by handleBarrier.
+func (r *ReplicaReceiver) FlushedLSN() uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.flushedLSN
 }
 
 // DataAddr returns the data listener's canonical address (ip:port).

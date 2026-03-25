@@ -31,9 +31,11 @@ type WALShipper struct {
 	ctrlMu   sync.Mutex // protects ctrlConn
 	ctrlConn net.Conn
 
-	shippedLSN atomic.Uint64
-	degraded   atomic.Bool
-	stopped    atomic.Bool
+	shippedLSN         atomic.Uint64 // diagnostic: highest LSN sent to TCP socket
+	replicaFlushedLSN  atomic.Uint64 // authoritative: highest LSN durably persisted on replica
+	hasFlushedProgress atomic.Bool   // true once replica returns a valid (non-zero) FlushedLSN
+	degraded           atomic.Bool
+	stopped            atomic.Bool
 }
 
 // NewWALShipper creates a WAL shipper. Connections are established lazily on
@@ -53,7 +55,8 @@ func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, metrics 
 }
 
 // Ship sends a WAL entry to the replica over the data channel.
-// On write error, the shipper enters degraded mode permanently.
+// On write error, the shipper enters degraded mode. Recovery requires
+// the full reconnect protocol. See design/sync-all-reconnect-protocol.md.
 func (s *WALShipper) Ship(entry *WALEntry) error {
 	if s.stopped.Load() || s.degraded.Load() {
 		return nil
@@ -98,7 +101,9 @@ func (s *WALShipper) Ship(entry *WALEntry) error {
 
 // Barrier sends a barrier request on the control channel and waits for the
 // replica to confirm durability up to lsnMax. Returns ErrReplicaDegraded if
-// the shipper is in degraded mode.
+// the shipper is in degraded mode. Reconnection requires the full reconnect
+// protocol (ResumeShipReq handshake + WAL catch-up), not just TCP retry.
+// See design/sync-all-reconnect-protocol.md.
 func (s *WALShipper) Barrier(lsnMax uint64) error {
 	if s.stopped.Load() {
 		return ErrShipperStopped
@@ -144,8 +149,23 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 		return ErrReplicaDegraded
 	}
 
-	switch payload[0] {
+	resp := DecodeBarrierResponse(payload)
+
+	switch resp.Status {
 	case BarrierOK:
+		// Update authoritative durable progress (monotonic: only advance).
+		if resp.FlushedLSN > 0 {
+			s.hasFlushedProgress.Store(true)
+			for {
+				cur := s.replicaFlushedLSN.Load()
+				if resp.FlushedLSN <= cur {
+					break
+				}
+				if s.replicaFlushedLSN.CompareAndSwap(cur, resp.FlushedLSN) {
+					break
+				}
+			}
+		}
 		s.recordBarrierMetric(barrierStart, false)
 		return nil
 	case BarrierEpochMismatch:
@@ -173,9 +193,24 @@ func (s *WALShipper) recordBarrierMetric(start time.Time, failed bool) {
 	}
 }
 
-// ShippedLSN returns the highest LSN successfully sent to the replica.
+// ShippedLSN returns the highest LSN successfully sent to the replica (diagnostic only).
+// This is NOT authoritative for sync durability — use ReplicaFlushedLSN() instead.
 func (s *WALShipper) ShippedLSN() uint64 {
 	return s.shippedLSN.Load()
+}
+
+// ReplicaFlushedLSN returns the highest LSN durably persisted on the replica,
+// as reported in the barrier response after fd.Sync(). This is the authoritative
+// durable progress variable for sync_all correctness.
+func (s *WALShipper) ReplicaFlushedLSN() uint64 {
+	return s.replicaFlushedLSN.Load()
+}
+
+// HasFlushedProgress returns true if the replica has ever reported a valid
+// (non-zero) FlushedLSN. Legacy replicas that only support 1-byte barrier
+// responses will never set this, and must not count toward sync_all.
+func (s *WALShipper) HasFlushedProgress() bool {
+	return s.hasFlushedProgress.Load()
 }
 
 // IsDegraded returns true if the replica is unreachable.

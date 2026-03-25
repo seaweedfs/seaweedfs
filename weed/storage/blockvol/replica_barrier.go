@@ -40,7 +40,7 @@ func (r *ReplicaReceiver) handleControlConn(conn net.Conn) {
 
 		resp := r.handleBarrier(req)
 
-		respPayload := []byte{resp.Status}
+		respPayload := EncodeBarrierResponse(resp)
 		if err := WriteFrame(conn, MsgBarrierResp, respPayload); err != nil {
 			log.Printf("replica: write barrier response: %v", err)
 			return
@@ -97,5 +97,14 @@ func (r *ReplicaReceiver) handleBarrier(req BarrierRequest) BarrierResponse {
 		return BarrierResponse{Status: BarrierFsyncFailed}
 	}
 
-	return BarrierResponse{Status: BarrierOK}
+	// Advance durable progress. Only after fd.Sync() succeeds and contiguous
+	// receipt through req.LSN has been proven (step 2 above).
+	r.mu.Lock()
+	if req.LSN > r.flushedLSN {
+		r.flushedLSN = req.LSN
+	}
+	flushed := r.flushedLSN
+	r.mu.Unlock()
+
+	return BarrierResponse{Status: BarrierOK, FlushedLSN: flushed}
 }

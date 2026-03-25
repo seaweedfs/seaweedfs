@@ -103,6 +103,30 @@ func (sg *ShipperGroup) Len() int {
 	return len(sg.shippers)
 }
 
+// MinReplicaFlushedLSN returns the minimum replicaFlushedLSN across all
+// shippers that have reported valid progress (HasFlushedProgress == true).
+// The bool return indicates whether any shipper has known progress.
+// Returns (0, false) for empty groups or groups where no shipper has
+// received a valid FlushedLSN response yet.
+// Used by WAL retention (CP13-6) to gate WAL reclaim.
+func (sg *ShipperGroup) MinReplicaFlushedLSN() (uint64, bool) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	var min uint64
+	found := false
+	for _, s := range sg.shippers {
+		if !s.HasFlushedProgress() {
+			continue
+		}
+		lsn := s.ReplicaFlushedLSN()
+		if !found || lsn < min {
+			min = lsn
+			found = true
+		}
+	}
+	return min, found
+}
+
 // Shipper returns the shipper at index i. For internal/test use.
 func (sg *ShipperGroup) Shipper(i int) *WALShipper {
 	sg.mu.RLock()

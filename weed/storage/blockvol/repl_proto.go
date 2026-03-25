@@ -34,8 +34,32 @@ type BarrierRequest struct {
 }
 
 // BarrierResponse is the replica's reply to a barrier request.
+// Wire format: [1B status][8B flushedLSN] = 9 bytes.
+// Legacy replicas send only 1 byte (FlushedLSN defaults to 0).
 type BarrierResponse struct {
-	Status byte
+	Status     byte
+	FlushedLSN uint64 // replica's durable WAL progress after this barrier
+}
+
+// EncodeBarrierResponse serializes a BarrierResponse (1+8 = 9 bytes).
+func EncodeBarrierResponse(resp BarrierResponse) []byte {
+	buf := make([]byte, 9)
+	buf[0] = resp.Status
+	binary.BigEndian.PutUint64(buf[1:9], resp.FlushedLSN)
+	return buf
+}
+
+// DecodeBarrierResponse deserializes a BarrierResponse.
+// Handles both 9-byte (new) and 1-byte (legacy) responses.
+func DecodeBarrierResponse(buf []byte) BarrierResponse {
+	if len(buf) < 1 {
+		return BarrierResponse{}
+	}
+	resp := BarrierResponse{Status: buf[0]}
+	if len(buf) >= 9 {
+		resp.FlushedLSN = binary.BigEndian.Uint64(buf[1:9])
+	}
+	return resp
 }
 
 // Frame header: [1B type][4B payload_len].
