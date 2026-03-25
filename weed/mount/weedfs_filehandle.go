@@ -50,22 +50,14 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	if fhToRelease != nil && fhToRelease.asyncFlushPending {
 		done := make(chan struct{})
 		wfs.pendingAsyncFlush[fhToRelease.inode] = done
+		// Add(1) while holding the mutex so WaitForAsyncFlush cannot
+		// observe a zero counter and close the channel before we send.
+		wfs.asyncFlushWg.Add(1)
 		wfs.pendingAsyncFlushMu.Unlock()
 
-		wfs.asyncFlushWg.Add(1)
-		go func() {
-			defer wfs.asyncFlushWg.Done()
-			defer func() {
-				// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
-				wfs.fhMap.RemoveFileHandle(fhToRelease.fh, fhToRelease.inode)
-				// Then signal completion (unblocks waitForPendingAsyncFlush).
-				close(done)
-				wfs.pendingAsyncFlushMu.Lock()
-				delete(wfs.pendingAsyncFlush, fhToRelease.inode)
-				wfs.pendingAsyncFlushMu.Unlock()
-			}()
-			wfs.completeAsyncFlush(fhToRelease)
-		}()
+		// Send after unlock to avoid deadlock — workers acquire the
+		// same mutex during cleanup.
+		wfs.asyncFlushCh <- &asyncFlushItem{fh: fhToRelease, done: done}
 		return
 	}
 	wfs.pendingAsyncFlushMu.Unlock()

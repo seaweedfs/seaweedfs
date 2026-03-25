@@ -8,14 +8,48 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-// completeAsyncFlush is called in a background goroutine when a file handle
-// with pending async flush work is released. It performs the deferred data
-// upload and metadata flush that was skipped in doFlush() for writebackCache mode.
+// asyncFlushItem holds the data needed for a background flush work item.
+type asyncFlushItem struct {
+	fh   *FileHandle
+	done chan struct{}
+}
+
+// startAsyncFlushWorkers launches a fixed pool of goroutines that process
+// background flush work items from asyncFlushCh. This bounds the number of
+// concurrent flush operations to prevent resource exhaustion (connections,
+// goroutines) when many files are closed rapidly (e.g., cp -r with writebackCache).
+func (wfs *WFS) startAsyncFlushWorkers(numWorkers int) {
+	wfs.asyncFlushCh = make(chan *asyncFlushItem, numWorkers*4)
+	for i := 0; i < numWorkers; i++ {
+		go wfs.asyncFlushWorker()
+	}
+}
+
+func (wfs *WFS) asyncFlushWorker() {
+	for item := range wfs.asyncFlushCh {
+		wfs.processAsyncFlushItem(item)
+	}
+}
+
+func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
+	defer wfs.asyncFlushWg.Done()
+	defer func() {
+		// Remove from fhMap first (so AcquireFileHandle creates a fresh handle).
+		wfs.fhMap.RemoveFileHandle(item.fh.fh, item.fh.inode)
+		// Then signal completion (unblocks waitForPendingAsyncFlush).
+		close(item.done)
+		wfs.pendingAsyncFlushMu.Lock()
+		delete(wfs.pendingAsyncFlush, item.fh.inode)
+		wfs.pendingAsyncFlushMu.Unlock()
+	}()
+	wfs.completeAsyncFlush(item.fh)
+}
+
+// completeAsyncFlush performs the deferred data upload and metadata flush
+// that was skipped in doFlush() for writebackCache mode.
 //
 // This enables close() to return immediately for small file workloads (e.g., rsync),
 // while the actual I/O happens concurrently in the background.
-//
-// The caller (submitAsyncFlush) owns asyncFlushWg and the per-inode done channel.
 func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
 	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
@@ -80,8 +114,11 @@ func (wfs *WFS) flushMetadataWithRetry(fh *FileHandle, dir, name string, fileFul
 	}
 }
 
-// WaitForAsyncFlush waits for all pending background flush goroutines to complete.
+// WaitForAsyncFlush waits for all pending background flush work items to complete.
 // Called before unmount cleanup to ensure no data is lost.
 func (wfs *WFS) WaitForAsyncFlush() {
 	wfs.asyncFlushWg.Wait()
+	if wfs.asyncFlushCh != nil {
+		close(wfs.asyncFlushCh)
+	}
 }
