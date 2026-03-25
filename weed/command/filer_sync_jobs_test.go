@@ -1,6 +1,7 @@
 package command
 
 import (
+	"container/heap"
 	"fmt"
 	"testing"
 
@@ -307,8 +308,8 @@ func TestIndexCleanup(t *testing.T) {
 	}
 }
 
-// TestMinActiveTsTracking verifies watermark advancement.
-func TestMinActiveTsTracking(t *testing.T) {
+// TestWatermarkWithHeap verifies watermark advancement using the min-heap.
+func TestWatermarkWithHeap(t *testing.T) {
 	noop := func(resp *filer_pb.SubscribeMetadataResponse) error { return nil }
 	p := NewMetadataProcessor(noop, 100, 0)
 
@@ -317,39 +318,43 @@ func TestMinActiveTsTracking(t *testing.T) {
 		jobPath := util.FullPath("/file" + string(rune('0'+ts/10)))
 		p.activeJobs[ts] = &syncJobPaths{path: jobPath, isDirectory: false}
 		p.addPathToIndex(jobPath, false)
-		if p.minActiveTs == 0 || ts < p.minActiveTs {
-			p.minActiveTs = ts
-		}
+		heap.Push(&p.tsHeap, ts)
 	}
 
-	if p.minActiveTs != 10 {
-		t.Errorf("expected minActiveTs=10, got %d", p.minActiveTs)
+	if p.tsHeap[0] != 10 {
+		t.Errorf("expected heap min=10, got %d", p.tsHeap[0])
 	}
 
-	// Remove non-oldest (ts=20) — minActiveTs should stay 10
+	// Remove non-oldest (ts=20) — heap top should stay 10
 	delete(p.activeJobs, 20)
 	p.removePathFromIndex("/file2", false)
-	// Simulate watermark check: not the oldest, no update
-	if 20 == p.minActiveTs {
-		t.Error("ts=20 should not be minActiveTs")
+	// Lazy clean: top is 10 which is still active, so no pop
+	for p.tsHeap.Len() > 0 {
+		if _, active := p.activeJobs[p.tsHeap[0]]; active {
+			break
+		}
+		heap.Pop(&p.tsHeap)
+	}
+	if p.tsHeap[0] != 10 {
+		t.Errorf("expected heap min=10 after removing 20, got %d", p.tsHeap[0])
 	}
 
-	// Remove oldest (ts=10) — should find new min (30)
+	// Remove oldest (ts=10) — lazy clean should find 30
 	delete(p.activeJobs, 10)
 	p.removePathFromIndex("/file1", false)
-	if 10 == p.minActiveTs {
-		p.processedTsWatermark.Store(10)
-		p.minActiveTs = 0
-		for ts := range p.activeJobs {
-			if p.minActiveTs == 0 || ts < p.minActiveTs {
-				p.minActiveTs = ts
-			}
+	for p.tsHeap.Len() > 0 {
+		if _, active := p.activeJobs[p.tsHeap[0]]; active {
+			break
 		}
+		heap.Pop(&p.tsHeap)
 	}
-	if p.minActiveTs != 30 {
-		t.Errorf("expected minActiveTs=30, got %d", p.minActiveTs)
+	if p.tsHeap.Len() != 1 || p.tsHeap[0] != 30 {
+		t.Errorf("expected heap min=30 after removing 10 and 20, got len=%d", p.tsHeap.Len())
 	}
 }
+
+// benchResult prevents the compiler from optimizing away the conflict check.
+var benchResult bool
 
 // BenchmarkConflictCheck measures conflict check cost with varying active job counts.
 // With the index-based approach, cost should be O(depth) regardless of job count.
@@ -360,7 +365,7 @@ func BenchmarkConflictCheck(b *testing.B) {
 			p := NewMetadataProcessor(noop, numJobs+1, 0)
 
 			// Fill with active jobs in different directories
-			for i := 0; i < numJobs; i++ {
+			for i := range numJobs {
 				dir := fmt.Sprintf("/dir%d/sub%d", i/100, i%100)
 				name := fmt.Sprintf("file%d.txt", i)
 				resp := makeResp(dir, name, false, int64(i+1), true)
@@ -371,10 +376,12 @@ func BenchmarkConflictCheck(b *testing.B) {
 
 			// Benchmark conflict check for a non-conflicting event
 			probe := makeResp("/other/path", "test.txt", false, int64(numJobs+1), true)
+			var r bool
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
-				p.conflictsWith(probe)
+				r = p.conflictsWith(probe)
 			}
+			benchResult = r
 		})
 	}
 }

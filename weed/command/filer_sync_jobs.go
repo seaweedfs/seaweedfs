@@ -1,6 +1,7 @@
 package command
 
 import (
+	"container/heap"
 	"path"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// tsMinHeap implements heap.Interface for int64 timestamps.
+type tsMinHeap []int64
+
+func (h tsMinHeap) Len() int            { return len(h) }
+func (h tsMinHeap) Less(i, j int) bool  { return h[i] < h[j] }
+func (h tsMinHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *tsMinHeap) Push(x any)         { *h = append(*h, x.(int64)) }
+func (h *tsMinHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
 
 type syncJobPaths struct {
 	path        util.FullPath
@@ -33,8 +49,9 @@ type MetadataProcessor struct {
 	// descendantCount counts active jobs (file or dir) strictly under each directory.
 	descendantCount map[util.FullPath]int
 
-	// minActiveTs tracks the smallest TsNs in activeJobs for O(1) watermark checks.
-	minActiveTs int64
+	// tsHeap is a min-heap of active job timestamps with lazy deletion,
+	// used for O(log n) amortized watermark tracking.
+	tsHeap tsMinHeap
 }
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
@@ -164,9 +181,7 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.addPathToIndex(newPath, isDirectory)
 	}
 
-	if t.minActiveTs == 0 || resp.TsNs < t.minActiveTs {
-		t.minActiveTs = resp.TsNs
-	}
+	heap.Push(&t.tsHeap, resp.TsNs)
 
 	go func() {
 
@@ -185,15 +200,17 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 			t.removePathFromIndex(jobPaths.newPath, jobPaths.isDirectory)
 		}
 
-		// if is the oldest job, write down the watermark
-		if resp.TsNs == t.minActiveTs {
-			t.processedTsWatermark.Store(resp.TsNs)
-			t.minActiveTs = 0
-			for ts := range t.activeJobs {
-				if t.minActiveTs == 0 || ts < t.minActiveTs {
-					t.minActiveTs = ts
-				}
+		// Lazy-clean stale entries from heap top (already-completed jobs).
+		// Each entry is pushed once and popped once: O(log n) amortized.
+		for t.tsHeap.Len() > 0 {
+			if _, active := t.activeJobs[t.tsHeap[0]]; active {
+				break
 			}
+			heap.Pop(&t.tsHeap)
+		}
+		// If this was the oldest job, advance the watermark.
+		if t.tsHeap.Len() == 0 || resp.TsNs < t.tsHeap[0] {
+			t.processedTsWatermark.Store(resp.TsNs)
 		}
 		t.activeJobsCond.Signal()
 	}()
