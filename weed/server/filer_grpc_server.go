@@ -3,6 +3,7 @@ package weed_server
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -191,6 +192,18 @@ func (fs *FilerServer) CreateEntry(ctx context.Context, req *filer_pb.CreateEntr
 	} else {
 		glog.V(3).InfofCtx(ctx, "CreateEntry %s: %v", filepath.Join(req.Directory, req.Entry.Name), createErr)
 		resp.Error = createErr.Error()
+		switch {
+		case errors.Is(createErr, filer_pb.ErrEntryNameTooLong):
+			resp.ErrorCode = filer_pb.FilerError_ENTRY_NAME_TOO_LONG
+		case errors.Is(createErr, filer_pb.ErrParentIsFile):
+			resp.ErrorCode = filer_pb.FilerError_PARENT_IS_FILE
+		case errors.Is(createErr, filer_pb.ErrExistingIsDirectory):
+			resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_DIRECTORY
+		case errors.Is(createErr, filer_pb.ErrExistingIsFile):
+			resp.ErrorCode = filer_pb.FilerError_EXISTING_IS_FILE
+		case errors.Is(createErr, filer_pb.ErrEntryAlreadyExists):
+			resp.ErrorCode = filer_pb.FilerError_ENTRY_ALREADY_EXISTS
+		}
 	}
 
 	return
