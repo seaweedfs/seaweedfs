@@ -74,8 +74,9 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		}
 	}
 
+	// Load compaction task configuration (task type: "compaction")
 	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
-		policy.TaskPolicies["delete_empty"] = &worker_pb.TaskPolicy{
+		policy.TaskPolicies["compaction"] = &worker_pb.TaskPolicy{
 			Enabled:               deConfig.Enabled,
 			MaxConcurrent:         int32(deConfig.MaxConcurrent),
 			RepeatIntervalSeconds: int32(deConfig.ScanIntervalSeconds),

@@ -47,7 +47,7 @@ func (t *DeleteEmptyTask) Execute(ctx context.Context, params *worker_pb.TaskPar
 		"volume_id":  t.volumeID,
 		"server":     t.server,
 		"collection": t.collection,
-	}).Info("Starting delete_empty task")
+	}).Info("Starting compaction task")
 
 	t.ReportProgress(10.0)
 
@@ -62,7 +62,7 @@ func (t *DeleteEmptyTask) Execute(ctx context.Context, params *worker_pb.TaskPar
 	}
 
 	t.ReportProgress(100.0)
-	glog.Infof("DELETE_EMPTY: successfully deleted empty volume %d from %s", t.volumeID, t.server)
+	glog.Infof("COMPACTION: successfully deleted empty volume %d from %s", t.volumeID, t.server)
 	return nil
 }
 
@@ -100,11 +100,13 @@ func (t *DeleteEmptyTask) verifyVolumeIsEmpty(ctx context.Context) error {
 				return fmt.Errorf("failed to check volume %d status: %w", t.volumeID, err)
 			}
 
-			// A truly empty volume has garbage ratio 0 and the shell command
-			// uses Size <= SuperBlockSize. We re-verify by checking that
-			// GarbageRatio is 0 and the volume reports no data (gRPC check is
-			// a reasonable proxy; the real guard is onlyEmpty=true in delete).
-			glog.V(2).Infof("DELETE_EMPTY: pre-delete check on volume %d: garbage_ratio=%.4f", t.volumeID, resp.GarbageRatio)
+			// Re-verify the volume is still empty: a non-zero GarbageRatio means
+			// the volume has received data since detection. Abort to be safe;
+			// the real server-side guard is onlyEmpty=true in VolumeDelete.
+			glog.V(2).Infof("COMPACTION: pre-delete check on volume %d: garbage_ratio=%.4f", t.volumeID, resp.GarbageRatio)
+			if resp.GarbageRatio > 0 {
+				return fmt.Errorf("pre-delete check failed: volume %d is not empty (garbage_ratio=%.4f)", t.volumeID, resp.GarbageRatio)
+			}
 			return nil
 		})
 }
