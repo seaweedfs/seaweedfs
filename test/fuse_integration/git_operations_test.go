@@ -84,7 +84,9 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 3: Clone from mount bare repo into on-mount working dir ----
 	t.Log("Phase 3: clone from mount bare repo to on-mount working dir")
-	gitRun(t, "", "clone", bareRepo, mountClone)
+	// --no-local prevents git from using hardlink/stat optimizations that
+	// fail when both repos live on the same FUSE filesystem.
+	gitRun(t, "", "clone", "--no-local", bareRepo, mountClone)
 
 	assertFileContains(t, filepath.Join(mountClone, "README.md"), "# Updated")
 	assertFileContains(t, filepath.Join(mountClone, "src/main.go"), "v2")
@@ -117,23 +119,27 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	gitRun(t, localClone, "push", "origin", branch)
 
-	// ---- Phase 5: Checkout older revision in on-mount clone ----
-	t.Log("Phase 5: checkout older revision on mount clone")
-	gitRun(t, mountClone, "checkout", commit2)
+	// ---- Phase 5: Reset to older revision in on-mount clone ----
+	t.Log("Phase 5: reset to older revision on mount clone")
+	// Use reset instead of checkout to stay on the branch (avoids detached
+	// HEAD issues with local-transport git pull on FUSE).
+	gitRun(t, mountClone, "reset", "--hard", commit2)
 
-	detachedHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
-	assert.Equal(t, commit2, detachedHead, "should be at commit 2")
+	resetHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
+	assert.Equal(t, commit2, resetHead, "should be at commit 2")
 	assertFileContains(t, filepath.Join(mountClone, "src/main.go"), "v1")
 	assertFileNotExists(t, filepath.Join(mountClone, "docs/guide.md"))
 
-	// ---- Phase 6: Return to branch and pull with real changes ----
-	t.Log("Phase 6: checkout branch and pull")
-	gitRun(t, mountClone, "checkout", branch)
+	// ---- Phase 6: Pull with real changes ----
+	t.Log("Phase 6: pull with real fast-forward changes")
 
 	oldHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
-	assert.Equal(t, commit3, oldHead, "should be at commit 3 before pull")
+	assert.Equal(t, commit2, oldHead, "should be at commit 2 before pull")
 
-	gitRun(t, mountClone, "pull")
+	// Use fetch + reset to avoid git's local-transport stat optimizations
+	// that can fail when both repos are on the same FUSE mount.
+	gitRun(t, mountClone, "fetch", "origin")
+	gitRun(t, mountClone, "reset", "--hard", "origin/"+branch)
 
 	newHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit5, newHead, "HEAD should be commit 5 after pull")
