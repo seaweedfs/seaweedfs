@@ -440,18 +440,25 @@ func (m *streamMutateMux) Close() {
 	}
 	m.closed = true
 	stream := m.stream
+	m.stream = nil // prevent teardownStream from acting after Close
 	cancel := m.cancel
+	m.cancel = nil
 	grpcConn := m.grpcConn
+	m.grpcConn = nil
+	recvDone := m.recvDone
 	if m.stopSend != nil {
 		close(m.stopSend)
 		m.stopSend = nil
 	}
 	m.mu.Unlock()
 
+	m.failAllPending()
 	close(m.sendCh)
 	if stream != nil {
 		stream.CloseSend()
-		<-m.recvDone
+		if recvDone != nil {
+			<-recvDone
+		}
 	}
 	if cancel != nil {
 		cancel()
