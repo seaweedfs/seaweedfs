@@ -29,11 +29,16 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 			if createErr != nil {
 				resp = &filer_pb.CreateEntryResponse{Error: createErr.Error()}
 			}
-			if sendErr := stream.Send(&filer_pb.StreamMutateEntryResponse{
+			streamResp := &filer_pb.StreamMutateEntryResponse{
 				RequestId: req.RequestId,
 				IsLast:    true,
 				Response:  &filer_pb.StreamMutateEntryResponse_CreateResponse{CreateResponse: resp},
-			}); sendErr != nil {
+			}
+			if resp.Error != "" {
+				streamResp.Error = resp.Error
+				streamResp.Errno = int32(syscall.EIO)
+			}
+			if sendErr := stream.Send(streamResp); sendErr != nil {
 				return sendErr
 			}
 
@@ -42,11 +47,16 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 			if updateErr != nil {
 				resp = &filer_pb.UpdateEntryResponse{}
 			}
-			if sendErr := stream.Send(&filer_pb.StreamMutateEntryResponse{
+			streamResp := &filer_pb.StreamMutateEntryResponse{
 				RequestId: req.RequestId,
 				IsLast:    true,
 				Response:  &filer_pb.StreamMutateEntryResponse_UpdateResponse{UpdateResponse: resp},
-			}); sendErr != nil {
+			}
+			if updateErr != nil {
+				streamResp.Error = updateErr.Error()
+				streamResp.Errno = int32(syscall.EIO)
+			}
+			if sendErr := stream.Send(streamResp); sendErr != nil {
 				return sendErr
 			}
 
@@ -55,11 +65,16 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 			if deleteErr != nil {
 				resp = &filer_pb.DeleteEntryResponse{Error: deleteErr.Error()}
 			}
-			if sendErr := stream.Send(&filer_pb.StreamMutateEntryResponse{
+			streamResp := &filer_pb.StreamMutateEntryResponse{
 				RequestId: req.RequestId,
 				IsLast:    true,
 				Response:  &filer_pb.StreamMutateEntryResponse_DeleteResponse{DeleteResponse: resp},
-			}); sendErr != nil {
+			}
+			if resp.Error != "" {
+				streamResp.Error = resp.Error
+				streamResp.Errno = int32(syscall.EIO)
+			}
+			if sendErr := stream.Send(streamResp); sendErr != nil {
 				return sendErr
 			}
 
@@ -124,11 +139,11 @@ func (p *renameStreamProxy) Context() context.Context {
 	return p.parent.Context()
 }
 
-func (p *renameStreamProxy) SendMsg(m interface{}) error   { return p.parent.SendMsg(m) }
-func (p *renameStreamProxy) RecvMsg(m interface{}) error    { return p.parent.RecvMsg(m) }
-func (p *renameStreamProxy) SetHeader(md metadata.MD) error { return p.parent.SetHeader(md) }
+func (p *renameStreamProxy) SendMsg(m any) error            { return p.parent.SendMsg(m) }
+func (p *renameStreamProxy) RecvMsg(m any) error             { return p.parent.RecvMsg(m) }
+func (p *renameStreamProxy) SetHeader(md metadata.MD) error  { return p.parent.SetHeader(md) }
 func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.SendHeader(md) }
-func (p *renameStreamProxy) SetTrailer(md metadata.MD)      { p.parent.SetTrailer(md) }
+func (p *renameStreamProxy) SetTrailer(md metadata.MD)       { p.parent.SetTrailer(md) }
 
 // renameErrno maps a rename error to a POSIX errno for the client.
 func renameErrno(err error) int32 {

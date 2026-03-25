@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -18,13 +19,20 @@ import (
 )
 
 // streamMutateError is returned when the server reports a structured errno.
+// It is also used by helpers to distinguish application errors (don't retry
+// on unary fallback) from transport errors (do retry).
 type streamMutateError struct {
 	msg   string
 	errno syscall.Errno
 }
 
-func (e *streamMutateError) Error() string         { return e.msg }
-func (e *streamMutateError) Errno() syscall.Errno  { return e.errno }
+func (e *streamMutateError) Error() string        { return e.msg }
+func (e *streamMutateError) Errno() syscall.Errno { return e.errno }
+
+// ErrStreamTransport is a sentinel error type for transport-level stream
+// failures (disconnects, send errors). Callers use errors.Is to decide
+// whether to fall back to unary RPCs.
+var ErrStreamTransport = errors.New("stream transport error")
 
 // streamMutateMux multiplexes filer mutation RPCs (create, update, delete,
 // rename) over a single bidirectional gRPC stream. Multiple goroutines can
@@ -33,12 +41,13 @@ func (e *streamMutateError) Errno() syscall.Errno  { return e.errno }
 type streamMutateMux struct {
 	wfs *WFS
 
-	mu       sync.Mutex // protects stream, cancel, grpcConn, closed
+	mu       sync.Mutex // protects stream, cancel, grpcConn, closed, stopSend
 	stream   filer_pb.SeaweedFiler_StreamMutateEntryClient
 	cancel   context.CancelFunc
 	grpcConn *grpc.ClientConn // dedicated connection, closed on stream teardown
 	closed   bool
 	disabled bool // permanently disabled if filer doesn't support the RPC
+	stopSend chan struct{} // closed to signal the current sendLoop to exit
 
 	nextID atomic.Uint64
 
@@ -71,10 +80,22 @@ func (m *streamMutateMux) CreateEntry(ctx context.Context, req *filer_pb.CreateE
 	if err != nil {
 		return nil, err
 	}
-	if r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse); ok {
-		return r.CreateResponse, nil
+	r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_CreateResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T", resp.Response)
 	}
-	return nil, fmt.Errorf("unexpected response type %T", resp.Response)
+	// Check nested error fields (same logic as CreateEntryWithResponse).
+	cr := r.CreateResponse
+	if cr.ErrorCode != filer_pb.FilerError_OK {
+		if sentinel := filer_pb.FilerErrorToSentinel(cr.ErrorCode); sentinel != nil {
+			return nil, fmt.Errorf("CreateEntry %s/%s: %w", req.Directory, req.Entry.Name, sentinel)
+		}
+		return nil, &streamMutateError{msg: cr.Error, errno: syscall.EIO}
+	}
+	if cr.Error != "" {
+		return nil, &streamMutateError{msg: cr.Error, errno: syscall.EIO}
+	}
+	return cr, nil
 }
 
 // UpdateEntry sends an UpdateEntryRequest over the stream and waits for the response.
@@ -99,10 +120,15 @@ func (m *streamMutateMux) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 	if err != nil {
 		return nil, err
 	}
-	if r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_DeleteResponse); ok {
-		return r.DeleteResponse, nil
+	r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_DeleteResponse)
+	if !ok {
+		return nil, fmt.Errorf("unexpected response type %T", resp.Response)
 	}
-	return nil, fmt.Errorf("unexpected response type %T", resp.Response)
+	// Check nested error field.
+	if r.DeleteResponse.Error != "" {
+		return nil, &streamMutateError{msg: r.DeleteResponse.Error, errno: syscall.EIO}
+	}
+	return r.DeleteResponse, nil
 }
 
 // Rename sends a StreamRenameEntryRequest over the stream and collects all
@@ -110,7 +136,7 @@ func (m *streamMutateMux) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 // intermediate rename event (same as the current StreamRenameEntry recv loop).
 func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRenameEntryRequest, onEvent func(*filer_pb.StreamRenameEntryResponse) error) error {
 	if err := m.ensureStream(); err != nil {
-		return err
+		return fmt.Errorf("%w: %v", ErrStreamTransport, err)
 	}
 
 	id := m.nextID.Add(1)
@@ -131,7 +157,7 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 		return ctx.Err()
 	}
 	if err := <-sendReq.errCh; err != nil {
-		return err
+		return fmt.Errorf("rename send: %w: %v", ErrStreamTransport, err)
 	}
 
 	// Collect rename events until is_last=true.
@@ -139,7 +165,7 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 		select {
 		case resp, ok := <-ch:
 			if !ok {
-				return fmt.Errorf("stream closed during rename")
+				return fmt.Errorf("rename recv: %w: stream closed", ErrStreamTransport)
 			}
 			if r, ok := resp.Response.(*filer_pb.StreamMutateEntryResponse_RenameResponse); ok {
 				if r.RenameResponse != nil && r.RenameResponse.EventNotification != nil {
@@ -166,7 +192,7 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 // doUnary sends a single-response request and waits for the reply.
 func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutateEntryRequest) (*filer_pb.StreamMutateEntryResponse, error) {
 	if err := m.ensureStream(); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
 	}
 
 	id := m.nextID.Add(1)
@@ -185,13 +211,13 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 		return nil, ctx.Err()
 	}
 	if err := <-sendReq.errCh; err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
 	}
 
 	select {
 	case resp, ok := <-ch:
 		if !ok {
-			return nil, fmt.Errorf("stream closed")
+			return nil, fmt.Errorf("%w: stream closed", ErrStreamTransport)
 		}
 		if resp.Error != "" {
 			return nil, &streamMutateError{
@@ -228,48 +254,68 @@ func (m *streamMutateMux) ensureStream() error {
 	}
 
 	m.stream = stream
+	m.stopSend = make(chan struct{})
 	m.recvDone = make(chan struct{})
-	go m.sendLoop()
+	go m.sendLoop(stream, m.stopSend)
 	go m.recvLoop()
 	return nil
 }
 
 func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntryClient) error {
 	i := atomic.LoadInt32(&m.wfs.option.filerIndex)
-	filerGrpcAddress := m.wfs.option.FilerAddresses[i].ToGrpcAddress()
+	n := int32(len(m.wfs.option.FilerAddresses))
+	var lastErr error
 
-	// Dial a dedicated gRPC connection that we own (not pooled).
-	// We cannot use pb.WithGrpcClient(streamingMode=true) because it
-	// closes the connection when the callback returns, destroying the stream.
-	ctx := context.Background()
-	if m.wfs.signature != 0 {
-		ctx = grpcMetadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", m.wfs.signature))
-	}
-	grpcConn, err := pb.GrpcDial(ctx, filerGrpcAddress, false, m.wfs.option.GrpcDialOption)
-	if err != nil {
-		return fmt.Errorf("stream dial %s: %v", filerGrpcAddress, err)
-	}
+	for x := int32(0); x < n; x++ {
+		idx := (i + x) % n
+		filerGrpcAddress := m.wfs.option.FilerAddresses[idx].ToGrpcAddress()
 
-	client := filer_pb.NewSeaweedFilerClient(grpcConn)
-	streamCtx, cancel := context.WithCancel(context.Background())
-	stream, err := client.StreamMutateEntry(streamCtx)
-	if err != nil {
-		cancel()
-		grpcConn.Close()
-		return err
+		ctx := context.Background()
+		if m.wfs.signature != 0 {
+			ctx = grpcMetadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", m.wfs.signature))
+		}
+		grpcConn, err := pb.GrpcDial(ctx, filerGrpcAddress, false, m.wfs.option.GrpcDialOption)
+		if err != nil {
+			lastErr = fmt.Errorf("stream dial %s: %v", filerGrpcAddress, err)
+			continue
+		}
+
+		client := filer_pb.NewSeaweedFilerClient(grpcConn)
+		streamCtx, cancel := context.WithCancel(ctx)
+		stream, err := client.StreamMutateEntry(streamCtx)
+		if err != nil {
+			cancel()
+			grpcConn.Close()
+			lastErr = err
+			// Unimplemented means all filers lack it — stop rotating.
+			if s, ok := status.FromError(err); ok && s.Code() == codes.Unimplemented {
+				return err
+			}
+			continue
+		}
+
+		atomic.StoreInt32(&m.wfs.option.filerIndex, idx)
+		m.cancel = cancel
+		m.grpcConn = grpcConn
+		*out = stream
+		return nil
 	}
-	m.cancel = cancel
-	m.grpcConn = grpcConn
-	*out = stream
-	return nil
+	return lastErr
 }
 
-func (m *streamMutateMux) sendLoop() {
-	for req := range m.sendCh {
-		err := m.stream.Send(req.req)
-		req.errCh <- err
-		if err != nil {
-			m.failAllPending(err)
+func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, stop <-chan struct{}) {
+	for {
+		select {
+		case req, ok := <-m.sendCh:
+			if !ok {
+				return // Close() was called
+			}
+			err := stream.Send(req.req)
+			req.errCh <- err
+			if err != nil {
+				return
+			}
+		case <-stop:
 			return
 		}
 	}
@@ -285,6 +331,10 @@ func (m *streamMutateMux) recvLoop() {
 			}
 			m.mu.Lock()
 			m.stream = nil
+			if m.stopSend != nil {
+				close(m.stopSend)
+				m.stopSend = nil
+			}
 			if m.cancel != nil {
 				m.cancel()
 				m.cancel = nil
@@ -332,6 +382,10 @@ func (m *streamMutateMux) Close() {
 	stream := m.stream
 	cancel := m.cancel
 	grpcConn := m.grpcConn
+	if m.stopSend != nil {
+		close(m.stopSend)
+		m.stopSend = nil
+	}
 	m.mu.Unlock()
 
 	close(m.sendCh)

@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,6 +14,38 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// doRename tries the streaming mux first, falling back to unary on transport errors.
+func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntryRequest, oldPath, newPath util.FullPath) error {
+	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
+		err := wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
+			return wfs.handleRenameResponse(ctx, resp)
+		})
+		if err == nil || !errors.Is(err, ErrStreamTransport) {
+			return err // success or application error
+		}
+		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
+	}
+	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
+		stream, streamErr := client.StreamRenameEntry(ctx, request)
+		if streamErr != nil {
+			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
+		}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
+			}
+			if err := wfs.handleRenameResponse(ctx, resp); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 
 /** Rename a file
  *
@@ -199,42 +232,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 
 	ctx := context.Background()
-	var err error
-	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
-		err = wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
-			return wfs.handleRenameResponse(ctx, resp)
-		})
-	} else {
-		err = wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-			stream, streamErr := client.StreamRenameEntry(ctx, request)
-			if streamErr != nil {
-				return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
-			}
-			for {
-				resp, recvErr := stream.Recv()
-				if recvErr != nil {
-					if recvErr == io.EOF {
-						break
-					}
-					return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
-				}
-				if err := wfs.handleRenameResponse(ctx, resp); err != nil {
-					return err
-				}
-			}
-			return nil
-		})
-	}
+	err := wfs.doRename(ctx, request, oldPath, newPath)
 	if err != nil {
 		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
-		// Use structured errno from streaming mux when available.
-		if sme, ok := err.(*streamMutateError); ok && sme.Errno() != 0 {
-			return fuse.Status(sme.Errno())
-		}
-		// Fallback: string matching for non-streaming path.
-		if strings.Contains(err.Error(), "not empty") {
+		// Map error strings to FUSE status codes. String matching is used
+		// instead of raw errno to stay portable across platforms (errno
+		// numeric values differ between Linux and macOS).
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
+			return fuse.Status(syscall.ENOENT)
+		} else if strings.Contains(msg, "not empty") {
 			return fuse.Status(syscall.ENOTEMPTY)
-		} else if strings.Contains(err.Error(), "not directory") {
+		} else if strings.Contains(msg, "not directory") {
 			return fuse.ENOTDIR
 		}
 		return fuse.EIO

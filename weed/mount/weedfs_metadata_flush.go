@@ -155,11 +155,6 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	}
 
 	glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
-	err = nil
-
-	if err != nil {
-		return err
-	}
 
 	// Note: We do NOT clear dirtyMetadata here because:
 	// 1. There may still be dirty pages in the write buffer

@@ -411,10 +411,25 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
 			// The entry may exist in the local store from a deferred create
-			// (deferFilerCreate=true) that hasn't been flushed yet.
-			if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
-				glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
-				return localEntry, fuse.OK
+			// (deferFilerCreate=true) that hasn't been flushed yet. Only trust
+			// the local store when an open file handle or pending async flush
+			// confirms the entry is genuinely local-only; otherwise a stale
+			// cache hit could resurrect a deleted/renamed entry.
+			if inode, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
+				hasDirtyHandle := false
+				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
+					hasDirtyHandle = true
+				}
+				wfs.pendingAsyncFlushMu.Lock()
+				_, hasPendingFlush := wfs.pendingAsyncFlush[inode]
+				wfs.pendingAsyncFlushMu.Unlock()
+
+				if hasDirtyHandle || hasPendingFlush {
+					if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
+						return localEntry, fuse.OK
+					}
+				}
 			}
 			glog.V(4).Infof("lookupEntry not found %s", fullpath)
 			return nil, fuse.ENOENT
