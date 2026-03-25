@@ -20,6 +20,7 @@ var (
 type ReplicaReceiver struct {
 	vol            *BlockVol
 	barrierTimeout time.Duration
+	advertisedHost string // canonical IP for address reporting; empty = auto-detect
 
 	mu          sync.Mutex
 	receivedLSN uint64
@@ -38,7 +39,10 @@ type ReplicaReceiver struct {
 const defaultBarrierTimeout = 5 * time.Second
 
 // NewReplicaReceiver creates and starts listening on the data and control ports.
-func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string) (*ReplicaReceiver, error) {
+// advertisedHost is the canonical IP for this server (from VS listen addr or
+// heartbeat identity). If empty, DataAddr()/CtrlAddr() will fall back to
+// outbound-IP detection. On multi-NIC hosts, always provide advertisedHost.
+func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string, advertisedHost ...string) (*ReplicaReceiver, error) {
 	dataLn, err := net.Listen("tcp", dataAddr)
 	if err != nil {
 		return nil, fmt.Errorf("replica: listen data %s: %w", dataAddr, err)
@@ -49,9 +53,14 @@ func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string) (*ReplicaRecei
 		return nil, fmt.Errorf("replica: listen ctrl %s: %w", ctrlAddr, err)
 	}
 
+	var advHost string
+	if len(advertisedHost) > 0 {
+		advHost = advertisedHost[0]
+	}
 	r := &ReplicaReceiver{
 		vol:            vol,
 		barrierTimeout: defaultBarrierTimeout,
+		advertisedHost: advHost,
 		dataListener:   dataLn,
 		ctrlListener:   ctrlLn,
 		stopCh:         make(chan struct{}),
@@ -293,12 +302,14 @@ func (r *ReplicaReceiver) ReceivedLSN() uint64 {
 	return r.receivedLSN
 }
 
-// DataAddr returns the data listener's address (useful for tests with :0 ports).
+// DataAddr returns the data listener's canonical address (ip:port).
+// Wildcard listener addresses are resolved using the advertised host
+// or outbound-IP fallback.
 func (r *ReplicaReceiver) DataAddr() string {
-	return r.dataListener.Addr().String()
+	return canonicalizeListenerAddr(r.dataListener.Addr(), r.advertisedHost)
 }
 
-// CtrlAddr returns the control listener's address.
+// CtrlAddr returns the control listener's canonical address (ip:port).
 func (r *ReplicaReceiver) CtrlAddr() string {
-	return r.ctrlListener.Addr().String()
+	return canonicalizeListenerAddr(r.ctrlListener.Addr(), r.advertisedHost)
 }
