@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -251,8 +252,14 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	if deferFilerCreate {
 		// Defer the filer gRPC call to flush time. The caller (Create) will
 		// build a file handle directly from newEntry, bypassing AcquireHandle.
-		// No local metadata cache update is needed here — the file handle holds
-		// the entry, and the filer entry is created by flushMetadataToFiler.
+		// Insert a local placeholder into the metadata cache so that
+		// maybeLoadEntry() can find the file (e.g., duplicate-create checks,
+		// stat, readdir). The actual filer entry is created by flushMetadataToFiler.
+		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
+		// triggering directory hot-threshold eviction that would wipe the entry.
+		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry)); insertErr != nil {
+			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
+		}
 		glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
 		return inode, newEntry, fuse.OK
 	}

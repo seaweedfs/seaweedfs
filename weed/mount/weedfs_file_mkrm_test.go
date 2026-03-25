@@ -175,6 +175,18 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 		t.Fatalf("FullPath = %q, want %q", got, "/hello.txt")
 	}
 
+	// File creation is deferred to flush time. Trigger a synchronous flush
+	// so the CreateEntry gRPC call is sent to the test server.
+	if flushStatus := wfs.Flush(make(chan struct{}), &fuse.FlushIn{
+		InHeader: fuse.InHeader{
+			NodeId: out.NodeId,
+			Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}},
+		},
+		Fh: out.Fh,
+	}); flushStatus != fuse.OK {
+		t.Fatalf("Flush status = %v, want OK", flushStatus)
+	}
+
 	snapshot := testServer.snapshot()
 	if snapshot.directory != "/" {
 		t.Fatalf("CreateEntry directory = %q, want %q", snapshot.directory, "/")

@@ -50,9 +50,13 @@ func (wfs *WFS) ReleaseHandle(handleId FileHandleId) {
 	if fhToRelease != nil && fhToRelease.asyncFlushPending {
 		done := make(chan struct{})
 		wfs.pendingAsyncFlush[fhToRelease.inode] = done
+		// Add(1) while holding the mutex so WaitForAsyncFlush cannot
+		// observe a zero counter and close the channel before we send.
+		wfs.asyncFlushWg.Add(1)
 		wfs.pendingAsyncFlushMu.Unlock()
 
-		wfs.asyncFlushWg.Add(1)
+		// Send after unlock to avoid deadlock — workers acquire the
+		// same mutex during cleanup.
 		wfs.asyncFlushCh <- &asyncFlushItem{fh: fhToRelease, done: done}
 		return
 	}
