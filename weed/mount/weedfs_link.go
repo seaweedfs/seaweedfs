@@ -90,7 +90,6 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 	// apply changes to the filer, and also apply to local metaCache
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
-	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	ctx := context.Background()
 	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
@@ -132,6 +131,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	newEntryPath := newParentPath.Child(name)
+
+	// Map back to local uid/gid before writing attributes to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	if err != nil {
 		glog.V(0).Infof("Link %v -> %s: %v", oldEntryPath, newEntryPath, err)
