@@ -327,7 +327,7 @@ func (m *streamMutateMux) recvLoop() {
 		resp, err := m.stream.Recv()
 		if err != nil {
 			if err != io.EOF {
-				m.failAllPending(err)
+				m.failAllPending()
 			}
 			m.mu.Lock()
 			m.stream = nil
@@ -355,13 +355,19 @@ func (m *streamMutateMux) recvLoop() {
 	}
 }
 
-func (m *streamMutateMux) failAllPending(err error) {
+// failAllPending closes all pending response channels, causing waiters to
+// receive ok=false. It is idempotent: entries are deleted before channels are
+// closed, so concurrent calls cannot double-close.
+func (m *streamMutateMux) failAllPending() {
+	var channels []chan *filer_pb.StreamMutateEntryResponse
 	m.pending.Range(func(key, value any) bool {
-		ch := value.(chan *filer_pb.StreamMutateEntryResponse)
-		close(ch) // causes waiters to get ok=false
 		m.pending.Delete(key)
+		channels = append(channels, value.(chan *filer_pb.StreamMutateEntryResponse))
 		return true
 	})
+	for _, ch := range channels {
+		close(ch)
+	}
 }
 
 // IsAvailable returns true if the stream mux is usable (not permanently disabled).
