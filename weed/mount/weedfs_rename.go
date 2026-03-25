@@ -172,49 +172,48 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
 	// update remote filer
-	err := wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
+	request := &filer_pb.StreamRenameEntryRequest{
+		OldDirectory: string(oldDir),
+		OldName:      oldName,
+		NewDirectory: string(newDir),
+		NewName:      newName,
+		Signatures:   []int32{wfs.signature},
+	}
 
-		request := &filer_pb.StreamRenameEntryRequest{
-			OldDirectory: string(oldDir),
-			OldName:      oldName,
-			NewDirectory: string(newDir),
-			NewName:      newName,
-			Signatures:   []int32{wfs.signature},
-		}
-
-		stream, err := client.StreamRenameEntry(ctx, request)
-		if err != nil {
-			code = fuse.EIO
-			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
-		}
-
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					break
-				} else {
-					if strings.Contains(recvErr.Error(), "not empty") {
-						code = fuse.Status(syscall.ENOTEMPTY)
-					} else if strings.Contains(recvErr.Error(), "not directory") {
-						code = fuse.ENOTDIR
+	ctx := context.Background()
+	var err error
+	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
+		err = wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
+			return wfs.handleRenameResponse(ctx, resp)
+		})
+	} else {
+		err = wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
+			stream, streamErr := client.StreamRenameEntry(ctx, request)
+			if streamErr != nil {
+				return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
+			}
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr != nil {
+					if recvErr == io.EOF {
+						break
 					}
 					return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
 				}
+				if err := wfs.handleRenameResponse(ctx, resp); err != nil {
+					return err
+				}
 			}
-
-			if err = wfs.handleRenameResponse(ctx, resp); err != nil {
-				glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
-				return err
-			}
-
+			return nil
+		})
+	}
+	if err != nil {
+		if strings.Contains(err.Error(), "not empty") {
+			code = fuse.Status(syscall.ENOTEMPTY)
+		} else if strings.Contains(err.Error(), "not directory") {
+			code = fuse.ENOTDIR
 		}
-
-		return nil
-
-	})
+	}
 	if err != nil {
 		glog.V(0).Infof("Link: %v", err)
 		return
