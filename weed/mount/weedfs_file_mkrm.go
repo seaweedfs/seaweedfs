@@ -64,7 +64,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		return code
 	}
 
-	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0)
+	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, true)
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
 		// Reopen the winner's entry.
@@ -99,10 +99,14 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 
 	wfs.outputPbEntry(&out.EntryOut, inode, newEntry)
 
-	fileHandle, status := wfs.AcquireHandle(inode, in.Flags, in.Uid, in.Gid)
-	if status != fuse.OK {
-		return status
-	}
+	// For deferred creates, bypass AcquireHandle (which calls maybeReadEntry
+	// and would fail since the entry is not yet on the filer or in the meta cache).
+	// We already have the entry from createRegularFile, so create the handle directly.
+	fileHandle := wfs.fhMap.AcquireFileHandle(wfs, inode, newEntry)
+	fileHandle.RememberPath(entryFullPath)
+	// Mark dirty so the deferred filer create happens on Flush,
+	// even if the file is closed without any writes.
+	fileHandle.dirtyMetadata = true
 	out.Fh = uint64(fileHandle.fh)
 	out.OpenFlags = 0
 
@@ -126,7 +130,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return
 	}
 
-	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev)
+	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false)
 	if code != fuse.OK {
 		return code
 	}
@@ -202,7 +206,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 }
 
-func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
+func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
 	if wfs.IsOverQuotaWithUncommitted() {
 		return 0, nil, fuse.Status(syscall.ENOSPC)
 	}
@@ -242,6 +246,15 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			Rdev:     rdev,
 			Inode:    inode,
 		},
+	}
+
+	if deferFilerCreate {
+		// Defer the filer gRPC call to flush time. The caller (Create) will
+		// build a file handle directly from newEntry, bypassing AcquireHandle.
+		// No local metadata cache update is needed here — the file handle holds
+		// the entry, and the filer entry is created by flushMetadataToFiler.
+		glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
+		return inode, newEntry, fuse.OK
 	}
 
 	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
