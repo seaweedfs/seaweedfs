@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
@@ -53,28 +54,28 @@ func TestFilerErrorToS3Error(t *testing.T) {
 			expectedErr: s3err.ErrInvalidRequest,
 		},
 		{
-			name:        "Directory exists error",
-			err:         errors.New("existing /path/to/file is a directory"),
+			name:        "Directory exists error (sentinel)",
+			err:         fmt.Errorf("CreateEntry /path: %w", filer_pb.ErrExistingIsDirectory),
 			expectedErr: s3err.ErrExistingObjectIsDirectory,
 		},
 		{
-			name:        "Directory exists error (CreateEntry-wrapped)",
-			err:         errors.New("CreateEntry: existing /path/to/file is a directory"),
-			expectedErr: s3err.ErrExistingObjectIsDirectory,
-		},
-		{
-			name:        "File exists error",
-			err:         errors.New("/path/to/file is a file"),
+			name:        "Parent is file error (sentinel)",
+			err:         fmt.Errorf("CreateEntry /path: %w", filer_pb.ErrParentIsFile),
 			expectedErr: s3err.ErrExistingObjectIsFile,
 		},
 		{
-			name:        "Entry name too long error",
-			err:         errors.New("CreateEntry: entry name too long"),
+			name:        "Existing is file error (sentinel)",
+			err:         fmt.Errorf("CreateEntry /path: %w", filer_pb.ErrExistingIsFile),
+			expectedErr: s3err.ErrExistingObjectIsFile,
+		},
+		{
+			name:        "Entry name too long (sentinel)",
+			err:         fmt.Errorf("CreateEntry: %w", filer_pb.ErrEntryNameTooLong),
 			expectedErr: s3err.ErrKeyTooLongError,
 		},
 		{
-			name:        "Entry name too long error (unwrapped)",
-			err:         errors.New("entry name too long"),
+			name:        "Entry name too long (bare sentinel)",
+			err:         filer_pb.ErrEntryNameTooLong,
 			expectedErr: s3err.ErrKeyTooLongError,
 		},
 		{

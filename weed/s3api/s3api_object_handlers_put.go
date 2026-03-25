@@ -793,21 +793,25 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrNone
 	}
 
-	errString := err.Error()
+	// Filer sentinel errors — matched via errors.Is() after crossing gRPC boundary
+	switch {
+	case errors.Is(err, filer_pb.ErrEntryNameTooLong):
+		return s3err.ErrKeyTooLongError
+	case errors.Is(err, filer_pb.ErrParentIsFile), errors.Is(err, filer_pb.ErrExistingIsFile):
+		return s3err.ErrExistingObjectIsFile
+	case errors.Is(err, filer_pb.ErrExistingIsDirectory):
+		return s3err.ErrExistingObjectIsDirectory
+	case errors.Is(err, weed_server.ErrReadOnly):
+		return s3err.ErrAccessDenied
+	}
 
+	// Non-filer errors that don't go through CreateEntryResponse — string matching required
+	errString := err.Error()
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
-	case errors.Is(err, weed_server.ErrReadOnly):
-		return s3err.ErrAccessDenied
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
 		return s3err.ErrInvalidRequest
-	case strings.Contains(errString, constants.ErrMsgExistingPrefix) && strings.HasSuffix(errString, constants.ErrMsgIsADirectory):
-		return s3err.ErrExistingObjectIsDirectory
-	case strings.HasSuffix(errString, constants.ErrMsgIsAFile):
-		return s3err.ErrExistingObjectIsFile
-	case strings.Contains(errString, constants.ErrMsgEntryNameTooLong):
-		return s3err.ErrKeyTooLongError
 	default:
 		return s3err.ErrInternalError
 	}

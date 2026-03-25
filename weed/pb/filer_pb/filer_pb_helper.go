@@ -145,6 +145,13 @@ func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, req
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
 		return nil, fmt.Errorf("CreateEntry: %w", err)
 	}
+	if resp.ErrorCode != FilerError_OK {
+		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v (code %v)", request.Directory, request.Entry.Name, request.OExcl, resp.Error, resp.ErrorCode)
+		if sentinel := FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+			return nil, fmt.Errorf("CreateEntry %s/%s: %w", request.Directory, request.Entry.Name, sentinel)
+		}
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
+	}
 	if resp.Error != "" {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
 		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
@@ -182,6 +189,37 @@ func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *Lookup
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
+
+// Sentinel errors for filer entry operations.
+// These are set by the filer and reconstructed from FilerError codes after
+// crossing the gRPC boundary, so consumers can use errors.Is() instead of
+// parsing error strings.
+var (
+	ErrEntryNameTooLong    = errors.New("entry name too long")
+	ErrParentIsFile        = errors.New("parent path is a file")
+	ErrExistingIsDirectory = errors.New("existing entry is a directory")
+	ErrExistingIsFile      = errors.New("existing entry is a file")
+	ErrEntryAlreadyExists  = errors.New("entry already exists")
+)
+
+// FilerErrorToSentinel maps a proto FilerError code to its sentinel error.
+// Returns nil for OK or unknown codes.
+func FilerErrorToSentinel(code FilerError) error {
+	switch code {
+	case FilerError_ENTRY_NAME_TOO_LONG:
+		return ErrEntryNameTooLong
+	case FilerError_PARENT_IS_FILE:
+		return ErrParentIsFile
+	case FilerError_EXISTING_IS_DIRECTORY:
+		return ErrExistingIsDirectory
+	case FilerError_EXISTING_IS_FILE:
+		return ErrExistingIsFile
+	case FilerError_ENTRY_ALREADY_EXISTS:
+		return ErrEntryAlreadyExists
+	default:
+		return nil
+	}
+}
 
 func IsEmpty(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil

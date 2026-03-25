@@ -203,9 +203,21 @@ message CreateEntryRequest {
     bool skip_check_parent_directory = 6;
 }
 
+// Structured error codes for filer entry operations.
+// Values are stable — do not reorder or reuse numbers.
+enum FilerError {
+    OK                    = 0;
+    ENTRY_NAME_TOO_LONG   = 1; // name exceeds max_file_name_length
+    PARENT_IS_FILE        = 2; // parent path component is a file, not a directory
+    EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
+    EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
+    ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+}
+
 message CreateEntryResponse {
-    string error = 1;
+    string error = 1;                          // kept for human readability + backward compat
     SubscribeMetadataResponse metadata_event = 2;
+    FilerError error_code = 3;                 // machine-readable error code
 }
 
 message UpdateEntryRequest {
