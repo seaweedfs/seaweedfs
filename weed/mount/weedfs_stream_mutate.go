@@ -41,13 +41,14 @@ var ErrStreamTransport = errors.New("stream transport error")
 type streamMutateMux struct {
 	wfs *WFS
 
-	mu       sync.Mutex // protects stream, cancel, grpcConn, closed, stopSend
-	stream   filer_pb.SeaweedFiler_StreamMutateEntryClient
-	cancel   context.CancelFunc
-	grpcConn *grpc.ClientConn // dedicated connection, closed on stream teardown
-	closed   bool
-	disabled bool // permanently disabled if filer doesn't support the RPC
-	stopSend chan struct{} // closed to signal the current sendLoop to exit
+	mu         sync.Mutex // protects stream, cancel, grpcConn, closed, stopSend, generation
+	stream     filer_pb.SeaweedFiler_StreamMutateEntryClient
+	cancel     context.CancelFunc
+	grpcConn   *grpc.ClientConn // dedicated connection, closed on stream teardown
+	closed     bool
+	disabled   bool       // permanently disabled if filer doesn't support the RPC
+	stopSend   chan struct{} // closed to signal the current sendLoop to exit
+	generation uint64     // incremented each time a new stream is created
 
 	nextID atomic.Uint64
 
@@ -63,6 +64,7 @@ type streamMutateMux struct {
 type streamMutateReq struct {
 	req   *filer_pb.StreamMutateEntryRequest
 	errCh chan error // send error feedback
+	gen   uint64    // stream generation this request targets
 }
 
 func newStreamMutateMux(wfs *WFS) *streamMutateMux {
@@ -135,7 +137,8 @@ func (m *streamMutateMux) DeleteEntry(ctx context.Context, req *filer_pb.DeleteE
 // response events until is_last=true. The callback is invoked for each
 // intermediate rename event (same as the current StreamRenameEntry recv loop).
 func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRenameEntryRequest, onEvent func(*filer_pb.StreamRenameEntryResponse) error) error {
-	if err := m.ensureStream(); err != nil {
+	gen, err := m.ensureStream()
+	if err != nil {
 		return fmt.Errorf("%w: %v", ErrStreamTransport, err)
 	}
 
@@ -150,6 +153,7 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 			Request:   &filer_pb.StreamMutateEntryRequest_RenameRequest{RenameRequest: req},
 		},
 		errCh: make(chan error, 1),
+		gen:   gen,
 	}
 	select {
 	case m.sendCh <- sendReq:
@@ -191,7 +195,8 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 
 // doUnary sends a single-response request and waits for the reply.
 func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutateEntryRequest) (*filer_pb.StreamMutateEntryResponse, error) {
-	if err := m.ensureStream(); err != nil {
+	gen, err := m.ensureStream()
+	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
 	}
 
@@ -204,6 +209,7 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 	sendReq := &streamMutateReq{
 		req:   req,
 		errCh: make(chan error, 1),
+		gen:   gen,
 	}
 	select {
 	case m.sendCh <- sendReq:
@@ -231,16 +237,40 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 	}
 }
 
-// ensureStream opens the bidi stream if not already open.
-func (m *streamMutateMux) ensureStream() error {
+// ensureStream opens the bidi stream if not already open. It returns the
+// stream generation so callers can tag outgoing requests.
+func (m *streamMutateMux) ensureStream() (uint64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	if m.closed {
+		return 0, fmt.Errorf("stream mux is closed")
+	}
 	if m.disabled {
-		return fmt.Errorf("StreamMutateEntry not supported by filer")
+		return 0, fmt.Errorf("StreamMutateEntry not supported by filer")
 	}
 	if m.stream != nil {
-		return nil
+		return m.generation, nil
+	}
+
+	// Wait for prior generation's recvLoop to fully tear down before opening
+	// a new stream. This guarantees all pending waiters from the old stream
+	// have been failed before we create a new generation.
+	if m.recvDone != nil {
+		done := m.recvDone
+		m.mu.Unlock()
+		<-done
+		m.mu.Lock()
+		// Re-check after reacquiring the lock.
+		if m.closed {
+			return 0, fmt.Errorf("stream mux is closed")
+		}
+		if m.disabled {
+			return 0, fmt.Errorf("StreamMutateEntry not supported by filer")
+		}
+		if m.stream != nil {
+			return m.generation, nil
+		}
 	}
 
 	var stream filer_pb.SeaweedFiler_StreamMutateEntryClient
@@ -250,15 +280,18 @@ func (m *streamMutateMux) ensureStream() error {
 			m.disabled = true
 			glog.V(0).Infof("filer does not support StreamMutateEntry, falling back to unary RPCs")
 		}
-		return err
+		return 0, err
 	}
 
+	m.generation++
 	m.stream = stream
 	m.stopSend = make(chan struct{})
-	m.recvDone = make(chan struct{})
-	go m.sendLoop(stream, m.stopSend)
-	go m.recvLoop()
-	return nil
+	recvDone := make(chan struct{})
+	m.recvDone = recvDone
+	gen := m.generation
+	go m.sendLoop(stream, m.stopSend, gen)
+	go m.recvLoop(stream, gen, recvDone)
+	return gen, nil
 }
 
 func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntryClient) error {
@@ -303,16 +336,21 @@ func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntr
 	return lastErr
 }
 
-func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, stop <-chan struct{}) {
+func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, stop <-chan struct{}, gen uint64) {
 	for {
 		select {
 		case req, ok := <-m.sendCh:
 			if !ok {
 				return // Close() was called
 			}
+			if req.gen != gen {
+				req.errCh <- fmt.Errorf("%w: stream generation mismatch", ErrStreamTransport)
+				continue
+			}
 			err := stream.Send(req.req)
 			req.errCh <- err
 			if err != nil {
+				m.teardownStream(gen)
 				return
 			}
 		case <-stop:
@@ -321,29 +359,15 @@ func (m *streamMutateMux) sendLoop(stream filer_pb.SeaweedFiler_StreamMutateEntr
 	}
 }
 
-func (m *streamMutateMux) recvLoop() {
-	defer close(m.recvDone)
+func (m *streamMutateMux) recvLoop(stream filer_pb.SeaweedFiler_StreamMutateEntryClient, gen uint64, recvDone chan struct{}) {
+	defer close(recvDone)
 	for {
-		resp, err := m.stream.Recv()
+		resp, err := stream.Recv()
 		if err != nil {
 			if err != io.EOF {
-				m.failAllPending()
+				glog.V(1).Infof("stream mutate recv error (gen=%d): %v", gen, err)
 			}
-			m.mu.Lock()
-			m.stream = nil
-			if m.stopSend != nil {
-				close(m.stopSend)
-				m.stopSend = nil
-			}
-			if m.cancel != nil {
-				m.cancel()
-				m.cancel = nil
-			}
-			if m.grpcConn != nil {
-				m.grpcConn.Close()
-				m.grpcConn = nil
-			}
-			m.mu.Unlock()
+			m.teardownStream(gen)
 			return
 		}
 
@@ -352,6 +376,36 @@ func (m *streamMutateMux) recvLoop() {
 			// For single-response ops, the caller deletes from pending after recv.
 			// For rename, the caller collects until is_last.
 		}
+	}
+}
+
+// teardownStream cleans up the stream for the given generation. It is safe to
+// call from both sendLoop and recvLoop; only the first call for a given
+// generation takes effect (idempotent via generation + nil-stream check).
+func (m *streamMutateMux) teardownStream(gen uint64) {
+	m.mu.Lock()
+	if m.generation != gen || m.stream == nil {
+		m.mu.Unlock()
+		return
+	}
+	m.stream = nil
+	if m.stopSend != nil {
+		close(m.stopSend)
+		m.stopSend = nil
+	}
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	conn := m.grpcConn
+	m.grpcConn = nil
+	m.mu.Unlock()
+
+	// Fail pending outside the lock to avoid holding mu during channel closes.
+	m.failAllPending()
+
+	if conn != nil {
+		conn.Close()
 	}
 }
 
