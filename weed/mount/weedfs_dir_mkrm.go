@@ -106,8 +106,14 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	entryFullPath := dirFullPath.Child(name)
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
-	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	resp, err := filer_pb.RemoveWithResponse(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
+	deleteReq := &filer_pb.DeleteEntryRequest{
+		Directory:            string(dirFullPath),
+		Name:                 name,
+		IsDeleteData:         true,
+		IgnoreRecursiveError: true, // ignore recursion error since the OS should manage it
+		Signatures:           []int32{wfs.signature},
+	}
+	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
 		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
