@@ -50,7 +50,10 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	entryFullPath := dirFullPath.Child(name)
 
 	wfs.mapPbIdFromLocalToFiler(newEntry)
-	defer wfs.mapPbIdFromFilerToLocal(newEntry)
+	// Defer restoring to local uid/gid AFTER the entry is sent to the filer
+	// but BEFORE outputPbEntry writes attributes to the kernel.  We restore
+	// explicitly below instead of using defer so the kernel gets local values.
+
 
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dirFullPath),
@@ -78,8 +81,14 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
+		wfs.mapPbIdFromFilerToLocal(newEntry)
 		return fuse.EIO
 	}
+
+	// Map uid/gid back to local-space before writing attributes to the
+	// kernel.  The kernel (especially macFUSE) caches these and uses them
+	// for subsequent permission checks on children.
+	wfs.mapPbIdFromFilerToLocal(newEntry)
 
 	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
 

@@ -228,7 +228,10 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	}
 	// Map parent dir uid/gid from filer-space to local-space so the
 	// permission check compares like with like (caller uid/gid are local).
-	parentUid, parentGid := wfs.option.UidGidMapper.FilerToLocal(parentEntry.Attributes.Uid, parentEntry.Attributes.Gid)
+	parentUid, parentGid := parentEntry.Attributes.Uid, parentEntry.Attributes.Gid
+	if wfs.option.UidGidMapper != nil {
+		parentUid, parentGid = wfs.option.UidGidMapper.FilerToLocal(parentUid, parentGid)
+	}
 	if !hasAccess(uid, gid, parentUid, parentGid, parentEntry.Attributes.FileMode, fuse.W_OK|fuse.X_OK) {
 		return 0, nil, fuse.Status(syscall.EACCES)
 	}

@@ -47,7 +47,6 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	}
 
 	wfs.mapPbIdFromLocalToFiler(request.Entry)
-	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	resp, err := wfs.streamCreateEntry(context.Background(), request)
 	if err == nil {
@@ -60,6 +59,10 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			wfs.inodeToPath.InvalidateChildrenCache(dirPath)
 		}
 	}
+
+	// Map back to local uid/gid before writing to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
+
 	if err != nil {
 		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
 		return fuse.EIO
