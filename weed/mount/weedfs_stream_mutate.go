@@ -160,8 +160,13 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	if err := <-sendReq.errCh; err != nil {
-		return fmt.Errorf("rename send: %w: %v", ErrStreamTransport, err)
+	select {
+	case err := <-sendReq.errCh:
+		if err != nil {
+			return fmt.Errorf("rename send: %w: %v", ErrStreamTransport, err)
+		}
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 
 	// Collect rename events until is_last=true.
@@ -216,8 +221,13 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	if err := <-sendReq.errCh; err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
+	select {
+	case err := <-sendReq.errCh:
+		if err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrStreamTransport, err)
+		}
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
 	select {
