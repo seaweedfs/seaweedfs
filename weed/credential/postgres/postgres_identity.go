@@ -18,7 +18,7 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 	config := &iam_pb.S3ApiConfiguration{}
 
 	// Query all users
-	rows, err := store.db.QueryContext(ctx, "SELECT username, email, account_data, actions FROM users")
+	rows, err := store.db.QueryContext(ctx, "SELECT username, email, account_data, actions, policy_names FROM users")
 	if err != nil {
 		return nil, fmt.Errorf("failed to query users: %w", err)
 	}
@@ -26,9 +26,9 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 
 	for rows.Next() {
 		var username, email string
-		var accountDataJSON, actionsJSON []byte
+		var accountDataJSON, actionsJSON, policyNamesJSON []byte
 
-		if err := rows.Scan(&username, &email, &accountDataJSON, &actionsJSON); err != nil {
+		if err := rows.Scan(&username, &email, &accountDataJSON, &actionsJSON, &policyNamesJSON); err != nil {
 			return nil, fmt.Errorf("failed to scan user row: %w", err)
 		}
 
@@ -47,6 +47,13 @@ func (store *PostgresStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3Ap
 		if len(actionsJSON) > 0 {
 			if err := json.Unmarshal(actionsJSON, &identity.Actions); err != nil {
 				return nil, fmt.Errorf("failed to unmarshal actions for user %s: %v", username, err)
+			}
+		}
+
+		// Parse policy names
+		if len(policyNamesJSON) > 0 {
+			if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
+				return nil, fmt.Errorf("failed to unmarshal policy names for user %s: %v", username, err)
 			}
 		}
 
@@ -116,10 +123,19 @@ func (store *PostgresStore) SaveConfiguration(ctx context.Context, config *iam_p
 			}
 		}
 
+		// Marshal policy names
+		var policyNamesJSON []byte
+		if identity.PolicyNames != nil {
+			policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+			if err != nil {
+				return fmt.Errorf("failed to marshal policy names for user %s: %v", identity.Name, err)
+			}
+		}
+
 		// Insert user
 		_, err := tx.ExecContext(ctx,
-			"INSERT INTO users (username, email, account_data, actions) VALUES ($1, $2, $3, $4)",
-			identity.Name, "", accountDataJSON, actionsJSON)
+			"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
+			identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
 		if err != nil {
 			return fmt.Errorf("failed to insert user %s: %v", identity.Name, err)
 		}
@@ -178,10 +194,19 @@ func (store *PostgresStore) CreateUser(ctx context.Context, identity *iam_pb.Ide
 		}
 	}
 
+	// Marshal policy names
+	var policyNamesJSON []byte
+	if identity.PolicyNames != nil {
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+		if err != nil {
+			return fmt.Errorf("failed to marshal policy names: %w", err)
+		}
+	}
+
 	// Insert user
 	_, err = tx.ExecContext(ctx,
-		"INSERT INTO users (username, email, account_data, actions) VALUES ($1, $2, $3, $4)",
-		identity.Name, "", accountDataJSON, actionsJSON)
+		"INSERT INTO users (username, email, account_data, actions, policy_names) VALUES ($1, $2, $3, $4, $5)",
+		identity.Name, "", accountDataJSON, actionsJSON, policyNamesJSON)
 	if err != nil {
 		return fmt.Errorf("failed to insert user: %w", err)
 	}
@@ -205,11 +230,11 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 	}
 
 	var email string
-	var accountDataJSON, actionsJSON []byte
+	var accountDataJSON, actionsJSON, policyNamesJSON []byte
 
 	err := store.db.QueryRowContext(ctx,
-		"SELECT email, account_data, actions FROM users WHERE username = $1",
-		username).Scan(&email, &accountDataJSON, &actionsJSON)
+		"SELECT email, account_data, actions, policy_names FROM users WHERE username = $1",
+		username).Scan(&email, &accountDataJSON, &actionsJSON, &policyNamesJSON)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, credential.ErrUserNotFound
@@ -232,6 +257,13 @@ func (store *PostgresStore) GetUser(ctx context.Context, username string) (*iam_
 	if len(actionsJSON) > 0 {
 		if err := json.Unmarshal(actionsJSON, &identity.Actions); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal actions: %w", err)
+		}
+	}
+
+	// Parse policy names
+	if len(policyNamesJSON) > 0 {
+		if err := json.Unmarshal(policyNamesJSON, &identity.PolicyNames); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal policy names: %w", err)
 		}
 	}
 
@@ -297,10 +329,19 @@ func (store *PostgresStore) UpdateUser(ctx context.Context, username string, ide
 		}
 	}
 
+	// Marshal policy names
+	var policyNamesJSON []byte
+	if identity.PolicyNames != nil {
+		policyNamesJSON, err = json.Marshal(identity.PolicyNames)
+		if err != nil {
+			return fmt.Errorf("failed to marshal policy names: %w", err)
+		}
+	}
+
 	// Update user
 	_, err = tx.ExecContext(ctx,
-		"UPDATE users SET email = $2, account_data = $3, actions = $4, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
-		username, "", accountDataJSON, actionsJSON)
+		"UPDATE users SET email = $2, account_data = $3, actions = $4, policy_names = $5, updated_at = CURRENT_TIMESTAMP WHERE username = $1",
+		username, "", accountDataJSON, actionsJSON, policyNamesJSON)
 	if err != nil {
 		return fmt.Errorf("failed to update user: %w", err)
 	}
@@ -443,4 +484,82 @@ func (store *PostgresStore) DeleteAccessKey(ctx context.Context, username string
 	}
 
 	return nil
+}
+
+// AttachUserPolicy attaches a managed policy to a user by policy name
+func (store *PostgresStore) AttachUserPolicy(ctx context.Context, username string, policyName string) error {
+	if !store.configured {
+		return fmt.Errorf("store not configured")
+	}
+
+	// Get user
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	// Verify policy exists
+	policy, err := store.GetPolicy(ctx, policyName)
+	if err != nil {
+		return err
+	}
+	if policy == nil {
+		return credential.ErrPolicyNotFound
+	}
+
+	// Check if already attached
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			return credential.ErrPolicyAlreadyAttached
+		}
+	}
+
+	// Append policy name and update
+	identity.PolicyNames = append(identity.PolicyNames, policyName)
+	return store.UpdateUser(ctx, username, identity)
+}
+
+// DetachUserPolicy detaches a managed policy from a user
+func (store *PostgresStore) DetachUserPolicy(ctx context.Context, username string, policyName string) error {
+	if !store.configured {
+		return fmt.Errorf("store not configured")
+	}
+
+	// Get user
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return err
+	}
+
+	// Find and remove policy
+	found := false
+	var newPolicyNames []string
+	for _, p := range identity.PolicyNames {
+		if p == policyName {
+			found = true
+		} else {
+			newPolicyNames = append(newPolicyNames, p)
+		}
+	}
+
+	if !found {
+		return credential.ErrPolicyNotAttached
+	}
+
+	identity.PolicyNames = newPolicyNames
+	return store.UpdateUser(ctx, username, identity)
+}
+
+// ListAttachedUserPolicies returns the list of policy names attached to a user
+func (store *PostgresStore) ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error) {
+	if !store.configured {
+		return nil, fmt.Errorf("store not configured")
+	}
+
+	identity, err := store.GetUser(ctx, username)
+	if err != nil {
+		return nil, err
+	}
+
+	return identity.PolicyNames, nil
 }

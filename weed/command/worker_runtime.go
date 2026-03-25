@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -16,14 +15,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	_ "github.com/seaweedfs/seaweedfs/weed/plugin/worker/handlers" // register all handler subpackages
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
+	"github.com/seaweedfs/seaweedfs/weed/worker"
 	"google.golang.org/grpc"
 )
 
-const defaultPluginWorkerJobTypes = "vacuum,volume_balance,erasure_coding"
+const defaultPluginWorkerJobTypes = "all"
 
 type pluginWorkerRunOptions struct {
 	AdminServer string
@@ -81,7 +82,7 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 		return false
 	}
 
-	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption)
+	handlers, err := buildPluginWorkerHandlers(options.JobTypes, dialOption, options.MaxExecute, options.WorkingDir)
 	if err != nil {
 		glog.Errorf("Failed to build plugin worker handlers: %v", err)
 		return false
@@ -130,111 +131,42 @@ func runPluginWorkerWithOptions(options pluginWorkerRunOptions) bool {
 }
 
 func resolvePluginWorkerID(explicitID string, workingDir string) (string, error) {
-	id := strings.TrimSpace(explicitID)
-	if id != "" {
-		return id, nil
+	if explicitID != "" {
+		return explicitID, nil
 	}
-
-	workingDir = strings.TrimSpace(workingDir)
-	if workingDir == "" {
-		return "", nil
-	}
-	if err := os.MkdirAll(workingDir, 0755); err != nil {
-		return "", err
-	}
-
-	workerIDPath := filepath.Join(workingDir, "plugin.worker.id")
-	if data, err := os.ReadFile(workerIDPath); err == nil {
-		if persisted := strings.TrimSpace(string(data)); persisted != "" {
-			return persisted, nil
-		}
-	}
-
-	generated := fmt.Sprintf("plugin-%d", time.Now().UnixNano())
-	if err := os.WriteFile(workerIDPath, []byte(generated+"\n"), 0644); err != nil {
-		return "", err
-	}
-	return generated, nil
+	// Use the same ID generation/loading logic as the standard worker
+	return worker.GenerateOrLoadWorkerID(workingDir)
 }
 
-func buildPluginWorkerHandler(jobType string, dialOption grpc.DialOption) (pluginworker.JobHandler, error) {
-	canonicalJobType, err := canonicalPluginWorkerJobType(jobType)
+// buildPluginWorkerHandlers resolves the comma-separated jobTypes string
+// (which may contain category names like "all", "default", "heavy" and/or
+// explicit job type names/aliases) into a deduplicated slice of JobHandlers.
+func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption, maxExecute int, workingDir string) ([]pluginworker.JobHandler, error) {
+	jobTypes = strings.TrimSpace(jobTypes)
+	if jobTypes == "" {
+		jobTypes = defaultPluginWorkerJobTypes
+	}
+
+	factories, err := pluginworker.ResolveHandlerFactories(jobTypes)
 	if err != nil {
 		return nil, err
 	}
 
-	switch canonicalJobType {
-	case "vacuum":
-		return pluginworker.NewVacuumHandler(dialOption), nil
-	case "volume_balance":
-		return pluginworker.NewVolumeBalanceHandler(dialOption), nil
-	case "erasure_coding":
-		return pluginworker.NewErasureCodingHandler(dialOption), nil
-	default:
-		return nil, fmt.Errorf("unsupported plugin job type %q", canonicalJobType)
-	}
-}
-
-func buildPluginWorkerHandlers(jobTypes string, dialOption grpc.DialOption) ([]pluginworker.JobHandler, error) {
-	parsedJobTypes, err := parsePluginWorkerJobTypes(jobTypes)
-	if err != nil {
-		return nil, err
+	opts := pluginworker.HandlerBuildOptions{
+		GrpcDialOption: dialOption,
+		MaxExecute:     maxExecute,
+		WorkingDir:     workingDir,
 	}
 
-	handlers := make([]pluginworker.JobHandler, 0, len(parsedJobTypes))
-	for _, jobType := range parsedJobTypes {
-		handler, buildErr := buildPluginWorkerHandler(jobType, dialOption)
+	handlers := make([]pluginworker.JobHandler, 0, len(factories))
+	for _, f := range factories {
+		handler, buildErr := f.Build(opts)
 		if buildErr != nil {
-			return nil, buildErr
+			return nil, fmt.Errorf("building handler for %q: %w", f.JobType, buildErr)
 		}
 		handlers = append(handlers, handler)
 	}
 	return handlers, nil
-}
-
-func parsePluginWorkerJobTypes(jobTypes string) ([]string, error) {
-	jobTypes = strings.TrimSpace(jobTypes)
-	if jobTypes == "" {
-		return []string{"vacuum"}, nil
-	}
-
-	parts := strings.Split(jobTypes, ",")
-	parsed := make([]string, 0, len(parts))
-	seen := make(map[string]struct{}, len(parts))
-
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		canonical, err := canonicalPluginWorkerJobType(part)
-		if err != nil {
-			return nil, err
-		}
-		if _, found := seen[canonical]; found {
-			continue
-		}
-		seen[canonical] = struct{}{}
-		parsed = append(parsed, canonical)
-	}
-
-	if len(parsed) == 0 {
-		return []string{"vacuum"}, nil
-	}
-	return parsed, nil
-}
-
-func canonicalPluginWorkerJobType(jobType string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(jobType)) {
-	case "", "vacuum":
-		return "vacuum", nil
-	case "volume_balance", "balance", "volume.balance", "volume-balance":
-		return "volume_balance", nil
-	case "erasure_coding", "erasure-coding", "erasure.coding", "ec":
-		return "erasure_coding", nil
-	default:
-		return "", fmt.Errorf("unsupported plugin job type %q", jobType)
-	}
 }
 
 func resolvePluginWorkerAdminServer(adminServer string) string {

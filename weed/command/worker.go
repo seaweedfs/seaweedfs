@@ -7,22 +7,28 @@ import (
 )
 
 var cmdWorker = &Command{
-	UsageLine: "worker -admin=<admin_server> [-id=<worker_id>] [-jobType=vacuum,volume_balance,erasure_coding] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=4] [-metricsPort=<port>] [-metricsIp=<ip>] [-debug]",
+	UsageLine: "worker -admin=<admin_server> [-id=<worker_id>] [-jobType=all] [-workingDir=<path>] [-heartbeat=15s] [-reconnect=5s] [-maxDetect=1] [-maxExecute=4] [-metricsPort=<port>] [-metricsIp=<ip>] [-debug]",
 	Short:     "start a plugin.proto worker process",
 	Long: `Start an external plugin worker using weed/pb/plugin.proto over gRPC.
 
-This command provides vacuum, volume_balance, and erasure_coding job type
-contracts with the plugin stream runtime, including descriptor delivery,
-heartbeat/load reporting, detection, and execution.
+This command provides plugin job type handlers for cluster maintenance,
+including descriptor delivery, heartbeat/load reporting, detection, and execution.
 
 Behavior:
-  - Use -jobType to choose one or more plugin job handlers (comma-separated list)
-  - Use -workingDir to persist plugin.worker.id for stable worker identity across restarts
+  - Use -jobType to choose handlers by category or explicit name (comma-separated)
+  - Categories: "all" (every registered handler), "default" (lightweight jobs),
+    "heavy" (resource-intensive jobs like erasure coding)
+  - Explicit job type names and aliases are still supported (e.g. "vacuum", "ec")
+  - Categories and explicit names can be mixed (e.g. "default,iceberg")
+  - Use -workingDir to persist worker.id for stable worker identity across restarts
   - Use -metricsPort/-metricsIp to expose /health, /ready, and /metrics
 
 Examples:
   weed worker -admin=localhost:23646
-  weed worker -admin=localhost:23646 -jobType=volume_balance
+  weed worker -admin=localhost:23646 -jobType=all
+  weed worker -admin=localhost:23646 -jobType=default
+  weed worker -admin=localhost:23646 -jobType=heavy
+  weed worker -admin=localhost:23646 -jobType=default,iceberg
   weed worker -admin=localhost:23646 -jobType=vacuum,volume_balance
   weed worker -admin=localhost:23646 -jobType=erasure_coding
   weed worker -admin=admin.example.com:23646 -id=plugin-vacuum-a -heartbeat=10s
@@ -35,7 +41,7 @@ var (
 	workerAdminServer = cmdWorker.Flag.String("admin", "localhost:23646", "admin server address")
 	workerID          = cmdWorker.Flag.String("id", "", "worker ID (auto-generated when empty)")
 	workerWorkingDir  = cmdWorker.Flag.String("workingDir", "", "working directory for persistent worker state")
-	workerJobType     = cmdWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types to serve (comma-separated list)")
+	workerJobType     = cmdWorker.Flag.String("jobType", defaultPluginWorkerJobTypes, "job types or categories to serve: all, default, heavy, or explicit names/aliases such as ec, balance, iceberg (comma-separated)")
 	workerHeartbeat   = cmdWorker.Flag.Duration("heartbeat", 15*time.Second, "heartbeat interval")
 	workerReconnect   = cmdWorker.Flag.Duration("reconnect", 5*time.Second, "reconnect delay")
 	workerMaxDetect   = cmdWorker.Flag.Int("maxDetect", 1, "max concurrent detection requests")

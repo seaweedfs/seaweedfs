@@ -18,6 +18,8 @@ service SeaweedS3IamCache {
     rpc GetPolicy (iam_pb.GetPolicyRequest) returns (iam_pb.GetPolicyResponse);
     rpc ListPolicies (iam_pb.ListPoliciesRequest) returns (iam_pb.ListPoliciesResponse);
     rpc DeletePolicy (iam_pb.DeletePolicyRequest) returns (iam_pb.DeletePolicyResponse);
+    rpc PutGroup (iam_pb.PutGroupRequest) returns (iam_pb.PutGroupResponse);
+    rpc RemoveGroup (iam_pb.RemoveGroupRequest) returns (iam_pb.RemoveGroupResponse);
 }
 
 //////////////////////////////////////////////////

@@ -27,11 +27,18 @@ func (m *IAMManager) ValidateTrustPolicyForPrincipal(ctx context.Context, roleAr
 		return fmt.Errorf("role has no trust policy")
 	}
 
-	// Create evaluation context
+	// Create evaluation context with RequestContext populated so that
+	// principal matching works for specific (non-wildcard) principals.
+	// Without this, evaluatePrincipalValue cannot look up "aws:PrincipalArn"
+	// and always returns false for non-wildcard trust policy principals.
 	evalCtx := &policy.EvaluationContext{
 		Principal: principalArn,
 		Action:    "sts:AssumeRole",
 		Resource:  roleArn,
+		RequestContext: map[string]interface{}{
+			"principal":        principalArn,
+			"aws:PrincipalArn": principalArn,
+		},
 	}
 
 	// Evaluate the trust policy

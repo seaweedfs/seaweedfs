@@ -49,9 +49,6 @@ type BucketRegistry struct {
 	metadataCache     map[string]*BucketMetaData
 	metadataCacheLock sync.RWMutex
 
-	tableLocationCache map[string]string // Cache for table location mappings (external bucket -> mapped root path)
-	tableLocationLock  sync.RWMutex
-
 	notFound     map[string]struct{}
 	notFoundLock sync.RWMutex
 	s3a          *S3ApiServer
@@ -59,10 +56,9 @@ type BucketRegistry struct {
 
 func NewBucketRegistry(s3a *S3ApiServer) *BucketRegistry {
 	br := &BucketRegistry{
-		metadataCache:      make(map[string]*BucketMetaData),
-		tableLocationCache: make(map[string]string),
-		notFound:           make(map[string]struct{}),
-		s3a:                s3a,
+		metadataCache: make(map[string]*BucketMetaData),
+		notFound:      make(map[string]struct{}),
+		s3a:           s3a,
 	}
 	err := br.init()
 	if err != nil {
@@ -164,7 +160,6 @@ func buildBucketMetadata(accountManager AccountManager, entry *filer_pb.Entry) *
 func (r *BucketRegistry) RemoveBucketMetadata(entry *filer_pb.Entry) {
 	r.removeMetadataCache(entry.Name)
 	r.unMarkNotFound(entry.Name)
-	r.removeTableLocationCache(entry.Name)
 }
 
 func (r *BucketRegistry) GetBucketMetadata(bucketName string) (*BucketMetaData, s3err.ErrorCode) {
@@ -227,12 +222,6 @@ func (r *BucketRegistry) removeMetadataCache(bucket string) {
 	r.metadataCacheLock.Lock()
 	defer r.metadataCacheLock.Unlock()
 	delete(r.metadataCache, bucket)
-}
-
-func (r *BucketRegistry) removeTableLocationCache(bucket string) {
-	r.tableLocationLock.Lock()
-	defer r.tableLocationLock.Unlock()
-	delete(r.tableLocationCache, bucket)
 }
 
 func (r *BucketRegistry) markNotFound(bucket string) {

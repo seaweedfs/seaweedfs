@@ -64,6 +64,48 @@ func (c *testFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntr
 	return &testListEntriesStream{entries: entries}, nil
 }
 
+type markerEchoFilerClient struct {
+	filer_pb.SeaweedFilerClient
+	entriesByDir    map[string][]*filer_pb.Entry
+	returnFollowing bool
+}
+
+// markerEchoFilerClient intentionally ignores request Limit/InclusiveStartFrom
+// and simulates a backend that may echo StartFromFileName. entriesByDir controls
+// returned entries; returnFollowing controls whether ListEntries returns only the
+// echoed marker or the echoed marker plus following entries.
+func (c *markerEchoFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[filer_pb.ListEntriesResponse], error) {
+	entries := c.entriesByDir[in.Directory]
+	ensureEntryAttributes(entries)
+	if in.StartFromFileName == "" {
+		return &testListEntriesStream{entries: entries}, nil
+	}
+
+	for i, e := range entries {
+		if e.Name == in.StartFromFileName {
+			// Emulate buggy backend behavior: return marker again even when exclusive.
+			if c.returnFollowing {
+				echoAndFollowing := entries[i:]
+				return &testListEntriesStream{entries: echoAndFollowing}, nil
+			}
+			return &testListEntriesStream{entries: []*filer_pb.Entry{e}}, nil
+		}
+	}
+
+	return &testListEntriesStream{entries: nil}, nil
+}
+
+func ensureEntryAttributes(entries []*filer_pb.Entry) {
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+	}
+}
+
 func TestListObjectsHandler(t *testing.T) {
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
@@ -94,6 +136,20 @@ func TestListObjectsHandler(t *testing.T) {
 	if encoded != expected {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}
+}
+
+func TestListObjectsV1NamespaceResponse(t *testing.T) {
+	response := ListBucketResult{
+		Name:        "test_container",
+		Prefix:      "",
+		Marker:      "",
+		NextMarker:  "",
+		MaxKeys:     1000,
+		IsTruncated: false,
+	}
+
+	encoded := string(s3err.EncodeXMLResponse(toListBucketResultV1(response)))
+	assert.Contains(t, encoded, `<ListBucketResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
 }
 
 func Test_normalizePrefixMarker(t *testing.T) {
@@ -253,6 +309,52 @@ func TestDoListFilerEntries_BucketRootPrefixSlashDelimiterSlash_ListsDirectories
 	assert.Contains(t, seen, "Veeam")
 }
 
+func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEcho(t *testing.T) {
+	s3a := &S3ApiServer{}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "file.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "test.txt", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Empty(t, seen, "marker entry should not be returned in exclusive mode")
+	assert.Equal(t, "", nextMarker, "next marker should be empty when only marker echo is returned")
+}
+
+func TestDoListFilerEntries_ExclusiveStartSkipsMarkerEchoWithSubsequentEntries(t *testing.T) {
+	s3a := &S3ApiServer{}
+	client := &markerEchoFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/test-bucket": {
+				{Name: "file.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "test.txt", Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "zebra.txt", Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+		returnFollowing: true,
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000}
+	var seen []string
+	nextMarker, err := s3a.doListFilerEntries(client, "/buckets/test-bucket", "", cursor, "test.txt", "", false, "test-bucket", func(dir string, entry *filer_pb.Entry) {
+		seen = append(seen, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"zebra.txt"}, seen, "marker should be skipped while subsequent entries are returned")
+	assert.Equal(t, "zebra.txt", nextMarker)
+}
+
 func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 	t.Run("should return error when allow-unordered=true and delimiter are both present", func(t *testing.T) {
 		// Create a request with both allow-unordered=true and delimiter
@@ -327,6 +429,38 @@ func TestAllowUnorderedWithDelimiterValidation(t *testing.T) {
 			assert.True(t, true, "Valid combination correctly allowed")
 		}
 	})
+}
+
+func TestSanitizeV1MarkerEcho_NoProgressGuard(t *testing.T) {
+	response := ListBucketResult{
+		Marker:      "test.txt",
+		NextMarker:  "test.txt",
+		IsTruncated: true,
+		Contents: []ListEntry{
+			{Key: "test.txt"},
+		},
+	}
+
+	sanitizeV1MarkerEcho(&response, "test.txt", false)
+
+	assert.Empty(t, response.Contents)
+	assert.Equal(t, "", response.NextMarker)
+	assert.False(t, response.IsTruncated)
+
+	response2 := ListBucketResult{
+		Marker:      "test file.txt",
+		NextMarker:  "test%20file.txt",
+		IsTruncated: true,
+		Contents: []ListEntry{
+			{Key: "test%20file.txt"},
+		},
+	}
+
+	sanitizeV1MarkerEcho(&response2, "test file.txt", true)
+
+	assert.Empty(t, response2.Contents)
+	assert.Equal(t, "", response2.NextMarker)
+	assert.False(t, response2.IsTruncated)
 }
 
 // TestMaxKeysParameterValidation tests the validation of max-keys parameter
@@ -679,4 +813,75 @@ func TestListObjectsV2_Regression_Sorting(t *testing.T) {
 	// With Limit=1, this fails because it only sees "reports-archive"
 	// With fix, it sees both and processes "reports"
 	assert.Contains(t, results, "file1", "Should return the nested file even if 'reports' directory is not the first match")
+}
+
+func TestListObjectsV2_PrefixEndingWithSlash_DoesNotMatchSiblings(t *testing.T) {
+	// Regression test: listing with prefix "1/" should only return objects under
+	// directory "1", not objects under "1000" or any other sibling whose name
+	// shares the same prefix string.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/bucket/path/to/list": {
+				{Name: "1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "1000", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "2500", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1": {
+				{Name: "fileA", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1000": {
+				{Name: "fileB", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "fileC", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/2500": {
+				{Name: "fileD", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	// Simulate listing with prefix "path/to/list/1/" (no delimiter).
+	// normalizePrefixMarker("path/to/list/1/", "") returns dir="path/to/list", prefix="1"
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+		if !entry.IsDirectory {
+			results = append(results, entry.Name)
+		}
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000' or '2500'")
+}
+
+func TestListObjectsV2_PrefixEndingWithSlash_WithDelimiter(t *testing.T) {
+	// Same scenario but with delimiter="/", verifying the fix works for both cases.
+
+	s3a := &S3ApiServer{}
+	client := &testFilerClient{
+		entriesByDir: map[string][]*filer_pb.Entry{
+			"/buckets/bucket/path/to/list": {
+				{Name: "1", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+				{Name: "1000", IsDirectory: true, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1": {
+				{Name: "fileA", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+			"/buckets/bucket/path/to/list/1000": {
+				{Name: "fileB", IsDirectory: false, Attributes: &filer_pb.FuseAttributes{}},
+			},
+		},
+	}
+
+	cursor := &ListingCursor{maxKeys: 1000, prefixEndsOnDelimiter: true}
+	var results []string
+
+	_, err := s3a.doListFilerEntries(client, "/buckets/bucket/path/to/list", "1", cursor, "", "/", false, "bucket", func(dir string, entry *filer_pb.Entry) {
+		results = append(results, entry.Name)
+	})
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{"fileA"}, results, "Should only return files under directory '1', not '1000'")
 }

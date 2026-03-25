@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.s3.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -42,7 +43,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.s3.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.s3.restartPolicy }}
       {{- if .Values.s3.affinity }}
       affinity:
         {{ tpl .Values.s3.affinity . | nindent 8 | trim }}
@@ -74,7 +75,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "s3.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -90,8 +91,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- if .Values.s3.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.s3.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.s3 "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -99,18 +102,6 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           command:
             - "/bin/sh"
@@ -125,7 +116,7 @@ spec:
               {{- if .Values.s3.loggingOverrideLevel }}
               -v={{ .Values.s3.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               s3 \
               -ip.bind={{ .Values.s3.bindAddress }} \
@@ -133,12 +124,11 @@ spec:
               {{- if .Values.s3.metricsPort }}
               -metricsPort {{ .Values.s3.metricsPort }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               {{- if .Values.s3.httpsPort }}
               -port.https={{ .Values.s3.httpsPort }} \
               {{- end }}
-              -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
-              -key.file=/usr/local/share/ca-certificates/client/tls.key \
+              {{- include "seaweedfs.s3.tlsArgs" (dict "root" . "prefix" "") | nindent 14 }}
               {{- end }}
               {{- if .Values.s3.domainName }}
               -domainName={{ .Values.s3.domainName }} \
@@ -166,7 +156,7 @@ spec:
               name: config-users
               readOnly: true
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -186,6 +176,7 @@ spec:
             - name: client-cert
               readOnly: true
               mountPath: /usr/local/share/ca-certificates/client/
+            {{- include "seaweedfs.s3.tlsVolumeMount" . | nindent 12 }}
             {{- end }}
             {{ tpl .Values.s3.extraVolumeMounts . | nindent 12 | trim }}
           ports:
@@ -258,7 +249,7 @@ spec:
         - name: logs
           emptyDir: {}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config
@@ -277,6 +268,7 @@ spec:
         - name: client-cert
           secret:
             secretName: {{ include "seaweedfs.fullname" . }}-client-cert
+        {{- include "seaweedfs.s3.tlsVolume" . | nindent 8 }}
         {{- end }}
         {{ tpl .Values.s3.extraVolumes . | indent 8 | trim }}
       {{- if .Values.s3.nodeSelector }}

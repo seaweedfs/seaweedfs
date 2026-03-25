@@ -2,16 +2,18 @@ package dash
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
 	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -99,12 +101,18 @@ type AdminServer struct {
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
 	plugin             *adminplugin.Plugin
+	pluginLock         *AdminLockManager
+	adminPresenceLock  *adminPresenceLock
+	expireJobHandler   func(jobID string, reason string) (*adminplugin.TrackedJob, bool, error)
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
 
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
+
+	// Background goroutine lifecycle
+	bgCancel context.CancelFunc
 
 	// Collection statistics caching
 	collectionStatsCache          map[string]collectionStats
@@ -132,8 +140,14 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 	)
 
 	// Start master client connection process (like shell and filer do)
-	ctx := context.Background()
-	go masterClient.KeepConnectedToMaster(ctx)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go masterClient.KeepConnectedToMaster(bgCtx)
+
+	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
+	presenceLock := newAdminPresenceLock(masterClient)
+	if presenceLock != nil {
+		presenceLock.Start()
+	}
 
 	server := &AdminServer{
 		masterClient:                  masterClient,
@@ -146,6 +160,9 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
 		s3TablesManager:               newS3TablesManager(),
 		icebergPort:                   icebergPort,
+		pluginLock:                    lockManager,
+		adminPresenceLock:             presenceLock,
+		bgCancel:                      bgCancel,
 	}
 
 	// Initialize topic retention purger
@@ -224,29 +241,110 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 		}()
 	}
 
-	plugin, err := adminplugin.New(adminplugin.Options{
+	pluginOpts := adminplugin.Options{
 		DataDir: dataDir,
 		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
 			return server.buildDefaultPluginClusterContext(), nil
 		},
-	})
+		LockManager:            lockManager,
+		ConfigDefaultsProvider: server.enrichConfigDefaults,
+	}
+	plugin, err := adminplugin.New(pluginOpts)
 	if err != nil && dataDir != "" {
 		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
-		plugin, err = adminplugin.New(adminplugin.Options{
-			DataDir: "",
-			ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
-				return server.buildDefaultPluginClusterContext(), nil
-			},
-		})
+		pluginOpts.DataDir = ""
+		plugin, err = adminplugin.New(pluginOpts)
 	}
 	if err != nil {
 		glog.Errorf("Failed to initialize plugin: %v", err)
 	} else {
 		server.plugin = plugin
 		glog.V(0).Infof("Plugin enabled")
+		go server.monitorVacuumWorker(bgCtx)
 	}
 
 	return server
+}
+
+// vacuumToggler abstracts the master's vacuum enable/disable for testing.
+type vacuumToggler interface {
+	disableVacuum() error
+	enableVacuum() error
+}
+
+// masterVacuumToggler implements vacuumToggler via gRPC calls to the master.
+type masterVacuumToggler struct {
+	server *AdminServer
+}
+
+func (m *masterVacuumToggler) disableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+func (m *masterVacuumToggler) enableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.EnableVacuum(ctx, &master_pb.EnableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
+// is present and calls disable/enable accordingly. Returns the updated state
+// and whether the call failed (for log dedup on retries).
+func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
+	if hasWorker == previouslyActive {
+		return previouslyActive, false
+	}
+	if hasWorker {
+		if !retrying {
+			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		}
+		if err := toggler.disableVacuum(); err != nil {
+			glog.Warningf("Failed to disable vacuum on master: %v", err)
+			return false, true // retry next tick
+		}
+		return true, false
+	}
+	if !retrying {
+		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	}
+	if err := toggler.enableVacuum(); err != nil {
+		glog.Warningf("Failed to enable vacuum on master: %v", err)
+		return true, true // retry next tick
+	}
+	return false, false
+}
+
+// monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
+// disables/enables the master's automatic scheduled vacuum accordingly.
+func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
+	const pollInterval = 30 * time.Second
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	toggler := &masterVacuumToggler{server: s}
+	vacuumWorkerActive := false
+	retrying := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.plugin == nil {
+				continue
+			}
+			hasWorker := s.plugin.HasCapableWorker("vacuum")
+			vacuumWorkerActive, retrying = syncVacuumState(hasWorker, vacuumWorkerActive, toggler, retrying)
+		}
+	}
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files
@@ -259,6 +357,89 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	// Load task configurations dynamically using the config update registry
 	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
+}
+
+// enrichConfigDefaults is called by the plugin when bootstrapping a job type's
+// default config from its descriptor. For admin_script, it fetches maintenance
+// scripts from the master and uses them as the script default.
+//
+// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
+// to the admin script plugin worker. Remove after March 2027.
+func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	if cfg.JobType != "admin_script" {
+		return cfg
+	}
+
+	var maintenanceScripts string
+	var sleepMinutes uint32
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		maintenanceScripts = resp.MaintenanceScripts
+		sleepMinutes = resp.MaintenanceSleepMinutes
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("Could not fetch master configuration for admin_script defaults: %v", err)
+		return cfg
+	}
+
+	script := cleanMaintenanceScript(maintenanceScripts)
+	if script == "" {
+		return cfg
+	}
+
+	interval := int64(sleepMinutes)
+	if interval <= 0 {
+		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
+	}
+
+	glog.V(0).Infof("Enriching admin_script defaults from master maintenance scripts (interval=%dm)", interval)
+
+	if cfg.AdminConfigValues == nil {
+		cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
+	}
+	cfg.AdminConfigValues["script"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
+	}
+	cfg.AdminConfigValues["run_interval_minutes"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+	}
+	cfg.UpdatedBy = "master_migration"
+
+	return cfg
+}
+
+// cleanMaintenanceScript strips lock/unlock commands and normalizes a
+// maintenance script string for use with the admin script plugin worker.
+//
+// MIGRATION: Used by enrichConfigDefaults. Remove after March 2027.
+func cleanMaintenanceScript(script string) string {
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Strip inline comments (e.g., "lock # migration note")
+		if idx := strings.Index(trimmed, "#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+			if trimmed == "" {
+				continue
+			}
+		}
+		firstToken := strings.ToLower(strings.Fields(trimmed)[0])
+		if firstToken == "lock" || firstToken == "unlock" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetCredentialManager returns the credential manager
@@ -278,8 +459,21 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // InvalidateCache method moved to cluster_topology.go
 
-// GetS3BucketsData retrieves all Object Store buckets and aggregates total storage metrics
-func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
+// GetS3BucketsData retrieves Object Store buckets with pagination and sorting
+func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder string) (S3BucketsData, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "name"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
 	buckets, err := s.GetS3Buckets()
 	if err != nil {
 		return S3BucketsData{}, err
@@ -290,12 +484,95 @@ func (s *AdminServer) GetS3BucketsData() (S3BucketsData, error) {
 		totalSize += bucket.PhysicalSize
 	}
 
+	totalBuckets := len(buckets)
+
+	// Sort buckets
+	s.sortBuckets(buckets, sortBy, sortOrder)
+
+	// Calculate pagination
+	totalPages := (totalBuckets + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if startIndex >= totalBuckets {
+		buckets = []S3Bucket{}
+	} else {
+		if endIndex > totalBuckets {
+			endIndex = totalBuckets
+		}
+		buckets = buckets[startIndex:endIndex]
+	}
+
 	return S3BucketsData{
 		Buckets:      buckets,
-		TotalBuckets: len(buckets),
+		TotalBuckets: totalBuckets,
 		TotalSize:    totalSize,
 		LastUpdated:  time.Now(),
+		CurrentPage:  page,
+		TotalPages:   totalPages,
+		PageSize:     pageSize,
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
 	}, nil
+}
+
+// sortBuckets sorts the bucket slice in place by the given field and order
+func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) {
+	desc := sortOrder == "desc"
+	sort.Slice(buckets, func(i, j int) bool {
+		a, b := buckets[i], buckets[j]
+		switch sortBy {
+		case "owner":
+			if a.Owner != b.Owner {
+				if desc {
+					return a.Owner > b.Owner
+				}
+				return a.Owner < b.Owner
+			}
+		case "created":
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				if desc {
+					return a.CreatedAt.After(b.CreatedAt)
+				}
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+		case "objects":
+			if a.ObjectCount != b.ObjectCount {
+				if desc {
+					return a.ObjectCount > b.ObjectCount
+				}
+				return a.ObjectCount < b.ObjectCount
+			}
+		case "logical_size":
+			if a.LogicalSize != b.LogicalSize {
+				if desc {
+					return a.LogicalSize > b.LogicalSize
+				}
+				return a.LogicalSize < b.LogicalSize
+			}
+		case "physical_size":
+			if a.PhysicalSize != b.PhysicalSize {
+				if desc {
+					return a.PhysicalSize > b.PhysicalSize
+				}
+				return a.PhysicalSize < b.PhysicalSize
+			}
+		}
+		// Tie-breaker: sort by name (also the default/primary for sortBy=="name")
+		if a.Name != b.Name {
+			if desc {
+				return a.Name > b.Name
+			}
+			return a.Name < b.Name
+		}
+		return false
+	})
 }
 
 // GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
@@ -313,28 +590,48 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the buckets directory
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          filerConfig.BucketsPath,
-			Prefix:             "",
-			StartFromFileName:  "",
-			InclusiveStartFrom: false,
-			Limit:              1000,
-		})
-		if err != nil {
-			return err
-		}
-
+		// Paginate through all buckets in the buckets directory
+		const listPageSize = 1000
+		startFrom := ""
+		var snapshotTsNs int64
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          filerConfig.BucketsPath,
+				Prefix:             "",
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+				Limit:              listPageSize,
+				SnapshotTsNs:       snapshotTsNs,
+			})
 			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
 				return err
 			}
 
-			if resp.Entry.IsDirectory {
+			pageCount := 0
+			lastName := ""
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					return err
+				}
+
+				if snapshotTsNs == 0 && resp.SnapshotTsNs != 0 {
+					snapshotTsNs = resp.SnapshotTsNs
+				}
+
+				if resp.Entry == nil {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+
+				if !resp.Entry.IsDirectory {
+					continue
+				}
+
 				bucketName := resp.Entry.Name
 				if strings.HasPrefix(bucketName, ".") {
 					// Skip internal/system directories from Object Store bucket listing.
@@ -387,13 +684,18 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					}
 				}
 
+				var createdAt, lastModified time.Time
+				if resp.Entry.Attributes != nil {
+					createdAt = time.Unix(resp.Entry.Attributes.Crtime, 0)
+					lastModified = time.Unix(resp.Entry.Attributes.Mtime, 0)
+				}
 				bucket := S3Bucket{
 					Name:               bucketName,
-					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
+					CreatedAt:          createdAt,
 					LogicalSize:        logicalSize,
 					PhysicalSize:       physicalSize,
 					ObjectCount:        objectCount,
-					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
+					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
 					VersioningStatus:   versioningStatus,
@@ -404,6 +706,12 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				}
 				buckets = append(buckets, bucket)
 			}
+
+			// If we received fewer entries than the page size, we've listed everything
+			if pageCount < listPageSize {
+				break
+			}
+			startFrom = lastName
 		}
 
 		return nil
@@ -574,11 +882,6 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 
 	// Convert IAM identities to ObjectStoreUser format
 	for _, identity := range s3cfg.Identities {
-		// Skip anonymous identity
-		if identity.Name == "anonymous" {
-			continue
-		}
-
 		// Skip service accounts - they should not be parent users
 		if strings.HasPrefix(identity.Name, serviceAccountPrefix) {
 			continue
@@ -631,7 +934,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 	// Add masters from topology
 	for _, master := range topology.Masters {
 		masterInfo := &MasterInfo{
-			Address:  master.Address,
+			Address:  pb.ServerAddress(master.Address).ToHttpAddress(),
 			IsLeader: master.IsLeader,
 			Suffrage: "",
 		}
@@ -653,6 +956,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
 			address := server.Address
+			httpAddress := pb.ServerAddress(address).ToHttpAddress()
 
 			// Update existing master info or create new one
 			if masterInfo, exists := masterMap[address]; exists {
@@ -662,7 +966,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			} else {
 				// Create new master info from raft data
 				masterInfo := &MasterInfo{
-					Address:  address,
+					Address:  httpAddress,
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
@@ -699,7 +1003,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			masters = append(masters, MasterInfo{
-				Address:  string(currentMaster),
+				Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 				IsLeader: true,
 				Suffrage: "Voter",
 			})
@@ -733,7 +1037,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			filerInfo := FilerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -780,7 +1084,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			brokerInfo := MessageBrokerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -816,18 +1120,18 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 // VacuumVolume method moved to volume_management.go
 
 // TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
-func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(w http.ResponseWriter, r *http.Request) {
 	err := as.TriggerTopicRetentionPurge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Topic retention purge triggered successfully"})
 }
 
 // GetConfigInfo returns information about the admin configuration
-func (as *AdminServer) GetConfigInfo(c *gin.Context) {
+func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo := as.configPersistence.GetConfigInfo()
 
 	// Add additional admin server info
@@ -845,7 +1149,7 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 		configInfo["maintenance_running"] = false
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config_info": configInfo,
 		"title":       "Configuration Information",
 	})
@@ -887,6 +1191,13 @@ func (s *AdminServer) GetWorkerGrpcPort() int {
 // GetPlugin returns the plugin instance when enabled.
 func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
 	return s.plugin
+}
+
+func (s *AdminServer) acquirePluginLock(reason string) (func(), error) {
+	if s == nil || s.pluginLock == nil {
+		return func() {}, nil
+	}
+	return s.pluginLock.Acquire(reason)
 }
 
 // RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
@@ -931,6 +1242,13 @@ func (s *AdminServer) RunPluginDetection(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
 }
 
@@ -956,7 +1274,31 @@ func (s *AdminServer) RunPluginDetectionWithReport(
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
 	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
+}
+
+// DispatchPluginProposals dispatches a batch of proposals using the same
+// capacity-aware dispatch logic as the scheduler loop (executor reservation with
+// backoff, per-job retry on transient errors). The plugin lock must already be
+// held by the caller.
+func (s *AdminServer) DispatchPluginProposals(
+	ctx context.Context,
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+	clusterContext *plugin_pb.ClusterContext,
+) (successCount, errorCount, canceledCount int, err error) {
+	if s.plugin == nil {
+		return 0, 0, 0, fmt.Errorf("plugin is not enabled")
+	}
+	sc, ec, cc := s.plugin.DispatchProposals(ctx, jobType, proposals, clusterContext)
+	return sc, ec, cc, nil
 }
 
 // ExecutePluginJob dispatches one job to a capable worker and waits for completion.
@@ -968,6 +1310,17 @@ func (s *AdminServer) ExecutePluginJob(
 ) (*plugin_pb.JobCompleted, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	jobType := ""
+	if job != nil {
+		jobType = strings.TrimSpace(job.JobType)
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin execution %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
 	}
 	return s.plugin.ExecuteJob(ctx, job, clusterContext, attempt)
 }
@@ -981,7 +1334,7 @@ func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeR
 }
 
 // ListPluginJobTypes returns known plugin job types from connected worker registry and persisted data.
-func (s *AdminServer) ListPluginJobTypes() ([]string, error) {
+func (s *AdminServer) ListPluginJobTypes() ([]adminplugin.JobTypeInfo, error) {
 	if s.plugin == nil {
 		return nil, fmt.Errorf("plugin is not enabled")
 	}
@@ -1018,6 +1371,17 @@ func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLim
 		return nil, false, fmt.Errorf("plugin is not enabled")
 	}
 	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
+}
+
+// ExpirePluginJob marks an active plugin job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJob(jobID, reason string) (*adminplugin.TrackedJob, bool, error) {
+	if handler := s.expireJobHandler; handler != nil {
+		return handler(jobID, reason)
+	}
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ExpireJob(jobID, reason)
 }
 
 // ListPluginActivities returns plugin job activities for monitoring.
@@ -1234,8 +1598,16 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 func (s *AdminServer) Shutdown() {
 	glog.V(1).Infof("Shutting down admin server...")
 
+	// Cancel background goroutines (vacuum monitor, etc.)
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
+
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+	if s.adminPresenceLock != nil {
+		s.adminPresenceLock.Stop()
+	}
 
 	if s.plugin != nil {
 		s.plugin.Shutdown()

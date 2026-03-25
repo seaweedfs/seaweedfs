@@ -111,6 +111,7 @@ message TaskParams {
     ErasureCodingTaskParams erasure_coding_params = 10;
     BalanceTaskParams balance_params = 11;
     ReplicationTaskParams replication_params = 12;
+    EcBalanceTaskParams ec_balance_params = 13;
   }
 }
 
@@ -157,10 +158,21 @@ message TaskTarget {
 
 
 
+// BalanceMoveSpec describes a single volume move within a batch balance job
+message BalanceMoveSpec {
+  uint32 volume_id = 1;                   // Volume to move
+  string source_node = 2;                 // Source server address (host:port)
+  string target_node = 3;                 // Destination server address (host:port)
+  string collection = 4;                  // Collection name
+  uint64 volume_size = 5;                 // Volume size in bytes (informational)
+}
+
 // BalanceTaskParams for volume balancing operations
 message BalanceTaskParams {
   bool force_move = 1;                    // Force move even with conflicts
   int32 timeout_seconds = 2;              // Operation timeout
+  int32 max_concurrent_moves = 3;         // Max concurrent moves in a batch job (0 = default 5)
+  repeated BalanceMoveSpec moves = 4;     // Batch: multiple volume moves in one job
 }
 
 // ReplicationTaskParams for adding replicas
@@ -296,6 +308,7 @@ message TaskPolicy {
     ErasureCodingTaskConfig erasure_coding_config = 6;
     BalanceTaskConfig balance_config = 7;
     ReplicationTaskConfig replication_config = 8;
+    EcBalanceTaskConfig ec_balance_config = 9;
   }
 }
 
@@ -314,6 +327,7 @@ message ErasureCodingTaskConfig {
   int32 quiet_for_seconds = 2;      // Minimum quiet time before EC
   int32 min_volume_size_mb = 3;     // Minimum volume size for EC
   string collection_filter = 4;     // Only process volumes from specific collections
+  repeated string preferred_tags = 5; // Disk tags to prioritize for EC shard placement
 }
 
 // BalanceTaskConfig contains balance-specific configuration
@@ -325,6 +339,34 @@ message BalanceTaskConfig {
 // ReplicationTaskConfig contains replication-specific configuration
 message ReplicationTaskConfig {
   int32 target_replica_count = 1;   // Target number of replicas
+}
+
+// EcBalanceTaskParams for EC shard balancing operations
+message EcBalanceTaskParams {
+  string disk_type = 1;                    // Disk type filter (hdd, ssd, "")
+  int32 max_parallelization = 2;           // Max parallel shard moves within a batch
+  int32 timeout_seconds = 3;               // Operation timeout per move
+  repeated EcShardMoveSpec moves = 4;      // Batch: multiple shard moves in one job
+}
+
+// EcShardMoveSpec describes a single EC shard move within a batch
+message EcShardMoveSpec {
+  uint32 volume_id = 1;                    // EC volume ID
+  uint32 shard_id = 2;                     // Shard ID (0-13)
+  string collection = 3;                   // Collection name
+  string source_node = 4;                  // Source server address
+  uint32 source_disk_id = 5;              // Source disk ID
+  string target_node = 6;                  // Target server address
+  uint32 target_disk_id = 7;              // Target disk ID
+}
+
+// EcBalanceTaskConfig contains EC balance-specific configuration
+message EcBalanceTaskConfig {
+  double imbalance_threshold = 1;         // Threshold for triggering EC shard rebalancing
+  int32 min_server_count = 2;             // Minimum number of servers required
+  string collection_filter = 3;           // Collection filter
+  string disk_type = 4;                   // Disk type filter
+  repeated string preferred_tags = 5;     // Preferred disk tags for placement
 }
 
 // ========== Task Persistence Messages ==========

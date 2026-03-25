@@ -195,3 +195,64 @@ func TestRunDetectionWithReportCapturesDetectionActivities(t *testing.T) {
 		t.Fatalf("expected requested/proposal/completed activities, got stages=%v", stages)
 	}
 }
+
+func TestRunDetectionAdminScriptUsesLastCompletedRun(t *testing.T) {
+	pluginSvc, err := New(Options{})
+	if err != nil {
+		t.Fatalf("New plugin error: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	jobType := "admin_script"
+	pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+		WorkerId: "worker-admin-script",
+		Capabilities: []*plugin_pb.JobTypeCapability{
+			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
+		},
+	})
+	session := &streamSession{workerID: "worker-admin-script", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1)}
+	pluginSvc.putSession(session)
+
+	successCompleted := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)
+	errorCompleted := successCompleted.Add(45 * time.Minute)
+	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{
+		Outcome:     RunOutcomeSuccess,
+		CompletedAt: timeToPtr(successCompleted),
+	}); err != nil {
+		t.Fatalf("AppendRunRecord success run: %v", err)
+	}
+	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{
+		Outcome:     RunOutcomeError,
+		CompletedAt: timeToPtr(errorCompleted),
+	}); err != nil {
+		t.Fatalf("AppendRunRecord error run: %v", err)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		_, runErr := pluginSvc.RunDetection(context.Background(), jobType, &plugin_pb.ClusterContext{}, 10)
+		errCh <- runErr
+	}()
+
+	message := <-session.outgoing
+	detectRequest := message.GetRunDetectionRequest()
+	if detectRequest == nil {
+		t.Fatalf("expected run detection request message")
+	}
+	if detectRequest.LastSuccessfulRun == nil {
+		t.Fatalf("expected last_successful_run to be set")
+	}
+	if got := detectRequest.LastSuccessfulRun.AsTime().UTC(); !got.Equal(errorCompleted) {
+		t.Fatalf("unexpected last_successful_run, got=%s want=%s", got, errorCompleted)
+	}
+
+	pluginSvc.handleDetectionComplete("worker-admin-script", &plugin_pb.DetectionComplete{
+		RequestId: message.RequestId,
+		JobType:   jobType,
+		Success:   true,
+	})
+
+	if runErr := <-errCh; runErr != nil {
+		t.Fatalf("RunDetection error: %v", runErr)
+	}
+}

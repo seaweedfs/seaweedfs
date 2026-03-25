@@ -1,7 +1,9 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
+	"crypto/md5"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -72,19 +74,21 @@ type SSEResponseMetadata struct {
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
-
 	// http://docs.aws.amazon.com/AmazonS3/latest/dev/UploadingObjects.html
 
 	bucket, object := s3_constants.GetBucketAndObject(r)
-	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
-	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
-		return
-	}
-
 	_, err := validateContentMd5(r.Header)
 	if err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidDigest)
+		return
+	}
+	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
+	if len(object) > s3_constants.MaxS3ObjectKeyLength {
+		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
+		return
+	}
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
 	}
 
@@ -139,6 +143,22 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 			fullDirPath = fullDirPath + "/" + dirName
 		}
 
+		// Read any content through dataReader (handles chunked encoding properly)
+		var dirContent []byte
+		if r.ContentLength != 0 {
+			var readErr error
+			dirContent, readErr = io.ReadAll(dataReader)
+			if readErr != nil {
+				glog.Errorf("PutObjectHandler: failed to read directory marker content %s/%s: %v", bucket, object, readErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+		}
+
+		// Compute MD5 for ETag (md5.Sum of nil/empty = MD5 of empty content)
+		dirMd5 := md5.Sum(dirContent)
+		dirEtag := fmt.Sprintf("%x", dirMd5)
+
 		glog.Infof("PutObjectHandler: explicit directory marker %s/%s (contentType=%q, len=%d)",
 			bucket, object, objectContentType, r.ContentLength)
 		if err := s3a.mkdir(
@@ -147,17 +167,25 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				if objectContentType == "" {
 					objectContentType = s3_constants.FolderMimeType
 				}
-				if r.ContentLength > 0 {
-					entry.Content, _ = io.ReadAll(r.Body)
+				if len(dirContent) > 0 {
+					entry.Content = dirContent
 				}
 				entry.Attributes.Mime = objectContentType
+				entry.Attributes.Md5 = dirMd5[:]
+
+				// Store ETag in extended attributes for consistency with regular objects
+				if entry.Extended == nil {
+					entry.Extended = make(map[string][]byte)
+				}
+				entry.Extended[s3_constants.ExtETagKey] = []byte(dirEtag)
 
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)
 			}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
 		}
+		setEtag(w, dirEtag)
 	} else {
 		// Get detailed versioning state for the bucket
 		versioningState, err := s3a.getVersioningState(bucket)
@@ -288,10 +316,12 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// NEW OPTIMIZATION: Write directly to volume servers, bypassing filer proxy
 	// This eliminates the filer proxy overhead for PUT operations
 	// Note: filePath is now passed directly instead of URL (no parsing needed)
-
 	// For SSE, encrypt with offset=0 for all parts
 	// Each part is encrypted independently, then decrypted using metadata during GET
 	partOffset := int64(0)
+
+	plaintextHash := md5.New()
+	dataReader = io.TeeReader(dataReader, plaintextHash)
 
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
@@ -426,8 +456,21 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Step 3: Calculate MD5 hash and add SSE metadata to chunks
-	md5Sum := chunkResult.Md5Hash.Sum(nil)
-
+	md5Sum := plaintextHash.Sum(nil)
+	contentMd5 := r.Header.Get("Content-Md5")
+	if contentMd5 != "" {
+		expectedMd5, err := base64.StdEncoding.DecodeString(contentMd5)
+		if err != nil {
+			glog.Errorf("putToFiler: Invalid Content-Md5 header: %v, attempting to cleanup %d orphaned chunks", err, len(chunkResult.FileChunks))
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrInvalidDigest, SSEResponseMetadata{}
+		}
+		if !bytes.Equal(md5Sum, expectedMd5) {
+			glog.Warningf("putToFiler: Checksum verification failed, attempting to cleanup %d orphaned chunks", len(chunkResult.FileChunks))
+			s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+			return "", s3err.ErrBadDigest, SSEResponseMetadata{}
+		}
+	}
 	glog.V(4).Infof("putToFiler: Chunked upload SUCCESS - path=%s, chunks=%d, size=%d",
 		filePath, len(chunkResult.FileChunks), chunkResult.TotalSize)
 
@@ -656,11 +699,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
-		_, err := client.CreateEntry(context.Background(), req)
-		if err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, req); err != nil {
 			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
+			return err
 		}
-		return err
+		return nil
 	})
 	if createErr != nil {
 		glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
@@ -750,23 +793,25 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrNone
 	}
 
-	errString := err.Error()
+	// Filer sentinel errors — matched via errors.Is() after crossing gRPC boundary
+	switch {
+	case errors.Is(err, filer_pb.ErrEntryNameTooLong):
+		return s3err.ErrKeyTooLongError
+	case errors.Is(err, filer_pb.ErrParentIsFile), errors.Is(err, filer_pb.ErrExistingIsFile):
+		return s3err.ErrExistingObjectIsFile
+	case errors.Is(err, filer_pb.ErrExistingIsDirectory):
+		return s3err.ErrExistingObjectIsDirectory
+	case errors.Is(err, weed_server.ErrReadOnly):
+		return s3err.ErrAccessDenied
+	}
 
+	// Non-filer errors that don't go through CreateEntryResponse — string matching required
+	errString := err.Error()
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
-	case errors.Is(err, weed_server.ErrReadOnly):
-		// Bucket is read-only due to quota enforcement or other configuration
-		// Return 403 Forbidden per S3 semantics (similar to MinIO's quota enforcement)
-		// Uses errors.Is() to properly detect wrapped errors
-		return s3err.ErrAccessDenied
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
-		// Client canceled the request, return client error not server error
 		return s3err.ErrInvalidRequest
-	case strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory"):
-		return s3err.ErrExistingObjectIsDirectory
-	case strings.HasSuffix(errString, "is a file"):
-		return s3err.ErrExistingObjectIsFile
 	default:
 		return s3err.ErrInternalError
 	}
@@ -1643,7 +1688,11 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	objectExists := entry != nil
 
 	// For PUT requests, all specified conditions must be met.
-	// The evaluation order follows AWS S3 behavior for consistency.
+	// The evaluation order follows RFC 7232 Section 6 and AWS S3 behavior:
+	//   1. If-Match
+	//   2. If-Unmodified-Since (ignored when If-Match is present, per RFC 7232 Section 3.4)
+	//   3. If-None-Match
+	//   4. If-Modified-Since (ignored when If-None-Match is present, per RFC 7232 Section 3.3)
 
 	// 1. Check If-Match
 	if headers.ifMatch != "" {
@@ -1664,7 +1713,9 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	}
 
 	// 2. Check If-Unmodified-Since
-	if !headers.ifUnmodifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.4: "A recipient MUST ignore If-Unmodified-Since
+	// if the request contains an If-Match header field"
+	if !headers.ifUnmodifiedSince.IsZero() && headers.ifMatch == "" {
 		if objectExists {
 			if entry.Attributes != nil {
 				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
@@ -1698,7 +1749,9 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	}
 
 	// 4. Check If-Modified-Since
-	if !headers.ifModifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.3: "A recipient MUST ignore If-Modified-Since
+	// if the request contains an If-None-Match header field"
+	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		if objectExists {
 			if entry.Attributes != nil {
 				objectModTime := time.Unix(entry.Attributes.Mtime, 0)
@@ -1787,7 +1840,11 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// Object exists - check all conditions
-	// The evaluation order follows AWS S3 behavior for consistency.
+	// The evaluation order follows RFC 7232 Section 6 and AWS S3 behavior:
+	//   1. If-Match
+	//   2. If-Unmodified-Since (ignored when If-Match is present, per RFC 7232 Section 3.4)
+	//   3. If-None-Match
+	//   4. If-Modified-Since (ignored when If-None-Match is present, per RFC 7232 Section 3.3)
 
 	// 1. Check If-Match (412 Precondition Failed if fails)
 	if headers.ifMatch != "" {
@@ -1806,7 +1863,9 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// 2. Check If-Unmodified-Since (412 Precondition Failed if fails)
-	if !headers.ifUnmodifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.4: "A recipient MUST ignore If-Unmodified-Since
+	// if the request contains an If-Match header field"
+	if !headers.ifUnmodifiedSince.IsZero() && headers.ifMatch == "" {
 		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
 		if objectModTime.After(headers.ifUnmodifiedSince) {
 			glog.V(3).Infof("validateConditionalHeadersForReads: If-Unmodified-Since failed - object modified after %s", r.Header.Get(s3_constants.IfUnmodifiedSince))
@@ -1833,7 +1892,9 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 	}
 
 	// 4. Check If-Modified-Since (304 Not Modified if fails)
-	if !headers.ifModifiedSince.IsZero() {
+	// Per RFC 7232 Section 3.3: "A recipient MUST ignore If-Modified-Since
+	// if the request contains an If-None-Match header field"
+	if !headers.ifModifiedSince.IsZero() && headers.ifNoneMatch == "" {
 		objectModTime := time.Unix(entry.Attributes.Mtime, 0)
 		if !objectModTime.After(headers.ifModifiedSince) {
 			// Use production getObjectETag method

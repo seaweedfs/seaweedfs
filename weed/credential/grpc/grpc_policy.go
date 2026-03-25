@@ -79,6 +79,22 @@ func (store *IamGrpcStore) CreatePolicy(ctx context.Context, name string, docume
 	return store.PutPolicy(ctx, name, document)
 }
 
+// ListPolicyNames retrieves names of all IAM policies via gRPC.
+func (store *IamGrpcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
+	var names []string
+	err := store.withIamClient(func(client iam_pb.SeaweedIdentityAccessManagementClient) error {
+		resp, err := client.ListPolicies(ctx, &iam_pb.ListPoliciesRequest{})
+		if err != nil {
+			return err
+		}
+		for _, policy := range resp.Policies {
+			names = append(names, policy.Name)
+		}
+		return nil
+	})
+	return names, err
+}
+
 // UpdatePolicy updates an existing policy (delegates to PutPolicy)
 func (store *IamGrpcStore) UpdatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	return store.PutPolicy(ctx, name, document)

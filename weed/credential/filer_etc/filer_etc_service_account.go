@@ -38,7 +38,7 @@ func (store *FilerEtcStore) loadServiceAccountsFromMultiFile(ctx context.Context
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read service account file %s: %v", entry.Name, err)
 					continue
@@ -133,7 +133,7 @@ func (store *FilerEtcStore) GetServiceAccount(ctx context.Context, id string) (*
 	}
 	var sa *iam_pb.ServiceAccount
 	err := store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
+		data, err := filer.ReadInsideFiler(ctx, client, filer.IamConfigDirectory+"/"+IamServiceAccountsDirectory, id+".json")
 		if err != nil {
 			if err == filer_pb.ErrNotFound {
 				return credential.ErrServiceAccountNotFound
@@ -170,7 +170,7 @@ func (store *FilerEtcStore) ListServiceAccounts(ctx context.Context) ([]*iam_pb.
 			if len(entry.Content) > 0 {
 				content = entry.Content
 			} else {
-				c, err := filer.ReadInsideFiler(client, dir, entry.Name)
+				c, err := filer.ReadInsideFiler(ctx, client, dir, entry.Name)
 				if err != nil {
 					glog.Warningf("Failed to read service account file %s: %v", entry.Name, err)
 					continue

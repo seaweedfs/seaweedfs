@@ -1,13 +1,13 @@
 package app
 
-templ Plugin(page string) {
+templ Plugin(page string, initialJob string) {
     {{
         currentPage := page
         if currentPage == "" {
             currentPage = "overview"
         }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage }>
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -65,7 +65,7 @@ templ Plugin(page string) {
 
         <div class="plugin-section plugin-section-overview">
             <div class="row mb-4">
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-info h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Workers</div>
@@ -73,7 +73,7 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-warning h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Active Jobs</div>
@@ -81,11 +81,20 @@ templ Plugin(page string) {
                         </div>
                     </div>
                 </div>
-                <div class="col-md-4 mb-3">
+                <div class="col-md-3 mb-3">
                     <div class="card border-success h-100">
                         <div class="card-body text-center">
                             <div class="text-uppercase text-muted small mb-1">Activities (recent)</div>
                             <h4 class="mb-0" id="plugin-status-activities">0</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <div class="card border-secondary h-100">
+                        <div class="card-body text-center">
+                            <div class="text-uppercase text-muted small mb-1">Next Run</div>
+                            <h4 class="mb-0 plugin-scheduler-next-run">-</h4>
+                            <div class="text-muted small plugin-scheduler-next-run-meta"></div>
                         </div>
                     </div>
                 </div>
@@ -120,7 +129,7 @@ templ Plugin(page string) {
                     <div class="card shadow-sm">
                         <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <h5 class="mb-0"><i class="fas fa-clock me-2"></i>Scheduler State</h5>
-                            <small class="text-muted">Per job type detection schedule and execution limits</small>
+                            <small class="text-muted">Sequential scheduler with per-job runtime limits</small>
                         </div>
                         <div class="card-body p-0">
                             <div class="table-responsive">
@@ -131,12 +140,12 @@ templ Plugin(page string) {
                                             <th>Enabled</th>
                                             <th>Detector</th>
                                             <th>In Flight</th>
-                                            <th>Next Detection</th>
-                                            <th>Interval</th>
+                                            <th>Max Runtime</th>
                                             <th>Exec Global</th>
                                             <th>Exec/Worker</th>
                                             <th>Executor Workers</th>
                                             <th>Effective Exec</th>
+                                            <th>Last Run</th>
                                         </tr>
                                     </thead>
                                     <tbody id="plugin-scheduler-table-body">
@@ -230,7 +239,7 @@ templ Plugin(page string) {
                 </div>
 
                 <div class="col-lg-4 mb-3">
-                    <div class="card shadow-sm h-100">
+                    <div class="card shadow-sm">
                         <div class="card-header">
                             <h5 class="mb-0"><i class="fas fa-cogs me-2"></i>Job Scheduling Settings</h5>
                         </div>
@@ -245,10 +254,15 @@ templ Plugin(page string) {
                                 <div class="col-12">
                                     <label class="form-label" for="plugin-admin-detection-interval">Detection Interval (s)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-interval" min="0"/>
+                                    <div class="form-text">How often to check for new work.</div>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label" for="plugin-admin-detection-timeout">Detection Timeout (s)</label>
                                     <input type="number" class="form-control" id="plugin-admin-detection-timeout" min="0"/>
+                                </div>
+                                <div class="col-12">
+                                    <label class="form-label" for="plugin-admin-max-runtime">Job Type Max Runtime (s)</label>
+                                    <input type="number" class="form-control" id="plugin-admin-max-runtime" min="0"/>
                                 </div>
                                 <div class="col-12">
                                     <label class="form-label" for="plugin-admin-max-results">Max Jobs / Detection</label>
@@ -271,6 +285,17 @@ templ Plugin(page string) {
                                     <input type="number" class="form-control" id="plugin-admin-retry-backoff" min="0"/>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+
+                    <div class="card shadow-sm mt-3">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h5 class="mb-0"><i class="fas fa-hourglass-half me-2"></i>Next Run</h5>
+                            <small class="text-muted">Scheduler</small>
+                        </div>
+                        <div class="card-body">
+                            <div class="h5 mb-1 plugin-scheduler-next-run">-</div>
+                            <div class="text-muted small plugin-scheduler-next-run-meta">Not scheduled</div>
                         </div>
                     </div>
                 </div>
@@ -485,6 +510,11 @@ templ Plugin(page string) {
             <div class="modal-content">
                 <div class="modal-header">
                     <h5 class="modal-title" id="plugin-job-detail-modal-label"><i class="fas fa-file-alt me-2"></i>Job Detail</h5>
+                    <div class="ms-auto me-2">
+                        <button type="button" class="btn btn-outline-danger btn-sm" id="plugin-expire-job-btn" disabled>
+                            <i class="fas fa-stop-circle me-1"></i>Expire Job
+                        </button>
+                    </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
                 <div class="modal-body" id="plugin-job-detail-content">
@@ -505,6 +535,9 @@ templ Plugin(page string) {
 
         .plugin-form-root .card {
             border: 1px solid #dee2e6;
+        }
+        .plugin-form-root textarea {
+            min-height: 12rem;
         }
 
         .plugin-field-hidden {
@@ -556,6 +589,7 @@ templ Plugin(page string) {
                 jobTypes: [],
                 lastDetectionByJobType: {},
                 initialPage: String(page.getAttribute('data-plugin-page') || 'overview').trim().toLowerCase(),
+                initialJob: String(page.getAttribute('data-plugin-job') || '').trim(),
                 activeTopTab: 'overview',
                 activeSubTab: 'configuration',
                 initialNavigationApplied: false,
@@ -564,6 +598,7 @@ templ Plugin(page string) {
                 jobs: [],
                 activities: [],
                 schedulerStates: [],
+                schedulerStatus: null,
                 allJobs: [],
                 allActivities: [],
                 loadedJobType: '',
@@ -683,6 +718,47 @@ templ Plugin(page string) {
                 return 'configuration';
             }
 
+            function buildPluginURL(topTab, subTab, jobType) {
+                if (topTab === 'overview') {
+                    return '/plugin';
+                }
+                var effectiveSubTab = normalizeSubTab(subTab);
+                var path = '/plugin/' + encodeURIComponent(effectiveSubTab);
+                var jt = String(jobType || '').trim();
+                if (jt) {
+                    path += '?job=' + encodeURIComponent(jt);
+                }
+                return path;
+            }
+
+            function updateURL(replace) {
+                var url = buildPluginURL(state.activeTopTab, state.activeSubTab, state.selectedJobType);
+                if (replace) {
+                    history.replaceState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                } else {
+                    history.pushState({ pluginTopTab: state.activeTopTab, pluginSubTab: state.activeSubTab, pluginJob: state.selectedJobType }, '', url);
+                }
+            }
+
+            // Parse a job type item (string or object) into a safe object shape
+            function parseJobTypeItem(item) {
+                var jobType = '';
+                var displayName = '';
+                
+                if (typeof item === 'string') {
+                    jobType = String(item || '').trim();
+                    displayName = jobType;
+                } else if (item && typeof item === 'object') {
+                    jobType = String(item.job_type || item.jobType || '').trim();
+                    displayName = String(item.display_name || item.displayName || jobType || '').trim();
+                    if (!displayName) {
+                        displayName = jobType;
+                    }
+                }
+                
+                return { jobType: jobType, displayName: displayName };
+            }
+
             function topTabKeyForJobType(jobType) {
                 var normalized = String(jobType || '').trim();
                 if (!normalized) {
@@ -706,7 +782,8 @@ templ Plugin(page string) {
                 }
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    if (String(jobTypes[i] || '').trim() === normalized) {
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    if (item.jobType === normalized) {
                         return true;
                     }
                 }
@@ -728,7 +805,13 @@ templ Plugin(page string) {
                     state.activeTopTab = 'overview';
                     return;
                 }
-                state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                // If a specific job type was provided in the URL, use it
+                if (state.initialJob && hasJobType(state.initialJob)) {
+                    state.selectedJobType = state.initialJob;
+                } else {
+                    var firstItem = parseJobTypeItem(state.jobTypes[0]);
+                    state.selectedJobType = firstItem.jobType;
+                }
                 state.activeTopTab = topTabKeyForJobType(state.selectedJobType);
             }
 
@@ -749,7 +832,8 @@ templ Plugin(page string) {
 
                 if (state.activeTopTab === 'overview') {
                     if (!state.selectedJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                        state.selectedJobType = String(state.jobTypes[0] || '').trim();
+                        var item = parseJobTypeItem(state.jobTypes[0]);
+                        state.selectedJobType = item.jobType;
                     }
                     return;
                 }
@@ -758,7 +842,8 @@ templ Plugin(page string) {
                     topTabJobType = state.selectedJobType;
                 }
                 if (!topTabJobType && Array.isArray(state.jobTypes) && state.jobTypes.length > 0) {
-                    topTabJobType = String(state.jobTypes[0] || '').trim();
+                    var item = parseJobTypeItem(state.jobTypes[0]);
+                    topTabJobType = item.jobType;
                 }
                 if (!topTabJobType) {
                     state.activeTopTab = 'overview';
@@ -784,14 +869,17 @@ templ Plugin(page string) {
 
                 var jobTypes = Array.isArray(state.jobTypes) ? state.jobTypes : [];
                 for (var i = 0; i < jobTypes.length; i++) {
-                    var jobType = String(jobTypes[i] || '').trim();
+                    var item = parseJobTypeItem(jobTypes[i]);
+                    var jobType = item.jobType;
+                    var displayName = item.displayName;
+                    
                     if (!jobType) {
                         continue;
                     }
                     html += '' +
                         '<li class="nav-item">' +
                         '<button type="button" class="nav-link" data-plugin-top-tab="' + escapeHtml(topTabKeyForJobType(jobType)) + '">' +
-                        escapeHtml(jobType) +
+                        escapeHtml(displayName) +
                         '</button>' +
                         '</li>';
                 }
@@ -966,6 +1054,9 @@ templ Plugin(page string) {
                 }
 
                 var jobType = String(plan.job_type || '').trim().toLowerCase();
+                if (jobType === 'volume_balance') {
+                    return renderBalanceExecutionPlan(plan);
+                }
                 if (jobType !== 'erasure_coding') {
                     var fallbackText = toPrettyJson(plan);
                     if (!fallbackText) {
@@ -1047,6 +1138,104 @@ templ Plugin(page string) {
                 return html;
             }
 
+            function renderBalanceExecutionPlan(plan) {
+                var html = '<div class="mb-3"><h6>Execution Plan</h6>';
+                var moves = Array.isArray(plan.moves) ? plan.moves : [];
+
+                if (moves.length === 0) {
+                    // Single-move balance job
+                    var src = textOrDash(plan.source_node || plan.source_server);
+                    var dst = textOrDash(plan.target_node || plan.target_server);
+                    var vid = textOrDash(plan.volume_id);
+                    var col = textOrDash(plan.collection);
+                    html += `<div class="row g-2 mb-2">
+                        <div class="col-md-3"><small><strong>Volume:</strong> ${escapeHtml(vid)}</small></div>
+                        <div class="col-md-3"><small><strong>Collection:</strong> ${escapeHtml(col)}</small></div>
+                        <div class="col-md-3"><small><strong>Source:</strong> <code>${escapeHtml(src)}</code></small></div>
+                        <div class="col-md-3"><small><strong>Target:</strong> <code>${escapeHtml(dst)}</code></small></div>
+                        </div>`;
+                } else {
+                    // Batch balance job
+                    html += '<div class="mb-2"><span class="badge bg-info">' + escapeHtml(String(moves.length)) + ' moves</span></div>';
+                    html += '<div class="table-responsive"><table class="table table-sm table-striped mb-0">' +
+                        '<thead><tr><th>#</th><th>Volume</th><th>Source</th><th>Target</th><th>Collection</th></tr></thead><tbody>';
+                    for (var i = 0; i < moves.length; i++) {
+                        var move = moves[i] || {};
+                        html += `<tr>
+                            <td>${escapeHtml(String(i + 1))}</td>
+                            <td>${escapeHtml(textOrDash(move.volume_id))}</td>
+                            <td><code>${escapeHtml(textOrDash(move.source_node))}</code></td>
+                            <td><code>${escapeHtml(textOrDash(move.target_node))}</code></td>
+                            <td>${escapeHtml(textOrDash(move.collection))}</td>
+                        </tr>`;
+                    }
+                    html += '</tbody></table></div>';
+                }
+
+                html += '</div>';
+                return html;
+            }
+
+            function isActiveJobState(candidateState) {
+                var jobState = candidateState;
+                if (candidateState && typeof candidateState === 'object' && candidateState.state !== undefined) {
+                    jobState = candidateState.state;
+                }
+                var st = String(jobState || '').toLowerCase();
+                return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' ||
+                    st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+            }
+
+            function setExpireButtonState(job) {
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (!expireBtn) {
+                    return;
+                }
+                var jobID = job && job.job_id ? String(job.job_id) : '';
+                var active = isActiveJobState(job);
+                expireBtn.setAttribute('data-job-id', jobID);
+                expireBtn.disabled = !jobID || !active;
+                if (!jobID) {
+                    expireBtn.title = 'Select a job to expire.';
+                } else if (!active) {
+                    expireBtn.title = 'Job is not active.';
+                } else {
+                    expireBtn.title = 'Expire job to unblock scheduling.';
+                }
+            }
+
+            async function expireJob(jobID) {
+                var normalizedJobID = String(jobID || '').trim();
+                if (!normalizedJobID) {
+                    return;
+                }
+
+                var reason = window.prompt('Expire job ' + normalizedJobID + '? Optional reason:', 'job expired by admin request');
+                if (reason === null) {
+                    return;
+                }
+
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (expireBtn) {
+                    expireBtn.disabled = true;
+                }
+
+                try {
+                    var response = await pluginRequest('POST', '/api/plugin/jobs/' + encodePath(normalizedJobID) + '/expire', {
+                        reason: reason,
+                    });
+                    if (response && response.expired === false) {
+                        notify(response.message || 'Job is not active.', 'info');
+                    } else {
+                        notify('Job expired: ' + normalizedJobID, 'success');
+                    }
+                    await refreshJobsAndActivities();
+                    await openJobDetail(normalizedJobID);
+                } catch (e) {
+                    notify('Failed to expire job: ' + e.message, 'error');
+                }
+            }
+
             async function openJobDetail(jobID) {
                 var normalizedJobID = String(jobID || '').trim();
                 if (!normalizedJobID) {
@@ -1067,10 +1256,12 @@ templ Plugin(page string) {
                     modal.show();
                 }
 
+                setExpireButtonState(null);
                 contentRoot.innerHTML = '<div class="text-muted">Loading job detail...</div>';
                 try {
                     var detail = await pluginRequest('GET', '/api/plugin/jobs/' + encodePath(normalizedJobID) + '/detail?activity_limit=500&related_limit=20');
                     var job = (detail && detail.job) ? detail.job : {};
+                    setExpireButtonState(job);
                     var runRecord = detail && detail.run_record ? detail.run_record : null;
                     var activities = (detail && Array.isArray(detail.activities)) ? detail.activities : [];
                     var relatedJobs = (detail && Array.isArray(detail.related_jobs)) ? detail.related_jobs : [];
@@ -1171,6 +1362,7 @@ templ Plugin(page string) {
 
                     contentRoot.innerHTML = html;
                 } catch (e) {
+                    setExpireButtonState(null);
                     contentRoot.innerHTML = '<div class="alert alert-danger mb-0">Failed to load job detail: ' + escapeHtml(e.message) + '</div>';
                 }
             }
@@ -1212,8 +1404,7 @@ templ Plugin(page string) {
                 var allActivities = Array.isArray(state.allActivities) ? state.allActivities : [];
 
                 var activeCount = allJobs.filter(function(job) {
-                    var st = String(job.state || '').toLowerCase();
-                    return st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    return isActiveJobState(job);
                 }).length;
 
                 document.getElementById('plugin-status-workers').textContent = String(state.workers.length);
@@ -1239,8 +1430,7 @@ templ Plugin(page string) {
                     if (!jobType) {
                         continue;
                     }
-                    var st = String(job.state || '').toLowerCase();
-                    var isActive = st === 'job_state_pending' || st === 'job_state_assigned' || st === 'job_state_running' || st === 'pending' || st === 'assigned' || st === 'running' || st === 'in_progress';
+                    var isActive = isActiveJobState(job);
                     if (!isActive) {
                         continue;
                     }
@@ -1267,7 +1457,8 @@ templ Plugin(page string) {
                 var jobTypes = [];
 
                 for (var k = 0; k < known.length; k++) {
-                    var knownType = String(known[k] || '').trim();
+                    var item = parseJobTypeItem(known[k]);
+                    var knownType = item && item.jobType ? String(item.jobType).trim() : '';
                     if (!knownType || seen[knownType]) {
                         continue;
                     }
@@ -1346,8 +1537,8 @@ templ Plugin(page string) {
                     var enabled = !!item.enabled;
                     var inFlight = !!item.detection_in_flight;
                     var detector = item.detector_available ? textOrDash(item.detector_worker_id) : 'No detector';
-                    var intervalSeconds = Number(item.detection_interval_seconds || 0);
-                    var intervalText = intervalSeconds > 0 ? (String(intervalSeconds) + 's') : '-';
+                    var maxRuntimeSeconds = Number(item.job_type_max_runtime_seconds || 0);
+                    var maxRuntimeText = maxRuntimeSeconds > 0 ? (String(maxRuntimeSeconds) + 's') : '-';
                     var globalExec = Number(item.global_execution_concurrency || 0);
                     var perWorkerExec = Number(item.per_worker_execution_concurrency || 0);
                     var executorWorkers = Number(item.executor_worker_count || 0);
@@ -1356,6 +1547,13 @@ templ Plugin(page string) {
                     var perWorkerExecText = enabled ? String(perWorkerExec) : '-';
                     var executorWorkersText = enabled ? String(executorWorkers) : '-';
                     var effectiveExecText = enabled ? String(effectiveExec) : '-';
+                    var lastRunStatus = textOrDash(item.last_run_status);
+                    var lastRunTime = parseTime(item.last_run_completed_at);
+                    var lastRunText = '-';
+                    if (lastRunStatus !== '-' || lastRunTime) {
+                        var statusLabel = lastRunStatus !== '-' ? lastRunStatus : 'run';
+                        lastRunText = lastRunTime ? (statusLabel + ' @ ' + lastRunTime) : statusLabel;
+                    }
 
                     var enabledBadge = enabled ? '<span class="badge bg-success">Enabled</span>' : '<span class="badge bg-secondary">Disabled</span>';
                     var inFlightBadge = inFlight ? '<span class="badge bg-warning text-dark">Yes</span>' : '<span class="badge bg-light text-dark">No</span>';
@@ -1369,16 +1567,36 @@ templ Plugin(page string) {
                         '<td>' + enabledBadge + '</td>' +
                         '<td><small>' + escapeHtml(detector) + '</small></td>' +
                         '<td>' + inFlightBadge + '</td>' +
-                        '<td><small>' + escapeHtml(parseTime(item.next_detection_at) || '-') + '</small></td>' +
-                        '<td><small>' + escapeHtml(intervalText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(maxRuntimeText) + '</small></td>' +
                         '<td><small>' + escapeHtml(globalExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(perWorkerExecText) + '</small></td>' +
                         '<td><small>' + escapeHtml(executorWorkersText) + '</small></td>' +
                         '<td><small>' + escapeHtml(effectiveExecText) + '</small></td>' +
+                        '<td><small>' + escapeHtml(lastRunText) + '</small></td>' +
                         '</tr>';
                 }
 
                 tbody.innerHTML = rows;
+            }
+
+            function renderSchedulerStatus() {
+                var valueNodes = document.querySelectorAll('.plugin-scheduler-next-run');
+                if (!valueNodes.length) {
+                    return;
+                }
+                var metaNodes = document.querySelectorAll('.plugin-scheduler-next-run-meta');
+                var status = state.schedulerStatus || {};
+                var nextRun = parseTime(status.next_detection_at);
+                var display = nextRun || '-';
+                valueNodes.forEach(function(node) {
+                    node.textContent = display;
+                });
+                var metaText = nextRun ? 'Local time' : 'Not scheduled';
+                if (metaNodes.length) {
+                    metaNodes.forEach(function(node) {
+                        node.textContent = metaText;
+                    });
+                }
             }
 
             function renderWorkers() {
@@ -1527,9 +1745,15 @@ templ Plugin(page string) {
                         barClass = 'bg-warning';
                     }
 
+                    var jobTypeCell = escapeHtml(textOrDash(executionJob.job_type));
+                    var execLabels = executionJob.labels || {};
+                    if (execLabels.batch === 'true' && execLabels.batch_size) {
+                        jobTypeCell += ' <span class="badge bg-info">' + escapeHtml(execLabels.batch_size) + ' moves</span>';
+                    }
+
                     rows += '<tr>' +
                         '<td>' + renderJobLink(executionJob.job_id) + '</td>' +
-                        '<td>' + escapeHtml(textOrDash(executionJob.job_type)) + '</td>' +
+                        '<td>' + jobTypeCell + '</td>' +
                         '<td><span class="badge bg-light text-dark">' + escapeHtml(textOrDash(executionJob.state)) + '</span></td>' +
                         '<td class="plugin-job-progress"><div class="progress" style="height: 14px;"><div class="progress-bar ' + barClass + '" role="progressbar" style="width:' + progress + '%">' + Math.round(progress) + '%</div></div></td>' +
                         '<td><small>' + escapeHtml(textOrDash(executionJob.worker_id)) + '</small></td>' +
@@ -2278,6 +2502,7 @@ templ Plugin(page string) {
                 document.getElementById('plugin-admin-enabled').checked = pickBool('enabled');
                 document.getElementById('plugin-admin-detection-interval').value = String(pickNumber('detection_interval_seconds'));
                 document.getElementById('plugin-admin-detection-timeout').value = String(pickNumber('detection_timeout_seconds'));
+                document.getElementById('plugin-admin-max-runtime').value = String(pickNumber('job_type_max_runtime_seconds'));
                 document.getElementById('plugin-admin-max-results').value = String(pickNumber('max_jobs_per_detection'));
                 document.getElementById('plugin-admin-global-exec').value = String(pickNumber('global_execution_concurrency'));
                 document.getElementById('plugin-admin-per-worker-exec').value = String(pickNumber('per_worker_execution_concurrency'));
@@ -2302,6 +2527,7 @@ templ Plugin(page string) {
                     enabled: !!document.getElementById('plugin-admin-enabled').checked,
                     detection_interval_seconds: getInt('plugin-admin-detection-interval'),
                     detection_timeout_seconds: getInt('plugin-admin-detection-timeout'),
+                    job_type_max_runtime_seconds: getInt('plugin-admin-max-runtime'),
                     max_jobs_per_detection: getInt('plugin-admin-max-results'),
                     global_execution_concurrency: getInt('plugin-admin-global-exec'),
                     per_worker_execution_concurrency: getInt('plugin-admin-per-worker-exec'),
@@ -2692,21 +2918,30 @@ templ Plugin(page string) {
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
                 var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
+                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status');
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
                 var schedulerStates = await schedulerPromise;
+                var schedulerStatus = null;
+                try {
+                    schedulerStatus = await schedulerStatusPromise;
+                } catch (e) {
+                    schedulerStatus = null;
+                }
 
                 state.jobs = Array.isArray(allJobs) ? allJobs : [];
                 state.activities = Array.isArray(allActivities) ? allActivities : [];
                 state.allJobs = state.jobs;
                 state.allActivities = state.activities;
                 state.schedulerStates = Array.isArray(schedulerStates) ? schedulerStates : [];
+                state.schedulerStatus = schedulerStatus && schedulerStatus.scheduler ? schedulerStatus.scheduler : null;
                 renderQueueJobs();
                 renderDetectionJobs();
                 renderExecutionJobs();
                 renderExecutionActivities();
                 renderSchedulerStates();
+                renderSchedulerStatus();
                 renderStatus();
                 renderJobTypeSummary();
             }
@@ -2748,6 +2983,17 @@ templ Plugin(page string) {
                     monitorStateFilter.addEventListener('change', function() {
                         state.monitorExecutionJobState = String(monitorStateFilter.value || '').trim();
                         renderExecutionJobs();
+                    });
+                }
+
+                var expireBtn = document.getElementById('plugin-expire-job-btn');
+                if (expireBtn) {
+                    expireBtn.addEventListener('click', function() {
+                        var jobID = String(expireBtn.getAttribute('data-job-id') || '').trim();
+                        if (!jobID) {
+                            return;
+                        }
+                        expireJob(jobID);
                     });
                 }
 
@@ -2797,6 +3043,7 @@ templ Plugin(page string) {
                         if (topTabKey === 'overview') {
                             state.activeTopTab = 'overview';
                             renderNavigationState();
+                            updateURL(false);
                             return;
                         }
 
@@ -2808,6 +3055,7 @@ templ Plugin(page string) {
                         state.selectedJobType = jobType;
                         ensureActiveNavigation();
                         renderNavigationState();
+                        updateURL(false);
                         if (state.loadedJobType !== jobType) {
                             try {
                                 await loadDescriptorAndConfig(jobType, false);
@@ -2835,6 +3083,7 @@ templ Plugin(page string) {
                         var subTabKey = normalizeSubTab(subTab.getAttribute('data-plugin-subtab'));
                         state.activeSubTab = subTabKey;
                         renderNavigationState();
+                        updateURL(false);
                         return;
                     }
 
@@ -2858,10 +3107,43 @@ templ Plugin(page string) {
                 renderNavigationState();
                 await refreshAll();
 
+                // Set the initial browser history state to match the current view
+                updateURL(true);
+
                 state.refreshTimer = setInterval(function() {
                     refreshAll();
                 }, 3000);
             }
+
+            window.addEventListener('popstate', async function(event) {
+                var s = event.state;
+                if (!s || !s.pluginTopTab) {
+                    // No plugin state — treat as overview
+                    state.activeTopTab = 'overview';
+                    renderNavigationState();
+                    return;
+                }
+                state.activeTopTab = String(s.pluginTopTab || 'overview');
+                state.activeSubTab = normalizeSubTab(s.pluginSubTab);
+                var jobType = String(s.pluginJob || '').trim();
+                if (jobType) {
+                    state.selectedJobType = jobType;
+                }
+                ensureActiveNavigation();
+                renderNavigationState();
+                // If a job type is selected and not loaded yet, load it
+                if (state.selectedJobType && state.loadedJobType !== state.selectedJobType) {
+                    try {
+                        await loadDescriptorAndConfig(state.selectedJobType, false);
+                    } catch (e) {
+                        console.error('Failed to load data on popstate navigation:', e);
+                    }
+                }
+                renderQueueJobs();
+                renderDetectionJobs();
+                renderExecutionJobs();
+                renderExecutionActivities();
+            });
 
             window.addEventListener('beforeunload', function() {
                 if (state.refreshTimer) {

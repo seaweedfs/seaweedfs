@@ -7,6 +7,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // tagsToEntry converts a map of tag key-value pairs to the entry.Extended format
@@ -443,8 +444,8 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		t.Errorf("Expected RequestMethod to be GET, got %v", values["s3:RequestMethod"])
 	}
 
-	if len(values["x-amz-copy-source"]) != 1 || values["x-amz-copy-source"][0] != "source-bucket/source-object" {
-		t.Errorf("Expected X-Amz-Copy-Source header to be extracted, got %v", values["x-amz-copy-source"])
+	if len(values["s3:x-amz-copy-source"]) != 1 || values["s3:x-amz-copy-source"][0] != "source-bucket/source-object" {
+		t.Errorf("Expected X-Amz-Copy-Source header to be extracted with s3: prefix, got %v", values["s3:x-amz-copy-source"])
 	}
 
 	// Check that aws:CurrentTime is properly set
@@ -749,7 +750,7 @@ func TestWildcardMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesWildcard(tt.pattern, tt.str)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.str)
 			if result != tt.expected {
 				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.str, tt.expected, result)
 			}

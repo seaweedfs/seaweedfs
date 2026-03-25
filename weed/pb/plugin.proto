@@ -96,6 +96,7 @@ message JobTypeCapability {
   int32 max_execution_concurrency = 5;
   string display_name = 6;
   string description = 7;
+  int32 weight = 8;
 }
 
 message RequestConfigSchema {
@@ -231,6 +232,7 @@ message AdminRuntimeDefaults {
   int32 per_worker_execution_concurrency = 6;
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
+  int32 job_type_max_runtime_seconds = 9;
 }
 
 message AdminRuntimeConfig {
@@ -242,6 +244,7 @@ message AdminRuntimeConfig {
   int32 per_worker_execution_concurrency = 6;
   int32 retry_limit = 7;
   int32 retry_backoff_seconds = 8;
+  int32 job_type_max_runtime_seconds = 9;
 }
 
 message RunDetectionRequest {

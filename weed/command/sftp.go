@@ -101,6 +101,12 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
+	// Load JWT configuration for filer signing
+	v := util.GetViper()
+	filerSigningKey := v.GetString("jwt.filer_signing.key")
+	v.SetDefault("jwt.filer_signing.expires_after_seconds", 600)
+	filerSigningExpiresAfter := v.GetInt("jwt.filer_signing.expires_after_seconds")
+
 	// metrics read from the filer
 	var metricsAddress string
 	var metricsIntervalSec int
@@ -137,19 +143,21 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Create a new SFTP service instance with all options
 	service := sftpd.NewSFTPService(&sftpd.SFTPServiceOptions{
-		GrpcDialOption:      grpcDialOption,
-		DataCenter:          *sftpOpt.dataCenter,
-		FilerGroup:          filerGroup,
-		Filer:               filerAddress,
-		SshPrivateKey:       *sftpOpt.sshPrivateKey,
-		HostKeysFolder:      *sftpOpt.hostKeysFolder,
-		AuthMethods:         authMethods,
-		MaxAuthTries:        *sftpOpt.maxAuthTries,
-		BannerMessage:       *sftpOpt.bannerMessage,
-		LoginGraceTime:      *sftpOpt.loginGraceTime,
-		ClientAliveInterval: *sftpOpt.clientAliveInterval,
-		ClientAliveCountMax: *sftpOpt.clientAliveCountMax,
-		UserStoreFile:       *sftpOpt.userStoreFile,
+		GrpcDialOption:           grpcDialOption,
+		DataCenter:               *sftpOpt.dataCenter,
+		FilerGroup:               filerGroup,
+		Filer:                    filerAddress,
+		SshPrivateKey:            *sftpOpt.sshPrivateKey,
+		HostKeysFolder:           *sftpOpt.hostKeysFolder,
+		AuthMethods:              authMethods,
+		MaxAuthTries:             *sftpOpt.maxAuthTries,
+		BannerMessage:            *sftpOpt.bannerMessage,
+		LoginGraceTime:           *sftpOpt.loginGraceTime,
+		ClientAliveInterval:      *sftpOpt.clientAliveInterval,
+		ClientAliveCountMax:      *sftpOpt.clientAliveCountMax,
+		UserStoreFile:            *sftpOpt.userStoreFile,
+		FilerSigningKey:          []byte(filerSigningKey),
+		FilerSigningExpiresAfter: filerSigningExpiresAfter,
 	})
 
 	// Register reload hook for HUP signal

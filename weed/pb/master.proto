@@ -61,6 +61,11 @@ service Seaweed {
 
 //////////////////////////////////////////////////
 
+message DiskTag {
+  uint32 disk_id = 1;
+  repeated string tags = 2;
+}
+
 message Heartbeat {
   string ip = 1;
   uint32 port = 2;
@@ -89,6 +94,8 @@ message Heartbeat {
 
   // state flags
   volume_server_pb.VolumeServerState state = 23;
+
+  repeated DiskTag disk_tags = 24;
 }
 
 message HeartbeatResponse {
@@ -292,6 +299,7 @@ message DiskInfo {
   repeated VolumeEcShardInformationMessage ec_shard_infos = 7;
   int64 remote_volume_count = 8;
   uint32 disk_id = 9;
+  repeated string tags = 10;
 }
 message DataNodeInfo {
   string id = 1;
@@ -342,11 +350,13 @@ message VacuumVolumeResponse {
 }
 
 message DisableVacuumRequest {
+    bool by_plugin = 1;
 }
 message DisableVacuumResponse {
 }
 
 message EnableVacuumRequest {
+    bool by_plugin = 1;
 }
 message EnableVacuumResponse {
 }
@@ -375,6 +385,9 @@ message GetMasterConfigurationResponse {
   string leader = 5;
   uint32 volume_size_limit_m_b = 6;
   bool volume_preallocate = 7;
+  // MIGRATION: fields 8-9 help migrate master.toml [master.maintenance] to admin script plugin. Remove after March 2027.
+  string maintenance_scripts = 8;
+  uint32 maintenance_sleep_minutes = 9;
 }
 
 message ListClusterNodesRequest {

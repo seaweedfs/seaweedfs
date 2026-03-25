@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 
+	"github.com/dustin/go-humanize/english"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -20,7 +21,7 @@ func ListExistingPeerUpdates(master pb.ServerAddress, grpcDialOption grpc.DialOp
 			return err
 		}
 
-		glog.V(0).Infof("the cluster has %d %s\n", len(resp.ClusterNodes), clientType)
+		glog.V(0).Infof("the cluster has %d %s\n", len(resp.ClusterNodes), english.PluralWord(len(resp.ClusterNodes), clientType, ""))
 		for _, node := range resp.ClusterNodes {
 			existingNodes = append(existingNodes, &master_pb.ClusterNodeUpdate{
 				NodeType:    FilerType,

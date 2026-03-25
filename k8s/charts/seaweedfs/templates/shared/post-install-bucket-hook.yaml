@@ -1,8 +1,18 @@
+{{- include "seaweedfs.compat" . -}}
 {{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
 {{- $createBuckets := list }}
 {{- $s3Enabled := false }}
 {{- $enableAuth := false }}
 {{- $existingConfigSecret := "" }}
+{{- $bucketsFolder := "/buckets" }}
+{{- $bucketEnvVars := merge (dict) (.Values.global.seaweedfs.extraEnvironmentVars | default dict) }}
+{{- if .Values.allInOne.enabled }}
+  {{- $bucketEnvVars = merge (.Values.allInOne.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- else }}
+  {{- $bucketEnvVars = merge (.Values.filer.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- end }}
+{{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
+{{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}
 
 {{- /* Check allInOne mode first */}}
 {{- if .Values.allInOne.enabled }}
@@ -42,7 +52,7 @@ metadata:
   annotations:
     "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     metadata:
@@ -55,9 +65,11 @@ spec:
       {{- if .Values.filer.podSecurityContext.enabled }}
       securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
       - name: post-install-job
         image: {{ template "master.image" . }}
+        imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
@@ -83,6 +95,7 @@ spec:
           - "/bin/sh"
           - "-ec"
           - |
+            set -o pipefail
             wait_for_service() {
               local url=$1
               local max_attempts=60  # 5 minutes total (5s * 60)
@@ -108,13 +121,49 @@ spec:
             wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
             {{- end }}
-          {{- range $createBuckets }}
-            if /bin/echo "s3.bucket.list" | /usr/bin/weed shell | awk '{print $1}' | grep -Fxq "{{ .name }}"; then
-              echo "Bucket '{{ .name }}' already exists, skipping creation."
+            {{- range $createBuckets }}
+            {{- $bucketName := .name }}
+            {{- $bucketLock := or .lock .objectLock .withLock }}
+            bucket_list=$(/bin/echo 's3.bucket.list' | /usr/bin/weed shell) || { echo "Error listing s3 buckets"; exit 1; }
+            if echo "$bucket_list" | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
+              echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
             else
-              echo "Creating bucket '{{ .name }}'..."
-              /bin/echo "s3.bucket.create --name {{ .name }}" | /usr/bin/weed shell
+              echo "Creating bucket '{{ $bucketName }}'..."
+              /bin/echo 's3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}' | /usr/bin/weed shell
             fi
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketLock := or .lock .objectLock .withLock }}
+          {{- if $bucketLock }}
+            /bin/echo 's3.bucket.lock -name {{ .name }} -enable' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketVersioning := "" }}
+          {{- if kindIs "bool" .versioning }}
+            {{- if .versioning }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- end }}
+          {{- else if kindIs "string" .versioning }}
+            {{- $versioningLower := lower .versioning }}
+            {{- if eq $versioningLower "enabled" "enable" "true" }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- else if eq $versioningLower "suspended" "disable" "false" }}
+              {{- $bucketVersioning = "Suspended" }}
+            {{- else if or (eq .versioning "Enabled") (eq .versioning "Suspended") }}
+              {{- $bucketVersioning = .versioning }}
+            {{- else }}
+              {{- fail (printf "Invalid versioning value for bucket %s: %s. Must be 'Enabled' or 'Suspended'" .name .versioning) }}
+            {{- end }}
+          {{- end }}
+          {{- if $bucketVersioning }}
+            /bin/echo 's3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- if .ttl }}
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
+          {{- end }}
           {{- end }}
           {{- range $createBuckets }}
           {{- if .anonymousRead }}
@@ -135,12 +184,16 @@ spec:
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
-          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          {{- if and .Values.global.seaweedfs.monitoring.enabled .Values.master.metricsPort }}
           - containerPort: {{ .Values.master.metricsPort }}
             name: metrics
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
+        {{- with coalesce .Values.allInOne.s3.createBucketsHook.resources .Values.s3.createBucketsHook.resources .Values.filer.s3.createBucketsHook.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}

@@ -58,6 +58,11 @@ type MountOptions struct {
 
 	// macOS-specific FUSE options
 	novncache *bool
+
+	// if true, we assume autofs exists over current mount point. Autofs (the kernel one, used by systemd automount)
+	// is expected to be mounted as a shim between auto-mounted fs and original mount point to provide auto mount.
+	// with this option, we ignore autofs mounted on the same point.
+	hasAutofs *bool
 }
 
 var (
@@ -98,6 +103,7 @@ func init() {
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
+	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
 
 	// Periodic metadata flush to protect against orphan chunk cleanup

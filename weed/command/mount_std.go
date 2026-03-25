@@ -1,5 +1,4 @@
 //go:build linux || darwin || freebsd
-// +build linux darwin freebsd
 
 package command
 
@@ -224,12 +223,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	// Ensure target mount point availability
-	if isValid := checkMountPointAvailable(dir); !isValid {
+	skipAutofs := option.hasAutofs != nil && *option.hasAutofs
+	if isValid := checkMountPointAvailable(dir, skipAutofs); !isValid {
 		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 
 	serverFriendlyName := strings.ReplaceAll(*option.filer, ",", "+")
+
+	// When autofs/systemd-mount is used, FsName must be "fuse" so util-linux/mount can recognize
+	// it as a pseudo filesystem. Otherwise, preserve the descriptive name for mount/df output.
+	fsName := serverFriendlyName + ":" + filerMountRootPath
+	if skipAutofs {
+		fsName = "fuse"
+	}
 
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
@@ -240,12 +247,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
 		RememberInodes:           false,
-		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
+		FsName:                   fsName,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
 		Debug:                    *option.debug,
-		EnableLocks:              false,
+		EnableLocks:              true,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
 		DirectMountFlags:         0,
@@ -305,35 +312,37 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
-		MountDirectory:       dir,
-		FilerAddresses:       filerAddresses,
-		GrpcDialOption:       grpcDialOption,
-		FilerMountRootPath:   mountRoot,
-		Collection:           *option.collection,
-		Replication:          *option.replication,
-		TtlSec:               int32(*option.ttlSec),
-		DiskType:             types.ToDiskType(*option.diskType),
-		ChunkSizeLimit:       int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:    *option.concurrentWriters,
-		ConcurrentReaders:    *option.concurrentReaders,
-		CacheDirForRead:      *option.cacheDirForRead,
-		CacheSizeMBForRead:   *option.cacheSizeMBForRead,
-		CacheDirForWrite:     cacheDirForWrite,
-		CacheMetaTTlSec:      *option.cacheMetaTtlSec,
-		DataCenter:           *option.dataCenter,
-		Quota:                int64(*option.collectionQuota) * 1024 * 1024,
-		MountUid:             uid,
-		MountGid:             gid,
-		MountMode:            mountMode,
-		MountCtime:           fileInfo.ModTime(),
-		MountMtime:           time.Now(),
-		Umask:                umask,
-		VolumeServerAccess:   *mountOptions.volumeServerAccess,
-		Cipher:               cipher,
-		UidGidMapper:         uidGidMapper,
-		DisableXAttr:         *option.disableXAttr,
-		IsMacOs:              runtime.GOOS == "darwin",
-		MetadataFlushSeconds: *option.metadataFlushSeconds,
+		MountDirectory:              dir,
+		FilerAddresses:              filerAddresses,
+		GrpcDialOption:              grpcDialOption,
+		FilerSigningKey:             security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
+		FilerSigningExpiresAfterSec: util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds"),
+		FilerMountRootPath:          mountRoot,
+		Collection:                  *option.collection,
+		Replication:                 *option.replication,
+		TtlSec:                      int32(*option.ttlSec),
+		DiskType:                    types.ToDiskType(*option.diskType),
+		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:           *option.concurrentWriters,
+		ConcurrentReaders:           *option.concurrentReaders,
+		CacheDirForRead:             *option.cacheDirForRead,
+		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
+		CacheDirForWrite:            cacheDirForWrite,
+		CacheMetaTTlSec:             *option.cacheMetaTtlSec,
+		DataCenter:                  *option.dataCenter,
+		Quota:                       int64(*option.collectionQuota) * 1024 * 1024,
+		MountUid:                    uid,
+		MountGid:                    gid,
+		MountMode:                   mountMode,
+		MountCtime:                  fileInfo.ModTime(),
+		MountMtime:                  time.Now(),
+		Umask:                       umask,
+		VolumeServerAccess:          *mountOptions.volumeServerAccess,
+		Cipher:                      cipher,
+		UidGidMapper:                uidGidMapper,
+		DisableXAttr:                *option.disableXAttr,
+		IsMacOs:                     runtime.GOOS == "darwin",
+		MetadataFlushSeconds:        *option.metadataFlushSeconds,
 		// RDMA acceleration options
 		RdmaEnabled:       *option.rdmaEnabled,
 		RdmaSidecarAddr:   *option.rdmaSidecarAddr,
@@ -342,6 +351,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
 		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
 		DirIdleEvictSec:   *option.dirIdleEvictSec,
+		WritebackCache:    option.writebackCache != nil && *option.writebackCache,
 	})
 
 	// create mount root
@@ -388,6 +398,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 
 	server.Serve()
+
+	// Wait for any pending background flushes (writebackCache async mode)
+	// before clearing caches, to prevent data loss during clean unmount.
+	seaweedFileSystem.WaitForAsyncFlush()
 
 	seaweedFileSystem.ClearCacheDir()
 

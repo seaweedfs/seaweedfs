@@ -15,7 +15,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				<a href="/object-store/s3tables/buckets" class="btn btn-sm btn-primary">
+				<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-sm btn-primary">
 					<i class="fas fa-plus me-1"></i>Create Table Bucket
 				</a>
 			</div>
@@ -162,7 +162,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 												<div class="btn-group btn-group-sm" role="group">
 													{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(catalog.ARN) }}
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(bucketName))) } title="Browse Namespaces">
+														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/iceberg/%s/namespaces", url.PathEscape(bucketName))) } title="Browse Namespaces">
 															<i class="fas fa-folder-open"></i>
 														</a>
 													} else {
@@ -181,7 +181,7 @@ templ IcebergCatalog(data dash.IcebergCatalogData) {
 												<div>
 													<h5>No catalogs available</h5>
 													<p>Create an S3 Table Bucket first to use as an Iceberg catalog.</p>
-													<a href="/object-store/s3tables/buckets" class="btn btn-primary">
+													<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-primary">
 														<i class="fas fa-plus me-1"></i>Create Table Bucket
 													</a>
 												</div>

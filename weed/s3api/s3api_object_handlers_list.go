@@ -47,6 +47,37 @@ type ListBucketResultV2 struct {
 	StartAfter            string         `xml:"StartAfter,omitempty"`
 }
 
+type listBucketResultV1 struct {
+	XMLName        xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ListBucketResult"`
+	Metadata       []MetadataEntry `xml:"Metadata,omitempty"`
+	Name           string          `xml:"Name"`
+	Prefix         string          `xml:"Prefix"`
+	Marker         string          `xml:"Marker"`
+	NextMarker     string          `xml:"NextMarker,omitempty"`
+	MaxKeys        int             `xml:"MaxKeys"`
+	Delimiter      string          `xml:"Delimiter,omitempty"`
+	IsTruncated    bool            `xml:"IsTruncated"`
+	Contents       []ListEntry     `xml:"Contents,omitempty"`
+	CommonPrefixes []PrefixEntry   `xml:"CommonPrefixes,omitempty"`
+	EncodingType   string          `xml:"EncodingType,omitempty"`
+}
+
+func toListBucketResultV1(in ListBucketResult) listBucketResultV1 {
+	return listBucketResultV1{
+		Metadata:       in.Metadata,
+		Name:           in.Name,
+		Prefix:         in.Prefix,
+		Marker:         in.Marker,
+		NextMarker:     in.NextMarker,
+		MaxKeys:        in.MaxKeys,
+		Delimiter:      in.Delimiter,
+		IsTruncated:    in.IsTruncated,
+		Contents:       in.Contents,
+		CommonPrefixes: in.CommonPrefixes,
+		EncodingType:   in.EncodingType,
+	}
+}
+
 func (s3a *S3ApiServer) ListObjectsV2Handler(w http.ResponseWriter, r *http.Request) {
 
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/v2-RESTBucketGET.html
@@ -148,6 +179,7 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
 	}
+	sanitizeV1MarkerEcho(&response, marker, encodingTypeUrl)
 
 	if len(response.Contents) == 0 {
 		if exists, existErr := s3a.bucketExists(bucket); existErr == nil && !exists {
@@ -157,7 +189,47 @@ func (s3a *S3ApiServer) ListObjectsV1Handler(w http.ResponseWriter, r *http.Requ
 	}
 
 	glog.V(3).Infof("ListObjectsV1Handler response: %+v", response)
-	writeSuccessResponseXML(w, r, response)
+	writeSuccessResponseXML(w, r, toListBucketResultV1(response))
+}
+
+func sanitizeV1MarkerEcho(response *ListBucketResult, marker string, encodingTypeUrl bool) {
+	if marker == "" {
+		return
+	}
+
+	markerCandidates := map[string]struct{}{
+		marker:                          {},
+		strings.TrimPrefix(marker, "/"): {},
+	}
+	if encodingTypeUrl {
+		escapedMarker := urlPathEscape(strings.TrimPrefix(marker, "/"))
+		markerCandidates[escapedMarker] = struct{}{}
+	}
+	matchesMarker := func(v string) bool {
+		if _, ok := markerCandidates[v]; ok {
+			return true
+		}
+		_, ok := markerCandidates[strings.TrimPrefix(v, "/")]
+		return ok
+	}
+
+	if len(response.Contents) > 0 {
+		filtered := response.Contents[:0]
+		for _, content := range response.Contents {
+			if matchesMarker(content.Key) {
+				continue
+			}
+			filtered = append(filtered, content)
+		}
+		response.Contents = filtered
+	}
+
+	// doListFilerEntries advances nextMarker to the last emitted entry and skips
+	// the marker in exclusive mode. So NextMarker==marker indicates no progress.
+	if matchesMarker(response.NextMarker) && len(response.Contents) == 0 && len(response.CommonPrefixes) == 0 {
+		response.NextMarker = ""
+		response.IsTruncated = false
+	}
 }
 
 func (s3a *S3ApiServer) listFilerEntries(bucket string, originalPrefix string, maxKeys uint16, originalMarker string, delimiter string, encodingTypeUrl bool, fetchOwner bool) (response ListBucketResult, err error) {
@@ -543,6 +615,15 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 		}
 		entry := resp.Entry
+		if entry == nil {
+			continue
+		}
+		// listFilerEntries always calls doListFilerEntries with inclusiveStartFrom=false
+		// (S3 marker semantics are exclusive), but keep the guard explicit to preserve
+		// behavior if inclusive callers are introduced in the future.
+		if !inclusiveStartFrom && marker != "" && entry.Name == marker {
+			continue
+		}
 
 		if cursor.maxKeys <= 0 {
 			cursor.isTruncated = true
@@ -551,6 +632,10 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 
 		// Set nextMarker only when we have quota to process this entry
 		nextMarker = entry.Name
+		// Track whether this entry is the exact directory targeted by a trailing-slash prefix
+		// (e.g., prefix "foo" from original prefix "foo/"). After recursing into this directory,
+		// we must stop processing siblings to avoid matching unrelated entries like "foo1000".
+		matchedPrefixDir := cursor.prefixEndsOnDelimiter && entry.Name == prefix && entry.IsDirectory
 		if cursor.prefixEndsOnDelimiter {
 			if entry.Name == prefix && entry.IsDirectory {
 				if delimiter != "/" {
@@ -592,15 +677,17 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-				// When delimiter is empty (recursive mode), recurse into directories but don't add them to results
-				// Only files and versioned objects should appear in results
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
 					if entry.IsDirectoryKeyObject() {
 						eachEntryFn(dir, entry)
 					}
+				} else if entry.IsDirectoryKeyObject() {
+					// Directory key objects (created via PutObject with trailing "/")
+					// must appear as regular keys in recursive listing mode.
+					eachEntryFn(dir, entry)
 				}
-				// Recurse into subdirectory - don't add the directory itself to results
+				// Recurse into subdirectory to list any children
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)
@@ -609,6 +696,9 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 				// println("doListFilerEntries2 dir", dir+"/"+entry.Name, "subNextMarker", subNextMarker)
 				nextMarker = entry.Name + "/" + subNextMarker
 				if cursor.isTruncated {
+					return
+				}
+				if matchedPrefixDir {
 					return
 				}
 				// println("doListFilerEntries2 nextMarker", nextMarker)

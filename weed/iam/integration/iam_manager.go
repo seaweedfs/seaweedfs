@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
@@ -28,6 +29,8 @@ type IAMManager struct {
 	userStore            UserStore
 	filerAddressProvider func() string // Function to get current filer address
 	initialized          bool
+	runtimePolicyMu      sync.Mutex
+	runtimePolicyNames   map[string]struct{}
 }
 
 // IAMConfig holds configuration for all IAM components
@@ -103,6 +106,57 @@ func NewIAMManager() *IAMManager {
 // SetUserStore assigns the user store used to resolve IAM user policy attachments.
 func (m *IAMManager) SetUserStore(store UserStore) {
 	m.userStore = store
+}
+
+// SyncRuntimePolicies keeps zero-config runtime policies available to the
+// in-memory policy engine used by the advanced IAM authorizer.
+func (m *IAMManager) SyncRuntimePolicies(ctx context.Context, policies []*iam_pb.Policy) error {
+	if !m.initialized || m.policyEngine == nil {
+		return nil
+	}
+	if m.policyEngine.StoreType() != sts.StoreTypeMemory {
+		return nil
+	}
+
+	desiredPolicies := make(map[string]*policy.PolicyDocument, len(policies))
+	for _, runtimePolicy := range policies {
+		if runtimePolicy == nil || runtimePolicy.Name == "" {
+			continue
+		}
+
+		var document policy.PolicyDocument
+		if err := json.Unmarshal([]byte(runtimePolicy.Content), &document); err != nil {
+			return fmt.Errorf("failed to parse runtime policy %q: %w", runtimePolicy.Name, err)
+		}
+
+		desiredPolicies[runtimePolicy.Name] = &document
+	}
+
+	m.runtimePolicyMu.Lock()
+	defer m.runtimePolicyMu.Unlock()
+
+	filerAddress := m.getFilerAddress()
+	for policyName := range m.runtimePolicyNames {
+		if _, keep := desiredPolicies[policyName]; keep {
+			continue
+		}
+		if err := m.policyEngine.DeletePolicy(ctx, filerAddress, policyName); err != nil {
+			return fmt.Errorf("failed to delete runtime policy %q: %w", policyName, err)
+		}
+	}
+
+	for policyName, document := range desiredPolicies {
+		if err := m.policyEngine.AddPolicy(filerAddress, policyName, document); err != nil {
+			return fmt.Errorf("failed to sync runtime policy %q: %w", policyName, err)
+		}
+	}
+
+	m.runtimePolicyNames = make(map[string]struct{}, len(desiredPolicies))
+	for policyName := range desiredPolicies {
+		m.runtimePolicyNames[policyName] = struct{}{}
+	}
+
+	return nil
 }
 
 // Initialize initializes the IAM manager with all components
@@ -246,6 +300,18 @@ func (m *IAMManager) CreateRole(ctx context.Context, filerAddress string, roleNa
 
 	// Store role definition
 	return m.roleStore.StoreRole(ctx, "", roleName, roleDef)
+}
+
+// GetRole retrieves a role definition by name.
+func (m *IAMManager) GetRole(ctx context.Context, roleName string) (*RoleDefinition, error) {
+	if !m.initialized {
+		return nil, fmt.Errorf("IAM manager not initialized")
+	}
+	if roleName == "" {
+		return nil, fmt.Errorf("role name cannot be empty")
+	}
+
+	return m.roleStore.GetRole(ctx, m.getFilerAddress(), roleName)
 }
 
 // UpdateBucketPolicy updates the policy for a bucket
@@ -410,6 +476,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	var baseResult *policy.EvaluationResult
 	var err error
+	subjectPolicyCount := 0
 
 	if isAdmin {
 		// Admin always has base access allowed
@@ -442,6 +509,7 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 				policies = roleDef.AttachedPolicies
 			}
 		}
+		subjectPolicyCount = len(policies)
 
 		if bucketPolicyName != "" {
 			// Enforce an upper bound on the number of policies to avoid excessive allocations
@@ -462,6 +530,14 @@ func (m *IAMManager) IsActionAllowed(ctx context.Context, request *ActionRequest
 
 	// Base policy must allow; if it doesn't, deny immediately (session policy can only further restrict)
 	if baseResult.Effect != policy.EffectAllow {
+		return false, nil
+	}
+
+	// Zero-config IAM uses DefaultEffect=Allow to preserve open-by-default behavior
+	// for requests without any subject policies. Once a user or role has attached
+	// policies, "no matching statement" must fall back to deny so the attachment
+	// actually scopes access.
+	if subjectPolicyCount > 0 && len(baseResult.MatchingStatements) == 0 {
 		return false, nil
 	}
 

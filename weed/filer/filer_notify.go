@@ -2,8 +2,10 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	nethttp "net/http"
 	"regexp"
 	"strings"
 	"time"
@@ -16,22 +18,27 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/notification"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) {
+	f.notifyUpdateEvent(ctx, oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
+}
+
+func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
 	var fullpath string
 	if oldEntry != nil {
 		fullpath = string(oldEntry.FullPath)
 	} else if newEntry != nil {
 		fullpath = string(newEntry.FullPath)
 	} else {
-		return
+		return nil
 	}
 
 	// println("fullpath:", fullpath)
 
 	if strings.HasPrefix(fullpath, SystemLogDir) {
-		return
+		return nil
 	}
 	foundSelf := false
 	for _, sig := range signatures {
@@ -43,18 +50,8 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		signatures = append(signatures, f.Signature)
 	}
 
-	newParentPath := ""
-	if newEntry != nil {
-		newParentPath, _ = newEntry.FullPath.DirAndName()
-	}
-	eventNotification := &filer_pb.EventNotification{
-		OldEntry:           oldEntry.ToProtoEntry(),
-		NewEntry:           newEntry.ToProtoEntry(),
-		DeleteChunks:       deleteChunks,
-		NewParentPath:      newParentPath,
-		IsFromOtherCluster: isFromOtherCluster,
-		Signatures:         signatures,
-	}
+	event := f.newMetadataEvent(oldEntry, newEntry, deleteChunks, isFromOtherCluster, signatures)
+	eventNotification := event.EventNotification
 
 	if notification.Queue != nil {
 		glog.V(3).Infof("notifying entry update %v", fullpath)
@@ -64,31 +61,57 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 		}
 	}
 
-	f.logMetaEvent(ctx, fullpath, eventNotification)
+	f.logMetaEvent(ctx, event)
+	if sink := metadataEventSinkFromContext(ctx); sink != nil {
+		sink.Record(event)
+	}
 
 	// Trigger empty folder cleanup for local events
 	// Remote events are handled via MetaAggregator.onMetadataChangeEvent
 	f.triggerLocalEmptyFolderCleanup(oldEntry, newEntry)
 
+	return event
 }
 
-func (f *Filer) logMetaEvent(ctx context.Context, fullpath string, eventNotification *filer_pb.EventNotification) {
-
-	dir, _ := util.FullPath(fullpath).DirAndName()
-
-	event := &filer_pb.SubscribeMetadataResponse{
-		Directory:         dir,
-		EventNotification: eventNotification,
-		TsNs:              time.Now().UnixNano(),
+func (f *Filer) newMetadataEvent(oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
+	if oldEntry == nil && newEntry == nil {
+		return nil
 	}
+	var fullpath util.FullPath
+	if oldEntry != nil {
+		fullpath = oldEntry.FullPath
+	}
+	if fullpath == "" && newEntry != nil {
+		fullpath = newEntry.FullPath
+	}
+	dir, _ := fullpath.DirAndName()
+	newParentPath := ""
+	if newEntry != nil {
+		newParentPath, _ = newEntry.FullPath.DirAndName()
+	}
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: dir,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:           oldEntry.ToProtoEntry(),
+			NewEntry:           newEntry.ToProtoEntry(),
+			DeleteChunks:       deleteChunks,
+			NewParentPath:      newParentPath,
+			IsFromOtherCluster: isFromOtherCluster,
+			Signatures:         signatures,
+		},
+		TsNs: time.Now().UnixNano(),
+	}
+}
+
+func (f *Filer) logMetaEvent(ctx context.Context, event *filer_pb.SubscribeMetadataResponse) {
 	data, err := proto.Marshal(event)
 	if err != nil {
 		glog.Errorf("failed to marshal filer_pb.SubscribeMetadataResponse %+v: %v", event, err)
 		return
 	}
 
-	if err := f.LocalMetaLogBuffer.AddDataToBuffer([]byte(dir), data, event.TsNs); err != nil {
-		glog.Errorf("failed to add data to log buffer for %s: %v", dir, err)
+	if err := f.LocalMetaLogBuffer.AddDataToBuffer([]byte(event.Directory), data, event.TsNs); err != nil {
+		glog.Errorf("failed to add data to log buffer for %s: %v", event.Directory, err)
 	}
 
 }
@@ -154,6 +177,7 @@ func (f *Filer) logFlushFunc(logBuffer *log_buffer.LogBuffer, startTime, stopTim
 var (
 	volumeNotFoundPattern = regexp.MustCompile(`volume \d+? not found`)
 	chunkNotFoundPattern  = regexp.MustCompile(`(urls not found|File Not Found)`)
+	httpNotFoundPattern   = regexp.MustCompile(`404 Not Found: not found`)
 )
 
 // isChunkNotFoundError checks if the error indicates that a volume or chunk
@@ -163,8 +187,13 @@ func isChunkNotFoundError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, util_http.ErrNotFound) || errors.Is(err, nethttp.ErrMissingFile) {
+		return true
+	}
 	errMsg := err.Error()
-	return volumeNotFoundPattern.MatchString(errMsg) || chunkNotFoundPattern.MatchString(errMsg)
+	return volumeNotFoundPattern.MatchString(errMsg) ||
+		chunkNotFoundPattern.MatchString(errMsg) ||
+		httpNotFoundPattern.MatchString(errMsg)
 }
 
 func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastTsNs int64, isDone bool, err error) {
@@ -199,4 +228,18 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 	}
 
 	return
+}
+
+func (f *Filer) readPersistedLogBufferPosition(startPosition log_buffer.MessagePosition, stopTsNs int64, eachLogEntryFn log_buffer.EachLogEntryFuncType) (lastReadPosition log_buffer.MessagePosition, isDone bool, err error) {
+	lastReadPosition = startPosition
+
+	lastTsNs, isDone, err := f.ReadPersistedLogBuffer(startPosition, stopTsNs, eachLogEntryFn)
+	if err != nil {
+		return lastReadPosition, isDone, err
+	}
+	if lastTsNs != 0 {
+		lastReadPosition = log_buffer.NewMessagePosition(lastTsNs, 1)
+	}
+
+	return lastReadPosition, isDone, nil
 }

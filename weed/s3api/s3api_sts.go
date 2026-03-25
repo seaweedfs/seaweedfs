@@ -5,6 +5,7 @@ package s3api
 // AWS SDKs to obtain temporary credentials using OIDC/JWT tokens.
 
 import (
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -13,10 +14,12 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 )
 
 // STS API constants matching AWS STS specification
@@ -95,6 +98,7 @@ func (h *STSHandlers) getAccountID() string {
 // HandleSTSRequest is the main entry point for STS requests
 // It routes requests based on the Action parameter
 func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
+	r, _ = request_id.Ensure(r)
 	if err := r.ParseForm(); err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue, err)
 		return
@@ -222,7 +226,7 @@ func (h *STSHandlers) handleAssumeRoleWithWebIdentity(w http.ResponseWriter, r *
 			SubjectFromWebIdentityToken: response.AssumedRoleUser.Subject,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
@@ -339,7 +343,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Generate common STS components
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -352,7 +356,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 			AssumedRoleUser: assumedUser,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
@@ -480,7 +484,7 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 		claims.WithIdentityProvider("ldap", identity.UserID, identity.Provider)
 	}
 
-	stsCreds, assumedUser, err := h.prepareSTSCredentials(roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
+	stsCreds, assumedUser, err := h.prepareSTSCredentials(r.Context(), roleArn, roleSessionName, durationSeconds, sessionPolicyJSON, modifyClaims)
 	if err != nil {
 		h.writeSTSErrorResponse(w, r, STSErrInternalError, err)
 		return
@@ -493,13 +497,13 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 			AssumedRoleUser: assumedUser,
 		},
 	}
-	xmlResponse.ResponseMetadata.RequestId = fmt.Sprintf("%d", time.Now().UnixNano())
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
 
 // prepareSTSCredentials extracts common shared logic for credential generation
-func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
+func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
 
 	// Calculate duration
@@ -545,6 +549,33 @@ func (h *STSHandlers) prepareSTSCredentials(roleArn, roleSessionName string,
 	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
 		WithSessionName(roleSessionName).
 		WithRoleInfo(effectiveRoleArn, fmt.Sprintf("%s:%s", roleName, roleSessionName), assumedRoleArn)
+
+	// If IAM integration is available, embed the role's attached policies into the session token.
+	// This makes the token self-sufficient for authorization even when role lookup is unavailable.
+	var policyManager *integration.IAMManager
+	if h.iam != nil && h.iam.iamIntegration != nil {
+		if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+			policyManager = provider.GetIAMManager()
+		}
+	}
+
+	if policyManager != nil {
+		roleNameForPolicies := utils.ExtractRoleNameFromArn(roleArn)
+		if roleNameForPolicies == "" {
+			roleNameForPolicies = utils.ExtractRoleNameFromPrincipal(roleArn)
+		}
+
+		if roleNameForPolicies != "" && len(claims.Policies) == 0 {
+			roleDef, err := policyManager.GetRole(ctx, roleNameForPolicies)
+			if err != nil {
+				glog.V(2).Infof("Failed to load role %q for policy embedding: %v", roleNameForPolicies, err)
+			} else if roleDef == nil {
+				glog.V(2).Infof("Role definition %q was missing for policy embedding", roleNameForPolicies)
+			} else if len(roleDef.AttachedPolicies) > 0 {
+				claims.WithPolicies(roleDef.AttachedPolicies)
+			}
+		}
+	}
 
 	if sessionPolicy != "" {
 		claims.WithSessionPolicy(sessionPolicy)
@@ -702,7 +733,7 @@ func (h *STSHandlers) writeSTSErrorResponse(w http.ResponseWriter, r *http.Reque
 	}
 
 	response := STSErrorResponse{
-		RequestId: fmt.Sprintf("%d", time.Now().UnixNano()),
+		RequestId: request_id.GetFromRequest(r),
 	}
 
 	// Server-side errors use "Receiver" type per AWS spec

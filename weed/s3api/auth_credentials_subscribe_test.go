@@ -90,18 +90,18 @@ func newTestS3ApiServerWithMemoryIAM(t *testing.T, identities []*iam_pb.Identity
 
 	// Create a test IAM instance
 	iam := &IdentityAccessManagement{
-		m:              sync.RWMutex{},
-		nameToIdentity: make(map[string]*Identity),
-		accessKeyIdent: make(map[string]*Identity),
-		identities:     []*Identity{},
-		policies:       make(map[string]*iam_pb.Policy),
-		accounts:       make(map[string]*Account),
-		emailAccount:   make(map[string]*Account),
-		hashes:         make(map[string]*sync.Pool),
-		hashCounters:   make(map[string]*int32),
-		isAuthEnabled:  false,
-		stopChan:       make(chan struct{}),
-		useStaticConfig: false,
+		m:                 sync.RWMutex{},
+		nameToIdentity:    make(map[string]*Identity),
+		accessKeyIdent:    make(map[string]*Identity),
+		identities:        []*Identity{},
+		policies:          make(map[string]*iam_pb.Policy),
+		accounts:          make(map[string]*Account),
+		emailAccount:      make(map[string]*Account),
+		hashes:            make(map[string]*sync.Pool),
+		hashCounters:      make(map[string]*int32),
+		isAuthEnabled:     false,
+		stopChan:          make(chan struct{}),
+		useStaticConfig:   false,
 		credentialManager: cm,
 	}
 

@@ -1,4 +1,8 @@
-{{- if and .Values.volume.enabled .Values.volume.ingress.enabled }}
+{{- /* Volume ingress works for both normal mode (volume.enabled) and all-in-one mode (allInOne.enabled) */}}
+{{- $volumeEnabled := or .Values.volume.enabled .Values.allInOne.enabled }}
+{{- if and $volumeEnabled .Values.volume.ingress.enabled }}
+{{- /* Determine service name based on deployment mode */}}
+{{- $serviceName := ternary (include "seaweedfs.componentName" (list . "all-in-one")) (include "seaweedfs.componentName" (list . "volume")) .Values.allInOne.enabled }}
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
 apiVersion: networking.k8s.io/v1
 {{- else if semverCompare ">=1.14-0" .Capabilities.KubeVersion.GitVersion }}
@@ -42,11 +46,11 @@ spec:
         backend:
 {{- if semverCompare ">=1.19-0" .Capabilities.KubeVersion.GitVersion }}
           service:
-            name: {{ include "seaweedfs.componentName" (list . "volume") }}
+            name: {{ $serviceName }}
             port:
               number: {{ .Values.volume.port }}
 {{- else }}
-          serviceName: {{ include "seaweedfs.componentName" (list . "volume") }}
+          serviceName: {{ $serviceName }}
           servicePort: {{ .Values.volume.port }}
 {{- end }}
 {{- end }}

@@ -262,3 +262,5 @@ const (
 	PByte = TByte * 1000
 	EByte = PByte * 1000
 )
+
+const ErrVolumeNoSpaceLeft = "no space left for disk type"

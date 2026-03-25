@@ -26,14 +26,14 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
       id: go
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
 
     - name: Install dependencies
       run: |

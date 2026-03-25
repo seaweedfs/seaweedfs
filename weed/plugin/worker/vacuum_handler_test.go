@@ -122,26 +122,26 @@ func TestMasterAddressCandidates(t *testing.T) {
 }
 
 func TestShouldSkipDetectionByInterval(t *testing.T) {
-	if shouldSkipDetectionByInterval(nil, 10) {
+	if ShouldSkipDetectionByInterval(nil, 10) {
 		t.Fatalf("expected false when timestamp is nil")
 	}
-	if shouldSkipDetectionByInterval(timestamppb.Now(), 0) {
+	if ShouldSkipDetectionByInterval(timestamppb.Now(), 0) {
 		t.Fatalf("expected false when min interval is zero")
 	}
 
 	recent := timestamppb.New(time.Now().Add(-5 * time.Second))
-	if !shouldSkipDetectionByInterval(recent, 10) {
+	if !ShouldSkipDetectionByInterval(recent, 10) {
 		t.Fatalf("expected true for recent successful run")
 	}
 
 	old := timestamppb.New(time.Now().Add(-30 * time.Second))
-	if shouldSkipDetectionByInterval(old, 10) {
+	if ShouldSkipDetectionByInterval(old, 10) {
 		t.Fatalf("expected false for old successful run")
 	}
 }
 
 func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
-	handler := NewVacuumHandler(nil)
+	handler := NewVacuumHandler(nil, 0)
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType: "balance",
 	}, noopDetectionSender{})
@@ -158,7 +158,7 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 }
 
 func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
-	handler := NewVacuumHandler(nil)
+	handler := NewVacuumHandler(nil, 0)
 	sender := &recordingDetectionSender{}
 	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
 		JobType:           "vacuum",
@@ -182,7 +182,7 @@ func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
 }
 
 func TestBuildExecutorActivity(t *testing.T) {
-	activity := buildExecutorActivity("running", "vacuum in progress")
+	activity := BuildExecutorActivity("running", "vacuum in progress")
 	if activity == nil {
 		t.Fatalf("expected non-nil activity")
 	}
@@ -239,6 +239,138 @@ func TestEmitVacuumDetectionDecisionTraceNoTasks(t *testing.T) {
 	}
 	if !strings.Contains(sender.events[1].Message, "VACUUM: Volume 17: garbage=0.00%") {
 		t.Fatalf("unexpected first detail message: %q", sender.events[1].Message)
+	}
+}
+
+func TestVacuumDescriptorHasNewFields(t *testing.T) {
+	handler := NewVacuumHandler(nil, 2)
+	desc := handler.Descriptor()
+	if desc == nil {
+		t.Fatal("descriptor is nil")
+	}
+	adminForm := desc.AdminConfigForm
+	if adminForm == nil {
+		t.Fatal("admin config form is nil")
+	}
+	if len(adminForm.Sections) == 0 {
+		t.Fatal("admin config form has no sections")
+	}
+
+	scopeSection := adminForm.Sections[0]
+	fieldNames := make(map[string]*plugin_pb.ConfigField)
+	for _, f := range scopeSection.Fields {
+		fieldNames[f.Name] = f
+	}
+
+	requiredFields := []string{
+		"collection_filter",
+		"volume_state",
+		"data_center_filter",
+		"rack_filter",
+		"node_filter",
+	}
+	for _, name := range requiredFields {
+		if _, ok := fieldNames[name]; !ok {
+			t.Errorf("missing field %q in admin config scope section", name)
+		}
+	}
+
+	// Verify volume_state is an enum with correct options.
+	vsField := fieldNames["volume_state"]
+	if vsField.FieldType != plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM {
+		t.Errorf("volume_state field type = %v, want ENUM", vsField.FieldType)
+	}
+	if len(vsField.Options) != 3 {
+		t.Errorf("volume_state options count = %d, want 3", len(vsField.Options))
+	}
+
+	// Verify default values exist for new fields.
+	defaultKeys := []string{"volume_state", "data_center_filter", "rack_filter", "node_filter"}
+	for _, key := range defaultKeys {
+		if _, ok := adminForm.DefaultValues[key]; !ok {
+			t.Errorf("missing default value for %q", key)
+		}
+	}
+
+	// Verify volume_state default is ALL.
+	vsDefault := adminForm.DefaultValues["volume_state"]
+	if sv, ok := vsDefault.Kind.(*plugin_pb.ConfigValue_StringValue); !ok || sv.StringValue != "ALL" {
+		t.Errorf("volume_state default = %v, want ALL", vsDefault)
+	}
+
+	// Verify collection_filter description mentions ALL_COLLECTIONS.
+	cfField := fieldNames["collection_filter"]
+	if cfField.Placeholder != "ALL_COLLECTIONS" {
+		t.Errorf("collection_filter placeholder = %q, want ALL_COLLECTIONS", cfField.Placeholder)
+	}
+}
+
+func TestVacuumFiltersVolumeState(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{VolumeID: 1, FullnessRatio: 0.5},  // active
+		{VolumeID: 2, FullnessRatio: 1.5},  // full
+		{VolumeID: 3, FullnessRatio: 0.9},  // active
+		{VolumeID: 4, FullnessRatio: 1.01}, // full (at threshold)
+	}
+
+	tests := []struct {
+		name    string
+		state   volumeState
+		wantIDs []uint32
+	}{
+		{"ALL returns all", volumeStateAll, []uint32{1, 2, 3, 4}},
+		{"ACTIVE returns writable", volumeStateActive, []uint32{1, 3}},
+		{"FULL returns read-only", volumeStateFull, []uint32{2, 4}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered := filterMetricsByVolumeState(metrics, tt.state)
+			if len(filtered) != len(tt.wantIDs) {
+				t.Fatalf("got %d metrics, want %d", len(filtered), len(tt.wantIDs))
+			}
+			for i, m := range filtered {
+				if m.VolumeID != tt.wantIDs[i] {
+					t.Errorf("filtered[%d].VolumeID = %d, want %d", i, m.VolumeID, tt.wantIDs[i])
+				}
+			}
+		})
+	}
+}
+
+func TestVacuumFiltersLocation(t *testing.T) {
+	metrics := []*workertypes.VolumeHealthMetrics{
+		{VolumeID: 1, DataCenter: "dc1", Rack: "r1", Server: "s1"},
+		{VolumeID: 2, DataCenter: "dc1", Rack: "r2", Server: "s2"},
+		{VolumeID: 3, DataCenter: "dc2", Rack: "r1", Server: "s3"},
+		{VolumeID: 4, DataCenter: "dc2", Rack: "r3", Server: "s4"},
+	}
+
+	tests := []struct {
+		name    string
+		dc      string
+		rack    string
+		node    string
+		wantIDs []uint32
+	}{
+		{"dc filter", "dc1", "", "", []uint32{1, 2}},
+		{"rack filter", "", "r1", "", []uint32{1, 3}},
+		{"node filter", "", "", "s2,s4", []uint32{2, 4}},
+		{"dc + rack", "dc1", "r1", "", []uint32{1}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered := filterMetricsByLocation(metrics, tt.dc, tt.rack, tt.node)
+			if len(filtered) != len(tt.wantIDs) {
+				t.Fatalf("got %d metrics, want %d", len(filtered), len(tt.wantIDs))
+			}
+			for i, m := range filtered {
+				if m.VolumeID != tt.wantIDs[i] {
+					t.Errorf("filtered[%d].VolumeID = %d, want %d", i, m.VolumeID, tt.wantIDs[i])
+				}
+			}
+		})
 	}
 }
 

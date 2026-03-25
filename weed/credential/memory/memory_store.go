@@ -23,6 +23,7 @@ type MemoryStore struct {
 	serviceAccounts          map[string]*iam_pb.ServiceAccount       // id -> service_account
 	serviceAccountAccessKeys map[string]string                       // access_key -> id
 	policies                 map[string]policy_engine.PolicyDocument // policy_name -> policy_document
+	groups                   map[string]*iam_pb.Group                // group_name -> group
 	initialized              bool
 }
 
@@ -43,6 +44,7 @@ func (store *MemoryStore) Initialize(configuration util.Configuration, prefix st
 	store.serviceAccounts = make(map[string]*iam_pb.ServiceAccount)
 	store.serviceAccountAccessKeys = make(map[string]string)
 	store.policies = make(map[string]policy_engine.PolicyDocument)
+	store.groups = make(map[string]*iam_pb.Group)
 	store.initialized = true
 
 	return nil
@@ -57,6 +59,7 @@ func (store *MemoryStore) Shutdown() {
 	store.serviceAccounts = nil
 	store.serviceAccountAccessKeys = nil
 	store.policies = nil
+	store.groups = nil
 	store.initialized = false
 }
 
@@ -71,6 +74,7 @@ func (store *MemoryStore) Reset() {
 		store.serviceAccounts = make(map[string]*iam_pb.ServiceAccount)
 		store.serviceAccountAccessKeys = make(map[string]string)
 		store.policies = make(map[string]policy_engine.PolicyDocument)
+		store.groups = make(map[string]*iam_pb.Group)
 	}
 }
 

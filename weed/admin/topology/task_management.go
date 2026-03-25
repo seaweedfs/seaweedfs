@@ -17,20 +17,30 @@ func (at *ActiveTopology) AssignTask(taskID string) error {
 		return fmt.Errorf("pending task %s not found", taskID)
 	}
 
-	// Check if all destination disks have sufficient capacity to reserve
-	for _, dest := range task.Destinations {
-		targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
-		if targetDisk, exists := at.disks[targetKey]; exists {
-			availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
+	// Skip capacity check if topology hasn't been populated yet
+	if len(at.disks) == 0 {
+		glog.Warningf("AssignTask %s: topology has no disks yet, skipping capacity check", taskID)
+	} else {
+		// Check if all destination disks have sufficient capacity to reserve
+		for _, dest := range task.Destinations {
+			targetKey := fmt.Sprintf("%s:%d", dest.TargetServer, dest.TargetDisk)
+			if targetDisk, exists := at.disks[targetKey]; exists {
+				availableCapacity := at.getEffectiveAvailableCapacityUnsafe(targetDisk)
 
-			// Check if we have enough total capacity using the improved unified comparison
-			if !availableCapacity.CanAccommodate(dest.StorageChange) {
-				return fmt.Errorf("insufficient capacity on target disk %s:%d. Available: %+v, Required: %+v",
-					dest.TargetServer, dest.TargetDisk, availableCapacity, dest.StorageChange)
+				// Check if we have enough total capacity using the improved unified comparison
+				if !availableCapacity.CanAccommodate(dest.StorageChange) {
+					return fmt.Errorf("insufficient capacity on target disk %s:%d. Available: %+v, Required: %+v",
+						dest.TargetServer, dest.TargetDisk, availableCapacity, dest.StorageChange)
+				}
+			} else if dest.TargetServer != "" {
+				// Fail fast if destination disk is not found in topology
+				var existingKeys []string
+				for k := range at.disks {
+					existingKeys = append(existingKeys, k)
+				}
+				glog.Warningf("destination disk %s not found in topology. Existing disk keys: %v", targetKey, existingKeys)
+				return fmt.Errorf("destination disk %s not found in topology", targetKey)
 			}
-		} else if dest.TargetServer != "" {
-			// Fail fast if destination disk is not found in topology
-			return fmt.Errorf("destination disk %s not found in topology", targetKey)
 		}
 	}
 
@@ -260,6 +270,40 @@ func (at *ActiveTopology) HasTask(volumeID uint32, taskType TaskType) bool {
 // HasAnyTask checks if there is any pending or assigned task for the given volume across all types.
 func (at *ActiveTopology) HasAnyTask(volumeID uint32) bool {
 	return at.HasTask(volumeID, TaskTypeNone)
+}
+
+// GetTaskServerAdjustments returns per-server volume count adjustments for
+// pending and assigned tasks of the given type. For each task, source servers
+// are decremented and destination servers are incremented, reflecting the
+// projected volume distribution once in-flight tasks complete.
+func (at *ActiveTopology) GetTaskServerAdjustments(taskType TaskType) map[string]int {
+	at.mutex.RLock()
+	defer at.mutex.RUnlock()
+
+	adjustments := make(map[string]int)
+	for _, task := range at.pendingTasks {
+		if task.TaskType != taskType {
+			continue
+		}
+		for _, src := range task.Sources {
+			adjustments[src.SourceServer]--
+		}
+		for _, dst := range task.Destinations {
+			adjustments[dst.TargetServer]++
+		}
+	}
+	for _, task := range at.assignedTasks {
+		if task.TaskType != taskType {
+			continue
+		}
+		for _, src := range task.Sources {
+			adjustments[src.SourceServer]--
+		}
+		for _, dst := range task.Destinations {
+			adjustments[dst.TargetServer]++
+		}
+	}
+	return adjustments
 }
 
 // calculateSourceStorageImpact calculates storage impact for sources based on task type and cleanup type

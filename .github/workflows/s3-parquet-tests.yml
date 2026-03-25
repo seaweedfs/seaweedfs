@@ -41,7 +41,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ^1.24
+          go-version: ^1.25
           cache: true
       
       - name: Set up Python ${{ matrix.python-version }}
@@ -121,7 +121,7 @@ jobs:
       
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: test-logs-python-${{ matrix.python-version }}
           path: |
@@ -148,7 +148,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: ^1.24
+          go-version: ^1.25
           cache: true
       
       - name: Run Go unit tests

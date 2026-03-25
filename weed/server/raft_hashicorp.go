@@ -6,6 +6,7 @@ package weed_server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path"
@@ -56,6 +57,28 @@ func raftServerID(server pb.ServerAddress) string {
 	return server.ToHttpAddress()
 }
 
+// recoverTopologyIdFromHashicorpSnapshot reads the TopologyId from the latest
+// hashicorp raft snapshot before state cleanup.
+func recoverTopologyIdFromHashicorpSnapshot(dataDir string, topo *topology.Topology) {
+	fss, err := raft.NewFileSnapshotStore(dataDir, 1, io.Discard)
+	if err != nil {
+		return
+	}
+	snapshots, err := fss.List()
+	if err != nil || len(snapshots) == 0 {
+		return
+	}
+	_, rc, err := fss.Open(snapshots[0].ID)
+	if err != nil {
+		return
+	}
+	defer rc.Close()
+
+	if b, err := io.ReadAll(rc); err == nil {
+		recoverTopologyIdFromState(b, topo)
+	}
+}
+
 func (s *RaftServer) AddPeersConfiguration() (cfg raft.Configuration) {
 	for _, peer := range s.peers {
 		cfg.Servers = append(cfg.Servers, raft.Server{
@@ -73,6 +96,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
 			leader, _ := s.RaftHashicorp.LeaderWithID()
+			s.topo.SetLastLeaderChangeTime(time.Now())
 			if isLeader {
 
 				if updatePeers {
@@ -99,7 +123,6 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
-			s.topo.LastLeaderChangeTime = time.Now()
 		}
 	}
 }
@@ -168,6 +191,8 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	if option.RaftBootstrap {
+		recoverTopologyIdFromHashicorpSnapshot(s.dataDir, option.Topo)
+
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))
 		os.RemoveAll(path.Join(s.dataDir, "snapshots"))

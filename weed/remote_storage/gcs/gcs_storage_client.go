@@ -2,11 +2,13 @@ package gcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -126,6 +128,74 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 	}
 	return
 }
+
+const defaultGCSOpTimeout = 30 * time.Second
+
+func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(ctx, &storage.Query{
+		Delimiter: "/",
+		Prefix:    pathKey,
+		Versions:  false,
+	})
+
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr != nil {
+			if iterErr == iterator.Done {
+				return nil
+			}
+			return fmt.Errorf("list directory %s%s: %w", loc.Bucket, loc.Path, iterErr)
+		}
+
+		if objectAttr.Prefix != "" {
+			// Common prefix → subdirectory
+			dirKey := "/" + strings.TrimSuffix(objectAttr.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err = visitFn(dir, name, true, nil); err != nil {
+				return err
+			}
+		} else {
+			key := "/" + objectAttr.Name
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			if err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
+				RemoteMtime: objectAttr.Updated.Unix(),
+				RemoteSize:  objectAttr.Size,
+				RemoteETag:  objectAttr.Etag,
+				StorageName: gcs.conf.Name,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return &filer_pb.RemoteEntry{
+		StorageName: gcs.conf.Name,
+		RemoteMtime: attr.Updated.Unix(),
+		RemoteSize:  attr.Size,
+		RemoteETag:  attr.Etag,
+	}, nil
+}
+
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
@@ -170,20 +240,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(context.Background())
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-		StorageName: gcs.conf.Name,
-	}, nil
-
+	return gcs.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]string {

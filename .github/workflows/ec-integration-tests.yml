@@ -18,7 +18,7 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code into the Go module directory
@@ -52,7 +52,7 @@ jobs:
 
     - name: Archive logs
       if: failure()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: ec-integration-test-logs
         path: |

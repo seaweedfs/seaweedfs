@@ -108,7 +108,7 @@ func (f *FilerConsumerGroupOffsetStorage) LoadConsumerGroupPosition(t topic.Topi
 
 	var position *ConsumerGroupPosition
 	err := f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, consumersDir, offsetFileName)
+		data, err := filer.ReadInsideFiler(context.Background(), client, consumersDir, offsetFileName)
 		if err != nil {
 			return err
 		}

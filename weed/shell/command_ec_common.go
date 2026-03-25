@@ -150,14 +150,14 @@ func parseReplicaPlacementArg(commandEnv *CommandEnv, replicaStr string) (*super
 		if err != nil {
 			return rp, err
 		}
-		fmt.Printf("using replica placement %q for EC volumes\n", rp.String())
+		glog.V(1).Infof("using replica placement %q for EC volumes\n", rp.String())
 	} else {
 		// No replica placement argument provided, resolve from master default settings.
 		rp, err = getDefaultReplicaPlacement(commandEnv)
 		if err != nil {
 			return rp, err
 		}
-		fmt.Printf("using master default replica placement %q for EC volumes\n", rp.String())
+		glog.V(1).Infof("using master default replica placement %q for EC volumes\n", rp.String())
 	}
 
 	return rp, nil
@@ -1628,7 +1628,7 @@ func EcBalance(commandEnv *CommandEnv, collections []string, dc string, ecReplic
 	}
 
 	if len(collections) == 0 {
-		fmt.Printf("WARNING: No collections to balance EC volumes across.\n")
+		glog.V(1).Infof("WARNING: No collections to balance EC volumes across.\n")
 	}
 	for _, c := range collections {
 		if err = ecb.balanceEcVolumes(c); err != nil {

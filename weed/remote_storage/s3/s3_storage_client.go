@@ -1,11 +1,15 @@
 package s3
 
 import (
+	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"reflect"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -96,12 +100,19 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 				key := *content.Key
 				key = "/" + key
 				dir, name := util.FullPath(key).DirAndName()
-				if err := visitFn(dir, name, false, &filer_pb.RemoteEntry{
-					RemoteMtime: (*content.LastModified).Unix(),
-					RemoteSize:  *content.Size,
-					RemoteETag:  *content.ETag,
+				remoteEntry := &filer_pb.RemoteEntry{
 					StorageName: s.conf.Name,
-				}); err != nil {
+				}
+				if content.LastModified != nil {
+					remoteEntry.RemoteMtime = content.LastModified.Unix()
+				}
+				if content.Size != nil {
+					remoteEntry.RemoteSize = *content.Size
+				}
+				if content.ETag != nil {
+					remoteEntry.RemoteETag = *content.ETag
+				}
+				if err := visitFn(dir, name, false, remoteEntry); err != nil {
 					localErr = err
 					return false
 				}
@@ -119,10 +130,103 @@ func (s *s3RemoteStorageClient) Traverse(remote *remote_pb.RemoteStorageLocation
 	}
 	return
 }
+
+func (s *s3RemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) error {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	listInput := &s3.ListObjectsV2Input{
+		Bucket:    aws.String(loc.Bucket),
+		Prefix:    aws.String(pathKey),
+		Delimiter: aws.String("/"),
+	}
+
+	var localErr error
+	listErr := s.conn.ListObjectsV2PagesWithContext(ctx, listInput, func(page *s3.ListObjectsV2Output, lastPage bool) bool {
+		for _, prefix := range page.CommonPrefixes {
+			if prefix.Prefix == nil {
+				continue
+			}
+			dirKey := "/" + strings.TrimSuffix(*prefix.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err := visitFn(dir, name, true, nil); err != nil {
+				localErr = err
+				return false
+			}
+		}
+		for _, content := range page.Contents {
+			key := "/" + *content.Key
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			remoteEntry := &filer_pb.RemoteEntry{
+				StorageName: s.conf.Name,
+			}
+			if content.LastModified != nil {
+				remoteEntry.RemoteMtime = content.LastModified.Unix()
+			}
+			if content.Size != nil {
+				remoteEntry.RemoteSize = *content.Size
+			}
+			if content.ETag != nil {
+				remoteEntry.RemoteETag = *content.ETag
+			}
+			if err := visitFn(dir, name, false, remoteEntry); err != nil {
+				localErr = err
+				return false
+			}
+		}
+		return true
+	})
+	if listErr != nil {
+		return fmt.Errorf("list directory %v: %w", loc, listErr)
+	}
+	if localErr != nil {
+		return fmt.Errorf("process directory %v: %w", loc, localErr)
+	}
+	return nil
+}
+
+func (s *s3RemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
+		Bucket: aws.String(loc.Bucket),
+		Key:    aws.String(loc.Path[1:]),
+	})
+	if err != nil {
+		if reqErr, ok := err.(awserr.RequestFailure); ok && reqErr.StatusCode() == http.StatusNotFound {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat s3 %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	remoteEntry = &filer_pb.RemoteEntry{
+		StorageName: s.conf.Name,
+	}
+	if resp.ContentLength != nil {
+		remoteEntry.RemoteSize = *resp.ContentLength
+	}
+	if resp.LastModified != nil {
+		remoteEntry.RemoteMtime = resp.LastModified.Unix()
+	}
+	if resp.ETag != nil {
+		remoteEntry.RemoteETag = *resp.ETag
+	}
+	return remoteEntry, nil
+}
+
 func (s *s3RemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
+	return s.ReadFileWithConcurrency(loc, offset, size, 5)
+}
+
+func (s *s3RemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
+	if concurrency <= 0 {
+		concurrency = 5
+	}
 	downloader := s3manager.NewDownloaderWithClient(s.conn, func(u *s3manager.Downloader) {
 		u.PartSize = int64(4 * 1024 * 1024)
-		u.Concurrency = 1
+		u.Concurrency = concurrency
 	})
 
 	dataSlice := make([]byte, int(size))
@@ -178,13 +282,16 @@ func (s *s3RemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocation, 
 	}
 
 	// Upload the file to S3.
-	_, err = uploader.Upload(&s3manager.UploadInput{
-		Bucket:       aws.String(loc.Bucket),
-		Key:          aws.String(loc.Path[1:]),
-		Body:         reader,
-		Tagging:      awsTags,
-		StorageClass: aws.String(s.conf.S3StorageClass),
-	})
+	uploadInput := &s3manager.UploadInput{
+		Bucket:  aws.String(loc.Bucket),
+		Key:     aws.String(loc.Path[1:]),
+		Body:    reader,
+		Tagging: awsTags,
+	}
+	if s.conf.S3StorageClass != "" {
+		uploadInput.StorageClass = aws.String(s.conf.S3StorageClass)
+	}
+	_, err = uploader.Upload(uploadInput)
 
 	//in case it fails to upload
 	if err != nil {
@@ -208,21 +315,7 @@ func toTagging(attributes map[string][]byte) *s3.Tagging {
 }
 
 func (s *s3RemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	resp, err := s.conn.HeadObject(&s3.HeadObjectInput{
-		Bucket: aws.String(loc.Bucket),
-		Key:    aws.String(loc.Path[1:]),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: resp.LastModified.Unix(),
-		RemoteSize:  *resp.ContentLength,
-		RemoteETag:  *resp.ETag,
-		StorageName: s.conf.Name,
-	}, nil
-
+	return s.StatFile(loc)
 }
 
 func (s *s3RemoteStorageClient) UpdateFileMetadata(loc *remote_pb.RemoteStorageLocation, oldEntry *filer_pb.Entry, newEntry *filer_pb.Entry) (err error) {

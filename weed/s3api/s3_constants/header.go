@@ -29,6 +29,11 @@ const (
 	S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
 )
 
+// S3 object key limits
+const (
+	MaxS3ObjectKeyLength = 1024
+)
+
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
@@ -44,6 +49,12 @@ const (
 	AmzObjectTaggingPrefix    = "X-Amz-Tagging-"
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
+
+	// GetObjectAttributes headers
+	AmzObjectAttributes = "X-Amz-Object-Attributes"
+	AmzMaxParts         = "X-Amz-Max-Parts"
+	AmzPartNumberMarker = "X-Amz-Part-Number-Marker"
+	AmzDeleteMarker     = "X-Amz-Delete-Marker"
 
 	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
 	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"

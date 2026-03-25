@@ -172,6 +172,13 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	// Use the global unified registry that already has all tasks registered
 	registry := tasks.GetGlobalTaskRegistry()
 
+	// Ensure the base working directory exists
+	if config.BaseWorkingDir != "" {
+		if err := os.MkdirAll(config.BaseWorkingDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create base working directory %s: %v", config.BaseWorkingDir, err)
+		}
+	}
+
 	// Initialize task log handler
 	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
 	// Ensure the base task log directory exists to avoid errors when admin requests logs
@@ -677,6 +684,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
+	taskInstance.SetWorkingDir(taskWorkingDir)
 
 	// If we have a file logger, adapt it so task WithFields logs are captured into file
 	if fileLogger != nil {

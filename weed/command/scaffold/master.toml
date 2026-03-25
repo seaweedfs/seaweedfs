@@ -6,6 +6,7 @@
 
 [master.maintenance]
 # periodically run these scripts are the same as running them from 'weed shell'
+# Scripts are skipped while an admin server is connected.
 scripts = """{{DEFAULT_MAINTENANCE_SCRIPTS}}"""
 sleep_minutes = 17          # sleep minutes between each script execution
 

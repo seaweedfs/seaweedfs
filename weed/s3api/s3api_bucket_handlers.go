@@ -20,6 +20,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 
@@ -88,20 +89,7 @@ func (s3a *S3ApiServer) ListBucketsHandler(w http.ResponseWriter, r *http.Reques
 
 			// Skip permission check if user is already the owner (optimization)
 			if !isOwner {
-				hasPermission := false
-				// Check permissions for each bucket
-				// For JWT-authenticated users, use IAM authorization
-				sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-				if s3a.iam.iamIntegration != nil && sessionToken != "" {
-					// Use IAM authorization for JWT users
-					errCode := s3a.iam.authorizeWithIAM(r, identity, s3_constants.ACTION_LIST, entry.Name, "")
-					hasPermission = (errCode == s3err.ErrNone)
-				} else {
-					// Use legacy authorization for non-JWT users
-					hasPermission = identity.CanDo(s3_constants.ACTION_LIST, entry.Name, "")
-				}
-
-				if !hasPermission {
+				if errCode := s3a.iam.VerifyActionPermission(r, identity, s3_constants.ACTION_LIST, entry.Name, ""); errCode != s3err.ErrNone {
 					continue
 				}
 			}
@@ -264,10 +252,11 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 	}
 
 	// If collection exists but bucket directory doesn't, this is an inconsistent state
+	// that can occur when a previous bucket deletion partially completed (collection
+	// deletion failed but directory deletion succeeded, or volumes were recreated).
+	// Recover by proceeding to create the missing bucket directory.
 	if collectionExists {
-		glog.Errorf("PutBucketHandler: collection exists but bucket directory missing for %s", bucket)
-		s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
-		return
+		glog.Warningf("PutBucketHandler: collection exists but bucket directory missing for %s, recovering by creating bucket directory", bucket)
 	}
 
 	// Check for x-amz-bucket-object-lock-enabled header BEFORE creating bucket
@@ -309,6 +298,13 @@ func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}); err != nil {
+		// If mkdir failed because another request created the bucket concurrently,
+		// return BucketAlreadyExists instead of InternalError.
+		if exist, checkErr := s3a.exists(s3a.option.BucketsPath, bucket, true); checkErr == nil && exist {
+			glog.V(3).Infof("PutBucketHandler: bucket %s was created concurrently", bucket)
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketAlreadyExists)
+			return
+		}
 		glog.Errorf("PutBucketHandler mkdir: %v", err)
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return
@@ -371,22 +367,29 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 		}
 	}
 
-	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		if !s3a.option.AllowDeleteBucketNotEmpty {
-			entries, _, err := s3a.list(s3a.option.BucketsPath+"/"+bucket, "", "", false, 2)
-			if err != nil {
-				return fmt.Errorf("failed to list bucket %s: %v", bucket, err)
-			}
-			for _, entry := range entries {
-				// Allow bucket deletion if only special directories remain
-				if entry.Name != s3_constants.MultipartUploadsFolder &&
-					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					return errors.New(s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code)
-				}
-			}
+	if !s3a.option.AllowDeleteBucketNotEmpty {
+		if hasUserObjects, err := s3a.bucketHasUserObjects(bucket); err != nil {
+			glog.Errorf("failed to list bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			return
+		} else if hasUserObjects {
+			s3err.WriteErrorResponse(w, r, s3err.ErrBucketNotEmpty)
+			return
 		}
+	}
 
-		// delete collection
+	// Delete bucket directory first, then collection. This order ensures that if
+	// collection deletion fails, the bucket directory is already gone, preventing
+	// the "collection exists but bucket directory missing" inconsistency that blocks
+	// bucket recreation. An orphaned collection is harmless and will be cleaned up
+	// or reused when the bucket is recreated.
+	err := s3a.rm(s3a.option.BucketsPath, bucket, false, true)
+	if err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	err = s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		deleteCollectionRequest := &filer_pb.DeleteCollectionRequest{
 			Collection: s3a.getCollectionName(bucket),
 		}
@@ -400,25 +403,43 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	})
 
 	if err != nil {
-		s3ErrorCode := s3err.ErrInternalError
-		if err.Error() == s3err.GetAPIError(s3err.ErrBucketNotEmpty).Code {
-			s3ErrorCode = s3err.ErrBucketNotEmpty
-		}
-		s3err.WriteErrorResponse(w, r, s3ErrorCode)
-		return
+		// Log but don't fail — the bucket directory is already removed, so the bucket
+		// is effectively deleted. The orphaned collection will be cleaned up or reused.
+		glog.Errorf("DeleteBucketHandler: failed to delete collection for bucket %s: %v", bucket, err)
 	}
 
-	err = s3a.rm(s3a.option.BucketsPath, bucket, false, true)
-
-	if err != nil {
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
-	// Clean up bucket-related caches and locks after successful deletion
+	// Clean up bucket-related caches, locks, and metrics after successful deletion
 	s3a.invalidateBucketConfigCache(bucket)
+	stats_collect.DeleteBucketMetrics(bucket)
 
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
+}
+
+// bucketHasUserObjects checks whether a bucket contains any non-special entries.
+// Special entries (.uploads, *.versions) are internal to S3 and don't count as user objects.
+func (s3a *S3ApiServer) bucketHasUserObjects(bucket string) (bool, error) {
+	bucketPath := s3a.option.BucketsPath + "/" + bucket
+	startFrom := ""
+	// Start with a small batch — most non-empty buckets have a real object early.
+	// If we only find special entries, switch to larger batches to page through quickly.
+	limit := uint32(10)
+	for {
+		entries, isLast, err := s3a.list(bucketPath, "", startFrom, false, limit)
+		if err != nil {
+			return false, err
+		}
+		for _, entry := range entries {
+			if entry.Name != s3_constants.MultipartUploadsFolder &&
+				!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+				return true, nil
+			}
+			startFrom = entry.Name
+		}
+		if isLast {
+			return false, nil
+		}
+		limit = 1000
+	}
 }
 
 // hasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
@@ -522,6 +543,10 @@ func (s3a *S3ApiServer) autoCreateBucket(r *http.Request, bucket string) error {
 				}
 			} else {
 				glog.Warningf("autoCreateBucket: failed to get entry for existing bucket %s: %v", bucket, getErr)
+			}
+			// Remove bucket from negative cache — it exists now
+			if s3a.bucketConfigCache != nil {
+				s3a.bucketConfigCache.RemoveNegativeCache(bucket)
 			}
 			return nil
 		}

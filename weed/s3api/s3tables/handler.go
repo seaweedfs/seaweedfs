@@ -21,10 +21,11 @@ const (
 	DefaultRegion    = "us-east-1"
 
 	// Extended entry attributes for metadata storage
-	ExtendedKeyTableBucket = "s3tables.tableBucket"
-	ExtendedKeyMetadata    = "s3tables.metadata"
-	ExtendedKeyPolicy      = "s3tables.policy"
-	ExtendedKeyTags        = "s3tables.tags"
+	ExtendedKeyTableBucket     = "s3tables.tableBucket"
+	ExtendedKeyMetadata        = "s3tables.metadata"
+	ExtendedKeyMetadataVersion = "s3tables.metadataVersion"
+	ExtendedKeyPolicy          = "s3tables.policy"
+	ExtendedKeyTags            = "s3tables.tags"
 
 	// Maximum request body size (10MB)
 	maxRequestBodySize = 10 * 1024 * 1024
@@ -44,9 +45,10 @@ const (
 
 // S3TablesHandler handles S3 Tables API requests
 type S3TablesHandler struct {
-	region       string
-	accountID    string
-	defaultAllow bool // Whether to allow access by default (for zero-config IAM)
+	region        string
+	accountID     string
+	defaultAllow  bool // Whether to allow access by default (for zero-config IAM)
+	iamAuthorizer IAMAuthorizer
 }
 
 // NewS3TablesHandler creates a new S3 Tables handler
@@ -168,26 +170,50 @@ func (h *S3TablesHandler) HandleRequest(w http.ResponseWriter, r *http.Request, 
 
 // Principal/authorization helpers
 
-// getAccountID returns the authenticated account ID from the request or the handler's default.
-// This is also used as the principal for permission checks, ensuring alignment between
-// the caller identity and ownership verification when IAM is enabled.
+// getAccountID returns a stable caller identifier for ownership and permission checks.
+// Reflection depends on the identity shape produced by JWT/STS auth (Account *struct{Id string},
+// Claims map[string]interface{} containing string values for preferred_username/sub, and optional
+// identity name/header values). Changing those fields without updating the reflection here will
+// break the handler, so refactorers should replace this with a typed interface if needed.
 func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	identityRaw := s3_constants.GetIdentityFromContext(r)
 	if identityRaw != nil {
-		// Use reflection to access the Account.Id field to avoid import cycle
+		// Use reflection to access identity fields and avoid import cycles.
 		val := reflect.ValueOf(identityRaw)
 		if val.Kind() == reflect.Ptr {
 			val = val.Elem()
 		}
 		if val.Kind() == reflect.Struct {
+			// Prefer stable claims from JWT/STS identities. Only "sub" is guaranteed durable per OIDC;
+			// preferred_username is ergonomic but can rotate and may orphan ownership data, while email
+			// is explicitly excluded to avoid storing PII in metadata.
+			claimsField := val.FieldByName("Claims")
+			if claimsField.IsValid() && claimsField.Kind() == reflect.Map && !claimsField.IsNil() && claimsField.Type().Key().Kind() == reflect.String {
+				for _, claimKey := range []string{"sub", "preferred_username"} {
+					claimVal := claimsField.MapIndex(reflect.ValueOf(claimKey))
+					if !claimVal.IsValid() {
+						continue
+					}
+					if claimVal.Kind() == reflect.Interface && !claimVal.IsNil() {
+						claimVal = claimVal.Elem()
+					}
+					if claimVal.Kind() == reflect.String {
+						if principal := normalizePrincipalID(claimVal.String()); principal != "" {
+							return principal
+						}
+					}
+				}
+			}
+
 			accountField := val.FieldByName("Account")
 			if accountField.IsValid() && !accountField.IsNil() {
 				accountVal := accountField.Elem()
 				if accountVal.Kind() == reflect.Struct {
 					idField := accountVal.FieldByName("Id")
 					if idField.IsValid() && idField.Kind() == reflect.String {
-						id := idField.String()
-						return id
+						if principal := normalizePrincipalID(idField.String()); principal != "" {
+							return principal
+						}
 					}
 				}
 			}
@@ -195,32 +221,50 @@ func (h *S3TablesHandler) getAccountID(r *http.Request) string {
 	}
 
 	if identityName := s3_constants.GetIdentityNameFromContext(r); identityName != "" {
-		return identityName
+		if principal := normalizePrincipalID(identityName); principal != "" {
+			return principal
+		}
 	}
 
 	if accountID := r.Header.Get(s3_constants.AmzAccountId); accountID != "" {
-		return accountID
+		if principal := normalizePrincipalID(accountID); principal != "" {
+			return principal
+		}
 	}
 	return h.accountID
+}
+
+// normalizePrincipalID collapses ARN and identity strings to a key that is stable within a single account.
+// WARNING: this assumes identity names are unique per account; distinct principals such as
+// arn:aws:iam::111:user/alice and arn:aws:iam::222:user/alice will both normalize to "alice".
+// If future work adds multi-account support, revisit this function to include the account ID or full ARN
+// so ownership checks remain correct.
+func normalizePrincipalID(id string) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return ""
+	}
+	// If this is an ARN (common for assumed roles), use the trailing segment as a
+	// stable-ish principal key instead of embedding the full ARN in ownership fields.
+	if strings.HasPrefix(id, "arn:") {
+		if idx := strings.LastIndex(id, "/"); idx >= 0 && idx+1 < len(id) {
+			return strings.TrimSpace(id[idx+1:])
+		}
+		if idx := strings.LastIndex(id, ":"); idx >= 0 && idx+1 < len(id) {
+			return strings.TrimSpace(id[idx+1:])
+		}
+		return strings.TrimSpace(id)
+	}
+	return id
 }
 
 // getIdentityActions extracts the action list from the identity object in the request context.
 // Uses reflection to avoid import cycles with s3api package.
 func getIdentityActions(r *http.Request) []string {
-	identityRaw := s3_constants.GetIdentityFromContext(r)
-	if identityRaw == nil {
+	val, ok := getIdentityStructValue(r)
+	if !ok {
 		return nil
 	}
-
-	// Use reflection to access the Actions field to avoid import cycle
-	val := reflect.ValueOf(identityRaw)
-	if val.Kind() == reflect.Ptr {
-		val = val.Elem()
-	}
-	if val.Kind() != reflect.Struct {
-		return nil
-	}
-
 	actionsField := val.FieldByName("Actions")
 	if !actionsField.IsValid() || actionsField.Kind() != reflect.Slice {
 		return nil

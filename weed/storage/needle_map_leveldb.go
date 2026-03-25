@@ -468,6 +468,7 @@ func lazyLoadingRoutine(m *LevelDbNeedleMap) (err error) {
 				glog.V(1).Infof("reset accessRecord %s", m.dbFileName)
 				// reset accessRecord
 				accessRecord = 0
+				m.accessFlag = 0
 			}
 			continue
 		}

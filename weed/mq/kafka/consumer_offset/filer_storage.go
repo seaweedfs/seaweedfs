@@ -285,7 +285,7 @@ func (f *FilerStorage) listDirectory(path string) ([]string, error) {
 				return err
 			}
 
-			if resp.Entry.IsDirectory {
+			if resp.Entry != nil && resp.Entry.IsDirectory {
 				entries = append(entries, resp.Entry.Name)
 			}
 		}

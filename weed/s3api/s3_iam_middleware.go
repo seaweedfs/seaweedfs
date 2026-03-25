@@ -47,6 +47,11 @@ type IAMIntegration interface {
 	DefaultAllow() bool
 }
 
+// IAMManagerProvider exposes the IAMManager backing an IAM integration.
+type IAMManagerProvider interface {
+	GetIAMManager() *integration.IAMManager
+}
+
 // S3IAMIntegration provides IAM integration for S3 API
 type S3IAMIntegration struct {
 	iamManager   *integration.IAMManager
@@ -68,6 +73,11 @@ func NewS3IAMIntegration(iamManager *integration.IAMManager, filerAddress string
 		filerAddress: filerAddress,
 		enabled:      iamManager != nil,
 	}
+}
+
+// GetIAMManager returns the IAMManager backing this integration.
+func (s3iam *S3IAMIntegration) GetIAMManager() *integration.IAMManager {
+	return s3iam.iamManager
 }
 
 // AuthenticateJWT authenticates JWT tokens using our STS service
@@ -238,7 +248,7 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrNone // Fallback to existing authorization
 	}
 
-	if identity.SessionToken == "" {
+	if identity == nil || identity.Principal == "" {
 		return s3err.ErrAccessDenied
 	}
 
@@ -282,9 +292,12 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 
 	// Create action request
 	actionRequest := &integration.ActionRequest{
-		Principal:      identity.Principal,
-		Action:         specificAction,
-		Resource:       resourceArn,
+		Principal: identity.Principal,
+		Action:    specificAction,
+		Resource:  resourceArn,
+		// Static SigV4 IAM users do not carry a session token. IAMManager
+		// evaluates their attached policies directly and only validates STS/OIDC
+		// session state when a token is actually present.
 		SessionToken:   identity.SessionToken,
 		RequestContext: requestContext,
 		PolicyNames:    identity.PolicyNames,
@@ -469,17 +482,17 @@ func mapLegacyActionToIAM(legacyAction Action) string {
 		return "s3:*" // Fallback for unmapped admin operations
 
 	// Handle granular multipart actions (already correctly mapped)
-	case s3_constants.ACTION_CREATE_MULTIPART_UPLOAD:
-		return "s3:CreateMultipartUpload"
-	case s3_constants.ACTION_UPLOAD_PART:
-		return "s3:UploadPart"
-	case s3_constants.ACTION_COMPLETE_MULTIPART:
-		return "s3:CompleteMultipartUpload"
-	case s3_constants.ACTION_ABORT_MULTIPART:
-		return "s3:AbortMultipartUpload"
-	case s3_constants.ACTION_LIST_MULTIPART_UPLOADS:
+	case s3_constants.S3_ACTION_CREATE_MULTIPART:
+		return s3_constants.S3_ACTION_CREATE_MULTIPART
+	case s3_constants.S3_ACTION_UPLOAD_PART:
+		return s3_constants.S3_ACTION_UPLOAD_PART
+	case s3_constants.S3_ACTION_COMPLETE_MULTIPART:
+		return s3_constants.S3_ACTION_COMPLETE_MULTIPART
+	case s3_constants.S3_ACTION_ABORT_MULTIPART:
+		return s3_constants.S3_ACTION_ABORT_MULTIPART
+	case s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS:
 		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
-	case s3_constants.ACTION_LIST_PARTS:
+	case s3_constants.S3_ACTION_LIST_PARTS:
 		return s3_constants.S3_ACTION_LIST_PARTS
 
 	default:

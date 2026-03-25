@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
@@ -112,7 +113,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 			// tell the volume servers about the leader
 			newLeader, err := ms.Topo.MaybeLeader()
 			if err != nil || newLeader == "" {
-				glog.Warningf("SendHeartbeat find leader: %v", err)
+				glog.Warningf("SendHeartbeat find leader: %v, %v", newLeader, err)
 				return raft.NotLeaderError
 			}
 			if err := stream.Send(&master_pb.HeartbeatResponse{
@@ -162,6 +163,7 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		}
 
 		dn.AdjustMaxVolumeCounts(heartbeat.MaxVolumeCounts)
+		dn.UpdateDiskTags(heartbeat.DiskTags)
 
 		glog.V(4).Infof("master received heartbeat %s", heartbeat.String())
 		stats.MasterReceivedHeartbeatCounter.WithLabelValues("total").Inc()
@@ -453,14 +455,24 @@ func (ms *MasterServer) GetMasterConfiguration(ctx context.Context, req *master_
 	// tell the volume servers about the leader
 	leader, _ := ms.Topo.Leader()
 
+	// MIGRATION: expose maintenance scripts for admin server seeding. Remove after March 2027.
+	v := util.GetViper()
+	maintenanceScripts := v.GetString("master.maintenance.scripts")
+	maintenanceSleepMinutes := v.GetInt("master.maintenance.sleep_minutes")
+	if maintenanceSleepMinutes <= 0 {
+		maintenanceSleepMinutes = maintenance.DefaultMaintenanceSleepMinutes
+	}
+
 	resp := &master_pb.GetMasterConfigurationResponse{
-		MetricsAddress:         ms.option.MetricsAddress,
-		MetricsIntervalSeconds: uint32(ms.option.MetricsIntervalSec),
-		StorageBackends:        backend.ToPbStorageBackends(),
-		DefaultReplication:     ms.option.DefaultReplicaPlacement,
-		VolumeSizeLimitMB:      uint32(ms.option.VolumeSizeLimitMB),
-		VolumePreallocate:      ms.option.VolumePreallocate,
-		Leader:                 string(leader),
+		MetricsAddress:          ms.option.MetricsAddress,
+		MetricsIntervalSeconds:  uint32(ms.option.MetricsIntervalSec),
+		StorageBackends:         backend.ToPbStorageBackends(),
+		DefaultReplication:      ms.option.DefaultReplicaPlacement,
+		VolumeSizeLimitMB:       uint32(ms.option.VolumeSizeLimitMB),
+		VolumePreallocate:       ms.option.VolumePreallocate,
+		Leader:                  string(leader),
+		MaintenanceScripts:      maintenanceScripts,
+		MaintenanceSleepMinutes: uint32(maintenanceSleepMinutes),
 	}
 
 	return resp, nil

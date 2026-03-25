@@ -3,15 +3,12 @@ package pluginworker
 import (
 	"context"
 	"fmt"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	vacuumtask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
@@ -22,27 +19,51 @@ import (
 )
 
 const (
-	defaultVacuumTaskBatchSize = int32(1000)
+	defaultVacuumTaskBatchSize     = int32(1000)
+	DefaultMaxExecutionConcurrency = int32(2)
 )
+
+func init() {
+	RegisterHandler(HandlerFactory{
+		JobType:  "vacuum",
+		Category: CategoryDefault,
+		Aliases:  []string{"vol.vacuum", "volume.vacuum"},
+		Build: func(opts HandlerBuildOptions) (JobHandler, error) {
+			return NewVacuumHandler(opts.GrpcDialOption, int32(opts.MaxExecute)), nil
+		},
+	})
+}
 
 // VacuumHandler is the plugin job handler for vacuum job type.
 type VacuumHandler struct {
-	grpcDialOption grpc.DialOption
+	grpcDialOption          grpc.DialOption
+	maxExecutionConcurrency int32
 }
 
-func NewVacuumHandler(grpcDialOption grpc.DialOption) *VacuumHandler {
-	return &VacuumHandler{grpcDialOption: grpcDialOption}
+// NewVacuumHandler creates a VacuumHandler with the given gRPC dial option and
+// maximum execution concurrency. When maxExecutionConcurrency is zero or
+// negative, DefaultMaxExecutionConcurrency is used as the fallback.
+func NewVacuumHandler(grpcDialOption grpc.DialOption, maxExecutionConcurrency int32) *VacuumHandler {
+	return &VacuumHandler{grpcDialOption: grpcDialOption, maxExecutionConcurrency: maxExecutionConcurrency}
 }
 
+// Capability returns the job type capability for the vacuum handler.
+// MaxExecutionConcurrency reflects the value passed at construction time,
+// falling back to DefaultMaxExecutionConcurrency when unset.
 func (h *VacuumHandler) Capability() *plugin_pb.JobTypeCapability {
+	maxExec := h.maxExecutionConcurrency
+	if maxExec <= 0 {
+		maxExec = DefaultMaxExecutionConcurrency
+	}
 	return &plugin_pb.JobTypeCapability{
 		JobType:                 "vacuum",
 		CanDetect:               true,
 		CanExecute:              true,
 		MaxDetectionConcurrency: 1,
-		MaxExecutionConcurrency: 2,
+		MaxExecutionConcurrency: maxExec,
 		DisplayName:             "Volume Vacuum",
 		Description:             "Reclaims disk space by removing deleted files from volumes",
+		Weight:                  60,
 	}
 }
 
@@ -66,8 +87,44 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 						{
 							Name:        "collection_filter",
 							Label:       "Collection Filter",
-							Description: "Only scan this collection when set.",
-							Placeholder: "all collections",
+							Description: "Filter collections for vacuum detection. Use ALL_COLLECTIONS (default) to treat all volumes as one pool, EACH_COLLECTION to run detection separately per collection, or a regex pattern to match specific collections.",
+							Placeholder: "ALL_COLLECTIONS",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "volume_state",
+							Label:       "Volume State Filter",
+							Description: "Filter volumes by state: ALL (default), ACTIVE (writable volumes below size limit), or FULL (read-only volumes above size limit).",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_ENUM,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_SELECT,
+							Options: []*plugin_pb.ConfigOption{
+								{Value: string(volumeStateAll), Label: "All Volumes"},
+								{Value: string(volumeStateActive), Label: "Active (writable)"},
+								{Value: string(volumeStateFull), Label: "Full (read-only)"},
+							},
+						},
+						{
+							Name:        "data_center_filter",
+							Label:       "Data Center Filter",
+							Description: "Only vacuum volumes in matching data centers (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all data centers",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "rack_filter",
+							Label:       "Rack Filter",
+							Description: "Only vacuum volumes on matching racks (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all racks",
+							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
+							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
+						},
+						{
+							Name:        "node_filter",
+							Label:       "Node Filter",
+							Description: "Only vacuum volumes on matching nodes (comma-separated, wildcards supported). Leave empty for all.",
+							Placeholder: "all nodes",
 							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_STRING,
 							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_TEXT,
 						},
@@ -76,6 +133,18 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"collection_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"volume_state": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: string(volumeStateAll)},
+				},
+				"data_center_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"rack_filter": {
+					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
+				},
+				"node_filter": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 				},
 			},
@@ -142,6 +211,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			PerWorkerExecutionConcurrency: 4,
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           10,
+			JobTypeMaxRuntimeSeconds:      1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"garbage_threshold": {
@@ -169,9 +239,9 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	}
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
-	if shouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
+	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
 		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(buildDetectorActivity(
+		_ = sender.SendActivity(BuildDetectorActivity(
 			"skipped_by_interval",
 			fmt.Sprintf("VACUUM: Detection skipped due to min interval (%s)", minInterval),
 			map[string]*plugin_pb.ConfigValue{
@@ -202,6 +272,17 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	metrics, activeTopology, err := h.collectVolumeMetrics(ctx, masters, collectionFilter)
 	if err != nil {
 		return err
+	}
+
+	volState := volumeState(strings.ToUpper(strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "volume_state", string(volumeStateAll)))))
+	metrics = filterMetricsByVolumeState(metrics, volState)
+
+	dataCenterFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "data_center_filter", ""))
+	rackFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "rack_filter", ""))
+	nodeFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "node_filter", ""))
+
+	if dataCenterFilter != "" || rackFilter != "" || nodeFilter != "" {
+		metrics = filterMetricsByLocation(metrics, dataCenterFilter, rackFilter, nodeFilter)
 	}
 
 	clusterInfo := &workertypes.ClusterInfo{ActiveTopology: activeTopology}
@@ -300,7 +381,7 @@ func emitVacuumDetectionDecisionTrace(
 		)
 	}
 
-	if err := sender.SendActivity(buildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
+	if err := sender.SendActivity(BuildDetectorActivity(summaryStage, summaryMessage, map[string]*plugin_pb.ConfigValue{
 		"total_volumes": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(totalVolumes)},
 		},
@@ -340,7 +421,7 @@ func emitVacuumDetectionDecisionTrace(
 			metric.Age.Truncate(time.Minute),
 			minVolumeAge.Truncate(time.Minute),
 		)
-		if err := sender.SendActivity(buildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
+		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.VolumeID)},
 			},
@@ -403,13 +484,16 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		params.Sources[0].Node,
 		params.VolumeId,
 		params.Collection,
+		h.grpcDialOption,
 	)
+	execCtx, execCancel := context.WithCancel(ctx)
+	defer execCancel()
 	task.SetProgressCallback(func(progress float64, stage string) {
 		message := fmt.Sprintf("vacuum progress %.0f%%", progress)
 		if strings.TrimSpace(stage) != "" {
 			message = stage
 		}
-		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+		if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
@@ -417,9 +501,11 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           stage,
 			Message:         message,
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity(stage, message),
+				BuildExecutorActivity(stage, message),
 			},
-		})
+		}); err != nil {
+			execCancel()
+		}
 	})
 
 	if err := sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -430,13 +516,13 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 		Stage:           "assigned",
 		Message:         "vacuum job accepted",
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("assigned", "vacuum job accepted"),
+			BuildExecutorActivity("assigned", "vacuum job accepted"),
 		},
 	}); err != nil {
 		return err
 	}
 
-	if err := task.Execute(ctx, params); err != nil {
+	if err := task.Execute(execCtx, params); err != nil {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           request.Job.JobId,
 			JobType:         request.Job.JobType,
@@ -445,7 +531,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			Stage:           "failed",
 			Message:         err.Error(),
 			Activities: []*plugin_pb.ActivityEvent{
-				buildExecutorActivity("failed", err.Error()),
+				BuildExecutorActivity("failed", err.Error()),
 			},
 		})
 		return err
@@ -468,7 +554,7 @@ func (h *VacuumHandler) Execute(ctx context.Context, request *plugin_pb.ExecuteJ
 			},
 		},
 		Activities: []*plugin_pb.ActivityEvent{
-			buildExecutorActivity("completed", resultSummary),
+			BuildExecutorActivity("completed", resultSummary),
 		},
 	})
 }
@@ -478,62 +564,8 @@ func (h *VacuumHandler) collectVolumeMetrics(
 	masterAddresses []string,
 	collectionFilter string,
 ) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	if h.grpcDialOption == nil {
-		return nil, nil, fmt.Errorf("grpc dial option is not configured")
-	}
-	if len(masterAddresses) == 0 {
-		return nil, nil, fmt.Errorf("no master addresses provided in cluster context")
-	}
-
-	for _, masterAddress := range masterAddresses {
-		response, err := h.fetchVolumeList(ctx, masterAddress)
-		if err != nil {
-			glog.Warningf("Plugin worker failed master volume list at %s: %v", masterAddress, err)
-			continue
-		}
-
-		metrics, activeTopology, buildErr := buildVolumeMetrics(response, collectionFilter)
-		if buildErr != nil {
-			glog.Warningf("Plugin worker failed to build metrics from master %s: %v", masterAddress, buildErr)
-			continue
-		}
-		return metrics, activeTopology, nil
-	}
-
-	return nil, nil, fmt.Errorf("failed to load topology from all provided masters")
-}
-
-func (h *VacuumHandler) fetchVolumeList(ctx context.Context, address string) (*master_pb.VolumeListResponse, error) {
-	var lastErr error
-	for _, candidate := range masterAddressCandidates(address) {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-
-		dialCtx, cancelDial := context.WithTimeout(ctx, 5*time.Second)
-		conn, err := pb.GrpcDial(dialCtx, candidate, false, h.grpcDialOption)
-		cancelDial()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		client := master_pb.NewSeaweedClient(conn)
-		callCtx, cancelCall := context.WithTimeout(ctx, 10*time.Second)
-		response, callErr := client.VolumeList(callCtx, &master_pb.VolumeListRequest{})
-		cancelCall()
-		_ = conn.Close()
-
-		if callErr == nil {
-			return response, nil
-		}
-		lastErr = callErr
-	}
-
-	if lastErr == nil {
-		lastErr = fmt.Errorf("no valid master address candidate")
-	}
-	return nil, lastErr
+	metrics, activeTopology, _, err := collectVolumeMetricsFromMasters(ctx, masterAddresses, collectionFilter, h.grpcDialOption)
+	return metrics, activeTopology, err
 }
 
 func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Config {
@@ -542,74 +574,6 @@ func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Co
 	config.MinVolumeAgeSeconds = int(readInt64Config(values, "min_volume_age_seconds", int64(config.MinVolumeAgeSeconds)))
 	config.MinIntervalSeconds = int(readInt64Config(values, "min_interval_seconds", int64(config.MinIntervalSeconds)))
 	return config
-}
-
-func buildVolumeMetrics(
-	response *master_pb.VolumeListResponse,
-	collectionFilter string,
-) ([]*workertypes.VolumeHealthMetrics, *topology.ActiveTopology, error) {
-	if response == nil || response.TopologyInfo == nil {
-		return nil, nil, fmt.Errorf("volume list response has no topology info")
-	}
-
-	activeTopology := topology.NewActiveTopology(10)
-	if err := activeTopology.UpdateTopology(response.TopologyInfo); err != nil {
-		return nil, nil, err
-	}
-
-	filter := strings.TrimSpace(collectionFilter)
-	volumeSizeLimitBytes := uint64(response.VolumeSizeLimitMb) * 1024 * 1024
-	now := time.Now()
-	metrics := make([]*workertypes.VolumeHealthMetrics, 0, 256)
-
-	for _, dc := range response.TopologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, node := range rack.DataNodeInfos {
-				for diskType, diskInfo := range node.DiskInfos {
-					for _, volume := range diskInfo.VolumeInfos {
-						if filter != "" && volume.Collection != filter {
-							continue
-						}
-
-						metric := &workertypes.VolumeHealthMetrics{
-							VolumeID:         volume.Id,
-							Server:           node.Id,
-							ServerAddress:    node.Address,
-							DiskType:         diskType,
-							DiskId:           volume.DiskId,
-							DataCenter:       dc.Id,
-							Rack:             rack.Id,
-							Collection:       volume.Collection,
-							Size:             volume.Size,
-							DeletedBytes:     volume.DeletedByteCount,
-							LastModified:     time.Unix(volume.ModifiedAtSecond, 0),
-							ReplicaCount:     1,
-							ExpectedReplicas: int(volume.ReplicaPlacement),
-							IsReadOnly:       volume.ReadOnly,
-						}
-						if metric.Size > 0 {
-							metric.GarbageRatio = float64(metric.DeletedBytes) / float64(metric.Size)
-						}
-						if volumeSizeLimitBytes > 0 {
-							metric.FullnessRatio = float64(metric.Size) / float64(volumeSizeLimitBytes)
-						}
-						metric.Age = now.Sub(metric.LastModified)
-						metrics = append(metrics, metric)
-					}
-				}
-			}
-		}
-	}
-
-	replicaCounts := make(map[uint32]int)
-	for _, metric := range metrics {
-		replicaCounts[metric.VolumeID]++
-	}
-	for _, metric := range metrics {
-		metric.ReplicaCount = replicaCounts[metric.VolumeID]
-	}
-
-	return metrics, activeTopology, nil
 }
 
 func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.JobProposal, error) {
@@ -640,6 +604,10 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 		summary = summary + " on " + result.Server
 	}
 
+	// Estimate runtime: 5 min/GB (compact + commit + overhead)
+	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
+	estimatedRuntimeSeconds := volumeSizeGB * 5 * 60
+
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
@@ -659,6 +627,9 @@ func buildVacuumProposal(result *workertypes.TaskDetectionResult) (*plugin_pb.Jo
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},
+			},
+			"estimated_runtime_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 			},
 		},
 		Labels: map[string]string{
@@ -820,26 +791,9 @@ func mapTaskPriority(priority workertypes.TaskPriority) plugin_pb.JobPriority {
 	}
 }
 
-func masterAddressCandidates(address string) []string {
-	trimmed := strings.TrimSpace(address)
-	if trimmed == "" {
-		return nil
-	}
-	candidateSet := map[string]struct{}{
-		trimmed: {},
-	}
-	converted := pb.ServerToGrpcAddress(trimmed)
-	candidateSet[converted] = struct{}{}
-
-	candidates := make([]string, 0, len(candidateSet))
-	for candidate := range candidateSet {
-		candidates = append(candidates, candidate)
-	}
-	sort.Strings(candidates)
-	return candidates
-}
-
-func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
+// ShouldSkipDetectionByInterval returns true when less than minIntervalSeconds
+// have elapsed since lastSuccessfulRun. Exported so sub-packages can reuse it.
+func ShouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, minIntervalSeconds int) bool {
 	if lastSuccessfulRun == nil || minIntervalSeconds <= 0 {
 		return false
 	}
@@ -850,7 +804,8 @@ func shouldSkipDetectionByInterval(lastSuccessfulRun *timestamppb.Timestamp, min
 	return time.Since(lastRun) < time.Duration(minIntervalSeconds)*time.Second
 }
 
-func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
+// BuildExecutorActivity creates an executor activity event. Exported for sub-packages.
+func BuildExecutorActivity(stage string, message string) *plugin_pb.ActivityEvent {
 	return &plugin_pb.ActivityEvent{
 		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_EXECUTOR,
 		Stage:     stage,
@@ -859,7 +814,8 @@ func buildExecutorActivity(stage string, message string) *plugin_pb.ActivityEven
 	}
 }
 
-func buildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
+// BuildDetectorActivity creates a detector activity event. Exported for sub-packages.
+func BuildDetectorActivity(stage string, message string, details map[string]*plugin_pb.ConfigValue) *plugin_pb.ActivityEvent {
 	return &plugin_pb.ActivityEvent{
 		Source:    plugin_pb.ActivitySource_ACTIVITY_SOURCE_DETECTOR,
 		Stage:     stage,

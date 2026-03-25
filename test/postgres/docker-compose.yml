@@ -54,7 +54,7 @@ services:
       seaweedfs:
         condition: service_healthy
     command: >
-      ./weed db
+      ./weed-db
       -host=0.0.0.0
       -port=5432
       -master=seaweedfs:9333

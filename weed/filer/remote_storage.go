@@ -82,6 +82,9 @@ func (rs *FilerRemoteStorage) mapDirectoryToRemoteStorage(dir util.FullPath, loc
 	rs.rules.Put([]byte(dir+"/"), loc)
 }
 
+// FindMountDirectory returns the mount directory and location for p. When multiple
+// mounts match (e.g. /buckets/b and /buckets/b/prefix), ptrie MatchPrefix visits
+// shorter prefixes first, so the last match is the longest prefix.
 func (rs *FilerRemoteStorage) FindMountDirectory(p util.FullPath) (mountDir util.FullPath, remoteLocation *remote_pb.RemoteStorageLocation) {
 	rs.rules.MatchPrefix([]byte(p), func(key []byte, value *remote_pb.RemoteStorageLocation) bool {
 		mountDir = util.FullPath(string(key[:len(key)-1]))
@@ -135,7 +138,7 @@ func UnmarshalRemoteStorageMappings(oldContent []byte) (mappings *remote_pb.Remo
 func ReadRemoteStorageConf(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress, storageName string) (conf *remote_pb.RemoteConf, readErr error) {
 	var oldContent []byte
 	if readErr = pb.WithFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, storageName+REMOTE_STORAGE_CONF_SUFFIX)
+		oldContent, readErr = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, storageName+REMOTE_STORAGE_CONF_SUFFIX)
 		return readErr
 	}); readErr != nil {
 		return nil, readErr

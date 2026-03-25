@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.master.enabled }}
 apiVersion: apps/v1
 kind: StatefulSet
@@ -50,7 +51,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.master.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.master.restartPolicy }}
       {{- if .Values.master.affinity }}
       affinity:
         {{ tpl .Values.master.affinity . | nindent 8 | trim }}
@@ -69,9 +70,7 @@ spec:
       priorityClassName: {{ .Values.master.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      {{- if .Values.global.createClusterRole }}
       serviceAccountName: {{ .Values.master.serviceAccountName | default (include "seaweedfs.serviceAccountName" .) | quote }} # for deleting statefulset pods after migration
-      {{- end }}
       {{- if .Values.master.initContainers }}
       initContainers:
         {{ tpl .Values.master.initContainers . | nindent 8 | trim }}
@@ -82,7 +81,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "master.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -98,8 +97,10 @@ spec:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
-            {{- if .Values.master.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.master.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.master "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
               value: {{ tpl $value $ | quote }}
@@ -107,18 +108,6 @@ spec:
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ tpl $value $ | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           command:
             - "/bin/sh"
@@ -133,23 +122,23 @@ spec:
               {{- if .Values.master.loggingOverrideLevel }}
               -v={{ .Values.master.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               master \
               -port={{ .Values.master.port }} \
               -mdir=/data \
               -ip.bind={{ .Values.master.ipBind }} \
-              {{- if .Values.global.enableReplication }}
-              -defaultReplication={{ .Values.global.replicationPlacement }} \
+              {{- if .Values.global.seaweedfs.enableReplication }}
+              -defaultReplication={{ .Values.global.seaweedfs.replicationPlacement }} \
               {{- else }}
               -defaultReplication={{ .Values.master.defaultReplication }} \
               {{- end }}
               {{- if .Values.master.volumePreallocate }}
               -volumePreallocate \
               {{- end }}
-              {{- if .Values.global.monitoring.enabled }}
-              {{- if and .Values.global.monitoring.gatewayHost .Values.global.monitoring.gatewayPort }}
-              -metrics.address="{{ .Values.global.monitoring.gatewayHost }}:{{ .Values.global.monitoring.gatewayPort }}" \
+              {{- if .Values.global.seaweedfs.monitoring.enabled }}
+              {{- if and .Values.global.seaweedfs.monitoring.gatewayHost .Values.global.seaweedfs.monitoring.gatewayPort }}
+              -metrics.address="{{ .Values.global.seaweedfs.monitoring.gatewayHost }}:{{ .Values.global.seaweedfs.monitoring.gatewayPort }}" \
               {{- if .Values.master.metricsIntervalSec }}
               -metrics.intervalSeconds={{ .Values.master.metricsIntervalSec }} \
               {{- end }}
@@ -199,7 +188,7 @@ spec:
               readOnly: true
               mountPath: /etc/seaweedfs/master.toml
               subPath: master.toml
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -224,7 +213,7 @@ spec:
           ports:
             - containerPort: {{ .Values.master.port }}
               name: swfs-master
-            {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+            {{- if and .Values.global.seaweedfs.monitoring.enabled .Values.master.metricsPort }}
             - containerPort: {{ .Values.master.metricsPort }}
               name: metrics
             {{- end }}
@@ -298,7 +287,7 @@ spec:
         - name: master-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-master-config
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

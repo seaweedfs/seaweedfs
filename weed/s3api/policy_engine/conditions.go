@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // LRUNode represents a node in the doubly-linked list for efficient LRU operations
@@ -210,7 +211,7 @@ func (e *StringLikeEvaluator) Evaluate(conditionValue interface{}, contextValues
 	patterns := getCachedNormalizedValues(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if MatchesWildcard(pattern, contextValue) {
+			if wildcard.MatchesWildcard(pattern, contextValue) {
 				return true
 			}
 		}
@@ -225,7 +226,7 @@ func (e *StringNotLikeEvaluator) Evaluate(conditionValue interface{}, contextVal
 	patterns := getCachedNormalizedValues(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if MatchesWildcard(pattern, contextValue) {
+			if wildcard.MatchesWildcard(pattern, contextValue) {
 				return false
 			}
 		}
@@ -628,7 +629,7 @@ func (e *ArnLikeEvaluator) Evaluate(conditionValue interface{}, contextValues []
 	patterns := getCachedNormalizedValues(conditionValue)
 	for _, pattern := range patterns {
 		for _, contextValue := range contextValues {
-			if MatchesWildcard(pattern, contextValue) {
+			if wildcard.MatchesWildcard(pattern, contextValue) {
 				return true
 			}
 		}

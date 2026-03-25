@@ -284,17 +284,17 @@ func (s3a *S3ApiServer) UploadPartWithIAM(w http.ResponseWriter, r *http.Request
 func determineMultipartS3Action(operation MultipartOperation) Action {
 	switch operation {
 	case MultipartOpInitiate:
-		return s3_constants.ACTION_CREATE_MULTIPART_UPLOAD
+		return s3_constants.S3_ACTION_CREATE_MULTIPART
 	case MultipartOpUploadPart:
-		return s3_constants.ACTION_UPLOAD_PART
+		return s3_constants.S3_ACTION_UPLOAD_PART
 	case MultipartOpComplete:
-		return s3_constants.ACTION_COMPLETE_MULTIPART
+		return s3_constants.S3_ACTION_COMPLETE_MULTIPART
 	case MultipartOpAbort:
-		return s3_constants.ACTION_ABORT_MULTIPART
+		return s3_constants.S3_ACTION_ABORT_MULTIPART
 	case MultipartOpList:
-		return s3_constants.ACTION_LIST_MULTIPART_UPLOADS
+		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
 	case MultipartOpListParts:
-		return s3_constants.ACTION_LIST_PARTS
+		return s3_constants.S3_ACTION_LIST_PARTS
 	default:
 		// Fail closed for unmapped operations to prevent unintended access
 		glog.Errorf("unmapped multipart operation: %s", operation)

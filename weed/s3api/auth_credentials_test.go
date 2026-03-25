@@ -1,23 +1,80 @@
 package s3api
 
 import (
+	"context"
+	"crypto/tls"
 	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
 
 	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
-	_ "github.com/seaweedfs/seaweedfs/weed/credential/memory"
 )
+
+type loadConfigurationDropsPoliciesStore struct {
+	*memory.MemoryStore
+	loadManagedPoliciesCalled bool
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stripped := *config
+	stripped.Policies = nil
+	return &stripped, nil
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	store.loadManagedPoliciesCalled = true
+
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	policies := make([]*iam_pb.Policy, 0, len(config.Policies))
+	for _, policy := range config.Policies {
+		policies = append(policies, &iam_pb.Policy{
+			Name:    policy.Name,
+			Content: policy.Content,
+		})
+	}
+
+	return policies, nil
+}
+
+type inlinePolicyRuntimeStore struct {
+	*memory.MemoryStore
+	inlinePolicies map[string]map[string]policy_engine.PolicyDocument
+}
+
+func (store *inlinePolicyRuntimeStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	_ = ctx
+	return store.inlinePolicies, nil
+}
+
+func newPolicyAuthRequest(t *testing.T, method string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+	require.NoError(t, err)
+	return req
+}
 
 func TestIdentityListFileFormat(t *testing.T) {
 
@@ -252,12 +309,459 @@ func TestMatchWildcardPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.pattern+"_"+tt.target, func(t *testing.T) {
-			result := policy_engine.MatchesWildcard(tt.pattern, tt.target)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.target)
 			if result != tt.match {
-				t.Errorf("policy_engine.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
+				t.Errorf("wildcard.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
 			}
 		})
 	}
+}
+
+func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
+	buildRequest := func(t *testing.T, method string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+		assert.NoError(t, err)
+		return req
+	}
+
+	t.Run("policy allow grants access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowGet"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("explicit deny overrides allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("denySecret", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/secret.txt"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denySecret"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("implicit deny when no statement matches", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowOtherBucket", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::other-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowOtherBucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("invalid policy document does not allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("invalidPolicy", "{not-json")
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"invalidPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("notresource excludes denied object", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("denyNotResource", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","NotResource":"arn:aws:s3:::test-bucket/public/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denyNotResource"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "private/secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "public/readme.txt")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("condition securetransport enforced", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowTLSOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*","Condition":{"Bool":{"aws:SecureTransport":"true"}}}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowTLSOnly"},
+		}
+
+		httpReq := buildRequest(t, http.MethodGet)
+		errCode := iam.VerifyActionPermission(httpReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		httpsReq := buildRequest(t, http.MethodGet)
+		httpsReq.TLS = &tls.ConnectionState{}
+		errCode = iam.VerifyActionPermission(httpsReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("attached policies override coarse legacy actions", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("putOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:PutObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			Actions:     []Action{"Write:test-bucket"},
+			PolicyNames: []string{"putOnly"},
+		}
+
+		putErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, putErrCode)
+
+		deleteErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+	})
+
+	t.Run("valid policy updated to invalid denies access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("myPolicy", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"myPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+
+		// Update to invalid JSON — should revoke access.
+		err = iam.PutPolicy("myPolicy", "{broken")
+		assert.NoError(t, err)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("actions based path still works", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		identity := &Identity{
+			Name:    "legacy-user",
+			Account: &AccountAdmin,
+			Actions: []Action{"Read:test-bucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "any-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedGet"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000001", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedGet",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+	assert.True(t, store.loadManagedPoliciesCalled)
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	errCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPoliciesThroughPropagatingStore(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	upstream := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+	wrappedStore := credential.NewPropagatingCredentialStore(upstream, nil, nil)
+	cm := &credential.CredentialManager{Store: wrappedStore}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedGet"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000010", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedGet",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+	assert.True(t, upstream.loadManagedPoliciesCalled)
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	errCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerSyncsPoliciesToIAMManager(t *testing.T) {
+	ctx := context.Background()
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	cm := &credential.CredentialManager{Store: baseStore}
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedPut"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000002", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedPut",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::cli-allowed-bucket","arn:aws:s3:::cli-allowed-bucket/*"]}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(ctx, config))
+
+	iamManager, err := loadIAMManagerFromConfig("", func() string { return "localhost:8888" }, func() string {
+		return "fallback-key-for-zero-config"
+	})
+	assert.NoError(t, err)
+	iamManager.SetUserStore(cm)
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	iam.SetIAMIntegration(NewS3IAMIntegration(iamManager, ""))
+
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	allowedErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-allowed-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, allowedErrCode)
+
+	forbiddenErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-forbidden-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenErrCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	inlinePolicy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
+			},
+		},
+	}
+
+	store := &inlinePolicyRuntimeStore{
+		MemoryStore: baseStore,
+		inlinePolicies: map[string]map[string]policy_engine.PolicyDocument{
+			"inline-user": {
+				"PutOnly": inlinePolicy,
+			},
+		},
+	}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "inline-user",
+				Actions: []string{"Write:test-bucket"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAINLINE0000001", SecretKey: "inline-secret"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("inline-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+	assert.Contains(t, identity.PolicyNames, inlinePolicyRuntimeName("inline-user", "PutOnly"))
+
+	putErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePoliciesThroughPropagatingStore(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	inlinePolicy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
+			},
+		},
+	}
+
+	upstream := &inlinePolicyRuntimeStore{
+		MemoryStore: baseStore,
+		inlinePolicies: map[string]map[string]policy_engine.PolicyDocument{
+			"inline-user": {
+				"PutOnly": inlinePolicy,
+			},
+		},
+	}
+	wrappedStore := credential.NewPropagatingCredentialStore(upstream, nil, nil)
+	cm := &credential.CredentialManager{Store: wrappedStore}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "inline-user",
+				Actions: []string{"Write:test-bucket"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAINLINE0000010", SecretKey: "inline-secret"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("inline-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+	assert.Contains(t, identity.PolicyNames, inlinePolicyRuntimeName("inline-user", "PutOnly"))
+
+	putErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+}
+
+func TestLoadConfigurationDropsPoliciesStoreDoesNotMutateSourceConfig(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	require.NoError(t, baseStore.Initialize(nil, ""))
+
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			{Name: "managedGet", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+	require.NoError(t, baseStore.SaveConfiguration(context.Background(), config))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+
+	stripped, err := store.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, stripped.Policies)
+
+	source, err := baseStore.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	require.Len(t, source.Policies, 1)
+	assert.Equal(t, "managedGet", source.Policies[0].Name)
+}
+
+func TestMergePoliciesIntoConfigurationSkipsNilPolicies(t *testing.T) {
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			nil,
+			{Name: "existing", Content: "old"},
+		},
+	}
+
+	mergePoliciesIntoConfiguration(config, []*iam_pb.Policy{
+		nil,
+		{Name: "", Content: "ignored"},
+		{Name: "existing", Content: "updated"},
+		{Name: "new", Content: "created"},
+	})
+
+	require.Len(t, config.Policies, 3)
+	assert.Nil(t, config.Policies[0])
+	assert.Equal(t, "existing", config.Policies[1].Name)
+	assert.Equal(t, "updated", config.Policies[1].Content)
+	assert.Equal(t, "new", config.Policies[2].Name)
+	assert.Equal(t, "created", config.Policies[2].Content)
 }
 
 type LoadS3ApiConfigurationTestCase struct {
@@ -804,4 +1308,86 @@ func TestStaticIdentityProtection(t *testing.T) {
 	_, ok = iam.nameToIdentity["dynamic-user"]
 	iam.m.RUnlock()
 	assert.False(t, ok, "Dynamic identity should have been removed")
+}
+
+func TestParseExternalUrlToHost(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expected  string
+		expectErr bool
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "HTTPS with default port stripped",
+			input:    "https://api.example.com:443",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP with default port stripped",
+			input:    "http://api.example.com:80",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTPS with non-standard port preserved",
+			input:    "https://api.example.com:9000",
+			expected: "api.example.com:9000",
+		},
+		{
+			name:     "HTTP with non-standard port preserved",
+			input:    "http://api.example.com:8080",
+			expected: "api.example.com:8080",
+		},
+		{
+			name:     "HTTPS without port",
+			input:    "https://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP without port",
+			input:    "http://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "IPv6 with non-standard port",
+			input:    "https://[::1]:9000",
+			expected: "[::1]:9000",
+		},
+		{
+			name:     "IPv6 with default HTTPS port stripped",
+			input:    "https://[::1]:443",
+			expected: "::1",
+		},
+		{
+			name:     "IPv6 without port",
+			input:    "https://[::1]",
+			expected: "::1",
+		},
+		{
+			name:      "invalid URL",
+			input:     "://not-a-url",
+			expectErr: true,
+		},
+		{
+			name:      "missing host",
+			input:     "https://",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseExternalUrlToHost(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

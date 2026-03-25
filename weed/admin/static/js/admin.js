@@ -1,5 +1,10 @@
 // SeaweedFS Dashboard JavaScript
 
+// URL prefix helper for subdirectory deployment
+function basePath(path) {
+    return (window.__BASE_PATH__ || '') + path;
+}
+
 // Global variables
 let bucketToDelete = '';
 
@@ -11,7 +16,7 @@ document.addEventListener('DOMContentLoaded', function () {
     setupFileManagerEventHandlers();
 
     // Initialize delete button visibility on file browser page
-    if (window.location.pathname === '/files') {
+    if (window.location.pathname === basePath('/files')) {
         updateDeleteSelectedButton();
     }
 });
@@ -31,6 +36,9 @@ function initializeDashboard() {
 
     // Set up submenu behavior
     setupSubmenuBehavior();
+
+    // Set up mobile sidebar behavior
+    setupMobileSidebar();
 }
 
 // HTMX event listeners
@@ -63,7 +71,7 @@ function initializeTooltips() {
 function setupAutoRefresh() {
     // Refresh dashboard data every 30 seconds
     setInterval(function () {
-        if (window.location.pathname === '/dashboard') {
+        if (window.location.pathname === basePath('/dashboard')) {
             htmx.trigger('#dashboard-content', 'refresh');
         }
     }, 30000);
@@ -192,6 +200,33 @@ function setupSubmenuBehavior() {
         });
     }
 
+}
+
+// Mobile sidebar toggle and backdrop behavior
+function setupMobileSidebar() {
+    const sidebar = document.getElementById('sidebarMenu');
+    const backdrop = document.getElementById('sidebarBackdrop');
+    if (!sidebar || !backdrop) return;
+
+    const hideSidebar = () => {
+        const bsCollapse = bootstrap.Collapse.getInstance(sidebar);
+        if (bsCollapse) {
+            bsCollapse.hide();
+        }
+    };
+
+    // Close sidebar when backdrop is clicked
+    backdrop.addEventListener('click', hideSidebar);
+
+    // Close sidebar when a nav link is clicked (on mobile)
+    const sidebarToggler = document.querySelector("button[data-bs-target='#sidebarMenu']");
+    sidebar.querySelectorAll('a.nav-link:not([data-bs-toggle="collapse"])').forEach(function (link) {
+        link.addEventListener('click', function () {
+            if (sidebarToggler && getComputedStyle(sidebarToggler).display !== 'none') {
+                hideSidebar();
+            }
+        });
+    });
 }
 
 // Loading indicator functions
@@ -436,7 +471,7 @@ async function handleCreateBucket(event) {
     };
 
     try {
-        const response = await fetch('/api/s3/buckets', {
+        const response = await fetch(basePath('/api/s3/buckets'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -448,7 +483,7 @@ async function handleCreateBucket(event) {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Bucket "${bucketData.name}" created successfully!`);
+            showAlert(`Bucket "${bucketData.name}" created successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('createBucketModal'));
@@ -463,11 +498,11 @@ async function handleCreateBucket(event) {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to create bucket');
+            showAlert(result.error || 'Failed to create bucket', 'danger');
         }
     } catch (error) {
         console.error('Error creating bucket:', error);
-        showAlert('danger', 'Network error occurred while creating bucket');
+        showAlert('Network error occurred while creating bucket', 'danger');
     }
 }
 
@@ -500,7 +535,7 @@ async function deleteBucket() {
     }
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketToDelete}`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketToDelete}`), {
             method: 'DELETE'
         });
 
@@ -508,7 +543,7 @@ async function deleteBucket() {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Bucket "${bucketToDelete}" deleted successfully!`);
+            showAlert(`Bucket "${bucketToDelete}" deleted successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('deleteBucketModal'));
@@ -520,11 +555,11 @@ async function deleteBucket() {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to delete bucket');
+            showAlert(result.error || 'Failed to delete bucket', 'danger');
         }
     } catch (error) {
         console.error('Error deleting bucket:', error);
-        showAlert('danger', 'Network error occurred while deleting bucket');
+        showAlert('Network error occurred while deleting bucket', 'danger');
     }
 
     bucketToDelete = '';
@@ -579,38 +614,7 @@ function exportBucketList() {
     window.URL.revokeObjectURL(url);
 }
 
-// Show alert message
-function showAlert(type, message) {
-    // Remove existing alerts
-    const existingAlerts = document.querySelectorAll('.alert-floating');
-    existingAlerts.forEach(alert => alert.remove());
-
-    // Create new alert
-    const alert = document.createElement('div');
-    alert.className = `alert alert-${type} alert-dismissible fade show alert-floating`;
-    alert.style.cssText = `
-        position: fixed;
-        top: 20px;
-        right: 20px;
-        z-index: 9999;
-        min-width: 300px;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    `;
-
-    alert.innerHTML = `
-        ${message}
-        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-    `;
-
-    document.body.appendChild(alert);
-
-    // Auto-remove after 5 seconds
-    setTimeout(() => {
-        if (alert.parentNode) {
-            alert.remove();
-        }
-    }, 5000);
-}
+// showAlert is provided by modal-alerts.js with signature: showAlert(message, type)
 
 // Format date for display
 function formatDate(date) {
@@ -621,7 +625,7 @@ function formatDate(date) {
 function adminCopyToClipboard(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-            showAlert('success', 'Copied to clipboard!');
+            showAlert('Copied to clipboard!', 'success');
         }).catch(err => {
             console.error('Failed to copy text: ', err);
             fallbackCopyText(text);
@@ -647,13 +651,13 @@ function fallbackCopyText(text) {
     try {
         const successful = document.execCommand('copy');
         if (successful) {
-            showAlert('success', 'Copied to clipboard!');
+            showAlert('Copied to clipboard!', 'success');
         } else {
-            showAlert('danger', 'Failed to copy to clipboard');
+            showAlert('Failed to copy to clipboard', 'danger');
         }
     } catch (err) {
         console.error('Fallback copy failed: ', err);
-        showAlert('danger', 'Failed to copy to clipboard');
+        showAlert('Failed to copy to clipboard', 'danger');
     }
 
     document.body.removeChild(textArea);
@@ -734,7 +738,7 @@ function exportVolumes() {
 function exportCollections() {
     const table = document.getElementById('collectionsTable');
     if (!table) {
-        showAlert('error', 'Collections table not found');
+        showAlert('Collections table not found', 'error');
         return;
     }
 
@@ -770,7 +774,7 @@ function exportCollections() {
 function exportMasters() {
     const table = document.getElementById('mastersTable');
     if (!table) {
-        showAlert('error', 'Masters table not found');
+        showAlert('Masters table not found', 'error');
         return;
     }
 
@@ -804,7 +808,7 @@ function exportMasters() {
 function exportFilers() {
     const table = document.getElementById('filersTable');
     if (!table) {
-        showAlert('error', 'Filers table not found');
+        showAlert('Filers table not found', 'error');
         return;
     }
 
@@ -840,7 +844,7 @@ function exportFilers() {
 function exportUsers() {
     const table = document.getElementById('usersTable');
     if (!table) {
-        showAlert('error', 'Users table not found');
+        showAlert('Users table not found', 'error');
         return;
     }
 
@@ -886,7 +890,7 @@ function confirmDeleteCollection(button) {
 // Delete collection
 async function deleteCollection(collectionName) {
     try {
-        const response = await fetch(`/api/collections/${collectionName}`, {
+        const response = await fetch(basePath(`/api/collections/${collectionName}`), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -990,7 +994,7 @@ function confirmDeleteSelected() {
     const selectedPaths = getSelectedFilePaths();
 
     if (selectedPaths.length === 0) {
-        showAlert('warning', 'No files selected');
+        showAlert('No files selected', 'warning');
         return;
     }
 
@@ -1011,7 +1015,7 @@ function confirmDeleteSelected() {
 // Delete multiple selected files
 async function deleteSelectedFiles(filePaths) {
     if (!filePaths || filePaths.length === 0) {
-        showAlert('warning', 'No files selected');
+        showAlert('No files selected', 'warning');
         return;
     }
 
@@ -1022,7 +1026,7 @@ async function deleteSelectedFiles(filePaths) {
     deleteBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Deleting...';
 
     try {
-        const response = await fetch('/api/files/delete-multiple', {
+        const response = await fetch(basePath('/api/files/delete-multiple'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1035,9 +1039,9 @@ async function deleteSelectedFiles(filePaths) {
 
             if (result.deleted > 0) {
                 if (result.failed === 0) {
-                    showAlert('success', `Successfully deleted ${result.deleted} item(s)`);
+                    showAlert(`Successfully deleted ${result.deleted} item(s)`, 'success');
                 } else {
-                    showAlert('warning', `Deleted ${result.deleted} item(s), failed to delete ${result.failed} item(s)`);
+                    showAlert(`Deleted ${result.deleted} item(s), failed to delete ${result.failed} item(s)`, 'warning');
                     if (result.errors && result.errors.length > 0) {
                         console.warn('Deletion errors:', result.errors);
                     }
@@ -1052,15 +1056,15 @@ async function deleteSelectedFiles(filePaths) {
                 if (result.errors && result.errors.length > 0) {
                     errorMessage += ': ' + result.errors.join(', ');
                 }
-                showAlert('error', errorMessage);
+                showAlert(errorMessage, 'error');
             }
         } else {
             const error = await response.json();
-            showAlert('error', `Failed to delete files: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to delete files: ${error.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Delete error:', error);
-        showAlert('error', 'Failed to delete files');
+        showAlert('Failed to delete files', 'error');
     } finally {
         // Re-enable the button
         deleteBtn.disabled = false;
@@ -1110,7 +1114,7 @@ async function submitCreateFolder() {
     submitButton.innerHTML = '<i class="fas fa-spinner fa-spin me-1"></i>Creating...';
 
     try {
-        const response = await fetch('/api/files/create-folder', {
+        const response = await fetch(basePath('/api/files/create-folder'), {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1281,7 +1285,7 @@ async function submitUploadFile() {
 function exportFileList() {
     const table = document.getElementById('fileTable');
     if (!table) {
-        showAlert('error', 'File table not found');
+        showAlert('File table not found', 'error');
         return;
     }
 
@@ -1323,11 +1327,11 @@ function downloadFile(filePath) {
 // View file
 async function viewFile(filePath) {
     try {
-        const response = await fetch(`/api/files/view?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/view?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
-            showAlert('error', `Failed to view file: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to view file: ${error.error || 'Unknown error'}`, 'error');
             return;
         }
 
@@ -1336,18 +1340,18 @@ async function viewFile(filePath) {
 
     } catch (error) {
         console.error('View file error:', error);
-        showAlert('error', 'Failed to view file');
+        showAlert('Failed to view file', 'error');
     }
 }
 
 // Show file properties
 async function showProperties(filePath) {
     try {
-        const response = await fetch(`/api/files/properties?path=${encodeURIComponent(filePath)}`);
+        const response = await fetch(basePath(`/api/files/properties?path=${encodeURIComponent(filePath)}`));
 
         if (!response.ok) {
             const error = await response.json();
-            showAlert('error', `Failed to get file properties: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to get file properties: ${error.error || 'Unknown error'}`, 'error');
             return;
         }
 
@@ -1356,7 +1360,7 @@ async function showProperties(filePath) {
 
     } catch (error) {
         console.error('Properties error:', error);
-        showAlert('error', 'Failed to get file properties');
+        showAlert('Failed to get file properties', 'error');
     }
 }
 
@@ -1374,7 +1378,7 @@ function confirmDelete(filePath) {
 // Delete file/folder
 async function deleteFile(filePath) {
     try {
-        const response = await fetch('/api/files/delete', {
+        const response = await fetch(basePath('/api/files/delete'), {
             method: 'DELETE',
             headers: {
                 'Content-Type': 'application/json',
@@ -1383,16 +1387,16 @@ async function deleteFile(filePath) {
         });
 
         if (response.ok) {
-            showAlert('success', `Successfully deleted "${filePath}"`);
+            showAlert(`Successfully deleted "${filePath}"`, 'success');
             // Reload the page to update the file list
             window.location.reload();
         } else {
             const error = await response.json();
-            showAlert('error', `Failed to delete file: ${error.error || 'Unknown error'}`);
+            showAlert(`Failed to delete file: ${error.error || 'Unknown error'}`, 'error');
         }
     } catch (error) {
         console.error('Delete error:', error);
-        showAlert('error', 'Failed to delete file');
+        showAlert('Failed to delete file', 'error');
     }
 }
 
@@ -1695,7 +1699,7 @@ async function handleUpdateQuota(event) {
     };
 
     try {
-        const response = await fetch(`/api/s3/buckets/${bucketName}/quota`, {
+        const response = await fetch(basePath(`/api/s3/buckets/${bucketName}/quota`), {
             method: 'PUT',
             headers: {
                 'Content-Type': 'application/json',
@@ -1707,7 +1711,7 @@ async function handleUpdateQuota(event) {
 
         if (response.ok) {
             // Success
-            showAlert('success', `Quota for bucket "${bucketName}" updated successfully!`);
+            showAlert(`Quota for bucket "${bucketName}" updated successfully!`, 'success');
 
             // Close modal
             const modal = bootstrap.Modal.getInstance(document.getElementById('manageQuotaModal'));
@@ -1719,11 +1723,11 @@ async function handleUpdateQuota(event) {
             }, 1500);
         } else {
             // Error
-            showAlert('danger', result.error || 'Failed to update bucket quota');
+            showAlert(result.error || 'Failed to update bucket quota', 'danger');
         }
     } catch (error) {
         console.error('Error updating bucket quota:', error);
-        showAlert('danger', 'Network error occurred while updating bucket quota');
+        showAlert('Network error occurred while updating bucket quota', 'danger');
     }
 }
 
@@ -2197,10 +2201,6 @@ function showNewAccessKeyModal(accessKeyData) {
             <i class="fas fa-check-circle me-2"></i>
             <strong>Success!</strong> Your new access key has been created.
         </div>
-        <div class="alert alert-warning">
-            <i class="fas fa-exclamation-triangle me-2"></i>
-            <strong>Important:</strong> This is the only time the secret key will be displayed. Please save it securely.
-        </div>
         <div class="mb-3">
             <label class="form-label"><strong>Access Key:</strong></label>
             <div class="input-group">
@@ -2244,21 +2244,21 @@ function copyFromInput(inputId) {
         try {
             const successful = document.execCommand('copy');
             if (successful) {
-                showAlert('success', 'Copied to clipboard!');
+                showAlert('Copied to clipboard!', 'success');
             } else {
                 // Try modern clipboard API as fallback
                 navigator.clipboard.writeText(input.value).then(() => {
-                    showAlert('success', 'Copied to clipboard!');
+                    showAlert('Copied to clipboard!', 'success');
                 }).catch(() => {
-                    showAlert('danger', 'Failed to copy');
+                    showAlert('Failed to copy', 'danger');
                 });
             }
         } catch (err) {
             // Try modern clipboard API as fallback
             navigator.clipboard.writeText(input.value).then(() => {
-                showAlert('success', 'Copied to clipboard!');
+                showAlert('Copied to clipboard!', 'success');
             }).catch(() => {
-                showAlert('danger', 'Failed to copy');
+                showAlert('Failed to copy', 'danger');
             });
         }
     }

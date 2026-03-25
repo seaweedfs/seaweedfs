@@ -34,6 +34,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -58,6 +59,7 @@ type S3ApiServerOption struct {
 	Cipher                    bool // encrypt data on volume servers
 	BindIp                    string
 	GrpcPort                  int
+	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
 }
 
 type S3ApiServer struct {
@@ -274,6 +276,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		filer.IamConfigDirectory + "/identities",
 		filer.IamConfigDirectory + "/policies",
 		filer.IamConfigDirectory + "/service_accounts",
+		filer.IamConfigDirectory + "/groups",
 	})
 
 	// Start bucket size metrics collection in background
@@ -539,6 +542,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
+	apiRouter.Use(request_id.Middleware)
 
 	// S3 Tables API endpoint
 	// POST / with X-Amz-Target: S3Tables.<OperationName>
@@ -590,7 +594,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// objects with query
 
 		// CopyObjectPart
-		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", `.*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
+		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", `(?i).*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// PutObjectPart
 		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectPartHandler, ACTION_WRITE)), "PUT")).Queries("partNumber", "{partNumber:[0-9]+}", "uploadId", "{uploadId:.*}")
 		// CompleteMultipartUpload
@@ -604,6 +608,8 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		// ListMultipartUploads
 		bucket.Methods(http.MethodGet).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.ListMultipartUploadsHandler, ACTION_READ)), "GET")).Queries("uploads", "")
 
+		// GetObjectAttributes
+		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectAttributesHandler, ACTION_READ)), "GET")).Queries("attributes", "")
 		// GetObjectTagging
 		bucket.Methods(http.MethodGet).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.GetObjectTaggingHandler, ACTION_READ)), "GET")).Queries("tagging", "")
 		// PutObjectTagging
@@ -642,7 +648,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		}, ACTION_READ), "GET"))
 
 		// CopyObject
-		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", ".*?(\\/|%2F).*?").HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectHandler, ACTION_WRITE)), "COPY"))
+		bucket.Methods(http.MethodPut).Path(objectPath).HeadersRegexp("X-Amz-Copy-Source", `(?i).*?(\/|%2F).*?`).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.CopyObjectHandler, ACTION_WRITE)), "COPY"))
 		// PutObject
 		bucket.Methods(http.MethodPut).Path(objectPath).HandlerFunc(track(s3a.iam.Auth(s3a.cb.Limit(s3a.PutObjectHandler, ACTION_WRITE)), "PUT"))
 		// DeleteObject
@@ -884,10 +890,10 @@ func loadIAMManagerFromConfig(configPath string, filerAddressProvider func() str
 		configRoot.Policy.StoreType = sts.StoreTypeMemory
 	}
 	if configRoot.Policy.DefaultEffect == "" {
-		// Default to Allow (open) with in-memory store so that
-		// users can start using STS without locking themselves out immediately.
-		// For other stores (e.g. filer), default to Deny (closed) for security.
-		if configRoot.Policy.StoreType == sts.StoreTypeMemory {
+		// Secure default when an explicit IAM config file is provided:
+		// omitted defaultEffect should be Deny to avoid unintentional privilege escalation.
+		// Keep zero-config startup behavior (no config file path) open for memory store.
+		if configPath == "" && configRoot.Policy.StoreType == sts.StoreTypeMemory {
 			configRoot.Policy.DefaultEffect = sts.EffectAllow
 		} else {
 			configRoot.Policy.DefaultEffect = sts.EffectDeny

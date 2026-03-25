@@ -427,10 +427,11 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	// HTTP method
 	values["s3:RequestMethod"] = []string{r.Method}
 
-	// Extract custom headers
+	// Extract custom headers with s3: prefix for AWS-compatible condition keys
 	for key, headerValues := range r.Header {
-		if strings.HasPrefix(strings.ToLower(key), "x-amz-") {
-			values[strings.ToLower(key)] = headerValues
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-") {
+			values["s3:"+lowerKey] = headerValues
 		}
 	}
 

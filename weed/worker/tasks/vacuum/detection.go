@@ -77,7 +77,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 	// Log debug summary if no tasks were created
 	if len(results) == 0 && len(metrics) > 0 {
 		totalVolumes := len(metrics)
-		glog.Infof("VACUUM: No tasks created for %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
+		glog.V(1).Infof("VACUUM: No tasks created for %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
 			totalVolumes, vacuumConfig.GarbageThreshold*100, minVolumeAge, skippedDueToGarbage, skippedDueToAge)
 
 		// Show details for first few volumes
@@ -85,7 +85,7 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			if i >= 3 { // Limit to first 3 volumes
 				break
 			}
-			glog.Infof("VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
+			glog.V(1).Infof("VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
 				metric.VolumeID, metric.GarbageRatio*100, vacuumConfig.GarbageThreshold*100,
 				metric.Age.Truncate(time.Minute), minVolumeAge.Truncate(time.Minute))
 		}
@@ -98,10 +98,10 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 // This function is moved from MaintenanceIntegration.createVacuumTaskParams to the detection logic
 func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.VolumeHealthMetrics, vacuumConfig *Config, clusterInfo *types.ClusterInfo) *worker_pb.TaskParams {
 	// Use configured values or defaults
-	garbageThreshold := 0.3                    // Default 30%
-	verifyChecksum := true                     // Default to verify
-	batchSize := int32(1000)                   // Default batch size
-	workingDir := "/tmp/seaweedfs_vacuum_work" // Default working directory
+	garbageThreshold := 0.3  // Default 30%
+	verifyChecksum := true   // Default to verify
+	batchSize := int32(1000) // Default batch size
+	workingDir := ""         // Use worker-provided default if empty
 
 	if vacuumConfig != nil {
 		garbageThreshold = vacuumConfig.GarbageThreshold

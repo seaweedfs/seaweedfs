@@ -40,3 +40,47 @@ func TestOrderedLock(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestShouldWaitForSharedLock(t *testing.T) {
+	lock := &ActiveLock{ID: 2, lockType: SharedLock}
+	entry := &LockEntry{
+		waiters: []*ActiveLock{{ID: 1}, lock},
+	}
+
+	if !shouldWaitForSharedLock(lock, entry) {
+		t.Fatal("shared lock should wait behind earlier waiters")
+	}
+
+	entry.waiters = []*ActiveLock{lock}
+	entry.activeExclusiveLockOwnerCount = 1
+	if !shouldWaitForSharedLock(lock, entry) {
+		t.Fatal("shared lock should wait while an exclusive owner is active")
+	}
+
+	lock.isDeleted = true
+	if shouldWaitForSharedLock(lock, entry) {
+		t.Fatal("deleted shared lock should stop waiting even if an exclusive owner is active")
+	}
+}
+
+func TestShouldWaitForExclusiveLock(t *testing.T) {
+	lock := &ActiveLock{ID: 2, lockType: ExclusiveLock}
+	entry := &LockEntry{
+		waiters: []*ActiveLock{{ID: 1}, lock},
+	}
+
+	if !shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("exclusive lock should wait behind earlier waiters")
+	}
+
+	entry.waiters = []*ActiveLock{lock}
+	entry.activeSharedLockOwnerCount = 1
+	if !shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("exclusive lock should wait while shared owners are active")
+	}
+
+	lock.isDeleted = true
+	if shouldWaitForExclusiveLock(lock, entry) {
+		t.Fatal("deleted exclusive lock should stop waiting even if shared owners are active")
+	}
+}

@@ -1,7 +1,6 @@
 package s3tables
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -240,10 +238,6 @@ func (h *S3TablesHandler) handleCreateTable(w http.ResponseWriter, r *http.Reque
 			if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyTags, tagsBytes); err != nil {
 				return err
 			}
-		}
-
-		if err := h.updateTableLocationMapping(r.Context(), client, "", req.MetadataLocation, tablePath); err != nil {
-			glog.V(1).Infof("failed to update table location mapping for %s: %v", req.MetadataLocation, err)
 		}
 
 		return nil
@@ -499,7 +493,7 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err == nil {
 				namespacePolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch namespace policy: %v", err)
+				return fmt.Errorf("failed to fetch namespace policy: %w", err)
 			}
 
 			// Fetch bucket metadata and policy
@@ -509,17 +503,17 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 					return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 				}
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket metadata: %v", err)
+				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
 
 			policyData, err = h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyPolicy)
 			if err == nil {
 				bucketPolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return err
+				return fmt.Errorf("failed to read bucket tags: %w", err)
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -545,6 +539,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 
 			tables, paginationToken, err = h.listTablesInNamespaceWithClient(r, client, bucketName, namespaceName, req.Prefix, req.ContinuationToken, maxTables)
+			if err != nil {
+				return fmt.Errorf("list tables in namespace %v: %w", namespaceName, err)
+			}
 		} else {
 			// List tables across all namespaces in bucket
 			bucketPath := GetTableBucketPath(bucketName)
@@ -555,10 +552,10 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			// Fetch bucket metadata and policy
 			data, err := h.getExtendedAttribute(r.Context(), client, bucketPath, ExtendedKeyMetadata)
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to fetch bucket metadata: %w", err)
 			}
 			if err := json.Unmarshal(data, &bucketMeta); err != nil {
-				return err
+				return fmt.Errorf("failed to unmarshal bucket metadata: %w", err)
 			}
 
 			// Fetch bucket policy if it exists
@@ -566,10 +563,10 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			if err == nil {
 				bucketPolicy = string(policyData)
 			} else if !errors.Is(err, ErrAttributeNotFound) {
-				return fmt.Errorf("failed to fetch bucket policy: %v", err)
+				return fmt.Errorf("failed to fetch bucket policy: %w", err)
 			}
 			if tags, err := h.readTags(r.Context(), client, bucketPath); err != nil {
-				return err
+				return fmt.Errorf("failed to read bucket tags: %w", err)
 			} else if tags != nil {
 				bucketTags = tags
 			}
@@ -586,6 +583,9 @@ func (h *S3TablesHandler) handleListTables(w http.ResponseWriter, r *http.Reques
 			}
 
 			tables, paginationToken, err = h.listTablesInAllNamespaces(r, client, bucketName, req.Prefix, req.ContinuationToken, maxTables)
+			if err != nil {
+				return fmt.Errorf("list tables in all namespaces: %w", err)
+			}
 		}
 		return err
 	})
@@ -768,8 +768,7 @@ func (h *S3TablesHandler) listTablesInAllNamespaces(r *http.Request, client file
 
 			nsTables, nsToken, err := h.listTablesInNamespaceWithClient(r, client, bucketName, namespace, prefix, tableNameFilter, maxTables-len(tables))
 			if err != nil {
-				glog.Warningf("S3Tables: failed to list tables in namespace %s/%s: %v", bucketName, namespace, err)
-				continue
+				return nil, "", fmt.Errorf("list tables in namespace %s: %w", namespace, err)
 			}
 
 			tables = append(tables, nsTables...)
@@ -938,9 +937,6 @@ func (h *S3TablesHandler) handleDeleteTable(w http.ResponseWriter, r *http.Reque
 		if err := h.deleteDirectory(r.Context(), client, tablePath); err != nil {
 			return err
 		}
-		if err := h.deleteTableLocationMapping(r.Context(), client, metadata.MetadataLocation, tablePath); err != nil {
-			glog.V(1).Infof("failed to delete table location mapping for %s: %v", metadata.MetadataLocation, err)
-		}
 		return nil
 	})
 
@@ -1085,9 +1081,6 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		return ErrVersionTokenMismatch
 	}
 
-	// Capture old metadata location before mutation for stale mapping cleanup
-	oldMetadataLocation := metadata.MetadataLocation
-
 	// Update metadata
 	if req.Metadata != nil {
 		if metadata.Metadata == nil {
@@ -1126,9 +1119,6 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		if err := h.setExtendedAttribute(r.Context(), client, tablePath, ExtendedKeyMetadata, metadataBytes); err != nil {
 			return err
 		}
-		if err := h.updateTableLocationMapping(r.Context(), client, oldMetadataLocation, metadata.MetadataLocation, tablePath); err != nil {
-			glog.V(1).Infof("failed to update table location mapping for %s -> %s: %v", oldMetadataLocation, metadata.MetadataLocation, err)
-		}
 		return nil
 	})
 
@@ -1142,106 +1132,5 @@ func (h *S3TablesHandler) handleUpdateTable(w http.ResponseWriter, r *http.Reque
 		MetadataLocation: metadata.MetadataLocation,
 		VersionToken:     metadata.VersionToken,
 	})
-	return nil
-}
-
-func (h *S3TablesHandler) updateTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, oldMetadataLocation, newMetadataLocation, tablePath string) error {
-	newTableLocationBucket, ok := parseTableLocationBucket(newMetadataLocation)
-	if !ok {
-		return nil
-	}
-	tableBucketPath, ok := tableBucketPathFromTablePath(tablePath)
-	if !ok {
-		return fmt.Errorf("invalid table path for location mapping: %s", tablePath)
-	}
-
-	if err := h.ensureDirectory(ctx, client, GetTableLocationMappingDir()); err != nil {
-		return err
-	}
-	if err := h.ensureTableLocationMappingBucketDir(ctx, client, newTableLocationBucket); err != nil {
-		return err
-	}
-
-	// If the metadata location changed, remove this table's stale mapping entry from the old bucket.
-	if oldMetadataLocation != "" && oldMetadataLocation != newMetadataLocation {
-		oldTableLocationBucket, ok := parseTableLocationBucket(oldMetadataLocation)
-		if ok && oldTableLocationBucket != newTableLocationBucket {
-			if err := h.removeTableLocationMappingEntry(ctx, client, oldTableLocationBucket, tablePath); err != nil {
-				glog.V(1).Infof("failed to delete stale mapping for %s: %v", oldTableLocationBucket, err)
-			}
-		}
-	}
-
-	return h.upsertFile(ctx, client, GetTableLocationMappingEntryPath(newTableLocationBucket, tablePath), []byte(tableBucketPath))
-}
-
-func (h *S3TablesHandler) deleteTableLocationMapping(ctx context.Context, client filer_pb.SeaweedFilerClient, metadataLocation, tablePath string) error {
-	tableLocationBucket, ok := parseTableLocationBucket(metadataLocation)
-	if !ok {
-		return nil
-	}
-	return h.removeTableLocationMappingEntry(ctx, client, tableLocationBucket, tablePath)
-}
-
-func (h *S3TablesHandler) ensureTableLocationMappingBucketDir(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
-	mappingDir := GetTableLocationMappingDir()
-	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
-
-	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
-		Directory: mappingDir,
-		Name:      tableLocationBucket,
-	})
-	if err == nil {
-		if resp != nil && resp.Entry != nil && resp.Entry.IsDirectory {
-			return nil
-		}
-		if removeErr := h.deleteEntryIfExists(ctx, client, bucketMappingPath); removeErr != nil && !errors.Is(removeErr, filer_pb.ErrNotFound) {
-			return removeErr
-		}
-	} else if !errors.Is(err, filer_pb.ErrNotFound) {
-		return err
-	}
-
-	return h.ensureDirectory(ctx, client, bucketMappingPath)
-}
-
-func (h *S3TablesHandler) removeTableLocationMappingEntry(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket, tablePath string) error {
-	entryPath := GetTableLocationMappingEntryPath(tableLocationBucket, tablePath)
-	if err := h.deleteEntryIfExists(ctx, client, entryPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return err
-	}
-	return h.removeTableLocationMappingBucketDirIfEmpty(ctx, client, tableLocationBucket)
-}
-
-func (h *S3TablesHandler) removeTableLocationMappingBucketDirIfEmpty(ctx context.Context, client filer_pb.SeaweedFilerClient, tableLocationBucket string) error {
-	bucketMappingPath := GetTableLocationMappingPath(tableLocationBucket)
-
-	stream, err := client.ListEntries(ctx, &filer_pb.ListEntriesRequest{
-		Directory: bucketMappingPath,
-		Limit:     1,
-	})
-	if err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			return nil
-		}
-		return err
-	}
-
-	for {
-		resp, recvErr := stream.Recv()
-		if recvErr == io.EOF {
-			break
-		}
-		if recvErr != nil {
-			return recvErr
-		}
-		if resp != nil && resp.Entry != nil {
-			return nil
-		}
-	}
-
-	if err := h.deleteEntryIfExists(ctx, client, bucketMappingPath); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
-		return err
-	}
 	return nil
 }

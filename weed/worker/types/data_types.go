@@ -6,13 +6,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 )
 
+// ReplicaLocation identifies where a volume replica lives.
+type ReplicaLocation struct {
+	DataCenter string
+	Rack       string
+	NodeID     string
+}
+
 // ClusterInfo contains cluster information for task detection
 type ClusterInfo struct {
-	Servers        []*VolumeServerInfo
-	TotalVolumes   int
-	TotalServers   int
-	LastUpdated    time.Time
-	ActiveTopology *topology.ActiveTopology // Added for destination planning in detection
+	Servers          []*VolumeServerInfo
+	TotalVolumes     int
+	TotalServers     int
+	LastUpdated      time.Time
+	ActiveTopology   *topology.ActiveTopology // Added for destination planning in detection
+	VolumeReplicaMap map[uint32][]ReplicaLocation
 }
 
 // VolumeHealthMetrics contains health information about a volume (simplified)

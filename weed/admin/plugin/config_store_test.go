@@ -208,6 +208,81 @@ func TestConfigStoreMonitorStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestConfigStoreSaveJobTypeConfigIfNotExists(t *testing.T) {
+	t.Parallel()
+
+	t.Run("in-memory", func(t *testing.T) {
+		t.Parallel()
+		store, err := NewConfigStore("")
+		if err != nil {
+			t.Fatalf("NewConfigStore: %v", err)
+		}
+		testSaveJobTypeConfigIfNotExists(t, store)
+	})
+
+	t.Run("on-disk", func(t *testing.T) {
+		t.Parallel()
+		store, err := NewConfigStore(t.TempDir())
+		if err != nil {
+			t.Fatalf("NewConfigStore: %v", err)
+		}
+		testSaveJobTypeConfigIfNotExists(t, store)
+	})
+}
+
+func testSaveJobTypeConfigIfNotExists(t *testing.T, store *ConfigStore) {
+	t.Helper()
+
+	cfg := &plugin_pb.PersistedJobTypeConfig{
+		JobType:      "admin_script",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: true},
+	}
+
+	// First call should save.
+	saved, err := store.SaveJobTypeConfigIfNotExists(cfg)
+	if err != nil {
+		t.Fatalf("first SaveJobTypeConfigIfNotExists: %v", err)
+	}
+	if !saved {
+		t.Fatal("expected first call to save the config")
+	}
+
+	// Second call with same job type should not save.
+	saved, err = store.SaveJobTypeConfigIfNotExists(&plugin_pb.PersistedJobTypeConfig{
+		JobType:      "admin_script",
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{Enabled: false},
+	})
+	if err != nil {
+		t.Fatalf("second SaveJobTypeConfigIfNotExists: %v", err)
+	}
+	if saved {
+		t.Fatal("expected second call to be a no-op")
+	}
+
+	// Verify the original config was preserved.
+	loaded, err := store.LoadJobTypeConfig("admin_script")
+	if err != nil {
+		t.Fatalf("LoadJobTypeConfig: %v", err)
+	}
+	if loaded == nil {
+		t.Fatal("expected config to exist")
+	}
+	if !loaded.AdminRuntime.Enabled {
+		t.Fatal("expected original config (Enabled=true) to be preserved")
+	}
+
+	// Different job type should still save.
+	saved, err = store.SaveJobTypeConfigIfNotExists(&plugin_pb.PersistedJobTypeConfig{
+		JobType: "vacuum",
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfigIfNotExists for different type: %v", err)
+	}
+	if !saved {
+		t.Fatal("expected save for a different job type")
+	}
+}
+
 func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 	t.Parallel()
 
@@ -253,5 +328,52 @@ func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 	}
 	if got.ResultOutputValues == nil {
 		t.Fatalf("expected result output values")
+	}
+}
+
+func TestConfigStoreDeleteJobDetail(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewConfigStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+
+	input := TrackedJob{
+		JobID:   "job-to-delete",
+		JobType: "vacuum",
+		Summary: "will be deleted",
+	}
+
+	if err := store.SaveJobDetail(input); err != nil {
+		t.Fatalf("SaveJobDetail: %v", err)
+	}
+
+	// Verify it was persisted.
+	got, err := store.LoadJobDetail(input.JobID)
+	if err != nil {
+		t.Fatalf("LoadJobDetail before delete: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("expected saved job detail, got nil")
+	}
+
+	// Delete it.
+	if err := store.DeleteJobDetail(input.JobID); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+
+	// Verify it is gone.
+	got, err = store.LoadJobDetail(input.JobID)
+	if err != nil {
+		t.Fatalf("LoadJobDetail after delete: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil after delete, got %+v", got)
+	}
+
+	// Deleting again should be a no-op, not an error.
+	if err := store.DeleteJobDetail(input.JobID); err != nil {
+		t.Fatalf("second DeleteJobDetail: %v", err)
 	}
 }

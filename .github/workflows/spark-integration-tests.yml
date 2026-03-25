@@ -43,7 +43,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v6
       with:
-        go-version: '1.24'
+        go-version-file: 'go.mod'
 
     - name: Build SeaweedFS binary
       run: |
@@ -125,7 +125,7 @@ jobs:
 
     - name: Upload test results
       if: always()
-      uses: actions/upload-artifact@v6
+      uses: actions/upload-artifact@v7
       with:
         name: spark-test-results
         path: test/java/spark/target/surefire-reports/
@@ -133,7 +133,7 @@ jobs:
 
     - name: Publish test report
       if: always()
-      uses: dorny/test-reporter@v2
+      uses: dorny/test-reporter@v3
       with:
         name: Spark Test Results
         path: test/java/spark/target/surefire-reports/*.xml

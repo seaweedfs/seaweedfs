@@ -26,17 +26,14 @@ func TestPyIcebergRestCatalog(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping PyIceberg integration test")
 	}
 
-	env.StartSeaweedFS(t)
-
 	// Create the test bucket first
-	bucketName := "pyiceberg-compat-test"
+	bucketName := "pyiceberg-compat-test-" + randomSuffix()
 	createTableBucket(t, env, bucketName)
 
 	// Build the test working directory path
@@ -84,8 +81,7 @@ func TestPyIcebergRestCatalogAuthenticated(t *testing.T) {
 		t.Skip("Skipping integration test in short mode")
 	}
 
-	env := NewTestEnvironment(t)
-	defer env.Cleanup(t)
+	env := sharedEnv
 
 	if !env.dockerAvailable {
 		t.Skip("Docker not available, skipping PyIceberg integration test")
@@ -95,11 +91,8 @@ func TestPyIcebergRestCatalogAuthenticated(t *testing.T) {
 	testAccessKey := "admin"
 	testSecretKey := "admin"
 
-	// Start SeaweedFS (it will use default admin credentials from environment if set)
-	env.StartSeaweedFS(t)
-
 	// Create the test bucket first (using unauthenticated request, which works with DefaultAllow)
-	bucketName := "pyiceberg-auth-test"
+	bucketName := "pyiceberg-auth-test-" + randomSuffix()
 	createTableBucket(t, env, bucketName)
 
 	// Build the test working directory path

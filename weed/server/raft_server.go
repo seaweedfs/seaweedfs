@@ -2,10 +2,14 @@ package weed_server
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/crc32"
 	"io"
 	"math/rand/v2"
 	"os"
 	"path"
+	"sort"
+	"sync"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
@@ -114,6 +118,14 @@ func (s *StateMachine) Restore(r io.ReadCloser) error {
 	return nil
 }
 
+var registerMaxVolumeIdCommandOnce sync.Once
+
+func registerMaxVolumeIdCommand() {
+	registerMaxVolumeIdCommandOnce.Do(func() {
+		raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	})
+}
+
 func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	s := &RaftServer{
 		peers:      option.Peers,
@@ -126,18 +138,27 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 		raft.SetLogLevel(2)
 	}
 
-	raft.RegisterCommand(&topology.MaxVolumeIdCommand{})
+	registerMaxVolumeIdCommand()
 
 	var err error
 	transporter := raft.NewGrpcTransporter(option.GrpcDialOption)
 	glog.V(0).Infof("Starting RaftServer with %v", option.ServerAddr)
 
 	if !option.RaftResumeState {
+		// Recover the TopologyId from the snapshot before clearing state.
+		// The TopologyId is a cluster identity used for license validation
+		// and must survive raft state cleanup.
+		recoverTopologyIdFromSnapshot(s.dataDir, option.Topo)
+
 		// clear previous log to ensure fresh start
 		os.RemoveAll(path.Join(s.dataDir, "log"))
 		// always clear previous metadata
 		os.RemoveAll(path.Join(s.dataDir, "conf"))
 		os.RemoveAll(path.Join(s.dataDir, "snapshot"))
+		// clear persisted vote state (currentTerm/votedFor) so that stale
+		// terms from previous runs cannot cause election conflicts when the
+		// log has been wiped.
+		os.Remove(path.Join(s.dataDir, "state"))
 	}
 	if err := os.MkdirAll(path.Join(s.dataDir, "snapshot"), os.ModePerm); err != nil {
 		return nil, err
@@ -197,6 +218,47 @@ func (s *RaftServer) Peers() (members []string) {
 		}
 	}
 	return
+}
+
+// recoverTopologyIdFromSnapshot reads the TopologyId from the latest
+// seaweedfs/raft snapshot before state cleanup.
+func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
+	snapshotDir := path.Join(dataDir, "snapshot")
+	dir, err := os.Open(snapshotDir)
+	if err != nil {
+		return
+	}
+	defer dir.Close()
+	filenames, err := dir.Readdirnames(-1)
+	if err != nil || len(filenames) == 0 {
+		return
+	}
+
+	sort.Strings(filenames)
+	file, err := os.Open(path.Join(snapshotDir, filenames[len(filenames)-1]))
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	// Snapshot format: 8-hex-digit CRC32 checksum, newline, JSON body.
+	var checksum uint32
+	if _, err := fmt.Fscanf(file, "%08x\n", &checksum); err != nil {
+		return
+	}
+	b, err := io.ReadAll(file)
+	if err != nil || crc32.ChecksumIEEE(b) != checksum {
+		return
+	}
+
+	// The snapshot JSON wraps the FSM state in a "state" field.
+	var snap struct {
+		State json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(b, &snap); err != nil || len(snap.State) == 0 {
+		return
+	}
+	recoverTopologyIdFromState(snap.State, topo)
 }
 
 func (s *RaftServer) DoJoinCommand() {

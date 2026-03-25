@@ -45,7 +45,7 @@ const (
 	defaultMiniVolumeSizeMB       = 128         // Default volume size for mini mode
 	maxVolumeSizeMB               = 1024        // Maximum volume size in MB (1GB)
 	GrpcPortOffset                = 10000       // Offset used to calculate gRPC port from HTTP port
-	defaultMiniPluginJobTypes     = "vacuum,volume_balance,erasure_coding"
+	defaultMiniPluginJobTypes     = "all"
 )
 
 var (
@@ -114,7 +114,7 @@ Admin UI (http://localhost:23646) to manage users and policies.
 
 var (
 	miniIp                          = cmdMini.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
-	miniBindIp                      = cmdMini.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
+	miniBindIp                      = cmdMini.Flag.String("ip.bind", "0.0.0.0", "ip address to bind to. If empty, default to same as -ip option.")
 	miniTimeout                     = cmdMini.Flag.Int("idleTimeout", 30, "connection idle seconds")
 	miniDataCenter                  = cmdMini.Flag.String("dataCenter", "", "current volume server's data center name")
 	miniRack                        = cmdMini.Flag.String("rack", "", "current volume server's rack name")
@@ -204,6 +204,7 @@ func initMiniVolumeFlags() {
 	miniOptions.v.publicUrl = cmdMini.Flag.String("volume.publicUrl", "", "publicly accessible address")
 	miniOptions.v.indexType = cmdMini.Flag.String("volume.index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	miniOptions.v.diskType = cmdMini.Flag.String("volume.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	miniOptions.v.tags = cmdMini.Flag.String("volume.tags", "", "comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive)")
 	miniOptions.v.fixJpgOrientation = cmdMini.Flag.Bool("volume.images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	miniOptions.v.readMode = cmdMini.Flag.String("volume.readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|read in remote node|redirect volume location'.")
 	miniOptions.v.compactionMBPerSecond = cmdMini.Flag.Int("volume.compactionMBps", 0, "limit compaction speed in mega bytes per second")
@@ -248,6 +249,7 @@ func initMiniS3Flags() {
 	miniS3Options.iamConfig = miniIamConfig
 	miniS3Options.auditLogConfig = cmdMini.Flag.String("s3.auditLogConfig", "", "path to the audit log config file")
 	miniS3Options.allowDeleteBucketNotEmpty = miniS3AllowDeleteBucketNotEmpty
+	miniS3Options.externalUrl = cmdMini.Flag.String("s3.externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	// In mini mode, S3 uses the shared debug server started at line 681, not its own separate debug server
 	miniS3Options.debug = new(bool) // explicitly false
 	miniS3Options.debugPort = cmdMini.Flag.Int("s3.debug.port", 6060, "http port for debugging (unused in mini mode)")
@@ -553,9 +555,23 @@ func ensureAllPortsAvailableOnIP(bindIp string) error {
 // If a gRPC port is 0, it will be set to httpPort + GrpcPortOffset
 // This must be called after HTTP ports are finalized and before services start
 func initializeGrpcPortsOnIP(bindIp string) {
-	// Track gRPC ports allocated during this function to prevent collisions between services
-	// when multiple services need fallback port allocation
-	allocatedGrpcPorts := make(map[int]bool)
+	// Track all ports allocated (both HTTP and gRPC) to prevent collisions.
+	// We must reserve HTTP ports so that gRPC fallback allocation never picks
+	// a port already assigned to an HTTP service (which hasn't bound yet).
+	allocatedPorts := make(map[int]bool)
+
+	// Reserve all HTTP ports first
+	allocatedPorts[*miniMasterOptions.port] = true
+	allocatedPorts[*miniFilerOptions.port] = true
+	allocatedPorts[*miniOptions.v.port] = true
+	allocatedPorts[*miniWebDavOptions.port] = true
+	allocatedPorts[*miniAdminOptions.port] = true
+	if *miniEnableS3 {
+		allocatedPorts[*miniS3Options.port] = true
+		if miniS3Options.portIceberg != nil && *miniS3Options.portIceberg > 0 {
+			allocatedPorts[*miniS3Options.portIceberg] = true
+		}
+	}
 
 	grpcConfigs := []struct {
 		httpPort *int
@@ -591,10 +607,10 @@ func initializeGrpcPortsOnIP(bindIp string) {
 
 		// Verify the gRPC port is available (whether calculated or explicitly set)
 		// Check on both specific IP and all interfaces, and check against already allocated ports
-		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedGrpcPorts[*config.grpcPort] {
+		if !isPortOpenOnIP(bindIp, *config.grpcPort) || !isPortAvailable(*config.grpcPort) || allocatedPorts[*config.grpcPort] {
 			glog.Warningf("gRPC port %d for %s is not available, finding alternative...", *config.grpcPort, config.name)
 			originalPort := *config.grpcPort
-			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedGrpcPorts)
+			newPort := findAvailablePortOnIP(bindIp, originalPort+1, 100, allocatedPorts)
 			if newPort == 0 {
 				glog.Errorf("Could not find available gRPC port for %s starting from %d, will use %d and fail on binding", config.name, originalPort+1, originalPort)
 			} else {
@@ -602,7 +618,7 @@ func initializeGrpcPortsOnIP(bindIp string) {
 				*config.grpcPort = newPort
 			}
 		}
-		allocatedGrpcPorts[*config.grpcPort] = true
+		allocatedPorts[*config.grpcPort] = true
 		glog.V(1).Infof("%s gRPC port set to %d", config.name, *config.grpcPort)
 	}
 }
@@ -727,6 +743,7 @@ func saveMiniConfiguration(dataFolder string) error {
 }
 
 func runMini(cmd *Command, args []string) bool {
+	*miniDataFolders = util.ResolvePath(*miniDataFolders)
 
 	// Capture which port flags were explicitly passed on CLI BEFORE config file is applied
 	// This is necessary to distinguish user-specified ports from defaults or config file options
@@ -1017,7 +1034,7 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
 		}
-		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort); err != nil {
+		if err := startAdminServer(ctx, miniAdminOptions, *miniEnableAdminUI, icebergPort, ""); err != nil {
 			glog.Errorf("Admin server error: %v", err)
 		}
 	}()
@@ -1029,9 +1046,15 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		glog.Fatalf("Admin server readiness check failed: %v", err)
 	}
 
-	// Start worker after admin server is ready
-	startMiniWorker()
-	startMiniPluginWorker(ctx)
+	// Start consolidated worker runtime (both standard and plugin runtimes)
+	workerDir := filepath.Join(*miniDataFolders, "worker")
+	if err := os.MkdirAll(workerDir, 0755); err != nil {
+		glog.Fatalf("Failed to create unified worker directory: %v", err)
+	}
+
+	glog.Infof("Starting consolidated maintenance worker system (directory: %s)", workerDir)
+	startMiniWorker(workerDir)
+	startMiniPluginWorker(ctx, workerDir)
 
 	// Wait for worker to be ready by polling its gRPC port
 	workerGrpcAddr := fmt.Sprintf("%s:%d", bindIp, *miniAdminOptions.grpcPort)
@@ -1090,17 +1113,13 @@ func waitForWorkerReady(workerGrpcAddr string) {
 }
 
 // startMiniWorker starts a single worker for the admin server
-func startMiniWorker() {
-	glog.Infof("Starting maintenance worker for admin server")
+func startMiniWorker(workerDir string) {
+	glog.V(1).Infof("Initializing standard worker runtime")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
 	capabilities := "vacuum,ec,balance"
 
-	// Use worker directory under main data folder
-	workerDir := filepath.Join(*miniDataFolders, "worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	glog.Infof("Worker connecting to admin server: %s", adminAddr)
 	glog.Infof("Worker capabilities: %s", capabilities)
@@ -1169,7 +1188,7 @@ func startMiniWorker() {
 	glog.Infof("Maintenance worker %s started successfully", workerInstance.ID())
 }
 
-func startMiniPluginWorker(ctx context.Context) {
+func startMiniPluginWorker(ctx context.Context, workerDir string) {
 	glog.Infof("Starting plugin worker for admin server")
 
 	adminAddr := fmt.Sprintf("%s:%d", *miniIp, *miniAdminOptions.port)
@@ -1178,15 +1197,12 @@ func startMiniPluginWorker(ctx context.Context) {
 		glog.Infof("Resolved mini plugin worker admin endpoint: %s -> %s", adminAddr, resolvedAdminAddr)
 	}
 
-	workerDir := filepath.Join(*miniDataFolders, "plugin_worker")
-	if err := os.MkdirAll(workerDir, 0755); err != nil {
-		glog.Fatalf("Failed to create plugin worker directory: %v", err)
-	}
+	// Use common worker directory
 
 	util.LoadConfiguration("security", false)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.worker")
 
-	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption)
+	handlers, err := buildPluginWorkerHandlers(defaultMiniPluginJobTypes, grpcDialOption, int(pluginworker.DefaultMaxExecutionConcurrency), workerDir)
 	if err != nil {
 		glog.Fatalf("Failed to build mini plugin worker handlers: %v", err)
 	}
@@ -1204,7 +1220,7 @@ func startMiniPluginWorker(ctx context.Context) {
 		HeartbeatInterval:       15 * time.Second,
 		ReconnectDelay:          5 * time.Second,
 		MaxDetectionConcurrency: 1,
-		MaxExecutionConcurrency: 2,
+		MaxExecutionConcurrency: int(pluginworker.DefaultMaxExecutionConcurrency),
 		GrpcDialOption:          grpcDialOption,
 		Handlers:                handlers,
 	})

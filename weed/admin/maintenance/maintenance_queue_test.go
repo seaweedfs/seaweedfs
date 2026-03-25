@@ -969,3 +969,154 @@ func TestMaintenanceQueue_AssignTaskRollback(t *testing.T) {
 		t.Errorf("Task %s should still be in pendingTasks slice", taskID)
 	}
 }
+
+func TestGetNextTask_SkipsVolumeConflictsAcrossTypes(t *testing.T) {
+	policy := &MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance":        {MaxConcurrent: 2},
+			"erasure_coding": {MaxConcurrent: 2},
+			"vacuum":         {MaxConcurrent: 2},
+		},
+	}
+
+	mq := NewMaintenanceQueue(policy)
+
+	now := time.Now()
+	mq.AddTask(&MaintenanceTask{
+		ID:          "t1",
+		Type:        MaintenanceTaskType("balance"),
+		Priority:    PriorityHigh,
+		VolumeID:    100,
+		Server:      "server1",
+		ScheduledAt: now.Add(-3 * time.Second),
+	})
+	t2 := &MaintenanceTask{
+		ID:          "t2",
+		Type:        MaintenanceTaskType("erasure_coding"),
+		Priority:    PriorityNormal,
+		VolumeID:    100,
+		Server:      "server1",
+		Status:      TaskStatusPending,
+		ScheduledAt: now.Add(-2 * time.Second),
+	}
+	mq.mutex.Lock()
+	mq.tasks[t2.ID] = t2
+	mq.pendingTasks = append(mq.pendingTasks, t2)
+	mq.mutex.Unlock()
+	mq.AddTask(&MaintenanceTask{
+		ID:          "t3",
+		Type:        MaintenanceTaskType("vacuum"),
+		Priority:    PriorityNormal,
+		VolumeID:    200,
+		Server:      "server1",
+		ScheduledAt: now.Add(-1 * time.Second),
+	})
+
+	mq.workers["worker1"] = &MaintenanceWorker{
+		ID:            "worker1",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance", "erasure_coding", "vacuum"},
+		MaxConcurrent: 2,
+		LastHeartbeat: time.Now(),
+	}
+	mq.workers["worker2"] = &MaintenanceWorker{
+		ID:            "worker2",
+		Status:        "active",
+		Capabilities:  []MaintenanceTaskType{"balance", "erasure_coding", "vacuum"},
+		MaxConcurrent: 2,
+		LastHeartbeat: time.Now(),
+	}
+
+	task1 := mq.GetNextTask("worker1", mq.workers["worker1"].Capabilities)
+	if task1 == nil || task1.ID != "t1" {
+		t.Fatalf("Expected first assignment to be t1, got %+v", task1)
+	}
+
+	task2 := mq.GetNextTask("worker2", mq.workers["worker2"].Capabilities)
+	if task2 == nil {
+		t.Fatalf("Expected a second task to be assigned, got nil")
+	}
+	if task2.ID != "t3" {
+		t.Fatalf("Expected second assignment to skip volume 100 and pick t3, got %s", task2.ID)
+	}
+
+	if mq.tasks["t2"].Status != TaskStatusPending {
+		t.Fatalf("Expected t2 to remain pending due to volume conflict, got %s", mq.tasks["t2"].Status)
+	}
+}
+
+func TestAddTask_OnePendingTaskPerVolume(t *testing.T) {
+	mq := NewMaintenanceQueue(&MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance":        {MaxConcurrent: 1},
+			"erasure_coding": {MaxConcurrent: 1},
+		},
+	})
+
+	mq.AddTask(&MaintenanceTask{
+		ID:       "t1",
+		Type:     MaintenanceTaskType("balance"),
+		VolumeID: 100,
+		Server:   "server1",
+	})
+	mq.AddTask(&MaintenanceTask{
+		ID:       "t2",
+		Type:     MaintenanceTaskType("erasure_coding"),
+		VolumeID: 100,
+		Server:   "server1",
+	})
+
+	mq.mutex.RLock()
+	defer mq.mutex.RUnlock()
+
+	if len(mq.tasks) != 1 {
+		t.Fatalf("Expected 1 task in queue, got %d", len(mq.tasks))
+	}
+	if len(mq.pendingTasks) != 1 {
+		t.Fatalf("Expected 1 pending task, got %d", len(mq.pendingTasks))
+	}
+	if _, exists := mq.tasks["t1"]; !exists {
+		t.Fatalf("Expected task t1 to be queued")
+	}
+	if _, exists := mq.tasks["t2"]; exists {
+		t.Fatalf("Did not expect task t2 to be queued due to pending volume")
+	}
+}
+
+func TestAddTask_RejectsWhenVolumeHasRunningTask(t *testing.T) {
+	mq := NewMaintenanceQueue(&MaintenancePolicy{
+		TaskPolicies: map[string]*worker_pb.TaskPolicy{
+			"balance":        {MaxConcurrent: 1},
+			"erasure_coding": {MaxConcurrent: 1},
+		},
+	})
+
+	mq.AddTask(&MaintenanceTask{
+		ID:       "t1",
+		Type:     MaintenanceTaskType("balance"),
+		VolumeID: 100,
+		Server:   "server1",
+	})
+
+	// Simulate assignment to make it active
+	mq.mutex.Lock()
+	mq.tasks["t1"].Status = TaskStatusInProgress
+	mq.mutex.Unlock()
+
+	mq.AddTask(&MaintenanceTask{
+		ID:       "t2",
+		Type:     MaintenanceTaskType("erasure_coding"),
+		VolumeID: 100,
+		Server:   "server1",
+	})
+
+	mq.mutex.RLock()
+	defer mq.mutex.RUnlock()
+
+	if len(mq.tasks) != 1 {
+		t.Fatalf("Expected 1 task in queue, got %d", len(mq.tasks))
+	}
+	if _, exists := mq.tasks["t2"]; exists {
+		t.Fatalf("Did not expect task t2 to be queued due to active volume task")
+	}
+}

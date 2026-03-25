@@ -43,7 +43,7 @@ The PostgreSQL server now directly integrates with SeaweedFS Message Queue topic
 - **Real Schema Information**: Reads actual topic schemas from broker configuration
 - **Actual Data Access**: Queries real MQ data stored in Parquet and log files
 - **Dynamic Updates**: Reflects topic additions and schema changes automatically
-- **Consistent SQL Engine**: Uses the same SQL engine as `weed sql` command
+- **Consistent SQL Engine**: Uses the same SQL engine as `weed-sql` command
 
 ### Database Context Management
 - **Session Isolation**: Each PostgreSQL connection has its own database context
@@ -232,7 +232,7 @@ psql -h localhost -p 5432 -U seaweedfs -d default
 - **DESIGN.md**: Complete architecture and design overview
 - **IMPLEMENTATION.md**: Detailed implementation guide
 - **postgres-examples/**: Client examples and test scripts
-- **Command Documentation**: `weed db -help`
+- **Command Documentation**: `weed-db -help`
 
 ## Security Considerations
 

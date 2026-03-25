@@ -4,20 +4,27 @@ import (
     "fmt"
     "strings"
     "time"
-    "github.com/gin-gonic/gin"
+    "github.com/seaweedfs/seaweedfs/weed/admin/dash"
     "github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
-templ Layout(c *gin.Context, content templ.Component) {
+script setBasePath(prefix string) {
+    window.__BASE_PATH__ = prefix;
+}
+
+templ Layout(view ViewContext, content templ.Component) {
 {{
-  username := c.GetString("username")
+  username := view.Username
   if username == "" {
-    username = "admin"
+    username = "unknown"
   }
-  csrfToken := c.GetString("csrf_token")
-  
-  currentPath := c.Request.URL.Path
-  
+  csrfToken := view.CSRFToken
+
+  currentPath := ""
+  if view.Request != nil {
+    currentPath = view.Request.URL.Path
+  }
+
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
 
@@ -26,7 +33,7 @@ templ Layout(c *gin.Context, content templ.Component) {
 
   // Detect if we're on a storage page to keep submenu expanded
   isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
-  
+
   // Detect if we're on a cluster page (but not storage page) to keep submenu expanded
   isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
 }}
@@ -37,32 +44,36 @@ templ Layout(c *gin.Context, content templ.Component) {
     <title>SeaweedFS Admin</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="csrf-token" content={ csrfToken }>
-    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
-    
+    <link rel="icon" href={ string(view.P("/static/favicon.ico")) } type="image/x-icon">
+
     <!-- Bootstrap CSS -->
-    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
+    <link href={ string(view.P("/static/css/bootstrap.min.css")) } rel="stylesheet">
     <!-- Font Awesome CSS -->
-    <link href="/static/css/fontawesome.min.css" rel="stylesheet">
+    <link href={ string(view.P("/static/css/fontawesome.min.css")) } rel="stylesheet">
     <!-- HTMX -->
-    <script src="/static/js/htmx.min.js"></script>
+    <script src={ string(view.P("/static/js/htmx.min.js")) }></script>
     <!-- Custom CSS -->
-    <link rel="stylesheet" href="/static/css/admin.css">
+    <link rel="stylesheet" href={ string(view.P("/static/css/admin.css")) }>
+    <!-- Set base path for JavaScript -->
+    @setBasePath(view.URLPrefix)
 </head>
 <body>
-    <div class="container-fluid">
+    <div class="container-fluid p-0">
         <!-- Header -->
         <header class="navbar navbar-expand-lg navbar-dark bg-primary sticky-top">
             <div class="container-fluid">
-                <a class="navbar-brand fw-bold" href="/admin">
+                <a class="navbar-brand fw-bold" href={ view.P("/admin") }>
                     <i class="fas fa-server me-2"></i>
                     SeaweedFS Admin
-                    <span class="badge bg-warning text-dark ms-2">ALPHA</span>
                 </a>
-                
-                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+
+                <button class="navbar-toggler d-md-none me-2" type="button" data-bs-toggle="collapse" data-bs-target="#sidebarMenu" aria-controls="sidebarMenu" aria-expanded="false" aria-label="Toggle navigation menu">
                     <span class="navbar-toggler-icon"></span>
                 </button>
-                
+                <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="User menu">
+                    <i class="fas fa-user"></i>
+                </button>
+
                 <div class="collapse navbar-collapse" id="navbarNav">
                     <ul class="navbar-nav ms-auto">
                         <li class="nav-item dropdown">
@@ -70,7 +81,7 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 <i class="fas fa-user me-1"></i>{username}
                             </a>
                             <ul class="dropdown-menu">
-                                <li><a class="dropdown-item" href="/logout">
+                                <li><a class="dropdown-item" href={ view.P("/logout") }>
                                     <i class="fas fa-sign-out-alt me-2"></i>Logout
                                 </a></li>
                             </ul>
@@ -82,14 +93,14 @@ templ Layout(c *gin.Context, content templ.Component) {
 
         <div class="row g-0">
             <!-- Sidebar -->
-            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
+            <div class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse" id="sidebarMenu">
                 <div class="position-sticky pt-3">
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
                         <span>MAIN</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            <a class="nav-link" href="/admin">
+                            <a class="nav-link" href={ view.P("/admin") }>
                                 <i class="fas fa-tachometer-alt me-2"></i>Dashboard
                             </a>
                         </li>
@@ -101,17 +112,17 @@ templ Layout(c *gin.Context, content templ.Component) {
                             <div class={ "collapse", templ.KV("show", isClusterPage) } id="clusterSubmenu">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/masters">
+                                        <a class="nav-link py-2" href={ view.P("/cluster/masters") }>
                                             <i class="fas fa-crown me-2"></i>Masters
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/volume-servers">
+                                        <a class="nav-link py-2" href={ view.P("/cluster/volume-servers") }>
                                             <i class="fas fa-server me-2"></i>Volume Servers
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/cluster/filers">
+                                        <a class="nav-link py-2" href={ view.P("/cluster/filers") }>
                                             <i class="fas fa-folder-open me-2"></i>Filers
                                         </a>
                                     </li>
@@ -126,17 +137,17 @@ templ Layout(c *gin.Context, content templ.Component) {
                             <div class={ "collapse", templ.KV("show", isStoragePage) } id="storageSubmenu">
                                 <ul class="nav flex-column ms-3">
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/volumes">
+                                        <a class="nav-link py-2" href={ view.P("/storage/volumes") }>
                                             <i class="fas fa-database me-2"></i>Volumes
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/ec-shards">
+                                        <a class="nav-link py-2" href={ view.P("/storage/ec-shards") }>
                                             <i class="fas fa-th-large me-2"></i>EC Volumes
                                         </a>
                                     </li>
                                     <li class="nav-item">
-                                        <a class="nav-link py-2" href="/storage/collections">
+                                        <a class="nav-link py-2" href={ view.P("/storage/collections") }>
                                             <i class="fas fa-layer-group me-2"></i>Collections
                                         </a>
                                     </li>
@@ -150,38 +161,43 @@ templ Layout(c *gin.Context, content templ.Component) {
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            <a class="nav-link" href="/object-store/buckets">
+                            <a class="nav-link" href={ view.P("/object-store/buckets") }>
                                 <i class="fas fa-cube me-2"></i>Buckets
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/object-store/s3tables/buckets">
+                            <a class="nav-link" href={ view.P("/object-store/s3tables/buckets") }>
                                 <i class="fas fa-table me-2"></i>Table Buckets
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/object-store/users">
+                            <a class="nav-link" href={ view.P("/object-store/users") }>
                                 <i class="fas fa-users me-2"></i>Users
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/object-store/service-accounts">
+                            <a class="nav-link" href={ view.P("/object-store/groups") }>
+                                <i class="fas fa-users-cog me-2"></i>Groups
+                            </a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" href={ view.P("/object-store/service-accounts") }>
                                 <i class="fas fa-robot me-2"></i>Service Accounts
                             </a>
                         </li>
                         <li class="nav-item">
-                            <a class="nav-link" href="/object-store/policies">
+                            <a class="nav-link" href={ view.P("/object-store/policies") }>
                                 <i class="fas fa-shield-alt me-2"></i>Policies
                             </a>
                         </li>
                     </ul>
-                    
+
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
                         <span>MANAGEMENT</span>
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            <a class="nav-link" href="/files">
+                            <a class="nav-link" href={ view.P("/files") }>
                                 <i class="fas fa-folder me-2"></i>File Browser
                             </a>
                         </li>
@@ -202,22 +218,22 @@ templ Layout(c *gin.Context, content templ.Component) {
                                     <ul class="nav flex-column ms-3">
                                         <li class="nav-item">
                                             if currentPath == "/mq/brokers" {
-                                                <a class="nav-link py-2 active" href="/mq/brokers">
+                                                <a class="nav-link py-2 active" href={ view.P("/mq/brokers") }>
                                                     <i class="fas fa-server me-2"></i>Brokers
                                                 </a>
                                             } else {
-                                                <a class="nav-link py-2" href="/mq/brokers">
+                                                <a class="nav-link py-2" href={ view.P("/mq/brokers") }>
                                                     <i class="fas fa-server me-2"></i>Brokers
                                                 </a>
                                             }
                                         </li>
                                         <li class="nav-item">
                                             if currentPath == "/mq/topics" {
-                                                <a class="nav-link py-2 active" href="/mq/topics">
+                                                <a class="nav-link py-2 active" href={ view.P("/mq/topics") }>
                                                     <i class="fas fa-list-alt me-2"></i>Topics
                                                 </a>
                                             } else {
-                                                <a class="nav-link py-2" href="/mq/topics">
+                                                <a class="nav-link py-2" href={ view.P("/mq/topics") }>
                                                     <i class="fas fa-list-alt me-2"></i>Topics
                                                 </a>
                                             }
@@ -229,12 +245,12 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 <div class="collapse" id="messageQueueSubmenu">
                                     <ul class="nav flex-column ms-3">
                                         <li class="nav-item">
-                                            <a class="nav-link py-2" href="/mq/brokers">
+                                            <a class="nav-link py-2" href={ view.P("/mq/brokers") }>
                                                 <i class="fas fa-server me-2"></i>Brokers
                                             </a>
                                         </li>
                                         <li class="nav-item">
-                                            <a class="nav-link py-2" href="/mq/topics">
+                                            <a class="nav-link py-2" href={ view.P("/mq/topics") }>
                                                 <i class="fas fa-list-alt me-2"></i>Topics
                                             </a>
                                         </li>
@@ -243,19 +259,6 @@ templ Layout(c *gin.Context, content templ.Component) {
                                 </div>
                             }
                         </li>
-                        <!-- Commented out for later -->
-                        <!--
-                        <li class="nav-item">
-                            <a class="nav-link" href="/metrics">
-                                <i class="fas fa-chart-line me-2"></i>Metrics
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/logs">
-                                <i class="fas fa-file-alt me-2"></i>Logs
-                            </a>
-                        </li>
-                        -->
                     </ul>
 
                     <h6 class="sidebar-heading px-3 mt-4 mb-1 text-muted">
@@ -264,56 +267,12 @@ templ Layout(c *gin.Context, content templ.Component) {
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             if isPluginPage {
-                                <a class="nav-link active" href="/plugin">
+                                <a class="nav-link active" href={ view.P("/plugin") }>
                                     <i class="fas fa-plug me-2"></i>Workers
                                 </a>
                             } else {
-                                <a class="nav-link" href="/plugin">
+                                <a class="nav-link" href={ view.P("/plugin") }>
                                     <i class="fas fa-plug me-2"></i>Workers
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/detection" {
-                                <a class="nav-link active" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/detection">
-                                    <i class="fas fa-search me-2"></i>Job Detection
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/queue" {
-                                <a class="nav-link active" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/queue">
-                                    <i class="fas fa-list me-2"></i>Job Queue
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/execution" {
-                                <a class="nav-link active" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/execution">
-                                    <i class="fas fa-tasks me-2"></i>Job Execution
-                                </a>
-                            }
-                        </li>
-                        <li class="nav-item">
-                            if currentPath == "/plugin/configuration" {
-                                <a class="nav-link active" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
-                                </a>
-                            } else {
-                                <a class="nav-link" href="/plugin/configuration">
-                                    <i class="fas fa-sliders-h me-2"></i>Configuration
                                 </a>
                             }
                         </li>
@@ -321,8 +280,11 @@ templ Layout(c *gin.Context, content templ.Component) {
                 </div>
             </div>
 
+            <!-- Sidebar backdrop for mobile -->
+            <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
             <!-- Main content -->
-            <main class="col-md-9 ms-sm-auto col-lg-10 px-md-4">
+            <main class="col-md-9 ms-sm-auto col-lg-10 px-3 px-md-4">
                 <div class="pt-3">
                     @content
                 </div>
@@ -335,6 +297,9 @@ templ Layout(c *gin.Context, content templ.Component) {
         <div class="container-fluid text-center">
             <small class="text-muted">
                 &copy; {fmt.Sprintf("%d", time.Now().Year())} SeaweedFS Admin v{version.VERSION_NUMBER}
+                if version.COMMIT != "" {
+                    <span class="mx-1">({version.COMMIT})</span>
+                }
                 if !strings.Contains(version.VERSION, "enterprise") {
                     <span class="mx-2">•</span>
                     <a href="https://seaweedfs.com" target="_blank" class="text-decoration-none">
@@ -346,27 +311,30 @@ templ Layout(c *gin.Context, content templ.Component) {
     </footer>
 
     <!-- Bootstrap JS -->
-    <script src="/static/js/bootstrap.bundle.min.js"></script>
+    <script src={ string(view.P("/static/js/bootstrap.bundle.min.js")) }></script>
     <!-- Modal Alerts JS (replaces native alert/confirm) -->
-    <script src="/static/js/modal-alerts.js"></script>
+    <script src={ string(view.P("/static/js/modal-alerts.js")) }></script>
     <!-- Custom JS -->
-    <script src="/static/js/admin.js"></script>
-    <script src="/static/js/iam-utils.js"></script>
-    <script src="/static/js/s3tables.js"></script>
+    <script src={ string(view.P("/static/js/admin.js")) }></script>
+    <script src={ string(view.P("/static/js/iam-utils.js")) }></script>
+    <script src={ string(view.P("/static/js/s3tables.js")) }></script>
 </body>
 </html>
 }
 
-templ LoginForm(c *gin.Context, title string, errorMessage string) {
+templ LoginForm(title string, errorMessage string, csrfToken string) {
+{{
+  prefix := dash.URLPrefixFromContext(ctx)
+}}
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <title>{title} - Login</title>
-    <link rel="icon" href="/static/favicon.ico" type="image/x-icon">
+    <link rel="icon" href={ prefix + "/static/favicon.ico" } type="image/x-icon">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link href="/static/css/bootstrap.min.css" rel="stylesheet">
-    <link href="/static/css/fontawesome.min.css" rel="stylesheet">
+    <link href={ prefix + "/static/css/bootstrap.min.css" } rel="stylesheet">
+    <link href={ prefix + "/static/css/fontawesome.min.css" } rel="stylesheet">
 </head>
 <body class="bg-light">
     <div class="container">
@@ -379,15 +347,16 @@ templ LoginForm(c *gin.Context, title string, errorMessage string) {
                             <h4 class="card-title">{title}</h4>
                             <p class="text-muted">Please sign in to continue</p>
                         </div>
-                        
+
                         if errorMessage != "" {
                             <div class="alert alert-danger" role="alert">
                                 <i class="fas fa-exclamation-triangle me-2"></i>
                                 {errorMessage}
                             </div>
                         }
-                        
-                        <form method="POST" action="/login">
+
+                        <form method="POST" action={ templ.SafeURL(prefix + "/login") }>
+                            <input type="hidden" name="csrf_token" value={ csrfToken }>
                             <div class="mb-3">
                                 <label for="username" class="form-label">Username</label>
                                 <div class="input-group">
@@ -397,7 +366,7 @@ templ LoginForm(c *gin.Context, title string, errorMessage string) {
                                     <input type="text" class="form-control" id="username" name="username" required>
                                 </div>
                             </div>
-                            
+
                             <div class="mb-4">
                                 <label for="password" class="form-label">Password</label>
                                 <div class="input-group">
@@ -407,7 +376,7 @@ templ LoginForm(c *gin.Context, title string, errorMessage string) {
                                     <input type="password" class="form-control" id="password" name="password" required>
                                 </div>
                             </div>
-                            
+
                             <button type="submit" class="btn btn-primary w-100">
                                 <i class="fas fa-sign-in-alt me-2"></i>Sign In
                             </button>
@@ -417,8 +386,8 @@ templ LoginForm(c *gin.Context, title string, errorMessage string) {
             </div>
         </div>
     </div>
-    
-    <script src="/static/js/bootstrap.bundle.min.js"></script>
+
+    <script src={ prefix + "/static/js/bootstrap.bundle.min.js" }></script>
 </body>
 </html>
-} 
+}

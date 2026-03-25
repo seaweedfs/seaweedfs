@@ -1,6 +1,7 @@
 package offset
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -48,7 +49,7 @@ func (f *FilerOffsetStorage) LoadCheckpoint(namespace, topicName string, partiti
 
 	var offset int64 = -1
 	err := f.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		data, err := filer.ReadInsideFiler(client, partitionDir, fileName)
+		data, err := filer.ReadInsideFiler(context.Background(), client, partitionDir, fileName)
 		if err != nil {
 			return err
 		}

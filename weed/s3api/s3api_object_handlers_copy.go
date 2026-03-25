@@ -32,12 +32,15 @@ const (
 )
 
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
+	t := time.Now().UTC().Truncate(time.Millisecond)
 
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
 	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
-	cpSrcPath, err := url.QueryUnescape(rawCopySource)
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
 		// Save unescaped string as is.
 		cpSrcPath = rawCopySource
@@ -46,6 +49,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
+	if len(dstObject) > s3_constants.MaxS3ObjectKeyLength {
+		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
+		return
+	}
 	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
@@ -83,7 +90,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			return
 		}
 		entry.Extended, err = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
-		entry.Attributes.Mtime = time.Now().Unix()
+		entry.Attributes.Mtime = t.Unix()
 		if err != nil {
 			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
 			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
@@ -96,7 +103,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 		writeSuccessResponseXML(w, r, CopyObjectResult{
 			ETag:         filer.ETag(entry),
-			LastModified: time.Now().UTC(),
+			LastModified: t,
 		})
 		return
 	}
@@ -183,7 +190,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
 			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Now().Unix(),
+			Mtime:    t.Unix(),
 			Crtime:   entry.Attributes.Crtime,
 			Mime:     entry.Attributes.Mime,
 		},
@@ -344,7 +351,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			entry.Attributes = dstEntry.Attributes
 			entry.Extended = dstEntry.Extended
 		}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
 		}
 
@@ -369,7 +376,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 		// Check if destination exists and remove it first (S3 copy overwrites)
 		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err := s3a.rm(dstDir, dstName, false, false); err != nil {
+			if err := s3a.rmObject(dstDir, dstName, false, false); err != nil {
 				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 				return
 			}
@@ -380,7 +387,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			entry.Attributes = dstEntry.Attributes
 			entry.Extended = dstEntry.Extended
 		}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
 		}
 
@@ -402,7 +409,7 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	response := CopyObjectResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: t,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -437,7 +444,7 @@ func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, 
 				versionId = values.Get("versionId")
 
 				rawPathNoQuery := rawPath[:idx]
-				if unescaped, err := url.QueryUnescape(rawPathNoQuery); err == nil {
+				if unescaped, err := url.PathUnescape(rawPathNoQuery); err == nil {
 					pathForBucket = unescaped
 				} else {
 					pathForBucket = rawPathNoQuery
@@ -459,6 +466,7 @@ type CopyPartResult struct {
 }
 
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
+	t := time.Now().UTC().Truncate(time.Millisecond)
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
@@ -468,8 +476,9 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	glog.V(4).Infof("CopyObjectPart: Raw copy source header=%q", rawCopySource)
 
-	// Try URL unescaping - AWS SDK sends URL-encoded copy sources
-	cpSrcPath, err := url.QueryUnescape(rawCopySource)
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
 		// If unescaping fails, log and use original
 		glog.V(4).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
@@ -480,6 +489,17 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	glog.V(4).Infof("CopyObjectPart: Parsed srcBucket=%q, srcObject=%q, srcVersionId=%q",
 		srcBucket, srcObject, srcVersionId)
+
+	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket {
+		if err := s3a.validateTableBucketObjectPath(srcBucket, srcObject); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	}
 
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
@@ -587,8 +607,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
 			FileSize: partSize,
-			Mtime:    time.Now().Unix(),
-			Crtime:   time.Now().Unix(),
+			Mtime:    t.Unix(),
+			Crtime:   t.Unix(),
 			Mime:     entry.Attributes.Mime,
 		},
 		Extended: make(map[string][]byte),
@@ -648,7 +668,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	response := CopyPartResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: t,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -956,22 +976,6 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeR
 	return assignResult, nil
 }
 
-// min returns the minimum of two int64 values
-func min(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// max returns the maximum of two int64 values
-func max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // parseRangeHeader parses the x-amz-copy-source-range header
 func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
 	// Remove "bytes=" prefix if present
@@ -997,6 +1001,7 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 // copyChunksForRange copies chunks that overlap with the specified range
 func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, error) {
 	var relevantChunks []*filer_pb.FileChunk
+	var originalChunks []*filer_pb.FileChunk
 
 	// Find chunks that overlap with the range
 	for _, chunk := range entry.GetChunks() {
@@ -1021,6 +1026,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 				Fid:          chunk.Fid,
 			}
 			relevantChunks = append(relevantChunks, newChunk)
+			originalChunks = append(originalChunks, chunk)
 		}
 	}
 
@@ -1029,20 +1035,6 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	const defaultChunkCopyConcurrency = 4
 	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency)
 	errChan := make(chan error, len(relevantChunks))
-
-	// Create a map to track original chunks for each relevant chunk
-	originalChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
-	relevantIndex := 0
-	for _, chunk := range entry.GetChunks() {
-		chunkStart := chunk.Offset
-		chunkEnd := chunk.Offset + int64(chunk.Size)
-
-		// Check if chunk overlaps with the range
-		if chunkStart < endOffset+1 && chunkEnd > startOffset {
-			originalChunks[relevantIndex] = chunk
-			relevantIndex++
-		}
-	}
 
 	for i, chunk := range relevantChunks {
 		chunkIndex := i
@@ -1833,10 +1825,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 			return nil, fmt.Errorf("decrypt SSE-C chunk data: %w", readErr)
 		}
 		finalData = decryptedData
-		previewLen := 16
-		if len(finalData) < previewLen {
-			previewLen = len(finalData)
-		}
 
 	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 		// Decrypt SSE-KMS source
@@ -1859,10 +1847,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 			return nil, fmt.Errorf("decrypt SSE-KMS chunk data: %w", readErr)
 		}
 		finalData = decryptedData
-		previewLen := 16
-		if len(finalData) < previewLen {
-			previewLen = len(finalData)
-		}
 
 	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
 		// Decrypt SSE-S3 source

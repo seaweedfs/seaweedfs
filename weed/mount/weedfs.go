@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
@@ -30,27 +31,29 @@ import (
 )
 
 type Option struct {
-	filerIndex         int32 // align memory for atomic read/write
-	FilerAddresses     []pb.ServerAddress
-	MountDirectory     string
-	GrpcDialOption     grpc.DialOption
-	FilerMountRootPath string
-	Collection         string
-	Replication        string
-	TtlSec             int32
-	DiskType           types.DiskType
-	ChunkSizeLimit     int64
-	ConcurrentWriters  int
-	ConcurrentReaders  int
-	CacheDirForRead    string
-	CacheSizeMBForRead int64
-	CacheDirForWrite   string
-	CacheMetaTTlSec    int
-	DataCenter         string
-	Umask              os.FileMode
-	Quota              int64
-	DisableXAttr       bool
-	IsMacOs            bool
+	filerIndex                  int32 // align memory for atomic read/write
+	FilerAddresses              []pb.ServerAddress
+	MountDirectory              string
+	GrpcDialOption              grpc.DialOption
+	FilerSigningKey             security.SigningKey
+	FilerSigningExpiresAfterSec int
+	FilerMountRootPath          string
+	Collection                  string
+	Replication                 string
+	TtlSec                      int32
+	DiskType                    types.DiskType
+	ChunkSizeLimit              int64
+	ConcurrentWriters           int
+	ConcurrentReaders           int
+	CacheDirForRead             string
+	CacheSizeMBForRead          int64
+	CacheDirForWrite            string
+	CacheMetaTTlSec             int
+	DataCenter                  string
+	Umask                       os.FileMode
+	Quota                       int64
+	DisableXAttr                bool
+	IsMacOs                     bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -78,6 +81,10 @@ type Option struct {
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
+	// WritebackCache enables async flush on close for improved small file write performance.
+	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
+	WritebackCache bool
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -102,6 +109,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
@@ -110,6 +118,21 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+
+	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
+	// Must be waited on before unmount cleanup to prevent data loss.
+	asyncFlushWg sync.WaitGroup
+
+	// asyncFlushCh is a bounded work queue for background flush operations.
+	// A fixed pool of worker goroutines processes items from this channel,
+	// preventing resource exhaustion from unbounded goroutine creation.
+	asyncFlushCh chan *asyncFlushItem
+
+	// pendingAsyncFlush tracks in-flight async flush goroutines by inode.
+	// AcquireHandle checks this to wait for a pending flush before reopening
+	// the same inode, preventing stale metadata from overwriting the async flush.
+	pendingAsyncFlushMu sync.Mutex
+	pendingAsyncFlush   map[uint64]chan struct{}
 }
 
 const (
@@ -151,18 +174,20 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs := &WFS{
-		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
-		option:          option,
-		signature:       util.RandomInt32(),
-		inodeToPath:     NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
-		fhMap:           NewFileHandleToInode(),
-		dhMap:           NewDirectoryHandleToInode(),
-		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
-		fhLockTable:     util.NewLockTable[FileHandleId](),
-		refreshingDirs:  make(map[util.FullPath]struct{}),
-		dirHotWindow:    dirHotWindow,
-		dirHotThreshold: dirHotThreshold,
-		dirIdleEvict:    dirIdleEvict,
+		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
+		option:            option,
+		signature:         util.RandomInt32(),
+		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
+		fhMap:             NewFileHandleToInode(),
+		dhMap:             NewDirectoryHandleToInode(),
+		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
+		pendingAsyncFlush: make(map[uint64]chan struct{}),
+		fhLockTable:       util.NewLockTable[FileHandleId](),
+		posixLocks:        NewPosixLockTable(),
+		refreshingDirs:    make(map[util.FullPath]struct{}),
+		dirHotWindow:      dirHotWindow,
+		dirHotThreshold:   dirHotThreshold,
+		dirIdleEvict:      dirIdleEvict,
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
@@ -200,12 +225,36 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		}, func(dirPath util.FullPath) {
 			if wfs.inodeToPath.RecordDirectoryUpdate(dirPath, time.Now(), wfs.dirHotWindow, wfs.dirHotThreshold) {
-				wfs.maybeRefreshDirectory(dirPath)
+				wfs.markDirectoryReadThrough(dirPath)
 			}
 		})
 	grace.OnInterrupt(func() {
+		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
+		// after server.Serve() would never execute.  Drain here first.
+		//
+		// Use a timeout to avoid hanging on Ctrl-C if the filer is
+		// unreachable (metadata retry can take up to 7 seconds).
+		// If the timeout expires, skip the write-cache removal so that
+		// still-running goroutines can finish reading swap files.
+		asyncDrained := true
+		if wfs.option.WritebackCache {
+			done := make(chan struct{})
+			go func() {
+				wfs.asyncFlushWg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				glog.V(0).Infof("all async flushes completed before shutdown")
+			case <-time.After(30 * time.Second):
+				glog.Warningf("timed out waiting for async flushes — swap files preserved for in-flight uploads")
+				asyncDrained = false
+			}
+		}
 		wfs.metaCache.Shutdown()
-		os.RemoveAll(option.getUniqueCacheDirForWrite())
+		if asyncDrained {
+			os.RemoveAll(option.getUniqueCacheDirForWrite())
+		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
@@ -233,6 +282,13 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
 		wfs.concurrentCopiersSem = make(chan struct{}, wfs.option.ConcurrentWriters)
 	}
+	if wfs.option.WritebackCache {
+		numWorkers := wfs.option.ConcurrentWriters
+		if numWorkers <= 0 {
+			numWorkers = 128
+		}
+		wfs.startAsyncFlushWorkers(numWorkers)
+	}
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, option.ChunkSizeLimit)
 	}
@@ -240,6 +296,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 }
 
 func (wfs *WFS) StartBackgroundTasks() error {
+	if wfs.option.WritebackCache {
+		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
+	}
+
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
@@ -313,36 +373,42 @@ func (wfs *WFS) maybeLoadEntry(fullpath util.FullPath) (*filer_pb.Entry, fuse.St
 }
 
 // lookupEntry looks up an entry by path, checking the local cache first.
-// If the directory is cached, it trusts the cache. Otherwise, it fetches
-// directly from the filer without caching the entire directory.
-// This avoids the performance issue of listing millions of files just to open one.
+// Cached metadata is only authoritative when the parent directory itself is cached.
+// For uncached/read-through directories, always consult the filer directly so stale
+// local entries do not leak back into lookup results.
 func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) {
 	dir, _ := fullpath.DirAndName()
+	dirPath := util.FullPath(dir)
 
-	// Try to find the entry in the local cache first.
-	cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
-	if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
-		glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
-		return nil, fuse.EIO
-	}
-	if cachedEntry != nil {
-		glog.V(4).Infof("lookupEntry cache hit %s", fullpath)
-		return cachedEntry, fuse.OK
-	}
-
-	// If the directory is cached but entry not found, file doesn't exist.
-	// No need to query the filer again.
-	if wfs.metaCache.IsDirectoryCached(util.FullPath(dir)) {
-		glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
-		return nil, fuse.ENOENT
+	if wfs.metaCache.IsDirectoryCached(dirPath) {
+		cachedEntry, cacheErr := wfs.metaCache.FindEntry(context.Background(), fullpath)
+		if cacheErr != nil && cacheErr != filer_pb.ErrNotFound {
+			glog.Errorf("lookupEntry: cache lookup for %s failed: %v", fullpath, cacheErr)
+			return nil, fuse.EIO
+		}
+		if cachedEntry != nil {
+			glog.V(4).Infof("lookupEntry cache hit %s", fullpath)
+			return cachedEntry, fuse.OK
+		}
+		// Re-check: the directory may have been evicted from cache between
+		// our IsDirectoryCached check and FindEntry (e.g. markDirectoryReadThrough).
+		// If it's no longer cached, fall through to the filer lookup below.
+		if wfs.metaCache.IsDirectoryCached(dirPath) {
+			glog.V(4).Infof("lookupEntry cache miss (dir cached) %s", fullpath)
+			return nil, fuse.ENOENT
+		}
 	}
 
 	// Directory not cached - fetch directly from filer without caching the entire directory.
 	glog.V(4).Infof("lookupEntry fetching from filer %s", fullpath)
 	entry, err := filer_pb.GetEntry(context.Background(), wfs, fullpath)
 	if err != nil {
-		glog.V(1).Infof("lookupEntry GetEntry %s: %v", fullpath, err)
-		return nil, fuse.ENOENT
+		if err == filer_pb.ErrNotFound {
+			glog.V(4).Infof("lookupEntry not found %s", fullpath)
+			return nil, fuse.ENOENT
+		}
+		glog.Warningf("lookupEntry GetEntry %s: %v", fullpath, err)
+		return nil, fuse.EIO
 	}
 	if entry != nil && entry.Attributes != nil && wfs.option.UidGidMapper != nil {
 		entry.Attributes.Uid, entry.Attributes.Gid = wfs.option.UidGidMapper.FilerToLocal(entry.Attributes.Uid, entry.Attributes.Gid)
@@ -371,31 +437,13 @@ func (wfs *WFS) ClearCacheDir() {
 	os.RemoveAll(wfs.option.getUniqueCacheDirForRead())
 }
 
-func (wfs *WFS) maybeRefreshDirectory(dirPath util.FullPath) {
-	if !wfs.inodeToPath.NeedsRefresh(dirPath) {
+func (wfs *WFS) markDirectoryReadThrough(dirPath util.FullPath) {
+	if !wfs.inodeToPath.MarkDirectoryReadThrough(dirPath, time.Now()) {
 		return
 	}
-	wfs.refreshMu.Lock()
-	if _, exists := wfs.refreshingDirs[dirPath]; exists {
-		wfs.refreshMu.Unlock()
-		return
+	if err := wfs.metaCache.DeleteFolderChildren(context.Background(), dirPath); err != nil {
+		glog.V(2).Infof("clear dir cache %s: %v", dirPath, err)
 	}
-	wfs.refreshingDirs[dirPath] = struct{}{}
-	wfs.refreshMu.Unlock()
-
-	go func() {
-		defer func() {
-			wfs.refreshMu.Lock()
-			delete(wfs.refreshingDirs, dirPath)
-			wfs.refreshMu.Unlock()
-		}()
-		wfs.inodeToPath.InvalidateChildrenCache(dirPath)
-		if err := meta_cache.EnsureVisited(wfs.metaCache, wfs, dirPath); err != nil {
-			glog.Warningf("refresh dir cache %s: %v", dirPath, err)
-			return
-		}
-		wfs.inodeToPath.MarkDirectoryRefreshed(dirPath, time.Now())
-	}()
 }
 
 func (wfs *WFS) loopEvictIdleDirCache() {

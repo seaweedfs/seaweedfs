@@ -201,7 +201,7 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 	return readFn(r.Body)
 }
 
-func DownloadFile(fileUrl string, jwt string) (filename string, header http.Header, resp *http.Response, e error) {
+func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return "", nil, nil, err
@@ -209,10 +209,29 @@ func DownloadFile(fileUrl string, jwt string) (filename string, header http.Head
 
 	maybeAddAuth(req, jwt)
 
+	var rangeOffset int64
+	if len(offset) > 0 {
+		rangeOffset = offset[0]
+	}
+	if rangeOffset > 0 {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", rangeOffset))
+	}
+
 	response, err := GetGlobalHttpClient().Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
+
+	if rangeOffset > 0 {
+		expected := fmt.Sprintf("bytes %d-", rangeOffset)
+		if response.StatusCode != http.StatusPartialContent ||
+			!strings.HasPrefix(response.Header.Get("Content-Range"), expected) {
+			CloseResponse(response)
+			return "", nil, nil, fmt.Errorf("range request %q to %s returned %s with Content-Range %q",
+				req.Header.Get("Range"), fileUrl, response.Status, response.Header.Get("Content-Range"))
+		}
+	}
+
 	header = response.Header
 	contentDisposition := response.Header["Content-Disposition"]
 	if len(contentDisposition) > 0 {
@@ -311,11 +330,11 @@ func ReadUrlAsStream(ctx context.Context, fileUrl, jwt string, cipherKey []byte,
 		return readEncryptedUrl(ctx, fileUrl, jwt, cipherKey, isContentGzipped, isFullChunk, offset, size, fn)
 	}
 
-	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
-	maybeAddAuth(req, jwt)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return false, err
 	}
+	maybeAddAuth(req, jwt)
 
 	if isFullChunk {
 		req.Header.Add("Accept-Encoding", "gzip")

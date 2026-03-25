@@ -107,7 +107,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 				return err
 			}
 
-			if !resp.Entry.IsDirectory {
+			if resp.Entry == nil || !resp.Entry.IsDirectory {
 				continue
 			}
 
@@ -135,7 +135,7 @@ func (b *MessageQueueBroker) ListTopics(ctx context.Context, request *mq_pb.List
 					break
 				}
 
-				if !topicResp.Entry.IsDirectory {
+				if topicResp.Entry == nil || !topicResp.Entry.IsDirectory {
 					continue
 				}
 

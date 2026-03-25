@@ -626,14 +626,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					}
 
 					// Send this response
+					var respBody []byte
 					if readyResp.err != nil {
 						glog.Errorf("[%s] Error processing correlation=%d: %v", connectionID, readyResp.correlationID, readyResp.err)
+						// Build an API-versioned error response so the body matches
+						// the schema the client expects for this API key/version.
+						// A generic 2-byte error code would corrupt the protocol
+						// stream for APIs that start with throttle_time or arrays.
+						respBody = BuildAPIErrorResponse(readyResp.apiKey, readyResp.apiVersion, ErrorCodeUnknownServerError)
 					} else {
-						if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, readyResp.response, timeoutConfig.WriteTimeout); writeErr != nil {
-							glog.Errorf("[%s] Response writer WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
-							correlationQueueMu.Unlock()
-							return
-						}
+						respBody = readyResp.response
+					}
+					if writeErr := h.writeResponseWithHeader(w, readyResp.correlationID, readyResp.apiKey, readyResp.apiVersion, respBody, timeoutConfig.WriteTimeout); writeErr != nil {
+						glog.Errorf("[%s] Response writer WRITE ERROR correlation=%d: %v - EXITING", connectionID, readyResp.correlationID, writeErr)
+						correlationQueueMu.Unlock()
+						return
 					}
 
 					// Remove from pending and advance
@@ -689,7 +696,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Warningf("[%s] Control plane: timeout sending response correlation=%d", connectionID, req.correlationID)
+					// responseChan stuck — cancel context to tear down connection.
+					// The orphaned correlationID would stall the ordered writer permanently.
+					glog.Warningf("[%s] Control plane: timeout sending response correlation=%d, tearing down connection", connectionID, req.correlationID)
+					cancel()
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
@@ -767,7 +777,10 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 					// Connection closed, stop processing
 					return
 				case <-time.After(5 * time.Second):
-					glog.Warningf("[%s] Data plane: timeout sending response correlation=%d", connectionID, req.correlationID)
+					// responseChan stuck — cancel context to tear down connection.
+					// The orphaned correlationID would stall the ordered writer permanently.
+					glog.Warningf("[%s] Data plane: timeout sending response correlation=%d, tearing down connection", connectionID, req.correlationID)
+					cancel()
 				}
 			case <-ctx.Done():
 				// Context cancelled, drain remaining requests before exiting
@@ -804,13 +817,18 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 	}()
 
 	defer func() {
-		// Close channels in correct order to avoid panics
-		// 1. Close input channels to stop accepting new requests
+		// Cancel context FIRST so the response writer (and any worker stuck
+		// in an inner select) sees ctx.Done() and can exit.  Previously
+		// cancel() ran in a separate defer registered earlier (LIFO: later
+		// defer runs first), so wg.Wait() below would deadlock waiting for
+		// the response writer which was itself waiting for ctx.Done().
+		cancel()
+		// Close input channels to stop accepting new requests
 		close(controlChan)
 		close(dataChan)
-		// 2. Wait for worker goroutines to finish processing and sending responses
+		// Wait for worker goroutines to finish processing and sending responses
 		wg.Wait()
-		// 3. NOW close responseChan to signal response writer to exit
+		// NOW close responseChan (safe — all senders have exited)
 		close(responseChan)
 	}()
 
@@ -872,14 +890,21 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 		if err := conn.SetReadDeadline(time.Now().Add(timeoutConfig.ReadTimeout)); err != nil {
 		}
 
-		// Read the message
-		// OPTIMIZATION: Use buffer pool to reduce GC pressure (was 1MB/sec at 1000 req/s)
-		messageBuf := mem.Allocate(int(size))
-		defer mem.Free(messageBuf)
-		if _, err := io.ReadFull(r, messageBuf); err != nil {
+		// Read the message into a pooled buffer, then copy to owned memory
+		// and return the pool buffer immediately.  The previous code used
+		// defer mem.Free which accumulated one deferred free per iteration,
+		// leaking pool buffers for the connection lifetime and risking
+		// use-after-free when the defers ran before processing goroutines
+		// finished draining.
+		poolBuf := mem.Allocate(int(size))
+		if _, err := io.ReadFull(r, poolBuf); err != nil {
+			mem.Free(poolBuf)
 			_ = HandleTimeoutError(err, "read") // errorCode
 			return fmt.Errorf("read message: %w", err)
 		}
+		messageBuf := make([]byte, int(size))
+		copy(messageBuf, poolBuf)
+		mem.Free(poolBuf)
 
 		// Parse at least the basic header to get API key and correlation ID
 		if len(messageBuf) < 8 {
@@ -898,6 +923,13 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 			if writeErr != nil {
 				return fmt.Errorf("build error response: %w", writeErr)
 			}
+			// Add to correlation queue BEFORE sending to responseChan so the
+			// response writer can match and send it.  Without this the response
+			// sits in pendingResponses forever and the client hangs.
+			correlationQueueMu.Lock()
+			correlationQueue = append(correlationQueue, correlationID)
+			correlationQueueMu.Unlock()
+
 			// Send error response through response queue to maintain sequential ordering
 			select {
 			case responseChan <- &kafkaResponse{
@@ -1016,28 +1048,49 @@ func (h *Handler) HandleConn(ctx context.Context, conn net.Conn) error {
 
 		// Route to appropriate channel based on API key
 		var targetChan chan *kafkaRequest
-		if apiKey == 2 { // ListOffsets
-		}
 		if isDataPlaneAPI(apiKey) {
 			targetChan = dataChan
 		} else {
 			targetChan = controlChan
 		}
 
-		// Only add to correlation queue AFTER successful channel send
-		// If we add before and the channel blocks, the correlation ID is in the queue
-		// but the request never gets processed, causing response writer deadlock
+		// Add correlation ID BEFORE channel send to prevent race condition:
+		// If we add after, the processor can finish and send the response before the
+		// ID is in the queue. The response writer then can't match the response to a
+		// queue entry, causing a deadlock for sequential clients (e.g., Sarama).
+		// If the channel send fails, we send an error response so the response writer
+		// can advance past this entry.
+		correlationQueueMu.Lock()
+		correlationQueue = append(correlationQueue, correlationID)
+		correlationQueueMu.Unlock()
+
 		select {
 		case targetChan <- req:
-			// Request queued successfully - NOW add to correlation tracking
-			correlationQueueMu.Lock()
-			correlationQueue = append(correlationQueue, correlationID)
-			correlationQueueMu.Unlock()
+			// Request queued successfully
 		case <-ctx.Done():
+			// Context cancelled - send error response so response writer can advance
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: correlationID,
+				apiKey:        apiKey,
+				apiVersion:    apiVersion,
+				err:           ctx.Err(),
+			}:
+			default:
+			}
 			return ctx.Err()
 		case <-time.After(10 * time.Second):
-			// Channel full for too long - this shouldn't happen with proper backpressure
+			// Channel full for too long - send error response so response writer can advance
 			glog.Errorf("[%s] Failed to queue correlation=%d - channel full (10s timeout)", connectionID, correlationID)
+			select {
+			case responseChan <- &kafkaResponse{
+				correlationID: correlationID,
+				apiKey:        apiKey,
+				apiVersion:    apiVersion,
+				err:           fmt.Errorf("request queue full"),
+			}:
+			default:
+			}
 			return fmt.Errorf("request queue full: correlation=%d", correlationID)
 		}
 	}

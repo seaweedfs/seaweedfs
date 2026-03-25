@@ -297,7 +297,7 @@ func (mm *MaintenanceManager) logTopologyStatus() {
 	errorCount := mm.errorCount
 	mm.mutex.RUnlock()
 
-	glog.V(0).Infof("Topology status: %d nodes, %d disks, %d workers, %d pending tasks, %d running tasks, errors: %d",
+	glog.V(1).Infof("Topology status: %d nodes, %d disks, %d workers, %d pending tasks, %d running tasks, errors: %d",
 		nodeCount, diskCount, workerCount,
 		stats.TasksByStatus[TaskStatusPending],
 		stats.TasksByStatus[TaskStatusInProgress]+stats.TasksByStatus[TaskStatusAssigned],

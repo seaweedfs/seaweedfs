@@ -32,7 +32,7 @@ func newTestStore(t *testing.T, numDirs int) *Store {
 	}
 
 	store := NewStore(nil, "localhost", 8080, 18080, "http://localhost:8080", "",
-		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, 3)
+		dirs, maxCounts, minFreeSpaces, "", NeedleMapInMemory, diskTypes, nil, 3)
 
 	// Consume channel messages to prevent blocking
 	done := make(chan bool)
