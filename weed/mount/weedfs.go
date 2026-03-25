@@ -133,6 +133,11 @@ type WFS struct {
 	// the same inode, preventing stale metadata from overwriting the async flush.
 	pendingAsyncFlushMu sync.Mutex
 	pendingAsyncFlush   map[uint64]chan struct{}
+
+	// streamMutate is the multiplexed streaming gRPC connection for all filer
+	// mutations (create, update, delete, rename). All mutations go through one
+	// ordered stream to prevent cross-operation reordering.
+	streamMutate *streamMutateMux
 }
 
 const (
@@ -289,6 +294,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		}
 		wfs.startAsyncFlushWorkers(numWorkers)
 	}
+	wfs.streamMutate = newStreamMutateMux(wfs)
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, option.ChunkSizeLimit)
 	}

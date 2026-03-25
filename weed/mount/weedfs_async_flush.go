@@ -121,4 +121,7 @@ func (wfs *WFS) WaitForAsyncFlush() {
 	if wfs.asyncFlushCh != nil {
 		close(wfs.asyncFlushCh)
 	}
+	if wfs.streamMutate != nil {
+		wfs.streamMutate.Close()
+	}
 }
