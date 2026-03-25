@@ -295,7 +295,7 @@ func testQAShipperShipAfterStop(t *testing.T) {
 
 func testQAShipperBarrierAfterDegraded(t *testing.T) {
 	s := NewWALShipper("127.0.0.1:0", "127.0.0.1:0", func() uint64 { return 1 })
-	s.degraded.Store(true)
+	s.state.Store(uint32(ReplicaDegraded))
 
 	err := s.Barrier(1)
 	if !errors.Is(err, ErrReplicaDegraded) {
@@ -349,7 +349,7 @@ func testQAShipperDegradedPermanent(t *testing.T) {
 	// Force degraded if the connection race didn't trigger it.
 	if !s.IsDegraded() {
 		// The connection might have worked briefly. Manually degrade for the rest of the test.
-		s.degraded.Store(true)
+		s.state.Store(uint32(ReplicaDegraded))
 	}
 
 	// Once degraded, subsequent Ship must not attempt connection.

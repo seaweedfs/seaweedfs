@@ -41,7 +41,7 @@ func TestShipperGroup_BarrierAll_AllSucceed(t *testing.T) {
 
 func TestShipperGroup_BarrierAll_OneFail(t *testing.T) {
 	s1 := newTestShipper()
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
 	s2 := newTestShipper()
 	sg := NewShipperGroup([]*WALShipper{s1, s2})
 	errs := sg.BarrierAll(10)
@@ -52,9 +52,9 @@ func TestShipperGroup_BarrierAll_OneFail(t *testing.T) {
 
 func TestShipperGroup_BarrierAll_AllFail(t *testing.T) {
 	s1 := newTestShipper()
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
 	s2 := newTestShipper()
-	s2.degraded.Store(true)
+	s2.state.Store(uint32(ReplicaDegraded))
 	sg := NewShipperGroup([]*WALShipper{s1, s2})
 	errs := sg.BarrierAll(10)
 	for i, e := range errs {
@@ -73,8 +73,9 @@ func TestShipperGroup_AllDegraded_Empty(t *testing.T) {
 
 func TestShipperGroup_AllDegraded_Mixed(t *testing.T) {
 	s1 := newTestShipper()
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
 	s2 := newTestShipper()
+	s2.state.Store(uint32(ReplicaInSync)) // one healthy, one degraded
 	sg := NewShipperGroup([]*WALShipper{s1, s2})
 	if sg.AllDegraded() {
 		t.Fatal("mixed group should not be AllDegraded")
@@ -97,7 +98,8 @@ func TestShipperGroup_StopAll(t *testing.T) {
 func TestShipperGroup_DegradedCount(t *testing.T) {
 	s1 := newTestShipper()
 	s2 := newTestShipper()
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
+	s2.state.Store(uint32(ReplicaInSync)) // one healthy, one degraded
 	sg := NewShipperGroup([]*WALShipper{s1, s2})
 	if got := sg.DegradedCount(); got != 1 {
 		t.Fatalf("DegradedCount: got %d, want 1", got)

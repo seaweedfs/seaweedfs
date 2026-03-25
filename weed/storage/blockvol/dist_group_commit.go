@@ -16,31 +16,15 @@ func MakeDistributedSync(walSync func() error, group *ShipperGroup, vol *BlockVo
 	return func() error {
 		mode := vol.DurabilityMode()
 
-		if group == nil || group.Len() == 0 || group.AllDegraded() {
-			// No healthy replicas available.
-			switch mode {
-			case DurabilitySyncAll:
-				if group != nil && (group.Len() > 0 || group.AllDegraded()) {
-					if vol.Metrics != nil {
-						vol.Metrics.DurabilityBarrierFailedTotal.Add(1)
-					}
-					return ErrDurabilityBarrierFailed
-				}
-			case DurabilitySyncQuorum:
-				if group != nil && group.Len() > 0 {
-					// quorum = (Len+1)/2+1; with 0 healthy replicas, only primary is durable
-					rf := group.Len() + 1
-					quorum := rf/2 + 1
-					if 1 < quorum { // primary alone doesn't meet quorum
-						if vol.Metrics != nil {
-							vol.Metrics.DurabilityQuorumLostTotal.Add(1)
-						}
-						return ErrDurabilityQuorumLost
-					}
-				}
-			}
+		if group == nil || group.Len() == 0 {
+			// No replicas configured — local sync only.
 			return walSync()
 		}
+
+		// Note: we always attempt BarrierAll, even when all shippers are
+		// Disconnected or Degraded. Barrier() handles bootstrap (Disconnected)
+		// and reconnect (Degraded) paths. Only Connecting/CatchingUp/NeedsRebuild
+		// are pre-rejected by individual shippers.
 
 		// The highest LSN that needs to be durable is nextLSN-1.
 		lsnMax := vol.nextLSN.Load() - 1

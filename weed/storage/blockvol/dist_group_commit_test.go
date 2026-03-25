@@ -70,7 +70,7 @@ func TestDistSync_SyncAll_AllDegraded_Fails(t *testing.T) {
 	shipper := NewWALShipper("127.0.0.1:99999", "127.0.0.1:99998", func() uint64 {
 		return vol.epoch.Load()
 	}, vol.Metrics)
-	shipper.degraded.Store(true)
+	shipper.state.Store(uint32(ReplicaDegraded))
 	group := NewShipperGroup([]*WALShipper{shipper})
 
 	fn := MakeDistributedSync(func() error { return nil }, group, vol)
@@ -86,8 +86,8 @@ func TestDistSync_SyncQuorum_AllDegraded_RF3_Fails(t *testing.T) {
 
 	s1 := NewWALShipper("127.0.0.1:99999", "127.0.0.1:99998", func() uint64 { return 0 }, vol.Metrics)
 	s2 := NewWALShipper("127.0.0.1:99997", "127.0.0.1:99996", func() uint64 { return 0 }, vol.Metrics)
-	s1.degraded.Store(true)
-	s2.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
+	s2.state.Store(uint32(ReplicaDegraded))
 	group := NewShipperGroup([]*WALShipper{s1, s2})
 
 	fn := MakeDistributedSync(func() error { return nil }, group, vol)
@@ -103,7 +103,7 @@ func TestDistSync_BestEffort_BackwardCompat(t *testing.T) {
 	defer vol.Close()
 
 	s1 := NewWALShipper("127.0.0.1:99999", "127.0.0.1:99998", func() uint64 { return 0 }, vol.Metrics)
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
 	group := NewShipperGroup([]*WALShipper{s1})
 
 	fn := MakeDistributedSync(func() error { return nil }, group, vol)
@@ -117,7 +117,7 @@ func TestDistSync_Metrics_IncrementOnFailure(t *testing.T) {
 	defer vol.Close()
 
 	s1 := NewWALShipper("127.0.0.1:99999", "127.0.0.1:99998", func() uint64 { return 0 }, vol.Metrics)
-	s1.degraded.Store(true)
+	s1.state.Store(uint32(ReplicaDegraded))
 	group := NewShipperGroup([]*WALShipper{s1})
 
 	fn := MakeDistributedSync(func() error { return nil }, group, vol)

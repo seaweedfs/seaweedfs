@@ -127,6 +127,19 @@ func (sg *ShipperGroup) MinReplicaFlushedLSN() (uint64, bool) {
 	return min, found
 }
 
+// InSyncCount returns the number of shippers in ReplicaInSync state.
+func (sg *ShipperGroup) InSyncCount() int {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	count := 0
+	for _, s := range sg.shippers {
+		if s.State() == ReplicaInSync {
+			count++
+		}
+	}
+	return count
+}
+
 // Shipper returns the shipper at index i. For internal/test use.
 func (sg *ShipperGroup) Shipper(i int) *WALShipper {
 	sg.mu.RLock()

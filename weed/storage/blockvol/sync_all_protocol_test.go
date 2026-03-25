@@ -132,8 +132,9 @@ func TestReplicaProgress_FlushedLSNMonotonicWithinEpoch(t *testing.T) {
 // state, no full state machine (Disconnected/Connecting/CatchingUp/InSync/
 // Degraded/NeedsRebuild).
 func TestBarrier_RejectsReplicaNotInSync(t *testing.T) {
-	primary, _ := createSyncAllPair(t)
+	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
+	defer replica.Close()
 
 	// Create a shipper pointing to a dead address. It will never connect.
 	primary.SetReplicaAddr("127.0.0.1:1", "127.0.0.1:2") // dead ports
@@ -1166,6 +1167,213 @@ func TestBestEffort_FlushSucceeds_ReplicaDown(t *testing.T) {
 		if got[0] != byte('A'+i) {
 			t.Fatalf("LBA %d: expected %c, got %c", i, 'A'+i, got[0])
 		}
+	}
+}
+
+// ============================================================
+// CP13-4: Replica State Machine Tests
+// ============================================================
+
+func TestReplicaState_InitialDisconnected(t *testing.T) {
+	s := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 })
+	if s.State() != ReplicaDisconnected {
+		t.Fatalf("initial state: got %s, want disconnected", s.State())
+	}
+}
+
+func TestReplicaState_ShipDoesNotGrantInSync(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+	primary.SetRole(RolePrimary)
+	primary.SetEpoch(1)
+	primary.SetMasterEpoch(1)
+	primary.lease.Grant(30 * time.Second)
+	replica.SetRole(RoleReplica)
+	replica.SetEpoch(1)
+	replica.SetMasterEpoch(1)
+
+	shipper := primary.shipperGroup.Shipper(0)
+
+	// Ship does not grant InSync — shipper stays Disconnected.
+	// (Ship silently returns nil because state != InSync)
+	if err := primary.WriteLBA(0, makeBlock('A')); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	time.Sleep(20 * time.Millisecond) // allow ship goroutine to run
+
+	if shipper.State() == ReplicaInSync {
+		t.Fatal("Ship should not grant InSync")
+	}
+}
+
+func TestReplicaState_BarrierBootstrapGrantsInSync(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+	primary.SetRole(RolePrimary)
+	primary.SetEpoch(1)
+	primary.SetMasterEpoch(1)
+	primary.lease.Grant(30 * time.Second)
+	replica.SetRole(RoleReplica)
+	replica.SetEpoch(1)
+	replica.SetMasterEpoch(1)
+
+	shipper := primary.shipperGroup.Shipper(0)
+
+	// Before barrier, state is Disconnected.
+	if shipper.State() != ReplicaDisconnected {
+		t.Fatalf("before barrier: got %s, want disconnected", shipper.State())
+	}
+
+	// SyncCache triggers barrier — barrier success grants InSync.
+	// Note: lsnMax will be 0 (no writes), barrier at LSN=0 should succeed.
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	if shipper.State() != ReplicaInSync {
+		t.Fatalf("after barrier: got %s, want in_sync", shipper.State())
+	}
+}
+
+func TestReplicaState_ShipFailureTransitionsToDegraded(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+	primary.SetRole(RolePrimary)
+	primary.SetEpoch(1)
+	primary.SetMasterEpoch(1)
+	primary.lease.Grant(30 * time.Second)
+	replica.SetRole(RoleReplica)
+	replica.SetEpoch(1)
+	replica.SetMasterEpoch(1)
+
+	shipper := primary.shipperGroup.Shipper(0)
+
+	// Bootstrap to InSync via barrier.
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+	if shipper.State() != ReplicaInSync {
+		t.Fatalf("expected in_sync after barrier, got %s", shipper.State())
+	}
+
+	// Kill replica to cause Ship failure.
+	recv.Stop()
+	time.Sleep(20 * time.Millisecond)
+
+	// Write — Ship will fail and mark degraded.
+	primary.WriteLBA(0, makeBlock('X'))
+	time.Sleep(50 * time.Millisecond) // allow ship to attempt and fail
+
+	if shipper.State() != ReplicaDegraded {
+		t.Fatalf("after ship failure: got %s, want degraded", shipper.State())
+	}
+}
+
+func TestReplicaState_BarrierDegradedReconnectFail_StaysDegraded(t *testing.T) {
+	s := NewWALShipper("127.0.0.1:1", "127.0.0.1:2", func() uint64 { return 1 })
+	// Force to Degraded.
+	s.state.Store(uint32(ReplicaDegraded))
+
+	err := s.Barrier(10)
+	if err == nil {
+		t.Fatal("barrier should fail for degraded shipper with dead ports")
+	}
+	if s.State() != ReplicaDegraded {
+		t.Fatalf("after failed reconnect: got %s, want degraded", s.State())
+	}
+}
+
+func TestReplicaState_BarrierDegradedReconnectSuccess_RestoresInSync(t *testing.T) {
+	primary, replica := createReplicaVolPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+	primary.SetRole(RolePrimary)
+	primary.SetEpoch(1)
+	primary.SetMasterEpoch(1)
+	primary.lease.Grant(30 * time.Second)
+	replica.SetRole(RoleReplica)
+	replica.SetEpoch(1)
+	replica.SetMasterEpoch(1)
+
+	shipper := primary.shipperGroup.Shipper(0)
+
+	// Force to Degraded (simulating prior failure).
+	shipper.state.Store(uint32(ReplicaDegraded))
+
+	// SyncCache triggers barrier — reconnect succeeds, barrier succeeds → InSync.
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+	if shipper.State() != ReplicaInSync {
+		t.Fatalf("after reconnect+barrier: got %s, want in_sync", shipper.State())
+	}
+}
+
+func TestShipperGroup_InSyncCount(t *testing.T) {
+	s1 := NewWALShipper("127.0.0.1:9001", "127.0.0.1:9002", func() uint64 { return 1 })
+	s2 := NewWALShipper("127.0.0.1:9003", "127.0.0.1:9004", func() uint64 { return 1 })
+	group := NewShipperGroup([]*WALShipper{s1, s2})
+
+	// Both disconnected.
+	if group.InSyncCount() != 0 {
+		t.Fatalf("expected 0, got %d", group.InSyncCount())
+	}
+
+	// One InSync.
+	s1.state.Store(uint32(ReplicaInSync))
+	if group.InSyncCount() != 1 {
+		t.Fatalf("expected 1, got %d", group.InSyncCount())
+	}
+
+	// Both InSync.
+	s2.state.Store(uint32(ReplicaInSync))
+	if group.InSyncCount() != 2 {
+		t.Fatalf("expected 2, got %d", group.InSyncCount())
+	}
+
+	// One degraded.
+	s1.state.Store(uint32(ReplicaDegraded))
+	if group.InSyncCount() != 1 {
+		t.Fatalf("expected 1 after degrading s1, got %d", group.InSyncCount())
 	}
 }
 

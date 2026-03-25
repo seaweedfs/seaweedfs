@@ -17,6 +17,38 @@ var (
 
 const barrierTimeout = 5 * time.Second
 
+// ReplicaState tracks the replication state machine for one replica.
+// Only InSync replicas are eligible for sync_all barrier participation.
+type ReplicaState uint32
+
+const (
+	ReplicaDisconnected ReplicaState = 0 // no session (initial state)
+	ReplicaConnecting   ReplicaState = 1 // socket open, handshake pending (CP13-5)
+	ReplicaCatchingUp   ReplicaState = 2 // connected, replaying missed WAL (CP13-5)
+	ReplicaInSync       ReplicaState = 3 // eligible for sync_all barriers
+	ReplicaDegraded     ReplicaState = 4 // transient failure, retry allowed
+	ReplicaNeedsRebuild ReplicaState = 5 // WAL gap too large, rebuild required (CP13-7)
+)
+
+func (s ReplicaState) String() string {
+	switch s {
+	case ReplicaDisconnected:
+		return "disconnected"
+	case ReplicaConnecting:
+		return "connecting"
+	case ReplicaCatchingUp:
+		return "catching_up"
+	case ReplicaInSync:
+		return "in_sync"
+	case ReplicaDegraded:
+		return "degraded"
+	case ReplicaNeedsRebuild:
+		return "needs_rebuild"
+	default:
+		return fmt.Sprintf("unknown(%d)", s)
+	}
+}
+
 // WALShipper streams WAL entries from the primary to a replica over TCP.
 // Fire-and-forget: no per-entry ACK. Barriers provide durability confirmation.
 type WALShipper struct {
@@ -34,7 +66,7 @@ type WALShipper struct {
 	shippedLSN         atomic.Uint64 // diagnostic: highest LSN sent to TCP socket
 	replicaFlushedLSN  atomic.Uint64 // authoritative: highest LSN durably persisted on replica
 	hasFlushedProgress atomic.Bool   // true once replica returns a valid (non-zero) FlushedLSN
-	degraded           atomic.Bool
+	state              atomic.Uint32 // ReplicaState
 	stopped            atomic.Bool
 }
 
@@ -58,7 +90,10 @@ func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, metrics 
 // On write error, the shipper enters degraded mode. Recovery requires
 // the full reconnect protocol. See design/sync-all-reconnect-protocol.md.
 func (s *WALShipper) Ship(entry *WALEntry) error {
-	if s.stopped.Load() || s.degraded.Load() {
+	st := s.State()
+	// Ship allowed from Disconnected (bootstrap: data must flow before first barrier)
+	// and InSync (steady state). All other states reject.
+	if s.stopped.Load() || (st != ReplicaInSync && st != ReplicaDisconnected) {
 		return nil
 	}
 
@@ -108,7 +143,29 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 	if s.stopped.Load() {
 		return ErrShipperStopped
 	}
-	if s.degraded.Load() {
+
+	st := s.State()
+	switch st {
+	case ReplicaInSync:
+		// proceed normally
+	case ReplicaDisconnected:
+		// bootstrap path: attempt connect + barrier
+	case ReplicaDegraded:
+		// recovery path: reset both connections and attempt reconnect + barrier
+		s.mu.Lock()
+		if s.dataConn != nil {
+			s.dataConn.Close()
+			s.dataConn = nil
+		}
+		s.mu.Unlock()
+		s.ctrlMu.Lock()
+		if s.ctrlConn != nil {
+			s.ctrlConn.Close()
+			s.ctrlConn = nil
+		}
+		s.ctrlMu.Unlock()
+	default:
+		// Connecting, CatchingUp, NeedsRebuild — reject immediately
 		return ErrReplicaDegraded
 	}
 
@@ -153,6 +210,8 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 
 	switch resp.Status {
 	case BarrierOK:
+		// Barrier success — transition to InSync (only barrier success grants this).
+		s.markInSync()
 		// Update authoritative durable progress (monotonic: only advance).
 		if resp.FlushedLSN > 0 {
 			s.hasFlushedProgress.Store(true)
@@ -213,9 +272,17 @@ func (s *WALShipper) HasFlushedProgress() bool {
 	return s.hasFlushedProgress.Load()
 }
 
-// IsDegraded returns true if the replica is unreachable.
+// State returns the current replica state machine state.
+func (s *WALShipper) State() ReplicaState {
+	return ReplicaState(s.state.Load())
+}
+
+// IsDegraded returns true if the replica is not sync-eligible (any state
+// other than InSync). This overloads Disconnected, Connecting, CatchingUp,
+// NeedsRebuild, and Degraded into one "not healthy" shape for backward
+// compatibility with existing metrics and callers.
 func (s *WALShipper) IsDegraded() bool {
-	return s.degraded.Load()
+	return s.State() != ReplicaInSync
 }
 
 // Stop shuts down the shipper and closes connections.
@@ -263,6 +330,11 @@ func (s *WALShipper) ensureCtrlConn() error {
 }
 
 func (s *WALShipper) markDegraded() {
-	s.degraded.Store(true)
-	log.Printf("wal_shipper: replica degraded (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
+	s.state.Store(uint32(ReplicaDegraded))
+	log.Printf("wal_shipper: replica degraded (data=%s, ctrl=%s, state=%s)", s.dataAddr, s.controlAddr, s.State())
+}
+
+func (s *WALShipper) markInSync() {
+	s.state.Store(uint32(ReplicaInSync))
+	log.Printf("wal_shipper: replica in-sync (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
 }
