@@ -4443,7 +4443,7 @@ mod tests {
         (VolumeGrpcService { state }, tmp)
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_volume_incremental_copy_streams_remote_only_volume_data() {
         let (service, _tmp, shutdown_tx, dat_bytes, super_block_size) = make_remote_only_service();
 
