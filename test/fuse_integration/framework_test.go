@@ -186,8 +186,13 @@ func (f *FuseTestFramework) Setup(config *TestConfig) error {
 	return nil
 }
 
-// Cleanup stops all processes and removes temporary files
+// Cleanup stops all processes and removes temporary files.
+// If the test failed, it dumps filer and mount logs automatically.
 func (f *FuseTestFramework) Cleanup() {
+	if f.t.Failed() {
+		f.DumpLogs()
+	}
+
 	if f.mountProcess != nil {
 		f.unmountFuse()
 	}
@@ -201,9 +206,19 @@ func (f *FuseTestFramework) Cleanup() {
 		}
 	}
 
+	// Copy logs to a well-known path for CI artifact upload before removing tempdir.
+	f.copyLogsForCI()
+
 	// Remove temp directory
 	if !DefaultTestConfig().SkipCleanup {
 		os.RemoveAll(f.tempDir)
+	}
+}
+
+// DumpLogs prints the tail of all SeaweedFS process logs to test output.
+func (f *FuseTestFramework) DumpLogs() {
+	for _, name := range []string{"master", "volume", "filer", "mount"} {
+		f.dumpLog(name)
 	}
 }
 
@@ -238,18 +253,35 @@ func (f *FuseTestFramework) startProcess(name string, args []string) (*os.Proces
 }
 
 // dumpLog prints the last lines of a process log file to the test output
-// for debugging when a service fails to start.
+// for debugging when a service fails to start or a test fails.
 func (f *FuseTestFramework) dumpLog(name string) {
 	data, err := os.ReadFile(filepath.Join(f.logDir, name+".log"))
 	if err != nil {
 		f.t.Logf("[%s log] (not available: %v)", name, err)
 		return
 	}
-	// Truncate to last 2KB to keep output manageable
-	if len(data) > 2048 {
-		data = data[len(data)-2048:]
+	// Show last 16KB on failure for meaningful context.
+	const maxTail = 16 * 1024
+	if len(data) > maxTail {
+		data = data[len(data)-maxTail:]
 	}
-	f.t.Logf("[%s log tail]\n%s", name, string(data))
+	f.t.Logf("[%s log tail (%d bytes)]\n%s", name, len(data), string(data))
+}
+
+// copyLogsForCI copies SeaweedFS process logs to /tmp/seaweedfs-fuse-logs/
+// so the CI workflow can upload them as artifacts regardless of whether
+// the temp directory is cleaned up.
+func (f *FuseTestFramework) copyLogsForCI() {
+	ciLogDir := "/tmp/seaweedfs-fuse-logs"
+	os.MkdirAll(ciLogDir, 0755)
+	for _, name := range []string{"master", "volume", "filer", "mount"} {
+		src := filepath.Join(f.logDir, name+".log")
+		data, err := os.ReadFile(src)
+		if err != nil {
+			continue
+		}
+		os.WriteFile(filepath.Join(ciLogDir, name+".log"), data, 0644)
+	}
 }
 
 // startMaster starts the SeaweedFS master server
@@ -300,6 +332,7 @@ func (f *FuseTestFramework) startVolumeServers(config *TestConfig) error {
 // startFiler starts the SeaweedFS filer server
 func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 	args := []string{
+		"-v=1", // V(0): hardlink create/delete, V(1): hardlink reads
 		"filer",
 		"-master=127.0.0.1:" + strconv.Itoa(f.masterPort),
 		"-ip=127.0.0.1",
@@ -320,6 +353,7 @@ func (f *FuseTestFramework) startFiler(config *TestConfig) error {
 // mountFuse mounts the SeaweedFS FUSE filesystem
 func (f *FuseTestFramework) mountFuse(config *TestConfig) error {
 	args := []string{
+		"-v=1", // V(0): hardlink lifecycle, Link ops, entry creates
 		"mount",
 		"-filer=127.0.0.1:" + strconv.Itoa(f.filerPort),
 		"-dir=" + f.mountPoint,
