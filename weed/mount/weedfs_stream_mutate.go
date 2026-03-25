@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	grpcMetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -22,9 +23,10 @@ import (
 type streamMutateMux struct {
 	wfs *WFS
 
-	mu       sync.Mutex // protects stream, cancel, closed
+	mu       sync.Mutex // protects stream, cancel, grpcConn, closed
 	stream   filer_pb.SeaweedFiler_StreamMutateEntryClient
 	cancel   context.CancelFunc
+	grpcConn *grpc.ClientConn // dedicated connection, closed on stream teardown
 	closed   bool
 	disabled bool // permanently disabled if filer doesn't support the RPC
 
@@ -213,18 +215,31 @@ func (m *streamMutateMux) ensureStream() error {
 func (m *streamMutateMux) openStream(out *filer_pb.SeaweedFiler_StreamMutateEntryClient) error {
 	i := atomic.LoadInt32(&m.wfs.option.filerIndex)
 	filerGrpcAddress := m.wfs.option.FilerAddresses[i].ToGrpcAddress()
-	return pb.WithGrpcClient(true, m.wfs.signature, func(grpcConnection *grpc.ClientConn) error {
-		client := filer_pb.NewSeaweedFilerClient(grpcConnection)
-		ctx, cancel := context.WithCancel(context.Background())
-		stream, err := client.StreamMutateEntry(ctx)
-		if err != nil {
-			cancel()
-			return err
-		}
-		m.cancel = cancel
-		*out = stream
-		return nil
-	}, filerGrpcAddress, false, m.wfs.option.GrpcDialOption)
+
+	// Dial a dedicated gRPC connection that we own (not pooled).
+	// We cannot use pb.WithGrpcClient(streamingMode=true) because it
+	// closes the connection when the callback returns, destroying the stream.
+	ctx := context.Background()
+	if m.wfs.signature != 0 {
+		ctx = grpcMetadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", m.wfs.signature))
+	}
+	grpcConn, err := pb.GrpcDial(ctx, filerGrpcAddress, false, m.wfs.option.GrpcDialOption)
+	if err != nil {
+		return fmt.Errorf("stream dial %s: %v", filerGrpcAddress, err)
+	}
+
+	client := filer_pb.NewSeaweedFilerClient(grpcConn)
+	streamCtx, cancel := context.WithCancel(context.Background())
+	stream, err := client.StreamMutateEntry(streamCtx)
+	if err != nil {
+		cancel()
+		grpcConn.Close()
+		return err
+	}
+	m.cancel = cancel
+	m.grpcConn = grpcConn
+	*out = stream
+	return nil
 }
 
 func (m *streamMutateMux) sendLoop() {
@@ -251,6 +266,10 @@ func (m *streamMutateMux) recvLoop() {
 			if m.cancel != nil {
 				m.cancel()
 				m.cancel = nil
+			}
+			if m.grpcConn != nil {
+				m.grpcConn.Close()
+				m.grpcConn = nil
 			}
 			m.mu.Unlock()
 			return
@@ -290,6 +309,7 @@ func (m *streamMutateMux) Close() {
 	m.closed = true
 	stream := m.stream
 	cancel := m.cancel
+	grpcConn := m.grpcConn
 	m.mu.Unlock()
 
 	close(m.sendCh)
@@ -299,5 +319,8 @@ func (m *streamMutateMux) Close() {
 	}
 	if cancel != nil {
 		cancel()
+	}
+	if grpcConn != nil {
+		grpcConn.Close()
 	}
 }
