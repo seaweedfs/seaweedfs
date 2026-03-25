@@ -67,8 +67,9 @@ func TestConfig_ToTaskPolicy_RoundTrip(t *testing.T) {
 	if policy.RepeatIntervalSeconds != 7200 {
 		t.Errorf("Expected RepeatIntervalSeconds=7200, got %d", policy.RepeatIntervalSeconds)
 	}
-	if policy.CheckIntervalSeconds != 7200 {
-		t.Errorf("Expected CheckIntervalSeconds=7200, got %d", policy.CheckIntervalSeconds)
+	// CheckIntervalSeconds now carries QuietForSeconds (12 h = 43200 s)
+	if policy.CheckIntervalSeconds != 12*3600 {
+		t.Errorf("Expected CheckIntervalSeconds=%d (QuietForSeconds), got %d", 12*3600, policy.CheckIntervalSeconds)
 	}
 
 	// Round-trip: policy → config
@@ -84,6 +85,9 @@ func TestConfig_ToTaskPolicy_RoundTrip(t *testing.T) {
 	}
 	if restored.ScanIntervalSeconds != original.ScanIntervalSeconds {
 		t.Errorf("ScanIntervalSeconds mismatch: %d vs %d", restored.ScanIntervalSeconds, original.ScanIntervalSeconds)
+	}
+	if restored.QuietForSeconds != original.QuietForSeconds {
+		t.Errorf("QuietForSeconds mismatch: %d vs %d", restored.QuietForSeconds, original.QuietForSeconds)
 	}
 }
 

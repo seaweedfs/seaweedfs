@@ -42,8 +42,12 @@ func RegisterDeleteEmptyTask() {
 			if len(params.Sources) == 0 {
 				return nil, fmt.Errorf("at least one source is required for compaction task")
 			}
+			taskID := params.TaskId
+			if taskID == "" {
+				taskID = fmt.Sprintf("compaction-%d", params.VolumeId)
+			}
 			return NewDeleteEmptyTask(
-				fmt.Sprintf("compaction-%d", params.VolumeId),
+				taskID,
 				params.Sources[0].Node,
 				params.VolumeId,
 				params.Collection,

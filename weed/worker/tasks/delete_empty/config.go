@@ -33,18 +33,21 @@ func NewDefaultConfig() *Config {
 }
 
 // ToTaskPolicy converts configuration to a TaskPolicy protobuf message.
-// Delete-empty config is stored via the generic policy fields; typed config
-// support requires proto regeneration (see worker.proto TODO).
+// QuietForSeconds is stored in CheckIntervalSeconds so it survives a
+// proto round-trip. DeleteEmptyEnabled is persisted via the full JSON
+// config (SaveCompactionConfig / LoadCompactionConfig); see worker.proto
+// TODO for the tracked typed-oneof approach.
 func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 	return &worker_pb.TaskPolicy{
 		Enabled:               c.Enabled,
 		MaxConcurrent:         int32(c.MaxConcurrent),
 		RepeatIntervalSeconds: int32(c.ScanIntervalSeconds),
-		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
+		CheckIntervalSeconds:  int32(c.QuietForSeconds),
 	}
 }
 
-// FromTaskPolicy loads base fields from a TaskPolicy protobuf message
+// FromTaskPolicy loads fields from a TaskPolicy protobuf message.
+// QuietForSeconds is recovered from CheckIntervalSeconds.
 func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	if policy == nil {
 		return nil
@@ -52,13 +55,29 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	c.Enabled = policy.Enabled
 	c.MaxConcurrent = int(policy.MaxConcurrent)
 	c.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
+	if policy.CheckIntervalSeconds > 0 {
+		c.QuietForSeconds = int(policy.CheckIntervalSeconds)
+	}
 	return nil
 }
 
-// LoadConfigFromPersistence loads configuration from the persistence layer if available
+// LoadConfigFromPersistence loads configuration from the persistence layer if available.
+// It first tries a full JSON config (which carries all fields including
+// DeleteEmptyEnabled) and falls back to the base TaskPolicy proto.
 func LoadConfigFromPersistence(configPersistence interface{}) *Config {
-	cfg := NewDefaultConfig()
+	// Prefer the full JSON config — it carries DeleteEmptyEnabled and
+	// QuietForSeconds without requiring proto regeneration.
+	if persistence, ok := configPersistence.(interface {
+		LoadCompactionConfig() (*Config, error)
+	}); ok {
+		if cfg, err := persistence.LoadCompactionConfig(); err == nil && cfg != nil {
+			glog.V(1).Infof("Loaded compaction configuration from full JSON config")
+			return cfg
+		}
+	}
 
+	// Fallback: load from base TaskPolicy proto (QuietForSeconds via check_interval_seconds)
+	cfg := NewDefaultConfig()
 	if persistence, ok := configPersistence.(interface {
 		LoadCompactionTaskPolicy() (*worker_pb.TaskPolicy, error)
 	}); ok {

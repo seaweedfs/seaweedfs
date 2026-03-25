@@ -48,14 +48,16 @@ func Detection(metrics []*types.VolumeHealthMetrics, clusterInfo *types.ClusterI
 			continue
 		}
 
+		// Build a per-replica task ID so each replica of an empty volume
+		// gets its own compaction task without ID collisions.
+		taskID := fmt.Sprintf("compaction_%d_%s_%d", metric.VolumeID, metric.ServerAddress, now.Unix())
+
 		if clusterInfo != nil && clusterInfo.ActiveTopology != nil {
 			if clusterInfo.ActiveTopology.HasAnyTask(metric.VolumeID) {
-				glog.V(2).Infof("COMPACTION: skipping volume %d, task already exists in ActiveTopology", metric.VolumeID)
+				glog.V(2).Infof("COMPACTION: skipping volume %d on %s, task already exists in ActiveTopology", metric.VolumeID, metric.ServerAddress)
 				continue
 			}
 		}
-
-		taskID := fmt.Sprintf("compaction_vol_%d_%d", metric.VolumeID, now.Unix())
 
 		result := &types.TaskDetectionResult{
 			TaskID:     taskID,
