@@ -33,7 +33,11 @@ import (
 )
 
 // MaxSize is the maximum size of a log file in bytes.
+// It is initialized from the --log_max_size_mb flag when the first log file is created.
 var MaxSize uint64 = 1024 * 1024 * 1800
+
+// MaxFileCount is the maximum number of log files retained per severity level.
+// It is initialized from the --log_max_files flag when the first log file is created.
 var MaxFileCount = 5
 
 // logDirs lists the candidate directories for new log files.
@@ -43,12 +47,43 @@ var logDirs []string
 // See createLogDirs for the full list of possible destinations.
 var logDir = flag.String("logdir", "", "If non-empty, write log files in this directory")
 
+// logMaxSizeMB controls the maximum size of each log file in megabytes.
+// When a log file reaches this size it is closed and a new file is created.
+// Defaults to 1800 MB. Set to 0 to use the compiled-in default.
+var logMaxSizeMB = flag.Uint64("log_max_size_mb", 1800, "Maximum size in megabytes of each log file before it is rotated (0 = use default of 1800 MB)")
+
+// logMaxFiles controls how many log files are kept per severity level.
+// Older files are deleted when the limit is exceeded.
+// Defaults to 5.
+var logMaxFiles = flag.Int("log_max_files", 5, "Maximum number of log files to keep per severity level before older ones are deleted (0 = use default of 5)")
+
+// logRotateHours controls time-based log rotation.
+// When non-zero, each log file is rotated after the given number of hours
+// regardless of its size. This prevents log files from accumulating in
+// long-running deployments even when log volume is low.
+// The default is 168 hours (7 days). Set to 0 to disable time-based rotation.
+var logRotateHours = flag.Int("log_rotate_hours", 168, "Rotate log files after this many hours (default: 168 = 7 days, 0 = disabled)")
+
 func createLogDirs() {
+	// Apply flag values now that flags have been parsed.
+	if *logMaxSizeMB > 0 {
+		MaxSize = *logMaxSizeMB * 1024 * 1024
+	}
+	if *logMaxFiles > 0 {
+		MaxFileCount = *logMaxFiles
+	}
+
 	if *logDir != "" {
 		logDirs = append(logDirs, *logDir)
 	} else {
 		logDirs = append(logDirs, os.TempDir())
 	}
+}
+
+// LogRotateHours returns the configured time-based rotation interval.
+// This is used by syncBuffer to decide when to rotate open log files.
+func LogRotateHours() int {
+	return *logRotateHours
 }
 
 var (
