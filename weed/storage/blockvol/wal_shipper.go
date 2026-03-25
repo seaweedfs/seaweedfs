@@ -353,12 +353,15 @@ func (s *WALShipper) resetConnections() {
 // doReconnectAndCatchUp runs the full reconnect handshake + catch-up protocol.
 // On success, transitions to InSync and resets ctrl connection for barrier.
 func (s *WALShipper) doReconnectAndCatchUp() error {
-	targetState, _, err := s.reconnectWithHandshake()
+	targetState, replicaFlushed, err := s.reconnectWithHandshake()
 	switch targetState {
 	case ReplicaInSync:
 		s.markInSync()
 	case ReplicaCatchingUp:
-		if catchErr := s.runCatchUp(s.replicaFlushedLSN.Load()); catchErr != nil {
+		// Use the handshake-reported flushedLSN as catch-up start point,
+		// NOT the shipper's cached value. The replica may have lost progress
+		// since the shipper last heard from it.
+		if catchErr := s.runCatchUp(replicaFlushed); catchErr != nil {
 			s.catchupFailures++
 			if s.catchupFailures >= maxCatchupRetries {
 				s.state.Store(uint32(ReplicaNeedsRebuild))

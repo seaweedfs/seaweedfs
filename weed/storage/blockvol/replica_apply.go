@@ -58,17 +58,23 @@ func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string, advertisedHost
 	if len(advertisedHost) > 0 {
 		advHost = advertisedHost[0]
 	}
-	// Initialize receivedLSN/flushedLSN from the volume's persisted state.
-	// This handles the case where a ReplicaReceiver is recreated on a
-	// volume that already has data (e.g., after process restart or reconnect).
-	initLSN := uint64(0)
+	// Initialize from the volume's persisted state on receiver recreation.
+	// receivedLSN: highest LSN in the WAL (may include unflushed entries).
+	// flushedLSN: only checkpoint LSN is guaranteed durable (fd.Sync completed
+	// during flusher cycle). Using nextLSN would overstate durability because
+	// applyEntry advances nextLSN before barrier fd.Sync.
+	initReceived := uint64(0)
 	if vol.nextLSN.Load() > 1 {
-		initLSN = vol.nextLSN.Load() - 1
+		initReceived = vol.nextLSN.Load() - 1
+	}
+	initFlushed := uint64(0)
+	if vol.flusher != nil {
+		initFlushed = vol.flusher.CheckpointLSN()
 	}
 	r := &ReplicaReceiver{
 		vol:            vol,
-		receivedLSN:    initLSN,
-		flushedLSN:     initLSN,
+		receivedLSN:    initReceived,
+		flushedLSN:     initFlushed,
 		barrierTimeout: defaultBarrierTimeout,
 		advertisedHost: advHost,
 		dataListener:   dataLn,
