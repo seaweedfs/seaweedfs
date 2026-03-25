@@ -33,6 +33,9 @@ service SeaweedFiler {
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
     }
 
+    rpc StreamMutateEntry (stream StreamMutateEntryRequest) returns (stream StreamMutateEntryResponse) {
+    }
+
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
@@ -534,4 +537,31 @@ message TransferLocksRequest {
     repeated Lock locks = 1;
 }
 message TransferLocksResponse {
+}
+
+//////////////////////////////////////////////////
+// StreamMutateEntry: ordered bidirectional streaming for all filer mutations.
+// All create/update/delete/rename operations from a single mount go through
+// one stream, preserving mutation ordering and eliminating per-request
+// connection overhead.
+
+message StreamMutateEntryRequest {
+    uint64 request_id = 1;
+    oneof request {
+        CreateEntryRequest create_request = 2;
+        UpdateEntryRequest update_request = 3;
+        DeleteEntryRequest delete_request = 4;
+        StreamRenameEntryRequest rename_request = 5;
+    }
+}
+
+message StreamMutateEntryResponse {
+    uint64 request_id = 1;
+    bool is_last = 2; // always true except for rename, which sends multiple events
+    oneof response {
+        CreateEntryResponse create_response = 3;
+        UpdateEntryResponse update_response = 4;
+        DeleteEntryResponse delete_response = 5;
+        StreamRenameEntryResponse rename_response = 6;
+    }
 }
