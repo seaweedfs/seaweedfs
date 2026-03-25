@@ -86,25 +86,24 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// apply changes to the filer, and also apply to local metaCache
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
+	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		updateResp, err := filer_pb.UpdateEntryWithResponse(context.Background(), client, updateOldEntryRequest)
-		if err != nil {
-			return err
-		}
+	ctx := context.Background()
+	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
+	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
 		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
+		if applyErr := wfs.applyLocalMetadataEvent(ctx, updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
-
-		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+	}
+	if err == nil {
+		var createResp *filer_pb.CreateEntryResponse
+		createResp, err = wfs.streamCreateEntry(ctx, request)
 		if err != nil {
 			// Rollback: restore original HardLinkId/Counter on the source entry
 			oldEntry.HardLinkId = origHardLinkId
@@ -114,23 +113,20 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				Entry:      oldEntry,
 				Signatures: []int32{wfs.signature},
 			}
-			if _, rollbackErr := filer_pb.UpdateEntryWithResponse(context.Background(), client, rollbackReq); rollbackErr != nil {
+			if _, rollbackErr := wfs.streamUpdateEntry(ctx, rollbackReq); rollbackErr != nil {
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
-			return err
+		} else {
+			createEvent := createResp.GetMetadataEvent()
+			if createEvent == nil {
+				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+			}
+			if applyErr := wfs.applyLocalMetadataEvent(ctx, createEvent); applyErr != nil {
+				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
+				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
+			}
 		}
-
-		createEvent := createResp.GetMetadataEvent()
-		if createEvent == nil {
-			createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
-			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
-		}
-
-		return nil
-	})
+	}
 
 	newEntryPath := newParentPath.Child(name)
 

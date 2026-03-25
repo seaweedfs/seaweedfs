@@ -2,7 +2,6 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"syscall"
 	"time"
@@ -47,16 +46,11 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		SkipCheckParentDirectory: true,
 	}
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
+	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
-		}
-
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err == nil {
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataCreateEvent(string(dirPath), request.Entry)
@@ -65,9 +59,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			glog.Warningf("symlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(dirPath)
 		}
-
-		return nil
-	})
+	}
 	if err != nil {
 		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
 		return fuse.EIO

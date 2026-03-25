@@ -99,65 +99,63 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 
 	glog.V(4).Infof("flushFileMetadata %s fh %d", fileFullPath, fh.fh)
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		entry := fh.GetEntry()
-		if entry == nil {
-			return nil
-		}
-		entry.Name = name
-
-		if entry.Attributes != nil {
-			entry.Attributes.Mtime = time.Now().Unix()
-		}
-
-		// Get current chunks - these include chunks that have been uploaded
-		// but not yet persisted to filer metadata
-		chunks := entry.GetChunks()
-		if len(chunks) == 0 {
-			return nil
-		}
-
-		// Separate manifest and non-manifest chunks
-		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(chunks)
-
-		// Compact chunks to remove fully overlapped ones
-		compactedChunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
-
-		// Try to create manifest chunks for large files
-		compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), compactedChunks)
-		if manifestErr != nil {
-			glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
-		}
-
-		entry.Chunks = append(compactedChunks, manifestChunks...)
-
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dir),
-			Entry:                    entry.GetEntry(),
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
-		}
-
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			return err
-		}
-
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataUpdateEvent(string(dir), request.Entry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
-		}
-
-		glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
+	entry := fh.GetEntry()
+	if entry == nil {
 		return nil
-	})
+	}
+	entry.Name = name
+
+	if entry.Attributes != nil {
+		entry.Attributes.Mtime = time.Now().Unix()
+	}
+
+	// Get current chunks - these include chunks that have been uploaded
+	// but not yet persisted to filer metadata
+	chunks := entry.GetChunks()
+	if len(chunks) == 0 {
+		return nil
+	}
+
+	// Separate manifest and non-manifest chunks
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(chunks)
+
+	// Compact chunks to remove fully overlapped ones
+	compactedChunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+
+	// Try to create manifest chunks for large files
+	compactedChunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), compactedChunks)
+	if manifestErr != nil {
+		glog.V(0).Infof("flushFileMetadata MaybeManifestize: %v", manifestErr)
+	}
+
+	entry.Chunks = append(compactedChunks, manifestChunks...)
+
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dir),
+		Entry:                    entry.GetEntry(),
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
+
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
+	defer wfs.mapPbIdFromFilerToLocal(request.Entry)
+
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		return err
+	}
+
+	event := resp.GetMetadataEvent()
+	if event == nil {
+		event = metadataUpdateEvent(string(dir), request.Entry)
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("flushFileMetadata %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
+	}
+
+	glog.V(3).Infof("flushed metadata for %s with %d chunks", fileFullPath, len(entry.GetChunks()))
+	err = nil
 
 	if err != nil {
 		return err

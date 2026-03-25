@@ -264,24 +264,21 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		return inode, newEntry, fuse.OK
 	}
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		wfs.mapPbIdFromLocalToFiler(newEntry)
-		defer wfs.mapPbIdFromFilerToLocal(newEntry)
+	wfs.mapPbIdFromLocalToFiler(newEntry)
+	defer wfs.mapPbIdFromFilerToLocal(newEntry)
 
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dirFullPath),
-			Entry:                    newEntry,
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
-		}
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dirFullPath),
+		Entry:                    newEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
 
-		glog.V(1).Infof("createFile: %v", request)
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			glog.V(0).Infof("createFile %s: %v", entryFullPath, err)
-			return err
-		}
-
+	glog.V(1).Infof("createFile: %v", request)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(0).Infof("createFile %s: %v", entryFullPath, err)
+	} else {
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataCreateEvent(string(dirFullPath), newEntry)
@@ -291,9 +288,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-
-		return nil
-	})
+	}
 
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
 
