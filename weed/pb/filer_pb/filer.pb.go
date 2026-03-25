@@ -4447,6 +4447,8 @@ type StreamMutateEntryResponse struct {
 	//	*StreamMutateEntryResponse_DeleteResponse
 	//	*StreamMutateEntryResponse_RenameResponse
 	Response      isStreamMutateEntryResponse_Response `protobuf_oneof:"response"`
+	Error         string                               `protobuf:"bytes,7,opt,name=error,proto3" json:"error,omitempty"`  // human-readable error message when the operation failed
+	Errno         int32                                `protobuf:"varint,8,opt,name=errno,proto3" json:"errno,omitempty"` // POSIX errno (e.g. ENOENT=2, ENOTEMPTY=66) for direct FUSE status mapping
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4536,6 +4538,20 @@ func (x *StreamMutateEntryResponse) GetRenameResponse() *StreamRenameEntryRespon
 		}
 	}
 	return nil
+}
+
+func (x *StreamMutateEntryResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *StreamMutateEntryResponse) GetErrno() int32 {
+	if x != nil {
+		return x.Errno
+	}
+	return 0
 }
 
 type isStreamMutateEntryResponse_Response interface {
@@ -5175,7 +5191,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x0eupdate_request\x18\x03 \x01(\v2\x1c.filer_pb.UpdateEntryRequestH\x00R\rupdateRequest\x12E\n" +
 	"\x0edelete_request\x18\x04 \x01(\v2\x1c.filer_pb.DeleteEntryRequestH\x00R\rdeleteRequest\x12K\n" +
 	"\x0erename_request\x18\x05 \x01(\v2\".filer_pb.StreamRenameEntryRequestH\x00R\rrenameRequestB\t\n" +
-	"\arequest\"\x8d\x03\n" +
+	"\arequest\"\xb9\x03\n" +
 	"\x19StreamMutateEntryResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x12\x17\n" +
@@ -5183,7 +5199,9 @@ const file_filer_proto_rawDesc = "" +
 	"\x0fcreate_response\x18\x03 \x01(\v2\x1d.filer_pb.CreateEntryResponseH\x00R\x0ecreateResponse\x12H\n" +
 	"\x0fupdate_response\x18\x04 \x01(\v2\x1d.filer_pb.UpdateEntryResponseH\x00R\x0eupdateResponse\x12H\n" +
 	"\x0fdelete_response\x18\x05 \x01(\v2\x1d.filer_pb.DeleteEntryResponseH\x00R\x0edeleteResponse\x12N\n" +
-	"\x0frename_response\x18\x06 \x01(\v2#.filer_pb.StreamRenameEntryResponseH\x00R\x0erenameResponseB\n" +
+	"\x0frename_response\x18\x06 \x01(\v2#.filer_pb.StreamRenameEntryResponseH\x00R\x0erenameResponse\x12\x14\n" +
+	"\x05error\x18\a \x01(\tR\x05error\x12\x14\n" +
+	"\x05errno\x18\b \x01(\x05R\x05errnoB\n" +
 	"\n" +
 	"\bresponse*7\n" +
 	"\aSSEType\x12\b\n" +

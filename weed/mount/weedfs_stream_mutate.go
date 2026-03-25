@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -15,6 +16,15 @@ import (
 	grpcMetadata "google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
+
+// streamMutateError is returned when the server reports a structured errno.
+type streamMutateError struct {
+	msg   string
+	errno syscall.Errno
+}
+
+func (e *streamMutateError) Error() string         { return e.msg }
+func (e *streamMutateError) Errno() syscall.Errno  { return e.errno }
 
 // streamMutateMux multiplexes filer mutation RPCs (create, update, delete,
 // rename) over a single bidirectional gRPC stream. Multiple goroutines can
@@ -139,6 +149,12 @@ func (m *streamMutateMux) Rename(ctx context.Context, req *filer_pb.StreamRename
 				}
 			}
 			if resp.IsLast {
+				if resp.Error != "" {
+					return &streamMutateError{
+						msg:   resp.Error,
+						errno: syscall.Errno(resp.Errno),
+					}
+				}
 				return nil
 			}
 		case <-ctx.Done():
@@ -176,6 +192,12 @@ func (m *streamMutateMux) doUnary(ctx context.Context, req *filer_pb.StreamMutat
 	case resp, ok := <-ch:
 		if !ok {
 			return nil, fmt.Errorf("stream closed")
+		}
+		if resp.Error != "" {
+			return nil, &streamMutateError{
+				msg:   resp.Error,
+				errno: syscall.Errno(resp.Errno),
+			}
 		}
 		return resp, nil
 	case <-ctx.Done():

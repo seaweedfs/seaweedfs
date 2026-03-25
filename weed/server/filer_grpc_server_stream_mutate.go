@@ -3,6 +3,8 @@ package weed_server
 import (
 	"context"
 	"io"
+	"strings"
+	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -90,11 +92,13 @@ func (fs *FilerServer) handleStreamMutateRename(
 			RenameResponse: &filer_pb.StreamRenameEntryResponse{},
 		},
 	}
+	if renameErr != nil {
+		finalResp.Error = renameErr.Error()
+		finalResp.Errno = renameErrno(renameErr)
+		glog.V(0).Infof("StreamMutateEntry rename: %v", renameErr)
+	}
 	if sendErr := parent.Send(finalResp); sendErr != nil {
 		return sendErr
-	}
-	if renameErr != nil {
-		glog.V(0).Infof("StreamMutateEntry rename: %v", renameErr)
 	}
 	return nil
 }
@@ -125,3 +129,18 @@ func (p *renameStreamProxy) RecvMsg(m interface{}) error    { return p.parent.Re
 func (p *renameStreamProxy) SetHeader(md metadata.MD) error { return p.parent.SetHeader(md) }
 func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.SendHeader(md) }
 func (p *renameStreamProxy) SetTrailer(md metadata.MD)      { p.parent.SetTrailer(md) }
+
+// renameErrno maps a rename error to a POSIX errno for the client.
+func renameErrno(err error) int32 {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "not found"):
+		return int32(syscall.ENOENT)
+	case strings.Contains(msg, "not empty"):
+		return int32(syscall.ENOTEMPTY)
+	case strings.Contains(msg, "not directory"):
+		return int32(syscall.ENOTDIR)
+	default:
+		return int32(syscall.EIO)
+	}
+}

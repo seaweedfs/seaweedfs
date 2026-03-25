@@ -171,6 +171,24 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
+	// Ensure the source file's metadata exists on the filer before renaming.
+	// Two cases can leave the entry only in the local cache:
+	//   1. deferFilerCreate=true — file handle still open, dirtyMetadata set.
+	//   2. writebackCache — close() triggered async flush, handle released.
+	// The filer rename will fail with ENOENT unless we flush/wait first.
+	if inode, found := wfs.inodeToPath.GetInode(oldPath); found {
+		// Case 2: handle already released, async flush may be in flight.
+		wfs.waitForPendingAsyncFlush(inode)
+		// Case 1: handle still open with deferred metadata.
+		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok && fh.dirtyMetadata {
+			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
+			if flushStatus := wfs.doFlush(fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
+				glog.Warningf("dir Rename %s: flush before rename failed: %v", oldPath, flushStatus)
+				return flushStatus
+			}
+		}
+	}
+
 	// update remote filer
 	request := &filer_pb.StreamRenameEntryRequest{
 		OldDirectory: string(oldDir),
@@ -208,15 +226,18 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		})
 	}
 	if err != nil {
-		if strings.Contains(err.Error(), "not empty") {
-			code = fuse.Status(syscall.ENOTEMPTY)
-		} else if strings.Contains(err.Error(), "not directory") {
-			code = fuse.ENOTDIR
+		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
+		// Use structured errno from streaming mux when available.
+		if sme, ok := err.(*streamMutateError); ok && sme.Errno() != 0 {
+			return fuse.Status(sme.Errno())
 		}
-	}
-	if err != nil {
-		glog.V(0).Infof("Link: %v", err)
-		return
+		// Fallback: string matching for non-streaming path.
+		if strings.Contains(err.Error(), "not empty") {
+			return fuse.Status(syscall.ENOTEMPTY)
+		} else if strings.Contains(err.Error(), "not directory") {
+			return fuse.ENOTDIR
+		}
+		return fuse.EIO
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)

@@ -564,4 +564,6 @@ message StreamMutateEntryResponse {
         DeleteEntryResponse delete_response = 5;
         StreamRenameEntryResponse rename_response = 6;
     }
+    string error = 7; // human-readable error message when the operation failed
+    int32 errno = 8;  // POSIX errno (e.g. ENOENT=2, ENOTEMPTY=66) for direct FUSE status mapping
 }
