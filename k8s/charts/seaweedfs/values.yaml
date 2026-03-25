@@ -1104,6 +1104,10 @@ s3:
     annotations: {}
     tls: []
 
+  # Service settings
+  service:
+    type: ClusterIP
+
   icebergIngress:
     enabled: false
     className: ""
@@ -1184,6 +1188,10 @@ sftp:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 10
+
+  # Service settings
+  service:
+    type: ClusterIP
 
 admin:
   enabled: false
