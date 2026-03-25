@@ -17,6 +17,8 @@ func (fsw *FilerStoreWrapper) handleUpdateToHardLinks(ctx context.Context, entry
 
 	if len(entry.HardLinkId) > 0 {
 		// handle hard links
+		glog.V(0).InfofCtx(ctx, "handleUpdateToHardLinks %s HardLinkId %x counter=%d chunks=%d",
+			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter, len(entry.GetChunks()))
 		if err := fsw.setHardLink(ctx, entry); err != nil {
 			return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
 		}
@@ -51,7 +53,8 @@ func (fsw *FilerStoreWrapper) setHardLink(ctx context.Context, entry *Entry) err
 		return encodeErr
 	}
 
-	glog.V(4).InfofCtx(ctx, "setHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+	glog.V(0).InfofCtx(ctx, "setHardLink KvPut %s HardLinkId %x nlink:%d blobLen=%d",
+		entry.FullPath, entry.HardLinkId, entry.HardLinkCounter, len(newBlob))
 
 	return fsw.KvPut(ctx, key, newBlob)
 }
@@ -62,26 +65,31 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 	}
 	key := entry.HardLinkId
 
+	glog.V(1).InfofCtx(ctx, "maybeReadHardLink %s HardLinkId %x", entry.FullPath, entry.HardLinkId)
+
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "read %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		glog.ErrorfCtx(ctx, "read %s HardLinkId %x: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 
 	if err = entry.DecodeAttributesAndChunks(value); err != nil {
-		glog.ErrorfCtx(ctx, "decode %s hardlink %d: %v", entry.FullPath, entry.HardLinkId, err)
+		glog.ErrorfCtx(ctx, "decode %s HardLinkId %x: %v", entry.FullPath, entry.HardLinkId, err)
 		return err
 	}
 
-	glog.V(4).InfofCtx(ctx, "maybeReadHardLink %v nlink:%d", entry.FullPath, entry.HardLinkCounter)
+	glog.V(1).InfofCtx(ctx, "maybeReadHardLink %s HardLinkId %x nlink:%d chunks=%d",
+		entry.FullPath, entry.HardLinkId, entry.HardLinkCounter, len(entry.GetChunks()))
 
 	return nil
 }
 
 func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error {
 	key := hardLinkId
+	glog.V(0).InfofCtx(ctx, "DeleteHardLink HardLinkId %x", key)
 	value, err := fsw.KvGet(ctx, key)
 	if err == ErrKvNotFound {
+		glog.V(0).InfofCtx(ctx, "DeleteHardLink HardLinkId %x: already gone", key)
 		return nil
 	}
 	if err != nil {
@@ -95,7 +103,8 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 
 	entry.HardLinkCounter--
 	if entry.HardLinkCounter <= 0 {
-		glog.V(4).InfofCtx(ctx, "DeleteHardLink KvDelete %v", key)
+		glog.V(0).InfofCtx(ctx, "DeleteHardLink KvDelete HardLinkId %x counter reached %d",
+			key, entry.HardLinkCounter)
 		return fsw.KvDelete(ctx, key)
 	}
 
@@ -104,7 +113,8 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 		return encodeErr
 	}
 
-	glog.V(4).InfofCtx(ctx, "DeleteHardLink KvPut %v", key)
+	glog.V(0).InfofCtx(ctx, "DeleteHardLink KvPut HardLinkId %x counter decremented to %d",
+		key, entry.HardLinkCounter)
 	return fsw.KvPut(ctx, key, newBlob)
 
 }

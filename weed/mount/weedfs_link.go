@@ -60,8 +60,11 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	if len(oldEntry.HardLinkId) == 0 {
 		oldEntry.HardLinkId = filer.NewHardLinkId()
 		oldEntry.HardLinkCounter = 1
+		glog.V(0).Infof("Link: new HardLinkId %x for %s", oldEntry.HardLinkId, oldEntryPath)
 	}
 	oldEntry.HardLinkCounter++
+	glog.V(0).Infof("Link: %s -> %s/%s HardLinkId %x counter=%d",
+		oldEntryPath, newParentPath, name, oldEntry.HardLinkId, oldEntry.HardLinkCounter)
 	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
 		Directory:  oldParentPath,
 		Entry:      oldEntry,
