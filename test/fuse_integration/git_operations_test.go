@@ -84,9 +84,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 3: Clone from mount bare repo into on-mount working dir ----
 	t.Log("Phase 3: clone from mount bare repo to on-mount working dir")
-	// --no-local prevents git from using hardlink/stat optimizations that
-	// fail when both repos live on the same FUSE filesystem.
-	gitRun(t, "", "clone", "--no-local", bareRepo, mountClone)
+	gitRun(t, "", "clone", bareRepo, mountClone)
 
 	assertFileContains(t, filepath.Join(mountClone, "README.md"), "# Updated")
 	assertFileContains(t, filepath.Join(mountClone, "src/main.go"), "v2")
@@ -121,8 +119,6 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 5: Reset to older revision in on-mount clone ----
 	t.Log("Phase 5: reset to older revision on mount clone")
-	// Use reset instead of checkout to stay on the branch (avoids detached
-	// HEAD issues with local-transport git pull on FUSE).
 	gitRun(t, mountClone, "reset", "--hard", commit2)
 
 	resetHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
@@ -136,10 +132,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 	oldHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit2, oldHead, "should be at commit 2 before pull")
 
-	// Use fetch + reset to avoid git's local-transport stat optimizations
-	// that can fail when both repos are on the same FUSE mount.
-	gitRun(t, mountClone, "fetch", "origin")
-	gitRun(t, mountClone, "reset", "--hard", "origin/"+branch)
+	gitRun(t, mountClone, "pull")
 
 	newHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit5, newHead, "HEAD should be commit 5 after pull")
