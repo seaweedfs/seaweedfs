@@ -80,6 +80,9 @@ func (fs *FilerServer) tusOptionsHandler(w http.ResponseWriter, r *http.Request)
 
 // tusCreateHandler handles POST requests to create new uploads
 func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) {
+	// Use a context that ignores cancellation from the request context.
+	// Internal operations (creating TUS session, writing data, completing uploads)
+	// may exceed the filer's client connection inactivity timeout.
 	ctx := context.WithoutCancel(r.Context())
 
 	// Parse Upload-Length header (required)
