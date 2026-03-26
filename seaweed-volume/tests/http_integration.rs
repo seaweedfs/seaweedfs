@@ -294,27 +294,10 @@ async fn admin_router_rejects_non_whitelisted_deletes() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
+// Go's volume_server.go has /stats/* endpoints commented out (L130-134).
+// Requests to /stats/counter fall through to the store handler which returns 400.
 #[tokio::test]
-async fn admin_router_rejects_non_whitelisted_stats_routes() {
-    let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
-    let app = build_admin_router_with_ui(state, true);
-
-    let response = app
-        .oneshot(with_remote_addr(
-            Request::builder()
-                .uri("/stats/counter")
-                .body(Body::empty())
-                .unwrap(),
-            "10.0.0.9:12345",
-        ))
-        .await
-        .unwrap();
-
-    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-}
-
-#[tokio::test]
-async fn admin_router_allows_whitelisted_stats_routes() {
+async fn admin_router_does_not_expose_stats_routes() {
     let (state, _tmp) = test_state_with_whitelist(vec!["127.0.0.1".to_string()]);
     let app = build_admin_router_with_ui(state, true);
 
@@ -329,7 +312,8 @@ async fn admin_router_allows_whitelisted_stats_routes() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    // Falls through to store handler → 400 (bad volume id)
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 // ============================================================================
@@ -585,8 +569,9 @@ async fn public_router_does_not_expose_healthz() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+// Go's volume_server.go has /stats/* endpoints commented out (L130-134).
 #[tokio::test]
-async fn admin_router_exposes_stats_routes() {
+async fn admin_router_stats_routes_not_registered() {
     let (state, _tmp) = test_state();
     let app = build_admin_router(state);
 
@@ -600,7 +585,8 @@ async fn admin_router_exposes_stats_routes() {
         .await
         .unwrap();
 
-    assert_eq!(response.status(), StatusCode::OK);
+    // Falls through to store handler → 400 (bad volume id)
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
