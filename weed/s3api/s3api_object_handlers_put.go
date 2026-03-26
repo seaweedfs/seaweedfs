@@ -83,6 +83,10 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	glog.V(2).Infof("PutObjectHandler bucket=%s object=%s size=%d", bucket, object, r.ContentLength)
+	if len(object) > s3_constants.MaxS3ObjectKeyLength {
+		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
+		return
+	}
 	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 		return
@@ -178,7 +182,7 @@ func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request)
 				// Set object owner for directory objects (same as regular objects)
 				s3a.setObjectOwnerFromRequest(r, bucket, entry)
 			}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
 			return
 		}
 		setEtag(w, dirEtag)
@@ -695,11 +699,11 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			Entry:     entry,
 		}
 		glog.V(3).Infof("putToFiler: Calling CreateEntry for %s", filePath)
-		_, err := client.CreateEntry(context.Background(), req)
-		if err != nil {
+		if err := filer_pb.CreateEntry(context.Background(), client, req); err != nil {
 			glog.Errorf("putToFiler: CreateEntry returned error: %v", err)
+			return err
 		}
-		return err
+		return nil
 	})
 	if createErr != nil {
 		glog.Errorf("putToFiler: failed to create entry for %s: %v", filePath, createErr)
@@ -789,23 +793,25 @@ func filerErrorToS3Error(err error) s3err.ErrorCode {
 		return s3err.ErrNone
 	}
 
-	errString := err.Error()
+	// Filer sentinel errors — matched via errors.Is() after crossing gRPC boundary
+	switch {
+	case errors.Is(err, filer_pb.ErrEntryNameTooLong):
+		return s3err.ErrKeyTooLongError
+	case errors.Is(err, filer_pb.ErrParentIsFile), errors.Is(err, filer_pb.ErrExistingIsFile):
+		return s3err.ErrExistingObjectIsFile
+	case errors.Is(err, filer_pb.ErrExistingIsDirectory):
+		return s3err.ErrExistingObjectIsDirectory
+	case errors.Is(err, weed_server.ErrReadOnly):
+		return s3err.ErrAccessDenied
+	}
 
+	// Non-filer errors that don't go through CreateEntryResponse — string matching required
+	errString := err.Error()
 	switch {
 	case errString == constants.ErrMsgBadDigest:
 		return s3err.ErrBadDigest
-	case errors.Is(err, weed_server.ErrReadOnly):
-		// Bucket is read-only due to quota enforcement or other configuration
-		// Return 403 Forbidden per S3 semantics (similar to MinIO's quota enforcement)
-		// Uses errors.Is() to properly detect wrapped errors
-		return s3err.ErrAccessDenied
 	case strings.Contains(errString, "context canceled") || strings.Contains(errString, "code = Canceled"):
-		// Client canceled the request, return client error not server error
 		return s3err.ErrInvalidRequest
-	case strings.HasPrefix(errString, "existing ") && strings.HasSuffix(errString, "is a directory"):
-		return s3err.ErrExistingObjectIsDirectory
-	case strings.HasSuffix(errString, "is a file"):
-		return s3err.ErrExistingObjectIsFile
 	default:
 		return s3err.ErrInternalError
 	}

@@ -50,6 +50,12 @@ print("WRITE_COUNT=" + str(count))
 	keys := listObjectKeysByPrefix(t, env, "test", "issue-8285/")
 	var temporaryKeys []string
 	for _, key := range keys {
+		// Skip directory markers (keys ending in "/") — these are 0-byte
+		// metadata objects, not data artifacts. They are verified separately
+		// via HeadObject with a timeout below.
+		if strings.HasSuffix(key, "/") {
+			continue
+		}
 		if hasTemporaryPathSegment(key) {
 			temporaryKeys = append(temporaryKeys, key)
 		}

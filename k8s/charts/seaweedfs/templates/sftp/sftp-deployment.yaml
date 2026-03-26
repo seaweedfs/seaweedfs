@@ -1,3 +1,4 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.sftp.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -42,7 +43,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.sftp.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.sftp.restartPolicy }}
       {{- if .Values.sftp.affinity }}
       affinity:
         {{ tpl .Values.sftp.affinity . | nindent 8 | trim }}
@@ -74,7 +75,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "sftp.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -91,7 +92,7 @@ spec:
             - name: SEAWEEDFS_FULLNAME
               value: "{{ include "seaweedfs.fullname" . }}"
             {{- $mergedExtraEnvironmentVars := dict }}
-            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global "component" .Values.sftp "target" $mergedExtraEnvironmentVars) }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.sftp "target" $mergedExtraEnvironmentVars) }}
             {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
             {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
@@ -115,7 +116,7 @@ spec:
               {{- if .Values.sftp.loggingOverrideLevel }}
               -v={{ .Values.sftp.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               sftp \
               -ip.bind={{ .Values.sftp.bindAddress }} \
@@ -156,7 +157,7 @@ spec:
               {{- if .Values.sftp.localSocket }}
               -localSocket={{ .Values.sftp.localSocket }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
@@ -175,7 +176,7 @@ spec:
             - mountPath: /etc/sw/ssh
               name: config-ssh
               readOnly: true
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -263,7 +264,7 @@ spec:
         - name: logs
           emptyDir: {}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
             name: {{ include "seaweedfs.fullname" . }}-security-config

@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'weed/s3api/**'
+      - 'weed/filer/**'
       - 'test/s3/spark/**'
       - 'test/s3tables/testutil/**'
       - '.github/workflows/s3-spark-tests.yml'

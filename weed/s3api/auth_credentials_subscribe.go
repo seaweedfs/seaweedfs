@@ -1,7 +1,6 @@
 package s3api
 
 import (
-	"errors"
 	"strings"
 	"time"
 
@@ -224,14 +223,13 @@ func (s3a *S3ApiServer) updateBucketConfigCacheFromEntry(entry *filer_pb.Entry) 
 	// Sync bucket policy to the policy engine for evaluation
 	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
-	// Load CORS configuration from bucket directory content
-	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {
-		if !errors.Is(err, filer_pb.ErrNotFound) {
-			glog.Errorf("updateBucketConfigCacheFromEntry: failed to load CORS configuration for bucket %s: %v", bucket, err)
-		}
-	} else {
-		config.CORS = corsConfig
-		glog.V(2).Infof("updateBucketConfigCacheFromEntry: loaded CORS config for bucket %s", bucket)
+	// Parse CORS configuration directly from the subscription entry's Content field.
+	// This avoids a separate RPC call that could return stale data when racing with
+	// concurrent metadata updates (e.g., PutBucketCors clearing the cache while this
+	// handler is still processing an older event).
+	config.CORS = parseCORSFromEntryContent(entry.Content)
+	if config.CORS != nil {
+		glog.V(2).Infof("updateBucketConfigCacheFromEntry: parsed CORS config for bucket %s from entry content", bucket)
 	}
 
 	// Update timestamp

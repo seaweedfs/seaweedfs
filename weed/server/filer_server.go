@@ -115,6 +115,9 @@ type FilerServer struct {
 	// deduplicates concurrent remote object caching operations
 	remoteCacheGroup singleflight.Group
 
+	recentCopyRequestsMu sync.Mutex
+	recentCopyRequests   map[string]recentCopyRequest
+
 	// credential manager for IAM operations
 	CredentialManager *credential.CredentialManager
 }
@@ -153,6 +156,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)

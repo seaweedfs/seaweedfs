@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
@@ -30,27 +31,29 @@ import (
 )
 
 type Option struct {
-	filerIndex         int32 // align memory for atomic read/write
-	FilerAddresses     []pb.ServerAddress
-	MountDirectory     string
-	GrpcDialOption     grpc.DialOption
-	FilerMountRootPath string
-	Collection         string
-	Replication        string
-	TtlSec             int32
-	DiskType           types.DiskType
-	ChunkSizeLimit     int64
-	ConcurrentWriters  int
-	ConcurrentReaders  int
-	CacheDirForRead    string
-	CacheSizeMBForRead int64
-	CacheDirForWrite   string
-	CacheMetaTTlSec    int
-	DataCenter         string
-	Umask              os.FileMode
-	Quota              int64
-	DisableXAttr       bool
-	IsMacOs            bool
+	filerIndex                  int32 // align memory for atomic read/write
+	FilerAddresses              []pb.ServerAddress
+	MountDirectory              string
+	GrpcDialOption              grpc.DialOption
+	FilerSigningKey             security.SigningKey
+	FilerSigningExpiresAfterSec int
+	FilerMountRootPath          string
+	Collection                  string
+	Replication                 string
+	TtlSec                      int32
+	DiskType                    types.DiskType
+	ChunkSizeLimit              int64
+	ConcurrentWriters           int
+	ConcurrentReaders           int
+	CacheDirForRead             string
+	CacheSizeMBForRead          int64
+	CacheDirForWrite            string
+	CacheMetaTTlSec             int
+	DataCenter                  string
+	Umask                       os.FileMode
+	Quota                       int64
+	DisableXAttr                bool
+	IsMacOs                     bool
 
 	MountUid         uint32
 	MountGid         uint32
@@ -78,6 +81,10 @@ type Option struct {
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
+	// WritebackCache enables async flush on close for improved small file write performance.
+	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
+	WritebackCache bool
+
 	uniqueCacheDirForRead  string
 	uniqueCacheDirForWrite string
 }
@@ -102,6 +109,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
@@ -110,6 +118,26 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+
+	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
+	// Must be waited on before unmount cleanup to prevent data loss.
+	asyncFlushWg sync.WaitGroup
+
+	// asyncFlushCh is a bounded work queue for background flush operations.
+	// A fixed pool of worker goroutines processes items from this channel,
+	// preventing resource exhaustion from unbounded goroutine creation.
+	asyncFlushCh chan *asyncFlushItem
+
+	// pendingAsyncFlush tracks in-flight async flush goroutines by inode.
+	// AcquireHandle checks this to wait for a pending flush before reopening
+	// the same inode, preventing stale metadata from overwriting the async flush.
+	pendingAsyncFlushMu sync.Mutex
+	pendingAsyncFlush   map[uint64]chan struct{}
+
+	// streamMutate is the multiplexed streaming gRPC connection for all filer
+	// mutations (create, update, delete, rename). All mutations go through one
+	// ordered stream to prevent cross-operation reordering.
+	streamMutate *streamMutateMux
 }
 
 const (
@@ -151,18 +179,20 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	wfs := &WFS{
-		RawFileSystem:   fuse.NewDefaultRawFileSystem(),
-		option:          option,
-		signature:       util.RandomInt32(),
-		inodeToPath:     NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
-		fhMap:           NewFileHandleToInode(),
-		dhMap:           NewDirectoryHandleToInode(),
-		filerClient:     filerClient, // nil for proxy mode, initialized for direct access
-		fhLockTable:     util.NewLockTable[FileHandleId](),
-		refreshingDirs:  make(map[util.FullPath]struct{}),
-		dirHotWindow:    dirHotWindow,
-		dirHotThreshold: dirHotThreshold,
-		dirIdleEvict:    dirIdleEvict,
+		RawFileSystem:     fuse.NewDefaultRawFileSystem(),
+		option:            option,
+		signature:         util.RandomInt32(),
+		inodeToPath:       NewInodeToPath(util.FullPath(option.FilerMountRootPath), option.CacheMetaTTlSec),
+		fhMap:             NewFileHandleToInode(),
+		dhMap:             NewDirectoryHandleToInode(),
+		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
+		pendingAsyncFlush: make(map[uint64]chan struct{}),
+		fhLockTable:       util.NewLockTable[FileHandleId](),
+		posixLocks:        NewPosixLockTable(),
+		refreshingDirs:    make(map[util.FullPath]struct{}),
+		dirHotWindow:      dirHotWindow,
+		dirHotThreshold:   dirHotThreshold,
+		dirIdleEvict:      dirIdleEvict,
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))
@@ -204,8 +234,32 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			}
 		})
 	grace.OnInterrupt(func() {
+		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
+		// after server.Serve() would never execute.  Drain here first.
+		//
+		// Use a timeout to avoid hanging on Ctrl-C if the filer is
+		// unreachable (metadata retry can take up to 7 seconds).
+		// If the timeout expires, skip the write-cache removal so that
+		// still-running goroutines can finish reading swap files.
+		asyncDrained := true
+		if wfs.option.WritebackCache {
+			done := make(chan struct{})
+			go func() {
+				wfs.asyncFlushWg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				glog.V(0).Infof("all async flushes completed before shutdown")
+			case <-time.After(30 * time.Second):
+				glog.Warningf("timed out waiting for async flushes — swap files preserved for in-flight uploads")
+				asyncDrained = false
+			}
+		}
 		wfs.metaCache.Shutdown()
-		os.RemoveAll(option.getUniqueCacheDirForWrite())
+		if asyncDrained {
+			os.RemoveAll(option.getUniqueCacheDirForWrite())
+		}
 		os.RemoveAll(option.getUniqueCacheDirForRead())
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
@@ -233,6 +287,14 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		wfs.concurrentWriters = util.NewLimitedConcurrentExecutor(wfs.option.ConcurrentWriters)
 		wfs.concurrentCopiersSem = make(chan struct{}, wfs.option.ConcurrentWriters)
 	}
+	if wfs.option.WritebackCache {
+		numWorkers := wfs.option.ConcurrentWriters
+		if numWorkers <= 0 {
+			numWorkers = 128
+		}
+		wfs.startAsyncFlushWorkers(numWorkers)
+	}
+	wfs.streamMutate = newStreamMutateMux(wfs)
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, option.ChunkSizeLimit)
 	}
@@ -240,6 +302,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 }
 
 func (wfs *WFS) StartBackgroundTasks() error {
+	if wfs.option.WritebackCache {
+		glog.V(0).Infof("writebackCache enabled: async flush on close() for improved small file performance")
+	}
+
 	follower, err := wfs.subscribeFilerConfEvents()
 	if err != nil {
 		return err
@@ -344,6 +410,27 @@ func (wfs *WFS) lookupEntry(fullpath util.FullPath) (*filer.Entry, fuse.Status) 
 	entry, err := filer_pb.GetEntry(context.Background(), wfs, fullpath)
 	if err != nil {
 		if err == filer_pb.ErrNotFound {
+			// The entry may exist in the local store from a deferred create
+			// (deferFilerCreate=true) that hasn't been flushed yet. Only trust
+			// the local store when an open file handle or pending async flush
+			// confirms the entry is genuinely local-only; otherwise a stale
+			// cache hit could resurrect a deleted/renamed entry.
+			if inode, inodeFound := wfs.inodeToPath.GetInode(fullpath); inodeFound {
+				hasDirtyHandle := false
+				if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound && fh.dirtyMetadata {
+					hasDirtyHandle = true
+				}
+				wfs.pendingAsyncFlushMu.Lock()
+				_, hasPendingFlush := wfs.pendingAsyncFlush[inode]
+				wfs.pendingAsyncFlushMu.Unlock()
+
+				if hasDirtyHandle || hasPendingFlush {
+					if localEntry, localErr := wfs.metaCache.FindEntry(context.Background(), fullpath); localErr == nil && localEntry != nil {
+						glog.V(4).Infof("lookupEntry found deferred entry in local cache %s", fullpath)
+						return localEntry, fuse.OK
+					}
+				}
+			}
 			glog.V(4).Infof("lookupEntry not found %s", fullpath)
 			return nil, fuse.ENOENT
 		}

@@ -102,6 +102,10 @@ func TestS3Integration(t *testing.T) {
 		testDeleteObject(t, cluster)
 	})
 
+	t.Run("DeleteDirectoryMarkerWithChildren", func(t *testing.T) {
+		testDeleteDirectoryMarkerWithChildren(t, cluster)
+	})
+
 	t.Run("DeleteBucket", func(t *testing.T) {
 		testDeleteBucket(t, cluster)
 	})
@@ -837,6 +841,47 @@ func testDeleteObject(t *testing.T, cluster *TestCluster) {
 	assert.Error(t, err, "Object should not exist after deletion")
 
 	t.Logf("✓ Deleted object: %s/%s", bucketName, objectKey)
+}
+
+func testDeleteDirectoryMarkerWithChildren(t *testing.T, cluster *TestCluster) {
+	bucketName := createTestBucket(t, cluster, "test-delete-dir-marker-")
+	childKey := "test-content/file1.txt"
+	directoryMarkerKey := "test-content/"
+
+	_, err := cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(childKey),
+		Body:   bytes.NewReader([]byte("child")),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.PutObject(&s3.PutObjectInput{
+		Bucket:      aws.String(bucketName),
+		Key:         aws.String(directoryMarkerKey),
+		Body:        bytes.NewReader(nil),
+		ContentType: aws.String("application/octet-stream"),
+	})
+	require.NoError(t, err)
+
+	_, err = cluster.s3Client.DeleteObject(&s3.DeleteObjectInput{
+		Bucket: aws.String(bucketName),
+		Key:    aws.String(directoryMarkerKey),
+	})
+	require.NoError(t, err, "Deleting a directory marker should succeed even when children exist")
+
+	listResp, err := cluster.s3Client.ListObjectsV2(&s3.ListObjectsV2Input{
+		Bucket: aws.String(bucketName),
+		Prefix: aws.String("test-content/"),
+	})
+	require.NoError(t, err)
+
+	foundKeys := make(map[string]bool)
+	for _, obj := range listResp.Contents {
+		foundKeys[aws.StringValue(obj.Key)] = true
+	}
+
+	assert.True(t, foundKeys[childKey], "Child object should remain after deleting the directory marker")
+	assert.False(t, foundKeys[directoryMarkerKey], "Directory marker should no longer be listed after deletion")
 }
 
 func testDeleteBucket(t *testing.T, cluster *TestCluster) {

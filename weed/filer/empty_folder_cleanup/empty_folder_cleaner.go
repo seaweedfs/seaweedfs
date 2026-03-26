@@ -308,7 +308,7 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	efc.mu.Unlock()
 
 	if count > 0 {
-		glog.Infof("EmptyFolderCleaner: folder %s (triggered by %s) has %d items, not empty", folder, triggeredBy, count)
+		glog.V(4).Infof("EmptyFolderCleaner: folder %s (triggered by %s) has %d items, not empty", folder, triggeredBy, count)
 		return
 	}
 

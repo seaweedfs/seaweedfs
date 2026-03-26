@@ -24,6 +24,9 @@ const (
 )
 
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+	if fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.HasRemotePeers() {
+		return fs.SubscribeLocalMetadata(req, stream)
+	}
 
 	ctx := stream.Context()
 	peerAddress := findClientAddress(ctx, 0)
@@ -99,18 +102,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData("aggMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
-			// Check if the client has disconnected by monitoring the context
 			select {
 			case <-ctx.Done():
 				return false
 			default:
 			}
-
-			fs.filer.MetaAggregator.ListenersLock.Lock()
-			atomic.AddInt64(&fs.filer.MetaAggregator.ListenersWaits, 1)
-			fs.filer.MetaAggregator.ListenersCond.Wait()
-			atomic.AddInt64(&fs.filer.MetaAggregator.ListenersWaits, -1)
-			fs.filer.MetaAggregator.ListenersLock.Unlock()
 			return fs.hasClient(req.ClientId, req.ClientEpoch)
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -237,23 +233,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		glog.V(3).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
-
-			// Check if the client has disconnected by monitoring the context
 			select {
 			case <-ctx.Done():
 				return false
 			default:
 			}
-
-			fs.listenersLock.Lock()
-			atomic.AddInt64(&fs.listenersWaits, 1)
-			fs.listenersCond.Wait()
-			atomic.AddInt64(&fs.listenersWaits, -1)
-			fs.listenersLock.Unlock()
-			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-				return false
-			}
-			return true
+			return fs.hasClient(req.ClientId, req.ClientEpoch)
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {

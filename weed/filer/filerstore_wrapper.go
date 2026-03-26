@@ -128,8 +128,11 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
-	if entry.Mime == "application/octet-stream" {
-		entry.Mime = ""
+	normalizeEntryMimeForStore(entry)
+
+	if len(entry.HardLinkId) > 0 {
+		glog.V(4).InfofCtx(ctx, "InsertEntry %s has HardLinkId %x counter=%d",
+			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
 	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
@@ -150,8 +153,11 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 	}()
 
 	filer_pb.BeforeEntrySerialization(entry.GetChunks())
-	if entry.Mime == "application/octet-stream" {
-		entry.Mime = ""
+	normalizeEntryMimeForStore(entry)
+
+	if len(entry.HardLinkId) > 0 {
+		glog.V(4).InfofCtx(ctx, "UpdateEntry %s has HardLinkId %x counter=%d",
+			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 	}
 
 	if err := fsw.handleUpdateToHardLinks(ctx, entry); err != nil {
@@ -160,6 +166,15 @@ func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) err
 
 	// glog.V(4).Infof("UpdateEntry %s", entry.FullPath)
 	return actualStore.UpdateEntry(ctx, entry)
+}
+
+func normalizeEntryMimeForStore(entry *Entry) {
+	if entry == nil {
+		return
+	}
+	if !entry.IsDirectory() && entry.Mime == "application/octet-stream" {
+		entry.Mime = ""
+	}
 }
 
 func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (entry *Entry, err error) {

@@ -141,10 +141,12 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                                             data-action="edit-user" data-username={ user.Username }>
                                                         <i class="fas fa-edit"></i>
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-secondary" 
-                                                            data-action="manage-access-keys" data-username={ user.Username }>
-                                                        <i class="fas fa-key"></i>
-                                                    </button>
+                                                    if user.Username != "anonymous" {
+                                                        <button type="button" class="btn btn-outline-secondary"
+                                                                data-action="manage-access-keys" data-username={ user.Username }>
+                                                            <i class="fas fa-key"></i>
+                                                        </button>
+                                                    }
                                                     <button type="button" class="btn btn-outline-danger" 
                                                             data-action="delete-user" data-username={ user.Username }>
                                                         <i class="fas fa-trash"></i>
@@ -197,7 +199,17 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     <form id="createUserForm">
                         <div class="mb-3">
                             <label for="username" class="form-label">Username *</label>
-                            <input type="text" class="form-control" id="username" name="username" required>
+                            if !data.HasAnonymousUser {
+                                <div class="input-group">
+                                    <input type="text" class="form-control" id="username" name="username" required>
+                                    <div class="input-group-text">
+                                        <input class="form-check-input mt-0 me-1" type="checkbox" id="anonymousCheck" onchange="toggleAnonymousUser()">
+                                        <label class="form-check-label small" for="anonymousCheck">Anonymous</label>
+                                    </div>
+                                </div>
+                            } else {
+                                <input type="text" class="form-control" id="username" name="username" required>
+                            }
                         </div>
                         <div class="mb-3">
                             <label for="email" class="form-label">Email</label>
@@ -669,6 +681,24 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             }
         }
 
+        // Toggle anonymous user checkbox
+        function toggleAnonymousUser() {
+            const checkbox = document.getElementById('anonymousCheck');
+            const usernameInput = document.getElementById('username');
+            const generateKey = document.getElementById('generateKey');
+            if (checkbox.checked) {
+                usernameInput.value = 'anonymous';
+                usernameInput.readOnly = true;
+                generateKey.checked = false;
+                generateKey.disabled = true;
+            } else {
+                usernameInput.value = '';
+                usernameInput.readOnly = false;
+                generateKey.disabled = false;
+                generateKey.checked = true;
+            }
+        }
+
         // Populate bucket selection dropdowns
         function populateBucketSelections() {
             const createSelect = document.getElementById('selectedBuckets');
@@ -1055,6 +1085,8 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                     const modal = bootstrap.Modal.getInstance(document.getElementById('createUserModal'));
                     modal.hide();
                     form.reset();
+                    document.getElementById('username').readOnly = false;
+                    document.getElementById('generateKey').disabled = false;
                     setTimeout(() => window.location.reload(), 1000);
                 } else {
                     const error = await response.json();

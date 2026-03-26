@@ -1284,6 +1284,23 @@ func (s *AdminServer) RunPluginDetectionWithReport(
 	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
 }
 
+// DispatchPluginProposals dispatches a batch of proposals using the same
+// capacity-aware dispatch logic as the scheduler loop (executor reservation with
+// backoff, per-job retry on transient errors). The plugin lock must already be
+// held by the caller.
+func (s *AdminServer) DispatchPluginProposals(
+	ctx context.Context,
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+	clusterContext *plugin_pb.ClusterContext,
+) (successCount, errorCount, canceledCount int, err error) {
+	if s.plugin == nil {
+		return 0, 0, 0, fmt.Errorf("plugin is not enabled")
+	}
+	sc, ec, cc := s.plugin.DispatchProposals(ctx, jobType, proposals, clusterContext)
+	return sc, ec, cc, nil
+}
+
 // ExecutePluginJob dispatches one job to a capable worker and waits for completion.
 func (s *AdminServer) ExecutePluginJob(
 	ctx context.Context,

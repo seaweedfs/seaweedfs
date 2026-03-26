@@ -29,6 +29,11 @@ const (
 	S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
 )
 
+// S3 object key limits
+const (
+	MaxS3ObjectKeyLength = 1024
+)
+
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class

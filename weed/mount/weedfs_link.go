@@ -60,8 +60,11 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	if len(oldEntry.HardLinkId) == 0 {
 		oldEntry.HardLinkId = filer.NewHardLinkId()
 		oldEntry.HardLinkCounter = 1
+		glog.V(4).Infof("Link: new HardLinkId %x for %s", oldEntry.HardLinkId, oldEntryPath)
 	}
 	oldEntry.HardLinkCounter++
+	glog.V(4).Infof("Link: %s -> %s/%s HardLinkId %x counter=%d",
+		oldEntryPath, newParentPath, name, oldEntry.HardLinkId, oldEntry.HardLinkCounter)
 	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
 		Directory:  oldParentPath,
 		Entry:      oldEntry,
@@ -86,25 +89,23 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// apply changes to the filer, and also apply to local metaCache
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		updateResp, err := filer_pb.UpdateEntryWithResponse(context.Background(), client, updateOldEntryRequest)
-		if err != nil {
-			return err
-		}
+	ctx := context.Background()
+	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
+	if err == nil {
 		updateEvent := updateResp.GetMetadataEvent()
 		if updateEvent == nil {
 			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
 		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), updateEvent); applyErr != nil {
+		if applyErr := wfs.applyLocalMetadataEvent(ctx, updateEvent); applyErr != nil {
 			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
-
-		createResp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
+	}
+	if err == nil {
+		var createResp *filer_pb.CreateEntryResponse
+		createResp, err = wfs.streamCreateEntry(ctx, request)
 		if err != nil {
 			// Rollback: restore original HardLinkId/Counter on the source entry
 			oldEntry.HardLinkId = origHardLinkId
@@ -114,25 +115,25 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				Entry:      oldEntry,
 				Signatures: []int32{wfs.signature},
 			}
-			if _, rollbackErr := filer_pb.UpdateEntryWithResponse(context.Background(), client, rollbackReq); rollbackErr != nil {
+			if _, rollbackErr := wfs.streamUpdateEntry(ctx, rollbackReq); rollbackErr != nil {
 				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
 			}
-			return err
+		} else {
+			createEvent := createResp.GetMetadataEvent()
+			if createEvent == nil {
+				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+			}
+			if applyErr := wfs.applyLocalMetadataEvent(ctx, createEvent); applyErr != nil {
+				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
+				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
+			}
 		}
-
-		createEvent := createResp.GetMetadataEvent()
-		if createEvent == nil {
-			createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), createEvent); applyErr != nil {
-			glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
-		}
-
-		return nil
-	})
+	}
 
 	newEntryPath := newParentPath.Child(name)
+
+	// Map back to local uid/gid before writing attributes to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	if err != nil {
 		glog.V(0).Infof("Link %v -> %s: %v", oldEntryPath, newEntryPath, err)

@@ -408,18 +408,9 @@ func (s3a *S3ApiServer) getBucketConfig(bucket string) (*BucketConfig, s3err.Err
 	// Sync bucket policy to the policy engine for evaluation
 	s3a.syncBucketPolicyToEngine(bucket, config.BucketPolicy)
 
-	// Load CORS configuration from bucket directory content
-	if corsConfig, err := s3a.loadCORSFromBucketContent(bucket); err != nil {
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			// Missing metadata is not an error; fall back cleanly
-			glog.V(2).Infof("CORS metadata not found for bucket %s, falling back to default behavior", bucket)
-		} else {
-			// Log parsing or validation errors
-			glog.Errorf("Failed to load CORS configuration for bucket %s: %v", bucket, err)
-		}
-	} else {
-		config.CORS = corsConfig
-	}
+	// Parse CORS configuration directly from the entry's Content field.
+	// This avoids a redundant RPC call since we already have the entry.
+	config.CORS = parseCORSFromEntryContent(entry.Content)
 
 	// Cache the result
 	s3a.bucketConfigCache.Set(bucket, config)
@@ -588,15 +579,19 @@ func (s3a *S3ApiServer) setBucketOwnership(bucket, ownership string) s3err.Error
 	})
 }
 
-// loadCORSFromBucketContent loads CORS configuration from bucket directory content
-func (s3a *S3ApiServer) loadCORSFromBucketContent(bucket string) (*cors.CORSConfiguration, error) {
-	metadata, err := s3a.GetBucketMetadata(bucket)
-	if err != nil {
-		return nil, err
+// parseCORSFromEntryContent parses CORS configuration directly from an entry's Content field.
+// This avoids a separate RPC call when the entry is already available (e.g., from a
+// subscription event or a prior getBucketEntry call).
+func parseCORSFromEntryContent(content []byte) *cors.CORSConfiguration {
+	if len(content) == 0 {
+		return nil
 	}
-
-	// Note: corsConfig can be nil if no CORS configuration is set, which is valid
-	return metadata.CORS, nil
+	var protoMetadata s3_pb.BucketMetadata
+	if err := proto.Unmarshal(content, &protoMetadata); err != nil {
+		glog.Errorf("parseCORSFromEntryContent: failed to unmarshal protobuf metadata: %v", err)
+		return nil
+	}
+	return corsConfigFromProto(protoMetadata.Cors)
 }
 
 // getCORSConfiguration retrieves CORS configuration with caching
