@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -120,6 +121,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 5: Reset to older revision in on-mount clone ----
 	t.Log("Phase 5: reset to older revision on mount clone")
+	ensureMountClone(t, bareRepo, mountClone)
 	gitRun(t, mountClone, "reset", "--hard", commit2)
 
 	resetHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
@@ -129,6 +131,8 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 6: Pull with real changes ----
 	t.Log("Phase 6: pull with real fast-forward changes")
+
+	ensureMountClone(t, bareRepo, mountClone)
 
 	// After git reset --hard, give the FUSE mount a moment to settle its
 	// metadata cache. On slow CI, the working directory can briefly appear
@@ -186,7 +190,7 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 func gitRunWithRetry(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	const (
-		maxRetries = 4
+		maxRetries = 6
 		dirWait    = 10 * time.Second
 	)
 	var out []byte
@@ -209,6 +213,10 @@ func gitRunWithRetry(t *testing.T, dir string, args ...string) string {
 			t.Logf("git %s attempt %d failed (retrying): %s", strings.Join(args, " "), i+1, string(out))
 			if dir != "" {
 				refreshDirEntry(t, dir)
+			}
+			if repoPath := extractGitRepoPath(string(out)); repoPath != "" {
+				_ = exec.Command("git", "init", "--bare", repoPath).Run()
+				waitForBareRepoEventually(t, repoPath, 5*time.Second)
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
@@ -283,6 +291,52 @@ func refreshDirEntry(t *testing.T, dir string) {
 	t.Helper()
 	parent := filepath.Dir(dir)
 	_, _ = os.ReadDir(parent)
+}
+
+func waitForBareRepoEventually(t *testing.T, bareRepo string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if isBareRepo(bareRepo) {
+			return true
+		}
+		refreshDirEntry(t, bareRepo)
+		time.Sleep(150 * time.Millisecond)
+	}
+	return false
+}
+
+func isBareRepo(bareRepo string) bool {
+	required := []string{
+		filepath.Join(bareRepo, "HEAD"),
+		filepath.Join(bareRepo, "config"),
+	}
+	for _, p := range required {
+		if _, err := os.Stat(p); err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
+	t.Helper()
+	if _, err := os.Stat(mountClone); err == nil {
+		return
+	} else if !os.IsNotExist(err) {
+		require.NoError(t, err)
+	}
+	t.Logf("mount clone missing, re-cloning from %s", bareRepo)
+	gitRun(t, "", "clone", bareRepo, mountClone)
+}
+
+var gitRepoPathRe = regexp.MustCompile(`'([^']+)' does not appear to be a git repository`)
+
+func extractGitRepoPath(output string) string {
+	if match := gitRepoPathRe.FindStringSubmatch(output); len(match) > 1 {
+		return match[1]
+	}
+	return ""
 }
 
 func leftPad(n, width int) string {
