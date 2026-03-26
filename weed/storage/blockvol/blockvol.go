@@ -33,6 +33,11 @@ type CreateOptions struct {
 var ErrVolumeClosed = errors.New("blockvol: volume closed")
 
 // BlockVol is the core block volume engine.
+// walRetentionTimeout is the maximum time a recoverable replica can hold
+// WAL entries. After this, the replica is escalated to NeedsRebuild and
+// its WAL hold is released. CP13-6: timeout-only budget (max-bytes deferred).
+const walRetentionTimeout = 5 * time.Minute
+
 type BlockVol struct {
 	mu             sync.RWMutex
 	ioMu           sync.RWMutex // guards local data mutation (WAL/dirtyMap/extent); Lock for restore/import/expand
@@ -178,6 +183,18 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
 		BatchIO:  bio,
+		// CP13-6: replica-aware WAL retention.
+		RetentionFloorFn: func() (uint64, bool) {
+			if v.shipperGroup == nil {
+				return 0, false
+			}
+			return v.shipperGroup.MinRecoverableFlushedLSN()
+		},
+		EvaluateRetentionBudgetsFn: func() {
+			if v.shipperGroup != nil {
+				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout)
+			}
+		},
 	})
 	go v.flusher.Run()
 	v.walAdmission = NewWALAdmission(WALAdmissionConfig{
@@ -290,6 +307,17 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
 		BatchIO:  bio,
+		RetentionFloorFn: func() (uint64, bool) {
+			if v.shipperGroup == nil {
+				return 0, false
+			}
+			return v.shipperGroup.MinRecoverableFlushedLSN()
+		},
+		EvaluateRetentionBudgetsFn: func() {
+			if v.shipperGroup != nil {
+				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout)
+			}
+		},
 	})
 	go v.flusher.Run()
 

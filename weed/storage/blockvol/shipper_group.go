@@ -1,7 +1,9 @@
 package blockvol
 
 import (
+	"log"
 	"sync"
+	"time"
 )
 
 // ShipperGroup wraps multiple WALShippers for fan-out replication to N replicas.
@@ -125,6 +127,57 @@ func (sg *ShipperGroup) MinReplicaFlushedLSN() (uint64, bool) {
 		}
 	}
 	return min, found
+}
+
+// MinRecoverableFlushedLSN returns the minimum replicaFlushedLSN across
+// shippers that are catch-up candidates (not NeedsRebuild, have flushed progress).
+// Pure read — does not mutate state. Returns (0, false) if no recoverable
+// replica has known progress.
+func (sg *ShipperGroup) MinRecoverableFlushedLSN() (uint64, bool) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	var min uint64
+	found := false
+	for _, s := range sg.shippers {
+		if !s.HasFlushedProgress() {
+			continue
+		}
+		if s.State() == ReplicaNeedsRebuild {
+			continue
+		}
+		lsn := s.ReplicaFlushedLSN()
+		if !found || lsn < min {
+			min = lsn
+			found = true
+		}
+	}
+	return min, found
+}
+
+// EvaluateRetentionBudgets checks each recoverable replica's contact time
+// against the timeout. Replicas that exceed the timeout are transitioned to
+// NeedsRebuild, releasing their WAL hold. Must be called before
+// MinRecoverableFlushedLSN to ensure stale replicas are escalated first.
+func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		if !s.HasFlushedProgress() {
+			continue // bootstrap shippers — not retention candidates
+		}
+		if s.State() == ReplicaNeedsRebuild {
+			continue
+		}
+		ct := s.LastContactTime()
+		if ct.IsZero() {
+			continue // no contact yet — skip
+		}
+		if time.Since(ct) > timeout {
+			s.state.Store(uint32(ReplicaNeedsRebuild))
+			log.Printf("shipper_group: retention timeout for %s (last contact %v ago), transitioning to NeedsRebuild",
+				s.dataAddr, time.Since(ct).Round(time.Second))
+		}
+	}
 }
 
 // InSyncCount returns the number of shippers in ReplicaInSync state.

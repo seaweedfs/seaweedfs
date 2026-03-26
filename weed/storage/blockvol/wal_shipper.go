@@ -69,6 +69,7 @@ type WALShipper struct {
 	hasFlushedProgress atomic.Bool   // true once replica returns a valid (non-zero) FlushedLSN
 	state              atomic.Uint32 // ReplicaState
 	catchupFailures    int           // consecutive catch-up failures; reset on success
+	lastContactTime    atomic.Value  // time.Time: last successful barrier/handshake/catch-up
 	stopped            atomic.Bool
 }
 
@@ -277,6 +278,20 @@ func (s *WALShipper) State() ReplicaState {
 	return ReplicaState(s.state.Load())
 }
 
+// LastContactTime returns the last time this replica had successful
+// durable contact (barrier success, reconnect handshake, catch-up completion).
+// Returns zero time if no contact has occurred.
+func (s *WALShipper) LastContactTime() time.Time {
+	if v := s.lastContactTime.Load(); v != nil {
+		return v.(time.Time)
+	}
+	return time.Time{}
+}
+
+func (s *WALShipper) touchContactTime() {
+	s.lastContactTime.Store(time.Now())
+}
+
 // IsDegraded returns true if the replica is not sync-eligible (any state
 // other than InSync). This overloads Disconnected, Connecting, CatchingUp,
 // NeedsRebuild, and Degraded into one "not healthy" shape for backward
@@ -391,6 +406,7 @@ func (s *WALShipper) doReconnectAndCatchUp() error {
 func (s *WALShipper) markInSync() {
 	s.state.Store(uint32(ReplicaInSync))
 	s.catchupFailures = 0
+	s.touchContactTime()
 	log.Printf("wal_shipper: replica in-sync (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
 }
 

@@ -18,6 +18,8 @@ type Flusher struct {
 	super       *Superblock
 	superMu     *sync.Mutex // serializes superblock writes (shared with group commit)
 	wal         *WALWriter
+	retentionFloorFn           func() (uint64, bool) // CP13-6
+	evaluateRetentionBudgetsFn func()                // CP13-6
 	dirtyMap    *DirtyMap
 	walOffset   uint64 // absolute file offset of WAL region
 	walSize     uint64
@@ -61,6 +63,9 @@ type FlusherConfig struct {
 	Logger      *log.Logger      // optional; defaults to log.Default()
 	Metrics     *EngineMetrics   // optional; if nil, no metrics recorded
 	BatchIO     batchio.BatchIO  // optional; defaults to batchio.NewStandard()
+	// CP13-6: replica-aware WAL retention.
+	RetentionFloorFn           func() (floorLSN uint64, hasFloor bool) // nil = no replica hold
+	EvaluateRetentionBudgetsFn func()                                  // nil = no budget evaluation
 }
 
 // NewFlusher creates a flusher. Call Run() in a goroutine.
@@ -87,12 +92,14 @@ func NewFlusher(cfg FlusherConfig) *Flusher {
 		bio:            cfg.BatchIO,
 		logger:         cfg.Logger,
 		metrics:        cfg.Metrics,
-		checkpointLSN:  cfg.Super.WALCheckpointLSN,
-		checkpointTail: 0,
-		interval:       cfg.Interval,
-		notifyCh:       make(chan struct{}, 1),
-		stopCh:         make(chan struct{}),
-		done:           make(chan struct{}),
+		checkpointLSN:              cfg.Super.WALCheckpointLSN,
+		checkpointTail:             0,
+		interval:                   cfg.Interval,
+		notifyCh:                   make(chan struct{}, 1),
+		stopCh:                     make(chan struct{}),
+		done:                       make(chan struct{}),
+		retentionFloorFn:           cfg.RetentionFloorFn,
+		evaluateRetentionBudgetsFn: cfg.EvaluateRetentionBudgetsFn,
 	}
 }
 
@@ -394,19 +401,35 @@ func (f *Flusher) flushOnceLocked() error {
 			f.dirtyMap.Delete(e.Lba)
 		}
 	}
-	f.checkpointLSN = maxLSN
-	f.checkpointTail = maxWALEnd
+	// CP13-6: replica-aware WAL retention.
+	// Evaluate retention budgets first (may escalate stale replicas).
+	if f.evaluateRetentionBudgetsFn != nil {
+		f.evaluateRetentionBudgetsFn()
+	}
+	// Check retention floor — hold WAL for recoverable replicas.
+	effectiveLSN := maxLSN
+	effectiveWALEnd := maxWALEnd
+	if f.retentionFloorFn != nil {
+		floorLSN, hasFloor := f.retentionFloorFn()
+		if hasFloor && maxLSN > floorLSN {
+			// Hold: don't advance checkpoint/tail past the floor.
+			// Extent writes are done (reads work), but WAL space is kept.
+			effectiveLSN = floorLSN
+			effectiveWALEnd = 0
+		}
+	}
+
+	f.checkpointLSN = effectiveLSN
+	f.checkpointTail = effectiveWALEnd
 	f.mu.Unlock()
 
-	// Advance WAL tail to free space.
-	if maxWALEnd > 0 {
-		f.wal.AdvanceTail(maxWALEnd)
+	// Advance WAL tail to free space (only if not held by retention).
+	if effectiveWALEnd > 0 {
+		f.wal.AdvanceTail(effectiveWALEnd)
 	}
 
 	// Update superblock checkpoint.
-	log.Printf("flusher: checkpoint LSN=%d entries=%d WALTail=%d WALHead=%d",
-		maxLSN, len(entries), f.wal.LogicalTail(), f.wal.LogicalHead())
-	f.updateSuperblockCheckpoint(maxLSN, f.wal.Tail())
+	f.updateSuperblockCheckpoint(effectiveLSN, f.wal.Tail())
 
 	// Record metrics.
 	if f.metrics != nil {
@@ -418,7 +441,8 @@ func (f *Flusher) flushOnceLocked() error {
 }
 
 // updateSuperblockCheckpoint writes the updated checkpoint to disk.
-// Acquires superMu to serialize against syncWithWALProgress (group commit).
+// This is the primary place where WALHead is persisted to the superblock.
+// Recovery's extended scan handles the gap between checkpoints.
 func (f *Flusher) updateSuperblockCheckpoint(checkpointLSN uint64, walTail uint64) error {
 	f.superMu.Lock()
 	defer f.superMu.Unlock()
