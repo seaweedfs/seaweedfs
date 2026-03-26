@@ -185,20 +185,31 @@ func gitOutput(t *testing.T, dir string, args ...string) string {
 // "failed to stat", "unpack-objects failed").
 func gitRunWithRetry(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	const maxRetries = 3
+	const (
+		maxRetries = 4
+		dirWait    = 10 * time.Second
+	)
 	var out []byte
 	var err error
 	for i := 0; i < maxRetries; i++ {
-		cmd := exec.Command("git", args...)
-		if dir != "" {
-			cmd.Dir = dir
+		if dir != "" && !waitForDirEventually(t, dir, dirWait) {
+			out = []byte("directory missing: " + dir)
+			err = &os.PathError{Op: "stat", Path: dir, Err: os.ErrNotExist}
+		} else {
+			cmd := exec.Command("git", args...)
+			if dir != "" {
+				cmd.Dir = dir
+			}
+			out, err = cmd.CombinedOutput()
 		}
-		out, err = cmd.CombinedOutput()
 		if err == nil {
 			return strings.TrimSpace(string(out))
 		}
 		if i < maxRetries-1 {
 			t.Logf("git %s attempt %d failed (retrying): %s", strings.Join(args, " "), i+1, string(out))
+			if dir != "" {
+				refreshDirEntry(t, dir)
+			}
 			time.Sleep(500 * time.Millisecond)
 		}
 	}
@@ -251,13 +262,27 @@ func countFiles(t *testing.T, dir string) int {
 
 func waitForDir(t *testing.T, dir string) {
 	t.Helper()
-	for i := 0; i < 50; i++ {
+	if !waitForDirEventually(t, dir, 10*time.Second) {
+		t.Fatalf("directory %s did not appear within 10s", dir)
+	}
+}
+
+func waitForDirEventually(t *testing.T, dir string, timeout time.Duration) bool {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
 		if _, err := os.Stat(dir); err == nil {
-			return
+			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	t.Fatalf("directory %s did not appear within 5s", dir)
+	return false
+}
+
+func refreshDirEntry(t *testing.T, dir string) {
+	t.Helper()
+	parent := filepath.Dir(dir)
+	_, _ = os.ReadDir(parent)
 }
 
 func leftPad(n, width int) string {
