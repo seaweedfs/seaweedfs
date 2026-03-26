@@ -153,17 +153,6 @@ fn request_is_whitelisted(state: &VolumeServerState, request: &Request) -> bool 
         .unwrap_or(true)
 }
 
-async fn whitelist_guard_middleware(
-    State(state): State<Arc<VolumeServerState>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    if !request_is_whitelisted(&state, &request) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    next.run(request).await
-}
-
 /// Middleware: set Server header, echo x-amz-request-id, set CORS if Origin present.
 async fn common_headers_middleware(request: Request, next: Next) -> Response {
     let origin = request.headers().get("origin").cloned();
@@ -378,18 +367,9 @@ pub fn build_admin_router_with_ui(state: Arc<VolumeServerState>, ui_enabled: boo
         .route("/:vid/:fid/:filename", any(admin_store_handler))
         .fallback(admin_store_handler);
     if ui_enabled {
-        let whitelist_state = state.clone();
-        let stats_router = Router::new()
-            .route("/stats/disk", get(handlers::stats_disk_handler))
-            .route("/stats/counter", get(handlers::stats_counter_handler))
-            .route("/stats/memory", get(handlers::stats_memory_handler))
-            .route_layer(middleware::from_fn_with_state(
-                whitelist_state,
-                whitelist_guard_middleware,
-            ));
-        router = router
-            .route("/ui/index.html", get(handlers::ui_handler))
-            .merge(stats_router);
+        // Note: /stats/* endpoints are commented out in Go's volume_server.go (L130-134).
+        // Only the UI endpoint is registered when UI access is enabled.
+        router = router.route("/ui/index.html", get(handlers::ui_handler));
     }
     router
         .layer(middleware::from_fn(common_headers_middleware))
