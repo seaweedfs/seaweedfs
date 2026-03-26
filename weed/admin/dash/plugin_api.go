@@ -81,6 +81,7 @@ func (s *AdminServer) GetPluginWorkersAPI(w http.ResponseWriter, r *http.Request
 }
 
 // GetPluginJobTypesAPI returns known plugin job types from workers and persisted data.
+// Accepts an optional ?lane= query parameter to filter by scheduler lane.
 func (s *AdminServer) GetPluginJobTypesAPI(w http.ResponseWriter, r *http.Request) {
 	jobTypes, err := s.ListPluginJobTypes()
 	if err != nil {
@@ -91,6 +92,20 @@ func (s *AdminServer) GetPluginJobTypesAPI(w http.ResponseWriter, r *http.Reques
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
+
+	laneFilter := strings.TrimSpace(r.URL.Query().Get("lane"))
+	if laneFilter != "" {
+		lane := plugin.SchedulerLane(laneFilter)
+		filtered := make([]plugin.JobTypeInfo, 0, len(jobTypes))
+		for _, jt := range jobTypes {
+			if plugin.JobTypeLane(jt.JobType) == lane {
+				filtered = append(filtered, jt)
+			}
+		}
+		writeJSON(w, http.StatusOK, filtered)
+		return
+	}
+
 	writeJSON(w, http.StatusOK, jobTypes)
 }
 

@@ -1,13 +1,17 @@
 package app
 
-templ Plugin(page string, initialJob string) {
+templ Plugin(page string, initialJob string, lane string) {
     {{
         currentPage := page
         if currentPage == "" {
             currentPage = "overview"
         }
+        currentLane := lane
+        if currentLane == "" {
+            currentLane = "default"
+        }
     }}
-    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob }>
+    <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob } data-plugin-lane={ currentLane }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -584,6 +588,8 @@ templ Plugin(page string, initialJob string) {
                 return;
             }
 
+            var pluginLane = String(page.getAttribute('data-plugin-lane') || '').trim();
+
             var state = {
                 selectedJobType: '',
                 jobTypes: [],
@@ -606,6 +612,13 @@ templ Plugin(page string, initialJob string) {
                 config: null,
                 refreshTimer: null,
             };
+
+            // appendLaneParam appends ?lane= or &lane= to a URL if a lane filter is active.
+            function appendLaneParam(url) {
+                if (!pluginLane) return url;
+                var sep = url.indexOf('?') === -1 ? '?' : '&';
+                return url + sep + 'lane=' + encodeURIComponent(pluginLane);
+            }
 
             function getCSRFToken() {
                 var meta = document.querySelector('meta[name="csrf-token"]');
@@ -2917,8 +2930,8 @@ templ Plugin(page string, initialJob string) {
 
                 var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
                 var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
-                var schedulerPromise = pluginRequest('GET', '/api/plugin/scheduler-states');
-                var schedulerStatusPromise = pluginRequest('GET', '/api/plugin/scheduler-status');
+                var schedulerPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states'));
+                var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
                 var allJobs = await allJobsPromise;
                 var allActivities = await allActivitiesPromise;
@@ -2950,11 +2963,11 @@ templ Plugin(page string, initialJob string) {
                 try {
                     var previousSelectedJobType = state.selectedJobType;
 
-                    var workers = await pluginRequest('GET', '/api/plugin/workers');
+                    var workers = await pluginRequest('GET', appendLaneParam('/api/plugin/workers'));
                     state.workers = Array.isArray(workers) ? workers : [];
                     renderWorkers();
 
-                    var jobTypes = await pluginRequest('GET', '/api/plugin/job-types');
+                    var jobTypes = await pluginRequest('GET', appendLaneParam('/api/plugin/job-types'));
                     state.jobTypes = Array.isArray(jobTypes) ? jobTypes : [];
                     applyInitialNavigation();
                     ensureActiveNavigation();

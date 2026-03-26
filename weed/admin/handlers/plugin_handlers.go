@@ -6,6 +6,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
 )
@@ -77,7 +78,16 @@ func (h *PluginHandlers) renderPluginPageWithLane(w http.ResponseWriter, r *http
 
 func (h *PluginHandlers) renderPluginPage(w http.ResponseWriter, r *http.Request, page string) {
 	initialJob := r.URL.Query().Get("job")
-	component := app.Plugin(page, initialJob)
+	lane := r.URL.Query().Get("lane")
+	if lane == "" && initialJob != "" {
+		// Derive lane from job type so that e.g. ?job=iceberg_maintenance
+		// scopes the page to the iceberg lane automatically.
+		lane = string(adminplugin.JobTypeLane(initialJob))
+	}
+	if lane == "" {
+		lane = "default"
+	}
+	component := app.Plugin(page, initialJob, lane)
 	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 
