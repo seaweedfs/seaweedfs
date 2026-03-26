@@ -3499,7 +3499,7 @@ fn extract_jwt(headers: &HeaderMap, uri: &axum::http::Uri) -> Option<String> {
     // 2. Check Authorization: Bearer <token> (case-insensitive prefix)
     if let Some(auth) = headers.get(header::AUTHORIZATION) {
         if let Ok(auth_str) = auth.to_str() {
-            if auth_str.len() >= 7 && auth_str[..7].eq_ignore_ascii_case("bearer ") {
+            if auth_str.len() > 7 && auth_str[..7].eq_ignore_ascii_case("bearer ") {
                 return Some(auth_str[7..].to_string());
             }
         }
