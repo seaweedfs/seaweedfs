@@ -112,11 +112,10 @@ jobs:
         working-directory: test/kms
         run: |
           echo "=== OpenBao Container Logs ==="
-          docker logs openbao-ci 2>&1 | tail -50 || echo "No OpenBao container found"
+          cat /tmp/openbao-ci-container.log 2>/dev/null || docker logs openbao-ci 2>&1 | tail -50 || echo "No OpenBao logs found"
           echo "=== SeaweedFS Server Logs ==="
           tail -100 /tmp/seaweedfs-kms-mini.log 2>/dev/null || echo "No server log found"
           echo "=== Setup Logs ==="
-          cat /tmp/openbao-ci-setup.log 2>/dev/null || echo "No OpenBao setup log"
           cat /tmp/weed-kms-ci-setup.log 2>/dev/null || echo "No weed setup log"
           echo "=== Process Information ==="
           ps aux | grep -E "(weed|test)" || true
@@ -128,7 +127,7 @@ jobs:
           name: s3-kms-e2e-logs
           path: |
             /tmp/seaweedfs-kms-mini.log
-            /tmp/openbao-ci-setup.log
+            /tmp/openbao-ci-container.log
             /tmp/weed-kms-ci-setup.log
           retention-days: 3
 

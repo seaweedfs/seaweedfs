@@ -203,7 +203,10 @@ start-seaweedfs-ci: check-binary ## Start weed mini with OpenBao KMS config
 	     -e 's|OPENBAO_ADDR_PLACEHOLDER|$(OPENBAO_ADDR)|g' \
 	     -e 's/OPENBAO_TOKEN_PLACEHOLDER/$(OPENBAO_TOKEN)/g' \
 	     s3-config-openbao-template.json > /tmp/seaweedfs-kms-s3.json
-	@AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
+	@# Start weed mini from the data dir to avoid picking up test/kms/filer.toml
+	@# (filer.toml is read from "." first, and the one here has Docker-only paths)
+	@cd /tmp/seaweedfs-test-kms && \
+		AWS_ACCESS_KEY_ID=$(ACCESS_KEY) AWS_SECRET_ACCESS_KEY=$(SECRET_KEY) GLOG_v=4 $(SEAWEEDFS_BINARY) mini \
 		-dir=/tmp/seaweedfs-test-kms \
 		-s3.port=$(S3_PORT) \
 		-s3.config=/tmp/seaweedfs-kms-s3.json \
@@ -217,7 +220,8 @@ start-seaweedfs-ci: check-binary ## Start weed mini with OpenBao KMS config
 		fi; \
 		if [ $$i -eq 30 ]; then \
 			echo "$(RED)Timeout waiting for S3 service$(NC)"; \
-			tail -20 /tmp/seaweedfs-kms-mini.log 2>/dev/null || true; \
+			echo "=== Last 50 lines of server log ==="; \
+			tail -50 /tmp/seaweedfs-kms-mini.log 2>/dev/null || echo "No server log found"; \
 			exit 1; \
 		fi; \
 		sleep 1; \
@@ -257,7 +261,7 @@ test-s3-kms-ci: build-weed ## Run S3 KMS e2e tests with weed mini + OpenBao in C
 	@echo "$(YELLOW)Starting S3 KMS end-to-end tests...$(NC)"
 	@if $(MAKE) start-openbao-ci > /tmp/openbao-ci-setup.log 2>&1; then \
 		echo "$(GREEN)OpenBao started and configured$(NC)"; \
-		trap '$(MAKE) -C $(TEST_DIR) stop-seaweedfs-ci || true; $(MAKE) -C $(TEST_DIR) stop-openbao-ci || true; $(MAKE) -C $(TEST_DIR) clean-ci || true' EXIT; \
+		trap 'docker logs openbao-ci > /tmp/openbao-ci-container.log 2>&1 || true; $(MAKE) -C $(TEST_DIR) stop-seaweedfs-ci || true; $(MAKE) -C $(TEST_DIR) stop-openbao-ci || true; $(MAKE) -C $(TEST_DIR) clean-ci || true' EXIT; \
 		if $(MAKE) start-seaweedfs-ci > /tmp/weed-kms-ci-setup.log 2>&1; then \
 			echo "$(GREEN)SeaweedFS started with OpenBao KMS$(NC)"; \
 			sleep 3; \
