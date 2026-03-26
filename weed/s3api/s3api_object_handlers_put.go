@@ -365,12 +365,18 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 			}
 		}
 
-		// If SSE-S3 was applied by bucket default, prepare metadata (if not already done)
+		// If bucket default encryption was applied, serialize the metadata (SSE-S3 and SSE-KMS are mutually exclusive)
+		var metaErr error
 		if sseS3Key != nil && len(sseS3Metadata) == 0 {
-			var metaErr error
 			sseS3Metadata, metaErr = SerializeSSES3Metadata(sseS3Key)
 			if metaErr != nil {
 				glog.Errorf("Failed to serialize SSE-S3 metadata for bucket default encryption: %v", metaErr)
+				return "", s3err.ErrInternalError, SSEResponseMetadata{}
+			}
+		} else if sseKMSKey != nil && len(sseKMSMetadata) == 0 {
+			sseKMSMetadata, metaErr = SerializeSSEKMSMetadata(sseKMSKey)
+			if metaErr != nil {
+				glog.Errorf("Failed to serialize SSE-KMS metadata for bucket default encryption: %v", metaErr)
 				return "", s3err.ErrInternalError, SSEResponseMetadata{}
 			}
 		}

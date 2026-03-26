@@ -80,7 +80,10 @@ func (fs *FilerServer) tusOptionsHandler(w http.ResponseWriter, r *http.Request)
 
 // tusCreateHandler handles POST requests to create new uploads
 func (fs *FilerServer) tusCreateHandler(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+	// Use a context that ignores cancellation from the request context.
+	// Internal operations (creating TUS session, writing data, completing uploads)
+	// may exceed the filer's client connection inactivity timeout.
+	ctx := context.WithoutCancel(r.Context())
 
 	// Parse Upload-Length header (required)
 	uploadLengthStr := r.Header.Get("Upload-Length")
@@ -195,7 +198,11 @@ func (fs *FilerServer) tusHeadHandler(w http.ResponseWriter, r *http.Request, up
 
 // tusPatchHandler handles PATCH requests to upload data
 func (fs *FilerServer) tusPatchHandler(w http.ResponseWriter, r *http.Request, uploadID string) {
-	ctx := r.Context()
+	// Use a context that ignores cancellation from the request context.
+	// The filer's connection has an inactivity timeout: after the request body is fully read,
+	// internal operations (assigning file IDs, uploading to volume servers, completing uploads)
+	// may exceed the timeout, causing the request context to be canceled.
+	ctx := context.WithoutCancel(r.Context())
 
 	// Validate Content-Type
 	contentType := r.Header.Get("Content-Type")
