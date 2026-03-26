@@ -25,3 +25,12 @@ func InitGlobalHttpClient() {
 		glog.Fatalf("error init global http client: %v", err)
 	}
 }
+
+func ReInitGlobalHttpClient(opt ...util_http_client.HttpClientOpt) {
+	var err error
+
+	globalHttpClient, err = NewGlobalHttpClient(opt...)
+	if err != nil {
+		glog.Fatalf("error reinit global http client: %v", err)
+	}
+}
