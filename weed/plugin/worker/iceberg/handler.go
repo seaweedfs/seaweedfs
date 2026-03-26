@@ -643,7 +643,7 @@ func (h *Handler) dialFiler(ctx context.Context, address string) (*grpc.ClientCo
 	opCtx, opCancel := context.WithTimeout(ctx, filerConnectTimeout)
 	defer opCancel()
 
-	conn, err := pb.GrpcDial(opCtx, address, false, h.grpcDialOption)
+	conn, err := pb.GrpcDial(opCtx, pb.ServerAddress(address).ToGrpcAddress(), false, h.grpcDialOption)
 	if err != nil {
 		return nil, err
 	}

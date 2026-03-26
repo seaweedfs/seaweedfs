@@ -245,7 +245,11 @@ func startFakeFilerWithAddress(t *testing.T) (*fakeFilerServer, filer_pb.Seaweed
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	return fakeServer, client, listener.Addr().String()
+	// Return the address in ServerAddress format (host:httpPort.grpcPort)
+	// so that dialFiler resolves it correctly via ToGrpcAddress().
+	_, portStr, _ := net.SplitHostPort(listener.Addr().String())
+	serverAddr := fmt.Sprintf("127.0.0.1:0.%s", portStr)
+	return fakeServer, client, serverAddr
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,8 +1005,9 @@ func TestConnectToFilerSkipsUnreachableAddresses(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen for dead address: %v", err)
 	}
-	deadAddr := deadListener.Addr().String()
+	_, deadPortStr, _ := net.SplitHostPort(deadListener.Addr().String())
 	_ = deadListener.Close()
+	deadAddr := fmt.Sprintf("127.0.0.1:0.%s", deadPortStr)
 
 	addr, conn, err := handler.connectToFiler(context.Background(), []string{deadAddr, liveAddr})
 	if err != nil {
@@ -1022,8 +1027,9 @@ func TestConnectToFilerFailsWhenAllAddressesAreUnreachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen for dead address: %v", err)
 	}
-	deadAddr := deadListener.Addr().String()
+	_, deadPortStr, _ := net.SplitHostPort(deadListener.Addr().String())
 	_ = deadListener.Close()
+	deadAddr := fmt.Sprintf("127.0.0.1:0.%s", deadPortStr)
 
 	_, _, err = handler.connectToFiler(context.Background(), []string{deadAddr})
 	if err == nil {

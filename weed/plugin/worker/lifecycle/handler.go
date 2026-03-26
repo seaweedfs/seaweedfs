@@ -289,9 +289,6 @@ func (h *Handler) Execute(ctx context.Context, req *plugin_pb.ExecuteJobRequest,
 func connectToFiler(ctx context.Context, addresses []string, dialOption grpc.DialOption) (filer_pb.SeaweedFilerClient, *grpc.ClientConn, error) {
 	var lastErr error
 	for _, addr := range addresses {
-		// Addresses from ClusterContext use ServerAddress format
-		// (e.g. "host:port.grpcPort"). Convert to the actual gRPC
-		// address before dialing.
 		grpcAddr := pb.ServerAddress(addr).ToGrpcAddress()
 		connCtx, cancel := context.WithTimeout(ctx, filerConnectTimeout)
 		conn, err := pb.GrpcDial(connCtx, grpcAddr, false, dialOption)
