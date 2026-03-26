@@ -19,7 +19,7 @@ on:
       - 'test/kms/**'
 
 concurrency:
-  group: ${{ github.head_ref }}/kms-tests
+  group: ${{ github.head_ref || github.ref }}-kms-tests
   cancel-in-progress: true
 
 permissions:
