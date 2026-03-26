@@ -2277,7 +2277,7 @@ pub async fn post_handler(
             return json_error_with_query(
                 StatusCode::BAD_REQUEST,
                 format!(
-                    "Content-MD5 mismatch: expected {} got {} size {}",
+                    "Content-MD5 did not match md5 of file data expected [{}] received [{}] size {}",
                     expected_md5, actual_md5, original_data_size
                 ),
                 Some(&query),
