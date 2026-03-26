@@ -63,7 +63,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 				return
 			}
 		}
-		glog.V(0).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
+		glog.V(1).Infof("Loading %s... , watermark: %d", dbFileName, getWatermark(m.db))
 		m.recordCount = uint64(m.indexFileOffset / NeedleMapEntrySize)
 		watermark := (m.recordCount / watermarkBatchSize) * watermarkBatchSize
 		err = setWatermark(m.db, watermark)
@@ -119,7 +119,7 @@ func generateLevelDbFile(dbFileName string, indexFile *os.File) error {
 		if watermark*NeedleMapEntrySize > uint64(stat.Size()) {
 			glog.Warningf("wrong watermark %d for filesize %d", watermark, stat.Size())
 		}
-		glog.V(0).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
+		glog.V(1).Infof("generateLevelDbFile %s, watermark %d, num of entries:%d", dbFileName, watermark, (uint64(stat.Size())-watermark*NeedleMapEntrySize)/NeedleMapEntrySize)
 	}
 	return idx.WalkIndexFile(indexFile, watermark, func(key NeedleId, offset Offset, size Size) error {
 		if !offset.IsZero() && !size.IsDeleted() {

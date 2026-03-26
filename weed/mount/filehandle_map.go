@@ -38,6 +38,17 @@ func (i *FileHandleToInode) FindFileHandle(inode uint64) (fh *FileHandle, found 
 	return
 }
 
+// MarkInodeRenamed sets isRenamed on any file handle associated with the
+// given inode.  This prevents the async flush from recreating a renamed
+// file's metadata under its old path.
+func (i *FileHandleToInode) MarkInodeRenamed(inode uint64) {
+	i.RLock()
+	defer i.RUnlock()
+	if fh, ok := i.inode2fh[inode]; ok {
+		fh.isRenamed = true
+	}
+}
+
 func (i *FileHandleToInode) AcquireFileHandle(wfs *WFS, inode uint64, entry *filer_pb.Entry) *FileHandle {
 	i.Lock()
 	defer i.Unlock()

@@ -49,25 +49,24 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	entryFullPath := dirFullPath.Child(name)
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(newEntry)
+	// Defer restoring to local uid/gid AFTER the entry is sent to the filer
+	// but BEFORE outputPbEntry writes attributes to the kernel.  We restore
+	// explicitly below instead of using defer so the kernel gets local values.
 
-		wfs.mapPbIdFromLocalToFiler(newEntry)
-		defer wfs.mapPbIdFromFilerToLocal(newEntry)
 
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dirFullPath),
-			Entry:                    newEntry,
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
-		}
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dirFullPath),
+		Entry:                    newEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
 
-		glog.V(1).Infof("mkdir: %v", request)
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
-			return err
-		}
-
+	glog.V(1).Infof("mkdir: %v", request)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+	} else {
 		event := resp.GetMetadataEvent()
 		if event == nil {
 			event = metadataCreateEvent(string(dirFullPath), newEntry)
@@ -77,15 +76,19 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-
-		return nil
-	})
+	}
 
 	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
+		wfs.mapPbIdFromFilerToLocal(newEntry)
 		return fuse.EIO
 	}
+
+	// Map uid/gid back to local-space before writing attributes to the
+	// kernel.  The kernel (especially macFUSE) caches these and uses them
+	// for subsequent permission checks on children.
+	wfs.mapPbIdFromFilerToLocal(newEntry)
 
 	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
 
@@ -112,10 +115,16 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	entryFullPath := dirFullPath.Child(name)
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
-	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	resp, err := filer_pb.RemoveWithResponse(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
+	deleteReq := &filer_pb.DeleteEntryRequest{
+		Directory:            string(dirFullPath),
+		Name:                 name,
+		IsDeleteData:         true,
+		IgnoreRecursiveError: true, // ignore recursion error since the OS should manage it
+		Signatures:           []int32{wfs.signature},
+	}
+	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
-		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		glog.V(1).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}

@@ -51,6 +51,9 @@ func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
 // This enables close() to return immediately for small file workloads (e.g., rsync),
 // while the actual I/O happens concurrently in the background.
 func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
+	glog.V(4).Infof("completeAsyncFlush inode %d fh %d saved=%s/%s dirtyMetadata=%v isDeleted=%v isRenamed=%v",
+		fh.inode, fh.fh, fh.savedDir, fh.savedName, fh.dirtyMetadata, fh.isDeleted, fh.isRenamed)
+
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
 	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
 	// so a failure here indicates a persistent issue; the chunk data has been freed.
@@ -65,8 +68,19 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 		// handle.  In that case the filer entry is already gone and
 		// flushing would recreate it.  The uploaded chunks become orphans
 		// and are cleaned up by volume.fsck.
-		if fh.isDeleted {
-			glog.V(3).Infof("completeAsyncFlush inode %d: file was unlinked, skipping metadata flush", fh.inode)
+		if fh.isDeleted || fh.isRenamed {
+			if fh.isDeleted {
+				glog.V(3).Infof("completeAsyncFlush inode %d: file was unlinked, skipping metadata flush", fh.inode)
+			} else {
+				glog.V(3).Infof("completeAsyncFlush inode %d: file was renamed, skipping old-path metadata flush (Rename handles it)", fh.inode)
+			}
+		} else if savedInode, found := wfs.inodeToPath.GetInode(util.FullPath(fh.savedDir).Child(fh.savedName)); !found || savedInode != fh.inode {
+			// The saved path no longer maps to this inode — the file was
+			// renamed (or deleted and recreated). Flushing metadata under
+			// the old path would re-insert a stale entry into the meta
+			// cache, breaking git's lock file protocol.
+			glog.V(3).Infof("completeAsyncFlush inode %d: saved path %s/%s no longer maps to this inode, skipping metadata flush",
+				fh.inode, fh.savedDir, fh.savedName)
 		} else {
 			// Resolve the current path for metadata flush.
 			//
@@ -120,5 +134,8 @@ func (wfs *WFS) WaitForAsyncFlush() {
 	wfs.asyncFlushWg.Wait()
 	if wfs.asyncFlushCh != nil {
 		close(wfs.asyncFlushCh)
+	}
+	if wfs.streamMutate != nil {
+		wfs.streamMutate.Close()
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"google.golang.org/protobuf/proto"
 )
 
 /**
@@ -168,65 +169,65 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 // This is shared between the synchronous doFlush path and the async flush completion.
 func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath := fh.FullPath()
+	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
 
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	entry := fh.GetEntry()
+	entry.Name = name // this flush may be just after a rename operation
 
-		entry := fh.GetEntry()
-		entry.Name = name // this flush may be just after a rename operation
-
-		if entry.Attributes != nil {
-			entry.Attributes.Mime = fh.contentType
-			if entry.Attributes.Uid == 0 {
-				entry.Attributes.Uid = uid
-			}
-			if entry.Attributes.Gid == 0 {
-				entry.Attributes.Gid = gid
-			}
-			entry.Attributes.Mtime = time.Now().Unix()
+	if entry.Attributes != nil {
+		entry.Attributes.Mime = fh.contentType
+		if entry.Attributes.Uid == 0 {
+			entry.Attributes.Uid = uid
 		}
-
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dir),
-			Entry:                    entry.GetEntry(),
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
+		if entry.Attributes.Gid == 0 {
+			entry.Attributes.Gid = gid
 		}
+		entry.Attributes.Mtime = time.Now().Unix()
+	}
 
-		glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
+	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))
 
-		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
+	manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entry.GetChunks())
 
-		chunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
-		chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
-		if manifestErr != nil {
-			// not good, but should be ok
-			glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
-		}
-		entry.Chunks = append(chunks, manifestChunks...)
+	chunks, _ := filer.CompactFileChunks(context.Background(), wfs.LookupFn(), nonManifestChunks)
+	chunks, manifestErr := filer.MaybeManifestize(wfs.saveDataAsChunk(fileFullPath), chunks)
+	if manifestErr != nil {
+		// not good, but should be ok
+		glog.V(0).Infof("MaybeManifestize: %v", manifestErr)
+	}
+	entry.Chunks = append(chunks, manifestChunks...)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
+	// Clone the proto entry for the filer request so that mapPbIdFromLocalToFiler
+	// does not mutate the file handle's live entry. Without the clone, a concurrent
+	// Lookup can observe filer-side uid/gid on the file handle entry and return it
+	// to the kernel, which caches it and then rejects opens by the local user.
+	requestEntry := proto.Clone(entry.GetEntry()).(*filer_pb.Entry)
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dir),
+		Entry:                    requestEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
 
-		resp, err := filer_pb.CreateEntryWithResponse(context.Background(), client, request)
-		if err != nil {
-			glog.Errorf("fh flush create %s: %v", fileFullPath, err)
-			return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
-		}
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataUpdateEvent(string(dir), request.Entry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
-		}
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		glog.Errorf("fh flush create %s: %v", fileFullPath, err)
+		return fmt.Errorf("fh flush create %s: %v", fileFullPath, err)
+	}
 
-		return nil
-	})
+	event := resp.GetMetadataEvent()
+	if event == nil {
+		event = metadataUpdateEvent(string(dir), request.Entry)
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("flush %s: best-effort metadata apply failed: %v", fileFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(dir))
+	}
 
 	if err == nil {
 		fh.dirtyMetadata = false

@@ -40,7 +40,13 @@ func (wfs *WFS) Access(cancel <-chan struct{}, input *fuse.AccessIn) (code fuse.
 	if entry == nil || entry.Attributes == nil {
 		return fuse.EIO
 	}
-	if hasAccess(input.Uid, input.Gid, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode, input.Mask) {
+	// Map entry uid/gid from filer-space to local-space so the permission
+	// check compares like with like (caller uid/gid from FUSE are local).
+	fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+	if wfs.option.UidGidMapper != nil {
+		fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+	}
+	if hasAccess(input.Uid, input.Gid, fileUid, fileGid, entry.Attributes.FileMode, input.Mask) {
 		return fuse.OK
 	}
 	return fuse.EACCES

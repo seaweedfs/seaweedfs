@@ -77,4 +77,5 @@ jobs:
         name: fuse-integration-test-results
         path: |
           /tmp/fuse-test-output.log
+          /tmp/seaweedfs-fuse-logs/
         retention-days: 7
