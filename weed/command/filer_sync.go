@@ -305,7 +305,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSink.SetChunkConcurrency(chunkConcurrency)
 	filerSink.SetSourceFiler(filerSource)
 
-	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, nil, filerSink, doDeleteFiles, debug)
+	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, nil, nil, filerSink, doDeleteFiles, debug)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -440,7 +440,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, reExcludePathPattern *regexp.Regexp, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	// process function
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -472,8 +472,8 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		// Compute per-side exclusion so that rename events crossing an
 		// exclude boundary are handled as delete + create rather than
 		// being entirely skipped.
-		oldExcluded := isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, reExcludePathPattern)
-		newExcluded := isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, reExcludePathPattern)
+		oldExcluded := isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+		newExcluded := isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
 
 		if oldExcluded && newExcluded {
 			return nil
@@ -596,19 +596,27 @@ func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification
 }
 
 // isEntryExcluded checks whether a single side (old or new) of an event is excluded
-// by either the filename regexp or the path-pattern regexp.
-func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regexp.Regexp, reExcludePathPattern *regexp.Regexp) bool {
+// by the deprecated filename regexp, the wildcard file-name matchers, or the
+// wildcard path-pattern matchers.
+func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher) bool {
 	if entry == nil {
 		return false
 	}
+	// deprecated regexp-based filename exclusion
 	if reExcludeFileName != nil && reExcludeFileName.MatchString(entry.Name) {
 		return true
 	}
-	if reExcludePathPattern != nil {
-		if pathContainsMatch(dir, reExcludePathPattern) {
+	// wildcard-based filename exclusion
+	if len(excludeFileNames) > 0 && matchesAnyWildcard(excludeFileNames, entry.Name) {
+		return true
+	}
+	// wildcard-based path-pattern exclusion: match against each directory
+	// component and the entry name itself
+	if len(excludePathPatterns) > 0 {
+		if pathContainsWildcardMatch(dir, excludePathPatterns) {
 			return true
 		}
-		if reExcludePathPattern.MatchString(entry.Name) {
+		if matchesAnyWildcard(excludePathPatterns, entry.Name) {
 			return true
 		}
 	}
@@ -625,26 +633,6 @@ func compileExcludePattern(pattern string, label string) (*regexp.Regexp, error)
 		return nil, fmt.Errorf("error compile regexp %v for %s: %+v", pattern, label, err)
 	}
 	return re, nil
-}
-
-// pathContainsMatch checks if any component of the given path matches the regexp,
-// without allocating a slice (unlike strings.Split).
-func pathContainsMatch(path string, re *regexp.Regexp) bool {
-	for path != "" {
-		i := strings.IndexByte(path, '/')
-		var component string
-		if i < 0 {
-			component = path
-			path = ""
-		} else {
-			component = path[:i]
-			path = path[i+1:]
-		}
-		if component != "" && re.MatchString(component) {
-			return true
-		}
-	}
-	return false
 }
 
 // matchesAnyWildcard returns true if any matcher matches the value.
