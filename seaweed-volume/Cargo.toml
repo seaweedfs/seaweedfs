@@ -12,10 +12,9 @@ name = "weed-volume"
 path = "src/main.rs"
 
 [features]
-# Match the default Go build: 4-byte offsets unless explicitly built with 5-byte support.
+# Default: 5-byte offsets (8TB max volume size), matching production Go builds (-tags 5BytesOffset).
+# Disable with --no-default-features for 4-byte offsets (32GB max volume size).
 default = ["5bytes"]
-# Enable 5-byte offset mode for 8TB max volume size (matches Go builds with -tags 5BytesOffset).
-# Without this feature, uses 4-byte offsets with 32GB max volume size.
 5bytes = []
 
 [dependencies]
