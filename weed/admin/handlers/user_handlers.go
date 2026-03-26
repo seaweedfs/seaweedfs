@@ -311,10 +311,19 @@ func (h *UserHandlers) getObjectStoreUsersData(r *http.Request) dash.ObjectStore
 		}
 	}
 
+	hasAnonymous := false
+	for _, u := range users {
+		if u.Username == "anonymous" {
+			hasAnonymous = true
+			break
+		}
+	}
+
 	return dash.ObjectStoreUsersData{
-		Username:    username,
-		Users:       users,
-		TotalUsers:  len(users),
-		LastUpdated: time.Now(),
+		Username:         username,
+		Users:            users,
+		TotalUsers:       len(users),
+		HasAnonymousUser: hasAnonymous,
+		LastUpdated:      time.Now(),
 	}
 }
