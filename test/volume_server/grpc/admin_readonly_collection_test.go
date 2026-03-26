@@ -115,19 +115,7 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	}
 
 	// enter maintenance mode
-	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{
-			Maintenance: true,
-			Version:     stateResp.GetState().GetVersion(),
-		},
-	})
-	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
-	}
+	framework.EnableMaintenanceMode(t, ctx, grpcClient)
 
 	// existing volume in maintenance mode should return "maintenance mode" error
 	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: volumeID, Persist: true})

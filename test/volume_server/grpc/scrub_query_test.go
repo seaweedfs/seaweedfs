@@ -2,10 +2,7 @@ package volume_server_grpc_test
 
 import (
 	"context"
-	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -443,17 +440,7 @@ func TestScrubVolumeMarkBrokenReadonlyCorruptVolume(t *testing.T) {
 	httpClient := framework.NewHTTPClient()
 	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("test data"))
 
-	// corrupt the index file by appending garbage bytes so CheckIndexFile detects a size mismatch
-	idxPath := filepath.Join(clusterHarness.BaseDir(), "volume", fmt.Sprintf("%d.idx", volumeID))
-	f, err := os.OpenFile(idxPath, os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		t.Fatalf("open idx file for corruption: %v", err)
-	}
-	if _, err := f.Write([]byte{0xDE, 0xAD}); err != nil {
-		f.Close()
-		t.Fatalf("corrupt idx file: %v", err)
-	}
-	f.Close()
+	framework.CorruptIndexFile(t, clusterHarness.BaseDir(), volumeID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -526,39 +513,16 @@ func TestScrubVolumeMarkBrokenReadonlyInMaintenanceMode(t *testing.T) {
 	httpClient := framework.NewHTTPClient()
 	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("test data"))
 
-	// corrupt the index file
-	idxPath := filepath.Join(clusterHarness.BaseDir(), "volume", fmt.Sprintf("%d.idx", volumeID))
-	f, err := os.OpenFile(idxPath, os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		t.Fatalf("open idx file for corruption: %v", err)
-	}
-	if _, err := f.Write([]byte{0xDE, 0xAD}); err != nil {
-		f.Close()
-		t.Fatalf("corrupt idx file: %v", err)
-	}
-	f.Close()
+	framework.CorruptIndexFile(t, clusterHarness.BaseDir(), volumeID)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	// enter maintenance mode
-	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
-	if err != nil {
-		t.Fatalf("GetState failed: %v", err)
-	}
-	_, err = grpcClient.SetState(ctx, &volume_server_pb.SetStateRequest{
-		State: &volume_server_pb.VolumeServerState{
-			Maintenance: true,
-			Version:     stateResp.GetState().GetVersion(),
-		},
-	})
-	if err != nil {
-		t.Fatalf("SetState maintenance=true failed: %v", err)
-	}
+	framework.EnableMaintenanceMode(t, ctx, grpcClient)
 
 	// scrub with the flag in maintenance mode: makeVolumeReadonly should fail
 	// and ScrubVolume should propagate the error
-	_, err = grpcClient.ScrubVolume(ctx, &volume_server_pb.ScrubVolumeRequest{
+	_, err := grpcClient.ScrubVolume(ctx, &volume_server_pb.ScrubVolumeRequest{
 		VolumeIds:                 []uint32{volumeID},
 		Mode:                      volume_server_pb.VolumeScrubMode_INDEX,
 		MarkBrokenVolumesReadonly: true,
