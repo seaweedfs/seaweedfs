@@ -172,6 +172,26 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.EPERM
 	}
 
+	// Before deleting from the filer, mark any draining async-flush handle
+	// as deleted and wait for it to complete.  Without this, the async flush
+	// can race with the filer delete and recreate the just-unlinked entry
+	// (the worker checks isDeleted, but it may have already passed that check
+	// before Unlink sets the flag).  By waiting here, any in-flight flush
+	// finishes first; even if it recreated the entry, the filer delete below
+	// will remove it again.
+	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
+			fh.isDeleted = true
+		}
+		wfs.waitForPendingAsyncFlush(inode)
+	} else if entry != nil && entry.Attributes != nil && entry.Attributes.Inode != 0 {
+		inodeFromEntry := entry.Attributes.Inode
+		if fh, fhFound := wfs.fhMap.FindFileHandle(inodeFromEntry); fhFound {
+			fh.isDeleted = true
+		}
+		wfs.waitForPendingAsyncFlush(inodeFromEntry)
+	}
+
 	// first, ensure the filer store can correctly delete
 	glog.V(3).Infof("remove file: %v", entryFullPath)
 	// Always let the filer decide whether to delete chunks based on its authoritative data.
@@ -199,15 +219,6 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
-
-	// If there is an async-draining handle for this file, mark it as deleted
-	// so the background flush skips the metadata write instead of recreating
-	// the just-unlinked entry.  The handle is still in fhMap during drain.
-	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
-		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
-			fh.isDeleted = true
-		}
-	}
 
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
