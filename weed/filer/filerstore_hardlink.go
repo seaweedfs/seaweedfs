@@ -3,6 +3,7 @@ package filer
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -69,7 +70,11 @@ func (fsw *FilerStoreWrapper) maybeReadHardLink(ctx context.Context, entry *Entr
 
 	value, err := fsw.KvGet(ctx, key)
 	if err != nil {
-		glog.ErrorfCtx(ctx, "read %s HardLinkId %x: %v", entry.FullPath, entry.HardLinkId, err)
+		if errors.Is(err, ErrKvNotFound) {
+			glog.V(4).InfofCtx(ctx, "maybeReadHardLink %s HardLinkId %x: not found", entry.FullPath, entry.HardLinkId)
+		} else {
+			glog.ErrorfCtx(ctx, "read %s HardLinkId %x: %v", entry.FullPath, entry.HardLinkId, err)
+		}
 		return err
 	}
 
