@@ -2394,11 +2394,12 @@ pub async fn post_handler(
 
     // Auto-compress compressible file types (matches Go's IsCompressableFileType).
     // Only compress if not already gzipped and compression saves >10%.
+    // Go uses filepath.Base(pu.FileName) for extension detection (not the URL path).
     let (final_data, final_is_gzipped) = if !is_gzipped && !is_chunk_manifest {
         let ext = {
-            let dot_pos = path.rfind('.');
+            let dot_pos = filename.rfind('.');
             dot_pos
-                .map(|p| path[p..].to_lowercase())
+                .map(|p| filename[p..].to_lowercase())
                 .unwrap_or_default()
         };
         if is_compressible_file_type(&ext, &mime_type) {
