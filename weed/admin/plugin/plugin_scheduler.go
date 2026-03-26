@@ -1287,6 +1287,35 @@ func isWaitingTrackedJobState(state string) bool {
 	return normalized == "pending" || normalized == "job_state_pending"
 }
 
+// DispatchProposals dispatches a batch of proposals using the same capacity-aware
+// dispatch logic as the scheduler loop: concurrent execution, executor reservation
+// with backoff, and per-job retry on transient errors. The scheduler policy is
+// loaded from the persisted job type config; if the job type has no config or is
+// disabled a sensible default policy is used so manual runs always work.
+func (r *Plugin) DispatchProposals(
+	ctx context.Context,
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+	clusterContext *plugin_pb.ClusterContext,
+) (successCount, errorCount, canceledCount int) {
+	if len(proposals) == 0 {
+		return 0, 0, 0
+	}
+
+	policy, enabled, err := r.loadSchedulerPolicy(jobType)
+	if err != nil || !enabled {
+		policy = schedulerPolicy{
+			ExecutionConcurrency:   defaultScheduledExecutionConcurrency,
+			PerWorkerConcurrency:   defaultScheduledPerWorkerConcurrency,
+			ExecutionTimeout:       defaultScheduledExecutionTimeout,
+			RetryBackoff:           defaultScheduledRetryBackoff,
+			ExecutorReserveBackoff: 200 * time.Millisecond,
+		}
+	}
+
+	return r.dispatchScheduledProposals(ctx, jobType, proposals, clusterContext, policy)
+}
+
 func (r *Plugin) filterScheduledProposals(proposals []*plugin_pb.JobProposal) []*plugin_pb.JobProposal {
 	filtered := make([]*plugin_pb.JobProposal, 0, len(proposals))
 	seenInRun := make(map[string]struct{}, len(proposals))

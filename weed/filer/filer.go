@@ -81,7 +81,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
 
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, f.readPersistedLogBufferPosition, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -203,7 +203,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	}
 
 	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
-		return fmt.Errorf("entry name too long")
+		return filer_pb.ErrEntryNameTooLong
 	}
 
 	if entry.IsDirectory() {
@@ -237,7 +237,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	} else {
 		if o_excl {
 			glog.V(3).InfofCtx(ctx, "EEXIST: entry %s already exists", entry.FullPath)
-			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
+			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
@@ -323,8 +323,16 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 	} else if !dirEntry.IsDirectory() {
-		glog.ErrorfCtx(ctx, "CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
-		return fmt.Errorf("%s is a file", dirPath)
+		// S3 allows both "foo/bar" (object) and "foo/bar/xyzzy" (another
+		// object) to coexist because S3 has a flat key space. Promote the
+		// existing file to a directory, preserving its content/chunks so
+		// the original object data remains accessible.
+		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
+		dirEntry.Attr.Mode |= os.ModeDir | 0111
+		if updateErr := f.Store.UpdateEntry(ctx, dirEntry); updateErr != nil {
+			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
+		}
+		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 	}
 
 	return nil
@@ -335,11 +343,11 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
+			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsDirectory)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a file", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
+			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)

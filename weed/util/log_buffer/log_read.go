@@ -77,6 +77,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {
+				prevReadPosition := lastReadPosition
 				lastReadPosition, isDone, err = logBuffer.ReadFromDiskFn(lastReadPosition, stopTsNs, eachLogDataFn)
 				if err != nil {
 					return lastReadPosition, isDone, err
@@ -84,6 +85,11 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				if isDone {
 					return lastReadPosition, isDone, nil
 				}
+				if lastReadPosition != prevReadPosition {
+					continue
+				}
+			} else if logBuffer.HasData() {
+				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			// CRITICAL: Check if client is still connected
@@ -261,6 +267,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {
+				prevReadPosition := lastReadPosition
 				// Wrap eachLogDataFn to match the expected signature
 				diskReadFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 					return eachLogDataFn(logEntry, logEntry.Offset)
@@ -272,7 +279,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				if isDone {
 					return lastReadPosition, isDone, nil
 				}
-				// Continue to next iteration after disk read
+				if lastReadPosition != prevReadPosition {
+					continue
+				}
+			} else if logBuffer.HasData() {
+				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			// CRITICAL: Check if client is still connected after disk read

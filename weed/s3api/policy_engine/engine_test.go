@@ -444,8 +444,8 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		t.Errorf("Expected RequestMethod to be GET, got %v", values["s3:RequestMethod"])
 	}
 
-	if len(values["x-amz-copy-source"]) != 1 || values["x-amz-copy-source"][0] != "source-bucket/source-object" {
-		t.Errorf("Expected X-Amz-Copy-Source header to be extracted, got %v", values["x-amz-copy-source"])
+	if len(values["s3:x-amz-copy-source"]) != 1 || values["s3:x-amz-copy-source"][0] != "source-bucket/source-object" {
+		t.Errorf("Expected X-Amz-Copy-Source header to be extracted with s3: prefix, got %v", values["s3:x-amz-copy-source"])
 	}
 
 	// Check that aws:CurrentTime is properly set

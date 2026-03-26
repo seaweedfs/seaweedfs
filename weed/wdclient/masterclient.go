@@ -183,16 +183,29 @@ func (mc *MasterClient) SetOnPeerUpdateFn(onPeerUpdate func(update *master_pb.Cl
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
 	var nextHintedLeader pb.ServerAddress
+	failedMasters := make(map[pb.ServerAddress]struct{})
 	mc.masters.RefreshBySrvIfAvailable()
 	for _, master := range mc.masters.GetInstances() {
+		if _, failed := failedMasters[master]; failed {
+			continue
+		}
 		nextHintedLeader = mc.tryConnectToMaster(ctx, master)
 		for nextHintedLeader != "" {
+			if _, failed := failedMasters[nextHintedLeader]; failed {
+				break // don't follow redirect to a known-unreachable master
+			}
 			select {
 			case <-ctx.Done():
 				glog.V(0).Infof("Connection attempt to all masters stopped: %v", ctx.Err())
 				return
 			default:
-				nextHintedLeader = mc.tryConnectToMaster(ctx, nextHintedLeader)
+				target := nextHintedLeader
+				nextHintedLeader = mc.tryConnectToMaster(ctx, target)
+				if nextHintedLeader == "" {
+					// connection to target failed; remember it so we skip
+					// stale redirects pointing back to it this cycle
+					failedMasters[target] = struct{}{}
+				}
 			}
 		}
 		mc.setCurrentMaster("")

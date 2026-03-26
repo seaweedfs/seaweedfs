@@ -27,6 +27,7 @@ const (
 	SeaweedFiler_DeleteEntry_FullMethodName                     = "/filer_pb.SeaweedFiler/DeleteEntry"
 	SeaweedFiler_AtomicRenameEntry_FullMethodName               = "/filer_pb.SeaweedFiler/AtomicRenameEntry"
 	SeaweedFiler_StreamRenameEntry_FullMethodName               = "/filer_pb.SeaweedFiler/StreamRenameEntry"
+	SeaweedFiler_StreamMutateEntry_FullMethodName               = "/filer_pb.SeaweedFiler/StreamMutateEntry"
 	SeaweedFiler_AssignVolume_FullMethodName                    = "/filer_pb.SeaweedFiler/AssignVolume"
 	SeaweedFiler_LookupVolume_FullMethodName                    = "/filer_pb.SeaweedFiler/LookupVolume"
 	SeaweedFiler_CollectionList_FullMethodName                  = "/filer_pb.SeaweedFiler/CollectionList"
@@ -58,6 +59,7 @@ type SeaweedFilerClient interface {
 	DeleteEntry(ctx context.Context, in *DeleteEntryRequest, opts ...grpc.CallOption) (*DeleteEntryResponse, error)
 	AtomicRenameEntry(ctx context.Context, in *AtomicRenameEntryRequest, opts ...grpc.CallOption) (*AtomicRenameEntryResponse, error)
 	StreamRenameEntry(ctx context.Context, in *StreamRenameEntryRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[StreamRenameEntryResponse], error)
+	StreamMutateEntry(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamMutateEntryRequest, StreamMutateEntryResponse], error)
 	AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error)
 	LookupVolume(ctx context.Context, in *LookupVolumeRequest, opts ...grpc.CallOption) (*LookupVolumeResponse, error)
 	CollectionList(ctx context.Context, in *CollectionListRequest, opts ...grpc.CallOption) (*CollectionListResponse, error)
@@ -184,6 +186,19 @@ func (c *seaweedFilerClient) StreamRenameEntry(ctx context.Context, in *StreamRe
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedFiler_StreamRenameEntryClient = grpc.ServerStreamingClient[StreamRenameEntryResponse]
 
+func (c *seaweedFilerClient) StreamMutateEntry(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[StreamMutateEntryRequest, StreamMutateEntryResponse], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[2], SeaweedFiler_StreamMutateEntry_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[StreamMutateEntryRequest, StreamMutateEntryResponse]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SeaweedFiler_StreamMutateEntryClient = grpc.BidiStreamingClient[StreamMutateEntryRequest, StreamMutateEntryResponse]
+
 func (c *seaweedFilerClient) AssignVolume(ctx context.Context, in *AssignVolumeRequest, opts ...grpc.CallOption) (*AssignVolumeResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(AssignVolumeResponse)
@@ -256,7 +271,7 @@ func (c *seaweedFilerClient) GetFilerConfiguration(ctx context.Context, in *GetF
 
 func (c *seaweedFilerClient) TraverseBfsMetadata(ctx context.Context, in *TraverseBfsMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[TraverseBfsMetadataResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[2], SeaweedFiler_TraverseBfsMetadata_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[3], SeaweedFiler_TraverseBfsMetadata_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +290,7 @@ type SeaweedFiler_TraverseBfsMetadataClient = grpc.ServerStreamingClient[Travers
 
 func (c *seaweedFilerClient) SubscribeMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeMetadataResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[3], SeaweedFiler_SubscribeMetadata_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[4], SeaweedFiler_SubscribeMetadata_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -294,7 +309,7 @@ type SeaweedFiler_SubscribeMetadataClient = grpc.ServerStreamingClient[Subscribe
 
 func (c *seaweedFilerClient) SubscribeLocalMetadata(ctx context.Context, in *SubscribeMetadataRequest, opts ...grpc.CallOption) (grpc.ServerStreamingClient[SubscribeMetadataResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[4], SeaweedFiler_SubscribeLocalMetadata_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &SeaweedFiler_ServiceDesc.Streams[5], SeaweedFiler_SubscribeLocalMetadata_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -393,6 +408,7 @@ type SeaweedFilerServer interface {
 	DeleteEntry(context.Context, *DeleteEntryRequest) (*DeleteEntryResponse, error)
 	AtomicRenameEntry(context.Context, *AtomicRenameEntryRequest) (*AtomicRenameEntryResponse, error)
 	StreamRenameEntry(*StreamRenameEntryRequest, grpc.ServerStreamingServer[StreamRenameEntryResponse]) error
+	StreamMutateEntry(grpc.BidiStreamingServer[StreamMutateEntryRequest, StreamMutateEntryResponse]) error
 	AssignVolume(context.Context, *AssignVolumeRequest) (*AssignVolumeResponse, error)
 	LookupVolume(context.Context, *LookupVolumeRequest) (*LookupVolumeResponse, error)
 	CollectionList(context.Context, *CollectionListRequest) (*CollectionListResponse, error)
@@ -444,6 +460,9 @@ func (UnimplementedSeaweedFilerServer) AtomicRenameEntry(context.Context, *Atomi
 }
 func (UnimplementedSeaweedFilerServer) StreamRenameEntry(*StreamRenameEntryRequest, grpc.ServerStreamingServer[StreamRenameEntryResponse]) error {
 	return status.Errorf(codes.Unimplemented, "method StreamRenameEntry not implemented")
+}
+func (UnimplementedSeaweedFilerServer) StreamMutateEntry(grpc.BidiStreamingServer[StreamMutateEntryRequest, StreamMutateEntryResponse]) error {
+	return status.Errorf(codes.Unimplemented, "method StreamMutateEntry not implemented")
 }
 func (UnimplementedSeaweedFilerServer) AssignVolume(context.Context, *AssignVolumeRequest) (*AssignVolumeResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method AssignVolume not implemented")
@@ -646,6 +665,13 @@ func _SeaweedFiler_StreamRenameEntry_Handler(srv interface{}, stream grpc.Server
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
 type SeaweedFiler_StreamRenameEntryServer = grpc.ServerStreamingServer[StreamRenameEntryResponse]
+
+func _SeaweedFiler_StreamMutateEntry_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(SeaweedFilerServer).StreamMutateEntry(&grpc.GenericServerStream[StreamMutateEntryRequest, StreamMutateEntryResponse]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type SeaweedFiler_StreamMutateEntryServer = grpc.BidiStreamingServer[StreamMutateEntryRequest, StreamMutateEntryResponse]
 
 func _SeaweedFiler_AssignVolume_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(AssignVolumeRequest)
@@ -1030,6 +1056,12 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 			StreamName:    "StreamRenameEntry",
 			Handler:       _SeaweedFiler_StreamRenameEntry_Handler,
 			ServerStreams: true,
+		},
+		{
+			StreamName:    "StreamMutateEntry",
+			Handler:       _SeaweedFiler_StreamMutateEntry_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 		{
 			StreamName:    "TraverseBfsMetadata",

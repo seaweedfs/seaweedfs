@@ -677,15 +677,17 @@ func (s3a *S3ApiServer) doListFilerEntries(client filer_pb.SeaweedFilerClient, d
 			}
 
 			if delimiter != "/" || cursor.prefixEndsOnDelimiter {
-				// When delimiter is empty (recursive mode), recurse into directories but don't add them to results
-				// Only files and versioned objects should appear in results
 				if cursor.prefixEndsOnDelimiter {
 					cursor.prefixEndsOnDelimiter = false
 					if entry.IsDirectoryKeyObject() {
 						eachEntryFn(dir, entry)
 					}
+				} else if entry.IsDirectoryKeyObject() {
+					// Directory key objects (created via PutObject with trailing "/")
+					// must appear as regular keys in recursive listing mode.
+					eachEntryFn(dir, entry)
 				}
-				// Recurse into subdirectory - don't add the directory itself to results
+				// Recurse into subdirectory to list any children
 				subNextMarker, subErr := s3a.doListFilerEntries(client, dir+"/"+entry.Name, "", cursor, "", delimiter, false, bucket, eachEntryFn)
 				if subErr != nil {
 					err = fmt.Errorf("doListFilerEntries2: %w", subErr)

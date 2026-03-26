@@ -138,6 +138,16 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
 				return nil
 			}
+			// Propagate delete markers as deletions on the remote.
+			// Delete markers are zero-content version entries, so they
+			// would be filtered out by the HasData check below.
+			if isDeleteMarker(message.NewEntry) {
+				if newParent, newName, ok := rewriteVersionedSourcePath(message.NewParentPath, message.NewEntry.Name); ok {
+					dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(newParent, newName), remoteStorageMountLocation)
+					return syncDeleteMarker(client, option, message, dest)
+				}
+				return nil
+			}
 			if !filer.HasData(message.NewEntry) {
 				return nil
 			}
@@ -146,7 +156,16 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 				glog.V(2).Infof("skipping creating: %+v", resp)
 				return nil
 			}
-			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(message.NewParentPath, message.NewEntry.Name), remoteStorageMountLocation)
+			// Rewrite internal versioning paths to the original S3 key
+			// to prevent double-versioning when central also has versioning enabled
+			parentPath, entryName := message.NewParentPath, message.NewEntry.Name
+			isRewrittenVersion := false
+			if newParent, newName, ok := rewriteVersionedSourcePath(parentPath, entryName); ok {
+				glog.V(0).Infof("rewrite versioned path %s/%s -> %s/%s", parentPath, entryName, newParent, newName)
+				parentPath, entryName = newParent, newName
+				isRewrittenVersion = true
+			}
+			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(parentPath, entryName), remoteStorageMountLocation)
 			if message.NewEntry.IsDirectory {
 				glog.V(0).Infof("mkdir  %s", remote_storage.FormatLocation(dest))
 				return client.WriteDirectory(dest, message.NewEntry)
@@ -156,9 +175,23 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 			if writeErr != nil {
 				return writeErr
 			}
+			// Skip updateLocalEntry for versioned rewrites: the logical
+			// object (e.g. file.xml) has no filer entry in versioned
+			// buckets, and stamping the internal v_* entry with a
+			// RemoteEntry for the logical key is semantically wrong.
+			// Replay is safe because S3 PutObject is idempotent.
+			if isRewrittenVersion {
+				return nil
+			}
 			return updateLocalEntry(option, message.NewParentPath, message.NewEntry, remoteEntry)
 		}
 		if filer_pb.IsDelete(resp) {
+			// Skip deletion of internal version files; individual version
+			// deletes should not propagate to the remote object
+			if isVersionedPath(resp.Directory, message.OldEntry.Name, message.OldEntry.IsDirectory) {
+				glog.V(2).Infof("skipping delete of internal version path: %s/%s", resp.Directory, message.OldEntry.Name)
+				return nil
+			}
 			glog.V(2).Infof("delete: %+v", resp)
 			dest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
 			if message.OldEntry.IsDirectory {
@@ -170,6 +203,11 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 		}
 		if message.OldEntry != nil && message.NewEntry != nil {
 			if isMultipartUploadFile(message.NewParentPath, message.NewEntry.Name) {
+				return nil
+			}
+			// Skip updates to internal version paths
+			if isVersionedPath(message.NewParentPath, message.NewEntry.Name, message.NewEntry.IsDirectory) {
+				glog.V(2).Infof("skipping update of internal version path: %s/%s", message.NewParentPath, message.NewEntry.Name)
 				return nil
 			}
 			oldDest := toRemoteStorageLocation(util.FullPath(mountedDir), util.NewFullPath(resp.Directory, message.OldEntry.Name), remoteStorageMountLocation)
@@ -291,4 +329,89 @@ func isMultipartUploadFile(dir string, name string) bool {
 func isMultipartUploadDir(dir string) bool {
 	return strings.HasPrefix(dir, "/buckets/") &&
 		strings.Contains(dir, "/"+s3_constants.MultipartUploadsFolder+"/")
+}
+
+// isDeleteMarker returns true if the entry is an S3 delete marker
+// (a zero-content version entry with ExtDeleteMarkerKey set to "true").
+func isDeleteMarker(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
+// syncDeleteMarker propagates a delete marker to the remote storage and
+// persists a local sync marker so that replaying the same event is a no-op.
+func syncDeleteMarker(
+	client remote_storage.RemoteStorageClient,
+	filerClient filer_pb.FilerClient,
+	message *filer_pb.EventNotification,
+	dest *remote_pb.RemoteStorageLocation,
+) error {
+	glog.V(0).Infof("delete (marker) %s", remote_storage.FormatLocation(dest))
+	if err := client.DeleteFile(dest); err != nil {
+		return err
+	}
+	return updateLocalEntry(filerClient, message.NewParentPath, message.NewEntry, &filer_pb.RemoteEntry{
+		StorageName: dest.Name,
+		RemoteMtime: message.NewEntry.Attributes.GetMtime(),
+	})
+}
+
+// isVersionedPath returns true if the dir/name refers to an internal
+// versioning path (.versions directory or a version file inside it).
+// These paths are SeaweedFS-internal and must not be synced to remote
+// storage as-is, because the remote S3 endpoint may apply its own
+// versioning, leading to double-versioned paths.
+//
+// For directories: matches only when the entry name ends with the
+// VersionsFolder suffix (e.g. "file.xml.versions").
+// For files: matches only when the parent directory ends with
+// VersionsFolder and the file name has the "v_" prefix used by
+// the internal version file naming convention.
+func isVersionedPath(dir string, name string, isDir bool) bool {
+	if !strings.HasPrefix(dir, "/buckets/") {
+		return false
+	}
+	if isDir {
+		return strings.HasSuffix(name, s3_constants.VersionsFolder)
+	}
+	return strings.HasSuffix(dir, s3_constants.VersionsFolder) && strings.HasPrefix(name, "v_")
+}
+
+// rewriteVersionedSourcePath rewrites an internal versioning path to the
+// original S3 object key. When a file is uploaded to a versioned bucket,
+// SeaweedFS stores it internally as:
+//
+//	/buckets/{bucket}/{key}.versions/v_{versionId}
+//
+// This function strips the ".versions/v_{versionId}" suffix and returns
+// the original parent directory and object name, so the remote destination
+// points to the logical S3 key rather than the internal version storage path.
+//
+// Returns (newDir, newName, true) if the path was rewritten, or
+// (dir, name, false) if the path is not a versioned path.
+func rewriteVersionedSourcePath(dir string, name string) (string, string, bool) {
+	if !strings.HasPrefix(dir, "/buckets/") {
+		return dir, name, false
+	}
+	if !strings.HasSuffix(dir, s3_constants.VersionsFolder) {
+		return dir, name, false
+	}
+	if !strings.HasPrefix(name, "v_") {
+		return dir, name, false
+	}
+	// dir  = "/buckets/bucket/path/to/file.xml.versions"
+	// name = "v_abc123"
+	// Original object: dir without ".versions" suffix → "/buckets/bucket/path/to/file.xml"
+	originalObjectPath := dir[:len(dir)-len(s3_constants.VersionsFolder)]
+	lastSlash := strings.LastIndex(originalObjectPath, "/")
+	if lastSlash < 0 {
+		return dir, name, false
+	}
+	newDir := originalObjectPath[:lastSlash]
+	if lastSlash == 0 {
+		newDir = "/"
+	}
+	return newDir, originalObjectPath[lastSlash+1:], true
 }

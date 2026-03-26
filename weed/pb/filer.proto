@@ -33,6 +33,9 @@ service SeaweedFiler {
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
     }
 
+    rpc StreamMutateEntry (stream StreamMutateEntryRequest) returns (stream StreamMutateEntryResponse) {
+    }
+
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
@@ -203,9 +206,21 @@ message CreateEntryRequest {
     bool skip_check_parent_directory = 6;
 }
 
+// Structured error codes for filer entry operations.
+// Values are stable — do not reorder or reuse numbers.
+enum FilerError {
+    OK                    = 0;
+    ENTRY_NAME_TOO_LONG   = 1; // name exceeds max_file_name_length
+    PARENT_IS_FILE        = 2; // parent path component is a file, not a directory
+    EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
+    EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
+    ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+}
+
 message CreateEntryResponse {
-    string error = 1;
+    string error = 1;                          // kept for human readability + backward compat
     SubscribeMetadataResponse metadata_event = 2;
+    FilerError error_code = 3;                 // machine-readable error code
 }
 
 message UpdateEntryRequest {
@@ -522,4 +537,33 @@ message TransferLocksRequest {
     repeated Lock locks = 1;
 }
 message TransferLocksResponse {
+}
+
+//////////////////////////////////////////////////
+// StreamMutateEntry: ordered bidirectional streaming for all filer mutations.
+// All create/update/delete/rename operations from a single mount go through
+// one stream, preserving mutation ordering and eliminating per-request
+// connection overhead.
+
+message StreamMutateEntryRequest {
+    uint64 request_id = 1;
+    oneof request {
+        CreateEntryRequest create_request = 2;
+        UpdateEntryRequest update_request = 3;
+        DeleteEntryRequest delete_request = 4;
+        StreamRenameEntryRequest rename_request = 5;
+    }
+}
+
+message StreamMutateEntryResponse {
+    uint64 request_id = 1;
+    bool is_last = 2; // always true except for rename, which sends multiple events
+    oneof response {
+        CreateEntryResponse create_response = 3;
+        UpdateEntryResponse update_response = 4;
+        DeleteEntryResponse delete_response = 5;
+        StreamRenameEntryResponse rename_response = 6;
+    }
+    string error = 7; // human-readable error message when the operation failed
+    int32 errno = 8;  // POSIX errno (e.g. ENOENT=2, ENOTEMPTY=66) for direct FUSE status mapping
 }

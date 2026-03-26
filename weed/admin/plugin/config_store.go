@@ -446,6 +446,30 @@ func (s *ConfigStore) LoadJobDetail(jobID string) (*TrackedJob, error) {
 	return &clone, nil
 }
 
+// DeleteJobDetail removes the persisted detail snapshot for a job.
+// It is a no-op when the file does not exist.
+func (s *ConfigStore) DeleteJobDetail(jobID string) error {
+	jobID, err := sanitizeJobID(jobID)
+	if err != nil {
+		return err
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if !s.configured {
+		delete(s.memJobDetails, jobID)
+		return nil
+	}
+
+	path := filepath.Join(s.baseDir, jobsDirName, jobDetailsDirName, jobDetailFileName(jobID))
+	err = os.Remove(path)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("delete job detail: %w", err)
+	}
+	return nil
+}
+
 func (s *ConfigStore) SaveActivities(activities []JobActivity) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

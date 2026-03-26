@@ -21,6 +21,7 @@ import (
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 )
 
@@ -304,7 +305,7 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, grpcDialOpti
 	filerSink.SetChunkConcurrency(chunkConcurrency)
 	filerSink.SetSourceFiler(filerSource)
 
-	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, filerSink, doDeleteFiles, debug)
+	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, nil, nil, filerSink, doDeleteFiles, debug)
 
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -439,7 +440,7 @@ func setOffset(grpcDialOption grpc.DialOption, filer pb.ServerAddress, signature
 
 }
 
-func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
+func genProcessFunction(sourcePath string, targetPath string, excludePaths []string, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, dataSink sink.ReplicationSink, doDeleteFiles bool, debug bool) func(resp *filer_pb.SubscribeMetadataResponse) error {
 	// process function
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
@@ -468,8 +469,23 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				return nil
 			}
 		}
-		if reExcludeFileName != nil && reExcludeFileName.MatchString(message.NewEntry.Name) {
+		// Compute per-side exclusion so that rename events crossing an
+		// exclude boundary are handled as delete + create rather than
+		// being entirely skipped.
+		oldExcluded := isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+		newExcluded := isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+
+		if oldExcluded && newExcluded {
 			return nil
+		}
+		if oldExcluded {
+			// Old side is excluded — treat as pure create of new entry.
+			message.OldEntry = nil
+		}
+		if newExcluded {
+			// New side is excluded — treat as pure delete of old entry.
+			message.NewEntry = nil
+			sourceNewKey = ""
 		}
 		if dataSink.IsIncremental() {
 			doDeleteFiles = false
@@ -577,4 +593,76 @@ func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification
 	}
 
 	return escapeKey(key)
+}
+
+// isEntryExcluded checks whether a single side (old or new) of an event is excluded
+// by the deprecated filename regexp, the wildcard file-name matchers, or the
+// wildcard path-pattern matchers.
+func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher) bool {
+	if entry == nil {
+		return false
+	}
+	// deprecated regexp-based filename exclusion
+	if reExcludeFileName != nil && reExcludeFileName.MatchString(entry.Name) {
+		return true
+	}
+	// wildcard-based filename exclusion
+	if len(excludeFileNames) > 0 && matchesAnyWildcard(excludeFileNames, entry.Name) {
+		return true
+	}
+	// wildcard-based path-pattern exclusion: match against each directory
+	// component and the entry name itself
+	if len(excludePathPatterns) > 0 {
+		if pathContainsWildcardMatch(dir, excludePathPatterns) {
+			return true
+		}
+		if matchesAnyWildcard(excludePathPatterns, entry.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+// compileExcludePattern compiles a regexp pattern string, returning nil if empty.
+func compileExcludePattern(pattern string, label string) (*regexp.Regexp, error) {
+	if pattern == "" {
+		return nil, nil
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return nil, fmt.Errorf("error compile regexp %v for %s: %+v", pattern, label, err)
+	}
+	return re, nil
+}
+
+// matchesAnyWildcard returns true if any matcher matches the value.
+// Returns false when matchers is empty (unlike wildcard.MatchesAnyWildcard
+// which returns true for empty matchers).
+func matchesAnyWildcard(matchers []*wildcard.WildcardMatcher, value string) bool {
+	for _, m := range matchers {
+		if m != nil && m.Match(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathContainsWildcardMatch checks if any component of the given path matches
+// any of the wildcard matchers, without allocating a slice.
+func pathContainsWildcardMatch(path string, matchers []*wildcard.WildcardMatcher) bool {
+	for path != "" {
+		i := strings.IndexByte(path, '/')
+		var component string
+		if i < 0 {
+			component = path
+			path = ""
+		} else {
+			component = path[:i]
+			path = path[i+1:]
+		}
+		if component != "" && matchesAnyWildcard(matchers, component) {
+			return true
+		}
+	}
+	return false
 }

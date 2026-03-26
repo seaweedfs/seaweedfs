@@ -66,5 +66,10 @@ func (wfs *WFS) Forget(nodeid, nlookup uint64) {
 	wfs.inodeToPath.Forget(nodeid, nlookup, func(dir util.FullPath) {
 		wfs.metaCache.DeleteFolderChildren(context.Background(), dir)
 	})
-	wfs.fhMap.ReleaseByInode(nodeid)
+	// ReleaseByInode returns nil if the handle is already draining (counter
+	// was already <= 0 from a prior Release).  Only non-async handles that
+	// reach counter 0 here need cleanup.
+	if fhToRelease := wfs.fhMap.ReleaseByInode(nodeid); fhToRelease != nil {
+		fhToRelease.ReleaseHandle()
+	}
 }

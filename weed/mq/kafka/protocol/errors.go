@@ -249,7 +249,8 @@ func IsRetriableError(code int16) bool {
 	return GetErrorInfo(code).Retriable
 }
 
-// BuildErrorResponse builds a standard Kafka error response
+// BuildErrorResponse builds a standard Kafka error response (2-byte error code only).
+// Prefer BuildAPIErrorResponse for API-aware error bodies.
 func BuildErrorResponse(correlationID uint32, errorCode int16) []byte {
 	response := make([]byte, 0, 8)
 
@@ -262,6 +263,228 @@ func BuildErrorResponse(correlationID uint32, errorCode int16) []byte {
 	response = append(response, errorCodeBytes...)
 
 	return response
+}
+
+// BuildAPIErrorResponse builds a minimal-but-valid error response body whose
+// layout matches the schema the client expects for the given API key and
+// version.  The correlation ID and header-level tagged fields are NOT included
+// (those are added by writeResponseWithHeader).
+func BuildAPIErrorResponse(apiKey, apiVersion uint16, errorCode int16) []byte {
+	ec := make([]byte, 2)
+	binary.BigEndian.PutUint16(ec, uint16(errorCode))
+	throttle := []byte{0, 0, 0, 0}      // throttle_time_ms = 0
+	emptyArr := []byte{0, 0, 0, 0}      // regular array length = 0
+	nullStr := []byte{0xFF, 0xFF}        // nullable string = null
+	emptyStr := []byte{0, 0}             // string length = 0
+
+	switch APIKey(apiKey) {
+
+	// --- error_code is the first body field -----------------------------------
+
+	case APIKeyApiVersions:
+		// error_code(2) + api_keys_array + [throttle_time_ms v1+] [+ tagged_fields v3+]
+		buf := append([]byte{}, ec...)
+		if apiVersion >= 3 {
+			buf = append(buf, 1) // compact array length=0 (varint 1 = 0+1)
+		} else {
+			buf = append(buf, emptyArr...)
+		}
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		if apiVersion >= 3 {
+			buf = append(buf, 0) // body-level tagged fields
+		}
+		return buf
+
+	// --- throttle_time_ms(4) + error_code(2) + trailing fields ----------------
+
+	case APIKeyFindCoordinator:
+		// [throttle v1+] + error_code + error_msg + node_id + host + port
+		buf := make([]byte, 0, 24)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		buf = append(buf, nullStr...)                        // error_message
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF)           // node_id = -1
+		buf = append(buf, emptyStr...)                       // host
+		buf = append(buf, 0, 0, 0, 0)                       // port = 0
+		return buf
+
+	case APIKeyJoinGroup:
+		// [throttle v2+] + error_code + generation_id + protocol_name + leader + member_id + members[]
+		buf := make([]byte, 0, 24)
+		if apiVersion >= 2 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF) // generation_id = -1
+		buf = append(buf, nullStr...)              // protocol_name
+		buf = append(buf, emptyStr...)             // leader
+		buf = append(buf, emptyStr...)             // member_id
+		buf = append(buf, emptyArr...)             // members = []
+		return buf
+
+	case APIKeySyncGroup:
+		// [throttle v1+] + error_code + assignment
+		buf := make([]byte, 0, 12)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		buf = append(buf, 0, 0, 0, 0) // assignment bytes length = 0
+		return buf
+
+	case APIKeyHeartbeat:
+		// [throttle v1+] + error_code
+		buf := make([]byte, 0, 8)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		return buf
+
+	case APIKeyLeaveGroup:
+		// [throttle v1+] + error_code [+ members v3+]
+		buf := make([]byte, 0, 12)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		if apiVersion >= 3 {
+			buf = append(buf, emptyArr...) // members = []
+		}
+		return buf
+
+	case APIKeyInitProducerId:
+		// throttle + error_code + producer_id + producer_epoch
+		buf := make([]byte, 0, 18)
+		buf = append(buf, throttle...)
+		buf = append(buf, ec...)
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF) // producer_id = -1
+		buf = append(buf, 0xFF, 0xFF)                                       // producer_epoch = -1
+		return buf
+
+	case APIKeyListGroups:
+		// [throttle v1+] + error_code + groups[]
+		buf := make([]byte, 0, 12)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, ec...)
+		buf = append(buf, emptyArr...) // groups = []
+		return buf
+
+	case APIKeyDescribeCluster:
+		// throttle + error_code + error_msg + cluster_id + controller_id + brokers[] + cluster_authorized_operations
+		buf := make([]byte, 0, 24)
+		buf = append(buf, throttle...)
+		buf = append(buf, ec...)
+		buf = append(buf, nullStr...)                        // error_message
+		buf = append(buf, emptyStr...)                       // cluster_id
+		buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF)           // controller_id = -1
+		buf = append(buf, emptyArr...)                       // brokers = []
+		buf = append(buf, 0, 0, 0, 0)                       // cluster_authorized_operations
+		return buf
+
+	// --- array-based responses (no top-level error_code) ----------------------
+
+	case APIKeyProduce:
+		// topics[] + [throttle v1+]
+		buf := append([]byte{}, emptyArr...)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		return buf
+
+	case APIKeyFetch:
+		// [throttle v1+] [+ error_code + session_id v7+] + topics[]
+		buf := make([]byte, 0, 16)
+		if apiVersion >= 1 {
+			buf = append(buf, throttle...)
+		}
+		if apiVersion >= 7 {
+			buf = append(buf, ec...)           // error_code
+			buf = append(buf, 0, 0, 0, 0)     // session_id = 0
+		}
+		buf = append(buf, emptyArr...) // topics = []
+		return buf
+
+	case APIKeyMetadata:
+		// [throttle v3+] + brokers[] + [cluster_id v2+] + [controller_id v1+] + topics[]
+		buf := make([]byte, 0, 24)
+		if apiVersion >= 3 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, emptyArr...) // brokers = []
+		if apiVersion >= 2 {
+			buf = append(buf, nullStr...) // cluster_id
+		}
+		if apiVersion >= 1 {
+			buf = append(buf, 0xFF, 0xFF, 0xFF, 0xFF) // controller_id = -1
+		}
+		buf = append(buf, emptyArr...) // topics = []
+		return buf
+
+	case APIKeyListOffsets:
+		// [throttle v2+] + topics[]
+		buf := make([]byte, 0, 8)
+		if apiVersion >= 2 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, emptyArr...)
+		return buf
+
+	case APIKeyOffsetCommit:
+		// [throttle v3+] + topics[]
+		buf := make([]byte, 0, 8)
+		if apiVersion >= 3 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, emptyArr...)
+		return buf
+
+	case APIKeyOffsetFetch:
+		// [throttle v3+] + topics[] [+ error_code v2+]
+		buf := make([]byte, 0, 12)
+		if apiVersion >= 3 {
+			buf = append(buf, throttle...)
+		}
+		buf = append(buf, emptyArr...) // topics = []
+		if apiVersion >= 2 {
+			buf = append(buf, ec...) // error_code
+		}
+		return buf
+
+	case APIKeyCreateTopics:
+		// throttle + topics[]
+		buf := append([]byte{}, throttle...)
+		buf = append(buf, emptyArr...)
+		return buf
+
+	case APIKeyDeleteTopics:
+		// throttle + topics[]
+		buf := append([]byte{}, throttle...)
+		buf = append(buf, emptyArr...)
+		return buf
+
+	case APIKeyDescribeGroups:
+		// throttle + groups[]
+		buf := append([]byte{}, throttle...)
+		buf = append(buf, emptyArr...)
+		return buf
+
+	case APIKeyDescribeConfigs:
+		// throttle + resources[]
+		buf := append([]byte{}, throttle...)
+		buf = append(buf, emptyArr...)
+		return buf
+
+	default:
+		// Unknown API — emit just the error code as a best-effort fallback
+		return append([]byte{}, ec...)
+	}
 }
 
 // BuildErrorResponseWithMessage builds a Kafka error response with error message

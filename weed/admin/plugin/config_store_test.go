@@ -330,3 +330,50 @@ func TestConfigStoreJobDetailRoundTrip(t *testing.T) {
 		t.Fatalf("expected result output values")
 	}
 }
+
+func TestConfigStoreDeleteJobDetail(t *testing.T) {
+	t.Parallel()
+
+	store, err := NewConfigStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewConfigStore: %v", err)
+	}
+
+	input := TrackedJob{
+		JobID:   "job-to-delete",
+		JobType: "vacuum",
+		Summary: "will be deleted",
+	}
+
+	if err := store.SaveJobDetail(input); err != nil {
+		t.Fatalf("SaveJobDetail: %v", err)
+	}
+
+	// Verify it was persisted.
+	got, err := store.LoadJobDetail(input.JobID)
+	if err != nil {
+		t.Fatalf("LoadJobDetail before delete: %v", err)
+	}
+	if got == nil {
+		t.Fatalf("expected saved job detail, got nil")
+	}
+
+	// Delete it.
+	if err := store.DeleteJobDetail(input.JobID); err != nil {
+		t.Fatalf("DeleteJobDetail: %v", err)
+	}
+
+	// Verify it is gone.
+	got, err = store.LoadJobDetail(input.JobID)
+	if err != nil {
+		t.Fatalf("LoadJobDetail after delete: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected nil after delete, got %+v", got)
+	}
+
+	// Deleting again should be a no-op, not an error.
+	if err := store.DeleteJobDetail(input.JobID); err != nil {
+		t.Fatalf("second DeleteJobDetail: %v", err)
+	}
+}
