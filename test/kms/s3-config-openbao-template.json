@@ -1,0 +1,27 @@
+{
+  "identities": [
+    {
+      "name": "admin",
+      "credentials": [
+        {
+          "accessKey": "ACCESS_KEY_PLACEHOLDER",
+          "secretKey": "SECRET_KEY_PLACEHOLDER"
+        }
+      ],
+      "actions": ["Admin", "Read", "List", "Tagging", "Write"]
+    }
+  ],
+  "kms": {
+    "default_provider": "openbao",
+    "providers": {
+      "openbao": {
+        "type": "openbao",
+        "address": "OPENBAO_ADDR_PLACEHOLDER",
+        "token": "OPENBAO_TOKEN_PLACEHOLDER",
+        "transit_path": "transit",
+        "cache_enabled": true,
+        "cache_ttl": "20m"
+      }
+    }
+  }
+}
