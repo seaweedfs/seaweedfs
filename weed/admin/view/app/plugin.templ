@@ -10,21 +10,35 @@ templ Plugin(page string, initialJob string, lane string) {
         if currentLane == "" {
             currentLane = "default"
         }
+        laneTitle := pluginLaneTitle(currentLane)
+        laneDescription := pluginLaneDescription(currentLane)
+        laneDisplayName := pluginLaneDisplayName(currentLane)
     }}
     <div class="container-fluid" id="plugin-page" data-plugin-page={ currentPage } data-plugin-job={ initialJob } data-plugin-lane={ currentLane }>
         <div class="row mb-4">
             <div class="col-12">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2">
                     <div>
-                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>Workers</h2>
-                        <p class="text-muted mb-0">Cluster-wide worker status, per-job configuration, detection, queue, and execution workflows.</p>
+                        <h2 class="mb-0"><i class="fas fa-plug me-2"></i>{ laneTitle }</h2>
+                        <p class="text-muted mb-0">{ laneDescription }</p>
                     </div>
                     <div class="btn-group">
+                        if currentLane != "default" {
+                            <a href="/plugin" class="btn btn-outline-secondary">
+                                <i class="fas fa-arrow-left me-1"></i>Default Lane
+                            </a>
+                        }
                         <button type="button" class="btn btn-outline-secondary" id="plugin-refresh-all-btn">
                             <i class="fas fa-sync-alt me-1"></i>Refresh
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+
+        <div class="row mb-3">
+            <div class="col-12">
+                <div class="small text-muted">Lane: <span class="fw-semibold text-body">{ laneDisplayName }</span></div>
             </div>
         </div>
 
@@ -732,11 +746,15 @@ templ Plugin(page string, initialJob string, lane string) {
             }
 
             function buildPluginURL(topTab, subTab, jobType) {
+                var laneBase = '/plugin';
+                if (pluginLane && pluginLane !== 'default') {
+                    laneBase = '/plugin/lanes/' + encodeURIComponent(pluginLane);
+                }
                 if (topTab === 'overview') {
-                    return '/plugin';
+                    return laneBase;
                 }
                 var effectiveSubTab = normalizeSubTab(subTab);
-                var path = '/plugin/' + encodeURIComponent(effectiveSubTab);
+                var path = laneBase + '/' + encodeURIComponent(effectiveSubTab);
                 var jt = String(jobType || '').trim();
                 if (jt) {
                     path += '?job=' + encodeURIComponent(jt);
@@ -2928,8 +2946,8 @@ templ Plugin(page string, initialJob string, lane string) {
 
                 state.monitorExecutionJobState = executionStateFilter ? String(executionStateFilter.value || '').trim() : '';
 
-                var allJobsPromise = pluginRequest('GET', '/api/plugin/jobs?limit=500');
-                var allActivitiesPromise = pluginRequest('GET', '/api/plugin/activities?limit=500');
+                var allJobsPromise = pluginRequest('GET', appendLaneParam('/api/plugin/jobs?limit=500'));
+                var allActivitiesPromise = pluginRequest('GET', appendLaneParam('/api/plugin/activities?limit=500'));
                 var schedulerPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-states'));
                 var schedulerStatusPromise = pluginRequest('GET', appendLaneParam('/api/plugin/scheduler-status'));
 
