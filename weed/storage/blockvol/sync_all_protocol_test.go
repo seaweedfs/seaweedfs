@@ -462,8 +462,9 @@ func TestWalRetention_RequiredReplicaBlocksReclaim(t *testing.T) {
 // This is acceptable for best_effort but problematic for sync_all because
 // the primary loses track of the replica gap size.
 func TestShip_DegradedDoesNotSilentlyCountAsHealthy(t *testing.T) {
-	primary, _ := createSyncAllPair(t)
+	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
+	defer replica.Close()
 
 	// Point shipper at dead address — will degrade on first Ship.
 	primary.SetReplicaAddr("127.0.0.1:1", "127.0.0.1:2")
