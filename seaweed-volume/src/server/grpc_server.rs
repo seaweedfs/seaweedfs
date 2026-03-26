@@ -701,9 +701,9 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkReadonlyRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkReadonlyResponse>, Status> {
-        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
+        // Go: volume lookup (L239-241) happens before maintenance check (L166 in makeVolumeReadonly)
         let info = {
             let store = self.state.store.read().unwrap();
             let (loc_idx, vol) = store
@@ -719,6 +719,7 @@ impl VolumeServer for VolumeGrpcService {
                 port: store.port,
             }
         };
+        self.state.check_maintenance()?;
 
         // Step 1: stop master from redirecting traffic here
         self.notify_master_volume_readonly(&info, true).await?;
@@ -751,7 +752,6 @@ impl VolumeServer for VolumeGrpcService {
         &self,
         request: Request<volume_server_pb::VolumeMarkWritableRequest>,
     ) -> Result<Response<volume_server_pb::VolumeMarkWritableResponse>, Status> {
-        self.state.check_maintenance()?;
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         let info = {
@@ -769,6 +769,8 @@ impl VolumeServer for VolumeGrpcService {
                 port: store.port,
             }
         };
+        // Go: maintenance check (L194 in makeVolumeWritable) happens after volume lookup (L253-255)
+        self.state.check_maintenance()?;
 
         // Step 1: mark local volume as writable (save result; Go continues on error)
         let mark_result = {
