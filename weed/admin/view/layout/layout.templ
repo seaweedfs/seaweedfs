@@ -28,9 +28,6 @@ templ Layout(view ViewContext, content templ.Component) {
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
 
-  // Detect if we're on plugin page.
-  isPluginPage := strings.HasPrefix(currentPath, "/plugin")
-
   // Detect if we're on a storage page to keep submenu expanded
   isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
 
@@ -266,75 +263,36 @@ templ Layout(view ViewContext, content templ.Component) {
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            if isPluginPage {
-                                <a class="nav-link" href="#" data-bs-toggle="collapse" data-bs-target="#workersSubmenu" aria-expanded="true" aria-controls="workersSubmenu">
-                                    <i class="fas fa-plug me-2"></i>Workers
-                                    <i class="fas fa-chevron-down ms-auto"></i>
+                            if currentPath == "/plugin" || currentPath == "/plugin/configuration" || currentPath == "/plugin/detection" || currentPath == "/plugin/queue" || currentPath == "/plugin/execution" || currentPath == "/plugin/monitoring" || currentPath == "/plugin/lanes/default/workers" {
+                                <a class="nav-link active" href={ view.P("/plugin") }>
+                                    <i class="fas fa-server me-2"></i>Default
                                 </a>
                             } else {
-                                <a class="nav-link collapsed" href="#" data-bs-toggle="collapse" data-bs-target="#workersSubmenu" aria-expanded="false" aria-controls="workersSubmenu">
-                                    <i class="fas fa-plug me-2"></i>Workers
-                                    <i class="fas fa-chevron-down ms-auto"></i>
+                                <a class="nav-link" href={ view.P("/plugin") }>
+                                    <i class="fas fa-server me-2"></i>Default
                                 </a>
                             }
-                            if isPluginPage {
-                                <div class="collapse show" id="workersSubmenu">
-                                    <ul class="nav flex-column ms-3">
-                                        <li class="nav-item">
-                                            if currentPath == "/plugin" || currentPath == "/plugin/configuration" || currentPath == "/plugin/detection" || currentPath == "/plugin/queue" || currentPath == "/plugin/execution" || currentPath == "/plugin/monitoring" || currentPath == "/plugin/lanes/default/workers" {
-                                                <a class="nav-link py-2 active" href={ view.P("/plugin") }>
-                                                    <i class="fas fa-server me-2"></i>Default
-                                                </a>
-                                            } else {
-                                                <a class="nav-link py-2" href={ view.P("/plugin") }>
-                                                    <i class="fas fa-server me-2"></i>Default
-                                                </a>
-                                            }
-                                        </li>
-                                        <li class="nav-item">
-                                            if currentPath == "/plugin/lanes/iceberg/workers" {
-                                                <a class="nav-link py-2 active" href={ view.P("/plugin/lanes/iceberg/workers") }>
-                                                    <i class="fas fa-snowflake me-2"></i>Iceberg
-                                                </a>
-                                            } else {
-                                                <a class="nav-link py-2" href={ view.P("/plugin/lanes/iceberg/workers") }>
-                                                    <i class="fas fa-snowflake me-2"></i>Iceberg
-                                                </a>
-                                            }
-                                        </li>
-                                        <li class="nav-item">
-                                            if currentPath == "/plugin/lanes/lifecycle/workers" {
-                                                <a class="nav-link py-2 active" href={ view.P("/plugin/lanes/lifecycle/workers") }>
-                                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
-                                                </a>
-                                            } else {
-                                                <a class="nav-link py-2" href={ view.P("/plugin/lanes/lifecycle/workers") }>
-                                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
-                                                </a>
-                                            }
-                                        </li>
-                                    </ul>
-                                </div>
+                        </li>
+                        <li class="nav-item">
+                            if currentPath == "/plugin/lanes/iceberg/workers" {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/iceberg/workers") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                </a>
                             } else {
-                                <div class="collapse" id="workersSubmenu">
-                                    <ul class="nav flex-column ms-3">
-                                        <li class="nav-item">
-                                            <a class="nav-link py-2" href={ view.P("/plugin") }>
-                                                <i class="fas fa-server me-2"></i>Default
-                                            </a>
-                                        </li>
-                                        <li class="nav-item">
-                                            <a class="nav-link py-2" href={ view.P("/plugin/lanes/iceberg/workers") }>
-                                                <i class="fas fa-snowflake me-2"></i>Iceberg
-                                            </a>
-                                        </li>
-                                        <li class="nav-item">
-                                            <a class="nav-link py-2" href={ view.P("/plugin/lanes/lifecycle/workers") }>
-                                                <i class="fas fa-hourglass-half me-2"></i>Lifecycle
-                                            </a>
-                                        </li>
-                                    </ul>
-                                </div>
+                                <a class="nav-link" href={ view.P("/plugin/lanes/iceberg/workers") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if currentPath == "/plugin/lanes/lifecycle/workers" {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/lifecycle/workers") }>
+                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                </a>
+                            } else {
+                                <a class="nav-link" href={ view.P("/plugin/lanes/lifecycle/workers") }>
+                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                </a>
                             }
                         </li>
                     </ul>
