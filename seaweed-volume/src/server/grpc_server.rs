@@ -155,6 +155,48 @@ impl VolumeGrpcService {
             })?;
         Ok(())
     }
+
+    /// Shared helper matching Go's `makeVolumeReadonly(ctx, v, persist)`.
+    /// 1. Check maintenance mode
+    /// 2. Notify master (readonly=true)
+    /// 3. Mark local volume readonly
+    /// 4. Notify master again (cover heartbeat race)
+    async fn make_volume_readonly(&self, vid: VolumeId, persist: bool) -> Result<(), Status> {
+        self.state.check_maintenance()?;
+
+        let info = {
+            let store = self.state.store.read().unwrap();
+            let (loc_idx, vol) = store
+                .find_volume(vid)
+                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
+            MasterVolumeInfo {
+                volume_id: vid,
+                collection: vol.collection.clone(),
+                replica_placement: vol.super_block.replica_placement.to_byte(),
+                ttl: vol.super_block.ttl.to_u32(),
+                disk_type: store.locations[loc_idx].disk_type.to_string(),
+                ip: store.ip.clone(),
+                port: store.port,
+            }
+        };
+
+        // Step 1: stop master from redirecting traffic here
+        self.notify_master_volume_readonly(&info, true).await?;
+
+        // Step 2: mark local volume readonly
+        {
+            let mut store = self.state.store.write().unwrap();
+            if let Some((_, vol)) = store.find_volume_mut(vid) {
+                vol.set_read_only_persist(persist)
+                    .map_err(|e| Status::internal(e.to_string()))?;
+            }
+            self.state.volume_state_notify.notify_one();
+        }
+
+        // Step 3: notify master again to cover heartbeat race
+        self.notify_master_volume_readonly(&info, true).await?;
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -704,45 +746,13 @@ impl VolumeServer for VolumeGrpcService {
         let req = request.into_inner();
         let vid = VolumeId(req.volume_id);
         // Go: volume lookup (L239-241) happens before maintenance check (L166 in makeVolumeReadonly)
-        let info = {
+        {
             let store = self.state.store.read().unwrap();
-            let (loc_idx, vol) = store
+            store
                 .find_volume(vid)
                 .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))?;
-            MasterVolumeInfo {
-                volume_id: vid,
-                collection: vol.collection.clone(),
-                replica_placement: vol.super_block.replica_placement.to_byte(),
-                ttl: vol.super_block.ttl.to_u32(),
-                disk_type: store.locations[loc_idx].disk_type.to_string(),
-                ip: store.ip.clone(),
-                port: store.port,
-            }
-        };
-        self.state.check_maintenance()?;
-
-        // Step 1: stop master from redirecting traffic here
-        self.notify_master_volume_readonly(&info, true).await?;
-
-        // Step 2: mark local volume as readonly (save result; Go continues on error)
-        let mark_result = {
-            let mut store = self.state.store.write().unwrap();
-            let res = store
-                .find_volume_mut(vid)
-                .ok_or_else(|| Status::not_found(format!("volume {} not found", vid)))
-                .and_then(|(_, vol)| {
-                    vol.set_read_only_persist(req.persist)
-                        .map_err(|e| Status::internal(e.to_string()))
-                });
-            if res.is_ok() {
-                self.state.volume_state_notify.notify_one();
-            }
-            res
-        };
-
-        // Step 3: tell master again to cover race with heartbeat (always, even on error)
-        self.notify_master_volume_readonly(&info, true).await?;
-        mark_result?;
+        }
+        self.make_volume_readonly(vid, req.persist).await?;
         Ok(Response::new(
             volume_server_pb::VolumeMarkReadonlyResponse {},
         ))
@@ -3258,13 +3268,6 @@ impl VolumeServer for VolumeGrpcService {
         request: Request<volume_server_pb::ScrubVolumeRequest>,
     ) -> Result<Response<volume_server_pb::ScrubVolumeResponse>, Status> {
         let req = request.into_inner();
-        let store = self.state.store.read().unwrap();
-
-        let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
-            store.all_volume_ids()
-        } else {
-            req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
-        };
 
         // Validate mode
         let mode = req.mode;
@@ -3282,34 +3285,67 @@ impl VolumeServer for VolumeGrpcService {
         let mut total_files: u64 = 0;
         let mut broken_volume_ids: Vec<u32> = Vec::new();
         let mut details: Vec<String> = Vec::new();
+        let mut broken_vids: Vec<VolumeId> = Vec::new();
 
-        for vid in &vids {
-            let (_, v) = store
-                .find_volume(*vid)
-                .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
-            total_volumes += 1;
-
-            // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
-            let scrub_result = if mode == 1 {
-                v.scrub_index()
+        // Scrub phase: hold store read lock, then drop before async readonly calls.
+        {
+            let store = self.state.store.read().unwrap();
+            let vids: Vec<VolumeId> = if req.volume_ids.is_empty() {
+                store.all_volume_ids()
             } else {
-                v.scrub()
+                req.volume_ids.iter().map(|&id| VolumeId(id)).collect()
             };
-            match scrub_result {
-                Ok((files, broken)) => {
-                    total_files += files;
-                    if !broken.is_empty() {
-                        broken_volume_ids.push(vid.0);
-                        for msg in broken {
-                            details.push(format!("vol {}: {}", vid.0, msg));
+
+            for vid in &vids {
+                let (_, v) = store
+                    .find_volume(*vid)
+                    .ok_or_else(|| Status::not_found(format!("volume id {} not found", vid.0)))?;
+                total_volumes += 1;
+
+                // INDEX mode (1) calls scrub_index; LOCAL (2) and FULL (3) call scrub
+                let scrub_result = if mode == 1 {
+                    v.scrub_index()
+                } else {
+                    v.scrub()
+                };
+                match scrub_result {
+                    Ok((files, broken)) => {
+                        total_files += files;
+                        if !broken.is_empty() {
+                            broken_vids.push(*vid);
+                            broken_volume_ids.push(vid.0);
+                            for msg in broken {
+                                details.push(format!("vol {}: {}", vid.0, msg));
+                            }
                         }
                     }
+                    Err(e) => {
+                        total_files += v.file_count().max(0) as u64;
+                        broken_vids.push(*vid);
+                        broken_volume_ids.push(vid.0);
+                        details.push(format!("vol {}: scrub error: {}", vid.0, e));
+                    }
                 }
-                Err(e) => {
-                    total_files += v.file_count().max(0) as u64;
-                    broken_volume_ids.push(vid.0);
-                    details.push(format!("vol {}: scrub error: {}", vid.0, e));
+            }
+        } // store lock dropped here
+
+        // Match Go: if mark_broken_volumes_readonly, call makeVolumeReadonly on each broken volume.
+        // Collect errors via errors.Join semantics (return joined error if any fail).
+        if req.mark_broken_volumes_readonly {
+            let mut errs: Vec<String> = Vec::new();
+            for vid in &broken_vids {
+                match self.make_volume_readonly(*vid, true).await {
+                    Ok(()) => {
+                        details.push(format!("volume {} is now read-only", vid.0));
+                    }
+                    Err(e) => {
+                        errs.push(e.message().to_string());
+                        details.push(e.message().to_string());
+                    }
                 }
+            }
+            if !errs.is_empty() {
+                return Err(Status::internal(errs.join("\n")));
             }
         }
 
