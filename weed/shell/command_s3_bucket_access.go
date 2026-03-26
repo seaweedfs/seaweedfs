@@ -72,7 +72,7 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 	userName := bucketCommand.String("user", "", "user name")
 	access := bucketCommand.String("access", "", "comma-separated actions: Read,Write,List,Tagging,Admin or none")
 	if err = bucketCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucketName == "" {
