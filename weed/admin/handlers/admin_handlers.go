@@ -147,6 +147,7 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/plugin/detection", h.pluginHandlers.ShowPluginDetection).Methods(http.MethodGet)
 	r.HandleFunc("/plugin/execution", h.pluginHandlers.ShowPluginExecution).Methods(http.MethodGet)
 	r.HandleFunc("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/workers", h.pluginHandlers.ShowPluginLaneWorkers).Methods(http.MethodGet)
 }
 
 func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
@@ -245,6 +246,7 @@ func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
 
 	pluginApi := api.PathPrefix("/plugin").Subrouter()
 	pluginApi.HandleFunc("/status", h.adminServer.GetPluginStatusAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/lanes", h.adminServer.GetPluginLanesAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/workers", h.adminServer.GetPluginWorkersAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/job-types", h.adminServer.GetPluginJobTypesAPI).Methods(http.MethodGet)
 	pluginApi.HandleFunc("/jobs", h.adminServer.GetPluginJobsAPI).Methods(http.MethodGet)

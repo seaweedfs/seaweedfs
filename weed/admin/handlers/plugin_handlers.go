@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 
+	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
@@ -50,6 +51,28 @@ func (h *PluginHandlers) ShowPluginExecution(w http.ResponseWriter, r *http.Requ
 func (h *PluginHandlers) ShowPluginMonitoring(w http.ResponseWriter, r *http.Request) {
 	// Backward-compatible alias for the old monitoring URL.
 	h.renderPluginPage(w, r, "detection")
+}
+
+// ShowPluginLaneWorkers displays workers filtered to a specific scheduler lane.
+func (h *PluginHandlers) ShowPluginLaneWorkers(w http.ResponseWriter, r *http.Request) {
+	lane := mux.Vars(r)["lane"]
+	h.renderPluginPageWithLane(w, r, "lane_workers", lane)
+}
+
+func (h *PluginHandlers) renderPluginPageWithLane(w http.ResponseWriter, r *http.Request, page, lane string) {
+	component := app.PluginLane(page, lane)
+	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+
+	var buf bytes.Buffer
+	if err := layoutComponent.Render(r.Context(), &buf); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buf.Bytes())
 }
 
 func (h *PluginHandlers) renderPluginPage(w http.ResponseWriter, r *http.Request, page string) {
