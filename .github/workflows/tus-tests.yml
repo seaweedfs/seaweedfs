@@ -2,17 +2,6 @@ name: "TUS Protocol Tests"
 
 on:
   pull_request:
-    paths:
-      - 'weed/server/filer_server_tus*.go'
-      - 'weed/server/filer_server.go'
-      - 'test/tus/**'
-      - '.github/workflows/tus-tests.yml'
-  push:
-    branches: [ master, main ]
-    paths:
-      - 'weed/server/filer_server_tus*.go'
-      - 'weed/server/filer_server.go'
-      - 'test/tus/**'
 
 concurrency:
   group: ${{ github.head_ref || github.ref }}/tus-tests
