@@ -289,14 +289,30 @@ func (h *Handler) Execute(ctx context.Context, req *plugin_pb.ExecuteJobRequest,
 func connectToFiler(ctx context.Context, addresses []string, dialOption grpc.DialOption) (filer_pb.SeaweedFilerClient, *grpc.ClientConn, error) {
 	var lastErr error
 	for _, addr := range addresses {
+		// Addresses from ClusterContext use ServerAddress format
+		// (e.g. "host:port.grpcPort"). Convert to the actual gRPC
+		// address before dialing.
+		grpcAddr := pb.ServerAddress(addr).ToGrpcAddress()
 		connCtx, cancel := context.WithTimeout(ctx, filerConnectTimeout)
-		conn, err := pb.GrpcDial(connCtx, addr, false, dialOption)
+		conn, err := pb.GrpcDial(connCtx, grpcAddr, false, dialOption)
 		cancel()
-		if err == nil {
-			return filer_pb.NewSeaweedFilerClient(conn), conn, nil
+		if err != nil {
+			lastErr = err
+			glog.V(1).Infof("s3_lifecycle: failed to connect to filer %s (grpc %s): %v", addr, grpcAddr, err)
+			continue
 		}
-		lastErr = err
-		glog.V(1).Infof("s3_lifecycle: failed to connect to filer %s: %v", addr, err)
+		// Verify the connection with a ping.
+		client := filer_pb.NewSeaweedFilerClient(conn)
+		pingCtx, pingCancel := context.WithTimeout(ctx, filerConnectTimeout)
+		_, pingErr := client.Ping(pingCtx, &filer_pb.PingRequest{})
+		pingCancel()
+		if pingErr != nil {
+			_ = conn.Close()
+			lastErr = pingErr
+			glog.V(1).Infof("s3_lifecycle: filer %s ping failed: %v", grpcAddr, pingErr)
+			continue
+		}
+		return client, conn, nil
 	}
 	return nil, nil, lastErr
 }
