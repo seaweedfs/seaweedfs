@@ -32,6 +32,42 @@ const (
 	maxPluginRunTimeout           = 30 * time.Minute
 )
 
+func matchesPluginLane(jobType, laneFilter string) bool {
+	laneFilter = strings.TrimSpace(laneFilter)
+	if laneFilter == "" {
+		return true
+	}
+	return plugin.JobTypeLane(jobType) == plugin.SchedulerLane(laneFilter)
+}
+
+func filterTrackedJobsByLane(jobs []plugin.TrackedJob, laneFilter string) []plugin.TrackedJob {
+	if strings.TrimSpace(laneFilter) == "" {
+		return jobs
+	}
+
+	filtered := make([]plugin.TrackedJob, 0, len(jobs))
+	for _, job := range jobs {
+		if matchesPluginLane(job.JobType, laneFilter) {
+			filtered = append(filtered, job)
+		}
+	}
+	return filtered
+}
+
+func filterActivitiesByLane(activities []plugin.JobActivity, laneFilter string) []plugin.JobActivity {
+	if strings.TrimSpace(laneFilter) == "" {
+		return activities
+	}
+
+	filtered := make([]plugin.JobActivity, 0, len(activities))
+	for _, activity := range activities {
+		if matchesPluginLane(activity.JobType, laneFilter) {
+			filtered = append(filtered, activity)
+		}
+	}
+	return filtered
+}
+
 // GetPluginStatusAPI returns plugin status.
 func (s *AdminServer) GetPluginStatusAPI(w http.ResponseWriter, r *http.Request) {
 	plugin := s.GetPlugin()
@@ -114,13 +150,14 @@ func (s *AdminServer) GetPluginJobsAPI(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	jobType := strings.TrimSpace(query.Get("job_type"))
 	state := strings.TrimSpace(query.Get("state"))
+	laneFilter := strings.TrimSpace(query.Get("lane"))
 	limit := parsePositiveInt(query.Get("limit"), 200)
 	jobs := s.ListPluginJobs(jobType, state, limit)
 	if jobs == nil {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
-	writeJSON(w, http.StatusOK, jobs)
+	writeJSON(w, http.StatusOK, filterTrackedJobsByLane(jobs, laneFilter))
 }
 
 // GetPluginJobAPI returns one tracked job.
@@ -209,13 +246,14 @@ func (s *AdminServer) ExpirePluginJobAPI(w http.ResponseWriter, r *http.Request)
 func (s *AdminServer) GetPluginActivitiesAPI(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	jobType := strings.TrimSpace(query.Get("job_type"))
+	laneFilter := strings.TrimSpace(query.Get("lane"))
 	limit := parsePositiveInt(query.Get("limit"), 500)
 	activities := s.ListPluginActivities(jobType, limit)
 	if activities == nil {
 		writeJSON(w, http.StatusOK, []interface{}{})
 		return
 	}
-	writeJSON(w, http.StatusOK, activities)
+	writeJSON(w, http.StatusOK, filterActivitiesByLane(activities, laneFilter))
 }
 
 // GetPluginSchedulerStatesAPI returns per-job-type scheduler status for monitoring.
