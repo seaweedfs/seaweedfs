@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -129,6 +130,11 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 	// ---- Phase 6: Pull with real changes ----
 	t.Log("Phase 6: pull with real fast-forward changes")
 
+	// After git reset --hard, give the FUSE mount a moment to settle its
+	// metadata cache. On slow CI, the working directory can briefly appear
+	// missing to a new subprocess (git pull → unpack-objects).
+	waitForDir(t, mountClone)
+
 	oldHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit2, oldHead, "should be at commit 2 before pull")
 
@@ -166,23 +172,38 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %s failed: %s", strings.Join(args, " "), string(out))
+	gitRunWithRetry(t, dir, args...)
 }
 
 func gitOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
+	return gitRunWithRetry(t, dir, args...)
+}
+
+// gitRunWithRetry runs a git command with retries to handle transient FUSE
+// I/O errors on slow CI runners (e.g. "Could not write new index file",
+// "failed to stat", "unpack-objects failed").
+func gitRunWithRetry(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	const maxRetries = 3
+	var out []byte
+	var err error
+	for i := 0; i < maxRetries; i++ {
+		cmd := exec.Command("git", args...)
+		if dir != "" {
+			cmd.Dir = dir
+		}
+		out, err = cmd.CombinedOutput()
+		if err == nil {
+			return strings.TrimSpace(string(out))
+		}
+		if i < maxRetries-1 {
+			t.Logf("git %s attempt %d failed (retrying): %s", strings.Join(args, " "), i+1, string(out))
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git %s failed: %s", strings.Join(args, " "), string(out))
-	return strings.TrimSpace(string(out))
+	require.NoError(t, err, "git %s failed after %d attempts: %s", strings.Join(args, " "), maxRetries, string(out))
+	return ""
 }
 
 func writeFile(t *testing.T, base, rel, content string) {
@@ -226,6 +247,17 @@ func countFiles(t *testing.T, dir string) int {
 		}
 	}
 	return count
+}
+
+func waitForDir(t *testing.T, dir string) {
+	t.Helper()
+	for i := 0; i < 50; i++ {
+		if _, err := os.Stat(dir); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("directory %s did not appear within 5s", dir)
 }
 
 func leftPad(n, width int) string {
