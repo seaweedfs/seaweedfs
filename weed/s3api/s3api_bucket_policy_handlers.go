@@ -17,7 +17,7 @@ import (
 )
 
 // Bucket policy metadata key for storing policies in filer
-const BUCKET_POLICY_METADATA_KEY = s3_constants.ExtBucketPolicyMetadataKey
+const BUCKET_POLICY_METADATA_KEY = "s3-bucket-policy"
 
 // Sentinel errors for bucket policy operations
 var (
