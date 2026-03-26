@@ -398,7 +398,12 @@ impl Needle {
 
         if !self.data.is_empty() {
             let data_checksum = CRC::new(&self.data);
-            if expected_checksum != data_checksum {
+            // Go double-checks: n.Checksum != crc && uint32(n.Checksum) != crc.Value()
+            // The crc.Value() path is a deprecated legacy transform for backward compat
+            // with seaweed versions prior to commit 056c480eb.
+            if expected_checksum != data_checksum
+                && expected_checksum.0 != data_checksum.legacy_value()
+            {
                 return Err(NeedleError::CrcMismatch {
                     needle_id: self.id,
                     got: data_checksum.0,
