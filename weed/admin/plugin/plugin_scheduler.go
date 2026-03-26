@@ -1006,6 +1006,17 @@ func (r *Plugin) tryReserveExecutorCapacity(
 	jobType string,
 	policy schedulerPolicy,
 ) (func(), bool) {
+	return r.tryReserveExecutorCapacityForLane(executor, jobType, policy, JobTypeLane(jobType))
+}
+
+// tryReserveExecutorCapacityForLane reserves an execution slot on the
+// per-lane reservation pool so that lanes cannot starve each other.
+func (r *Plugin) tryReserveExecutorCapacityForLane(
+	executor *WorkerSession,
+	jobType string,
+	policy schedulerPolicy,
+	lane SchedulerLane,
+) (func(), bool) {
 	if executor == nil || strings.TrimSpace(executor.WorkerID) == "" {
 		return nil, false
 	}
@@ -1021,19 +1032,58 @@ func (r *Plugin) tryReserveExecutorCapacity(
 
 	workerID := strings.TrimSpace(executor.WorkerID)
 
-	r.schedulerExecMu.Lock()
-	reserved := r.schedulerExecReservations[workerID]
-	if heartbeatUsed+reserved >= limit {
+	ls := r.lanes[lane]
+	if ls == nil {
+		// Fallback to global reservations if lane state is missing.
+		r.schedulerExecMu.Lock()
+		reserved := r.schedulerExecReservations[workerID]
+		if heartbeatUsed+reserved >= limit {
+			r.schedulerExecMu.Unlock()
+			return nil, false
+		}
+		r.schedulerExecReservations[workerID] = reserved + 1
 		r.schedulerExecMu.Unlock()
+		release := func() { r.releaseExecutorCapacity(workerID) }
+		return release, true
+	}
+
+	ls.execMu.Lock()
+	reserved := ls.execRes[workerID]
+	if heartbeatUsed+reserved >= limit {
+		ls.execMu.Unlock()
 		return nil, false
 	}
-	r.schedulerExecReservations[workerID] = reserved + 1
-	r.schedulerExecMu.Unlock()
+	ls.execRes[workerID] = reserved + 1
+	ls.execMu.Unlock()
 
 	release := func() {
-		r.releaseExecutorCapacity(workerID)
+		r.releaseExecutorCapacityForLane(workerID, lane)
 	}
 	return release, true
+}
+
+// releaseExecutorCapacityForLane releases a reservation from the per-lane pool.
+func (r *Plugin) releaseExecutorCapacityForLane(workerID string, lane SchedulerLane) {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return
+	}
+
+	ls := r.lanes[lane]
+	if ls == nil {
+		r.releaseExecutorCapacity(workerID)
+		return
+	}
+
+	ls.execMu.Lock()
+	defer ls.execMu.Unlock()
+
+	current := ls.execRes[workerID]
+	if current <= 1 {
+		delete(ls.execRes, workerID)
+		return
+	}
+	ls.execRes[workerID] = current - 1
 }
 
 func (r *Plugin) releaseExecutorCapacity(workerID string) {
