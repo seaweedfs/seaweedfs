@@ -21,6 +21,7 @@ import (
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 )
 
@@ -640,6 +641,38 @@ func pathContainsMatch(path string, re *regexp.Regexp) bool {
 			path = path[i+1:]
 		}
 		if component != "" && re.MatchString(component) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchesAnyWildcard returns true if any matcher matches the value.
+// Returns false when matchers is empty (unlike wildcard.MatchesAnyWildcard
+// which returns true for empty matchers).
+func matchesAnyWildcard(matchers []*wildcard.WildcardMatcher, value string) bool {
+	for _, m := range matchers {
+		if m != nil && m.Match(value) {
+			return true
+		}
+	}
+	return false
+}
+
+// pathContainsWildcardMatch checks if any component of the given path matches
+// any of the wildcard matchers, without allocating a slice.
+func pathContainsWildcardMatch(path string, matchers []*wildcard.WildcardMatcher) bool {
+	for path != "" {
+		i := strings.IndexByte(path, '/')
+		var component string
+		if i < 0 {
+			component = path
+			path = ""
+		} else {
+			component = path[:i]
+			path = path[i+1:]
+		}
+		if component != "" && matchesAnyWildcard(matchers, component) {
 			return true
 		}
 	}
