@@ -124,7 +124,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
-		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		glog.V(1).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
