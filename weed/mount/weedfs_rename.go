@@ -210,9 +210,8 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	//   2. writebackCache — close() triggered async flush, handle released.
 	// The filer rename will fail with ENOENT unless we flush/wait first.
 	if inode, found := wfs.inodeToPath.GetInode(oldPath); found {
-		// Case 2: handle already released, async flush may be in flight.
-		wfs.waitForPendingAsyncFlush(inode)
-		// Case 1: handle still open with deferred metadata.
+		// Case 1: handle still open with deferred metadata — flush synchronously
+		// BEFORE any async flush interference.
 		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok && fh.dirtyMetadata {
 			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
 			if flushStatus := wfs.doFlush(fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
@@ -220,6 +219,16 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 				return flushStatus
 			}
 		}
+		// Case 2: handle already released, async flush may be in flight.
+		// Mark it as renamed so the async flush skips old-path metadata
+		// creation (which would re-insert the renamed entry into the meta
+		// cache after the rename events cleaned it up). The data flush
+		// still runs; the filer already has the metadata from the sync
+		// flush above or from a prior async flush.
+		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok {
+			fh.isRenamed = true
+		}
+		wfs.waitForPendingAsyncFlush(inode)
 	}
 
 	// update remote filer

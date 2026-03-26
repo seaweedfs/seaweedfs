@@ -72,8 +72,12 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 		// handle.  In that case the filer entry is already gone and
 		// flushing would recreate it.  The uploaded chunks become orphans
 		// and are cleaned up by volume.fsck.
-		if fh.isDeleted {
-			glog.V(3).Infof("completeAsyncFlush inode %d: file was unlinked, skipping metadata flush", fh.inode)
+		if fh.isDeleted || fh.isRenamed {
+			if fh.isDeleted {
+				glog.V(3).Infof("completeAsyncFlush inode %d: file was unlinked, skipping metadata flush", fh.inode)
+			} else {
+				glog.V(3).Infof("completeAsyncFlush inode %d: file was renamed, skipping old-path metadata flush (Rename handles it)", fh.inode)
+			}
 		} else {
 			// Resolve the current path for metadata flush.
 			//

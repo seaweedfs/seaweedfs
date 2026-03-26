@@ -36,6 +36,7 @@ type FileHandle struct {
 	savedName         string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
+	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
 
 	// RDMA chunk offset cache for performance optimization
 	chunkOffsetCache []int64
