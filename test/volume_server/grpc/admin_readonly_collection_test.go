@@ -97,9 +97,13 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
+	const volumeID = uint32(75)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
+	// non-existent volumes should return "not found"
 	_, err := grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 98771, Persist: true})
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("VolumeMarkReadonly missing-volume error mismatch: %v", err)
@@ -110,6 +114,7 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 		t.Fatalf("VolumeMarkWritable missing-volume error mismatch: %v", err)
 	}
 
+	// enter maintenance mode
 	stateResp, err := grpcClient.GetState(ctx, &volume_server_pb.GetStateRequest{})
 	if err != nil {
 		t.Fatalf("GetState failed: %v", err)
@@ -122,6 +127,29 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("SetState maintenance=true failed: %v", err)
+	}
+
+	// existing volume in maintenance mode should return "maintenance mode" error
+	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: volumeID, Persist: true})
+	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
+		t.Fatalf("VolumeMarkReadonly maintenance error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: volumeID})
+	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
+		t.Fatalf("VolumeMarkWritable maintenance error mismatch: %v", err)
+	}
+
+	// non-existent volume in maintenance mode should still return "not found"
+	// (volume lookup happens before maintenance check)
+	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 98773, Persist: true})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("VolumeMarkReadonly missing-volume in maintenance error mismatch: %v", err)
+	}
+
+	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: 98774})
+	if err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("VolumeMarkWritable missing-volume in maintenance error mismatch: %v", err)
 	}
 }
 
