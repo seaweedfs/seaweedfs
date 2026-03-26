@@ -135,6 +135,7 @@ enabled = false  # Set to true to enable HTTPS for all outgoing HTTP client conn
 cert = ""        # Client certificate for mTLS (optional if server doesn't require client cert)
 key = ""         # Client key for mTLS (optional if server doesn't require client cert)
 ca = ""          # CA certificate to verify server certificates (required when enabled=true)
+insecure_skip_verify = false  # Skip TLS certificate verification (NOT recommended for production)
 
 # Volume server HTTPS options (server-side)
 # Enables HTTPS for incoming HTTP connections to volume server

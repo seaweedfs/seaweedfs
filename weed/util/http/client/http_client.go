@@ -126,6 +126,13 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 				tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
 			}
 		}
+
+		if getBoolOptionFromSecurityConfiguration(clientName, "insecure_skip_verify") {
+			if tlsConfig == nil {
+				tlsConfig = &tls.Config{}
+			}
+			tlsConfig.InsecureSkipVerify = true
+		}
 	}
 
 	httpClient.Transport = &http.Transport{
