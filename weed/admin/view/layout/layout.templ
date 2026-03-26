@@ -275,11 +275,11 @@ templ Layout(view ViewContext, content templ.Component) {
                     <ul class="nav flex-column">
                         <li class="nav-item">
                             if isDefaultWorkerPage {
-                                <a class="nav-link active" href={ view.P("/plugin") }>
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/default") }>
                                     <i class="fas fa-server me-2"></i>Default
                                 </a>
                             } else {
-                                <a class="nav-link" href={ view.P("/plugin") }>
+                                <a class="nav-link" href={ view.P("/plugin/lanes/default") }>
                                     <i class="fas fa-server me-2"></i>Default
                                 </a>
                             }

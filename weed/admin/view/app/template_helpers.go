@@ -96,10 +96,10 @@ func pluginLaneTitle(lane string) string {
 func pluginLaneDescription(lane string) string {
 	switch strings.TrimSpace(strings.ToLower(lane)) {
 	case "iceberg":
-		return "Iceberg maintenance workers, scheduler state, queue, and execution flows for this lane."
+		return "Iceberg maintenance workers, scheduler state, queue, and execution flows."
 	case "lifecycle":
-		return "Lifecycle workers, scheduler state, queue, and execution flows for this lane."
+		return "Lifecycle workers, scheduler state, queue, and execution flows."
 	default:
-		return "Default-lane workers, scheduler state, queue, and execution flows."
+		return "Default workers, scheduler state, queue, and execution flows."
 	}
 }
