@@ -249,7 +249,7 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"-filer.port=" + strconv.Itoa(f.filerPort),
 		"-s3=false",
 		"-webdav=false",
-		"-admin=false",
+		"-admin.ui=false",
 	}
 	if config.EnableDebug {
 		args = append(args, "-v=4")
