@@ -169,7 +169,7 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 // This is shared between the synchronous doFlush path and the async flush completion.
 func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath := fh.FullPath()
-	glog.V(0).Infof("flushMetadataToFiler %s/%s (fh.FullPath=%s) inode %d fh %d", dir, name, fileFullPath, fh.inode, fh.fh)
+	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)
 
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("doFlush", fh.fh, util.ExclusiveLock)
 	defer fh.wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)

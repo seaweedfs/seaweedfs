@@ -51,12 +51,8 @@ func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
 // This enables close() to return immediately for small file workloads (e.g., rsync),
 // while the actual I/O happens concurrently in the background.
 func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
-	resolvedPath := "unknown"
-	if p, s := wfs.inodeToPath.GetPath(fh.inode); s == fuse.OK {
-		resolvedPath = string(p)
-	}
-	glog.V(0).Infof("completeAsyncFlush inode %d fh %d path=%s saved=%s/%s dirtyMetadata=%v isDeleted=%v",
-		fh.inode, fh.fh, resolvedPath, fh.savedDir, fh.savedName, fh.dirtyMetadata, fh.isDeleted)
+	glog.V(4).Infof("completeAsyncFlush inode %d fh %d saved=%s/%s dirtyMetadata=%v isDeleted=%v isRenamed=%v",
+		fh.inode, fh.fh, fh.savedDir, fh.savedName, fh.dirtyMetadata, fh.isDeleted, fh.isRenamed)
 
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
 	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
@@ -83,7 +79,7 @@ func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
 			// renamed (or deleted and recreated). Flushing metadata under
 			// the old path would re-insert a stale entry into the meta
 			// cache, breaking git's lock file protocol.
-			glog.V(0).Infof("completeAsyncFlush inode %d: saved path %s/%s no longer maps to this inode, skipping metadata flush",
+			glog.V(3).Infof("completeAsyncFlush inode %d: saved path %s/%s no longer maps to this inode, skipping metadata flush",
 				fh.inode, fh.savedDir, fh.savedName)
 		} else {
 			// Resolve the current path for metadata flush.
