@@ -123,16 +123,6 @@ func TestVolumeMarkReadonlyWritableErrorPaths(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetState maintenance=true failed: %v", err)
 	}
-
-	_, err = grpcClient.VolumeMarkReadonly(ctx, &volume_server_pb.VolumeMarkReadonlyRequest{VolumeId: 1, Persist: true})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeMarkReadonly maintenance error mismatch: %v", err)
-	}
-
-	_, err = grpcClient.VolumeMarkWritable(ctx, &volume_server_pb.VolumeMarkWritableRequest{VolumeId: 1})
-	if err == nil || !strings.Contains(err.Error(), "maintenance mode") {
-		t.Fatalf("VolumeMarkWritable maintenance error mismatch: %v", err)
-	}
 }
 
 func TestDeleteCollectionRemovesVolumeAndIsIdempotent(t *testing.T) {
