@@ -57,8 +57,8 @@ func (c *commandS3BucketAccess) Help() string {
 	access. Setting "none" removes the anonymous policy statements; other
 	policy statements are preserved.
 
-	NOTE: Anonymous access also requires an "anonymous" identity to be
-	configured in IAM. The command will warn if it does not exist.
+	NOTE: For write access, an "anonymous" identity must also be configured
+	in IAM. Read and list access work with bucket policy alone.
 `
 }
 
@@ -114,8 +114,10 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 			return displayCurrentAccess(writer, *bucketName, entry)
 		}
 
-		// Warn if anonymous identity is missing
-		warnIfNoAnonymousIdentity(client, writer)
+		// Warn if anonymous identity is missing and write access is requested
+		if strings.Contains(accessStr, "write") {
+			warnIfNoAnonymousIdentity(client, writer)
+		}
 
 		// Set mode
 		return setAccess(client, writer, filerBucketsPath, *bucketName, entry, accessStr)
@@ -345,7 +347,7 @@ func warnIfNoAnonymousIdentity(client filer_pb.SeaweedFilerClient, writer io.Wri
 	})
 	if err != nil {
 		fmt.Fprintln(writer, "WARNING: No anonymous identity found in IAM.")
-		fmt.Fprintln(writer, "  Anonymous access requires an 'anonymous' identity.")
+		fmt.Fprintln(writer, "  Write access requires an 'anonymous' identity.")
 		fmt.Fprintln(writer, "  Create one via the admin UI or: s3.configure -user=anonymous -apply")
 	}
 }
