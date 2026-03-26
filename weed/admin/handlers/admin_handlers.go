@@ -147,6 +147,12 @@ func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
 	r.HandleFunc("/plugin/detection", h.pluginHandlers.ShowPluginDetection).Methods(http.MethodGet)
 	r.HandleFunc("/plugin/execution", h.pluginHandlers.ShowPluginExecution).Methods(http.MethodGet)
 	r.HandleFunc("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}", h.pluginHandlers.ShowPluginLane).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/configuration", h.pluginHandlers.ShowPluginLaneConfiguration).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/queue", h.pluginHandlers.ShowPluginLaneQueue).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/detection", h.pluginHandlers.ShowPluginLaneDetection).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/execution", h.pluginHandlers.ShowPluginLaneExecution).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/monitoring", h.pluginHandlers.ShowPluginLaneMonitoring).Methods(http.MethodGet)
 	r.HandleFunc("/plugin/lanes/{lane}/workers", h.pluginHandlers.ShowPluginLaneWorkers).Methods(http.MethodGet)
 }
 

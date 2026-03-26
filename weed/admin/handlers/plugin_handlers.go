@@ -54,14 +54,47 @@ func (h *PluginHandlers) ShowPluginMonitoring(w http.ResponseWriter, r *http.Req
 	h.renderPluginPage(w, r, "detection")
 }
 
-// ShowPluginLaneWorkers displays workers filtered to a specific scheduler lane.
-func (h *PluginHandlers) ShowPluginLaneWorkers(w http.ResponseWriter, r *http.Request) {
-	lane := mux.Vars(r)["lane"]
-	h.renderPluginPageWithLane(w, r, "lane_workers", lane)
+// ShowPluginLane displays a lane overview page using the shared plugin UI.
+func (h *PluginHandlers) ShowPluginLane(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPageWithLane(w, r, "overview")
 }
 
-func (h *PluginHandlers) renderPluginPageWithLane(w http.ResponseWriter, r *http.Request, page, lane string) {
-	component := app.PluginLane(page, lane)
+// ShowPluginLaneConfiguration displays a lane-specific configuration page.
+func (h *PluginHandlers) ShowPluginLaneConfiguration(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPageWithLane(w, r, "configuration")
+}
+
+// ShowPluginLaneQueue displays a lane-specific queue page.
+func (h *PluginHandlers) ShowPluginLaneQueue(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPageWithLane(w, r, "queue")
+}
+
+// ShowPluginLaneDetection displays a lane-specific detection page.
+func (h *PluginHandlers) ShowPluginLaneDetection(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPageWithLane(w, r, "detection")
+}
+
+// ShowPluginLaneExecution displays a lane-specific execution page.
+func (h *PluginHandlers) ShowPluginLaneExecution(w http.ResponseWriter, r *http.Request) {
+	h.renderPluginPageWithLane(w, r, "execution")
+}
+
+// ShowPluginLaneMonitoring displays a lane-specific monitoring page.
+func (h *PluginHandlers) ShowPluginLaneMonitoring(w http.ResponseWriter, r *http.Request) {
+	// Backward-compatible alias for the old monitoring URL.
+	h.renderPluginPageWithLane(w, r, "detection")
+}
+
+// ShowPluginLaneWorkers displays workers filtered to a specific scheduler lane.
+func (h *PluginHandlers) ShowPluginLaneWorkers(w http.ResponseWriter, r *http.Request) {
+	// Backward-compatible alias for the old lane overview URL.
+	h.renderPluginPageWithLane(w, r, "overview")
+}
+
+func (h *PluginHandlers) renderPluginPageWithLane(w http.ResponseWriter, r *http.Request, page string) {
+	initialJob := r.URL.Query().Get("job")
+	lane := mux.Vars(r)["lane"]
+	component := app.Plugin(page, initialJob, lane)
 	viewCtx := layout.NewViewContext(r, dash.UsernameFromContext(r.Context()), dash.CSRFTokenFromContext(r.Context()))
 	layoutComponent := layout.Layout(viewCtx, component)
 
