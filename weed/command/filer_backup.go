@@ -15,22 +15,25 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 )
 
 type FilerBackupOptions struct {
-	isActivePassive   *bool
-	filer             *string
-	path              *string
-	excludePaths      *string
-	excludeFileName   *string
-	debug             *bool
-	proxyByFiler      *bool
-	doDeleteFiles     *bool
-	disableErrorRetry *bool
-	ignore404Error    *bool
-	timeAgo           *time.Duration
-	retentionDays     *int
+	isActivePassive     *bool
+	filer               *string
+	path                *string
+	excludePaths        *string
+	excludeFileName     *string // deprecated: use excludeFileNames
+	excludeFileNames    *string
+	excludePathPatterns *string
+	debug               *bool
+	proxyByFiler        *bool
+	doDeleteFiles       *bool
+	disableErrorRetry   *bool
+	ignore404Error      *bool
+	timeAgo             *time.Duration
+	retentionDays       *int
 }
 
 var (
@@ -43,7 +46,9 @@ func init() {
 	filerBackupOptions.filer = cmdFilerBackup.Flag.String("filer", "localhost:8888", "filer of one SeaweedFS cluster")
 	filerBackupOptions.path = cmdFilerBackup.Flag.String("filerPath", "/", "directory to sync on filer")
 	filerBackupOptions.excludePaths = cmdFilerBackup.Flag.String("filerExcludePaths", "", "exclude directories to sync on filer")
-	filerBackupOptions.excludeFileName = cmdFilerBackup.Flag.String("filerExcludeFileName", "", "exclude file names that match the regexp to sync on filer")
+	filerBackupOptions.excludeFileName = cmdFilerBackup.Flag.String("filerExcludeFileName", "", "[DEPRECATED: use -filerExcludeFileNames] exclude file names that match the regexp")
+	filerBackupOptions.excludeFileNames = cmdFilerBackup.Flag.String("filerExcludeFileNames", "", "comma-separated wildcard patterns to exclude file names, e.g., \"*.tmp,._*\"")
+	filerBackupOptions.excludePathPatterns = cmdFilerBackup.Flag.String("filerExcludePathPatterns", "", "comma-separated wildcard patterns to exclude paths where any component matches, e.g., \".snapshot,temp*\"")
 	filerBackupOptions.proxyByFiler = cmdFilerBackup.Flag.Bool("filerProxy", false, "read and write file chunks by filer instead of volume servers")
 	filerBackupOptions.doDeleteFiles = cmdFilerBackup.Flag.Bool("doDeleteFiles", false, "delete files on the destination")
 	filerBackupOptions.debug = cmdFilerBackup.Flag.Bool("debug", false, "debug mode to print out received files")
@@ -72,6 +77,15 @@ func runFilerBackup(cmd *Command, args []string) bool {
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("replication", true)
 
+	// Compile exclude patterns once before the retry loop — these are
+	// configuration errors and must not be retried.
+	reExcludeFileName, err := compileExcludePattern(*filerBackupOptions.excludeFileName, "exclude file name")
+	if err != nil {
+		glog.Fatalf("invalid -filerExcludeFileName: %v", err)
+	}
+	excludeFileNames := wildcard.CompileWildcardMatchers(*filerBackupOptions.excludeFileNames)
+	excludePathPatterns := wildcard.CompileWildcardMatchers(*filerBackupOptions.excludePathPatterns)
+
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	clientId := util.RandomInt32()
@@ -79,7 +93,7 @@ func runFilerBackup(cmd *Command, args []string) bool {
 
 	for {
 		clientEpoch++
-		err := doFilerBackup(grpcDialOption, &filerBackupOptions, clientId, clientEpoch)
+		err := doFilerBackup(grpcDialOption, &filerBackupOptions, reExcludeFileName, excludeFileNames, excludePathPatterns, clientId, clientEpoch)
 		if err != nil {
 			glog.Errorf("backup from %s: %v", *filerBackupOptions.filer, err)
 			time.Sleep(1747 * time.Millisecond)
@@ -91,7 +105,7 @@ const (
 	BackupKeyPrefix = "backup."
 )
 
-func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, clientId int32, clientEpoch int32) error {
+func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOptions, reExcludeFileName *regexp.Regexp, excludeFileNames []*wildcard.WildcardMatcher, excludePathPatterns []*wildcard.WildcardMatcher, clientId int32, clientEpoch int32) error {
 
 	// find data sink
 	dataSink := findSink(util.GetViper())
@@ -102,13 +116,6 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	sourceFiler := pb.ServerAddress(*backupOption.filer)
 	sourcePath := *backupOption.path
 	excludePaths := util.StringSplit(*backupOption.excludePaths, ",")
-	var reExcludeFileName *regexp.Regexp
-	if *backupOption.excludeFileName != "" {
-		var err error
-		if reExcludeFileName, err = regexp.Compile(*backupOption.excludeFileName); err != nil {
-			return fmt.Errorf("error compile regexp %v for exclude file name: %+v", *backupOption.excludeFileName, err)
-		}
-	}
 	timeAgo := *backupOption.timeAgo
 	targetPath := dataSink.GetSinkToDirectory()
 	debug := *backupOption.debug
@@ -140,7 +147,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
-		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
+		processEventFnGenerated := genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
 		processEventFn = func(resp *filer_pb.SubscribeMetadataResponse) error {
 			err := processEventFnGenerated(resp)
 			if err == nil {
@@ -153,7 +160,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 			return err
 		}
 	} else {
-		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, dataSink, *backupOption.doDeleteFiles, debug)
+		processEventFn = genProcessFunction(sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.doDeleteFiles, debug)
 	}
 
 	processEventFnWithOffset := pb.AddOffsetFunc(processEventFn, 3*time.Second, func(counter int64, lastTsNs int64) error {
