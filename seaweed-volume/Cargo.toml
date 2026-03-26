@@ -124,7 +124,7 @@ libc = "0.2"
 
 # AWS S3 SDK (for remote storage backends)
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1.125.0"
+aws-sdk-s3 = { version = "1.125.0", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-credential-types = "1"
 aws-types = "1"
 
