@@ -1,7 +1,6 @@
 package client
 
 import (
-	"crypto/tls"
 	"net"
 	"time"
 )
@@ -16,11 +15,4 @@ func AddDialContext(httpClient *HTTPClient) {
 
 	httpClient.Transport.DialContext = dialContext
 	httpClient.Client.Transport = httpClient.Transport
-}
-
-func WithInsecureSkipVerify(httpClient *HTTPClient) {
-	if httpClient.Transport.TLSClientConfig == nil {
-		httpClient.Transport.TLSClientConfig = &tls.Config{}
-	}
-	httpClient.Transport.TLSClientConfig.InsecureSkipVerify = true
 }

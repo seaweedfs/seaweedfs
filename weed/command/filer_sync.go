@@ -21,8 +21,6 @@ import (
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 )
@@ -53,13 +51,12 @@ type SyncOptions struct {
 	metricsHttpPort *int
 	concurrency      *int
 	chunkConcurrency *int
-	aDoDeleteFiles     *bool
-	bDoDeleteFiles     *bool
-	insecureSkipVerify *bool
-	clientId           int32
-	clientEpoch        atomic.Int32
-	debug              *bool
-	debugPort          *int
+	aDoDeleteFiles   *bool
+	bDoDeleteFiles  *bool
+	clientId        int32
+	clientEpoch     atomic.Int32
+	debug           *bool
+	debugPort       *int
 }
 
 const (
@@ -116,7 +113,6 @@ func init() {
 	syncOptions.metricsHttpPort = cmdFilerSynchronize.Flag.Int("metricsPort", 0, "metrics listen port")
 	syncOptions.aDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("a.doDeleteFiles", true, "delete and update files when synchronizing on filer A")
 	syncOptions.bDoDeleteFiles = cmdFilerSynchronize.Flag.Bool("b.doDeleteFiles", true, "delete and update files when synchronizing on filer B")
-	syncOptions.insecureSkipVerify = cmdFilerSynchronize.Flag.Bool("insecureSkipVerify", false, "skip TLS certificate verification for HTTPS connections")
 	syncOptions.debug = cmdFilerSynchronize.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	syncOptions.debugPort = cmdFilerSynchronize.Flag.Int("debug.port", 6060, "http port for debugging")
 	syncOptions.clientId = util.RandomInt32()
@@ -146,9 +142,6 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	}
 
 	util.LoadSecurityConfiguration()
-	if *syncOptions.insecureSkipVerify {
-		util_http.ReInitGlobalHttpClient(util_http_client.WithInsecureSkipVerify)
-	}
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
