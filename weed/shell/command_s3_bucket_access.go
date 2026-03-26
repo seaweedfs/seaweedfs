@@ -17,13 +17,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// validAccessActions lists the actions accepted by the -access flag.
-var validAccessActions = map[string]bool{
-	"Read":    true,
-	"Write":   true,
-	"List":    true,
-	"Tagging": true,
-	"Admin":   true,
+// canonicalActions maps lowercased action names to their canonical form.
+var canonicalActions = map[string]string{
+	"read":    "Read",
+	"write":   "Write",
+	"list":    "List",
+	"tagging": "Tagging",
+	"admin":   "Admin",
 }
 
 func init() {
@@ -84,14 +84,18 @@ func (c *commandS3BucketAccess) Do(args []string, commandEnv *CommandEnv, writer
 
 	accessStr := strings.TrimSpace(*access)
 
-	// Validate actions
+	// Validate and normalize actions to canonical casing
 	if accessStr != "" && strings.ToLower(accessStr) != "none" {
+		var normalized []string
 		for _, a := range strings.Split(accessStr, ",") {
 			a = strings.TrimSpace(a)
-			if !validAccessActions[a] {
+			canonical, ok := canonicalActions[strings.ToLower(a)]
+			if !ok {
 				return fmt.Errorf("invalid action %q: must be Read, Write, List, Tagging, Admin, or none", a)
 			}
+			normalized = append(normalized, canonical)
 		}
+		accessStr = strings.Join(normalized, ",")
 	}
 
 	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
