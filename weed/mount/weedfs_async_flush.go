@@ -51,6 +51,13 @@ func (wfs *WFS) processAsyncFlushItem(item *asyncFlushItem) {
 // This enables close() to return immediately for small file workloads (e.g., rsync),
 // while the actual I/O happens concurrently in the background.
 func (wfs *WFS) completeAsyncFlush(fh *FileHandle) {
+	resolvedPath := "unknown"
+	if p, s := wfs.inodeToPath.GetPath(fh.inode); s == fuse.OK {
+		resolvedPath = string(p)
+	}
+	glog.V(0).Infof("completeAsyncFlush inode %d fh %d path=%s saved=%s/%s dirtyMetadata=%v isDeleted=%v",
+		fh.inode, fh.fh, resolvedPath, fh.savedDir, fh.savedName, fh.dirtyMetadata, fh.isDeleted)
+
 	// Phase 1: Flush dirty pages — seals writable chunks, uploads to volume servers, and waits.
 	// The underlying UploadWithRetry already retries transient HTTP/gRPC errors internally,
 	// so a failure here indicates a persistent issue; the chunk data has been freed.
