@@ -8,6 +8,7 @@ import (
 
 type SchedulerStatus struct {
 	Now                  time.Time                `json:"now"`
+	Lane                 string                   `json:"lane,omitempty"`
 	SchedulerTickSeconds int                      `json:"scheduler_tick_seconds"`
 	IdleSleepSeconds     int                      `json:"idle_sleep_seconds,omitempty"`
 	NextDetectionAt      *time.Time               `json:"next_detection_at,omitempty"`
@@ -211,6 +212,126 @@ func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 	r.schedulerLoopMu.Lock()
 	defer r.schedulerLoopMu.Unlock()
 	return r.schedulerLoopState
+}
+
+// --- Per-lane loop state helpers ---
+
+func (r *Plugin) setLaneLoopState(ls *schedulerLaneState, jobType, phase string) {
+	if r == nil || ls == nil {
+		return
+	}
+	ls.loopMu.Lock()
+	ls.loop.currentJobType = jobType
+	ls.loop.currentPhase = phase
+	ls.loopMu.Unlock()
+}
+
+func (r *Plugin) recordLaneIterationComplete(ls *schedulerLaneState, hadJobs bool) {
+	if r == nil || ls == nil {
+		return
+	}
+	ls.loopMu.Lock()
+	ls.loop.lastIterationHadJobs = hadJobs
+	ls.loop.lastIterationCompleted = time.Now().UTC()
+	ls.loopMu.Unlock()
+}
+
+func (r *Plugin) snapshotLaneLoopState(ls *schedulerLaneState) schedulerLoopState {
+	if r == nil || ls == nil {
+		return schedulerLoopState{}
+	}
+	ls.loopMu.Lock()
+	defer ls.loopMu.Unlock()
+	return ls.loop
+}
+
+// GetLaneSchedulerStatus returns scheduler status scoped to a single lane.
+func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
+	ls := r.lanes[lane]
+	if ls == nil {
+		return SchedulerStatus{Now: time.Now().UTC()}
+	}
+	now := time.Now().UTC()
+	loopState := r.snapshotLaneLoopState(ls)
+	idleSleep := LaneIdleSleep(lane)
+	status := SchedulerStatus{
+		Now:                  now,
+		Lane:                 string(lane),
+		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
+		InProcessJobs:        r.listInProcessJobs(now),
+		IdleSleepSeconds:     int(idleSleep / time.Second),
+		CurrentJobType:       loopState.currentJobType,
+		CurrentPhase:         loopState.currentPhase,
+		LastIterationHadJobs: loopState.lastIterationHadJobs,
+	}
+	nextDetectionAt := r.earliestLaneDetectionAt(lane)
+	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
+		nextDetectionAt = loopState.lastIterationCompleted.Add(idleSleep)
+	}
+	if !nextDetectionAt.IsZero() {
+		at := nextDetectionAt
+		status.NextDetectionAt = &at
+	}
+	if !loopState.lastIterationCompleted.IsZero() {
+		at := loopState.lastIterationCompleted
+		status.LastIterationDoneAt = &at
+	}
+
+	states, err := r.ListSchedulerStates()
+	if err != nil {
+		return status
+	}
+
+	waiting := make([]SchedulerWaitingStatus, 0)
+	jobTypes := make([]SchedulerJobTypeStatus, 0)
+
+	for _, state := range states {
+		if JobTypeLane(state.JobType) != lane {
+			continue
+		}
+		jobType := state.JobType
+		info := r.snapshotSchedulerDetection(jobType)
+
+		jobStatus := SchedulerJobTypeStatus{
+			JobType:                  jobType,
+			Enabled:                  state.Enabled,
+			DetectionInFlight:        state.DetectionInFlight,
+			NextDetectionAt:          state.NextDetectionAt,
+			DetectionIntervalSeconds: state.DetectionIntervalSeconds,
+		}
+		if !info.lastDetectedAt.IsZero() {
+			jobStatus.LastDetectedAt = timeToPtr(info.lastDetectedAt)
+			jobStatus.LastDetectedCount = info.lastDetectedCount
+		}
+		if info.lastError != "" {
+			jobStatus.LastDetectionError = info.lastError
+		}
+		if info.lastSkippedReason != "" {
+			jobStatus.LastDetectionSkipped = info.lastSkippedReason
+		}
+		jobTypes = append(jobTypes, jobStatus)
+
+		if state.DetectionInFlight {
+			waiting = append(waiting, SchedulerWaitingStatus{
+				Reason:  "detection_in_flight",
+				JobType: jobType,
+			})
+		} else if state.Enabled && state.NextDetectionAt != nil && now.Before(*state.NextDetectionAt) {
+			waiting = append(waiting, SchedulerWaitingStatus{
+				Reason:  "next_detection_at",
+				JobType: jobType,
+				Until:   state.NextDetectionAt,
+			})
+		}
+	}
+
+	sort.Slice(jobTypes, func(i, j int) bool {
+		return jobTypes[i].JobType < jobTypes[j].JobType
+	})
+
+	status.Waiting = waiting
+	status.JobTypes = jobTypes
+	return status
 }
 
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {

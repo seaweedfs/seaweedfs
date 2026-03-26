@@ -83,6 +83,7 @@ type JobDetail struct {
 
 type SchedulerJobTypeState struct {
 	JobType                       string     `json:"job_type"`
+	Lane                          string     `json:"lane"`
 	Enabled                       bool       `json:"enabled"`
 	PolicyError                   string     `json:"policy_error,omitempty"`
 	DetectionInFlight             bool       `json:"detection_in_flight"`
