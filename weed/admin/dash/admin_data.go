@@ -48,10 +48,11 @@ type ObjectStoreUser struct {
 }
 
 type ObjectStoreUsersData struct {
-	Username    string            `json:"username"`
-	Users       []ObjectStoreUser `json:"users"`
-	TotalUsers  int               `json:"total_users"`
-	LastUpdated time.Time         `json:"last_updated"`
+	Username         string            `json:"username"`
+	Users            []ObjectStoreUser `json:"users"`
+	TotalUsers       int               `json:"total_users"`
+	HasAnonymousUser bool              `json:"has_anonymous_user"`
+	LastUpdated      time.Time         `json:"last_updated"`
 }
 
 // User management request structures
