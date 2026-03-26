@@ -220,14 +220,16 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 			}
 		}
 		// Case 2: handle already released, async flush may be in flight.
-		// Mark it as renamed so the async flush skips old-path metadata
-		// creation (which would re-insert the renamed entry into the meta
-		// cache after the rename events cleaned it up). The data flush
-		// still runs; the filer already has the metadata from the sync
-		// flush above or from a prior async flush.
-		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok {
-			fh.isRenamed = true
-		}
+		// Mark ALL handles for this inode as renamed so the async flush
+		// skips old-path metadata creation (which would re-insert the
+		// renamed entry into the meta cache after rename events clean it up).
+		wfs.fhMap.MarkInodeRenamed(inode)
+		wfs.waitForPendingAsyncFlush(inode)
+	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
+		// GetInode failed (Forget already removed the mapping), but the
+		// entry's stored inode can still identify pending async flushes.
+		inode = oldEntry.Attributes.Inode
+		wfs.fhMap.MarkInodeRenamed(inode)
 		wfs.waitForPendingAsyncFlush(inode)
 	}
 
