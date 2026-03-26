@@ -374,6 +374,16 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				return "", s3err.ErrInternalError, SSEResponseMetadata{}
 			}
 		}
+
+		// If SSE-KMS was applied by bucket default, prepare metadata (if not already done)
+		if sseKMSKey != nil && len(sseKMSMetadata) == 0 {
+			var metaErr error
+			sseKMSMetadata, metaErr = SerializeSSEKMSMetadata(sseKMSKey)
+			if metaErr != nil {
+				glog.Errorf("Failed to serialize SSE-KMS metadata for bucket default encryption: %v", metaErr)
+				return "", s3err.ErrInternalError, SSEResponseMetadata{}
+			}
+		}
 	} else {
 		glog.V(4).Infof("putToFiler: explicit encryption already applied, skipping bucket default encryption")
 	}
