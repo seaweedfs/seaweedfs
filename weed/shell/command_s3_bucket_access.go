@@ -346,6 +346,6 @@ func warnIfNoAnonymousIdentity(client filer_pb.SeaweedFilerClient, writer io.Wri
 	if err != nil {
 		fmt.Fprintln(writer, "WARNING: No anonymous identity found in IAM.")
 		fmt.Fprintln(writer, "  Anonymous access requires an 'anonymous' identity.")
-		fmt.Fprintln(writer, "  Create one via the admin UI or: s3.configure -user=anonymous -actions=Read,List -apply")
+		fmt.Fprintln(writer, "  Create one via the admin UI or: s3.configure -user=anonymous -apply")
 	}
 }
