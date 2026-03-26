@@ -786,9 +786,10 @@ impl VolumeServer for VolumeGrpcService {
             res
         };
 
-        // Step 2: enable master to redirect traffic here (always, even on error)
-        self.notify_master_volume_readonly(&info, false).await?;
+        // Step 2: Go returns early if marking failed (L198-200), before notifying master.
         mark_result?;
+        // Step 3: enable master to redirect traffic here
+        self.notify_master_volume_readonly(&info, false).await?;
         Ok(Response::new(
             volume_server_pb::VolumeMarkWritableResponse {},
         ))
