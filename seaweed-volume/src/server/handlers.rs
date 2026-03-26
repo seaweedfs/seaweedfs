@@ -1249,9 +1249,14 @@ async fn get_or_head_handler_inner(
     let content_type = if let Some(ref ct) = query.response_content_type {
         Some(ct.clone())
     } else if n.is_chunk_manifest() {
-        // Chunk manifests: use the stored MIME directly without filtering or extension detection
+        // Chunk manifests: use stored MIME but filter application/octet-stream (Go L334)
         if !n.mime.is_empty() {
-            Some(String::from_utf8_lossy(&n.mime).to_string())
+            let mt = String::from_utf8_lossy(&n.mime).to_string();
+            if mt.starts_with("application/octet-stream") {
+                None
+            } else {
+                Some(mt)
+            }
         } else {
             None
         }
