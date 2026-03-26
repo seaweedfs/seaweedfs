@@ -6,6 +6,14 @@ import (
 	"time"
 )
 
+// ReplicaShipperStatus reports per-replica state from the primary's shipper group.
+// Used in heartbeat so master can identify which replica needs rebuild.
+type ReplicaShipperStatus struct {
+	DataAddr   string // replica identity
+	State      string // "disconnected", "in_sync", "degraded", "needs_rebuild", etc.
+	FlushedLSN uint64 // last known durable progress
+}
+
 // ShipperGroup wraps multiple WALShippers for fan-out replication to N replicas.
 // Len()==0 means standalone (no replicas), Len()==1 is RF=2, Len()==2 is RF=3.
 type ShipperGroup struct {
@@ -178,6 +186,22 @@ func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration) {
 				s.dataAddr, time.Since(ct).Round(time.Second))
 		}
 	}
+}
+
+// ShipperStates returns per-replica status for heartbeat reporting.
+// Master uses this to identify which replicas need rebuild.
+func (sg *ShipperGroup) ShipperStates() []ReplicaShipperStatus {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	states := make([]ReplicaShipperStatus, len(sg.shippers))
+	for i, s := range sg.shippers {
+		states[i] = ReplicaShipperStatus{
+			DataAddr:   s.dataAddr,
+			State:      s.State().String(),
+			FlushedLSN: s.ReplicaFlushedLSN(),
+		}
+	}
+	return states
 }
 
 // InSyncCount returns the number of shippers in ReplicaInSync state.

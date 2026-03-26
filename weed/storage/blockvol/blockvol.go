@@ -855,6 +855,15 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 	go v.groupCommit.Run()
 }
 
+// ReplicaShipperStates returns per-replica status from the primary's shipper group.
+// Used by heartbeat to report which replicas need rebuild. Returns nil if no shippers.
+func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
+	if v.shipperGroup == nil {
+		return nil
+	}
+	return v.shipperGroup.ShipperStates()
+}
+
 // StartReplicaReceiver starts listening for replicated WAL entries from a primary.
 func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string) error {
 	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr)

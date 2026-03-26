@@ -24,8 +24,9 @@ type BlockVolumeInfoMessage struct {
 	LastScrubTime   int64   // CP8-2: unix seconds
 	ReplicaDegraded bool    // CP8-2: true if any replica shipper degraded
 	DurabilityMode  string  // CP8-3-1: "best_effort", "sync_all", "sync_quorum"
-	NvmeAddr        string  // NVMe/TCP target address (ip:port), empty if NVMe disabled
-	NQN             string  // NVMe subsystem NQN, empty if NVMe disabled
+	NvmeAddr             string                 // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQN                  string                 // NVMe subsystem NQN, empty if NVMe disabled
+	ReplicaShipperStates []ReplicaShipperStatus // CP13-7: per-replica state from primary's shipper group
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats
@@ -70,8 +71,9 @@ func ToBlockVolumeInfoMessage(path, diskType string, vol *BlockVol) BlockVolumeI
 		HealthScore:     status.HealthScore,
 		ScrubErrors:     hs.ScrubErrors,
 		LastScrubTime:   hs.LastScrubTime,
-		ReplicaDegraded: status.ReplicaDegraded,
-		DurabilityMode:  vol.DurabilityMode().String(),
+		ReplicaDegraded:      status.ReplicaDegraded,
+		DurabilityMode:       vol.DurabilityMode().String(),
+		ReplicaShipperStates: vol.ReplicaShipperStates(),
 	}
 }
 

@@ -19,7 +19,7 @@ func TestInfoMessageRoundTrip(t *testing.T) {
 	}
 	pb := InfoMessageToProto(orig)
 	back := InfoMessageFromProto(pb)
-	if back != orig {
+	if !reflect.DeepEqual(back, orig) {
 		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", back, orig)
 	}
 }
@@ -33,7 +33,7 @@ func TestShortInfoRoundTrip(t *testing.T) {
 	}
 	pb := ShortInfoToProto(orig)
 	back := ShortInfoFromProto(pb)
-	if back != orig {
+	if !reflect.DeepEqual(back, orig) {
 		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", back, orig)
 	}
 }
@@ -63,7 +63,7 @@ func TestInfoMessagesSliceRoundTrip(t *testing.T) {
 		t.Fatalf("length mismatch: got %d, want %d", len(back), len(origSlice))
 	}
 	for i := range origSlice {
-		if back[i] != origSlice[i] {
+		if !reflect.DeepEqual(back[i], origSlice[i]) {
 			t.Fatalf("index %d mismatch:\n got  %+v\n want %+v", i, back[i], origSlice[i])
 		}
 	}
@@ -102,7 +102,7 @@ func TestInfoMessageRoundTripWithReplicaAddrs(t *testing.T) {
 	}
 	pb := InfoMessageToProto(orig)
 	back := InfoMessageFromProto(pb)
-	if back != orig {
+	if !reflect.DeepEqual(back, orig) {
 		t.Fatalf("round-trip mismatch:\n got  %+v\n want %+v", back, orig)
 	}
 }
@@ -188,7 +188,7 @@ func TestAssignmentsToProto(t *testing.T) {
 func TestNilProtoConversions(t *testing.T) {
 	// Nil proto -> zero-value Go types.
 	info := InfoMessageFromProto(nil)
-	if info != (BlockVolumeInfoMessage{}) {
+	if !reflect.DeepEqual(info, BlockVolumeInfoMessage{}) {
 		t.Fatalf("nil info proto should yield zero value, got %+v", info)
 	}
 	short := ShortInfoFromProto(nil)
