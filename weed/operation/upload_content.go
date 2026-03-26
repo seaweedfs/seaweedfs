@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -415,6 +416,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		}
 	}
 	if post_err != nil {
+		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)
 	}
 	// print("-")
@@ -428,15 +430,18 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		glog.ErrorfCtx(ctx, "unmarshal %s: %v", option.UploadUrl, string(resp_body))
 		return nil, fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)
 	}
 	if ret.Error != "" {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)
 	}
 	ret.ETag = etag

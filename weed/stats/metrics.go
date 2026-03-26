@@ -458,6 +458,13 @@ var (
 			Name:      "bucket_object_count",
 			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
 		}, []string{"bucket"})
+
+	UploadErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "upload_error_total",
+			Help:      "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received).",
+		}, []string{"code"})
 )
 
 func init() {
@@ -518,6 +525,8 @@ func init() {
 	Gather.MustRegister(S3BucketSizeBytesGauge)
 	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
 	Gather.MustRegister(S3BucketObjectCountGauge)
+
+	Gather.MustRegister(UploadErrorCounter)
 
 	go bucketMetricTTLControl()
 }
