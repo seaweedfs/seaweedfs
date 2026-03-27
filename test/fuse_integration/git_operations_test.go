@@ -324,13 +324,21 @@ func tryEnsureBareRepo(bareRepo, localClone string) error {
 	if _, err := os.Stat(filepath.Join(bareRepo, "HEAD")); err == nil {
 		return nil
 	}
+	branch, err := tryGitCommand(localClone, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return fmt.Errorf("detect local branch: %w", err)
+	}
 	os.RemoveAll(bareRepo)
 	time.Sleep(500 * time.Millisecond)
 	if _, err := tryGitCommand("", "init", "--bare", bareRepo); err != nil {
 		return fmt.Errorf("re-init bare repo: %w", err)
 	}
-	if _, err := tryGitCommand(localClone, "push", "--force", bareRepo, "master"); err != nil {
-		return fmt.Errorf("re-push to bare repo: %w", err)
+	refSpec := fmt.Sprintf("%s:refs/heads/%s", branch, branch)
+	if _, err := tryGitCommand(localClone, "push", "--force", bareRepo, refSpec); err != nil {
+		return fmt.Errorf("re-push branch %s to bare repo: %w", branch, err)
+	}
+	if _, err := tryGitCommand("", "--git-dir="+bareRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+		return fmt.Errorf("set bare repo HEAD to %s: %w", branch, err)
 	}
 	return nil
 }
@@ -436,4 +444,37 @@ func leftPad(n, width int) string {
 		s = "0" + s
 	}
 	return s
+}
+
+func TestTryEnsureBareRepoPreservesCurrentBranch(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "git_bare_recovery_")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	bareRepo := filepath.Join(tempDir, "repo.git")
+	localClone := filepath.Join(tempDir, "clone")
+	restoredClone := filepath.Join(tempDir, "restored")
+
+	gitRun(t, "", "init", "--bare", bareRepo)
+	gitRun(t, "", "clone", bareRepo, localClone)
+	gitRun(t, localClone, "config", "user.email", "test@seaweedfs.test")
+	gitRun(t, localClone, "config", "user.name", "Test")
+
+	writeFile(t, localClone, "README.md", "hello recovery\n")
+	gitRun(t, localClone, "add", "README.md")
+	gitRun(t, localClone, "commit", "-m", "initial commit")
+
+	branch := gitOutput(t, localClone, "rev-parse", "--abbrev-ref", "HEAD")
+	require.NotEmpty(t, branch)
+
+	require.NoError(t, os.RemoveAll(bareRepo))
+	require.NoError(t, tryEnsureBareRepo(bareRepo, localClone))
+
+	headRef := gitOutput(t, "", "--git-dir="+bareRepo, "symbolic-ref", "--short", "HEAD")
+	assert.Equal(t, branch, headRef, "recovered bare repo should keep the current branch as HEAD")
+
+	gitRun(t, "", "clone", bareRepo, restoredClone)
+	restoredHead := gitOutput(t, restoredClone, "rev-parse", "--abbrev-ref", "HEAD")
+	assert.Equal(t, branch, restoredHead, "clone from recovered bare repo should check out the current branch")
+	assertFileContains(t, filepath.Join(restoredClone, "README.md"), "hello recovery")
 }
