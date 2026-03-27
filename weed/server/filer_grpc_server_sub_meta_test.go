@@ -96,7 +96,9 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 		for _, file := range files {
 			time.Sleep(fileReadDelay) // read log file from volume server
 			for _, ev := range file {
-				stream.Send(ev) // blocks for sendDelay each
+				if err := stream.Send(ev); err != nil {
+					t.Fatalf("send error: %v", err)
+				}
 			}
 		}
 		elapsed := time.Since(start)
@@ -121,7 +123,9 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 				}
 			}
 		}
-		sender.Close()
+		if err := sender.Close(); err != nil {
+			t.Fatalf("close error: %v", err)
+		}
 		elapsed := time.Since(start)
 
 		batchedRate = float64(stream.eventsSent) / elapsed.Seconds()
@@ -267,7 +271,7 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	}
 
 	// simulatePipeline: read files with I/O delay, push events, send via pipelinedSender
-	simulatePipeline := func(files []logFile) (eventsSent, sends int64, elapsed time.Duration) {
+	simulatePipeline := func(files []logFile) (eventsSent, sends int64, elapsed time.Duration, err error) {
 		stream := &slowStream{sendDelay: sendDelay}
 		sender := newPipelinedSender(stream, 1024, true)
 
@@ -276,12 +280,14 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 		for _, file := range files {
 			time.Sleep(fileReadDelay) // volume server read
 			for _, ev := range file {
-				if err := sender.Send(ev); err != nil {
+				if err = sender.Send(ev); err != nil {
 					break outer
 				}
 			}
 		}
-		sender.Close()
+		if closeErr := sender.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		elapsed = time.Since(start)
 		eventsSent = atomic.LoadInt64(&stream.eventsSent)
 		sends = atomic.LoadInt64(&stream.sends)
@@ -290,7 +296,10 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 
 	var singleRate float64
 	t.Run("1_pipelined_stream", func(t *testing.T) {
-		eventsSent, sends, elapsed := simulatePipeline(allFiles)
+		eventsSent, sends, elapsed, err := simulatePipeline(allFiles)
+		if err != nil {
+			t.Fatalf("pipeline error: %v", err)
+		}
 		singleRate = float64(eventsSent) / elapsed.Seconds()
 		t.Logf("1 stream:    %5d events  %4d sends  %v  %7.0f events/sec",
 			eventsSent, sends, elapsed.Round(time.Millisecond), singleRate)
@@ -306,7 +315,7 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 			wg.Add(1)
 			go func(files []logFile) {
 				defer wg.Done()
-				eventsSent, sends, _ := simulatePipeline(files)
+				eventsSent, sends, _, _ := simulatePipeline(files)
 				atomic.AddInt64(&totalEventsSent, eventsSent)
 				atomic.AddInt64(&totalSends, sends)
 			}(partitions[d])
