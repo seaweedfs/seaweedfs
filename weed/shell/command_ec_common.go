@@ -1301,49 +1301,65 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 	hasMove := true
 	for hasMove {
 		hasMove = false
+		// Sort by shard count (ascending) so emptyNode has fewest shards, fullNode has most.
+		// Using freeEcSlot would be incorrect when nodes have different total capacities.
 		slices.SortFunc(rackEcNodes, func(a, b *EcNode) int {
-			return b.freeEcSlot - a.freeEcSlot
+			return ecNodeIdToShardCount[a.info.Id] - ecNodeIdToShardCount[b.info.Id]
 		})
 		emptyNode, fullNode := rackEcNodes[0], rackEcNodes[len(rackEcNodes)-1]
 		emptyNodeShardCount, fullNodeShardCount := ecNodeIdToShardCount[emptyNode.info.Id], ecNodeIdToShardCount[fullNode.info.Id]
 		if fullNodeShardCount > averageShardCount && emptyNodeShardCount+1 <= averageShardCount {
 
-			emptyNodeIds := make(map[uint32]bool)
+			// Build a map of volume ID -> shard bits on the empty node
+			emptyNodeVolumeShards := make(map[uint32]erasure_coding.ShardBits)
 			if emptyDiskInfo, found := emptyNode.info.DiskInfos[string(ecb.diskType)]; found {
 				for _, shards := range emptyDiskInfo.EcShardInfos {
-					emptyNodeIds[shards.Id] = true
+					emptyNodeVolumeShards[shards.Id] = erasure_coding.ShardBits(shards.EcIndexBits)
 				}
 			}
+
 			if fullDiskInfo, found := fullNode.info.DiskInfos[string(ecb.diskType)]; found {
-				for _, shards := range fullDiskInfo.EcShardInfos {
-					if _, found := emptyNodeIds[shards.Id]; found {
-						continue
-					}
-					si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(shards)
-					for _, shardId := range si.Ids() {
-						vid := needle.VolumeId(shards.Id)
-						// For balancing, strictly require matching disk type
-						// For balancing, strictly require matching disk type and apply anti-affinity
-						dataShardCount := ecb.getDataShardCount()
-						destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType, true, shardId, dataShardCount)
-
-						if destDiskId > 0 {
-							fmt.Printf("%s moves ec shards %d.%d to %s (disk %d)\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id, destDiskId)
-						} else {
-							fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+				// Pass 1: prefer moving shards of volumes not on the empty node (best diversity)
+				// Pass 2: move shards of shared volumes where the specific shard ID differs
+				for pass := 0; pass < 2 && !hasMove; pass++ {
+					for _, shards := range fullDiskInfo.EcShardInfos {
+						emptyBits, volumeOnEmpty := emptyNodeVolumeShards[shards.Id]
+						if pass == 0 && volumeOnEmpty {
+							continue // Pass 1: skip volumes already on the empty node
 						}
-
-						err := moveMountedShardToEcNode(ecb.commandEnv, fullNode, shards.Collection, vid, shardId, emptyNode, destDiskId, ecb.applyBalancing, ecb.diskType)
-						if err != nil {
-							return err
+						if pass == 1 && !volumeOnEmpty {
+							continue // Pass 2: only consider volumes already on the empty node
 						}
+						si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(shards)
+						for _, shardId := range si.Ids() {
+							if pass == 1 && emptyBits.Has(shardId) {
+								continue // Skip shard IDs already on the empty node
+							}
+							vid := needle.VolumeId(shards.Id)
+							// For balancing, strictly require matching disk type and apply anti-affinity
+							dataShardCount := ecb.getDataShardCount()
+							destDiskId := pickBestDiskOnNode(emptyNode, vid, ecb.diskType, true, shardId, dataShardCount)
 
-						ecNodeIdToShardCount[emptyNode.info.Id]++
-						ecNodeIdToShardCount[fullNode.info.Id]--
-						hasMove = true
-						break
+							if destDiskId > 0 {
+								fmt.Printf("%s moves ec shards %d.%d to %s (disk %d)\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id, destDiskId)
+							} else {
+								fmt.Printf("%s moves ec shards %d.%d to %s\n", fullNode.info.Id, shards.Id, shardId, emptyNode.info.Id)
+							}
+
+							err := moveMountedShardToEcNode(ecb.commandEnv, fullNode, shards.Collection, vid, shardId, emptyNode, destDiskId, ecb.applyBalancing, ecb.diskType)
+							if err != nil {
+								return err
+							}
+
+							ecNodeIdToShardCount[emptyNode.info.Id]++
+							ecNodeIdToShardCount[fullNode.info.Id]--
+							hasMove = true
+							break
+						}
+						if hasMove {
+							break
+						}
 					}
-					break
 				}
 			}
 		}
