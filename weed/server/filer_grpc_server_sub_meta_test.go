@@ -110,7 +110,7 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 	var batchedRate float64
 	t.Run("pipelined_batched_send", func(t *testing.T) {
 		stream := &slowStream{sendDelay: sendDelay}
-		sender := newPipelinedSender(stream, 1024)
+		sender := newPipelinedSender(stream, 1024, true)
 
 		start := time.Now()
 		for _, file := range files {
@@ -141,7 +141,7 @@ func TestBatchingAdaptive(t *testing.T) {
 
 	t.Run("old_events_are_batched", func(t *testing.T) {
 		stream := &slowStream{sendDelay: 10 * time.Microsecond}
-		sender := newPipelinedSender(stream, 1024)
+		sender := newPipelinedSender(stream, 1024, true)
 
 		// Push all events at once (no read delay) so the sender can batch aggressively
 		for _, ev := range makeOldEvents(numEvents) {
@@ -159,7 +159,7 @@ func TestBatchingAdaptive(t *testing.T) {
 
 	t.Run("recent_events_sent_individually", func(t *testing.T) {
 		stream := &slowStream{sendDelay: 10 * time.Microsecond}
-		sender := newPipelinedSender(stream, 1024)
+		sender := newPipelinedSender(stream, 1024, true)
 
 		for _, ev := range makeRecentEvents(numEvents) {
 			sender.Send(ev)
@@ -210,7 +210,7 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	// simulatePipeline: read files with I/O delay, push events, send via pipelinedSender
 	simulatePipeline := func(files []logFile) (eventsSent, sends int64, elapsed time.Duration) {
 		stream := &slowStream{sendDelay: sendDelay}
-		sender := newPipelinedSender(stream, 1024)
+		sender := newPipelinedSender(stream, 1024, true)
 
 		start := time.Now()
 		for _, file := range files {

@@ -62,15 +62,16 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:   option.ClientName,
-			PathPrefix:   option.PathPrefix,
-			PathPrefixes: option.AdditionalPathPrefixes,
-			Directories:  option.DirectoriesToWatch,
-			SinceNs:      option.StartTsNs,
-			Signature:    option.SelfSignature,
-			ClientId:     option.ClientId,
-			ClientEpoch:  option.ClientEpoch,
-			UntilNs:      option.StopTsNs,
+			ClientName:              option.ClientName,
+			PathPrefix:              option.PathPrefix,
+			PathPrefixes:            option.AdditionalPathPrefixes,
+			Directories:             option.DirectoriesToWatch,
+			SinceNs:                 option.StartTsNs,
+			Signature:               option.SelfSignature,
+			ClientId:                option.ClientId,
+			ClientEpoch:             option.ClientEpoch,
+			UntilNs:                 option.StopTsNs,
+			ClientSupportsBatching:  true,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)

@@ -42,20 +42,22 @@ const (
 // the reader to continue reading ahead without waiting for the client to
 // acknowledge each event.
 //
-// When events are far behind current time (backlog catch-up), it batches
-// multiple events into a single stream.Send() using the Events field.
-// When events are close to current time (real-time), it sends one-by-one.
+// When the client declares support for batching AND events are far behind
+// current time (backlog catch-up), multiple events are packed into a single
+// stream.Send() using the Events field. Otherwise events are sent one-by-one.
 type pipelinedSender struct {
-	sendCh chan *filer_pb.SubscribeMetadataResponse
-	errCh  chan error
-	done   chan struct{}
+	sendCh         chan *filer_pb.SubscribeMetadataResponse
+	errCh          chan error
+	done           chan struct{}
+	canBatch       bool // true only if client set ClientSupportsBatching
 }
 
-func newPipelinedSender(stream metadataStreamSender, bufSize int) *pipelinedSender {
+func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
 	s := &pipelinedSender{
-		sendCh: make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
-		errCh:  make(chan error, 1),
-		done:   make(chan struct{}),
+		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
+		errCh:    make(chan error, 1),
+		done:     make(chan struct{}),
+		canBatch: clientSupportsBatching,
 	}
 	go s.sendLoop(stream)
 	return s
@@ -64,9 +66,9 @@ func newPipelinedSender(stream metadataStreamSender, bufSize int) *pipelinedSend
 func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 	defer close(s.done)
 	for msg := range s.sendCh {
-		isBehind := time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
+		shouldBatch := s.canBatch && time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
 
-		if !isBehind {
+		if !shouldBatch {
 			// Real-time: send immediately for low latency
 			if err := stream.Send(msg); err != nil {
 				s.reportErr(err)
@@ -161,7 +163,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	sender := newPipelinedSender(stream, 1024)
+	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	// Register for instant notification when new data arrives in the aggregated log buffer.
@@ -291,7 +293,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	sender := newPipelinedSender(stream, 1024)
+	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
 	defer sender.Close()
 
 	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)

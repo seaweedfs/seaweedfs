@@ -200,11 +200,12 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		defer cancel()
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:  "filer:" + string(self),
-			PathPrefix:  "/",
-			SinceNs:     lastTsNs,
-			ClientId:    ma.filer.UniqueFilerId,
-			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
+			ClientName:             "filer:" + string(self),
+			PathPrefix:             "/",
+			SinceNs:                lastTsNs,
+			ClientId:               ma.filer.UniqueFilerId,
+			ClientEpoch:            atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
+			ClientSupportsBatching: true,
 		})
 		if err != nil {
 			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)

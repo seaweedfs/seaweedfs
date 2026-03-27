@@ -2899,18 +2899,19 @@ func (x *GetFilerConfigurationResponse) GetMinorVersion() int32 {
 }
 
 type SubscribeMetadataRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ClientName    string                 `protobuf:"bytes,1,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
-	PathPrefix    string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
-	SinceNs       int64                  `protobuf:"varint,3,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
-	Signature     int32                  `protobuf:"varint,4,opt,name=signature,proto3" json:"signature,omitempty"`
-	PathPrefixes  []string               `protobuf:"bytes,6,rep,name=path_prefixes,json=pathPrefixes,proto3" json:"path_prefixes,omitempty"`
-	ClientId      int32                  `protobuf:"varint,7,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
-	UntilNs       int64                  `protobuf:"varint,8,opt,name=until_ns,json=untilNs,proto3" json:"until_ns,omitempty"`
-	ClientEpoch   int32                  `protobuf:"varint,9,opt,name=client_epoch,json=clientEpoch,proto3" json:"client_epoch,omitempty"`
-	Directories   []string               `protobuf:"bytes,10,rep,name=directories,proto3" json:"directories,omitempty"` // exact directory to watch
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	ClientName             string                 `protobuf:"bytes,1,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
+	PathPrefix             string                 `protobuf:"bytes,2,opt,name=path_prefix,json=pathPrefix,proto3" json:"path_prefix,omitempty"`
+	SinceNs                int64                  `protobuf:"varint,3,opt,name=since_ns,json=sinceNs,proto3" json:"since_ns,omitempty"`
+	Signature              int32                  `protobuf:"varint,4,opt,name=signature,proto3" json:"signature,omitempty"`
+	PathPrefixes           []string               `protobuf:"bytes,6,rep,name=path_prefixes,json=pathPrefixes,proto3" json:"path_prefixes,omitempty"`
+	ClientId               int32                  `protobuf:"varint,7,opt,name=client_id,json=clientId,proto3" json:"client_id,omitempty"`
+	UntilNs                int64                  `protobuf:"varint,8,opt,name=until_ns,json=untilNs,proto3" json:"until_ns,omitempty"`
+	ClientEpoch            int32                  `protobuf:"varint,9,opt,name=client_epoch,json=clientEpoch,proto3" json:"client_epoch,omitempty"`
+	Directories            []string               `protobuf:"bytes,10,rep,name=directories,proto3" json:"directories,omitempty"`                                                        // exact directory to watch
+	ClientSupportsBatching bool                   `protobuf:"varint,11,opt,name=client_supports_batching,json=clientSupportsBatching,proto3" json:"client_supports_batching,omitempty"` // client can unpack SubscribeMetadataResponse.events
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SubscribeMetadataRequest) Reset() {
@@ -3004,6 +3005,13 @@ func (x *SubscribeMetadataRequest) GetDirectories() []string {
 		return x.Directories
 	}
 	return nil
+}
+
+func (x *SubscribeMetadataRequest) GetClientSupportsBatching() bool {
+	if x != nil {
+		return x.ClientSupportsBatching
+	}
+	return false
 }
 
 type SubscribeMetadataResponse struct {
@@ -5071,7 +5079,7 @@ const file_filer_proto_rawDesc = "" +
 	"\vfiler_group\x18\r \x01(\tR\n" +
 	"filerGroup\x12#\n" +
 	"\rmajor_version\x18\x0e \x01(\x05R\fmajorVersion\x12#\n" +
-	"\rminor_version\x18\x0f \x01(\x05R\fminorVersion\"\xb7\x02\n" +
+	"\rminor_version\x18\x0f \x01(\x05R\fminorVersion\"\xf1\x02\n" +
 	"\x18SubscribeMetadataRequest\x12\x1f\n" +
 	"\vclient_name\x18\x01 \x01(\tR\n" +
 	"clientName\x12\x1f\n" +
@@ -5084,7 +5092,8 @@ const file_filer_proto_rawDesc = "" +
 	"\buntil_ns\x18\b \x01(\x03R\auntilNs\x12!\n" +
 	"\fclient_epoch\x18\t \x01(\x05R\vclientEpoch\x12 \n" +
 	"\vdirectories\x18\n" +
-	" \x03(\tR\vdirectories\"\xd7\x01\n" +
+	" \x03(\tR\vdirectories\x128\n" +
+	"\x18client_supports_batching\x18\v \x01(\bR\x16clientSupportsBatching\"\xd7\x01\n" +
 	"\x19SubscribeMetadataResponse\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12J\n" +
 	"\x12event_notification\x18\x02 \x01(\v2\x1b.filer_pb.EventNotificationR\x11eventNotification\x12\x13\n" +
