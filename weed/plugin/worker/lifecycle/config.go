@@ -97,6 +97,7 @@ func readBoolConfig(values map[string]*plugin_pb.ConfigValue, field string, fall
 		if s == "false" || s == "0" || s == "no" {
 			return false
 		}
+		glog.V(1).Infof("readBoolConfig: unrecognized string value %q for field %q, using fallback %v", kind.StringValue, field, fallback)
 	case *plugin_pb.ConfigValue_Int64Value:
 		return kind.Int64Value != 0
 	default:

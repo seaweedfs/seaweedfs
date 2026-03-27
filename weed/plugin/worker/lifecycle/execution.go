@@ -159,9 +159,12 @@ func (h *Handler) executeLifecycleForBucket(
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
 			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", config.AbortMPUDays),
 		})
-		aborted, abortErrs := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, config.MaxDeletesPerBucket)
+		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, config.MaxDeletesPerBucket)
 		result.mpuAborted = int64(aborted)
 		result.errors += int64(abortErrs)
+		if abortCtxErr != nil {
+			return result, abortCtxErr
+		}
 	}
 
 	return result, nil
@@ -236,7 +239,7 @@ func abortIncompleteMPUs(
 	client filer_pb.SeaweedFilerClient,
 	bucketsPath, bucket string,
 	olderThanDays, limit int64,
-) (aborted, errors int) {
+) (aborted, errors int, ctxErr error) {
 	uploadsDir := path.Join(bucketsPath, bucket, ".uploads")
 	cutoff := time.Now().Add(-time.Duration(olderThanDays) * 24 * time.Hour)
 
@@ -271,10 +274,10 @@ func abortIncompleteMPUs(
 	}, "", false, 10000)
 
 	if listErr != nil && !strings.Contains(listErr.Error(), "limit reached") {
-		glog.Errorf("s3_lifecycle: failed to list uploads in %s: %v", uploadsDir, listErr)
+		return aborted, errors, fmt.Errorf("list uploads in %s: %w", uploadsDir, listErr)
 	}
 
-	return aborted, errors
+	return aborted, errors, nil
 }
 
 // deleteExpiredObjects deletes a batch of expired objects from the filer.
