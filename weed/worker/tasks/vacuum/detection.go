@@ -105,7 +105,7 @@ func createVacuumTaskParams(task *types.TaskDetectionResult, metric *types.Volum
 
 	if vacuumConfig != nil {
 		garbageThreshold = vacuumConfig.GarbageThreshold
-		// Note: VacuumTaskConfig has GarbageThreshold, MinVolumeAgeHours, MinIntervalSeconds
+		// Note: VacuumTaskConfig has GarbageThreshold, MinVolumeAgeHours
 		// Other fields like VerifyChecksum, BatchSize, WorkingDir would need to be added
 		// to the protobuf definition if they should be configurable
 	}

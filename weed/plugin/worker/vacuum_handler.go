@@ -178,15 +178,6 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
 						},
-						{
-							Name:        "min_interval_seconds",
-							Label:       "Min Interval (s)",
-							Description: "Minimum interval between vacuum on the same volume.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
 					},
 				},
 			},
@@ -197,14 +188,11 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"min_volume_age_seconds": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 24 * 60 * 60},
 				},
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7 * 24 * 60 * 60},
-				},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
 			Enabled:                       true,
-			DetectionIntervalSeconds:      2 * 60 * 60,
+			DetectionIntervalSeconds:      17 * 60,
 			DetectionTimeoutSeconds:       120,
 			MaxJobsPerDetection:           200,
 			GlobalExecutionConcurrency:    16,
@@ -219,9 +207,6 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_volume_age_seconds": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 24 * 60 * 60},
-			},
-			"min_interval_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 7 * 24 * 60 * 60},
 			},
 		},
 	}
@@ -239,31 +224,6 @@ func (h *VacuumHandler) Detect(ctx context.Context, request *plugin_pb.RunDetect
 	}
 
 	workerConfig := deriveVacuumConfig(request.GetWorkerConfigValues())
-	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
-		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(BuildDetectorActivity(
-			"skipped_by_interval",
-			fmt.Sprintf("VACUUM: Detection skipped due to min interval (%s)", minInterval),
-			map[string]*plugin_pb.ConfigValue{
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
-				},
-			},
-		))
-		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
-			JobType:   "vacuum",
-			Proposals: []*plugin_pb.JobProposal{},
-			HasMore:   false,
-		}); err != nil {
-			return err
-		}
-		return sender.SendComplete(&plugin_pb.DetectionComplete{
-			JobType:        "vacuum",
-			Success:        true,
-			TotalProposals: 0,
-		})
-	}
-
 	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	masters := make([]string, 0)
 	if request.ClusterContext != nil {
@@ -572,7 +532,6 @@ func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Co
 	config := vacuumtask.NewDefaultConfig()
 	config.GarbageThreshold = readDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
 	config.MinVolumeAgeSeconds = int(readInt64Config(values, "min_volume_age_seconds", int64(config.MinVolumeAgeSeconds)))
-	config.MinIntervalSeconds = int(readInt64Config(values, "min_interval_seconds", int64(config.MinIntervalSeconds)))
 	return config
 }
 

@@ -31,9 +31,8 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
+					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
+					MinVolumeAgeHours: int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
 				},
 			},
 		}

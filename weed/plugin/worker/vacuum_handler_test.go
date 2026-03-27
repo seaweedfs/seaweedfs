@@ -87,9 +87,6 @@ func TestDeriveVacuumConfigAllowsZeroValues(t *testing.T) {
 		"min_volume_age_seconds": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
 		},
-		"min_interval_seconds": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
-		},
 	}
 
 	cfg := deriveVacuumConfig(values)
@@ -98,9 +95,6 @@ func TestDeriveVacuumConfigAllowsZeroValues(t *testing.T) {
 	}
 	if cfg.MinVolumeAgeSeconds != 0 {
 		t.Fatalf("expected min_volume_age_seconds 0, got %d", cfg.MinVolumeAgeSeconds)
-	}
-	if cfg.MinIntervalSeconds != 0 {
-		t.Fatalf("expected min_interval_seconds 0, got %d", cfg.MinIntervalSeconds)
 	}
 }
 
@@ -157,29 +151,6 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
-func TestVacuumHandlerDetectSkipsByMinInterval(t *testing.T) {
-	handler := NewVacuumHandler(nil, 0)
-	sender := &recordingDetectionSender{}
-	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
-		JobType:           "vacuum",
-		LastSuccessfulRun: timestamppb.New(time.Now().Add(-3 * time.Second)),
-		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
-			"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10}},
-		},
-	}, sender)
-	if err != nil {
-		t.Fatalf("detect returned err = %v", err)
-	}
-	if sender.proposals == nil {
-		t.Fatalf("expected proposals message")
-	}
-	if len(sender.proposals.Proposals) != 0 {
-		t.Fatalf("expected zero proposals, got %d", len(sender.proposals.Proposals))
-	}
-	if sender.complete == nil || !sender.complete.Success {
-		t.Fatalf("expected successful completion message")
-	}
-}
 
 func TestBuildExecutorActivity(t *testing.T) {
 	activity := BuildExecutorActivity("running", "vacuum in progress")
