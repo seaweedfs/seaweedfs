@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/pquerna/cachecontrol/cacheobject"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -697,6 +698,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Step 4: Save metadata to filer via gRPC
 	// Use context.Background() to ensure metadata save completes even if HTTP request is cancelled
 	// This matches the chunk upload behavior and prevents orphaned chunks
+	//
+	// If conditional headers are present, acquire a distributed lock to atomically
+	// re-check conditions and create the entry. This prevents TOCTOU races where
+	// concurrent requests all pass the early check before any write completes.
+	condBucket, condObject := s3_constants.GetBucketAndObject(r)
+	condLock, condErr := s3a.lockAndRecheckConditionalHeaders(r, condBucket, condObject)
+	if condErr != s3err.ErrNone {
+		s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+		return "", condErr, SSEResponseMetadata{}
+	}
+	if condLock != nil {
+		defer condLock.StopShortLivedLock()
+	}
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	createErr := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
@@ -1820,6 +1834,44 @@ func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object 
 		}
 	}
 	return s3a.validateConditionalHeaders(r, headers, entry, bucket, object)
+}
+
+// lockAndRecheckConditionalHeaders acquires a distributed lock and re-checks conditional
+// headers atomically before a write operation. This prevents TOCTOU races where concurrent
+// requests could all pass the early (unlocked) check before any write completes.
+//
+// Returns (nil, ErrNone) if no conditional headers are present (no lock needed).
+// Returns (lock, ErrNone) if the re-check passes — the caller MUST defer lock.StopShortLivedLock()
+// to hold the lock across the subsequent write and release it after.
+// Returns (nil, errCode) if the re-check fails — no lock to release.
+func (s3a *S3ApiServer) lockAndRecheckConditionalHeaders(r *http.Request, bucket, object string) (*cluster.LiveLock, s3err.ErrorCode) {
+	headers, errCode := parseConditionalHeaders(r)
+	if errCode != s3err.ErrNone {
+		return nil, errCode
+	}
+	if !headers.isSet {
+		return nil, s3err.ErrNone
+	}
+
+	lockKey := s3a.toFilerPath(bucket, object)
+	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, s3a.option.Filers[0])
+	lock := lockClient.NewShortLivedLock(lockKey, fmt.Sprintf("s3-cond-%d", s3a.randomClientId))
+
+	entry, err := s3a.resolveObjectEntry(bucket, object)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			entry = nil
+		} else {
+			lock.StopShortLivedLock()
+			glog.Errorf("lockAndRecheckConditionalHeaders: error resolving object entry for %s/%s: %v", bucket, object, err)
+			return nil, s3err.ErrInternalError
+		}
+	}
+	if errCode = s3a.validateConditionalHeaders(r, headers, entry, bucket, object); errCode != s3err.ErrNone {
+		lock.StopShortLivedLock()
+		return nil, errCode
+	}
+	return lock, s3err.ErrNone
 }
 
 // validateConditionalHeadersForReads checks conditional headers for read operations against the provided entry

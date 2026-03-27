@@ -457,6 +457,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 	} else if vErr == nil && versioningState == s3_constants.VersioningSuspended {
 		// For suspended versioning, add "null" version ID metadata and return "null" version ID
+		// If conditional headers are present, acquire a distributed lock to atomically
+		// re-check conditions and create the entry, preventing TOCTOU races.
+		condLock, condErr := s3a.lockAndRecheckConditionalHeaders(r, *input.Bucket, *input.Key)
+		if condErr != s3err.ErrNone {
+			return nil, condErr
+		}
+		if condLock != nil {
+			defer condLock.StopShortLivedLock()
+		}
 		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
@@ -512,6 +521,15 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		}
 	} else {
 		// For non-versioned buckets, create main object file
+		// If conditional headers are present, acquire a distributed lock to atomically
+		// re-check conditions and create the entry, preventing TOCTOU races.
+		condLock, condErr := s3a.lockAndRecheckConditionalHeaders(r, *input.Bucket, *input.Key)
+		if condErr != s3err.ErrNone {
+			return nil, condErr
+		}
+		if condLock != nil {
+			defer condLock.StopShortLivedLock()
+		}
 		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
 				entry.Extended = make(map[string][]byte)
