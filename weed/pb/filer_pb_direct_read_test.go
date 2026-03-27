@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -218,11 +217,10 @@ func TestReadLogFileRefsPathFilter(t *testing.T) {
 }
 
 // TestDirectReadVsServerSideThroughput compares the throughput of:
-//   - Server-side path: sequential file read → send → recv → process (simulated)
-//   - Client direct-read path: ReadLogFileRefs reads files and processes locally
+//   - Server-side path: sequential file read → gRPC send per event (simulated)
+//   - Client direct-read: ReadLogFileRefs with parallel filers + prefetching
 //
-// Each file read has a simulated volume server latency. The direct-read path is
-// faster because it eliminates the gRPC send/recv overhead per event.
+// Each file read has a simulated volume server latency.
 func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	const (
 		numFilers     = 3
@@ -230,24 +228,21 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 		eventsPerFile = 300
 		totalEvents   = numFilers * filesPerFiler * eventsPerFile // 6300
 		fileReadDelay = 2 * time.Millisecond                      // volume server I/O per file
-		sendDelay     = 20 * time.Microsecond                     // gRPC send per event (server-side path)
+		sendDelay     = 20 * time.Microsecond                     // gRPC send per event (server-side)
 	)
 
 	files := newTestLogFiles(numFilers, filesPerFiler, eventsPerFile, fileReadDelay)
 
 	// --- Server-side path (old): sequential file read + per-event gRPC send ---
-	// Simulates: for each file in merged order → read(delay) → for each entry → send(delay)
 	var serverRate float64
 	t.Run("server_side_sequential", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
-		// Read all files sequentially (like OrderedLogVisitor)
 		for _, ref := range files.refs {
 			time.Sleep(fileReadDelay) // volume server read
 			key := ref.Chunks[0].FileId
 			data := files.fileData[key]
-			// Count entries and simulate per-event send delay
 			pos := 0
 			for pos+4 <= len(data) {
 				size := int(util.BytesToUint32(data[pos : pos+4]))
@@ -258,15 +253,16 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 		}
 		elapsed := time.Since(start)
 		serverRate = float64(processed) / elapsed.Seconds()
-		t.Logf("server-side: %d events  %v  %.0f events/sec  (files: %d × %v read + %d × %v send)",
+		t.Logf("server-side: %d events  %v  %6.0f events/sec  (%d files sequential + %v send/event)",
 			processed, elapsed.Round(time.Millisecond), serverRate,
-			numFilers*filesPerFiler, fileReadDelay, processed, sendDelay)
+			numFilers*filesPerFiler, sendDelay)
 	})
 
-	// --- Client direct-read path (new): ReadLogFileRefs reads + processes locally ---
-	// No gRPC send delay — events are processed in-place after reading from volume servers.
-	var clientRate float64
-	t.Run("client_direct_read", func(t *testing.T) {
+	// --- Client direct-read (new): parallel filers + prefetching + no gRPC ---
+	// ReadLogFileRefs now internally runs one goroutine per filer (parallel I/O)
+	// and prefetches the next file while the current one's entries feed the merge heap.
+	var directRate float64
+	t.Run("client_direct_read_parallel_prefetch", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
@@ -279,62 +275,13 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 			t.Fatalf("ReadLogFileRefs: %v", err)
 		}
 		elapsed := time.Since(start)
-		clientRate = float64(processed) / elapsed.Seconds()
-		t.Logf("direct-read: %d events  %v  %.0f events/sec  (files: %d × %v read, no gRPC)",
-			processed, elapsed.Round(time.Millisecond), clientRate,
-			numFilers*filesPerFiler, fileReadDelay)
-	})
-
-	// --- Client direct-read with parallel per-filer reads ---
-	var parallelRate float64
-	t.Run("client_direct_read_parallel", func(t *testing.T) {
-		var processed int64
-
-		// Group refs by filer, read each filer's files in a separate goroutine
-		perFiler := make(map[string][]*filer_pb.LogFileChunkRef)
-		for _, ref := range files.refs {
-			perFiler[ref.FilerId] = append(perFiler[ref.FilerId], ref)
-		}
-
-		start := time.Now()
-
-		// Read all filers in parallel, collect results
-		type filerResult struct {
-			entries []*filer_pb.LogEntry
-		}
-		var mu sync.Mutex
-		var wg sync.WaitGroup
-		allEntries := make(map[string][]*filer_pb.LogEntry)
-
-		for filerId, filerRefs := range perFiler {
-			wg.Add(1)
-			go func(fid string, refs []*filer_pb.LogFileChunkRef) {
-				defer wg.Done()
-				var entries []*filer_pb.LogEntry
-				for _, ref := range refs {
-					e, _ := readLogFileEntries(files.readerFn(), ref.Chunks, 0, 0)
-					entries = append(entries, e...)
-				}
-				mu.Lock()
-				allEntries[fid] = entries
-				mu.Unlock()
-			}(filerId, filerRefs)
-		}
-		wg.Wait()
-
-		// Count all entries (merge is fast, dominated by I/O above)
-		for _, entries := range allEntries {
-			atomic.AddInt64(&processed, int64(len(entries)))
-		}
-		elapsed := time.Since(start)
-		parallelRate = float64(processed) / elapsed.Seconds()
-		t.Logf("parallel:    %d events  %v  %.0f events/sec  (%d filers read in parallel)",
-			processed, elapsed.Round(time.Millisecond), parallelRate, numFilers)
+		directRate = float64(processed) / elapsed.Seconds()
+		t.Logf("direct-read: %d events  %v  %6.0f events/sec  (%d filers parallel + prefetch, no gRPC)",
+			processed, elapsed.Round(time.Millisecond), directRate, numFilers)
 	})
 
 	if serverRate > 0 {
-		t.Logf("")
-		t.Logf("Direct-read vs server-side: %.1fx", clientRate/serverRate)
-		t.Logf("Parallel vs server-side:    %.1fx", parallelRate/serverRate)
+		speedup := directRate / serverRate
+		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", speedup)
 	}
 }

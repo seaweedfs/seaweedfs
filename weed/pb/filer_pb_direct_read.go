@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 
 	"google.golang.org/protobuf/proto"
 
@@ -22,6 +23,12 @@ type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
 // chunk references, merges entries from multiple filers in timestamp order
 // (same algorithm as the server's OrderedLogVisitor), applies path filtering,
 // and invokes processEventFn for each matching event.
+//
+// Optimizations over the server-side path:
+//   - Filers are read in parallel (one goroutine per filer)
+//   - Within each filer, the next file is prefetched while the current file's
+//     entries are being consumed by the merge heap
+//   - No gRPC send/recv overhead per event
 func ReadLogFileRefs(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -35,7 +42,6 @@ func ReadLogFileRefs(
 	}
 
 	// Group refs by filer ID, preserving order within each filer.
-	// This mirrors the server's perFilerIteratorMap in OrderedLogVisitor.
 	perFiler := make(map[string][]*filer_pb.LogFileChunkRef)
 	var filerOrder []string
 	for _, ref := range refs {
@@ -48,82 +54,192 @@ func ReadLogFileRefs(
 		perFiler[ref.FilerId] = append(perFiler[ref.FilerId], ref)
 	}
 
-	// Read all files per filer, collecting entries.
-	// The server does the same in LogFileQueueIterator.readFileEntries().
-	type filerEntries struct {
-		filerId string
-		entries []*filer_pb.LogEntry
-		idx     int
-	}
-	filerData := make([]*filerEntries, 0, len(filerOrder))
-	for _, filerId := range filerOrder {
-		var allEntries []*filer_pb.LogEntry
-		for _, ref := range perFiler[filerId] {
-			entries, readErr := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
-			if readErr != nil {
-				glog.V(0).Infof("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, readErr)
-				continue // skip unreadable files
-			}
-			allEntries = append(allEntries, entries...)
-		}
-		if len(allEntries) > 0 {
-			filerData = append(filerData, &filerEntries{filerId: filerId, entries: allEntries})
-		}
-	}
-
-	if len(filerData) == 0 {
+	if len(filerOrder) == 0 {
 		return
 	}
 
-	// If only one filer, no merge needed — process sequentially.
-	if len(filerData) == 1 {
-		return processEntriesForFiler(filerData[0].entries, pathPrefix, processEventFn)
+	// Single filer fast path: no merge heap needed.
+	if len(filerOrder) == 1 {
+		return readFilerFilesWithPrefetch(perFiler[filerOrder[0]], newReader, startTsNs, stopTsNs, pathPrefix, processEventFn)
 	}
 
-	// Merge entries from multiple filers in timestamp order using a min-heap.
-	// This is the same algorithm as the server's OrderedLogVisitor + LogEntryItemPriorityQueue.
-	pq := &logEntryHeap{}
-	heap.Init(pq)
-	for i, fd := range filerData {
-		if len(fd.entries) > 0 {
-			heap.Push(pq, &logEntryHeapItem{
-				entry:    fd.entries[0],
-				filerIdx: i,
-			})
-			filerData[i].idx = 1
-		}
+	// Multiple filers: read each in parallel with prefetching, merge via min-heap.
+	return readMultiFilersMerged(filerOrder, perFiler, newReader, startTsNs, stopTsNs, pathPrefix, processEventFn)
+}
+
+// readFilerFilesWithPrefetch reads files for a single filer, prefetching the
+// next file while processing entries from the current one.
+func readFilerFilesWithPrefetch(
+	refs []*filer_pb.LogFileChunkRef,
+	newReader LogFileReaderFn,
+	startTsNs, stopTsNs int64,
+	pathPrefix string,
+	processEventFn ProcessMetadataFunc,
+) (lastTsNs int64, err error) {
+
+	type prefetchResult struct {
+		entries []*filer_pb.LogEntry
+		err     error
 	}
 
-	for pq.Len() > 0 {
-		item := heap.Pop(pq).(*logEntryHeapItem)
+	var pending *prefetchResult
+	var pendingCh chan prefetchResult
 
-		// Process this entry
-		lastTsNs, err = processOneLogEntry(item.entry, pathPrefix, processEventFn)
-		if err != nil {
-			return
+	// Start prefetch for the first file
+	startPrefetch := func(ref *filer_pb.LogFileChunkRef) chan prefetchResult {
+		ch := make(chan prefetchResult, 1)
+		go func() {
+			entries, readErr := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
+			ch <- prefetchResult{entries, readErr}
+		}()
+		return ch
+	}
+
+	if len(refs) > 0 {
+		pendingCh = startPrefetch(refs[0])
+	}
+
+	for i, ref := range refs {
+		// Wait for current file's data
+		var result prefetchResult
+		if pending != nil {
+			result = *pending
+			pending = nil
+		} else if pendingCh != nil {
+			result = <-pendingCh
+			pendingCh = nil
 		}
 
-		// Advance the filer iterator and push next entry
-		fd := filerData[item.filerIdx]
-		if fd.idx < len(fd.entries) {
-			heap.Push(pq, &logEntryHeapItem{
-				entry:    fd.entries[fd.idx],
-				filerIdx: item.filerIdx,
-			})
-			fd.idx++
+		// Start prefetching next file while we process current
+		if i+1 < len(refs) {
+			pendingCh = startPrefetch(refs[i+1])
+		}
+
+		if result.err != nil {
+			glog.V(0).Infof("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
+			continue
+		}
+
+		for _, logEntry := range result.entries {
+			lastTsNs, err = processOneLogEntry(logEntry, pathPrefix, processEventFn)
+			if err != nil {
+				return
+			}
 		}
 	}
 	return
 }
 
-func processEntriesForFiler(entries []*filer_pb.LogEntry, pathPrefix string, processEventFn ProcessMetadataFunc) (lastTsNs int64, err error) {
-	for _, logEntry := range entries {
-		lastTsNs, err = processOneLogEntry(logEntry, pathPrefix, processEventFn)
-		if err != nil {
-			return
+// readMultiFilersMerged reads files from multiple filers in parallel (one goroutine
+// per filer with prefetching), then merges entries in timestamp order via min-heap.
+func readMultiFilersMerged(
+	filerOrder []string,
+	perFiler map[string][]*filer_pb.LogFileChunkRef,
+	newReader LogFileReaderFn,
+	startTsNs, stopTsNs int64,
+	pathPrefix string,
+	processEventFn ProcessMetadataFunc,
+) (lastTsNs int64, err error) {
+
+	// Each filer gets a goroutine that reads its files (with prefetching)
+	// and sends entries to a channel. The main goroutine merges via min-heap.
+	type filerStream struct {
+		filerId string
+		entryCh chan *filer_pb.LogEntry
+	}
+
+	streams := make([]filerStream, len(filerOrder))
+	var wg sync.WaitGroup
+
+	for i, filerId := range filerOrder {
+		entryCh := make(chan *filer_pb.LogEntry, 512)
+		streams[i] = filerStream{filerId: filerId, entryCh: entryCh}
+
+		wg.Add(1)
+		go func(refs []*filer_pb.LogFileChunkRef, ch chan *filer_pb.LogEntry) {
+			defer wg.Done()
+			defer close(ch)
+			readFilerFilesToChannel(refs, newReader, startTsNs, stopTsNs, ch)
+		}(perFiler[filerId], entryCh)
+	}
+
+	// Seed the min-heap with the first entry from each filer
+	pq := &logEntryHeap{}
+	heap.Init(pq)
+	for i := range streams {
+		if entry, ok := <-streams[i].entryCh; ok {
+			heap.Push(pq, &logEntryHeapItem{entry: entry, filerIdx: i})
 		}
 	}
+
+	// Merge loop: pop minimum, process, advance that filer
+	for pq.Len() > 0 {
+		item := heap.Pop(pq).(*logEntryHeapItem)
+
+		lastTsNs, err = processOneLogEntry(item.entry, pathPrefix, processEventFn)
+		if err != nil {
+			// Drain remaining channels so goroutines exit
+			for i := range streams {
+				for range streams[i].entryCh {
+				}
+			}
+			return
+		}
+
+		// Read next entry from the same filer
+		if entry, ok := <-streams[item.filerIdx].entryCh; ok {
+			heap.Push(pq, &logEntryHeapItem{entry: entry, filerIdx: item.filerIdx})
+		}
+	}
+
+	wg.Wait()
 	return
+}
+
+// readFilerFilesToChannel reads files for one filer with prefetching and sends
+// entries to a channel. Used by the parallel multi-filer merge.
+func readFilerFilesToChannel(
+	refs []*filer_pb.LogFileChunkRef,
+	newReader LogFileReaderFn,
+	startTsNs, stopTsNs int64,
+	ch chan *filer_pb.LogEntry,
+) {
+	type prefetchResult struct {
+		entries []*filer_pb.LogEntry
+		err     error
+	}
+
+	startPrefetch := func(ref *filer_pb.LogFileChunkRef) chan prefetchResult {
+		resultCh := make(chan prefetchResult, 1)
+		go func() {
+			entries, err := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
+			resultCh <- prefetchResult{entries, err}
+		}()
+		return resultCh
+	}
+
+	var pendingCh chan prefetchResult
+	if len(refs) > 0 {
+		pendingCh = startPrefetch(refs[0])
+	}
+
+	for i, ref := range refs {
+		result := <-pendingCh
+
+		// Prefetch next file while we send current entries
+		if i+1 < len(refs) {
+			pendingCh = startPrefetch(refs[i+1])
+		}
+
+		if result.err != nil {
+			glog.V(0).Infof("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, result.err)
+			continue
+		}
+
+		for _, entry := range result.entries {
+			ch <- entry
+		}
+	}
 }
 
 func processOneLogEntry(logEntry *filer_pb.LogEntry, pathPrefix string, processEventFn ProcessMetadataFunc) (int64, error) {
@@ -145,7 +261,7 @@ func processOneLogEntry(logEntry *filer_pb.LogEntry, pathPrefix string, processE
 
 type logEntryHeapItem struct {
 	entry    *filer_pb.LogEntry
-	filerIdx int // index into filerData slice
+	filerIdx int
 }
 
 type logEntryHeap []*logEntryHeapItem
@@ -165,8 +281,6 @@ func (h *logEntryHeap) Pop() any {
 
 // --- log file parsing (shared format with server's LogFileIterator.getNext) ---
 
-// readLogFileEntries reads a single log file and parses the
-// [4-byte size | protobuf LogEntry] records within. Filters by timestamp range.
 func readLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChunk, startTsNs, stopTsNs int64) ([]*filer_pb.LogEntry, error) {
 	reader, err := newReader(chunks)
 	if err != nil {
@@ -216,7 +330,6 @@ func readLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChunk,
 	return entries, nil
 }
 
-// matchesPathPrefix checks if a subscription event matches the given path prefix.
 func matchesPathPrefix(resp *filer_pb.SubscribeMetadataResponse, pathPrefix string) bool {
 	if pathPrefix == "" || pathPrefix == "/" {
 		return true
