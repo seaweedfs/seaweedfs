@@ -65,7 +65,7 @@ func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId,
 		}
 		return normalizeConditionalTargetEntry(entry), nil
 	case s3_constants.VersioningSuspended, "":
-		entry, err := s3a.getEntry(bucketDir, normalizedObject)
+		entry, err := s3a.resolveObjectEntry(bucket, normalizedObject)
 		if err != nil {
 			return nil, err
 		}
