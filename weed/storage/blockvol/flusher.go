@@ -467,6 +467,14 @@ func (f *Flusher) CheckpointLSN() uint64 {
 	return f.checkpointLSN
 }
 
+// SetCheckpointLSN updates the flusher's internal checkpoint state.
+// Used after rebuild to sync flusher with the rebuilt superblock state.
+func (f *Flusher) SetCheckpointLSN(lsn uint64) {
+	f.mu.Lock()
+	f.checkpointLSN = lsn
+	f.mu.Unlock()
+}
+
 // CloseBatchIO releases the batch I/O backend resources (e.g. io_uring ring).
 // Must be called after Stop() and the final FlushOnce().
 func (f *Flusher) CloseBatchIO() error {

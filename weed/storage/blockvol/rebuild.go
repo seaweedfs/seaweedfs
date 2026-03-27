@@ -337,6 +337,13 @@ extentDone:
 	}
 	vol.mu.Unlock()
 
+	// Sync flusher's internal checkpoint with the rebuilt superblock state.
+	// Without this, NewReplicaReceiver reads stale checkpointLSN=0 from
+	// flusher.CheckpointLSN(), causing post-rebuild flushedLSN to be wrong.
+	if vol.flusher != nil {
+		vol.flusher.SetCheckpointLSN(checkpointLSN)
+	}
+
 	conn.Close()
 
 	// Second catch-up scan: capture writes during extent copy.
