@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 )
 
 type executionResult struct {
@@ -97,8 +99,8 @@ func (h *Handler) executeLifecycleForBucket(
 	var batchSize int
 	if config.BatchSize <= 0 {
 		batchSize = defaultBatchSize
-	} else if config.BatchSize > math.MaxInt32 {
-		batchSize = math.MaxInt32
+	} else if config.BatchSize > math.MaxInt {
+		batchSize = math.MaxInt
 	} else {
 		batchSize = int(config.BatchSize)
 	}
@@ -142,9 +144,12 @@ func (h *Handler) executeLifecycleForBucket(
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
 			Stage: "cleaning_delete_markers", Message: "cleaning expired delete markers",
 		})
-		cleaned, cleanErrs := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, config.MaxDeletesPerBucket)
+		cleaned, cleanErrs, cleanCtxErr := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, config.MaxDeletesPerBucket)
 		result.deleteMarkersClean = int64(cleaned)
 		result.errors += int64(cleanErrs)
+		if cleanCtxErr != nil {
+			return result, cleanCtxErr
+		}
 	}
 
 	// Abort incomplete multipart uploads.
@@ -169,21 +174,19 @@ func cleanupDeleteMarkers(
 	client filer_pb.SeaweedFilerClient,
 	bucketsPath, bucket string,
 	limit int64,
-) (cleaned, errors int) {
+) (cleaned, errors int, ctxErr error) {
 	bucketPath := path.Join(bucketsPath, bucket)
 
 	dirsToProcess := []string{bucketPath}
 	for len(dirsToProcess) > 0 {
-		select {
-		case <-ctx.Done():
-			return cleaned, errors
-		default:
+		if ctx.Err() != nil {
+			return cleaned, errors, ctx.Err()
 		}
 
 		dir := dirsToProcess[0]
 		dirsToProcess = dirsToProcess[1:]
 
-		_ = filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		listErr := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
 				// Skip .uploads directories.
 				if entry.Name != ".uploads" {
@@ -207,11 +210,15 @@ func cleanupDeleteMarkers(
 			return nil
 		}, "", false, 10000)
 
+		if listErr != nil && !strings.Contains(listErr.Error(), "limit reached") {
+			return cleaned, errors, fmt.Errorf("list %s: %w", dir, listErr)
+		}
+
 		if limit > 0 && int64(cleaned+errors) >= limit {
 			break
 		}
 	}
-	return cleaned, errors
+	return cleaned, errors, nil
 }
 
 // isDeleteMarker checks if an entry is an S3 delete marker.
@@ -219,7 +226,7 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 	if entry == nil || entry.Extended == nil {
 		return false
 	}
-	return string(entry.Extended["Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"]) == "true"
+	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
 }
 
 // abortIncompleteMPUs scans the .uploads directory under a bucket and
@@ -233,11 +240,9 @@ func abortIncompleteMPUs(
 	uploadsDir := path.Join(bucketsPath, bucket, ".uploads")
 	cutoff := time.Now().Add(-time.Duration(olderThanDays) * 24 * time.Hour)
 
-	_ = filer_pb.SeaweedList(ctx, client, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-		select {
-		case <-ctx.Done():
+	listErr := filer_pb.SeaweedList(ctx, client, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if ctx.Err() != nil {
 			return ctx.Err()
-		default:
 		}
 
 		if !entry.IsDirectory {
@@ -264,6 +269,10 @@ func abortIncompleteMPUs(
 		}
 		return nil
 	}, "", false, 10000)
+
+	if listErr != nil && !strings.Contains(listErr.Error(), "limit reached") {
+		glog.Errorf("s3_lifecycle: failed to list uploads in %s: %v", uploadsDir, listErr)
+	}
 
 	return aborted, errors
 }
