@@ -21,6 +21,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	"github.com/seaweedfs/seaweedfs/weed/sftpd/user"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"google.golang.org/grpc"
 )
 
@@ -322,6 +323,10 @@ func (fs *SftpServer) removeDir(absPath string) error {
 func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User) error {
 	dir, filename := util.FullPath(filepath).DirAndName()
 	uploadUrl := fmt.Sprintf("http://%s%s", fs.filerAddr, filepath)
+	// Let the global HTTP client normalize the scheme to https:// when TLS is configured
+	if normalizedUrl, err := util_http.NormalizeUrl(uploadUrl); err == nil {
+		uploadUrl = normalizedUrl
+	}
 
 	// Compute MD5 while uploading
 	hash := md5.New()
@@ -342,7 +347,7 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 		}
 	}
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := util_http.Do(req)
 	if err != nil {
 		return fmt.Errorf("upload to filer: %w", err)
 	}
