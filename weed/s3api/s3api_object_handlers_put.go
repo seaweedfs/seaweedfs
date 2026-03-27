@@ -1854,8 +1854,7 @@ func (s3a *S3ApiServer) lockAndRecheckConditionalHeaders(r *http.Request, bucket
 	}
 
 	lockKey := s3a.toFilerPath(bucket, object)
-	lockClient := cluster.NewLockClient(s3a.option.GrpcDialOption, s3a.option.Filers[0])
-	lock := lockClient.NewShortLivedLock(lockKey, fmt.Sprintf("s3-cond-%d", s3a.randomClientId))
+	lock := s3a.lockClient.NewShortLivedLock(lockKey, fmt.Sprintf("s3-cond-%d", s3a.randomClientId))
 
 	entry, err := s3a.resolveObjectEntry(bucket, object)
 	if err != nil {

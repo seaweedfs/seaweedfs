@@ -82,6 +82,7 @@ type S3ApiServer struct {
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
+	lockClient            *cluster.LockClient
 }
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
@@ -180,6 +181,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		cipher:                option.Cipher,
+		lockClient:            cluster.NewLockClient(option.GrpcDialOption, option.Filers[0]),
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting
