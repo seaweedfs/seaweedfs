@@ -136,7 +136,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 	// After git reset --hard on FUSE (Phase 5), the kernel dcache can
 	// permanently lose the directory entry. Wrap the pull in a recovery
 	// loop that re-clones from the bare repo if the clone has vanished.
-	pullFromCommitWithRecovery(t, bareRepo, mountClone, commit2)
+	pullFromCommitWithRecovery(t, bareRepo, localClone, mountClone, commit2)
 
 	newHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit5, newHead, "HEAD should be commit 5 after pull")
@@ -318,6 +318,23 @@ func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 	require.NoError(t, tryEnsureMountClone(bareRepo, mountClone))
 }
 
+// tryEnsureBareRepo verifies the bare repo on the FUSE mount exists.
+// If it has vanished, it re-creates it from the local clone.
+func tryEnsureBareRepo(bareRepo, localClone string) error {
+	if _, err := os.Stat(filepath.Join(bareRepo, "HEAD")); err == nil {
+		return nil
+	}
+	os.RemoveAll(bareRepo)
+	time.Sleep(500 * time.Millisecond)
+	if _, err := tryGitCommand("", "init", "--bare", bareRepo); err != nil {
+		return fmt.Errorf("re-init bare repo: %w", err)
+	}
+	if _, err := tryGitCommand(localClone, "push", "--force", bareRepo, "master"); err != nil {
+		return fmt.Errorf("re-push to bare repo: %w", err)
+	}
+	return nil
+}
+
 // tryEnsureMountClone is like ensureMountClone but returns an error instead
 // of failing the test, for use in recovery loops.
 func tryEnsureMountClone(bareRepo, mountClone string) error {
@@ -349,14 +366,14 @@ func tryGitCommand(dir string, args ...string) (string, error) {
 }
 
 // pullFromCommitWithRecovery resets to fromCommit and runs git pull. If the
-// clone directory vanishes (a known FUSE metadata issue after git reset),
-// it removes the clone, re-creates it from the bare repo, and retries.
-func pullFromCommitWithRecovery(t *testing.T, bareRepo, cloneDir, fromCommit string) {
+// FUSE mount loses directories (both the bare repo and the working clone can
+// vanish after heavy git operations), it re-creates them and retries.
+func pullFromCommitWithRecovery(t *testing.T, bareRepo, localClone, cloneDir, fromCommit string) {
 	t.Helper()
 	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if lastErr = tryPullFromCommit(t, bareRepo, cloneDir, fromCommit); lastErr == nil {
+		if lastErr = tryPullFromCommit(t, bareRepo, localClone, cloneDir, fromCommit); lastErr == nil {
 			return
 		}
 		if attempt == maxAttempts {
@@ -368,8 +385,13 @@ func pullFromCommitWithRecovery(t *testing.T, bareRepo, cloneDir, fromCommit str
 	}
 }
 
-func tryPullFromCommit(t *testing.T, bareRepo, cloneDir, fromCommit string) error {
+func tryPullFromCommit(t *testing.T, bareRepo, localClone, cloneDir, fromCommit string) error {
 	t.Helper()
+	// The bare repo lives on the FUSE mount and can also vanish.
+	// Re-create it from the local clone (which is on local disk).
+	if err := tryEnsureBareRepo(bareRepo, localClone); err != nil {
+		return err
+	}
 	if err := tryEnsureMountClone(bareRepo, cloneDir); err != nil {
 		return err
 	}
