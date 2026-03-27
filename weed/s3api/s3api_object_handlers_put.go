@@ -741,6 +741,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	glog.V(3).Infof("putToFiler: About to create entry - dir=%s, name=%s, chunks=%d, extended keys=%d",
 		path.Dir(filePath), path.Base(filePath), len(entry.Chunks), len(entry.Extended))
 	var createErr error
+	var rollbackErr error
 	entryCreated := false
 	preconditionFn := func() s3err.ErrorCode {
 		if object == "" {
@@ -766,7 +767,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		}
 		entryCreated = true
 		if afterCreate != nil {
-			return afterCreate(entry)
+			if afterCreateCode := afterCreate(entry); afterCreateCode != s3err.ErrNone {
+				rollbackErr = s3a.rmObject(path.Dir(filePath), path.Base(filePath), true, false)
+				if rollbackErr != nil {
+					glog.Errorf("putToFiler: failed to rollback created entry for %s after post-create error: %v", filePath, rollbackErr)
+				} else {
+					entryCreated = false
+				}
+				return afterCreateCode
+			}
 		}
 		return s3err.ErrNone
 	})
