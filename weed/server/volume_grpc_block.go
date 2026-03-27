@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // AllocateBlockVolume creates a new block volume on this volume server.
@@ -30,6 +31,10 @@ func (vs *VolumeServer) AllocateBlockVolume(_ context.Context, req *volume_serve
 	host := vs.blockService.ListenAddr()
 	if idx := strings.LastIndex(host, ":"); idx >= 0 {
 		host = host[:idx]
+	}
+	// Canonicalize: if host is empty (VS bound to ":port"), resolve to routable IP.
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = blockvol.PreferredOutboundIP()
 	}
 
 	resp := &volume_server_pb.AllocateBlockVolumeResponse{

@@ -27,7 +27,7 @@ func canonicalizeListenerAddr(addr net.Addr, advertisedHost string) string {
 	// Wildcard bind — use advertised host or fallback.
 	host := advertisedHost
 	if host == "" {
-		host = preferredOutboundIP()
+		host = PreferredOutboundIP()
 	}
 	if host == "" {
 		// Last resort: return raw address (will be ":port").
@@ -42,7 +42,8 @@ func canonicalizeListenerAddr(addr net.Addr, advertisedHost string) string {
 //
 // This is a fallback — callers should prefer an explicitly configured
 // advertised host when available.
-func preferredOutboundIP() string {
+// PreferredOutboundIP returns the machine's preferred outbound IP as a string.
+func PreferredOutboundIP() string {
 	conn, err := net.Dial("udp", "8.8.8.8:80")
 	if err != nil {
 		return ""

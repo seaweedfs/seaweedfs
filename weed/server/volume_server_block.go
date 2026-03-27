@@ -370,6 +370,9 @@ func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCt
 		return
 	}
 	// Track replication state for heartbeat reporting (R1-4).
+	// These addresses are what the primary ships to — they come from the
+	// master's assignment. They should already be canonical (from
+	// AllocateBlockVolumeResponse), but if not, they'll be reported as-is.
 	bs.replMu.Lock()
 	if bs.replStates == nil {
 		bs.replStates = make(map[string]*volReplState)
