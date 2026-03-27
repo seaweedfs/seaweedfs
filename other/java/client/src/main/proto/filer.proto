@@ -391,12 +391,22 @@ message SubscribeMetadataRequest {
     int32 client_epoch = 9;
     repeated string directories = 10;  // exact directory to watch
     bool client_supports_batching = 11; // client can unpack SubscribeMetadataResponse.events
+    bool client_supports_metadata_chunks = 12; // client can read log file chunks from volume servers
 }
 message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
     repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
+    repeated LogFileChunkRef log_file_refs = 5;    // log file chunk refs for client direct-read
+}
+// A persisted log file that the client can read directly from volume servers.
+// The file format is: [4-byte size | protobuf LogEntry] repeated.
+// Each LogEntry.Data contains a marshaled SubscribeMetadataResponse.
+message LogFileChunkRef {
+    repeated FileChunk chunks = 1; // chunk references (fids) to read from volume servers
+    int64 file_ts_ns = 2;         // minute-level timestamp of the log file
+    string filer_id = 3;          // filer signature suffix from log filename
 }
 
 message TraverseBfsMetadataRequest {

@@ -40,6 +40,74 @@ func (f *Filer) collectPersistedLogBuffer(startPosition log_buffer.MessagePositi
 
 }
 
+// CollectLogFileRefs lists persisted log files and returns their chunk references
+// without reading any data from volume servers. The client can use the returned
+// fids to read log file data directly from volume servers in parallel.
+func (f *Filer) CollectLogFileRefs(ctx context.Context, startPosition log_buffer.MessagePosition, stopTsNs int64) (refs []*filer_pb.LogFileChunkRef, lastTsNs int64, err error) {
+	if stopTsNs != 0 && startPosition.Time.UnixNano() > stopTsNs {
+		return nil, 0, nil
+	}
+
+	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
+	startHourMinute := fmt.Sprintf("%02d-%02d", startPosition.Time.Hour(), startPosition.Time.Minute())
+	var stopDate, stopHourMinute string
+	if stopTsNs != 0 {
+		stopTime := time.Unix(0, stopTsNs).UTC()
+		stopDate = fmt.Sprintf("%04d-%02d-%02d", stopTime.Year(), stopTime.Month(), stopTime.Day())
+		stopHourMinute = fmt.Sprintf("%02d-%02d", stopTime.Hour(), stopTime.Minute())
+	}
+
+	dayEntries, _, listDayErr := f.ListDirectoryEntries(ctx, SystemLogDir, startDate, true, math.MaxInt32, "", "", "")
+	if listDayErr != nil {
+		return nil, 0, fmt.Errorf("fail to list log by day: %w", listDayErr)
+	}
+
+	for _, dayEntry := range dayEntries {
+		if stopDate != "" && strings.Compare(dayEntry.Name(), stopDate) > 0 {
+			break
+		}
+
+		hourMinuteEntries, _, listErr := f.ListDirectoryEntries(ctx, util.NewFullPath(SystemLogDir, dayEntry.Name()), "", false, math.MaxInt32, "", "", "")
+		if listErr != nil {
+			return nil, 0, fmt.Errorf("fail to list log %s: %w", dayEntry.Name(), listErr)
+		}
+
+		for _, hmEntry := range hourMinuteEntries {
+			hourMinute := util.FileNameBase(hmEntry.Name())
+			if dayEntry.Name() == startDate && strings.Compare(hourMinute, startHourMinute) < 0 {
+				continue
+			}
+			if dayEntry.Name() == stopDate && stopHourMinute != "" && strings.Compare(hourMinute, stopHourMinute) > 0 {
+				break
+			}
+
+			tsMinute := fmt.Sprintf("%s-%s", dayEntry.Name(), hourMinute)
+			t, parseErr := time.Parse("2006-01-02-15-04", tsMinute)
+			if parseErr != nil {
+				glog.Errorf("failed to parse %s: %v", tsMinute, parseErr)
+				continue
+			}
+			filerId := getFilerId(hmEntry.Name())
+			if filerId == "" {
+				continue
+			}
+
+			chunks := hmEntry.GetChunks()
+			if len(chunks) == 0 {
+				continue
+			}
+
+			refs = append(refs, &filer_pb.LogFileChunkRef{
+				Chunks:   chunks,
+				FileTsNs: t.UnixNano(),
+				FilerId:  filerId,
+			})
+			lastTsNs = t.UnixNano()
+		}
+	}
+	return
+}
+
 func (f *Filer) HasPersistedLogFiles(startPosition log_buffer.MessagePosition) (bool, error) {
 	startDate := fmt.Sprintf("%04d-%02d-%02d", startPosition.Time.Year(), startPosition.Time.Month(), startPosition.Time.Day())
 	dayEntries, _, listDayErr := f.ListDirectoryEntries(context.Background(), SystemLogDir, startDate, true, 1, "", "", "")

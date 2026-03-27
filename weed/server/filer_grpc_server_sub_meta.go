@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -196,7 +197,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+		if req.ClientSupportsMetadataChunks {
+			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+		} else {
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 		}
@@ -331,7 +336,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			// Record the position we are about to read from
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			if req.ClientSupportsMetadataChunks {
+				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+			} else {
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			}
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -445,6 +454,35 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 
 		return false, nil
 	}
+}
+
+// sendLogFileRefs collects persisted log file chunk references and sends them
+// to the client so it can read the data directly from volume servers.
+// This does zero volume server I/O — it only lists filer store directory entries.
+// Sends directly on the gRPC stream (bypasses pipelinedSender) because ref
+// messages have TsNs=0 and must not be batched into Events by the sender.
+func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64) (lastTsNs int64, isDone bool, err error) {
+	refs, lastTsNs, err := fs.filer.CollectLogFileRefs(ctx, startPosition, stopTsNs)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(refs) == 0 {
+		return 0, false, nil
+	}
+
+	const maxRefsPerMessage = 64
+	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		end := i + maxRefsPerMessage
+		if end > len(refs) {
+			end = len(refs)
+		}
+		if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
+			LogFileRefs: refs[i:end],
+		}); err != nil {
+			return lastTsNs, false, err
+		}
+	}
+	return lastTsNs, false, nil
 }
 
 func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {

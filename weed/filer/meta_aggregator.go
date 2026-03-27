@@ -199,13 +199,20 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
+		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
+		lookupFn := LookupFn(filerClient{client})
+		logFileReaderFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
+			return NewChunkStreamReaderFromLookup(ctx, lookupFn, chunks), nil
+		}
+
 		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:             "filer:" + string(self),
-			PathPrefix:             "/",
-			SinceNs:                lastTsNs,
-			ClientId:               ma.filer.UniqueFilerId,
-			ClientEpoch:            atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
-			ClientSupportsBatching: true,
+			ClientName:                    "filer:" + string(self),
+			PathPrefix:                    "/",
+			SinceNs:                       lastTsNs,
+			ClientId:                      ma.filer.UniqueFilerId,
+			ClientEpoch:                   atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
+			ClientSupportsBatching:        true,
+			ClientSupportsMetadataChunks:  true,
 		})
 		if err != nil {
 			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
@@ -222,6 +229,8 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			return nil
 		}
 
+		var pendingRefs []*filer_pb.LogFileChunkRef
+
 		for {
 			resp, listenErr := stream.Recv()
 			if listenErr == io.EOF {
@@ -232,8 +241,32 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return listenErr
 			}
 
-			if err := processOne(resp); err != nil {
-				return err
+			// Accumulate log file chunk references
+			if len(resp.LogFileRefs) > 0 {
+				pendingRefs = append(pendingRefs, resp.LogFileRefs...)
+				continue
+			}
+
+			// Process accumulated refs (transition from disk to in-memory)
+			if len(pendingRefs) > 0 {
+				lastTs, readErr := pb.ReadLogFileRefs(pendingRefs, logFileReaderFn,
+					lastTsNs, 0, pb.PathFilter{PathPrefix: "/"},
+					func(event *filer_pb.SubscribeMetadataResponse) error {
+						return processOne(event)
+					})
+				if readErr != nil {
+					return fmt.Errorf("read log file refs from %s: %w", peer, readErr)
+				}
+				if lastTs > 0 {
+					lastTsNs = lastTs
+				}
+				pendingRefs = nil
+			}
+
+			if resp.EventNotification != nil {
+				if err := processOne(resp); err != nil {
+					return err
+				}
 			}
 			// Process any additional batched events
 			for _, batchedEvent := range resp.Events {
@@ -301,4 +334,23 @@ func (ma *MetaAggregator) updateOffset(f *Filer, peer pb.ServerAddress, peerSign
 	glog.V(4).Infof("updateOffset %s : %d", peer, lastTsNs)
 
 	return
+}
+
+// filerClient adapts a SeaweedFilerClient to the FilerClient interface
+// for use with LookupFn. Used by MetaAggregator to resolve volume IDs
+// on peer filers.
+type filerClient struct {
+	client filer_pb.SeaweedFilerClient
+}
+
+func (fc filerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fn(fc.client)
+}
+
+func (fc filerClient) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
+
+func (fc filerClient) GetDataCenter() string {
+	return ""
 }

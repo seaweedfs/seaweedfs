@@ -34,6 +34,10 @@ type MetadataFollowOption struct {
 	StartTsNs              int64
 	StopTsNs               int64
 	EventErrorType         EventErrorType
+	// LogFileReaderFn, when non-nil, enables metadata chunks mode:
+	// the server sends log file chunk fids instead of streaming events,
+	// and the client reads directly from volume servers.
+	LogFileReaderFn        LogFileReaderFn
 }
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
@@ -62,16 +66,17 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:              option.ClientName,
-			PathPrefix:              option.PathPrefix,
-			PathPrefixes:            option.AdditionalPathPrefixes,
-			Directories:             option.DirectoriesToWatch,
-			SinceNs:                 option.StartTsNs,
-			Signature:               option.SelfSignature,
-			ClientId:                option.ClientId,
-			ClientEpoch:             option.ClientEpoch,
-			UntilNs:                 option.StopTsNs,
-			ClientSupportsBatching:  true,
+			ClientName:                    option.ClientName,
+			PathPrefix:                    option.PathPrefix,
+			PathPrefixes:                  option.AdditionalPathPrefixes,
+			Directories:                   option.DirectoriesToWatch,
+			SinceNs:                       option.StartTsNs,
+			Signature:                     option.SelfSignature,
+			ClientId:                      option.ClientId,
+			ClientEpoch:                   option.ClientEpoch,
+			UntilNs:                       option.StopTsNs,
+			ClientSupportsBatching:        true,
+			ClientSupportsMetadataChunks:  option.LogFileReaderFn != nil,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
@@ -97,6 +102,8 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			}
 		}
 
+		var pendingRefs []*filer_pb.LogFileChunkRef
+
 		for {
 			resp, listenErr := stream.Recv()
 			if listenErr == io.EOF {
@@ -106,11 +113,38 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				return listenErr
 			}
 
-			// Process the first event (always present in top-level fields)
-			if err := processEventFn(resp); err != nil {
-				handleErr(resp, err)
+			// Accumulate log file chunk references (metadata chunks mode)
+			if len(resp.LogFileRefs) > 0 {
+				pendingRefs = append(pendingRefs, resp.LogFileRefs...)
+				continue
 			}
-			option.StartTsNs = resp.TsNs
+
+			// Process accumulated refs before handling normal events (transition point)
+			if len(pendingRefs) > 0 && option.LogFileReaderFn != nil {
+				lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
+					option.StartTsNs, option.StopTsNs,
+					PathFilter{
+						PathPrefix:             option.PathPrefix,
+						AdditionalPathPrefixes: option.AdditionalPathPrefixes,
+						DirectoriesToWatch:     option.DirectoriesToWatch,
+					},
+					processEventFn)
+				if readErr != nil {
+					return fmt.Errorf("read log file refs: %w", readErr)
+				}
+				if lastTs > 0 {
+					option.StartTsNs = lastTs
+				}
+				pendingRefs = nil
+			}
+
+			// Process the first event (always present in top-level fields)
+			if resp.EventNotification != nil {
+				if err := processEventFn(resp); err != nil {
+					handleErr(resp, err)
+				}
+				option.StartTsNs = resp.TsNs
+			}
 
 			// Process any additional batched events
 			for _, batchedEvent := range resp.Events {
