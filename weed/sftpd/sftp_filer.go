@@ -324,9 +324,11 @@ func (fs *SftpServer) putFile(filepath string, reader io.Reader, user *user.User
 	dir, filename := util.FullPath(filepath).DirAndName()
 	uploadUrl := fmt.Sprintf("http://%s%s", fs.filerAddr, filepath)
 	// Let the global HTTP client normalize the scheme to https:// when TLS is configured
-	if normalizedUrl, err := util_http.NormalizeUrl(uploadUrl); err == nil {
-		uploadUrl = normalizedUrl
+	normalizedUrl, err := util_http.NormalizeUrl(uploadUrl)
+	if err != nil {
+		return fmt.Errorf("normalize upload url %q: %w", uploadUrl, err)
 	}
+	uploadUrl = normalizedUrl
 
 	// Compute MD5 while uploading
 	hash := md5.New()
