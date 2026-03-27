@@ -6,14 +6,12 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	balancetask "github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
 	workertypes "github.com/seaweedfs/seaweedfs/weed/worker/types"
 	"google.golang.org/protobuf/proto"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func TestDecodeVolumeBalanceTaskParamsFromPayload(t *testing.T) {
@@ -98,9 +96,6 @@ func TestDeriveBalanceWorkerConfig(t *testing.T) {
 		"min_server_count": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 5},
 		},
-		"min_interval_seconds": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 33},
-		},
 	}
 
 	cfg := deriveBalanceWorkerConfig(values)
@@ -109,9 +104,6 @@ func TestDeriveBalanceWorkerConfig(t *testing.T) {
 	}
 	if cfg.TaskConfig.MinServerCount != 5 {
 		t.Fatalf("expected min_server_count 5, got %d", cfg.TaskConfig.MinServerCount)
-	}
-	if cfg.MinIntervalSeconds != 33 {
-		t.Fatalf("expected min_interval_seconds 33, got %d", cfg.MinIntervalSeconds)
 	}
 	// Defaults for batch config when not specified
 	if cfg.MaxConcurrentMoves != defaultMaxConcurrentMoves {
@@ -348,35 +340,6 @@ func TestVolumeBalanceHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
-func TestVolumeBalanceHandlerDetectSkipsByMinInterval(t *testing.T) {
-	handler := NewVolumeBalanceHandler(nil)
-	sender := &recordingDetectionSender{}
-	err := handler.Detect(context.Background(), &plugin_pb.RunDetectionRequest{
-		JobType:           "volume_balance",
-		LastSuccessfulRun: timestamppb.New(time.Now().Add(-3 * time.Second)),
-		WorkerConfigValues: map[string]*plugin_pb.ConfigValue{
-			"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 10}},
-		},
-	}, sender)
-	if err != nil {
-		t.Fatalf("detect returned err = %v", err)
-	}
-	if sender.proposals == nil {
-		t.Fatalf("expected proposals message")
-	}
-	if len(sender.proposals.Proposals) != 0 {
-		t.Fatalf("expected zero proposals, got %d", len(sender.proposals.Proposals))
-	}
-	if sender.complete == nil || !sender.complete.Success {
-		t.Fatalf("expected successful completion message")
-	}
-	if len(sender.events) == 0 {
-		t.Fatalf("expected detector activity events")
-	}
-	if !strings.Contains(sender.events[0].Message, "min interval") {
-		t.Fatalf("unexpected skip-by-interval message: %q", sender.events[0].Message)
-	}
-}
 
 func TestEmitVolumeBalanceDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}

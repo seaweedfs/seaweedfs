@@ -14,7 +14,6 @@ type Config struct {
 	base.BaseConfig
 	GarbageThreshold    float64 `json:"garbage_threshold"`
 	MinVolumeAgeSeconds int     `json:"min_volume_age_seconds"`
-	MinIntervalSeconds  int     `json:"min_interval_seconds"`
 }
 
 // NewDefaultConfig creates a new default vacuum configuration
@@ -25,9 +24,8 @@ func NewDefaultConfig() *Config {
 			ScanIntervalSeconds: 2 * 60 * 60, // 2 hours
 			MaxConcurrent:       2,
 		},
-		GarbageThreshold:    0.3,              // 30%
-		MinVolumeAgeSeconds: 24 * 60 * 60,     // 24 hours
-		MinIntervalSeconds:  7 * 24 * 60 * 60, // 7 days
+		GarbageThreshold:    0.3,          // 30%
+		MinVolumeAgeSeconds: 24 * 60 * 60, // 24 hours
 	}
 }
 
@@ -40,9 +38,8 @@ func (c *Config) ToTaskPolicy() *worker_pb.TaskPolicy {
 		CheckIntervalSeconds:  int32(c.ScanIntervalSeconds),
 		TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 			VacuumConfig: &worker_pb.VacuumTaskConfig{
-				GarbageThreshold:   float64(c.GarbageThreshold),
-				MinVolumeAgeHours:  int32(c.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-				MinIntervalSeconds: int32(c.MinIntervalSeconds),
+				GarbageThreshold:  float64(c.GarbageThreshold),
+				MinVolumeAgeHours: int32(c.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
 			},
 		},
 	}
@@ -63,7 +60,6 @@ func (c *Config) FromTaskPolicy(policy *worker_pb.TaskPolicy) error {
 	if vacuumConfig := policy.GetVacuumConfig(); vacuumConfig != nil {
 		c.GarbageThreshold = float64(vacuumConfig.GarbageThreshold)
 		c.MinVolumeAgeSeconds = int(vacuumConfig.MinVolumeAgeHours * 3600) // Convert hours to seconds
-		c.MinIntervalSeconds = int(vacuumConfig.MinIntervalSeconds)
 	}
 
 	return nil
@@ -166,22 +162,6 @@ func GetConfigSpec() base.ConfigSpec {
 				HelpText:     "Prevents vacuuming of recently created volumes that may still be actively written to",
 				Placeholder:  "24",
 				Unit:         config.UnitHours,
-				InputType:    "interval",
-				CSSClasses:   "form-control",
-			},
-			{
-				Name:         "min_interval_seconds",
-				JSONName:     "min_interval_seconds",
-				Type:         config.FieldTypeInterval,
-				DefaultValue: 7 * 24 * 60 * 60,
-				MinValue:     1 * 24 * 60 * 60,
-				MaxValue:     30 * 24 * 60 * 60,
-				Required:     true,
-				DisplayName:  "Minimum Interval",
-				Description:  "Minimum time between vacuum operations on the same volume",
-				HelpText:     "Prevents excessive vacuuming of the same volume by enforcing a minimum wait time",
-				Placeholder:  "7",
-				Unit:         config.UnitDays,
 				InputType:    "interval",
 				CSSClasses:   "form-control",
 			},

@@ -32,8 +32,7 @@ func init() {
 }
 
 type erasureCodingWorkerConfig struct {
-	TaskConfig         *erasurecodingtask.Config
-	MinIntervalSeconds int
+	TaskConfig *erasurecodingtask.Config
 }
 
 // ErasureCodingHandler is the plugin job handler for erasure coding.
@@ -132,15 +131,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 1}},
 						},
 						{
-							Name:        "min_interval_seconds",
-							Label:       "Minimum Detection Interval (s)",
-							Description: "Skip detection if the last successful run is more recent than this interval.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
-						{
 							Name:        "preferred_tags",
 							Label:       "Preferred Tags",
 							Description: "Comma-separated disk tags to prioritize for EC shard placement, ordered by preference.",
@@ -160,9 +150,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 				"min_size_mb": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
-				},
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
 				},
 				"preferred_tags": {
 					Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
@@ -190,9 +177,6 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			"min_size_mb": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30},
 			},
-			"min_interval_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60},
-			},
 			"preferred_tags": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""},
 			},
@@ -216,30 +200,6 @@ func (h *ErasureCodingHandler) Detect(
 	}
 
 	workerConfig := deriveErasureCodingWorkerConfig(request.GetWorkerConfigValues())
-	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
-		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(BuildDetectorActivity(
-			"skipped_by_interval",
-			fmt.Sprintf("ERASURE CODING: Detection skipped due to min interval (%s)", minInterval),
-			map[string]*plugin_pb.ConfigValue{
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
-				},
-			},
-		))
-		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
-			JobType:   "erasure_coding",
-			Proposals: []*plugin_pb.JobProposal{},
-			HasMore:   false,
-		}); err != nil {
-			return err
-		}
-		return sender.SendComplete(&plugin_pb.DetectionComplete{
-			JobType:        "erasure_coding",
-			Success:        true,
-			TotalProposals: 0,
-		})
-	}
 
 	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	if collectionFilter != "" {
@@ -629,15 +589,10 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	}
 	taskConfig.MinSizeMB = minSizeMB
 
-	minIntervalSeconds := int(readInt64Config(values, "min_interval_seconds", 60*60))
-	if minIntervalSeconds < 0 {
-		minIntervalSeconds = 0
-	}
 	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &erasureCodingWorkerConfig{
 		TaskConfig:         taskConfig,
-		MinIntervalSeconds: minIntervalSeconds,
 	}
 }
 

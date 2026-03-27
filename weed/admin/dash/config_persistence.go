@@ -291,7 +291,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
 	return &VacuumTaskConfig{
 		GarbageThreshold:   0.3,
 		MinVolumeAgeHours:  24,
-		MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 	}, nil
 }
 
@@ -308,7 +307,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   0.3,
 					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 				},
 			},
 		}, nil
@@ -329,7 +327,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   0.3,
 					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 				},
 			},
 		}, nil
@@ -710,7 +707,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
 					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
 				},
 			},
 		}

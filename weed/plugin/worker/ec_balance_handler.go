@@ -36,8 +36,7 @@ func init() {
 }
 
 type ecBalanceWorkerConfig struct {
-	TaskConfig         *ecbalancetask.Config
-	MinIntervalSeconds int
+	TaskConfig *ecbalancetask.Config
 }
 
 // ECBalanceHandler is the plugin job handler for EC shard balancing.
@@ -142,15 +141,6 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ecBalanceMinServerCount}},
 						},
 						{
-							Name:        "min_interval_seconds",
-							Label:       "Minimum Detection Interval (s)",
-							Description: "Skip detection if the last successful run is more recent than this interval.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
-						{
 							Name:        "preferred_tags",
 							Label:       "Preferred Tags",
 							Description: "Comma-separated disk tags to prioritize for shard placement, ordered by preference.",
@@ -164,7 +154,6 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
 				"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-				"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60}},
 				"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
@@ -182,7 +171,6 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
 			"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-			"min_interval_seconds": {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 60 * 60}},
 			"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
@@ -204,30 +192,6 @@ func (h *ECBalanceHandler) Detect(
 	}
 
 	workerConfig := deriveECBalanceWorkerConfig(request.GetWorkerConfigValues())
-	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
-		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(BuildDetectorActivity(
-			"skipped_by_interval",
-			fmt.Sprintf("EC BALANCE: Detection skipped due to min interval (%s)", minInterval),
-			map[string]*plugin_pb.ConfigValue{
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
-				},
-			},
-		))
-		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
-			JobType:   "ec_balance",
-			Proposals: []*plugin_pb.JobProposal{},
-			HasMore:   false,
-		}); err != nil {
-			return err
-		}
-		return sender.SendComplete(&plugin_pb.DetectionComplete{
-			JobType:        "ec_balance",
-			Success:        true,
-			TotalProposals: 0,
-		})
-	}
 
 	// Apply admin-side scope filters
 	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
@@ -440,20 +404,11 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	}
 	taskConfig.MinServerCount = int(minServerCountRaw)
 
-	minIntervalRaw := readInt64Config(values, "min_interval_seconds", 60*60)
-	if minIntervalRaw < 0 {
-		minIntervalRaw = 0
-	}
-	if minIntervalRaw > math.MaxInt32 {
-		minIntervalRaw = math.MaxInt32
-	}
-	minIntervalSeconds := int(minIntervalRaw)
 
 	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &ecBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
-		MinIntervalSeconds: minIntervalSeconds,
 	}
 }
 

@@ -51,9 +51,8 @@ func (mcm *MaintenanceConfigManager) GetVacuumConfig(taskType string) *worker_pb
 	}
 	// Return defaults if not configured
 	return &worker_pb.VacuumTaskConfig{
-		GarbageThreshold:   0.3,
-		MinVolumeAgeHours:  24,
-		MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
+		GarbageThreshold:  0.3,
+		MinVolumeAgeHours: 24,
 	}
 }
 

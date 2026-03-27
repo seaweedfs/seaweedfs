@@ -56,7 +56,6 @@ func init() {
 
 type volumeBalanceWorkerConfig struct {
 	TaskConfig         *balancetask.Config
-	MinIntervalSeconds int
 	MaxConcurrentMoves int
 	BatchSize          int
 }
@@ -194,15 +193,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							Required:    true,
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2}},
 						},
-						{
-							Name:        "min_interval_seconds",
-							Label:       "Minimum Detection Interval (s)",
-							Description: "Skip detection if the last successful run is more recent than this interval.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
 					},
 				},
 				{
@@ -238,9 +228,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				"min_server_count": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
 				},
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
-				},
 				"max_concurrent_moves": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
 				},
@@ -266,9 +253,6 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			},
 			"min_server_count": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 2},
-			},
-			"min_interval_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 30 * 60},
 			},
 			"max_concurrent_moves": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(defaultMaxConcurrentMoves)},
@@ -296,31 +280,6 @@ func (h *VolumeBalanceHandler) Detect(
 	}
 
 	workerConfig := deriveBalanceWorkerConfig(request.GetWorkerConfigValues())
-	if ShouldSkipDetectionByInterval(request.GetLastSuccessfulRun(), workerConfig.MinIntervalSeconds) {
-		minInterval := time.Duration(workerConfig.MinIntervalSeconds) * time.Second
-		_ = sender.SendActivity(BuildDetectorActivity(
-			"skipped_by_interval",
-			fmt.Sprintf("VOLUME BALANCE: Detection skipped due to min interval (%s)", minInterval),
-			map[string]*plugin_pb.ConfigValue{
-				"min_interval_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinIntervalSeconds)},
-				},
-			},
-		))
-		if err := sender.SendProposals(&plugin_pb.DetectionProposals{
-			JobType:   "volume_balance",
-			Proposals: []*plugin_pb.JobProposal{},
-			HasMore:   false,
-		}); err != nil {
-			return err
-		}
-		return sender.SendComplete(&plugin_pb.DetectionComplete{
-			JobType:        "volume_balance",
-			Success:        true,
-			TotalProposals: 0,
-		})
-	}
-
 	collectionFilter := strings.TrimSpace(readStringConfig(request.GetAdminConfigValues(), "collection_filter", ""))
 	masters := make([]string, 0)
 	if request.ClusterContext != nil {
@@ -1110,10 +1069,6 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.MinServerCount = minServerCount
 
-	minIntervalSeconds := int(readInt64Config(values, "min_interval_seconds", 0))
-	if minIntervalSeconds < 0 {
-		minIntervalSeconds = 0
-	}
 
 	maxConcurrentMoves64 := readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves))
 	if maxConcurrentMoves64 < 1 {
@@ -1135,7 +1090,6 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 
 	return &volumeBalanceWorkerConfig{
 		TaskConfig:         taskConfig,
-		MinIntervalSeconds: minIntervalSeconds,
 		MaxConcurrentMoves: maxConcurrentMoves,
 		BatchSize:          batchSize,
 	}
