@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -197,7 +198,7 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		if req.ClientSupportsMetadataChunks {
-			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(sender, lastReadTime, req.UntilNs)
+			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 		} else {
 			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
 		}
@@ -336,7 +337,7 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
 			if req.ClientSupportsMetadataChunks {
-				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(sender, lastReadTime, req.UntilNs)
+				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
 			} else {
 				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
 			}
@@ -458,8 +459,10 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 // sendLogFileRefs collects persisted log file chunk references and sends them
 // to the client so it can read the data directly from volume servers.
 // This does zero volume server I/O — it only lists filer store directory entries.
-func (fs *FilerServer) sendLogFileRefs(sender metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64) (lastTsNs int64, isDone bool, err error) {
-	refs, lastTsNs, err := fs.filer.CollectLogFileRefs(startPosition, stopTsNs)
+// Sends directly on the gRPC stream (bypasses pipelinedSender) because ref
+// messages have TsNs=0 and must not be batched into Events by the sender.
+func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64) (lastTsNs int64, isDone bool, err error) {
+	refs, lastTsNs, err := fs.filer.CollectLogFileRefs(ctx, startPosition, stopTsNs)
 	if err != nil {
 		return 0, false, err
 	}
@@ -473,7 +476,7 @@ func (fs *FilerServer) sendLogFileRefs(sender metadataStreamSender, startPositio
 		if end > len(refs) {
 			end = len(refs)
 		}
-		if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
+		if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
 			LogFileRefs: refs[i:end],
 		}); err != nil {
 			return lastTsNs, false, err

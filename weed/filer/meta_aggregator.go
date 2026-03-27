@@ -202,7 +202,7 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		// Construct a log file reader that reads chunks via the peer filer's LookupVolume.
 		lookupFn := LookupFn(filerClient{client})
 		logFileReaderFn := func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error) {
-			return NewChunkStreamReaderFromLookup(lookupFn, chunks), nil
+			return NewChunkStreamReaderFromLookup(ctx, lookupFn, chunks), nil
 		}
 
 		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
@@ -250,7 +250,8 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			// Process accumulated refs (transition from disk to in-memory)
 			if len(pendingRefs) > 0 {
 				lastTs, readErr := pb.ReadLogFileRefs(pendingRefs, logFileReaderFn,
-					lastTsNs, 0, "/", func(event *filer_pb.SubscribeMetadataResponse) error {
+					lastTsNs, 0, pb.PathFilter{PathPrefix: "/"},
+					func(event *filer_pb.SubscribeMetadataResponse) error {
 						return processOne(event)
 					})
 				if readErr != nil {

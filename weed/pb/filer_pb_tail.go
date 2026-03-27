@@ -122,7 +122,13 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 			// Process accumulated refs before handling normal events (transition point)
 			if len(pendingRefs) > 0 && option.LogFileReaderFn != nil {
 				lastTs, readErr := ReadLogFileRefs(pendingRefs, option.LogFileReaderFn,
-					option.StartTsNs, option.StopTsNs, option.PathPrefix, processEventFn)
+					option.StartTsNs, option.StopTsNs,
+					PathFilter{
+						PathPrefix:             option.PathPrefix,
+						AdditionalPathPrefixes: option.AdditionalPathPrefixes,
+						DirectoriesToWatch:     option.DirectoriesToWatch,
+					},
+					processEventFn)
 				if readErr != nil {
 					return fmt.Errorf("read log file refs: %w", readErr)
 				}

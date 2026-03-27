@@ -55,7 +55,6 @@ type delayedReader struct {
 }
 
 func (r *delayedReader) Read(p []byte) (int, error) {
-	// Apply delay on first read (simulate volume server connection + first chunk fetch)
 	if r.openedAt.IsZero() {
 		r.openedAt = time.Now()
 		time.Sleep(r.delay)
@@ -70,7 +69,6 @@ func (r *delayedReader) Read(p []byte) (int, error) {
 
 func (r *delayedReader) Close() error { return nil }
 
-// testLogFiles represents log files from multiple filers for testing.
 type testLogFiles struct {
 	refs      []*filer_pb.LogFileChunkRef
 	fileData  map[string][]byte // key: "filerId:fileTsNs" → raw log file bytes
@@ -91,11 +89,9 @@ func newTestLogFiles(numFilers, filesPerFiler, eventsPerFile int, fileDelay time
 		for file := 0; file < filesPerFiler; file++ {
 			fileTsNs := baseTs + int64(file)*int64(time.Minute)
 
-			// Generate events for this file
 			events := make([]*filer_pb.SubscribeMetadataResponse, eventsPerFile)
 			for i := 0; i < eventsPerFile; i++ {
 				tsCounter++
-				// Interleave timestamps across filers to test merge ordering
 				ts := baseTs + tsCounter
 				events[i] = makeSubEvent(
 					fmt.Sprintf("/data/%s/dir%02d", filerId, file),
@@ -108,10 +104,9 @@ func newTestLogFiles(numFilers, filesPerFiler, eventsPerFile int, fileDelay time
 			key := fmt.Sprintf("%s:%d", filerId, fileTsNs)
 			t.fileData[key] = data
 
-			// Use a dummy FileChunk — the key is used to look up data in the mock reader
 			t.refs = append(t.refs, &filer_pb.LogFileChunkRef{
 				Chunks: []*filer_pb.FileChunk{{
-					FileId: key, // abuse FileId to carry the lookup key
+					FileId: key,
 				}},
 				FileTsNs: fileTsNs,
 				FilerId:  filerId,
@@ -131,18 +126,15 @@ func (t *testLogFiles) readerFn() LogFileReaderFn {
 		if !ok {
 			return nil, fmt.Errorf("file not found: %s", key)
 		}
-		// Return a copy with simulated read delay
 		dataCopy := make([]byte, len(data))
 		copy(dataCopy, data)
 		return &delayedReader{data: dataCopy, delay: t.fileDelay}, nil
 	}
 }
 
-// totalEvents returns the total number of events across all files.
 func (t *testLogFiles) totalEvents() int {
 	total := 0
 	for _, data := range t.fileData {
-		// Count entries by scanning size-prefixed records
 		pos := 0
 		for pos+4 <= len(data) {
 			size := int(util.BytesToUint32(data[pos : pos+4]))
@@ -154,12 +146,13 @@ func (t *testLogFiles) totalEvents() int {
 }
 
 // TestReadLogFileRefsMergeOrder verifies that entries from multiple filers are
-// delivered in correct timestamp order (same guarantee as server-side OrderedLogVisitor).
+// delivered in correct timestamp order.
 func TestReadLogFileRefsMergeOrder(t *testing.T) {
 	files := newTestLogFiles(3, 2, 50, 0)
 
 	var timestamps []int64
-	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0, "/",
+	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/"},
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			timestamps = append(timestamps, resp.TsNs)
 			return nil
@@ -173,7 +166,6 @@ func TestReadLogFileRefsMergeOrder(t *testing.T) {
 		t.Fatalf("expected %d events, got %d", expected, len(timestamps))
 	}
 
-	// Verify strict timestamp ordering
 	for i := 1; i < len(timestamps); i++ {
 		if timestamps[i] < timestamps[i-1] {
 			t.Errorf("out of order at index %d: ts[%d]=%d > ts[%d]=%d",
@@ -185,23 +177,31 @@ func TestReadLogFileRefsMergeOrder(t *testing.T) {
 	t.Logf("Verified %d events from 3 filers in correct timestamp order", len(timestamps))
 }
 
-// TestReadLogFileRefsPathFilter verifies that path filtering works correctly.
+// TestReadLogFileRefsPathFilter verifies path filtering including system log exclusion.
 func TestReadLogFileRefsPathFilter(t *testing.T) {
 	files := newTestLogFiles(2, 2, 50, 0)
 	total := files.totalEvents()
 
 	var allCount, filteredCount int64
-	ReadLogFileRefs(files.refs, files.readerFn(), 0, 0, "/",
+	_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/"},
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			allCount++
 			return nil
 		})
+	if err != nil {
+		t.Fatalf("ReadLogFileRefs (all): %v", err)
+	}
 
-	ReadLogFileRefs(files.refs, files.readerFn(), 0, 0, "/data/filer00/",
+	_, err = ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+		PathFilter{PathPrefix: "/data/filer00/"},
 		func(resp *filer_pb.SubscribeMetadataResponse) error {
 			filteredCount++
 			return nil
 		})
+	if err != nil {
+		t.Fatalf("ReadLogFileRefs (filtered): %v", err)
+	}
 
 	t.Logf("Total events: %d, matching /data/filer00/: %d", allCount, filteredCount)
 
@@ -216,38 +216,34 @@ func TestReadLogFileRefsPathFilter(t *testing.T) {
 	}
 }
 
-// TestDirectReadVsServerSideThroughput compares the throughput of:
-//   - Server-side path: sequential file read → gRPC send per event (simulated)
-//   - Client direct-read: ReadLogFileRefs with parallel filers + prefetching
-//
-// Each file read has a simulated volume server latency.
+// TestDirectReadVsServerSideThroughput compares:
+//   - Server-side: sequential file read → gRPC send per event
+//   - Client direct-read: parallel filers + prefetching + no gRPC
 func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	const (
 		numFilers     = 3
 		filesPerFiler = 7
 		eventsPerFile = 300
-		totalEvents   = numFilers * filesPerFiler * eventsPerFile // 6300
-		fileReadDelay = 2 * time.Millisecond                      // volume server I/O per file
-		sendDelay     = 20 * time.Microsecond                     // gRPC send per event (server-side)
+		fileReadDelay = 2 * time.Millisecond
+		sendDelay     = 20 * time.Microsecond
 	)
 
 	files := newTestLogFiles(numFilers, filesPerFiler, eventsPerFile, fileReadDelay)
 
-	// --- Server-side path (old): sequential file read + per-event gRPC send ---
 	var serverRate float64
 	t.Run("server_side_sequential", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
 		for _, ref := range files.refs {
-			time.Sleep(fileReadDelay) // volume server read
+			time.Sleep(fileReadDelay)
 			key := ref.Chunks[0].FileId
 			data := files.fileData[key]
 			pos := 0
 			for pos+4 <= len(data) {
 				size := int(util.BytesToUint32(data[pos : pos+4]))
 				pos += 4 + size
-				time.Sleep(sendDelay) // gRPC send
+				time.Sleep(sendDelay)
 				atomic.AddInt64(&processed, 1)
 			}
 		}
@@ -258,15 +254,13 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 			numFilers*filesPerFiler, sendDelay)
 	})
 
-	// --- Client direct-read (new): parallel filers + prefetching + no gRPC ---
-	// ReadLogFileRefs now internally runs one goroutine per filer (parallel I/O)
-	// and prefetches the next file while the current one's entries feed the merge heap.
 	var directRate float64
 	t.Run("client_direct_read_parallel_prefetch", func(t *testing.T) {
 		var processed int64
 		start := time.Now()
 
-		_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0, "/",
+		_, err := ReadLogFileRefs(files.refs, files.readerFn(), 0, 0,
+			PathFilter{PathPrefix: "/"},
 			func(resp *filer_pb.SubscribeMetadataResponse) error {
 				atomic.AddInt64(&processed, 1)
 				return nil
@@ -281,7 +275,6 @@ func TestDirectReadVsServerSideThroughput(t *testing.T) {
 	})
 
 	if serverRate > 0 {
-		speedup := directRate / serverRate
-		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", speedup)
+		t.Logf("Speedup: %.1fx (parallel + prefetch + no gRPC vs server-side sequential)", directRate/serverRate)
 	}
 }
