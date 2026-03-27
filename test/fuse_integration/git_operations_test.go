@@ -122,8 +122,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 5: Reset to older revision in on-mount clone ----
 	t.Log("Phase 5: reset to older revision on mount clone")
-	ensureMountClone(t, bareRepo, mountClone)
-	gitRun(t, mountClone, "reset", "--hard", commit2)
+	resetToCommitWithRecovery(t, bareRepo, localClone, mountClone, commit2)
 
 	resetHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit2, resetHead, "should be at commit 2")
@@ -391,6 +390,50 @@ func pullFromCommitWithRecovery(t *testing.T, bareRepo, localClone, cloneDir, fr
 		os.RemoveAll(cloneDir)
 		time.Sleep(2 * time.Second)
 	}
+}
+
+// resetToCommitWithRecovery resets the on-mount clone to a given commit. If
+// the FUSE mount loses the directory after a failed reset (the kernel dcache
+// can drop the entry after "Could not write new index file"), it re-clones
+// from the bare repo and retries.
+func resetToCommitWithRecovery(t *testing.T, bareRepo, localClone, mountClone, commit string) {
+	t.Helper()
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := tryEnsureBareRepo(bareRepo, localClone); err != nil {
+			lastErr = err
+			t.Logf("reset recovery attempt %d: ensure bare repo: %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if err := tryEnsureMountClone(bareRepo, mountClone); err != nil {
+			lastErr = err
+			t.Logf("reset recovery attempt %d: ensure mount clone: %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if _, err := tryGitCommand(mountClone, "reset", "--hard", commit); err != nil {
+			lastErr = err
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v — removing clone for re-create", attempt, err)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
+		if !waitForDirEventually(t, mountClone, 5*time.Second) {
+			lastErr = fmt.Errorf("clone dir %s did not recover after reset", mountClone)
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v", attempt, lastErr)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
+		return
+	}
+	require.NoError(t, lastErr, "git reset --hard %s failed after %d recovery attempts", commit, maxAttempts)
 }
 
 func tryPullFromCommit(t *testing.T, bareRepo, localClone, cloneDir, fromCommit string) error {
