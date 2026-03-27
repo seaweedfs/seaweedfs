@@ -315,9 +315,7 @@ func isBareRepo(bareRepo string) bool {
 
 func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 	t.Helper()
-	if err := tryEnsureMountClone(bareRepo, mountClone); err != nil {
-		require.NoError(t, err)
-	}
+	require.NoError(t, tryEnsureMountClone(bareRepo, mountClone))
 }
 
 // tryEnsureMountClone is like ensureMountClone but returns an error instead
