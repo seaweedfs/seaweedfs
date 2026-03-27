@@ -107,6 +107,9 @@ func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
 			s.reportErr(err)
 			return
 		}
+		if toSend.Events != nil {
+			toSend.Events = nil
+		}
 	}
 }
 
