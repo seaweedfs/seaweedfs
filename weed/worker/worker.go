@@ -833,24 +833,6 @@ func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
 	return w.registry
 }
 
-// registerWorker registers the worker with the admin server
-func (w *Worker) registerWorker() {
-	workerInfo := &types.WorkerData{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
-	}
-
-	if err := w.getAdmin().RegisterWorker(workerInfo); err != nil {
-		glog.Warningf("Failed to register worker (will retry on next heartbeat): %v", err)
-	} else {
-		glog.Infof("Worker %s registered successfully with admin server", w.id)
-	}
-}
-
 // connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
