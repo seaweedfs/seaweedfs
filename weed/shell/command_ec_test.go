@@ -334,3 +334,91 @@ func TestCommandEcBalanceAllNodesShareAllVolumes(t *testing.T) {
 		t.Logf("node %s: %d shards", node.info.Id, count)
 	}
 }
+
+// TestCommandEcBalanceIssue8793Topology simulates the real cluster from issue #8793:
+// 14 nodes (9 with max=80, 5 with max=33), all in one rack, with mixed capacities.
+// Each EC volume has 1 shard per node. Nodes have uneven totals (some have extra volumes).
+func TestCommandEcBalanceIssue8793Topology(t *testing.T) {
+	// Simulate 22 EC volumes across 14 nodes (each volume has 14 shards, 1 per node).
+	// Give nodes 0-3 an extra volume each (vol 23-26, all 14 shards) to create imbalance.
+	// Before balancing: nodes 0-3 have 22+14=36 shards each, nodes 4-13 have 22 shards each.
+	// Total = 4*36 + 10*22 = 144+220 = 364. Average = ceil(364/14) = 26.
+
+	type nodeSpec struct {
+		id      string
+		maxSlot int
+	}
+	nodes := []nodeSpec{
+		{"192.168.0.12:8332", 80}, {"192.168.0.12:8333", 80}, {"192.168.0.12:8334", 80},
+		{"192.168.0.12:8335", 80}, {"192.168.0.12:8336", 80}, {"192.168.0.12:8337", 80},
+		{"192.168.0.12:8338", 80}, {"192.168.0.12:8339", 80}, {"192.168.0.12:8340", 80},
+		{"192.168.0.12:8341", 33}, {"192.168.0.12:8342", 33}, {"192.168.0.12:8343", 33},
+		{"192.168.0.25:8350", 33}, {"192.168.0.25:8351", 33},
+	}
+
+	ecNodes := make([]*EcNode, len(nodes))
+	for i, ns := range nodes {
+		ecNodes[i] = newEcNode("home", "center", ns.id, ns.maxSlot)
+	}
+
+	// 22 shared volumes: each node gets exactly 1 shard (shard i for node i)
+	for vid := uint32(1); vid <= 22; vid++ {
+		for i := range ecNodes {
+			ecNodes[i].addEcVolumeAndShardsForTest(vid, "cldata", []erasure_coding.ShardId{erasure_coding.ShardId(i)})
+		}
+	}
+
+	// 4 extra volumes only on first 4 nodes (all 14 shards each) to create imbalance
+	for extra := uint32(0); extra < 4; extra++ {
+		vid := 23 + extra
+		nodeIdx := int(extra)
+		allShards := make([]erasure_coding.ShardId, 14)
+		for s := 0; s < 14; s++ {
+			allShards[s] = erasure_coding.ShardId(s)
+		}
+		ecNodes[nodeIdx].addEcVolumeAndShardsForTest(vid, "cldata", allShards)
+	}
+
+	ecb := &ecBalancer{
+		ecNodes:        ecNodes,
+		applyBalancing: false,
+		diskType:       types.HardDriveType,
+	}
+
+	// Log initial state
+	for _, node := range ecb.ecNodes {
+		count := 0
+		if diskInfo, found := node.info.DiskInfos[string(types.HardDriveType)]; found {
+			for _, ecsi := range diskInfo.EcShardInfos {
+				count += erasure_coding.GetShardCount(ecsi)
+			}
+		}
+		t.Logf("BEFORE node %s (max %d): %d shards", node.info.Id, node.freeEcSlot+count, count)
+	}
+
+	ecb.balanceEcVolumes("cldata")
+	ecb.balanceEcRacks()
+
+	// Verify: no node should exceed the average
+	totalShards := 0
+	shardCounts := make(map[string]int)
+	for _, node := range ecb.ecNodes {
+		count := 0
+		if diskInfo, found := node.info.DiskInfos[string(types.HardDriveType)]; found {
+			for _, ecsi := range diskInfo.EcShardInfos {
+				count += erasure_coding.GetShardCount(ecsi)
+			}
+		}
+		shardCounts[node.info.Id] = count
+		totalShards += count
+	}
+	avg := ceilDivide(totalShards, len(ecNodes))
+
+	for _, node := range ecb.ecNodes {
+		count := shardCounts[node.info.Id]
+		t.Logf("AFTER  node %s: %d shards (avg %d)", node.info.Id, count, avg)
+		if count > avg {
+			t.Errorf("node %s has %d shards, expected at most %d (avg)", node.info.Id, count, avg)
+		}
+	}
+}
