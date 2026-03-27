@@ -416,6 +416,9 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		}
 
 		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
+			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+			}
 			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
 			return "", "", fmt.Errorf("update latest version metadata: %w", err)
 		}
@@ -463,6 +466,12 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 
 		return "", etag, nil
 	}
+}
+
+func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
+	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
+	versionDir, versionName := versionPath.DirAndName()
+	return s3a.rmObject(versionDir, versionName, true, false)
 }
 
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
