@@ -22,7 +22,7 @@ const (
 	adminScriptJobType        = "admin_script"
 	maxAdminScriptOutputBytes = 16 * 1024
 	defaultAdminScriptRunMins = 17
-	adminScriptDetectTickSecs = 60
+	adminScriptDetectTickSecs = 17 * 60
 )
 
 const defaultAdminScript = `ec.balance -apply
