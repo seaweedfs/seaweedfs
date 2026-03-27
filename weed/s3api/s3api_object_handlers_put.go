@@ -394,6 +394,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	if s3a.option.FilerGroup != "" {
 		collection = s3a.getCollectionName(bucket)
 	}
+	ttlSeconds := s3a.resolveBucketLifecycleTTLSeconds(bucket, filePath)
 
 	// Create assign function for chunked upload
 	assignFunc := func(ctx context.Context, count int) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
@@ -406,6 +407,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 				DiskType:    "",
 				DataCenter:  s3a.option.DataCenter,
 				Path:        filePath,
+				TtlSec:      ttlSeconds,
 			})
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)
@@ -582,6 +584,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		},
 		Chunks:   chunkResult.FileChunks, // All chunks from auto-chunking
 		Extended: make(map[string][]byte),
+	}
+	if ttlSeconds > 0 {
+		entry.Attributes.TtlSec = ttlSeconds
 	}
 
 	// Always set Md5 attribute for regular object uploads (PutObject)
