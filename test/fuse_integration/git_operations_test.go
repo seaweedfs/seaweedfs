@@ -315,15 +315,25 @@ func isBareRepo(bareRepo string) bool {
 
 func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 	t.Helper()
+	if err := tryEnsureMountClone(bareRepo, mountClone); err != nil {
+		require.NoError(t, err)
+	}
+}
+
+// tryEnsureMountClone is like ensureMountClone but returns an error instead
+// of failing the test, for use in recovery loops.
+func tryEnsureMountClone(bareRepo, mountClone string) error {
 	// Verify .git/HEAD exists — just checking the top-level dir is
 	// insufficient because FUSE may cache a stale directory entry.
 	if _, err := os.Stat(filepath.Join(mountClone, ".git", "HEAD")); err == nil {
-		return
+		return nil
 	}
 	os.RemoveAll(mountClone)
 	time.Sleep(500 * time.Millisecond)
-	t.Logf("mount clone missing or corrupt, re-cloning from %s", bareRepo)
-	gitRun(t, "", "clone", bareRepo, mountClone)
+	if _, err := tryGitCommand("", "clone", bareRepo, mountClone); err != nil {
+		return fmt.Errorf("re-clone: %w", err)
+	}
+	return nil
 }
 
 // tryGitCommand runs a git command and returns (output, error) without
@@ -362,7 +372,9 @@ func pullFromCommitWithRecovery(t *testing.T, bareRepo, cloneDir, fromCommit str
 
 func tryPullFromCommit(t *testing.T, bareRepo, cloneDir, fromCommit string) error {
 	t.Helper()
-	ensureMountClone(t, bareRepo, cloneDir)
+	if err := tryEnsureMountClone(bareRepo, cloneDir); err != nil {
+		return err
+	}
 	if !waitForDirEventually(t, cloneDir, 10*time.Second) {
 		return fmt.Errorf("clone dir %s did not appear", cloneDir)
 	}
@@ -370,7 +382,9 @@ func tryPullFromCommit(t *testing.T, bareRepo, cloneDir, fromCommit string) erro
 	if _, err := tryGitCommand(cloneDir, "reset", "--hard", fromCommit); err != nil {
 		return fmt.Errorf("reset --hard: %w", err)
 	}
-	waitForDirEventually(t, cloneDir, 5*time.Second)
+	if !waitForDirEventually(t, cloneDir, 5*time.Second) {
+		return fmt.Errorf("clone dir %s did not recover after reset", cloneDir)
+	}
 	refreshDirEntry(t, cloneDir)
 
 	head, err := tryGitCommand(cloneDir, "rev-parse", "HEAD")
