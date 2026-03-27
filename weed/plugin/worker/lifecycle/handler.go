@@ -260,8 +260,14 @@ func (h *Handler) Execute(ctx context.Context, req *plugin_pb.ExecuteJobRequest,
 		metrics[MetricErrors] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.errors}}
 	}
 
+	var scanned, expired int64
+	if result != nil {
+		scanned = result.objectsScanned
+		expired = result.objectsExpired
+	}
+
 	success := execErr == nil && (result == nil || result.errors == 0)
-	message := fmt.Sprintf("bucket %s: scanned %d objects, expired %d", bucket, result.objectsScanned, result.objectsExpired)
+	message := fmt.Sprintf("bucket %s: scanned %d objects, expired %d", bucket, scanned, expired)
 	if result != nil && result.deleteMarkersClean > 0 {
 		message += fmt.Sprintf(", delete markers cleaned %d", result.deleteMarkersClean)
 	}
@@ -347,8 +353,9 @@ func filerAddressesFromCluster(cc *plugin_pb.ClusterContext) []string {
 	}
 	var addrs []string
 	for _, addr := range cc.FilerGrpcAddresses {
-		if strings.TrimSpace(addr) != "" {
-			addrs = append(addrs, addr)
+		trimmed := strings.TrimSpace(addr)
+		if trimmed != "" {
+			addrs = append(addrs, trimmed)
 		}
 	}
 	return addrs
