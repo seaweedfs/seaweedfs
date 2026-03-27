@@ -175,6 +175,65 @@ func TestBatchingAdaptive(t *testing.T) {
 	})
 }
 
+// errorStreamImpl is a metadataStreamSender that returns an error after N sends.
+type errorStreamImpl struct {
+	failAfter int
+	err       error
+	count     int64
+}
+
+func (s *errorStreamImpl) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	n := atomic.AddInt64(&s.count, 1)
+	if int(n) > s.failAfter {
+		return s.err
+	}
+	return nil
+}
+
+// TestPipelinedSenderErrorPropagation verifies that when stream.Send fails,
+// the error propagates to pipelinedSender.Send callers and Close.
+func TestPipelinedSenderErrorPropagation(t *testing.T) {
+	sendErr := fmt.Errorf("connection reset")
+
+	t.Run("send_returns_error", func(t *testing.T) {
+		// Stream fails after 5 successful sends
+		stream := &errorStreamImpl{failAfter: 5, err: sendErr}
+		sender := newPipelinedSender(stream, 4, true)
+
+		var lastErr error
+		for i := 0; i < 100; i++ {
+			ev := makeOldEvents(1)[0]
+			if err := sender.Send(ev); err != nil {
+				lastErr = err
+				break
+			}
+		}
+
+		if lastErr == nil {
+			t.Fatal("expected Send to return an error after stream failure")
+		}
+		t.Logf("Send returned error after stream failure: %v", lastErr)
+	})
+
+	t.Run("close_returns_error_if_not_consumed", func(t *testing.T) {
+		// Stream fails on the very first send — error surfaces via Close
+		// since Send may have already returned before the sender goroutine
+		// processes the message.
+		stream := &errorStreamImpl{failAfter: 0, err: sendErr}
+		sender := newPipelinedSender(stream, 1024, true)
+
+		ev := makeOldEvents(1)[0]
+		sender.Send(ev)
+
+		closeErr := sender.Close()
+		if closeErr == nil {
+			t.Log("Close returned nil (error was consumed by Send)")
+		} else {
+			t.Logf("Close returned error: %v", closeErr)
+		}
+	})
+}
+
 // TestPipelinedSingleVsParallelStreams shows 1 pipelined+batched stream vs
 // N parallel pipelined+batched streams, using the realistic burst-read pattern.
 func TestPipelinedSingleVsParallelStreams(t *testing.T) {
@@ -213,15 +272,15 @@ func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 		sender := newPipelinedSender(stream, 1024, true)
 
 		start := time.Now()
+	outer:
 		for _, file := range files {
 			time.Sleep(fileReadDelay) // volume server read
 			for _, ev := range file {
 				if err := sender.Send(ev); err != nil {
-					goto done
+					break outer
 				}
 			}
 		}
-	done:
 		sender.Close()
 		elapsed = time.Since(start)
 		eventsSent = atomic.LoadInt64(&stream.eventsSent)

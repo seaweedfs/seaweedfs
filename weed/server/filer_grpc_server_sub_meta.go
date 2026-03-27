@@ -118,8 +118,8 @@ func (s *pipelinedSender) reportErr(err error) {
 	case s.errCh <- err:
 	default:
 	}
-	for range s.sendCh {
-	}
+	// Don't drain sendCh here — Send() detects the exit via <-s.done
+	// and the deferred close(s.done) in sendLoop will fire after this returns.
 }
 
 func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
@@ -128,6 +128,14 @@ func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 		return nil
 	case err := <-s.errCh:
 		return err
+	case <-s.done:
+		// Sender goroutine exited (stream error or shutdown).
+		select {
+		case err := <-s.errCh:
+			return err
+		default:
+			return fmt.Errorf("pipelined sender closed")
+		}
 	}
 }
 
@@ -351,8 +359,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						lastReadTime = log_buffer.NewMessagePosition(earliestTime.UnixNano(), -2)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
 					} else {
-						// No memory data yet, just wait
-						time.Sleep(1127 * time.Millisecond)
+						// No memory data yet, wait for new data (event-driven)
+						fs.listenersLock.Lock()
+						atomic.AddInt64(&fs.listenersWaits, 1)
+						fs.listenersCond.Wait()
+						atomic.AddInt64(&fs.listenersWaits, -1)
+						fs.listenersLock.Unlock()
 						continue
 					}
 				} else {
