@@ -1,0 +1,215 @@
+name: "rust: build versioned volume server binaries"
+
+on:
+  push:
+    tags:
+      - '*'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+
+  build-rust-volume-linux:
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            asset_suffix: linux_amd64
+          - target: aarch64-unknown-linux-gnu
+            asset_suffix: linux_arm64
+            cross: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools
+        if: matrix.cross
+        run: |
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-release-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-release-${{ matrix.target }}-
+
+      - name: Build Rust volume server (large disk)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Build Rust volume server (normal)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }} --no-default-features
+
+      - name: Package binaries
+        run: |
+          # Large disk (default, 5bytes feature)
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
+          rm weed-volume-large-disk
+
+          # Normal volume size
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
+          rm weed-volume-normal
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-rust-volume-darwin:
+    permissions:
+      contents: write
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            asset_suffix: darwin_amd64
+          - target: aarch64-apple-darwin
+            asset_suffix: darwin_arm64
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: brew install protobuf
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-release-${{ matrix.target }}-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-release-${{ matrix.target }}-
+
+      - name: Build Rust volume server (large disk)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }}
+
+      - name: Build Rust volume server (normal)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --target ${{ matrix.target }} --no-default-features
+
+      - name: Package binaries
+        run: |
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-large-disk
+          tar czf weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz weed-volume-large-disk
+          rm weed-volume-large-disk
+
+          cp seaweed-volume/target/${{ matrix.target }}/release/weed-volume weed-volume-normal
+          tar czf weed-volume_${{ matrix.asset_suffix }}.tar.gz weed-volume-normal
+          rm weed-volume-normal
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-rust-volume-windows:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install protobuf compiler
+        run: choco install protoc -y
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            seaweed-volume/target
+          key: rust-release-windows-${{ hashFiles('seaweed-volume/Cargo.lock') }}
+          restore-keys: |
+            rust-release-windows-
+
+      - name: Build Rust volume server (large disk)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release
+
+      - name: Build Rust volume server (normal)
+        env:
+          SEAWEEDFS_COMMIT: ${{ github.sha }}
+        run: |
+          cd seaweed-volume
+          cargo build --release --no-default-features
+
+      - name: Package binaries
+        shell: bash
+        run: |
+          cp seaweed-volume/target/release/weed-volume.exe weed-volume-large-disk.exe
+          7z a weed-volume_large_disk_windows_amd64.zip weed-volume-large-disk.exe
+          rm weed-volume-large-disk.exe
+
+          cp seaweed-volume/target/release/weed-volume.exe weed-volume-normal.exe
+          7z a weed-volume_windows_amd64.zip weed-volume-normal.exe
+          rm weed-volume-normal.exe
+
+      - name: Upload release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            weed-volume_large_disk_windows_amd64.zip
+            weed-volume_windows_amd64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -16,9 +16,31 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
+# Rust volume server builder (amd64/arm64 only)
+FROM rust:1-alpine as rust_builder
+ARG TARGETARCH
+RUN apk add musl-dev protobuf-dev git
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/proto /build/proto
+WORKDIR /build/seaweed-volume
+ARG TAGS
+RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+      if [ "$TAGS" = "5BytesOffset" ]; then \
+        cargo build --release; \
+      else \
+        cargo build --release --no-default-features; \
+      fi && \
+      cp target/release/weed-volume /weed-volume; \
+    else \
+      echo "Skipping Rust build for $TARGETARCH (unsupported)" && \
+      touch /weed-volume; \
+    fi
+
 FROM alpine AS final
 LABEL author="Chris Lu"
 COPY --from=builder /go/bin/weed /usr/bin/
+# Copy Rust volume server binary (real binary on amd64/arm64, empty placeholder on other platforms)
+COPY --from=rust_builder /weed-volume /usr/bin/weed-volume
 RUN mkdir -p /etc/seaweedfs
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/filer.toml /etc/seaweedfs/filer.toml
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh /entrypoint.sh

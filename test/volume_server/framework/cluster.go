@@ -27,6 +27,12 @@ const (
 	testVolumeSizeLimitMB = 32
 )
 
+var (
+	weedBinaryOnce sync.Once
+	weedBinaryPath string
+	weedBinaryErr  error
+)
+
 // Cluster is a lightweight SeaweedFS master + one volume server test harness.
 type Cluster struct {
 	testingTB testing.TB
@@ -326,6 +332,13 @@ func writeSecurityConfig(configDir string, profile matrix.Profile) error {
 		b.WriteString("\"\n")
 		b.WriteString("expires_after_seconds = 60\n")
 	}
+	if profile.EnableUIAccess {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString("[access]\n")
+		b.WriteString("ui = true\n")
+	}
 	if b.Len() == 0 {
 		b.WriteString("# optional security config generated for integration tests\n")
 	}
@@ -341,40 +354,43 @@ func FindOrBuildWeedBinary() (string, error) {
 		return "", fmt.Errorf("WEED_BINARY is set but not executable: %s", fromEnv)
 	}
 
-	repoRoot := ""
-	if _, file, _, ok := runtime.Caller(0); ok {
-		repoRoot = filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
-		candidate := filepath.Join(repoRoot, "weed", "weed")
-		if isExecutableFile(candidate) {
-			return candidate, nil
+	weedBinaryOnce.Do(func() {
+		repoRoot := ""
+		if _, file, _, ok := runtime.Caller(0); ok {
+			repoRoot = filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
 		}
-	}
+		if repoRoot == "" {
+			weedBinaryErr = errors.New("unable to detect repository root")
+			return
+		}
 
-	if repoRoot == "" {
-		return "", errors.New("unable to detect repository root")
-	}
+		binDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_bin")
+		if err := os.MkdirAll(binDir, 0o755); err != nil {
+			weedBinaryErr = fmt.Errorf("create binary directory %s: %w", binDir, err)
+			return
+		}
+		binPath := filepath.Join(binDir, "weed")
 
-	binDir := filepath.Join(os.TempDir(), "seaweedfs_volume_server_it_bin")
-	if err := os.MkdirAll(binDir, 0o755); err != nil {
-		return "", fmt.Errorf("create binary directory %s: %w", binDir, err)
-	}
-	binPath := filepath.Join(binDir, "weed")
-	if isExecutableFile(binPath) {
-		return binPath, nil
-	}
+		cmd := exec.Command("go", "build", "-o", binPath, ".")
+		cmd.Dir = filepath.Join(repoRoot, "weed")
+		var out bytes.Buffer
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			weedBinaryErr = fmt.Errorf("build weed binary: %w\n%s", err, out.String())
+			return
+		}
+		if !isExecutableFile(binPath) {
+			weedBinaryErr = fmt.Errorf("built weed binary is not executable: %s", binPath)
+			return
+		}
+		weedBinaryPath = binPath
+	})
 
-	cmd := exec.Command("go", "build", "-o", binPath, ".")
-	cmd.Dir = filepath.Join(repoRoot, "weed")
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("build weed binary: %w\n%s", err, out.String())
+	if weedBinaryErr != nil {
+		return "", weedBinaryErr
 	}
-	if !isExecutableFile(binPath) {
-		return "", fmt.Errorf("built weed binary is not executable: %s", binPath)
-	}
-	return binPath, nil
+	return weedBinaryPath, nil
 }
 
 func isExecutableFile(path string) bool {

@@ -16,7 +16,7 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P1())
+	cluster := framework.StartVolumeCluster(t, matrix.P1())
 	client := framework.NewHTTPClient()
 
 	statusReq, err := http.NewRequest(http.MethodGet, cluster.VolumeAdminURL()+"/status", nil)
@@ -43,6 +43,19 @@ func TestAdminStatusAndHealthz(t *testing.T) {
 	for _, field := range []string{"Version", "DiskStatuses", "Volumes"} {
 		if _, found := payload[field]; !found {
 			t.Fatalf("status payload missing field %q", field)
+		}
+	}
+	diskStatuses, ok := payload["DiskStatuses"].([]interface{})
+	if !ok || len(diskStatuses) == 0 {
+		t.Fatalf("status payload expected non-empty DiskStatuses, got %#v", payload["DiskStatuses"])
+	}
+	firstDisk, ok := diskStatuses[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("status payload disk status has unexpected shape: %#v", diskStatuses[0])
+	}
+	for _, field := range []string{"dir", "all", "used", "free"} {
+		if _, found := firstDisk[field]; !found {
+			t.Fatalf("status disk payload missing field %q: %#v", field, firstDisk)
 		}
 	}
 
@@ -74,7 +87,7 @@ func TestOptionsMethodsByPort(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminResp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/"))
@@ -114,7 +127,7 @@ func TestOptionsWithOriginIncludesCorsHeaders(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P2())
+	cluster := framework.StartVolumeCluster(t, matrix.P2())
 	client := framework.NewHTTPClient()
 
 	adminReq := mustNewRequest(t, http.MethodOptions, cluster.VolumeAdminURL()+"/")
@@ -151,7 +164,7 @@ func TestUiIndexNotExposedWhenJwtSigningEnabled(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartSingleVolumeCluster(t, matrix.P3())
+	cluster := framework.StartVolumeCluster(t, matrix.P3())
 	client := framework.NewHTTPClient()
 
 	resp := framework.DoRequest(t, client, mustNewRequest(t, http.MethodGet, cluster.VolumeAdminURL()+"/ui/index.html"))

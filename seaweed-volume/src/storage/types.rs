@@ -1,0 +1,679 @@
+//! Core storage types: NeedleId, Offset, Size, Cookie, DiskType.
+//!
+//! These types define the binary-compatible on-disk format matching the Go implementation.
+//! CRITICAL: Byte layout must match exactly for cross-compatibility.
+
+use std::fmt;
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+pub const NEEDLE_ID_SIZE: usize = 8;
+pub const NEEDLE_ID_EMPTY: u64 = 0;
+pub const COOKIE_SIZE: usize = 4;
+pub const SIZE_SIZE: usize = 4;
+pub const NEEDLE_HEADER_SIZE: usize = COOKIE_SIZE + NEEDLE_ID_SIZE + SIZE_SIZE; // 16
+pub const DATA_SIZE_SIZE: usize = 4;
+pub const TIMESTAMP_SIZE: usize = 8;
+pub const NEEDLE_PADDING_SIZE: usize = 8;
+pub const NEEDLE_CHECKSUM_SIZE: usize = 4;
+
+/// 5-byte offset mode (matching Go production builds with `-tags 5BytesOffset`).
+/// Max volume size: 8TB. Index entry: 17 bytes (8 + 5 + 4).
+#[cfg(feature = "5bytes")]
+pub const OFFSET_SIZE: usize = 5;
+#[cfg(feature = "5bytes")]
+pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8 * 256; // 8TB
+
+/// 4-byte offset mode (matching Go default build without `5BytesOffset`).
+/// Max volume size: 32GB. Index entry: 16 bytes (8 + 4 + 4).
+#[cfg(not(feature = "5bytes"))]
+pub const OFFSET_SIZE: usize = 4;
+#[cfg(not(feature = "5bytes"))]
+pub const MAX_POSSIBLE_VOLUME_SIZE: u64 = 4 * 1024 * 1024 * 1024 * 8; // 32GB
+
+pub const NEEDLE_MAP_ENTRY_SIZE: usize = NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE;
+
+// ============================================================================
+// NeedleId
+// ============================================================================
+
+/// 64-bit unique identifier for a needle within a volume.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct NeedleId(pub u64);
+
+impl NeedleId {
+    pub fn to_bytes(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= NEEDLE_ID_SIZE);
+        bytes[0..8].copy_from_slice(&self.0.to_be_bytes());
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= NEEDLE_ID_SIZE);
+        NeedleId(u64::from_be_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Parse a hex string into a NeedleId.
+    pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
+        u64::from_str_radix(s, 16).map(NeedleId)
+    }
+}
+
+impl fmt::Display for NeedleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+impl From<u64> for NeedleId {
+    fn from(v: u64) -> Self {
+        NeedleId(v)
+    }
+}
+
+impl From<NeedleId> for u64 {
+    fn from(v: NeedleId) -> Self {
+        v.0
+    }
+}
+
+// ============================================================================
+// Cookie
+// ============================================================================
+
+/// Random 32-bit value to mitigate brute-force lookups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Cookie(pub u32);
+
+impl Cookie {
+    pub fn to_bytes(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= COOKIE_SIZE);
+        bytes[0..4].copy_from_slice(&self.0.to_be_bytes());
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= COOKIE_SIZE);
+        Cookie(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+    }
+
+    /// Parse a hex string into a Cookie.
+    pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
+        u32::from_str_radix(s, 16).map(Cookie)
+    }
+}
+
+impl fmt::Display for Cookie {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:x}", self.0)
+    }
+}
+
+impl From<u32> for Cookie {
+    fn from(v: u32) -> Self {
+        Cookie(v)
+    }
+}
+
+// ============================================================================
+// Size
+// ============================================================================
+
+/// Needle size as stored in the index. Negative = deleted.
+///
+/// - Positive: valid needle with that many bytes of body content
+/// - TombstoneFileSize (-1): tombstone marker
+/// - Other negative: deleted, absolute value was the original size
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct Size(pub i32);
+
+/// Special marker for a tombstone (deletion marker) entry.
+pub const TOMBSTONE_FILE_SIZE: Size = Size(-1);
+
+impl Size {
+    pub fn is_tombstone(&self) -> bool {
+        self.0 == TOMBSTONE_FILE_SIZE.0
+    }
+
+    pub fn is_deleted(&self) -> bool {
+        self.0 < 0 || self.0 == TOMBSTONE_FILE_SIZE.0
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.0 > 0 && !self.is_tombstone()
+    }
+
+    /// Raw storage size. For tombstones returns 0; for negative returns abs value.
+    pub fn raw(&self) -> u32 {
+        if self.is_tombstone() {
+            return 0;
+        }
+        if self.0 < 0 {
+            return (self.0 * -1) as u32;
+        }
+        self.0 as u32
+    }
+
+    pub fn to_bytes(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= SIZE_SIZE);
+        bytes[0..4].copy_from_slice(&(self.0 as u32).to_be_bytes());
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= SIZE_SIZE);
+        let v = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        Size(v as i32)
+    }
+}
+
+impl From<i32> for Size {
+    fn from(v: i32) -> Self {
+        Size(v)
+    }
+}
+
+impl From<Size> for i32 {
+    fn from(v: Size) -> Self {
+        v.0
+    }
+}
+
+// ============================================================================
+// Offset
+// ============================================================================
+
+/// Offset encoding for needle positions in .dat files.
+///
+/// The offset is stored divided by NEEDLE_PADDING_SIZE (8).
+///
+/// With `5bytes` feature (default, matching Go production builds):
+///   5 bytes can address up to 8TB.
+///   On-disk layout: [b3][b2][b1][b0][b4] (big-endian 4 bytes + 1 high byte)
+///
+/// Without `5bytes` feature (matching Go default build):
+///   4 bytes can address up to 32GB.
+///   On-disk layout: [b3][b2][b1][b0] (big-endian 4 bytes)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Offset {
+    pub b0: u8,
+    pub b1: u8,
+    pub b2: u8,
+    pub b3: u8,
+    #[cfg(feature = "5bytes")]
+    pub b4: u8,
+}
+
+impl Offset {
+    /// Convert to the actual byte offset in the .dat file.
+    pub fn to_actual_offset(&self) -> i64 {
+        let stored = self.b0 as i64
+            + (self.b1 as i64) * 256
+            + (self.b2 as i64) * 65536
+            + (self.b3 as i64) * 16777216;
+        #[cfg(feature = "5bytes")]
+        let stored = stored + (self.b4 as i64) * 4294967296; // 1 << 32
+        stored * NEEDLE_PADDING_SIZE as i64
+    }
+
+    /// Create an Offset from an actual byte offset.
+    pub fn from_actual_offset(offset: i64) -> Self {
+        let smaller = offset / NEEDLE_PADDING_SIZE as i64;
+        Offset {
+            b0: smaller as u8,
+            b1: (smaller >> 8) as u8,
+            b2: (smaller >> 16) as u8,
+            b3: (smaller >> 24) as u8,
+            #[cfg(feature = "5bytes")]
+            b4: (smaller >> 32) as u8,
+        }
+    }
+
+    /// Serialize to bytes in the .idx file format.
+    /// 5-byte layout: [b3][b2][b1][b0][b4]
+    /// 4-byte layout: [b3][b2][b1][b0]
+    pub fn to_bytes(&self, bytes: &mut [u8]) {
+        assert!(bytes.len() >= OFFSET_SIZE);
+        bytes[0] = self.b3;
+        bytes[1] = self.b2;
+        bytes[2] = self.b1;
+        bytes[3] = self.b0;
+        #[cfg(feature = "5bytes")]
+        {
+            bytes[4] = self.b4;
+        }
+    }
+
+    /// Deserialize from bytes in the .idx file format.
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        assert!(bytes.len() >= OFFSET_SIZE);
+        Offset {
+            b3: bytes[0],
+            b2: bytes[1],
+            b1: bytes[2],
+            b0: bytes[3],
+            #[cfg(feature = "5bytes")]
+            b4: bytes[4],
+        }
+    }
+
+    pub fn is_zero(&self) -> bool {
+        #[cfg(feature = "5bytes")]
+        {
+            self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0 && self.b4 == 0
+        }
+        #[cfg(not(feature = "5bytes"))]
+        {
+            self.b0 == 0 && self.b1 == 0 && self.b2 == 0 && self.b3 == 0
+        }
+    }
+}
+
+impl fmt::Display for Offset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.to_actual_offset())
+    }
+}
+
+// ============================================================================
+// DiskType
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum DiskType {
+    HardDrive,
+    Ssd,
+    Custom(String),
+}
+
+impl DiskType {
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "" | "hdd" => DiskType::HardDrive,
+            "ssd" => DiskType::Ssd,
+            other => DiskType::Custom(other.to_string()),
+        }
+    }
+
+    pub fn readable_string(&self) -> &str {
+        match self {
+            DiskType::HardDrive => "hdd",
+            DiskType::Ssd => "ssd",
+            DiskType::Custom(s) => s,
+        }
+    }
+}
+
+impl fmt::Display for DiskType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DiskType::HardDrive => write!(f, ""),
+            DiskType::Ssd => write!(f, "ssd"),
+            DiskType::Custom(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl Default for DiskType {
+    fn default() -> Self {
+        DiskType::HardDrive
+    }
+}
+
+// ============================================================================
+// VolumeId
+// ============================================================================
+
+/// Volume identifier, stored as u32.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
+pub struct VolumeId(pub u32);
+
+impl VolumeId {
+    pub fn parse(s: &str) -> Result<Self, std::num::ParseIntError> {
+        s.parse::<u32>().map(VolumeId)
+    }
+
+    pub fn next(&self) -> VolumeId {
+        VolumeId(self.0 + 1)
+    }
+}
+
+impl fmt::Display for VolumeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl From<u32> for VolumeId {
+    fn from(v: u32) -> Self {
+        VolumeId(v)
+    }
+}
+
+// ============================================================================
+// Version
+// ============================================================================
+
+/// Needle storage format version.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Version(pub u8);
+
+pub const VERSION_1: Version = Version(1);
+pub const VERSION_2: Version = Version(2);
+pub const VERSION_3: Version = Version(3);
+
+impl Version {
+    pub fn current() -> Self {
+        VERSION_3
+    }
+
+    pub fn is_supported(&self) -> bool {
+        self.0 >= 1 && self.0 <= 3
+    }
+}
+
+impl Default for Version {
+    fn default() -> Self {
+        VERSION_3
+    }
+}
+
+impl From<u8> for Version {
+    fn from(v: u8) -> Self {
+        Version(v)
+    }
+}
+
+// ============================================================================
+// ReadOption
+// ============================================================================
+
+/// Options controlling needle read behavior, matching Go's `ReadOption` in store.go.
+///
+/// Fields are split into request-side options (set by the caller) and response-side
+/// flags (set during the read to communicate status back).
+#[derive(Debug, Clone)]
+pub struct ReadOption {
+    // -- request --
+    /// If true, allow reading needles that have been soft-deleted.
+    pub read_deleted: bool,
+    /// If true, attempt to read only metadata for large needles (> PagedReadLimit).
+    pub attempt_meta_only: bool,
+    /// If true, the caller requires metadata only (no data payload).
+    pub must_meta_only: bool,
+
+    // -- response --
+    /// Set to true when the read actually returned metadata only.
+    pub is_meta_only: bool,
+    /// Compaction revision at the time of the read (for consistency during streaming).
+    pub volume_revision: u16,
+    /// Set to true when the offset exceeded MaxPossibleVolumeSize (4-byte offset wrap).
+    pub is_out_of_range: bool,
+
+    // -- slow-read / streaming --
+    /// When true, the read lock is acquired and released per chunk instead of held
+    /// for the entire read, reducing write latency at the cost of higher read P99.
+    pub has_slow_read: bool,
+    /// Buffer size for chunked streaming reads (used with `has_slow_read`).
+    pub read_buffer_size: i32,
+}
+
+impl Default for ReadOption {
+    fn default() -> Self {
+        ReadOption {
+            read_deleted: false,
+            attempt_meta_only: false,
+            must_meta_only: false,
+            is_meta_only: false,
+            volume_revision: 0,
+            is_out_of_range: false,
+            has_slow_read: false,
+            read_buffer_size: 0,
+        }
+    }
+}
+
+// ============================================================================
+// NeedleMapEntry helpers (for .idx file)
+// ============================================================================
+
+/// Parse a single .idx file entry (17 bytes) into (NeedleId, Offset, Size).
+pub fn idx_entry_from_bytes(bytes: &[u8]) -> (NeedleId, Offset, Size) {
+    assert!(bytes.len() >= NEEDLE_MAP_ENTRY_SIZE);
+    let key = NeedleId::from_bytes(&bytes[..NEEDLE_ID_SIZE]);
+    let offset = Offset::from_bytes(&bytes[NEEDLE_ID_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE]);
+    let size = Size::from_bytes(
+        &bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE],
+    );
+    (key, offset, size)
+}
+
+/// Write a single .idx file entry (17 bytes).
+pub fn idx_entry_to_bytes(bytes: &mut [u8], key: NeedleId, offset: Offset, size: Size) {
+    assert!(bytes.len() >= NEEDLE_MAP_ENTRY_SIZE);
+    key.to_bytes(&mut bytes[..NEEDLE_ID_SIZE]);
+    offset.to_bytes(&mut bytes[NEEDLE_ID_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE]);
+    size.to_bytes(
+        &mut bytes[NEEDLE_ID_SIZE + OFFSET_SIZE..NEEDLE_ID_SIZE + OFFSET_SIZE + SIZE_SIZE],
+    );
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_needle_id_round_trip() {
+        let id = NeedleId(0x123456789abcdef0);
+        let mut buf = [0u8; 8];
+        id.to_bytes(&mut buf);
+        let id2 = NeedleId::from_bytes(&buf);
+        assert_eq!(id, id2);
+    }
+
+    #[test]
+    fn test_needle_id_display() {
+        let id = NeedleId(255);
+        assert_eq!(id.to_string(), "ff");
+    }
+
+    #[test]
+    fn test_needle_id_parse() {
+        let id = NeedleId::parse("ff").unwrap();
+        assert_eq!(id, NeedleId(255));
+    }
+
+    #[test]
+    fn test_cookie_round_trip() {
+        let cookie = Cookie(0xdeadbeef);
+        let mut buf = [0u8; 4];
+        cookie.to_bytes(&mut buf);
+        let cookie2 = Cookie::from_bytes(&buf);
+        assert_eq!(cookie, cookie2);
+    }
+
+    #[test]
+    fn test_size_semantics() {
+        assert!(Size(100).is_valid());
+        assert!(!Size(100).is_deleted());
+        assert!(!Size(100).is_tombstone());
+        assert_eq!(Size(100).raw(), 100);
+
+        assert!(Size(-50).is_deleted());
+        assert!(!Size(-50).is_tombstone());
+        assert_eq!(Size(-50).raw(), 50);
+
+        assert!(TOMBSTONE_FILE_SIZE.is_deleted());
+        assert!(TOMBSTONE_FILE_SIZE.is_tombstone());
+        assert_eq!(TOMBSTONE_FILE_SIZE.raw(), 0);
+
+        assert!(!Size(0).is_valid());
+        assert!(!Size(0).is_deleted());
+    }
+
+    #[test]
+    fn test_size_round_trip() {
+        let size = Size(12345);
+        let mut buf = [0u8; 4];
+        size.to_bytes(&mut buf);
+        let size2 = Size::from_bytes(&buf);
+        assert_eq!(size, size2);
+    }
+
+    #[test]
+    fn test_size_negative_round_trip() {
+        // Negative sizes round-trip through u32 bit pattern
+        let size = Size(-50);
+        let mut buf = [0u8; 4];
+        size.to_bytes(&mut buf);
+        let size2 = Size::from_bytes(&buf);
+        assert_eq!(size, size2);
+    }
+
+    #[test]
+    fn test_offset_round_trip() {
+        // Test with a known actual offset
+        let actual_offset: i64 = 8 * 1000000; // must be multiple of 8
+        let offset = Offset::from_actual_offset(actual_offset);
+        assert_eq!(offset.to_actual_offset(), actual_offset);
+
+        // Test byte serialization
+        let mut buf = [0u8; 5];
+        offset.to_bytes(&mut buf);
+        let offset2 = Offset::from_bytes(&buf);
+        assert_eq!(offset.to_actual_offset(), offset2.to_actual_offset());
+    }
+
+    #[test]
+    fn test_offset_zero() {
+        let offset = Offset::default();
+        assert!(offset.is_zero());
+        assert_eq!(offset.to_actual_offset(), 0);
+    }
+
+    #[test]
+    fn test_offset_max() {
+        // Max stored value depends on offset size
+        #[cfg(feature = "5bytes")]
+        let max_stored: i64 = (1i64 << 40) - 1; // 5-byte max
+        #[cfg(not(feature = "5bytes"))]
+        let max_stored: i64 = (1i64 << 32) - 1; // 4-byte max
+        let max_actual = max_stored * NEEDLE_PADDING_SIZE as i64;
+        let offset = Offset::from_actual_offset(max_actual);
+        assert_eq!(offset.to_actual_offset(), max_actual);
+    }
+
+    #[test]
+    fn test_offset_size_constants() {
+        #[cfg(feature = "5bytes")]
+        {
+            assert_eq!(OFFSET_SIZE, 5);
+            assert_eq!(NEEDLE_MAP_ENTRY_SIZE, 17); // 8 + 5 + 4
+            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8 * 256);
+            // 8TB
+        }
+        #[cfg(not(feature = "5bytes"))]
+        {
+            assert_eq!(OFFSET_SIZE, 4);
+            assert_eq!(NEEDLE_MAP_ENTRY_SIZE, 16); // 8 + 4 + 4
+            assert_eq!(MAX_POSSIBLE_VOLUME_SIZE, 4 * 1024 * 1024 * 1024 * 8); // 32GB
+        }
+    }
+
+    #[test]
+    fn test_idx_entry_round_trip() {
+        let key = NeedleId(0xdeadbeef12345678);
+        let offset = Offset::from_actual_offset(8 * 999);
+        let size = Size(4096);
+
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        idx_entry_to_bytes(&mut buf, key, offset, size);
+
+        let (key2, offset2, size2) = idx_entry_from_bytes(&buf);
+        assert_eq!(key, key2);
+        assert_eq!(offset.to_actual_offset(), offset2.to_actual_offset());
+        assert_eq!(size, size2);
+    }
+
+    #[test]
+    fn test_volume_id() {
+        let vid = VolumeId::parse("42").unwrap();
+        assert_eq!(vid, VolumeId(42));
+        assert_eq!(vid.to_string(), "42");
+        assert_eq!(vid.next(), VolumeId(43));
+    }
+
+    #[test]
+    fn test_version() {
+        assert!(VERSION_1.is_supported());
+        assert!(VERSION_2.is_supported());
+        assert!(VERSION_3.is_supported());
+        assert!(!Version(0).is_supported());
+        assert!(!Version(4).is_supported());
+        assert_eq!(Version::current(), VERSION_3);
+    }
+
+    #[test]
+    fn test_disk_type() {
+        assert_eq!(DiskType::from_string(""), DiskType::HardDrive);
+        assert_eq!(DiskType::from_string("hdd"), DiskType::HardDrive);
+        assert_eq!(DiskType::from_string("SSD"), DiskType::Ssd);
+        assert_eq!(
+            DiskType::from_string("nvme"),
+            DiskType::Custom("nvme".to_string())
+        );
+        assert_eq!(DiskType::HardDrive.readable_string(), "hdd");
+        assert_eq!(DiskType::Ssd.readable_string(), "ssd");
+    }
+
+    #[test]
+    fn test_read_option_default() {
+        let ro = ReadOption::default();
+        assert!(!ro.read_deleted);
+        assert!(!ro.attempt_meta_only);
+        assert!(!ro.must_meta_only);
+        assert!(!ro.is_meta_only);
+        assert_eq!(ro.volume_revision, 0);
+        assert!(!ro.is_out_of_range);
+        assert!(!ro.has_slow_read);
+        assert_eq!(ro.read_buffer_size, 0);
+    }
+
+    #[test]
+    fn test_read_option_custom() {
+        let ro = ReadOption {
+            read_deleted: true,
+            attempt_meta_only: true,
+            has_slow_read: true,
+            read_buffer_size: 1024 * 1024,
+            ..ReadOption::default()
+        };
+        assert!(ro.read_deleted);
+        assert!(ro.attempt_meta_only);
+        assert!(!ro.must_meta_only);
+        assert!(!ro.is_meta_only);
+        assert!(ro.has_slow_read);
+        assert_eq!(ro.read_buffer_size, 1024 * 1024);
+    }
+
+    #[test]
+    fn test_read_option_clone() {
+        let ro = ReadOption {
+            is_out_of_range: true,
+            volume_revision: 42,
+            ..ReadOption::default()
+        };
+        let ro2 = ro.clone();
+        assert!(ro2.is_out_of_range);
+        assert_eq!(ro2.volume_revision, 42);
+    }
+}

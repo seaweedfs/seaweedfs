@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
@@ -37,18 +39,19 @@ const (
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir    string
-	ctx        context.Context
-	cancel     context.CancelFunc
-	s3Client   *s3.S3
-	isRunning  bool
-	startOnce  sync.Once
-	wg         sync.WaitGroup
-	masterPort int
-	volumePort int
-	filerPort  int
-	s3Port     int
-	s3Endpoint string
+	dataDir        string
+	ctx            context.Context
+	cancel         context.CancelFunc
+	s3Client       *s3.S3
+	isRunning      bool
+	startOnce      sync.Once
+	wg             sync.WaitGroup
+	masterPort     int
+	volumePort     int
+	filerPort      int
+	s3Port         int
+	s3Endpoint     string
+	rustVolumeCmd  *exec.Cmd
 }
 
 // TestS3Integration demonstrates basic S3 operations against a running weed mini instance
@@ -236,6 +239,14 @@ func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 		return nil, fmt.Errorf("S3 service failed to start: %v", err)
 	}
 
+	// If VOLUME_SERVER_IMPL=rust, start a Rust volume server alongside weed mini
+	if os.Getenv("VOLUME_SERVER_IMPL") == "rust" {
+		if err := cluster.startRustVolumeServer(t); err != nil {
+			cancel()
+			return nil, fmt.Errorf("failed to start Rust volume server: %v", err)
+		}
+	}
+
 	cluster.isRunning = true
 
 	// Create S3 client
@@ -257,8 +268,82 @@ func startMiniCluster(t *testing.T, extraArgs ...string) (*TestCluster, error) {
 	return cluster, nil
 }
 
+// startRustVolumeServer starts a Rust volume server that registers with the same master.
+func (c *TestCluster) startRustVolumeServer(t *testing.T) error {
+	t.Helper()
+
+	rustBinary, err := framework.FindOrBuildRustBinary()
+	if err != nil {
+		return fmt.Errorf("resolve rust volume binary: %v", err)
+	}
+
+	rustVolumePort, err := findAvailablePort()
+	if err != nil {
+		return fmt.Errorf("find rust volume port: %v", err)
+	}
+	rustVolumeGrpcPort, err := findAvailablePort()
+	if err != nil {
+		return fmt.Errorf("find rust volume grpc port: %v", err)
+	}
+
+	rustVolumeDir := filepath.Join(c.dataDir, "rust-volume")
+	if err := os.MkdirAll(rustVolumeDir, 0o755); err != nil {
+		return fmt.Errorf("create rust volume dir: %v", err)
+	}
+
+	securityToml := filepath.Join(c.dataDir, "security.toml")
+
+	args := []string{
+		"--port", strconv.Itoa(rustVolumePort),
+		"--port.grpc", strconv.Itoa(rustVolumeGrpcPort),
+		"--port.public", strconv.Itoa(rustVolumePort),
+		"--ip", "127.0.0.1",
+		"--ip.bind", "127.0.0.1",
+		"--dir", rustVolumeDir,
+		"--max", "16",
+		"--master", "127.0.0.1:" + strconv.Itoa(c.masterPort),
+		"--securityFile", securityToml,
+		"--preStopSeconds", "0",
+	}
+
+	logFile, err := os.Create(filepath.Join(c.dataDir, "rust-volume.log"))
+	if err != nil {
+		return fmt.Errorf("create rust volume log: %v", err)
+	}
+
+	c.rustVolumeCmd = exec.Command(rustBinary, args...)
+	c.rustVolumeCmd.Dir = c.dataDir
+	c.rustVolumeCmd.Stdout = logFile
+	c.rustVolumeCmd.Stderr = logFile
+	if err := c.rustVolumeCmd.Start(); err != nil {
+		logFile.Close()
+		return fmt.Errorf("start rust volume: %v", err)
+	}
+
+	// Wait for the Rust volume server to be ready
+	rustEndpoint := fmt.Sprintf("http://127.0.0.1:%d/healthz", rustVolumePort)
+	deadline := time.Now().Add(15 * time.Second)
+	client := &http.Client{Timeout: 1 * time.Second}
+	for time.Now().Before(deadline) {
+		resp, err := client.Get(rustEndpoint)
+		if err == nil {
+			resp.Body.Close()
+			t.Logf("Rust volume server ready on port %d (grpc %d)", rustVolumePort, rustVolumeGrpcPort)
+			return nil
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return fmt.Errorf("rust volume server not ready after 15s (port %d)", rustVolumePort)
+}
+
 // Stop stops the test cluster
 func (c *TestCluster) Stop() {
+	// Stop Rust volume server first
+	if c.rustVolumeCmd != nil && c.rustVolumeCmd.Process != nil {
+		c.rustVolumeCmd.Process.Kill()
+		c.rustVolumeCmd.Wait()
+	}
+
 	if c.cancel != nil {
 		c.cancel()
 	}

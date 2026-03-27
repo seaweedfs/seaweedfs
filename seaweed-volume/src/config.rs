@@ -1,0 +1,1697 @@
+use clap::Parser;
+use std::net::UdpSocket;
+use std::path::{Path, PathBuf};
+
+use crate::security::tls::TlsPolicy;
+
+/// SeaweedFS Volume Server (Rust implementation)
+///
+/// Start a volume server to provide storage spaces.
+#[derive(Parser, Debug)]
+#[command(name = "weed-volume", version, about)]
+pub struct Cli {
+    /// HTTP listen port
+    #[arg(long = "port", default_value_t = 8080)]
+    pub port: u16,
+
+    /// gRPC listen port. If 0, defaults to port + 10000.
+    #[arg(long = "port.grpc", default_value_t = 0)]
+    pub port_grpc: u16,
+
+    /// Port opened to public. If 0, defaults to same as --port.
+    #[arg(long = "port.public", default_value_t = 0)]
+    pub port_public: u16,
+
+    /// IP or server name, also used as identifier.
+    /// If empty, auto-detected.
+    #[arg(long = "ip", default_value = "")]
+    pub ip: String,
+
+    /// Volume server ID. If empty, defaults to ip:port.
+    #[arg(long = "id", default_value = "")]
+    pub id: String,
+
+    /// Publicly accessible address.
+    #[arg(long = "publicUrl", default_value = "")]
+    pub public_url: String,
+
+    /// IP address to bind to. If empty, defaults to same as --ip.
+    #[arg(long = "ip.bind", default_value = "")]
+    pub bind_ip: String,
+
+    /// Comma-separated master server addresses.
+    #[arg(long = "master", default_value = "localhost:9333")]
+    pub master: String,
+
+    /// Comma-separated master servers (deprecated, use --master instead).
+    #[arg(long = "mserver", default_value = "")]
+    pub mserver: String,
+
+    /// Number of seconds between stop sending heartbeats and stopping the volume server.
+    #[arg(long = "preStopSeconds", default_value_t = 10)]
+    pub pre_stop_seconds: u32,
+
+    /// Connection idle seconds.
+    #[arg(long = "idleTimeout", default_value_t = 30)]
+    pub idle_timeout: u32,
+
+    /// Current volume server's data center name.
+    #[arg(long = "dataCenter", default_value = "")]
+    pub data_center: String,
+
+    /// Current volume server's rack name.
+    #[arg(long = "rack", default_value = "")]
+    pub rack: String,
+
+    /// Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.
+    #[arg(long = "index", default_value = "memory")]
+    pub index: String,
+
+    /// [hdd|ssd|<tag>] hard drive or solid state drive or any tag.
+    #[arg(long = "disk", default_value = "")]
+    pub disk: String,
+
+    /// Comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive).
+    #[arg(long = "tags", default_value = "")]
+    pub tags: String,
+
+    /// Adjust jpg orientation when uploading.
+    #[arg(long = "images.fix.orientation", default_value_t = false)]
+    pub fix_jpg_orientation: bool,
+
+    /// [local|proxy|redirect] how to deal with non-local volume.
+    #[arg(long = "readMode", default_value = "proxy")]
+    pub read_mode: String,
+
+    /// CPU profile output file.
+    #[arg(long = "cpuprofile", default_value = "")]
+    pub cpu_profile: String,
+
+    /// Memory profile output file.
+    #[arg(long = "memprofile", default_value = "")]
+    pub mem_profile: String,
+
+    /// Limit background compaction or copying speed in mega bytes per second.
+    #[arg(long = "compactionMBps", default_value_t = 0)]
+    pub compaction_mb_per_second: u32,
+
+    /// Limit maintenance (replication/balance) IO rate in MB/s. 0 means no limit.
+    #[arg(long = "maintenanceMBps", default_value_t = 0)]
+    pub maintenance_mb_per_second: u32,
+
+    /// Limit file size to avoid out of memory.
+    #[arg(long = "fileSizeLimitMB", default_value_t = 256)]
+    pub file_size_limit_mb: u32,
+
+    /// Limit total concurrent upload size in MB, 0 means unlimited.
+    #[arg(long = "concurrentUploadLimitMB", default_value_t = 0)]
+    pub concurrent_upload_limit_mb: u32,
+
+    /// Limit total concurrent download size in MB, 0 means unlimited.
+    #[arg(long = "concurrentDownloadLimitMB", default_value_t = 0)]
+    pub concurrent_download_limit_mb: u32,
+
+    /// Enable pprof-equivalent HTTP handlers. Precludes --memprofile and --cpuprofile.
+    #[arg(long = "pprof", default_value_t = false)]
+    pub pprof: bool,
+
+    /// Prometheus metrics listen port.
+    #[arg(long = "metricsPort", default_value_t = 0)]
+    pub metrics_port: u16,
+
+    /// Metrics listen IP. If empty, defaults to same as --ip.bind.
+    #[arg(long = "metricsIp", default_value = "")]
+    pub metrics_ip: String,
+
+    /// Directories to store data files. dir[,dir]...
+    /// If empty, defaults to the platform temp directory (Go's os.TempDir()).
+    #[arg(long = "dir", default_value = "")]
+    pub dir: String,
+
+    /// Directory to store .idx files.
+    #[arg(long = "dir.idx", default_value = "")]
+    pub dir_idx: String,
+
+    /// Maximum numbers of volumes, count[,count]...
+    /// If set to zero, the limit will be auto configured as free disk space divided by volume size.
+    #[arg(long = "max", default_value = "8")]
+    pub max: String,
+
+    /// Comma separated IP addresses having write permission. No limit if empty.
+    #[arg(long = "whiteList", default_value = "")]
+    pub white_list: String,
+
+    /// Minimum free disk space (default to 1%). Low disk space will mark all volumes as ReadOnly.
+    /// Deprecated: use --minFreeSpace instead.
+    #[arg(long = "minFreeSpacePercent", default_value = "1")]
+    pub min_free_space_percent: String,
+
+    /// Min free disk space (value<=100 as percentage like 1, other as human readable bytes, like 10GiB).
+    /// Low disk space will mark all volumes as ReadOnly.
+    #[arg(long = "minFreeSpace", default_value = "")]
+    pub min_free_space: String,
+
+    /// Inflight upload data wait timeout of volume servers.
+    #[arg(long = "inflightUploadDataTimeout", default_value = "60s")]
+    pub inflight_upload_data_timeout: String,
+
+    /// Inflight download data wait timeout of volume servers.
+    #[arg(long = "inflightDownloadDataTimeout", default_value = "60s")]
+    pub inflight_download_data_timeout: String,
+
+    /// <experimental> if true, prevents slow reads from blocking other requests,
+    /// but large file read P99 latency will increase.
+    #[arg(long = "hasSlowRead", default_value_t = true)]
+    pub has_slow_read: bool,
+
+    /// <experimental> larger values can optimize query performance but will increase memory usage.
+    /// Use with hasSlowRead normally.
+    #[arg(long = "readBufferSizeMB", default_value_t = 4)]
+    pub read_buffer_size_mb: u32,
+
+    /// Alive time for leveldb (default to 0). If leveldb of volume is not accessed in
+    /// ldbTimeout hours, it will be offloaded to reduce opened files and memory consumption.
+    #[arg(long = "index.leveldbTimeout", default_value_t = 0)]
+    pub ldb_timeout: i64,
+
+    /// Serves runtime profiling data on the port specified by --debug.port.
+    #[arg(long = "debug", default_value_t = false)]
+    pub debug: bool,
+
+    /// HTTP port for debugging.
+    #[arg(long = "debug.port", default_value_t = 6060)]
+    pub debug_port: u16,
+
+    /// Path to security.toml configuration file for JWT signing keys.
+    #[arg(long = "securityFile", default_value = "")]
+    pub security_file: String,
+
+    /// A file of command line options, each line in optionName=optionValue format.
+    #[arg(long = "options", default_value = "")]
+    pub options: String,
+}
+
+/// Resolved configuration after applying defaults and validation.
+#[derive(Debug)]
+pub struct VolumeServerConfig {
+    pub port: u16,
+    pub grpc_port: u16,
+    pub public_port: u16,
+    pub ip: String,
+    pub bind_ip: String,
+    pub public_url: String,
+    pub id: String,
+    pub masters: Vec<String>,
+    pub pre_stop_seconds: u32,
+    pub idle_timeout: u32,
+    pub data_center: String,
+    pub rack: String,
+    pub index_type: NeedleMapKind,
+    pub disk_type: String,
+    pub folders: Vec<String>,
+    pub folder_max_limits: Vec<i32>,
+    pub folder_tags: Vec<Vec<String>>,
+    pub min_free_spaces: Vec<MinFreeSpace>,
+    pub disk_types: Vec<String>,
+    pub idx_folder: String,
+    pub white_list: Vec<String>,
+    pub fix_jpg_orientation: bool,
+    pub read_mode: ReadMode,
+    pub cpu_profile: String,
+    pub mem_profile: String,
+    pub compaction_byte_per_second: i64,
+    pub maintenance_byte_per_second: i64,
+    pub file_size_limit_bytes: i64,
+    pub concurrent_upload_limit: i64,
+    pub concurrent_download_limit: i64,
+    pub inflight_upload_data_timeout: std::time::Duration,
+    pub inflight_download_data_timeout: std::time::Duration,
+    pub has_slow_read: bool,
+    pub read_buffer_size_mb: u32,
+    pub ldb_timeout: i64,
+    pub pprof: bool,
+    pub metrics_port: u16,
+    pub metrics_ip: String,
+    pub debug: bool,
+    pub debug_port: u16,
+    pub ui_enabled: bool,
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires_seconds: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires_seconds: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
+    pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
+    pub tls_policy: TlsPolicy,
+    /// Enable batched write queue for improved throughput under load.
+    pub enable_write_queue: bool,
+    /// Path to security.toml — stored for SIGHUP reload.
+    pub security_file: String,
+}
+
+pub use crate::storage::needle_map::NeedleMapKind;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadMode {
+    Local,
+    Proxy,
+    Redirect,
+}
+
+#[derive(Debug, Clone)]
+pub enum MinFreeSpace {
+    Percent(f64),
+    Bytes(u64),
+}
+
+/// Convert single-dash long options to double-dash for clap compatibility.
+/// Go's `flag` package uses `-port`, clap expects `--port`.
+/// This allows both `-port 8080` and `--port 8080` to work.
+fn normalize_args_vec(args: Vec<String>) -> Vec<String> {
+    let mut args = args;
+    // Skip args[0] (binary name).
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        // Stop processing after "--"
+        if arg == "--" {
+            break;
+        }
+        // Already double-dash or not a flag: leave as-is
+        if arg.starts_with("--") || !arg.starts_with('-') {
+            i += 1;
+            continue;
+        }
+        // Single char flags like -h, -V: leave as-is
+        let without_dash = &arg[1..];
+        // Check if it's a single-dash long option: more than 1 char and not a negative number
+        if without_dash.len() > 1 && !without_dash.starts_with(|c: char| c.is_ascii_digit()) {
+            // Handle -key=value format
+            if let Some(eq_pos) = without_dash.find('=') {
+                let key = &without_dash[..eq_pos];
+                if key.len() > 1 {
+                    args[i] = format!("--{}", without_dash);
+                }
+            } else {
+                args[i] = format!("-{}", arg);
+            }
+        }
+        i += 1;
+    }
+    args
+}
+
+/// Parse CLI arguments and resolve all defaults — mirroring Go's `runVolume()` + `startVolumeServer()`.
+///
+/// Supports `-options <file>` to load defaults from a file (same format as Go's fla9).
+/// CLI arguments take precedence over file values.
+pub fn parse_cli() -> VolumeServerConfig {
+    let args: Vec<String> = std::env::args().collect();
+    let normalized = normalize_args_vec(args);
+    let merged = merge_options_file(normalized);
+    let cli = Cli::parse_from(merged);
+    resolve_config(cli)
+}
+
+/// Find `-options`/`--options` in args, parse the referenced file, and inject
+/// file-based defaults for any flags not already set on the command line.
+///
+/// File format (matching Go's fla9.ParseFile):
+///   - One option per line: `key=value`, `key value`, or `key:value`
+///   - Lines starting with `#` are comments; blank lines are ignored
+///   - Leading `-` on key names is stripped
+///   - CLI arguments take precedence over file values
+fn merge_options_file(args: Vec<String>) -> Vec<String> {
+    // Find the options file path from the args
+    let options_path = find_options_arg(&args);
+    if options_path.is_empty() {
+        return args;
+    }
+
+    let content = match std::fs::read_to_string(&options_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!(
+                "WARNING: could not read options file {}: {}",
+                options_path, e
+            );
+            return args;
+        }
+    };
+
+    // Collect which flags are already explicitly set on the command line.
+    let mut cli_flags: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut i = 1; // skip binary name
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--" {
+            break;
+        }
+        if arg.starts_with("--") {
+            let key = if let Some(eq) = arg.find('=') {
+                arg[2..eq].to_string()
+            } else {
+                arg[2..].to_string()
+            };
+            cli_flags.insert(key);
+        } else if arg.starts_with('-') && arg.len() > 2 {
+            // Single-dash long option (already normalized to -- at this point,
+            // but handle both for safety)
+            let without_dash = &arg[1..];
+            let key = if let Some(eq) = without_dash.find('=') {
+                without_dash[..eq].to_string()
+            } else {
+                without_dash.to_string()
+            };
+            cli_flags.insert(key);
+        }
+        i += 1;
+    }
+
+    // Parse file and append missing options
+    let mut extra_args: Vec<String> = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        // Split on first `=`, ` `, or `:`
+        let (name, value) =
+            if let Some(pos) = trimmed.find(|c: char| c == '=' || c == ' ' || c == ':') {
+                (
+                    trimmed[..pos].trim().to_string(),
+                    trimmed[pos + 1..].trim().to_string(),
+                )
+            } else {
+                (trimmed.to_string(), String::new())
+            };
+
+        // Strip leading dashes from name
+        let name = name.trim_start_matches('-').to_string();
+        if name.is_empty() || name == "options" {
+            continue;
+        }
+
+        // Skip if already set on CLI
+        if cli_flags.contains(&name) {
+            continue;
+        }
+
+        extra_args.push(format!("--{}", name));
+        if !value.is_empty() {
+            extra_args.push(value);
+        }
+    }
+
+    let mut merged = args;
+    merged.extend(extra_args);
+    merged
+}
+
+/// Extract the options file path from args (looks for --options or -options).
+fn find_options_arg(args: &[String]) -> String {
+    for i in 1..args.len() {
+        if args[i] == "--options" || args[i] == "-options" {
+            if i + 1 < args.len() {
+                return args[i + 1].clone();
+            }
+        }
+        if let Some(rest) = args[i].strip_prefix("--options=") {
+            return rest.to_string();
+        }
+        if let Some(rest) = args[i].strip_prefix("-options=") {
+            return rest.to_string();
+        }
+    }
+    String::new()
+}
+
+/// Parse a duration string like "60s", "5m", "1h" into a std::time::Duration.
+fn parse_duration(s: &str) -> std::time::Duration {
+    let s = s.trim();
+    if s.is_empty() {
+        return std::time::Duration::from_secs(60);
+    }
+    if let Some(secs) = s.strip_suffix('s') {
+        if let Ok(v) = secs.parse::<u64>() {
+            return std::time::Duration::from_secs(v);
+        }
+    }
+    if let Some(mins) = s.strip_suffix('m') {
+        if let Ok(v) = mins.parse::<u64>() {
+            return std::time::Duration::from_secs(v * 60);
+        }
+    }
+    if let Some(hours) = s.strip_suffix('h') {
+        if let Ok(v) = hours.parse::<u64>() {
+            return std::time::Duration::from_secs(v * 3600);
+        }
+    }
+    // Fallback: try parsing as raw seconds
+    if let Ok(v) = s.parse::<u64>() {
+        return std::time::Duration::from_secs(v);
+    }
+    std::time::Duration::from_secs(60)
+}
+
+/// Parse minFreeSpace / minFreeSpacePercent into MinFreeSpace values.
+/// Mirrors Go's `util.MustParseMinFreeSpace()`.
+fn parse_min_free_spaces(min_free_space: &str, min_free_space_percent: &str) -> Vec<MinFreeSpace> {
+    // If --minFreeSpace is provided, use it (takes precedence).
+    let source = if !min_free_space.is_empty() {
+        min_free_space
+    } else {
+        min_free_space_percent
+    };
+
+    source
+        .split(',')
+        .map(|s| {
+            let s = s.trim();
+            // Try parsing as a percentage (value <= 100)
+            if let Ok(v) = s.parse::<f64>() {
+                if v <= 100.0 {
+                    return MinFreeSpace::Percent(v);
+                }
+                // Treat as bytes if > 100
+                return MinFreeSpace::Bytes(v as u64);
+            }
+            // Try parsing human-readable bytes: e.g. "10GiB", "500MiB", "1TiB"
+            let s_upper = s.to_uppercase();
+            if let Some(rest) = s_upper.strip_suffix("TIB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0 * 1024.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("GIB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0 * 1024.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("MIB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1024.0 * 1024.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("KIB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1024.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("TB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1_000_000_000_000.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("GB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1_000_000_000.0) as u64);
+                }
+            }
+            if let Some(rest) = s_upper.strip_suffix("MB") {
+                if let Ok(v) = rest.trim().parse::<f64>() {
+                    return MinFreeSpace::Bytes((v * 1_000_000.0) as u64);
+                }
+            }
+            // Default: 1%
+            MinFreeSpace::Percent(1.0)
+        })
+        .collect()
+}
+
+/// Parse comma-separated tag groups like "fast:ssd,archive" into per-folder tag vectors.
+/// Mirrors Go's `parseVolumeTags()`.
+fn parse_volume_tags(tags_arg: &str, folder_count: usize) -> Vec<Vec<String>> {
+    if folder_count == 0 {
+        return vec![];
+    }
+    let tags_arg = tags_arg.trim();
+    let tag_entries: Vec<&str> = if tags_arg.is_empty() {
+        vec![]
+    } else {
+        tags_arg.split(',').collect()
+    };
+
+    let mut folder_tags: Vec<Vec<String>> = vec![vec![]; folder_count];
+
+    if tag_entries.len() == 1 && !tag_entries[0].is_empty() {
+        // Single entry: replicate to all folders
+        let normalized: Vec<String> = tag_entries[0]
+            .split(':')
+            .map(|t| t.trim().to_lowercase())
+            .filter(|t| !t.is_empty())
+            .collect();
+        for tags in folder_tags.iter_mut() {
+            *tags = normalized.clone();
+        }
+    } else {
+        for (i, tags) in folder_tags.iter_mut().enumerate() {
+            if i < tag_entries.len() {
+                *tags = tag_entries[i]
+                    .split(':')
+                    .map(|t| t.trim().to_lowercase())
+                    .filter(|t| !t.is_empty())
+                    .collect();
+            }
+        }
+    }
+
+    folder_tags
+}
+
+fn resolve_config(cli: Cli) -> VolumeServerConfig {
+    // Backward compatibility: --mserver overrides --master
+    let master_string = if !cli.mserver.is_empty() {
+        &cli.mserver
+    } else {
+        &cli.master
+    };
+    let masters: Vec<String> = master_string
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Parse folders
+    let dir_value = if cli.dir.trim().is_empty() {
+        default_volume_dir()
+    } else {
+        cli.dir
+    };
+    let folders: Vec<String> = dir_value
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    let folder_count = folders.len();
+
+    // Parse max volume counts
+    let mut folder_max_limits: Vec<i32> = cli
+        .max
+        .split(',')
+        .map(|s| {
+            s.trim().parse::<i32>().unwrap_or_else(|_| {
+                panic!("The max specified in --max is not a valid number: {}", s)
+            })
+        })
+        .collect();
+    // Replicate single value to all folders
+    if folder_max_limits.len() == 1 && folder_count > 1 {
+        let v = folder_max_limits[0];
+        folder_max_limits.resize(folder_count, v);
+    }
+    if folders.len() != folder_max_limits.len() {
+        panic!(
+            "{} directories by --dir, but only {} max is set by --max",
+            folders.len(),
+            folder_max_limits.len()
+        );
+    }
+
+    // Parse min free spaces
+    let mut min_free_spaces =
+        parse_min_free_spaces(&cli.min_free_space, &cli.min_free_space_percent);
+    if min_free_spaces.len() == 1 && folder_count > 1 {
+        let v = min_free_spaces[0].clone();
+        min_free_spaces.resize(folder_count, v);
+    }
+    if folders.len() != min_free_spaces.len() {
+        panic!(
+            "{} directories by --dir, but only {} minFreeSpace values",
+            folders.len(),
+            min_free_spaces.len()
+        );
+    }
+
+    // Parse disk types
+    let mut disk_types: Vec<String> = cli.disk.split(',').map(|s| s.trim().to_string()).collect();
+    if disk_types.len() == 1 && folder_count > 1 {
+        let v = disk_types[0].clone();
+        disk_types.resize(folder_count, v);
+    }
+    if folders.len() != disk_types.len() {
+        panic!(
+            "{} directories by --dir, but only {} disk types by --disk",
+            folders.len(),
+            disk_types.len()
+        );
+    }
+
+    // Parse tags
+    let folder_tags = parse_volume_tags(&cli.tags, folder_count);
+
+    // Resolve IP
+    let ip = if cli.ip.is_empty() {
+        detect_host_address()
+    } else {
+        cli.ip
+    };
+
+    // Resolve bind IP
+    let bind_ip = if cli.bind_ip.is_empty() {
+        ip.clone()
+    } else {
+        cli.bind_ip
+    };
+
+    // Resolve public port
+    let public_port = if cli.port_public == 0 {
+        cli.port
+    } else {
+        cli.port_public
+    };
+
+    // Resolve gRPC port
+    let grpc_port = if cli.port_grpc == 0 {
+        10000 + cli.port
+    } else {
+        cli.port_grpc
+    };
+
+    // Resolve public URL
+    let public_url = if cli.public_url.is_empty() {
+        format!("{}:{}", ip, public_port)
+    } else {
+        cli.public_url
+    };
+
+    // Resolve volume server ID
+    let id = if cli.id.is_empty() {
+        format!("{}:{}", ip, cli.port)
+    } else {
+        cli.id
+    };
+
+    // Resolve metrics IP
+    let metrics_ip = if !cli.metrics_ip.is_empty() {
+        cli.metrics_ip
+    } else if !bind_ip.is_empty() {
+        bind_ip.clone()
+    } else {
+        ip.clone()
+    };
+
+    // Parse index type
+    let index_type = match cli.index.as_str() {
+        "memory" => NeedleMapKind::InMemory,
+        "leveldb" => NeedleMapKind::LevelDb,
+        "leveldbMedium" => NeedleMapKind::LevelDbMedium,
+        "leveldbLarge" => NeedleMapKind::LevelDbLarge,
+        other => panic!(
+            "Unknown index type: {}. Use memory|leveldb|leveldbMedium|leveldbLarge",
+            other
+        ),
+    };
+
+    // Parse read mode
+    let read_mode = match cli.read_mode.as_str() {
+        "local" => ReadMode::Local,
+        "proxy" => ReadMode::Proxy,
+        "redirect" => ReadMode::Redirect,
+        other => panic!("Unknown readMode: {}. Use local|proxy|redirect", other),
+    };
+
+    // Parse security config from TOML file
+    let sec = parse_security_config(&cli.security_file);
+
+    // Parse whitelist: merge CLI --whiteList with guard.white_list from security.toml
+    let mut white_list: Vec<String> = cli
+        .white_list
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    white_list.extend(sec.guard_white_list.iter().cloned());
+
+    // Parse durations
+    let inflight_upload_data_timeout = parse_duration(&cli.inflight_upload_data_timeout);
+    let inflight_download_data_timeout = parse_duration(&cli.inflight_download_data_timeout);
+
+    VolumeServerConfig {
+        port: cli.port,
+        grpc_port,
+        public_port,
+        ip,
+        bind_ip,
+        public_url,
+        id,
+        masters,
+        pre_stop_seconds: cli.pre_stop_seconds,
+        idle_timeout: cli.idle_timeout,
+        data_center: cli.data_center,
+        rack: cli.rack,
+        index_type,
+        disk_type: cli.disk,
+        folders,
+        folder_max_limits,
+        folder_tags,
+        min_free_spaces,
+        disk_types,
+        idx_folder: cli.dir_idx,
+        white_list,
+        fix_jpg_orientation: cli.fix_jpg_orientation,
+        read_mode,
+        cpu_profile: cli.cpu_profile,
+        mem_profile: cli.mem_profile,
+        compaction_byte_per_second: cli.compaction_mb_per_second as i64 * 1024 * 1024,
+        maintenance_byte_per_second: cli.maintenance_mb_per_second as i64 * 1024 * 1024,
+        file_size_limit_bytes: cli.file_size_limit_mb as i64 * 1024 * 1024,
+        concurrent_upload_limit: cli.concurrent_upload_limit_mb as i64 * 1024 * 1024,
+        concurrent_download_limit: cli.concurrent_download_limit_mb as i64 * 1024 * 1024,
+        inflight_upload_data_timeout,
+        inflight_download_data_timeout,
+        has_slow_read: cli.has_slow_read,
+        read_buffer_size_mb: cli.read_buffer_size_mb,
+        ldb_timeout: cli.ldb_timeout,
+        pprof: cli.pprof,
+        metrics_port: cli.metrics_port,
+        metrics_ip,
+        debug: cli.debug,
+        debug_port: cli.debug_port,
+        ui_enabled: sec.jwt_signing_key.is_empty() || sec.access_ui,
+        jwt_signing_key: sec.jwt_signing_key,
+        jwt_signing_expires_seconds: sec.jwt_signing_expires,
+        jwt_read_signing_key: sec.jwt_read_signing_key,
+        jwt_read_signing_expires_seconds: sec.jwt_read_signing_expires,
+        https_cert_file: sec.https_cert_file,
+        https_key_file: sec.https_key_file,
+        https_ca_file: sec.https_ca_file,
+        https_client_enabled: sec.https_client_enabled,
+        https_client_cert_file: sec.https_client_cert_file,
+        https_client_key_file: sec.https_client_key_file,
+        https_client_ca_file: sec.https_client_ca_file,
+        grpc_cert_file: sec.grpc_cert_file,
+        grpc_key_file: sec.grpc_key_file,
+        grpc_ca_file: sec.grpc_ca_file,
+        grpc_allowed_wildcard_domain: sec.grpc_allowed_wildcard_domain,
+        grpc_volume_allowed_common_names: sec.grpc_volume_allowed_common_names,
+        tls_policy: sec.tls_policy,
+        enable_write_queue: std::env::var("SEAWEED_WRITE_QUEUE")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false),
+        security_file: cli.security_file,
+    }
+}
+
+fn default_volume_dir() -> String {
+    std::env::temp_dir().to_string_lossy().into_owned()
+}
+
+/// Parsed security configuration from security.toml.
+#[derive(Debug, Default)]
+pub struct SecurityConfig {
+    pub jwt_signing_key: Vec<u8>,
+    pub jwt_signing_expires: i64,
+    pub jwt_read_signing_key: Vec<u8>,
+    pub jwt_read_signing_expires: i64,
+    pub https_cert_file: String,
+    pub https_key_file: String,
+    pub https_ca_file: String,
+    pub https_client_enabled: bool,
+    pub https_client_cert_file: String,
+    pub https_client_key_file: String,
+    pub https_client_ca_file: String,
+    pub grpc_cert_file: String,
+    pub grpc_key_file: String,
+    pub grpc_ca_file: String,
+    pub grpc_allowed_wildcard_domain: String,
+    pub grpc_volume_allowed_common_names: Vec<String>,
+    pub tls_policy: TlsPolicy,
+    pub access_ui: bool,
+    /// IPs from [guard] white_list in security.toml
+    pub guard_white_list: Vec<String>,
+}
+
+const SECURITY_CONFIG_FILE_NAME: &str = "security.toml";
+
+/// Parse a security.toml file to extract JWT signing keys and TLS configuration.
+/// Format:
+/// ```toml
+/// [jwt.signing]
+/// key = "secret"
+/// expires_after_seconds = 60
+///
+/// [jwt.signing.read]
+/// key = "read-secret"
+/// expires_after_seconds = 60
+///
+/// [https.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
+///
+/// [tls]
+/// min_version = "TLS 1.2"
+/// max_version = "TLS 1.3"
+/// cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+///
+/// [https.client]
+/// enabled = true
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// ca = "/path/to/ca.pem"
+///
+/// [grpc]
+/// ca = "/path/to/ca.pem"
+/// allowed_wildcard_domain = ".example.com"
+///
+/// [grpc.volume]
+/// cert = "/path/to/cert.pem"
+/// key = "/path/to/key.pem"
+/// allowed_commonNames = "volume-a.internal,volume-b.internal"
+/// ```
+pub fn parse_security_config(path: &str) -> SecurityConfig {
+    let Some(config_path) = resolve_security_config_path(path) else {
+        let mut cfg = SecurityConfig::default();
+        apply_env_overrides(&mut cfg);
+        return cfg;
+    };
+
+    let content = match std::fs::read_to_string(&config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            let mut cfg = SecurityConfig::default();
+            apply_env_overrides(&mut cfg);
+            return cfg;
+        }
+    };
+
+    let mut cfg = SecurityConfig::default();
+
+    #[derive(PartialEq)]
+    enum Section {
+        None,
+        JwtSigning,
+        JwtSigningRead,
+        HttpsClient,
+        Grpc,
+        HttpsVolume,
+        GrpcVolume,
+        Tls,
+        Guard,
+        Access,
+    }
+
+    let mut section = Section::None;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('#') || trimmed.is_empty() {
+            continue;
+        }
+        if trimmed == "[jwt.signing.read]" {
+            section = Section::JwtSigningRead;
+            continue;
+        }
+        if trimmed == "[jwt.signing]" {
+            section = Section::JwtSigning;
+            continue;
+        }
+        if trimmed == "[https.client]" {
+            section = Section::HttpsClient;
+            continue;
+        }
+        if trimmed == "[grpc]" {
+            section = Section::Grpc;
+            continue;
+        }
+        if trimmed == "[https.volume]" {
+            section = Section::HttpsVolume;
+            continue;
+        }
+        if trimmed == "[grpc.volume]" {
+            section = Section::GrpcVolume;
+            continue;
+        }
+        if trimmed == "[tls]" {
+            section = Section::Tls;
+            continue;
+        }
+        if trimmed == "[guard]" {
+            section = Section::Guard;
+            continue;
+        }
+        if trimmed == "[access]" {
+            section = Section::Access;
+            continue;
+        }
+        if trimmed.starts_with('[') {
+            section = Section::None;
+            continue;
+        }
+
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"');
+            match section {
+                Section::JwtSigningRead => match key {
+                    "key" => cfg.jwt_read_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => {
+                        cfg.jwt_read_signing_expires = value.parse().unwrap_or(60)
+                    }
+                    _ => {}
+                },
+                Section::JwtSigning => match key {
+                    "key" => cfg.jwt_signing_key = value.as_bytes().to_vec(),
+                    "expires_after_seconds" => cfg.jwt_signing_expires = value.parse().unwrap_or(10),
+                    _ => {}
+                },
+                Section::HttpsClient => match key {
+                    "enabled" => cfg.https_client_enabled = value.parse().unwrap_or(false),
+                    "cert" => cfg.https_client_cert_file = value.to_string(),
+                    "key" => cfg.https_client_key_file = value.to_string(),
+                    "ca" => cfg.https_client_ca_file = value.to_string(),
+                    _ => {}
+                },
+                Section::Grpc => match key {
+                    "ca" => cfg.grpc_ca_file = value.to_string(),
+                    "allowed_wildcard_domain" => {
+                        cfg.grpc_allowed_wildcard_domain = value.to_string()
+                    }
+                    _ => {}
+                },
+                Section::HttpsVolume => match key {
+                    "cert" => cfg.https_cert_file = value.to_string(),
+                    "key" => cfg.https_key_file = value.to_string(),
+                    "ca" => cfg.https_ca_file = value.to_string(),
+                    _ => {}
+                },
+                Section::GrpcVolume => match key {
+                    "cert" => cfg.grpc_cert_file = value.to_string(),
+                    "key" => cfg.grpc_key_file = value.to_string(),
+                    // Go only reads CA from [grpc], not [grpc.volume]
+                    "allowed_commonNames" => {
+                        cfg.grpc_volume_allowed_common_names =
+                            value.split(',').map(|name| name.to_string()).collect();
+                    }
+                    _ => {}
+                },
+                Section::Tls => match key {
+                    "min_version" => cfg.tls_policy.min_version = value.to_string(),
+                    "max_version" => cfg.tls_policy.max_version = value.to_string(),
+                    "cipher_suites" => cfg.tls_policy.cipher_suites = value.to_string(),
+                    _ => {}
+                },
+                Section::Guard => match key {
+                    "white_list" => {
+                        cfg.guard_white_list = value
+                            .split(',')
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+                    }
+                    _ => {}
+                },
+                Section::Access => match key {
+                    "ui" => cfg.access_ui = value.parse().unwrap_or(false),
+                    _ => {}
+                },
+                Section::None => {}
+            }
+        }
+    }
+
+    // Match Go's v.SetDefault: when a signing key is present but
+    // expires_after_seconds was never specified, apply Go's defaults.
+    if !cfg.jwt_signing_key.is_empty() && cfg.jwt_signing_expires == 0 {
+        cfg.jwt_signing_expires = 10;
+    }
+    if !cfg.jwt_read_signing_key.is_empty() && cfg.jwt_read_signing_expires == 0 {
+        cfg.jwt_read_signing_expires = 60;
+    }
+
+    // Override with WEED_ environment variables (matches Go's Viper convention:
+    // prefix WEED_, uppercase, replace . with _).
+    // e.g. WEED_JWT_SIGNING_KEY overrides [jwt.signing] key
+    apply_env_overrides(&mut cfg);
+
+    cfg
+}
+
+fn resolve_security_config_path(path: &str) -> Option<PathBuf> {
+    if !path.is_empty() {
+        return Some(PathBuf::from(path));
+    }
+
+    default_security_config_candidates(
+        std::env::current_dir().ok().as_deref(),
+        home_dir_from_env().as_deref(),
+    )
+    .into_iter()
+    .find(|candidate| candidate.is_file())
+}
+
+fn default_security_config_candidates(
+    current_dir: Option<&Path>,
+    home_dir: Option<&Path>,
+) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(dir) = current_dir {
+        candidates.push(dir.join(SECURITY_CONFIG_FILE_NAME));
+    }
+    if let Some(home) = home_dir {
+        candidates.push(home.join(".seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    }
+    candidates.push(PathBuf::from("/usr/local/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    candidates.push(PathBuf::from("/etc/seaweedfs").join(SECURITY_CONFIG_FILE_NAME));
+    candidates
+}
+
+fn home_dir_from_env() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            std::env::var_os("USERPROFILE")
+                .filter(|v| !v.is_empty())
+                .map(PathBuf::from)
+        })
+}
+
+/// Apply WEED_ environment variable overrides to a SecurityConfig.
+/// Matches Go's Viper convention: WEED_ prefix, uppercase, dots replaced with underscores.
+fn apply_env_overrides(cfg: &mut SecurityConfig) {
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_KEY") {
+        cfg.jwt_signing_key = v.into_bytes();
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_signing_expires = v.parse().unwrap_or(cfg.jwt_signing_expires);
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_KEY") {
+        cfg.jwt_read_signing_key = v.into_bytes();
+    }
+    if let Ok(v) = std::env::var("WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS") {
+        cfg.jwt_read_signing_expires = v.parse().unwrap_or(cfg.jwt_read_signing_expires);
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CERT") {
+        cfg.https_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_KEY") {
+        cfg.https_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_VOLUME_CA") {
+        cfg.https_ca_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_ENABLED") {
+        cfg.https_client_enabled = v == "true" || v == "1";
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CERT") {
+        cfg.https_client_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_KEY") {
+        cfg.https_client_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_HTTPS_CLIENT_CA") {
+        cfg.https_client_ca_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CERT") {
+        cfg.grpc_cert_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_KEY") {
+        cfg.grpc_key_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_CA") {
+        cfg.grpc_ca_file = v;
+    } else if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_CA") {
+        cfg.grpc_ca_file = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_ALLOWED_WILDCARD_DOMAIN") {
+        cfg.grpc_allowed_wildcard_domain = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES") {
+        cfg.grpc_volume_allowed_common_names = v.split(',').map(|name| name.to_string()).collect();
+    }
+    if let Ok(v) = std::env::var("WEED_TLS_MIN_VERSION") {
+        cfg.tls_policy.min_version = v;
+    }
+    if let Ok(v) = std::env::var("WEED_TLS_MAX_VERSION") {
+        cfg.tls_policy.max_version = v;
+    }
+    if let Ok(v) = std::env::var("WEED_TLS_CIPHER_SUITES") {
+        cfg.tls_policy.cipher_suites = v;
+    }
+    if let Ok(v) = std::env::var("WEED_GUARD_WHITE_LIST") {
+        cfg.guard_white_list = v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+    if let Ok(v) = std::env::var("WEED_ACCESS_UI") {
+        cfg.access_ui = v == "true" || v == "1";
+    }
+}
+
+/// Detect the host's IP address.
+/// Mirrors Go's `util.DetectedHostAddress()`.
+fn detect_host_address() -> String {
+    // Connect to a remote address to determine the local outbound IP
+    if let Ok(socket) = UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(addr) = socket.local_addr() {
+                return addr.ip().to_string();
+            }
+        }
+    }
+    "localhost".to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    fn process_state_lock() -> MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn with_temp_env_var<F: FnOnce()>(key: &str, value: Option<&str>, f: F) {
+        let previous = std::env::var_os(key);
+        match value {
+            Some(v) => std::env::set_var(key, v),
+            None => std::env::remove_var(key),
+        }
+        f();
+        restore_env_var(key, previous);
+    }
+
+    fn restore_env_var(key: &str, value: Option<OsString>) {
+        if let Some(value) = value {
+            std::env::set_var(key, value);
+        } else {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn with_temp_current_dir<F: FnOnce()>(dir: &Path, f: F) {
+        let previous = std::env::current_dir().unwrap();
+        std::env::set_current_dir(dir).unwrap();
+        f();
+        std::env::set_current_dir(previous).unwrap();
+    }
+
+    fn with_cleared_security_env<F: FnOnce()>(f: F) {
+        const KEYS: &[&str] = &[
+            "WEED_JWT_SIGNING_KEY",
+            "WEED_JWT_SIGNING_EXPIRES_AFTER_SECONDS",
+            "WEED_JWT_SIGNING_READ_KEY",
+            "WEED_JWT_SIGNING_READ_EXPIRES_AFTER_SECONDS",
+            "WEED_HTTPS_VOLUME_CERT",
+            "WEED_HTTPS_VOLUME_KEY",
+            "WEED_HTTPS_VOLUME_CA",
+            "WEED_HTTPS_CLIENT_ENABLED",
+            "WEED_HTTPS_CLIENT_CERT",
+            "WEED_HTTPS_CLIENT_KEY",
+            "WEED_HTTPS_CLIENT_CA",
+            "WEED_GRPC_VOLUME_CERT",
+            "WEED_GRPC_VOLUME_KEY",
+            "WEED_GRPC_CA",
+            "WEED_GRPC_VOLUME_CA",
+            "WEED_GRPC_ALLOWED_WILDCARD_DOMAIN",
+            "WEED_GRPC_VOLUME_ALLOWED_COMMONNAMES",
+            "WEED_TLS_MIN_VERSION",
+            "WEED_TLS_MAX_VERSION",
+            "WEED_TLS_CIPHER_SUITES",
+            "WEED_GUARD_WHITE_LIST",
+            "WEED_ACCESS_UI",
+        ];
+
+        let previous: Vec<(&str, Option<OsString>)> = KEYS
+            .iter()
+            .map(|key| (*key, std::env::var_os(key)))
+            .collect();
+
+        for key in KEYS {
+            std::env::remove_var(key);
+        }
+
+        f();
+
+        for (key, value) in previous {
+            restore_env_var(key, value);
+        }
+    }
+
+    #[test]
+    fn test_parse_duration() {
+        assert_eq!(parse_duration("60s"), std::time::Duration::from_secs(60));
+        assert_eq!(parse_duration("5m"), std::time::Duration::from_secs(300));
+        assert_eq!(parse_duration("1h"), std::time::Duration::from_secs(3600));
+        assert_eq!(parse_duration("30"), std::time::Duration::from_secs(30));
+        assert_eq!(parse_duration(""), std::time::Duration::from_secs(60));
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_percent() {
+        let result = parse_min_free_spaces("", "1");
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            MinFreeSpace::Percent(v) => assert!((v - 1.0).abs() < f64::EPSILON),
+            _ => panic!("Expected Percent"),
+        }
+    }
+
+    #[test]
+    fn test_parse_min_free_spaces_bytes() {
+        let result = parse_min_free_spaces("10GiB", "");
+        assert_eq!(result.len(), 1);
+        match &result[0] {
+            MinFreeSpace::Bytes(v) => assert_eq!(*v, 10 * 1024 * 1024 * 1024),
+            _ => panic!("Expected Bytes"),
+        }
+    }
+
+    #[test]
+    fn test_parse_volume_tags_single() {
+        let tags = parse_volume_tags("fast:ssd", 3);
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0], vec!["fast", "ssd"]);
+        assert_eq!(tags[1], vec!["fast", "ssd"]);
+        assert_eq!(tags[2], vec!["fast", "ssd"]);
+    }
+
+    #[test]
+    fn test_parse_volume_tags_multi() {
+        let tags = parse_volume_tags("fast:ssd,archive", 3);
+        assert_eq!(tags.len(), 3);
+        assert_eq!(tags[0], vec!["fast", "ssd"]);
+        assert_eq!(tags[1], vec!["archive"]);
+        assert_eq!(tags[2], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_parse_volume_tags_empty() {
+        let tags = parse_volume_tags("", 2);
+        assert_eq!(tags.len(), 2);
+        assert_eq!(tags[0], Vec::<String>::new());
+        assert_eq!(tags[1], Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_normalize_args_single_dash_to_double() {
+        let args = vec![
+            "bin".into(),
+            "-port".into(),
+            "8080".into(),
+            "-ip.bind".into(),
+            "127.0.0.1".into(),
+            "-dir".into(),
+            "/data".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(
+            norm,
+            vec![
+                "bin",
+                "--port",
+                "8080",
+                "--ip.bind",
+                "127.0.0.1",
+                "--dir",
+                "/data",
+            ]
+        );
+    }
+
+    #[test]
+    fn test_normalize_args_double_dash_unchanged() {
+        let args = vec![
+            "bin".into(),
+            "--port".into(),
+            "8080".into(),
+            "--master".into(),
+            "localhost:9333".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(
+            norm,
+            vec!["bin", "--port", "8080", "--master", "localhost:9333",]
+        );
+    }
+
+    #[test]
+    fn test_normalize_args_single_char_flags_unchanged() {
+        let args = vec!["bin".into(), "-h".into(), "-V".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "-h", "-V"]);
+    }
+
+    #[test]
+    fn test_normalize_args_equals_format() {
+        let args = vec!["bin".into(), "-port=8080".into(), "-ip.bind=0.0.0.0".into()];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port=8080", "--ip.bind=0.0.0.0"]);
+    }
+
+    #[test]
+    fn test_normalize_args_stop_at_double_dash() {
+        let args = vec![
+            "bin".into(),
+            "-port".into(),
+            "8080".into(),
+            "--".into(),
+            "-notaflag".into(),
+        ];
+        let norm = normalize_args_vec(args);
+        assert_eq!(norm, vec!["bin", "--port", "8080", "--", "-notaflag"]);
+    }
+
+    #[test]
+    fn test_resolve_config_defaults_dir_to_platform_temp_dir() {
+        let cfg = resolve_config(Cli::parse_from(["bin"]));
+        assert_eq!(cfg.folders, vec![default_volume_dir()]);
+    }
+
+    #[test]
+    fn test_parse_security_config_access_ui() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "secret"
+
+[access]
+ui = true
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.jwt_signing_key, b"secret");
+            assert!(cfg.access_ui);
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_discovers_current_directory_default() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(SECURITY_CONFIG_FILE_NAME),
+            r#"
+[jwt.signing]
+key = "cwd-secret"
+"#,
+        )
+        .unwrap();
+
+        with_temp_current_dir(tmp.path(), || {
+            with_temp_env_var("WEED_JWT_SIGNING_KEY", None, || {
+                let cfg = parse_security_config("");
+                assert_eq!(cfg.jwt_signing_key, b"cwd-secret");
+            });
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_discovers_home_default() {
+        let _guard = process_state_lock();
+        let current_dir = tempfile::TempDir::new().unwrap();
+        let home_dir = tempfile::TempDir::new().unwrap();
+        let seaweed_home = home_dir.path().join(".seaweedfs");
+        std::fs::create_dir_all(&seaweed_home).unwrap();
+        std::fs::write(
+            seaweed_home.join(SECURITY_CONFIG_FILE_NAME),
+            r#"
+[jwt.signing]
+key = "home-secret"
+"#,
+        )
+        .unwrap();
+
+        with_temp_current_dir(current_dir.path(), || {
+            with_temp_env_var("WEED_JWT_SIGNING_KEY", None, || {
+                with_temp_env_var("HOME", Some(home_dir.path().to_str().unwrap()), || {
+                    let cfg = parse_security_config("");
+                    assert_eq!(cfg.jwt_signing_key, b"home-secret");
+                });
+            });
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_root_ca() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+ca = "/etc/seaweedfs/grpc-ca.pem"
+
+[grpc.volume]
+cert = "/etc/seaweedfs/volume-cert.pem"
+key = "/etc/seaweedfs/volume-key.pem"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.grpc_ca_file, "/etc/seaweedfs/grpc-ca.pem");
+            assert_eq!(cfg.grpc_cert_file, "/etc/seaweedfs/volume-cert.pem");
+            assert_eq!(cfg.grpc_key_file, "/etc/seaweedfs/volume-key.pem");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_grpc_peer_name_policy() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[grpc]
+allowed_wildcard_domain = ".example.com"
+
+[grpc.volume]
+allowed_commonNames = "volume-a.internal,volume-b.internal"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.grpc_allowed_wildcard_domain, ".example.com");
+            assert_eq!(
+                cfg.grpc_volume_allowed_common_names,
+                vec![
+                    String::from("volume-a.internal"),
+                    String::from("volume-b.internal")
+                ]
+            );
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_https_client_settings() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[https.client]
+enabled = true
+cert = "/etc/seaweedfs/client-cert.pem"
+key = "/etc/seaweedfs/client-key.pem"
+ca = "/etc/seaweedfs/client-ca.pem"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert!(cfg.https_client_enabled);
+            assert_eq!(cfg.https_client_cert_file, "/etc/seaweedfs/client-cert.pem");
+            assert_eq!(cfg.https_client_key_file, "/etc/seaweedfs/client-key.pem");
+            assert_eq!(cfg.https_client_ca_file, "/etc/seaweedfs/client-ca.pem");
+        });
+    }
+
+    #[test]
+    fn test_parse_security_config_uses_tls_policy_settings() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[tls]
+min_version = "TLS 1.2"
+max_version = "TLS 1.3"
+cipher_suites = "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+"#,
+        )
+        .unwrap();
+
+        with_cleared_security_env(|| {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.tls_policy.min_version, "TLS 1.2");
+            assert_eq!(cfg.tls_policy.max_version, "TLS 1.3");
+            assert_eq!(
+                cfg.tls_policy.cipher_suites,
+                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+            );
+        });
+    }
+
+    #[test]
+    fn test_merge_options_file_basic() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "port=9999\ndir=/data\nmaster=localhost:9333\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // Should contain the original args plus the file-based ones
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"9999".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"/data".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_cli_precedence() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "port=9999\ndir=/data\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--port".into(),
+            "8080".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        // port should NOT be duplicated from file since CLI already set it
+        let port_count = merged.iter().filter(|a| *a == "--port").count();
+        assert_eq!(
+            port_count, 1,
+            "CLI port should take precedence, file port skipped"
+        );
+        // dir should be added from file
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_comments_and_blanks() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            "# this is a comment\n\nport=9999\n# another comment\ndir=/data\n",
+        )
+        .unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+    }
+
+    #[test]
+    fn test_merge_options_file_with_dashes_in_key() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(tmp.path(), "-port=9999\n--dir=/data\nip.bind=0.0.0.0\n").unwrap();
+
+        let args = vec![
+            "bin".into(),
+            "--options".into(),
+            tmp.path().to_str().unwrap().into(),
+        ];
+        let merged = merge_options_file(args);
+        assert!(merged.contains(&"--port".to_string()));
+        assert!(merged.contains(&"--dir".to_string()));
+        assert!(merged.contains(&"--ip.bind".to_string()));
+    }
+
+    #[test]
+    fn test_find_options_arg() {
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "-options".into(), "/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--options=/tmp/opts".into()]),
+            "/tmp/opts"
+        );
+        assert_eq!(
+            find_options_arg(&["bin".into(), "--port".into(), "8080".into()]),
+            ""
+        );
+    }
+
+    #[test]
+    fn test_env_override_jwt_signing_key() {
+        let _guard = process_state_lock();
+        with_temp_env_var("WEED_JWT_SIGNING_KEY", Some("env-secret"), || {
+            let cfg = parse_security_config("");
+            assert_eq!(cfg.jwt_signing_key, b"env-secret");
+        });
+    }
+
+    #[test]
+    fn test_env_override_takes_precedence_over_file() {
+        let _guard = process_state_lock();
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(
+            tmp.path(),
+            r#"
+[jwt.signing]
+key = "file-secret"
+"#,
+        )
+        .unwrap();
+
+        with_temp_env_var("WEED_JWT_SIGNING_KEY", Some("env-secret"), || {
+            let cfg = parse_security_config(tmp.path().to_str().unwrap());
+            assert_eq!(cfg.jwt_signing_key, b"env-secret");
+        });
+    }
+
+    #[test]
+    fn test_env_override_guard_white_list() {
+        let _guard = process_state_lock();
+        with_temp_env_var(
+            "WEED_GUARD_WHITE_LIST",
+            Some("10.0.0.0/8, 192.168.1.0/24"),
+            || {
+                let cfg = parse_security_config("");
+                assert_eq!(cfg.guard_white_list, vec!["10.0.0.0/8", "192.168.1.0/24"]);
+            },
+        );
+    }
+
+    #[test]
+    fn test_env_override_access_ui() {
+        let _guard = process_state_lock();
+        with_temp_env_var("WEED_ACCESS_UI", Some("true"), || {
+            let cfg = parse_security_config("");
+            assert!(cfg.access_ui);
+        });
+    }
+}

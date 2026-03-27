@@ -11,7 +11,7 @@ import (
 type DualVolumeCluster = MultiVolumeCluster
 
 // StartDualVolumeCluster starts a cluster with 2 volume servers.
-// Deprecated: Use StartMultiVolumeCluster(t, profile, 2) directly.
-func StartDualVolumeCluster(t testing.TB, profile matrix.Profile) *DualVolumeCluster {
-	return StartMultiVolumeCluster(t, profile, 2)
+// Deprecated: Use StartMultiVolumeClusterAuto(t, profile, 2) directly.
+func StartDualVolumeCluster(t testing.TB, profile matrix.Profile) MultiCluster {
+	return StartMultiVolumeClusterAuto(t, profile, 2)
 }

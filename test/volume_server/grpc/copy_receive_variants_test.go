@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -18,7 +19,7 @@ func TestVolumeIncrementalCopyDataAndNoDataPaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -77,7 +78,7 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -132,12 +133,70 @@ func TestCopyFileIgnoreNotFoundAndStopOffsetZeroPaths(t *testing.T) {
 	}
 }
 
+func TestCopyFileStopOffsetZeroExistingFileSendsMetadata(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration test in short mode")
+	}
+
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
+	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
+	defer conn.Close()
+
+	const volumeID = uint32(93)
+	const needleID = uint64(770101)
+	const cookie = uint32(0x1234ABCD)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
+
+	client := framework.NewHTTPClient()
+	uploadResp := framework.UploadBytes(
+		t,
+		client,
+		clusterHarness.VolumeAdminURL(),
+		framework.NewFileID(volumeID, needleID, cookie),
+		[]byte("copy-file-stop-zero"),
+	)
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	stream, err := grpcClient.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+		VolumeId:                 volumeID,
+		Ext:                      ".dat",
+		CompactionRevision:       math.MaxUint32,
+		StopOffset:               0,
+		IgnoreSourceFileNotFound: false,
+	})
+	if err != nil {
+		t.Fatalf("CopyFile stop_offset=0 existing file start failed: %v", err)
+	}
+
+	msg, err := stream.Recv()
+	if err != nil {
+		t.Fatalf("CopyFile stop_offset=0 existing file recv failed: %v", err)
+	}
+	if len(msg.GetFileContent()) != 0 {
+		t.Fatalf("CopyFile stop_offset=0 existing file should not send content, got %d bytes", len(msg.GetFileContent()))
+	}
+	if msg.GetModifiedTsNs() == 0 {
+		t.Fatalf("CopyFile stop_offset=0 existing file expected non-zero ModifiedTsNs")
+	}
+
+	_, err = stream.Recv()
+	if err != io.EOF {
+		t.Fatalf("CopyFile stop_offset=0 existing file expected EOF after metadata frame, got: %v", err)
+	}
+}
+
 func TestCopyFileCompactionRevisionMismatch(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -166,7 +225,7 @@ func TestReceiveFileProtocolViolationResponses(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -213,7 +272,7 @@ func TestReceiveFileSuccessForRegularVolume(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -299,7 +358,7 @@ func TestReceiveFileSuccessForEcVolume(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -389,7 +448,7 @@ func TestCopyFileEcVolumeIgnoreMissingSourcePaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

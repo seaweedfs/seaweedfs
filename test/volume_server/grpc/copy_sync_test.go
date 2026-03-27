@@ -18,12 +18,19 @@ func TestVolumeSyncStatusAndReadVolumeFileStatus(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
+	httpClient := framework.NewHTTPClient()
 	const volumeID = uint32(41)
 	framework.AllocateVolume(t, grpcClient, volumeID, "")
+	fid := framework.NewFileID(volumeID, 1, 0x11112222)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("sync-status-payload"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -46,6 +53,12 @@ func TestVolumeSyncStatusAndReadVolumeFileStatus(t *testing.T) {
 	if statusResp.GetVersion() == 0 {
 		t.Fatalf("ReadVolumeFileStatus expected non-zero version")
 	}
+	if syncResp.GetTailOffset() == 0 {
+		t.Fatalf("VolumeSyncStatus expected non-zero tail offset after upload")
+	}
+	if syncResp.GetTailOffset() != statusResp.GetDatFileSize() {
+		t.Fatalf("VolumeSyncStatus tail offset mismatch: got %d want %d", syncResp.GetTailOffset(), statusResp.GetDatFileSize())
+	}
 }
 
 func TestCopyAndStreamMethodsMissingVolumePaths(t *testing.T) {
@@ -53,7 +66,7 @@ func TestCopyAndStreamMethodsMissingVolumePaths(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 
@@ -100,7 +113,7 @@ func TestVolumeCopyAndReceiveFileMaintenanceRejection(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	clusterHarness := framework.StartSingleVolumeCluster(t, matrix.P1())
+	clusterHarness := framework.StartVolumeCluster(t, matrix.P1())
 	conn, grpcClient := framework.DialVolumeServer(t, clusterHarness.VolumeGRPCAddress())
 	defer conn.Close()
 

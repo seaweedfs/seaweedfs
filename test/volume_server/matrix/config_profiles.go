@@ -12,6 +12,7 @@ type Profile struct {
 	EnableJWT      bool
 	JWTSigningKey  string
 	JWTReadKey     string
+	EnableUIAccess bool
 	EnableMaintain bool
 
 	ConcurrentUploadLimitMB   int

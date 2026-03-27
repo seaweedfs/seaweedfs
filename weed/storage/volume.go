@@ -94,7 +94,7 @@ func (v *Volume) IndexFileName() (fileName string) {
 
 func (v *Volume) FileName(ext string) (fileName string) {
 	switch ext {
-	case ".idx", ".cpx", ".ldb", ".cpldb":
+	case ".idx", ".cpx", ".ldb", ".cpldb", ".rdb":
 		return VolumeFileName(v.dirIdx, v.Collection, int(v.Id)) + ext
 	}
 	// .dat, .cpd, .vif

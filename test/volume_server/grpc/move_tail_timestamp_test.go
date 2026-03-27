@@ -29,7 +29,7 @@ func TestVolumeCopyReturnsPreciseLastAppendTimestamp(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartDualVolumeCluster(t, matrix.P1())
+	cluster := framework.StartMultiVolumeClusterAuto(t, matrix.P1(), 2)
 	sourceConn, sourceClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(0))
 	defer sourceConn.Close()
 	destConn, destClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(1))
@@ -156,7 +156,7 @@ func TestVolumeMoveHandlesInFlightWrites(t *testing.T) {
 		t.Skip("skipping integration test in short mode")
 	}
 
-	cluster := framework.StartDualVolumeCluster(t, matrix.P1())
+	cluster := framework.StartMultiVolumeClusterAuto(t, matrix.P1(), 2)
 	sourceConn, sourceClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(0))
 	defer sourceConn.Close()
 	destConn, destClient := framework.DialVolumeServer(t, cluster.VolumeGRPCAddress(1))

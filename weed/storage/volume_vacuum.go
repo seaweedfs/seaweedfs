@@ -201,6 +201,7 @@ func (v *Volume) CommitCompact() error {
 	//time.Sleep(20 * time.Second)
 
 	os.RemoveAll(v.FileName(".ldb"))
+	os.Remove(v.FileName(".rdb"))
 
 	glog.V(3).Infof("Loading volume %d commit file...", v.Id)
 	if e = v.load(true, false, v.needleMapKind, 0, v.Version()); e != nil {
