@@ -59,21 +59,23 @@ func (h *Handler) executeLifecycleForBucket(
 		Message:         fmt.Sprintf("scanning bucket %s for expired objects (%d rules)", bucket, len(ttlRules)),
 	})
 
+	// Shared budget across all phases so we don't exceed MaxDeletesPerBucket.
+	remaining := config.MaxDeletesPerBucket
+
 	// Find expired objects.
-	expired, scanned, err := listExpiredObjects(ctx, filerClient, bucketsPath, bucket, config.MaxDeletesPerBucket)
+	expired, scanned, err := listExpiredObjects(ctx, filerClient, bucketsPath, bucket, remaining)
 	result.objectsScanned = scanned
 	if err != nil {
 		return result, fmt.Errorf("list expired objects: %w", err)
 	}
 
-	if len(expired) == 0 {
+	if len(expired) > 0 {
+		glog.V(1).Infof("s3_lifecycle: bucket %s: found %d expired objects out of %d scanned", bucket, len(expired), scanned)
+	} else {
 		glog.V(1).Infof("s3_lifecycle: bucket %s: scanned %d objects, none expired", bucket, scanned)
-		return result, nil
 	}
 
-	glog.V(1).Infof("s3_lifecycle: bucket %s: found %d expired objects out of %d scanned", bucket, len(expired), scanned)
-
-	if config.DryRun {
+	if config.DryRun && len(expired) > 0 {
 		result.objectsExpired = int64(len(expired))
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           jobID,
@@ -87,79 +89,90 @@ func (h *Handler) executeLifecycleForBucket(
 	}
 
 	// Delete expired objects in batches.
-	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
-		JobId:           jobID,
-		JobType:         jobType,
-		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
-		ProgressPercent: 50,
-		Stage:           "deleting",
-		Message:         fmt.Sprintf("deleting %d expired objects", len(expired)),
-	})
-
-	var batchSize int
-	if config.BatchSize <= 0 {
-		batchSize = defaultBatchSize
-	} else if config.BatchSize > math.MaxInt {
-		batchSize = math.MaxInt
-	} else {
-		batchSize = int(config.BatchSize)
-	}
-
-	for i := 0; i < len(expired); i += batchSize {
-		select {
-		case <-ctx.Done():
-			return result, ctx.Err()
-		default:
-		}
-
-		end := i + batchSize
-		if end > len(expired) {
-			end = len(expired)
-		}
-		batch := expired[i:end]
-
-		deleted, errs, batchErr := deleteExpiredObjects(ctx, filerClient, batch)
-		result.objectsExpired += int64(deleted)
-		result.errors += int64(errs)
-
-		if batchErr != nil {
-			return result, batchErr
-		}
-
-		progress := float64(end)/float64(len(expired))*50 + 50 // 50-100%
+	if len(expired) > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId:           jobID,
 			JobType:         jobType,
 			State:           plugin_pb.JobState_JOB_STATE_RUNNING,
-			ProgressPercent: progress,
+			ProgressPercent: 50,
 			Stage:           "deleting",
-			Message:         fmt.Sprintf("deleted %d/%d expired objects", result.objectsExpired, len(expired)),
+			Message:         fmt.Sprintf("deleting %d expired objects", len(expired)),
 		})
+
+		var batchSize int
+		if config.BatchSize <= 0 {
+			batchSize = defaultBatchSize
+		} else if config.BatchSize > math.MaxInt {
+			batchSize = math.MaxInt
+		} else {
+			batchSize = int(config.BatchSize)
+		}
+
+		for i := 0; i < len(expired); i += batchSize {
+			select {
+			case <-ctx.Done():
+				return result, ctx.Err()
+			default:
+			}
+
+			end := i + batchSize
+			if end > len(expired) {
+				end = len(expired)
+			}
+			batch := expired[i:end]
+
+			deleted, errs, batchErr := deleteExpiredObjects(ctx, filerClient, batch)
+			result.objectsExpired += int64(deleted)
+			result.errors += int64(errs)
+
+			if batchErr != nil {
+				return result, batchErr
+			}
+
+			progress := float64(end)/float64(len(expired))*50 + 50 // 50-100%
+			_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+				JobId:           jobID,
+				JobType:         jobType,
+				State:           plugin_pb.JobState_JOB_STATE_RUNNING,
+				ProgressPercent: progress,
+				Stage:           "deleting",
+				Message:         fmt.Sprintf("deleted %d/%d expired objects", result.objectsExpired, len(expired)),
+			})
+		}
+
+		remaining -= result.objectsExpired + result.errors
+		if remaining < 0 {
+			remaining = 0
+		}
 	}
 
 	// Delete marker cleanup.
-	if config.DeleteMarkerCleanup {
+	if config.DeleteMarkerCleanup && remaining > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId: jobID, JobType: jobType,
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
 			Stage: "cleaning_delete_markers", Message: "cleaning expired delete markers",
 		})
-		cleaned, cleanErrs, cleanCtxErr := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, config.MaxDeletesPerBucket)
+		cleaned, cleanErrs, cleanCtxErr := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, remaining)
 		result.deleteMarkersClean = int64(cleaned)
 		result.errors += int64(cleanErrs)
 		if cleanCtxErr != nil {
 			return result, cleanCtxErr
 		}
+		remaining -= int64(cleaned + cleanErrs)
+		if remaining < 0 {
+			remaining = 0
+		}
 	}
 
 	// Abort incomplete multipart uploads.
-	if config.AbortMPUDays > 0 {
+	if config.AbortMPUDays > 0 && remaining > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId: jobID, JobType: jobType,
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
 			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", config.AbortMPUDays),
 		})
-		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, config.MaxDeletesPerBucket)
+		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, remaining)
 		result.mpuAborted = int64(aborted)
 		result.errors += int64(abortErrs)
 		if abortCtxErr != nil {
@@ -172,6 +185,12 @@ func (h *Handler) executeLifecycleForBucket(
 
 // cleanupDeleteMarkers scans the bucket for entries marked as delete markers
 // (via the S3 versioning extended attribute) and removes them.
+//
+// NOTE: This currently removes delete markers unconditionally without checking
+// whether prior non-expired versions exist. In versioned buckets, removing a
+// delete marker can resurface an older version. A future enhancement should
+// query version metadata before removal to match AWS ExpiredObjectDeleteMarker
+// semantics (only remove when no non-current versions remain).
 func cleanupDeleteMarkers(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
