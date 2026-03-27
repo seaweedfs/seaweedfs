@@ -1,6 +1,7 @@
 package pb
 
 import (
+	"container/heap"
 	"fmt"
 	"io"
 	"strings"
@@ -13,17 +14,14 @@ import (
 )
 
 // LogFileReaderFn creates an io.ReadCloser for a set of file chunks.
-// This is typically filer.NewChunkStreamReader or similar, passed in by
-// the caller to avoid a circular dependency on the filer package.
+// This is typically filer.NewChunkStreamReaderFromLookup or similar, passed in
+// by the caller to avoid a circular dependency on the filer package.
 type LogFileReaderFn func(chunks []*filer_pb.FileChunk) (io.ReadCloser, error)
 
 // ReadLogFileRefs reads log file data directly from volume servers using the
-// chunk references, parses the entries, applies path filtering, and invokes
-// processEventFn for each matching event.
-//
-// This replaces the server-side ReadPersistedLogBuffer path — the client does
-// the work that the server previously did, but can read from multiple volume
-// servers in parallel.
+// chunk references, merges entries from multiple filers in timestamp order
+// (same algorithm as the server's OrderedLogVisitor), applies path filtering,
+// and invokes processEventFn for each matching event.
 func ReadLogFileRefs(
 	refs []*filer_pb.LogFileChunkRef,
 	newReader LogFileReaderFn,
@@ -32,39 +30,143 @@ func ReadLogFileRefs(
 	processEventFn ProcessMetadataFunc,
 ) (lastTsNs int64, err error) {
 
+	if len(refs) == 0 {
+		return
+	}
+
+	// Group refs by filer ID, preserving order within each filer.
+	// This mirrors the server's perFilerIteratorMap in OrderedLogVisitor.
+	perFiler := make(map[string][]*filer_pb.LogFileChunkRef)
+	var filerOrder []string
 	for _, ref := range refs {
 		if len(ref.Chunks) == 0 {
 			continue
 		}
+		if _, seen := perFiler[ref.FilerId]; !seen {
+			filerOrder = append(filerOrder, ref.FilerId)
+		}
+		perFiler[ref.FilerId] = append(perFiler[ref.FilerId], ref)
+	}
 
-		entries, readErr := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
-		if readErr != nil {
-			glog.V(0).Infof("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, readErr)
-			continue // skip unreadable files, similar to server-side isChunkNotFoundError handling
+	// Read all files per filer, collecting entries.
+	// The server does the same in LogFileQueueIterator.readFileEntries().
+	type filerEntries struct {
+		filerId string
+		entries []*filer_pb.LogEntry
+		idx     int
+	}
+	filerData := make([]*filerEntries, 0, len(filerOrder))
+	for _, filerId := range filerOrder {
+		var allEntries []*filer_pb.LogEntry
+		for _, ref := range perFiler[filerId] {
+			entries, readErr := readLogFileEntries(newReader, ref.Chunks, startTsNs, stopTsNs)
+			if readErr != nil {
+				glog.V(0).Infof("read log file filer=%s ts=%d: %v", ref.FilerId, ref.FileTsNs, readErr)
+				continue // skip unreadable files
+			}
+			allEntries = append(allEntries, entries...)
+		}
+		if len(allEntries) > 0 {
+			filerData = append(filerData, &filerEntries{filerId: filerId, entries: allEntries})
+		}
+	}
+
+	if len(filerData) == 0 {
+		return
+	}
+
+	// If only one filer, no merge needed — process sequentially.
+	if len(filerData) == 1 {
+		return processEntriesForFiler(filerData[0].entries, pathPrefix, processEventFn)
+	}
+
+	// Merge entries from multiple filers in timestamp order using a min-heap.
+	// This is the same algorithm as the server's OrderedLogVisitor + LogEntryItemPriorityQueue.
+	pq := &logEntryHeap{}
+	heap.Init(pq)
+	for i, fd := range filerData {
+		if len(fd.entries) > 0 {
+			heap.Push(pq, &logEntryHeapItem{
+				entry:    fd.entries[0],
+				filerIdx: i,
+			})
+			filerData[i].idx = 1
+		}
+	}
+
+	for pq.Len() > 0 {
+		item := heap.Pop(pq).(*logEntryHeapItem)
+
+		// Process this entry
+		lastTsNs, err = processOneLogEntry(item.entry, pathPrefix, processEventFn)
+		if err != nil {
+			return
 		}
 
-		for _, logEntry := range entries {
-			event := &filer_pb.SubscribeMetadataResponse{}
-			if unmarshalErr := proto.Unmarshal(logEntry.Data, event); unmarshalErr != nil {
-				glog.Errorf("unmarshal log entry: %v", unmarshalErr)
-				continue
-			}
-
-			if !matchesPathPrefix(event, pathPrefix) {
-				continue
-			}
-
-			if err = processEventFn(event); err != nil {
-				return lastTsNs, fmt.Errorf("process event: %w", err)
-			}
-			lastTsNs = event.TsNs
+		// Advance the filer iterator and push next entry
+		fd := filerData[item.filerIdx]
+		if fd.idx < len(fd.entries) {
+			heap.Push(pq, &logEntryHeapItem{
+				entry:    fd.entries[fd.idx],
+				filerIdx: item.filerIdx,
+			})
+			fd.idx++
 		}
 	}
 	return
 }
 
+func processEntriesForFiler(entries []*filer_pb.LogEntry, pathPrefix string, processEventFn ProcessMetadataFunc) (lastTsNs int64, err error) {
+	for _, logEntry := range entries {
+		lastTsNs, err = processOneLogEntry(logEntry, pathPrefix, processEventFn)
+		if err != nil {
+			return
+		}
+	}
+	return
+}
+
+func processOneLogEntry(logEntry *filer_pb.LogEntry, pathPrefix string, processEventFn ProcessMetadataFunc) (int64, error) {
+	event := &filer_pb.SubscribeMetadataResponse{}
+	if err := proto.Unmarshal(logEntry.Data, event); err != nil {
+		glog.Errorf("unmarshal log entry: %v", err)
+		return 0, nil // skip corrupt entries
+	}
+	if !matchesPathPrefix(event, pathPrefix) {
+		return event.TsNs, nil
+	}
+	if err := processEventFn(event); err != nil {
+		return event.TsNs, fmt.Errorf("process event: %w", err)
+	}
+	return event.TsNs, nil
+}
+
+// --- min-heap for merging entries across filers (same as server's LogEntryItemPriorityQueue) ---
+
+type logEntryHeapItem struct {
+	entry    *filer_pb.LogEntry
+	filerIdx int // index into filerData slice
+}
+
+type logEntryHeap []*logEntryHeapItem
+
+func (h logEntryHeap) Len() int            { return len(h) }
+func (h logEntryHeap) Less(i, j int) bool  { return h[i].entry.TsNs < h[j].entry.TsNs }
+func (h logEntryHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
+func (h *logEntryHeap) Push(x any)         { *h = append(*h, x.(*logEntryHeapItem)) }
+func (h *logEntryHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	old[n-1] = nil
+	*h = old[:n-1]
+	return item
+}
+
+// --- log file parsing (shared format with server's LogFileIterator.getNext) ---
+
 // readLogFileEntries reads a single log file and parses the
-// [4-byte size | protobuf LogEntry] records within.
+// [4-byte size | protobuf LogEntry] records within. Filters by timestamp range.
 func readLogFileEntries(newReader LogFileReaderFn, chunks []*filer_pb.FileChunk, startTsNs, stopTsNs int64) ([]*filer_pb.LogEntry, error) {
 	reader, err := newReader(chunks)
 	if err != nil {
