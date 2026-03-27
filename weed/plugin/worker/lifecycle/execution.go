@@ -116,9 +116,13 @@ func (h *Handler) executeLifecycleForBucket(
 		}
 		batch := expired[i:end]
 
-		deleted, errs := deleteExpiredObjects(ctx, filerClient, batch)
+		deleted, errs, batchErr := deleteExpiredObjects(ctx, filerClient, batch)
 		result.objectsExpired += int64(deleted)
 		result.errors += int64(errs)
+
+		if batchErr != nil {
+			return result, batchErr
+		}
 
 		progress := float64(end)/float64(len(expired))*50 + 50 // 50-100%
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -265,16 +269,15 @@ func abortIncompleteMPUs(
 }
 
 // deleteExpiredObjects deletes a batch of expired objects from the filer.
+// Returns a non-nil error when the context is canceled mid-batch.
 func deleteExpiredObjects(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
 	objects []expiredObject,
-) (deleted, errors int) {
+) (deleted, errors int, ctxErr error) {
 	for _, obj := range objects {
-		select {
-		case <-ctx.Done():
-			return deleted, errors
-		default:
+		if ctx.Err() != nil {
+			return deleted, errors, ctx.Err()
 		}
 
 		err := filer_pb.DoRemove(ctx, client, obj.dir, obj.name, true, false, false, false, nil)
@@ -285,7 +288,7 @@ func deleteExpiredObjects(
 		}
 		deleted++
 	}
-	return deleted, errors
+	return deleted, errors, nil
 }
 
 // nowUnix returns the current time as a Unix timestamp.

@@ -99,6 +99,8 @@ func readBoolConfig(values map[string]*plugin_pb.ConfigValue, field string, fall
 		}
 	case *plugin_pb.ConfigValue_Int64Value:
 		return kind.Int64Value != 0
+	default:
+		glog.V(1).Infof("readBoolConfig: unexpected config value type %T for field %q, using fallback %v", value.Kind, field, fallback)
 	}
 	return fallback
 }
@@ -121,6 +123,8 @@ func readInt64Config(values map[string]*plugin_pb.ConfigValue, field string, fal
 		if err == nil {
 			return parsed
 		}
+	default:
+		glog.V(1).Infof("readInt64Config: unexpected config value type %T for field %q, using fallback %d", value.Kind, field, fallback)
 	}
 	return fallback
 }
