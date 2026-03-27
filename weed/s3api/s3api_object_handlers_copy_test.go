@@ -580,7 +580,7 @@ func TestCopyVersioningIntegration(t *testing.T) {
 			},
 		},
 		{
-			name:            "SuspendedWritesNullVersion",
+			name:            "SuspendedCleansVersionMetadataBeforeFinalize",
 			versioningState: s3_constants.VersioningSuspended,
 			sourceMetadata: map[string][]byte{
 				s3_constants.ExtVersionIdKey: []byte("v123"),
@@ -588,7 +588,6 @@ func TestCopyVersioningIntegration(t *testing.T) {
 			},
 			expectVersionPath: false,
 			expectMetadataKeys: []string{
-				s3_constants.ExtVersionIdKey,
 				"X-Amz-Meta-Custom",
 			},
 		},
@@ -624,9 +623,6 @@ func TestCopyVersioningIntegration(t *testing.T) {
 
 			if !shouldCreateVersion {
 				cleanupVersioningMetadata(metadata)
-				if tc.versioningState == s3_constants.VersioningSuspended {
-					metadata[s3_constants.ExtVersionIdKey] = []byte("null")
-				}
 			}
 
 			// Verify only expected keys remain
