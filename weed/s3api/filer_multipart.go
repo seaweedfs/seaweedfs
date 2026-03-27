@@ -359,158 +359,165 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	// Precompute ETag once for consistency across all paths
 	multipartETag := calculateMultipartETag(partEntries, completedPartNumbers)
 	etagQuote := "\"" + multipartETag + "\""
+	finalizeCode := s3a.withObjectWriteLock(*input.Bucket, *input.Key, func() s3err.ErrorCode {
+		return s3a.checkConditionalHeaders(r, *input.Bucket, *input.Key)
+	}, func() s3err.ErrorCode {
+		// Check if versioning is configured for this bucket BEFORE creating any files.
+		versioningState, vErr := s3a.getVersioningState(*input.Bucket)
+		if vErr == nil && versioningState == s3_constants.VersioningEnabled {
+			// Use full object key (not just entryName) to ensure correct .versions directory is checked
+			normalizedKey := strings.TrimPrefix(*input.Key, "/")
+			useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
+			versionId := generateVersionId(useInvertedFormat)
+			versionFileName := s3a.getVersionFileName(versionId)
+			versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
 
-	// Check if versioning is configured for this bucket BEFORE creating any files
-	versioningState, vErr := s3a.getVersioningState(*input.Bucket)
-	if vErr == nil && versioningState == s3_constants.VersioningEnabled {
-		// Use full object key (not just entryName) to ensure correct .versions directory is checked
-		normalizedKey := strings.TrimPrefix(*input.Key, "/")
-		useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
-		versionId := generateVersionId(useInvertedFormat)
-		versionFileName := s3a.getVersionFileName(versionId)
-		versionDir := dirName + "/" + entryName + s3_constants.VersionsFolder
-
-		// Capture timestamp and owner once for consistency between version entry and cache entry
-		versionMtime := time.Now().Unix()
-		amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-
-		// Create the version file in the .versions directory
-		err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
-			if versionEntry.Extended == nil {
-				versionEntry.Extended = make(map[string][]byte)
-			}
-			versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
-			versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
-			// Store parts count for x-amz-mp-parts-count header
-			versionEntry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
-			// Store part boundaries for GetObject with PartNumber
-			if partBoundariesJSON, err := json.Marshal(partBoundaries); err == nil {
-				versionEntry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
-			}
-
-			// Set object owner for versioned multipart objects
-			if amzAccountId != "" {
-				versionEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
-			}
-
-			for k, v := range pentry.Extended {
-				if k != s3_constants.ExtMultipartObjectKey {
-					versionEntry.Extended[k] = v
-				}
-			}
-
-			// Persist ETag to ensure subsequent HEAD/GET uses the same value
-			versionEntry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
-
-			// Preserve ALL SSE metadata from the first part (if any)
-			// SSE metadata is stored in individual parts, not the upload directory
-			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
-				firstPartEntry := partEntries[completedPartNumbers[0]][0]
-				copySSEHeadersFromFirstPart(versionEntry, firstPartEntry, "versioned")
-			}
-			if pentry.Attributes.Mime != "" {
-				versionEntry.Attributes.Mime = pentry.Attributes.Mime
-			} else if mime != "" {
-				versionEntry.Attributes.Mime = mime
-			}
-			versionEntry.Attributes.FileSize = uint64(offset)
-			versionEntry.Attributes.Mtime = versionMtime
-		})
-
-		if err != nil {
-			glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
-			return nil, s3err.ErrInternalError
-		}
-
-		// Construct entry with metadata for caching in .versions directory
-		// Reuse versionMtime to keep list vs. HEAD timestamps aligned
-		// multipartETag is precomputed
-		versionEntryForCache := &filer_pb.Entry{
-			Attributes: &filer_pb.FuseAttributes{
-				FileSize: uint64(offset),
-				Mtime:    versionMtime,
-			},
-			Extended: map[string][]byte{
-				s3_constants.ExtETagKey: []byte(multipartETag),
-			},
-		}
-		if amzAccountId != "" {
-			versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
-		}
-
-		// Update the .versions directory metadata to indicate this is the latest version
-		// Pass entry to cache its metadata for single-scan list efficiency
-		err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache)
-		if err != nil {
-			glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
-			return nil, s3err.ErrInternalError
-		}
-
-		// For versioned buckets, all content is stored in .versions directory
-		// The latest version information is tracked in the .versions directory metadata
-		output = &CompleteMultipartUploadResult{
-			Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-			Bucket:    input.Bucket,
-			ETag:      aws.String(etagQuote),
-			Key:       objectKey(input.Key),
-			VersionId: aws.String(versionId),
-		}
-	} else if vErr == nil && versioningState == s3_constants.VersioningSuspended {
-		// For suspended versioning, add "null" version ID metadata and return "null" version ID
-		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
-			if entry.Extended == nil {
-				entry.Extended = make(map[string][]byte)
-			}
-			entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
-			// Store parts count for x-amz-mp-parts-count header
-			entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
-			// Store part boundaries for GetObject with PartNumber
-			if partBoundariesJSON, jsonErr := json.Marshal(partBoundaries); jsonErr == nil {
-				entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
-			}
-
-			// Set object owner for suspended versioning multipart objects
+			// Capture timestamp and owner once for consistency between version entry and cache entry
+			versionMtime := time.Now().Unix()
 			amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
-			if amzAccountId != "" {
-				entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
-			}
 
-			for k, v := range pentry.Extended {
-				if k != s3_constants.ExtMultipartObjectKey {
-					entry.Extended[k] = v
+			// Create the version file in the .versions directory
+			err = s3a.mkFile(versionDir, versionFileName, finalParts, func(versionEntry *filer_pb.Entry) {
+				if versionEntry.Extended == nil {
+					versionEntry.Extended = make(map[string][]byte)
 				}
+				versionEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+				versionEntry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
+				// Store parts count for x-amz-mp-parts-count header
+				versionEntry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
+				// Store part boundaries for GetObject with PartNumber
+				if partBoundariesJSON, err := json.Marshal(partBoundaries); err == nil {
+					versionEntry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
+				}
+
+				// Set object owner for versioned multipart objects
+				if amzAccountId != "" {
+					versionEntry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+				}
+
+				for k, v := range pentry.Extended {
+					if k != s3_constants.ExtMultipartObjectKey {
+						versionEntry.Extended[k] = v
+					}
+				}
+
+				// Persist ETag to ensure subsequent HEAD/GET uses the same value
+				versionEntry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
+
+				// Preserve ALL SSE metadata from the first part (if any)
+				// SSE metadata is stored in individual parts, not the upload directory
+				if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+					firstPartEntry := partEntries[completedPartNumbers[0]][0]
+					copySSEHeadersFromFirstPart(versionEntry, firstPartEntry, "versioned")
+				}
+				if pentry.Attributes.Mime != "" {
+					versionEntry.Attributes.Mime = pentry.Attributes.Mime
+				} else if mime != "" {
+					versionEntry.Attributes.Mime = mime
+				}
+				versionEntry.Attributes.FileSize = uint64(offset)
+				versionEntry.Attributes.Mtime = versionMtime
+			})
+
+			if err != nil {
+				glog.Errorf("completeMultipartUpload: failed to create version %s: %v", versionId, err)
+				return s3err.ErrInternalError
 			}
 
-			// Preserve ALL SSE metadata from the first part (if any)
-			// SSE metadata is stored in individual parts, not the upload directory
-			if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
-				firstPartEntry := partEntries[completedPartNumbers[0]][0]
-				copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
+			// Construct entry with metadata for caching in .versions directory
+			// Reuse versionMtime to keep list vs. HEAD timestamps aligned
+			// multipartETag is precomputed
+			versionEntryForCache := &filer_pb.Entry{
+				Attributes: &filer_pb.FuseAttributes{
+					FileSize: uint64(offset),
+					Mtime:    versionMtime,
+				},
+				Extended: map[string][]byte{
+					s3_constants.ExtETagKey: []byte(multipartETag),
+				},
 			}
-			// Persist ETag to ensure subsequent HEAD/GET uses the same value
-			entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
-			if pentry.Attributes.Mime != "" {
-				entry.Attributes.Mime = pentry.Attributes.Mime
-			} else if mime != "" {
-				entry.Attributes.Mime = mime
+			if amzAccountId != "" {
+				versionEntryForCache.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
 			}
-			entry.Attributes.FileSize = uint64(offset)
-		})
 
-		if err != nil {
-			glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
-			return nil, s3err.ErrInternalError
+			// Update the .versions directory metadata to indicate this is the latest version
+			// Pass entry to cache its metadata for single-scan list efficiency
+			err = s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache)
+			if err != nil {
+				glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
+				return s3err.ErrInternalError
+			}
+
+			// For versioned buckets, all content is stored in .versions directory
+			// The latest version information is tracked in the .versions directory metadata
+			output = &CompleteMultipartUploadResult{
+				Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:    input.Bucket,
+				ETag:      aws.String(etagQuote),
+				Key:       objectKey(input.Key),
+				VersionId: aws.String(versionId),
+			}
+			return s3err.ErrNone
 		}
 
-		// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
-		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-			Bucket:   input.Bucket,
-			ETag:     aws.String(etagQuote),
-			Key:      objectKey(input.Key),
-			// VersionId field intentionally omitted for suspended versioning
+		if vErr == nil && versioningState == s3_constants.VersioningSuspended {
+			// For suspended versioning, add "null" version ID metadata and return "null" version ID
+			err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
+				if entry.Extended == nil {
+					entry.Extended = make(map[string][]byte)
+				}
+				entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+				// Store parts count for x-amz-mp-parts-count header
+				entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
+				// Store part boundaries for GetObject with PartNumber
+				if partBoundariesJSON, jsonErr := json.Marshal(partBoundaries); jsonErr == nil {
+					entry.Extended[s3_constants.SeaweedFSMultipartPartBoundaries] = partBoundariesJSON
+				}
+
+				// Set object owner for suspended versioning multipart objects
+				amzAccountId := r.Header.Get(s3_constants.AmzAccountId)
+				if amzAccountId != "" {
+					entry.Extended[s3_constants.ExtAmzOwnerKey] = []byte(amzAccountId)
+				}
+
+				for k, v := range pentry.Extended {
+					if k != s3_constants.ExtMultipartObjectKey {
+						entry.Extended[k] = v
+					}
+				}
+
+				// Preserve ALL SSE metadata from the first part (if any)
+				// SSE metadata is stored in individual parts, not the upload directory
+				if len(completedPartNumbers) > 0 && len(partEntries[completedPartNumbers[0]]) > 0 {
+					firstPartEntry := partEntries[completedPartNumbers[0]][0]
+					copySSEHeadersFromFirstPart(entry, firstPartEntry, "suspended versioning")
+				}
+				// Persist ETag to ensure subsequent HEAD/GET uses the same value
+				entry.Extended[s3_constants.ExtETagKey] = []byte(multipartETag)
+				if pentry.Attributes.Mime != "" {
+					entry.Attributes.Mime = pentry.Attributes.Mime
+				} else if mime != "" {
+					entry.Attributes.Mime = mime
+				}
+				entry.Attributes.FileSize = uint64(offset)
+			})
+
+			if err != nil {
+				glog.Errorf("completeMultipartUpload: failed to create suspended versioning object: %v", err)
+				return s3err.ErrInternalError
+			}
+
+			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
+			output = &CompleteMultipartUploadResult{
+				Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:   input.Bucket,
+				ETag:     aws.String(etagQuote),
+				Key:      objectKey(input.Key),
+				// VersionId field intentionally omitted for suspended versioning
+			}
+			return s3err.ErrNone
 		}
-	} else {
+
 		// For non-versioned buckets, create main object file
 		err = s3a.mkFile(dirName, entryName, finalParts, func(entry *filer_pb.Entry) {
 			if entry.Extended == nil {
@@ -558,7 +565,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		if err != nil {
 			glog.Errorf("completeMultipartUpload %s/%s error: %v", dirName, entryName, err)
-			return nil, s3err.ErrInternalError
+			return s3err.ErrInternalError
 		}
 
 		// For non-versioned buckets, return response without VersionId
@@ -568,6 +575,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			ETag:     aws.String(etagQuote),
 			Key:      objectKey(input.Key),
 		}
+		return s3err.ErrNone
+	})
+	if finalizeCode != s3err.ErrNone {
+		return nil, finalizeCode
 	}
 
 	for _, deleteEntry := range deleteEntries {

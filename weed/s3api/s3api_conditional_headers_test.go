@@ -928,3 +928,56 @@ func TestConditionalHeadersMultipartUpload(t *testing.T) {
 		}
 	})
 }
+
+func TestConditionalHeadersTreatDeleteMarkerAsMissing(t *testing.T) {
+	bucket := "test-bucket"
+	object := "/deleted-object"
+	deleteMarkerEntry := &filer_pb.Entry{
+		Name: "deleted-object",
+		Extended: map[string][]byte{
+			s3_constants.ExtDeleteMarkerKey: []byte("true"),
+		},
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC).Unix(),
+		},
+	}
+
+	t.Run("WriteIfNoneMatchAsteriskSucceeds", func(t *testing.T) {
+		getter := createMockEntryGetter(deleteMarkerEntry)
+		req := createTestPutRequest(bucket, object, "new content")
+		req.Header.Set(s3_constants.IfNoneMatch, "*")
+
+		s3a := NewS3ApiServerForTest()
+		errCode := s3a.checkConditionalHeadersWithGetter(getter, req, bucket, object)
+		if errCode != s3err.ErrNone {
+			t.Fatalf("expected ErrNone for delete marker with If-None-Match=*, got %v", errCode)
+		}
+	})
+
+	t.Run("WriteIfMatchAsteriskFails", func(t *testing.T) {
+		getter := createMockEntryGetter(deleteMarkerEntry)
+		req := createTestPutRequest(bucket, object, "new content")
+		req.Header.Set(s3_constants.IfMatch, "*")
+
+		s3a := NewS3ApiServerForTest()
+		errCode := s3a.checkConditionalHeadersWithGetter(getter, req, bucket, object)
+		if errCode != s3err.ErrPreconditionFailed {
+			t.Fatalf("expected ErrPreconditionFailed for delete marker with If-Match=*, got %v", errCode)
+		}
+	})
+
+	t.Run("ReadIfMatchAsteriskFails", func(t *testing.T) {
+		getter := createMockEntryGetter(deleteMarkerEntry)
+		req := &http.Request{Method: http.MethodGet, Header: make(http.Header)}
+		req.Header.Set(s3_constants.IfMatch, "*")
+
+		s3a := NewS3ApiServerForTest()
+		result := s3a.checkConditionalHeadersForReadsWithGetter(getter, req, bucket, object)
+		if result.ErrorCode != s3err.ErrPreconditionFailed {
+			t.Fatalf("expected ErrPreconditionFailed for read against delete marker with If-Match=*, got %v", result.ErrorCode)
+		}
+		if result.Entry != nil {
+			t.Fatalf("expected no entry to be returned for delete marker, got %#v", result.Entry)
+		}
+	})
+}

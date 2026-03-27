@@ -82,7 +82,16 @@ type S3ApiServer struct {
 	embeddedIam           *EmbeddedIamApi // Embedded IAM API server (when enabled)
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
+	newObjectWriteLock    func(bucket, object string) objectWriteLock
 }
+
+type objectWriteLock interface {
+	StopShortLivedLock() error
+}
+
+const (
+	objectWriteLockTTL = 15 * time.Second
+)
 
 func NewS3ApiServer(router *mux.Router, option *S3ApiServerOption) (s3ApiServer *S3ApiServer, err error) {
 	return NewS3ApiServerWithStore(router, option, "")
@@ -180,6 +189,21 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		cipher:                option.Cipher,
+	}
+
+	if len(option.Filers) > 0 {
+		objectWriteLockClient := cluster.NewLockClient(option.GrpcDialOption, option.Filers[0])
+		s3ApiServer.newObjectWriteLock = func(bucket, object string) objectWriteLock {
+			lockKey := fmt.Sprintf("s3.object.write:%s", s3ApiServer.toFilerPath(bucket, object))
+			owner := fmt.Sprintf("s3api-%d", s3ApiServer.randomClientId)
+			lock := objectWriteLockClient.NewShortLivedLock(lockKey, owner)
+			if err := lock.AttemptToLock(objectWriteLockTTL); err != nil {
+				// The initial acquisition already succeeded with the default short TTL.
+				// Renewal to a longer TTL is opportunistic to cover slower metadata paths.
+				glog.Warningf("objectWriteLock: failed to extend lock TTL for %s: %v", lockKey, err)
+			}
+			return lock
+		}
 	}
 
 	// Set s3a reference in circuit breaker for upload limiting

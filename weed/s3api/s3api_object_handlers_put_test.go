@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -197,5 +198,106 @@ func TestNewMultipartUploadHandler_KeyTooLong(t *testing.T) {
 	}
 	if errResp.Code != "KeyTooLongError" {
 		t.Errorf("expected error code KeyTooLongError, got %s", errResp.Code)
+	}
+}
+
+type testObjectWriteLockFactory struct {
+	mu    sync.Mutex
+	locks map[string]*sync.Mutex
+}
+
+func (f *testObjectWriteLockFactory) newLock(bucket, object string) objectWriteLock {
+	key := bucket + "|" + object
+
+	f.mu.Lock()
+	lock, ok := f.locks[key]
+	if !ok {
+		lock = &sync.Mutex{}
+		f.locks[key] = lock
+	}
+	f.mu.Unlock()
+
+	lock.Lock()
+	return &testObjectWriteLock{unlock: lock.Unlock}
+}
+
+type testObjectWriteLock struct {
+	once   sync.Once
+	unlock func()
+}
+
+func (l *testObjectWriteLock) StopShortLivedLock() error {
+	l.once.Do(l.unlock)
+	return nil
+}
+
+func TestWithObjectWriteLockSerializesConcurrentPreconditions(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	lockFactory := &testObjectWriteLockFactory{
+		locks: make(map[string]*sync.Mutex),
+	}
+	s3a.newObjectWriteLock = lockFactory.newLock
+
+	const workers = 3
+	const bucket = "test-bucket"
+	const object = "/file.txt"
+
+	start := make(chan struct{})
+	results := make(chan s3err.ErrorCode, workers)
+	var wg sync.WaitGroup
+
+	var stateMu sync.Mutex
+	objectExists := false
+
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+
+			errCode := s3a.withObjectWriteLock(bucket, object,
+				func() s3err.ErrorCode {
+					stateMu.Lock()
+					defer stateMu.Unlock()
+					if objectExists {
+						return s3err.ErrPreconditionFailed
+					}
+					return s3err.ErrNone
+				},
+				func() s3err.ErrorCode {
+					stateMu.Lock()
+					defer stateMu.Unlock()
+					objectExists = true
+					return s3err.ErrNone
+				},
+			)
+
+			results <- errCode
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	close(results)
+
+	var successCount int
+	var preconditionFailedCount int
+
+	for errCode := range results {
+		switch errCode {
+		case s3err.ErrNone:
+			successCount++
+		case s3err.ErrPreconditionFailed:
+			preconditionFailedCount++
+		default:
+			t.Fatalf("unexpected error code: %v", errCode)
+		}
+	}
+
+	if successCount != 1 {
+		t.Fatalf("expected exactly one successful writer, got %d", successCount)
+	}
+	if preconditionFailedCount != workers-1 {
+		t.Fatalf("expected %d precondition failures, got %d", workers-1, preconditionFailedCount)
 	}
 }
