@@ -321,12 +321,14 @@ func isBareRepo(bareRepo string) bool {
 
 func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 	t.Helper()
-	if _, err := os.Stat(mountClone); err == nil {
+	// Verify .git/HEAD exists — just checking the top-level dir is
+	// insufficient because FUSE may cache a stale directory entry.
+	if _, err := os.Stat(filepath.Join(mountClone, ".git", "HEAD")); err == nil {
 		return
-	} else if !os.IsNotExist(err) {
-		require.NoError(t, err)
 	}
-	t.Logf("mount clone missing, re-cloning from %s", bareRepo)
+	os.RemoveAll(mountClone)
+	time.Sleep(500 * time.Millisecond)
+	t.Logf("mount clone missing or corrupt, re-cloning from %s", bareRepo)
 	gitRun(t, "", "clone", bareRepo, mountClone)
 }
 
