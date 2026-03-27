@@ -23,6 +23,120 @@ const (
 	MaxUnsyncedEvents = 1e3
 )
 
+// metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
+type metadataStreamSender interface {
+	Send(*filer_pb.SubscribeMetadataResponse) error
+}
+
+const (
+	// batchBehindThreshold: when an event's timestamp is older than this
+	// relative to wall clock, the sender switches to batch mode for throughput.
+	// When events are closer to current time, they are sent one-by-one for
+	// low latency.
+	batchBehindThreshold = 2 * time.Minute
+	maxBatchSize         = 256
+)
+
+// pipelinedSender decouples event reading from gRPC delivery by buffering
+// messages in a channel. A dedicated goroutine handles stream.Send(), allowing
+// the reader to continue reading ahead without waiting for the client to
+// acknowledge each event.
+//
+// When events are far behind current time (backlog catch-up), it batches
+// multiple events into a single stream.Send() using the Events field.
+// When events are close to current time (real-time), it sends one-by-one.
+type pipelinedSender struct {
+	sendCh chan *filer_pb.SubscribeMetadataResponse
+	errCh  chan error
+	done   chan struct{}
+}
+
+func newPipelinedSender(stream metadataStreamSender, bufSize int) *pipelinedSender {
+	s := &pipelinedSender{
+		sendCh: make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
+		errCh:  make(chan error, 1),
+		done:   make(chan struct{}),
+	}
+	go s.sendLoop(stream)
+	return s
+}
+
+func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
+	defer close(s.done)
+	for msg := range s.sendCh {
+		isBehind := time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
+
+		if !isBehind {
+			// Real-time: send immediately for low latency
+			if err := stream.Send(msg); err != nil {
+				s.reportErr(err)
+				return
+			}
+			continue
+		}
+
+		// Backlog: batch multiple events into one Send for throughput.
+		// The first event goes in the top-level fields; additional events
+		// go in the Events slice. Old clients ignore the Events field.
+		batch := make([]*filer_pb.SubscribeMetadataResponse, 0, maxBatchSize)
+		batch = append(batch, msg)
+	drain:
+		for len(batch) < maxBatchSize {
+			select {
+			case next, ok := <-s.sendCh:
+				if !ok {
+					break drain
+				}
+				batch = append(batch, next)
+			default:
+				break drain
+			}
+		}
+
+		var toSend *filer_pb.SubscribeMetadataResponse
+		if len(batch) == 1 {
+			toSend = batch[0]
+		} else {
+			// Pack batch: first event is the envelope, rest go in Events
+			toSend = batch[0]
+			toSend.Events = batch[1:]
+		}
+		if err := stream.Send(toSend); err != nil {
+			s.reportErr(err)
+			return
+		}
+	}
+}
+
+func (s *pipelinedSender) reportErr(err error) {
+	select {
+	case s.errCh <- err:
+	default:
+	}
+	for range s.sendCh {
+	}
+}
+
+func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	select {
+	case s.sendCh <- msg:
+		return nil
+	case err := <-s.errCh:
+		return err
+	}
+}
+
+func (s *pipelinedSender) Close() error {
+	close(s.sendCh)
+	<-s.done
+	select {
+	case err := <-s.errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
 	if fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.HasRemotePeers() {
 		return fs.SubscribeLocalMetadata(req, stream)
@@ -47,7 +161,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
+	sender := newPipelinedSender(stream, 1024)
+	defer sender.Close()
+
+	// Register for instant notification when new data arrives in the aggregated log buffer.
+	// Used to replace the 1127ms sleep with event-driven wake-up.
+	aggNotifyName := "aggSubscribe:" + clientName
+	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
+	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
+
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -128,7 +251,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return nil
 		}
 
-		time.Sleep(1127 * time.Millisecond)
+		// Wait for new data (event-driven instead of 1127ms polling).
+		// Drain any stale notification first to avoid a spurious wake-up.
+		select {
+		case <-aggNotifyChan:
+		default:
+		}
+		select {
+		case <-aggNotifyChan:
+		case <-ctx.Done():
+			return nil
+		}
 	}
 
 	return readInMemoryLogErr
@@ -158,7 +291,10 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
+	sender := newPipelinedSender(stream, 1024)
+	defer sender.Close()
+
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -294,13 +430,13 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	}
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	filtered := 0
 
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		defer func() {
 			if filtered > MaxUnsyncedEvents {
-				if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
+				if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 					EventNotification: &filer_pb.EventNotification{},
 					TsNs:              tsNs,
 				}); err == nil {
@@ -364,7 +500,7 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			TsNs:              tsNs,
 		}
 		// println("sending", dirPath, entryName)
-		if err := stream.Send(message); err != nil {
+		if err := sender.Send(message); err != nil {
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
