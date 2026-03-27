@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -91,9 +92,13 @@ func (h *Handler) executeLifecycleForBucket(
 		Message:         fmt.Sprintf("deleting %d expired objects", len(expired)),
 	})
 
-	batchSize := int(config.BatchSize)
-	if batchSize <= 0 {
+	var batchSize int
+	if config.BatchSize <= 0 {
 		batchSize = defaultBatchSize
+	} else if config.BatchSize > math.MaxInt32 {
+		batchSize = math.MaxInt32
+	} else {
+		batchSize = int(config.BatchSize)
 	}
 
 	for i := 0; i < len(expired); i += batchSize {
