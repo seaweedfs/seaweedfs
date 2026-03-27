@@ -69,6 +69,8 @@ type Plugin struct {
 	detectorLeaseMu sync.Mutex
 	detectorLeases  map[string]string
 
+	lanes map[SchedulerLane]*schedulerLaneState
+
 	schedulerExecMu           sync.Mutex
 	schedulerExecReservations map[string]int
 	adminScriptRunMu          sync.RWMutex
@@ -158,6 +160,11 @@ func New(options Options) (*Plugin, error) {
 		schedulerTick = defaultSchedulerTick
 	}
 
+	lanes := make(map[SchedulerLane]*schedulerLaneState, len(AllLanes()))
+	for _, lane := range AllLanes() {
+		lanes[lane] = newLaneState(lane)
+	}
+
 	plugin := &Plugin{
 		store:                     store,
 		registry:                  NewRegistry(),
@@ -167,6 +174,7 @@ func New(options Options) (*Plugin, error) {
 		clusterContextProvider:    options.ClusterContextProvider,
 		configDefaultsProvider:    options.ConfigDefaultsProvider,
 		lockManager:               options.LockManager,
+		lanes:                     lanes,
 		sessions:                  make(map[string]*streamSession),
 		pendingSchema:             make(map[string]chan *plugin_pb.ConfigSchemaResponse),
 		pendingDetection:          make(map[string]*pendingDetectionState),
@@ -191,8 +199,10 @@ func New(options Options) (*Plugin, error) {
 	}
 
 	if plugin.clusterContextProvider != nil {
-		plugin.wg.Add(1)
-		go plugin.schedulerLoop()
+		for _, ls := range plugin.lanes {
+			plugin.wg.Add(1)
+			go plugin.laneSchedulerLoop(ls)
+		}
 	}
 	plugin.wg.Add(1)
 	go plugin.persistenceLoop()

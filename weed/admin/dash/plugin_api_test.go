@@ -220,3 +220,39 @@ func TestApplyDescriptorDefaultsToPersistedConfigReplacesBlankAdminScript(t *tes
 		t.Fatalf("expected blank script to be replaced by default, got=%q", scriptKind.StringValue)
 	}
 }
+
+func TestFilterTrackedJobsByLane(t *testing.T) {
+	t.Parallel()
+
+	jobs := []plugin.TrackedJob{
+		{JobID: "vacuum-1", JobType: "vacuum"},
+		{JobID: "iceberg-1", JobType: "iceberg_maintenance"},
+		{JobID: "lifecycle-1", JobType: "s3_lifecycle"},
+	}
+
+	filtered := filterTrackedJobsByLane(jobs, "iceberg")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 iceberg job, got %d", len(filtered))
+	}
+	if filtered[0].JobID != "iceberg-1" {
+		t.Fatalf("expected iceberg job to be retained, got %+v", filtered[0])
+	}
+}
+
+func TestFilterActivitiesByLane(t *testing.T) {
+	t.Parallel()
+
+	activities := []plugin.JobActivity{
+		{JobID: "vacuum-1", JobType: "vacuum"},
+		{JobID: "iceberg-1", JobType: "iceberg_maintenance"},
+		{JobID: "lifecycle-1", JobType: "s3_lifecycle"},
+	}
+
+	filtered := filterActivitiesByLane(activities, "lifecycle")
+	if len(filtered) != 1 {
+		t.Fatalf("expected 1 lifecycle activity, got %d", len(filtered))
+	}
+	if filtered[0].JobID != "lifecycle-1" {
+		t.Fatalf("expected lifecycle activity to be retained, got %+v", filtered[0])
+	}
+}

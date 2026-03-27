@@ -48,7 +48,9 @@ type schedulerPolicy struct {
 	ExecutorReserveBackoff time.Duration
 }
 
-func (r *Plugin) schedulerLoop() {
+// laneSchedulerLoop is the main scheduling goroutine for a single lane.
+// Each lane runs independently with its own timing, lock scope, and wake channel.
+func (r *Plugin) laneSchedulerLoop(ls *schedulerLaneState) {
 	defer r.wg.Done()
 	for {
 		select {
@@ -57,16 +59,16 @@ func (r *Plugin) schedulerLoop() {
 		default:
 		}
 
-		hadJobs := r.runSchedulerIteration()
-		r.recordSchedulerIterationComplete(hadJobs)
+		hadJobs := r.runLaneSchedulerIteration(ls)
+		r.recordLaneIterationComplete(ls, hadJobs)
 
 		if hadJobs {
 			continue
 		}
 
-		r.setSchedulerLoopState("", "sleeping")
-		idleSleep := defaultSchedulerIdleSleep
-		if nextRun := r.earliestNextDetectionAt(); !nextRun.IsZero() {
+		r.setLaneLoopState(ls, "", "sleeping")
+		idleSleep := LaneIdleSleep(ls.lane)
+		if nextRun := r.earliestLaneDetectionAt(ls.lane); !nextRun.IsZero() {
 			if until := time.Until(nextRun); until <= 0 {
 				idleSleep = 0
 			} else if until < idleSleep {
@@ -82,7 +84,7 @@ func (r *Plugin) schedulerLoop() {
 		case <-r.shutdownCh:
 			timer.Stop()
 			return
-		case <-r.schedulerWakeCh:
+		case <-ls.wakeCh:
 			if !timer.Stop() {
 				<-timer.C
 			}
@@ -92,7 +94,90 @@ func (r *Plugin) schedulerLoop() {
 	}
 }
 
+// schedulerLoop is kept for backward compatibility; it delegates to
+// laneSchedulerLoop with the default lane. New code should not call this.
+func (r *Plugin) schedulerLoop() {
+	ls := r.lanes[LaneDefault]
+	if ls == nil {
+		ls = newLaneState(LaneDefault)
+	}
+	r.laneSchedulerLoop(ls)
+}
+
+// runLaneSchedulerIteration runs one scheduling pass for a single lane,
+// processing only the job types assigned to that lane.
+func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
+	r.expireStaleJobs(time.Now().UTC())
+
+	allJobTypes := r.registry.DetectableJobTypes()
+	// Filter to only job types belonging to this lane.
+	var jobTypes []string
+	for _, jt := range allJobTypes {
+		if JobTypeLane(jt) == ls.lane {
+			jobTypes = append(jobTypes, jt)
+		}
+	}
+	if len(jobTypes) == 0 {
+		r.setLaneLoopState(ls, "", "idle")
+		return false
+	}
+
+	r.setLaneLoopState(ls, "", "waiting_for_lock")
+	lockName := fmt.Sprintf("plugin scheduler:%s", ls.lane)
+	releaseLock, err := r.acquireAdminLock(lockName)
+	if err != nil {
+		glog.Warningf("Plugin scheduler [%s] failed to acquire lock: %v", ls.lane, err)
+		r.setLaneLoopState(ls, "", "idle")
+		return false
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+
+	active := make(map[string]struct{}, len(jobTypes))
+	hadJobs := false
+
+	for _, jobType := range jobTypes {
+		active[jobType] = struct{}{}
+
+		policy, enabled, err := r.loadSchedulerPolicy(jobType)
+		if err != nil {
+			glog.Warningf("Plugin scheduler [%s] failed to load policy for %s: %v", ls.lane, jobType, err)
+			continue
+		}
+		if !enabled {
+			r.clearSchedulerJobType(jobType)
+			continue
+		}
+		initialDelay := time.Duration(0)
+		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
+			initialDelay = 5 * time.Second
+		}
+		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
+			continue
+		}
+
+		detected := r.runJobTypeIteration(jobType, policy)
+		if detected {
+			hadJobs = true
+		}
+	}
+
+	r.pruneSchedulerState(active)
+	r.pruneDetectorLeases(active)
+	r.setLaneLoopState(ls, "", "idle")
+	return hadJobs
+}
+
+// runSchedulerIteration is kept for backward compatibility. It runs a
+// single iteration across ALL job types (equivalent to the old single-loop
+// behavior). It is only used by the legacy schedulerLoop() fallback.
 func (r *Plugin) runSchedulerIteration() bool {
+	ls := r.lanes[LaneDefault]
+	if ls == nil {
+		ls = newLaneState(LaneDefault)
+	}
+	// For backward compat, the old function processes all job types.
 	r.expireStaleJobs(time.Now().UTC())
 
 	jobTypes := r.registry.DetectableJobTypes()
@@ -147,14 +232,36 @@ func (r *Plugin) runSchedulerIteration() bool {
 	return hadJobs
 }
 
-func (r *Plugin) wakeScheduler() {
+// wakeLane wakes the scheduler goroutine for a specific lane.
+func (r *Plugin) wakeLane(lane SchedulerLane) {
 	if r == nil {
 		return
 	}
-	select {
-	case r.schedulerWakeCh <- struct{}{}:
-	default:
+	if ls, ok := r.lanes[lane]; ok {
+		select {
+		case ls.wakeCh <- struct{}{}:
+		default:
+		}
 	}
+}
+
+// wakeAllLanes wakes all lane scheduler goroutines.
+func (r *Plugin) wakeAllLanes() {
+	if r == nil {
+		return
+	}
+	for _, ls := range r.lanes {
+		select {
+		case ls.wakeCh <- struct{}{}:
+		default:
+		}
+	}
+}
+
+// wakeScheduler wakes the lane that owns the given job type, or all lanes
+// if no job type is specified. Kept for backward compatibility.
+func (r *Plugin) wakeScheduler() {
+	r.wakeAllLanes()
 }
 
 func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {
@@ -454,6 +561,7 @@ func (r *Plugin) ListSchedulerStates() ([]SchedulerJobTypeState, error) {
 		jobType := jobTypeInfo.JobType
 		state := SchedulerJobTypeState{
 			JobType:           jobType,
+			Lane:              string(JobTypeLane(jobType)),
 			DetectionInFlight: detectionInFlight[jobType],
 		}
 
@@ -573,6 +681,35 @@ func (r *Plugin) markDetectionDue(jobType string, interval, initialDelay time.Du
 	return true
 }
 
+// earliestLaneDetectionAt returns the earliest next detection time among
+// job types that belong to the given lane.
+func (r *Plugin) earliestLaneDetectionAt(lane SchedulerLane) time.Time {
+	if r == nil {
+		return time.Time{}
+	}
+
+	r.schedulerMu.Lock()
+	defer r.schedulerMu.Unlock()
+
+	var earliest time.Time
+	for jobType, nextRun := range r.nextDetectionAt {
+		if JobTypeLane(jobType) != lane {
+			continue
+		}
+		if nextRun.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || nextRun.Before(earliest) {
+			earliest = nextRun
+		}
+	}
+
+	return earliest
+}
+
+// earliestNextDetectionAt returns the earliest next detection time across
+// all job types regardless of lane. Kept for backward compatibility and
+// the global scheduler status API.
 func (r *Plugin) earliestNextDetectionAt() time.Time {
 	if r == nil {
 		return time.Time{}
@@ -869,6 +1006,17 @@ func (r *Plugin) tryReserveExecutorCapacity(
 	jobType string,
 	policy schedulerPolicy,
 ) (func(), bool) {
+	return r.tryReserveExecutorCapacityForLane(executor, jobType, policy, JobTypeLane(jobType))
+}
+
+// tryReserveExecutorCapacityForLane reserves an execution slot on the
+// per-lane reservation pool so that lanes cannot starve each other.
+func (r *Plugin) tryReserveExecutorCapacityForLane(
+	executor *WorkerSession,
+	jobType string,
+	policy schedulerPolicy,
+	lane SchedulerLane,
+) (func(), bool) {
 	if executor == nil || strings.TrimSpace(executor.WorkerID) == "" {
 		return nil, false
 	}
@@ -884,19 +1032,58 @@ func (r *Plugin) tryReserveExecutorCapacity(
 
 	workerID := strings.TrimSpace(executor.WorkerID)
 
-	r.schedulerExecMu.Lock()
-	reserved := r.schedulerExecReservations[workerID]
-	if heartbeatUsed+reserved >= limit {
+	ls := r.lanes[lane]
+	if ls == nil {
+		// Fallback to global reservations if lane state is missing.
+		r.schedulerExecMu.Lock()
+		reserved := r.schedulerExecReservations[workerID]
+		if heartbeatUsed+reserved >= limit {
+			r.schedulerExecMu.Unlock()
+			return nil, false
+		}
+		r.schedulerExecReservations[workerID] = reserved + 1
 		r.schedulerExecMu.Unlock()
+		release := func() { r.releaseExecutorCapacity(workerID) }
+		return release, true
+	}
+
+	ls.execMu.Lock()
+	reserved := ls.execRes[workerID]
+	if heartbeatUsed+reserved >= limit {
+		ls.execMu.Unlock()
 		return nil, false
 	}
-	r.schedulerExecReservations[workerID] = reserved + 1
-	r.schedulerExecMu.Unlock()
+	ls.execRes[workerID] = reserved + 1
+	ls.execMu.Unlock()
 
 	release := func() {
-		r.releaseExecutorCapacity(workerID)
+		r.releaseExecutorCapacityForLane(workerID, lane)
 	}
 	return release, true
+}
+
+// releaseExecutorCapacityForLane releases a reservation from the per-lane pool.
+func (r *Plugin) releaseExecutorCapacityForLane(workerID string, lane SchedulerLane) {
+	workerID = strings.TrimSpace(workerID)
+	if workerID == "" {
+		return
+	}
+
+	ls := r.lanes[lane]
+	if ls == nil {
+		r.releaseExecutorCapacity(workerID)
+		return
+	}
+
+	ls.execMu.Lock()
+	defer ls.execMu.Unlock()
+
+	current := ls.execRes[workerID]
+	if current <= 1 {
+		delete(ls.execRes, workerID)
+		return
+	}
+	ls.execRes[workerID] = current - 1
 }
 
 func (r *Plugin) releaseExecutorCapacity(workerID string) {

@@ -28,14 +28,22 @@ templ Layout(view ViewContext, content templ.Component) {
   // Detect if we're on a message queue page to keep submenu expanded
   isMQPage := strings.HasPrefix(currentPath, "/mq/")
 
-  // Detect if we're on plugin page.
-  isPluginPage := strings.HasPrefix(currentPath, "/plugin")
-
   // Detect if we're on a storage page to keep submenu expanded
   isStoragePage := strings.HasPrefix(currentPath, "/storage/volumes") || strings.HasPrefix(currentPath, "/storage/ec-shards") || strings.HasPrefix(currentPath, "/storage/collections")
 
   // Detect if we're on a cluster page (but not storage page) to keep submenu expanded
   isClusterPage := (strings.HasPrefix(currentPath, "/cluster/masters") || strings.HasPrefix(currentPath, "/cluster/volume-servers") || strings.HasPrefix(currentPath, "/cluster/filers"))
+
+  isDefaultWorkerPage := currentPath == "/plugin" ||
+    strings.HasPrefix(currentPath, "/plugin/configuration") ||
+    strings.HasPrefix(currentPath, "/plugin/detection") ||
+    strings.HasPrefix(currentPath, "/plugin/queue") ||
+    strings.HasPrefix(currentPath, "/plugin/execution") ||
+    strings.HasPrefix(currentPath, "/plugin/monitoring") ||
+    currentPath == "/plugin/lanes/default" ||
+    strings.HasPrefix(currentPath, "/plugin/lanes/default/")
+  isIcebergWorkerPage := currentPath == "/plugin/lanes/iceberg" || strings.HasPrefix(currentPath, "/plugin/lanes/iceberg/")
+  isLifecycleWorkerPage := currentPath == "/plugin/lanes/lifecycle" || strings.HasPrefix(currentPath, "/plugin/lanes/lifecycle/")
 }}
 <!DOCTYPE html>
 <html lang="en">
@@ -266,13 +274,35 @@ templ Layout(view ViewContext, content templ.Component) {
                     </h6>
                     <ul class="nav flex-column">
                         <li class="nav-item">
-                            if isPluginPage {
-                                <a class="nav-link active" href={ view.P("/plugin") }>
-                                    <i class="fas fa-plug me-2"></i>Workers
+                            if isDefaultWorkerPage {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/default") }>
+                                    <i class="fas fa-server me-2"></i>Default
                                 </a>
                             } else {
-                                <a class="nav-link" href={ view.P("/plugin") }>
-                                    <i class="fas fa-plug me-2"></i>Workers
+                                <a class="nav-link" href={ view.P("/plugin/lanes/default") }>
+                                    <i class="fas fa-server me-2"></i>Default
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if isIcebergWorkerPage {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/iceberg") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                </a>
+                            } else {
+                                <a class="nav-link" href={ view.P("/plugin/lanes/iceberg") }>
+                                    <i class="fas fa-snowflake me-2"></i>Iceberg
+                                </a>
+                            }
+                        </li>
+                        <li class="nav-item">
+                            if isLifecycleWorkerPage {
+                                <a class="nav-link active" href={ view.P("/plugin/lanes/lifecycle") }>
+                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
+                                </a>
+                            } else {
+                                <a class="nav-link" href={ view.P("/plugin/lanes/lifecycle") }>
+                                    <i class="fas fa-hourglass-half me-2"></i>Lifecycle
                                 </a>
                             }
                         </li>

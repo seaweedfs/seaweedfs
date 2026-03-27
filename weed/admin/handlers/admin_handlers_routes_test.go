@@ -53,6 +53,16 @@ func TestSetupRoutes_RegistersPluginPages_NoAuth(t *testing.T) {
 	assertHasRoute(t, router, http.MethodGet, "/plugin/detection")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/execution")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/monitoring")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/configuration")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/queue")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/detection")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/execution")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/monitoring")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/default/workers")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/lifecycle")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/lifecycle/configuration")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/lifecycle/workers")
 }
 
 func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
@@ -66,6 +76,13 @@ func TestSetupRoutes_RegistersPluginPages_WithAuth(t *testing.T) {
 	assertHasRoute(t, router, http.MethodGet, "/plugin/detection")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/execution")
 	assertHasRoute(t, router, http.MethodGet, "/plugin/monitoring")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/configuration")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/queue")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/detection")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/execution")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/monitoring")
+	assertHasRoute(t, router, http.MethodGet, "/plugin/lanes/iceberg/workers")
 }
 
 func newRouteTestAdminHandlers() *AdminHandlers {
