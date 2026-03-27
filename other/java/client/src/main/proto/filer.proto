@@ -390,11 +390,13 @@ message SubscribeMetadataRequest {
     int64 until_ns = 8;
     int32 client_epoch = 9;
     repeated string directories = 10;  // exact directory to watch
+    bool client_supports_batching = 11; // client can unpack SubscribeMetadataResponse.events
 }
 message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
+    repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
 }
 
 message TraverseBfsMetadataRequest {

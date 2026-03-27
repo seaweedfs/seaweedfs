@@ -200,15 +200,26 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		defer cancel()
 		atomic.AddInt32(&ma.filer.UniqueFilerEpoch, 1)
 		stream, err := client.SubscribeLocalMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:  "filer:" + string(self),
-			PathPrefix:  "/",
-			SinceNs:     lastTsNs,
-			ClientId:    ma.filer.UniqueFilerId,
-			ClientEpoch: atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
+			ClientName:             "filer:" + string(self),
+			PathPrefix:             "/",
+			SinceNs:                lastTsNs,
+			ClientId:               ma.filer.UniqueFilerId,
+			ClientEpoch:            atomic.LoadInt32(&ma.filer.UniqueFilerEpoch),
+			ClientSupportsBatching: true,
 		})
 		if err != nil {
 			glog.V(0).Infof("SubscribeLocalMetadata %v: %v", peer, err)
 			return fmt.Errorf("subscribe: %w", err)
+		}
+
+		processOne := func(event *filer_pb.SubscribeMetadataResponse) error {
+			if err := processEventFn(event); err != nil {
+				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", event, err)
+				return fmt.Errorf("process %v: %w", event, err)
+			}
+			f.onMetadataChangeEvent(event)
+			lastTsNs = event.TsNs
+			return nil
 		}
 
 		for {
@@ -221,13 +232,15 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return listenErr
 			}
 
-			if err := processEventFn(resp); err != nil {
-				glog.V(0).Infof("SubscribeLocalMetadata process %v: %v", resp, err)
-				return fmt.Errorf("process %v: %w", resp, err)
+			if err := processOne(resp); err != nil {
+				return err
 			}
-
-			f.onMetadataChangeEvent(resp)
-			lastTsNs = resp.TsNs
+			// Process any additional batched events
+			for _, batchedEvent := range resp.Events {
+				if err := processOne(batchedEvent); err != nil {
+					return err
+				}
+			}
 		}
 	})
 	return lastTsNs, err

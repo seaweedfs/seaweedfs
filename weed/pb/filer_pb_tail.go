@@ -62,18 +62,39 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:   option.ClientName,
-			PathPrefix:   option.PathPrefix,
-			PathPrefixes: option.AdditionalPathPrefixes,
-			Directories:  option.DirectoriesToWatch,
-			SinceNs:      option.StartTsNs,
-			Signature:    option.SelfSignature,
-			ClientId:     option.ClientId,
-			ClientEpoch:  option.ClientEpoch,
-			UntilNs:      option.StopTsNs,
+			ClientName:              option.ClientName,
+			PathPrefix:              option.PathPrefix,
+			PathPrefixes:            option.AdditionalPathPrefixes,
+			Directories:             option.DirectoriesToWatch,
+			SinceNs:                 option.StartTsNs,
+			Signature:               option.SelfSignature,
+			ClientId:                option.ClientId,
+			ClientEpoch:             option.ClientEpoch,
+			UntilNs:                 option.StopTsNs,
+			ClientSupportsBatching:  true,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)
+		}
+
+		handleErr := func(resp *filer_pb.SubscribeMetadataResponse, err error) {
+			switch option.EventErrorType {
+			case TrivialOnError:
+				glog.Errorf("process %v: %v", resp, err)
+			case FatalOnError:
+				glog.Fatalf("process %v: %v", resp, err)
+			case RetryForeverOnError:
+				util.RetryUntil("followMetaUpdates", func() error {
+					return processEventFn(resp)
+				}, func(err error) bool {
+					glog.Errorf("process %v: %v", resp, err)
+					return true
+				})
+			case DontLogError:
+				// pass
+			default:
+				glog.Errorf("process %v: %v", resp, err)
+			}
 		}
 
 		for {
@@ -85,26 +106,19 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 				return listenErr
 			}
 
+			// Process the first event (always present in top-level fields)
 			if err := processEventFn(resp); err != nil {
-				switch option.EventErrorType {
-				case TrivialOnError:
-					glog.Errorf("process %v: %v", resp, err)
-				case FatalOnError:
-					glog.Fatalf("process %v: %v", resp, err)
-				case RetryForeverOnError:
-					util.RetryUntil("followMetaUpdates", func() error {
-						return processEventFn(resp)
-					}, func(err error) bool {
-						glog.Errorf("process %v: %v", resp, err)
-						return true
-					})
-				case DontLogError:
-					// pass
-				default:
-					glog.Errorf("process %v: %v", resp, err)
-				}
+				handleErr(resp, err)
 			}
 			option.StartTsNs = resp.TsNs
+
+			// Process any additional batched events
+			for _, batchedEvent := range resp.Events {
+				if err := processEventFn(batchedEvent); err != nil {
+					handleErr(batchedEvent, err)
+				}
+				option.StartTsNs = batchedEvent.TsNs
+			}
 		}
 	}
 }

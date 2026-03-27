@@ -206,22 +206,50 @@ func (f *Filer) ReadPersistedLogBuffer(startPosition log_buffer.MessagePosition,
 		err = fmt.Errorf("reading from persisted logs: %w", visitErr)
 		return
 	}
-	var logEntry *filer_pb.LogEntry
-	for {
-		logEntry, visitErr = visitor.GetNext()
-		if visitErr != nil {
-			if visitErr == io.EOF {
-				break
+
+	// Readahead: run the visitor in a background goroutine so volume server I/O
+	// for the next log file overlaps with event processing and gRPC delivery.
+	const readaheadSize = 1024
+	type entryOrErr struct {
+		entry *filer_pb.LogEntry
+		err   error
+	}
+	ch := make(chan entryOrErr, readaheadSize)
+	stopReadahead := make(chan struct{})
+	go func() {
+		defer close(ch)
+		for {
+			entry, readErr := visitor.GetNext()
+			if readErr != nil {
+				if readErr != io.EOF {
+					select {
+					case ch <- entryOrErr{err: fmt.Errorf("read next from persisted logs: %w", readErr)}:
+					case <-stopReadahead:
+					}
+				}
+				return
 			}
-			err = fmt.Errorf("read next from persisted logs: %w", visitErr)
+			select {
+			case ch <- entryOrErr{entry: entry}:
+			case <-stopReadahead:
+				return
+			}
+		}
+	}()
+	defer close(stopReadahead)
+
+	for item := range ch {
+		if item.err != nil {
+			err = item.err
 			return
 		}
-		isDone, visitErr = eachLogEntryFn(logEntry)
-		if visitErr != nil {
-			err = fmt.Errorf("process persisted log entry: %w", visitErr)
+		var processErr error
+		isDone, processErr = eachLogEntryFn(item.entry)
+		if processErr != nil {
+			err = fmt.Errorf("process persisted log entry: %w", processErr)
 			return
 		}
-		lastTsNs = logEntry.TsNs
+		lastTsNs = item.entry.TsNs
 		if isDone {
 			return
 		}
