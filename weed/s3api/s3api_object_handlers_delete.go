@@ -43,7 +43,7 @@ func isMissingDeleteConditionTarget(err error) bool {
 	}
 
 	lowerErr := strings.ToLower(err.Error())
-	return strings.Contains(lowerErr, "not found") || strings.Contains(lowerErr, ErrDeleteMarker.Error())
+	return strings.Contains(lowerErr, "not found")
 }
 
 func (s3a *S3ApiServer) resolveDeleteConditionalEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
@@ -117,6 +117,12 @@ func (s3a *S3ApiServer) deleteVersionedObject(r *http.Request, bucket, object, v
 
 	switch {
 	case versionId != "":
+		versionEntry, versionLookupErr := s3a.getSpecificObjectVersion(bucket, object, versionId)
+		if versionLookupErr == nil && versionEntry != nil && versionEntry.Extended != nil {
+			if deleteMarker, ok := versionEntry.Extended[s3_constants.ExtDeleteMarkerKey]; ok && string(deleteMarker) == "true" {
+				result.deleteMarker = true
+			}
+		}
 		governanceBypassAllowed := s3a.evaluateGovernanceBypassRequest(r, bucket, object)
 		if err := s3a.enforceObjectLockProtections(r, bucket, object, versionId, governanceBypassAllowed); err != nil {
 			glog.V(2).Infof("deleteVersionedObject: object lock check failed for %s/%s version %s: %v", bucket, object, versionId, err)
