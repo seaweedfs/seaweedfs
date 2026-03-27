@@ -256,13 +256,23 @@ func (h *Handler) Execute(ctx context.Context, req *plugin_pb.ExecuteJobRequest,
 		metrics[MetricObjectsExpired] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.objectsExpired}}
 		metrics[MetricObjectsScanned] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.objectsScanned}}
 		metrics[MetricDeleteMarkersClean] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.deleteMarkersClean}}
+		metrics[MetricMPUAborted] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.mpuAborted}}
 		metrics[MetricErrors] = &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: result.errors}}
 	}
 
-	success := execErr == nil
+	success := execErr == nil && (result == nil || result.errors == 0)
 	message := fmt.Sprintf("bucket %s: scanned %d objects, expired %d", bucket, result.objectsScanned, result.objectsExpired)
+	if result != nil && result.deleteMarkersClean > 0 {
+		message += fmt.Sprintf(", delete markers cleaned %d", result.deleteMarkersClean)
+	}
+	if result != nil && result.mpuAborted > 0 {
+		message += fmt.Sprintf(", MPUs aborted %d", result.mpuAborted)
+	}
 	if config.DryRun {
 		message += " (dry run)"
+	}
+	if result != nil && result.errors > 0 {
+		message += fmt.Sprintf(" (%d errors)", result.errors)
 	}
 	if execErr != nil {
 		message = fmt.Sprintf("lifecycle execution failed for bucket %s: %v", bucket, execErr)
@@ -271,6 +281,8 @@ func (h *Handler) Execute(ctx context.Context, req *plugin_pb.ExecuteJobRequest,
 	errMsg := ""
 	if execErr != nil {
 		errMsg = execErr.Error()
+	} else if result != nil && result.errors > 0 {
+		errMsg = fmt.Sprintf("%d objects failed to process", result.errors)
 	}
 
 	return sender.SendCompleted(&plugin_pb.JobCompleted{

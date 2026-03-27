@@ -101,10 +101,10 @@ func (s *AdminServer) GetPluginWorkersAPI(w http.ResponseWriter, r *http.Request
 	if laneFilter != "" {
 		lane := plugin.SchedulerLane(laneFilter)
 		filtered := make([]*plugin.WorkerSession, 0, len(workers))
-		for _, w := range workers {
-			for jobType := range w.Capabilities {
+		for _, worker := range workers {
+			for jobType := range worker.Capabilities {
 				if plugin.JobTypeLane(jobType) == lane {
-					filtered = append(filtered, w)
+					filtered = append(filtered, worker)
 					break
 				}
 			}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"path"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -16,6 +17,7 @@ type executionResult struct {
 	objectsExpired     int64
 	objectsScanned     int64
 	deleteMarkersClean int64
+	mpuAborted         int64
 	errors             int64
 }
 
@@ -129,7 +131,137 @@ func (h *Handler) executeLifecycleForBucket(
 		})
 	}
 
+	// Delete marker cleanup.
+	if config.DeleteMarkerCleanup {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId: jobID, JobType: jobType,
+			State: plugin_pb.JobState_JOB_STATE_RUNNING,
+			Stage: "cleaning_delete_markers", Message: "cleaning expired delete markers",
+		})
+		cleaned, cleanErrs := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, config.MaxDeletesPerBucket)
+		result.deleteMarkersClean = int64(cleaned)
+		result.errors += int64(cleanErrs)
+	}
+
+	// Abort incomplete multipart uploads.
+	if config.AbortMPUDays > 0 {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId: jobID, JobType: jobType,
+			State: plugin_pb.JobState_JOB_STATE_RUNNING,
+			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", config.AbortMPUDays),
+		})
+		aborted, abortErrs := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, config.MaxDeletesPerBucket)
+		result.mpuAborted = int64(aborted)
+		result.errors += int64(abortErrs)
+	}
+
 	return result, nil
+}
+
+// cleanupDeleteMarkers scans the bucket for entries marked as delete markers
+// (via the S3 versioning extended attribute) and removes them.
+func cleanupDeleteMarkers(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	bucketsPath, bucket string,
+	limit int64,
+) (cleaned, errors int) {
+	bucketPath := path.Join(bucketsPath, bucket)
+
+	dirsToProcess := []string{bucketPath}
+	for len(dirsToProcess) > 0 {
+		select {
+		case <-ctx.Done():
+			return cleaned, errors
+		default:
+		}
+
+		dir := dirsToProcess[0]
+		dirsToProcess = dirsToProcess[1:]
+
+		_ = filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory {
+				// Skip .uploads directories.
+				if entry.Name != ".uploads" {
+					dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
+				}
+				return nil
+			}
+
+			if isDeleteMarker(entry) {
+				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, true, false, false, false, nil); err != nil {
+					glog.V(1).Infof("s3_lifecycle: failed to remove delete marker %s/%s: %v", dir, entry.Name, err)
+					errors++
+				} else {
+					cleaned++
+				}
+			}
+
+			if limit > 0 && int64(cleaned+errors) >= limit {
+				return fmt.Errorf("limit reached")
+			}
+			return nil
+		}, "", false, 10000)
+
+		if limit > 0 && int64(cleaned+errors) >= limit {
+			break
+		}
+	}
+	return cleaned, errors
+}
+
+// isDeleteMarker checks if an entry is an S3 delete marker.
+func isDeleteMarker(entry *filer_pb.Entry) bool {
+	if entry == nil || entry.Extended == nil {
+		return false
+	}
+	return string(entry.Extended["Seaweed-X-Amz-Latest-Version-Is-Delete-Marker"]) == "true"
+}
+
+// abortIncompleteMPUs scans the .uploads directory under a bucket and
+// removes multipart upload entries older than the specified number of days.
+func abortIncompleteMPUs(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	bucketsPath, bucket string,
+	olderThanDays, limit int64,
+) (aborted, errors int) {
+	uploadsDir := path.Join(bucketsPath, bucket, ".uploads")
+	cutoff := time.Now().Add(-time.Duration(olderThanDays) * 24 * time.Hour)
+
+	_ = filer_pb.SeaweedList(ctx, client, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		if !entry.IsDirectory {
+			return nil
+		}
+
+		// Each subdirectory under .uploads is one multipart upload.
+		// Check the directory creation time.
+		if entry.Attributes != nil && entry.Attributes.Crtime > 0 {
+			created := time.Unix(entry.Attributes.Crtime, 0)
+			if created.Before(cutoff) {
+				uploadPath := path.Join(uploadsDir, entry.Name)
+				if err := filer_pb.DoRemove(ctx, client, uploadsDir, entry.Name, true, true, true, false, nil); err != nil {
+					glog.V(1).Infof("s3_lifecycle: failed to abort MPU %s: %v", uploadPath, err)
+					errors++
+				} else {
+					aborted++
+				}
+			}
+		}
+
+		if limit > 0 && int64(aborted+errors) >= limit {
+			return fmt.Errorf("limit reached")
+		}
+		return nil
+	}, "", false, 10000)
+
+	return aborted, errors
 }
 
 // deleteExpiredObjects deletes a batch of expired objects from the filer.

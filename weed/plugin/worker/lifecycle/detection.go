@@ -169,7 +169,7 @@ func listExpiredObjects(
 		}, "", false, 10000)
 
 		if err != nil && !strings.Contains(err.Error(), "limit reached") {
-			glog.V(1).Infof("s3_lifecycle: error listing %s: %v", dir, err)
+			return expired, scanned, fmt.Errorf("list %s: %w", dir, err)
 		}
 
 		if limitReached || (limit > 0 && int64(len(expired)) >= limit) {

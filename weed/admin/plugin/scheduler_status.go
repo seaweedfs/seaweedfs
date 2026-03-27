@@ -214,6 +214,43 @@ func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 	return r.schedulerLoopState
 }
 
+// aggregateLaneLoopStates merges per-lane loop states into a single
+// schedulerLoopState for the aggregate GetSchedulerStatus API. It picks
+// the most recent iteration completion, any currently-active job type,
+// and a phase that reflects whether any lane is actively working.
+func (r *Plugin) aggregateLaneLoopStates() schedulerLoopState {
+	if r == nil || len(r.lanes) == 0 {
+		return r.snapshotSchedulerLoopState()
+	}
+
+	var agg schedulerLoopState
+	for _, ls := range r.lanes {
+		snap := r.snapshotLaneLoopState(ls)
+		if snap.lastIterationCompleted.After(agg.lastIterationCompleted) {
+			agg.lastIterationCompleted = snap.lastIterationCompleted
+		}
+		if snap.lastIterationHadJobs {
+			agg.lastIterationHadJobs = true
+		}
+		// Prefer showing an active phase over idle/sleeping.
+		if snap.currentJobType != "" {
+			agg.currentJobType = snap.currentJobType
+			agg.currentPhase = snap.currentPhase
+		}
+	}
+	// If no lane is actively processing, show the most interesting phase.
+	if agg.currentPhase == "" {
+		for _, ls := range r.lanes {
+			snap := r.snapshotLaneLoopState(ls)
+			if snap.currentPhase != "" {
+				agg.currentPhase = snap.currentPhase
+				break
+			}
+		}
+	}
+	return agg
+}
+
 // --- Per-lane loop state helpers ---
 
 func (r *Plugin) setLaneLoopState(ls *schedulerLaneState, jobType, phase string) {
@@ -254,11 +291,19 @@ func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
 	now := time.Now().UTC()
 	loopState := r.snapshotLaneLoopState(ls)
 	idleSleep := LaneIdleSleep(lane)
+	allInProcess := r.listInProcessJobs(now)
+	laneInProcess := make([]SchedulerJobStatus, 0, len(allInProcess))
+	for _, job := range allInProcess {
+		if JobTypeLane(job.JobType) == lane {
+			laneInProcess = append(laneInProcess, job)
+		}
+	}
+
 	status := SchedulerStatus{
 		Now:                  now,
 		Lane:                 string(lane),
 		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
-		InProcessJobs:        r.listInProcessJobs(now),
+		InProcessJobs:        laneInProcess,
 		IdleSleepSeconds:     int(idleSleep / time.Second),
 		CurrentJobType:       loopState.currentJobType,
 		CurrentPhase:         loopState.currentPhase,
@@ -336,26 +381,30 @@ func (r *Plugin) GetLaneSchedulerStatus(lane SchedulerLane) SchedulerStatus {
 
 func (r *Plugin) GetSchedulerStatus() SchedulerStatus {
 	now := time.Now().UTC()
-	loopState := r.snapshotSchedulerLoopState()
+
+	// Aggregate loop state across all lanes instead of reading the
+	// legacy single-loop state which is no longer updated.
+	aggregated := r.aggregateLaneLoopStates()
+
 	status := SchedulerStatus{
 		Now:                  now,
 		SchedulerTickSeconds: int(secondsFromDuration(r.schedulerTick)),
 		InProcessJobs:        r.listInProcessJobs(now),
 		IdleSleepSeconds:     int(defaultSchedulerIdleSleep / time.Second),
-		CurrentJobType:       loopState.currentJobType,
-		CurrentPhase:         loopState.currentPhase,
-		LastIterationHadJobs: loopState.lastIterationHadJobs,
+		CurrentJobType:       aggregated.currentJobType,
+		CurrentPhase:         aggregated.currentPhase,
+		LastIterationHadJobs: aggregated.lastIterationHadJobs,
 	}
 	nextDetectionAt := r.earliestNextDetectionAt()
-	if nextDetectionAt.IsZero() && loopState.currentPhase == "sleeping" && !loopState.lastIterationCompleted.IsZero() {
-		nextDetectionAt = loopState.lastIterationCompleted.Add(defaultSchedulerIdleSleep)
+	if nextDetectionAt.IsZero() && aggregated.currentPhase == "sleeping" && !aggregated.lastIterationCompleted.IsZero() {
+		nextDetectionAt = aggregated.lastIterationCompleted.Add(defaultSchedulerIdleSleep)
 	}
 	if !nextDetectionAt.IsZero() {
 		at := nextDetectionAt
 		status.NextDetectionAt = &at
 	}
-	if !loopState.lastIterationCompleted.IsZero() {
-		at := loopState.lastIterationCompleted
+	if !aggregated.lastIterationCompleted.IsZero() {
+		at := aggregated.lastIterationCompleted
 		status.LastIterationDoneAt = &at
 	}
 

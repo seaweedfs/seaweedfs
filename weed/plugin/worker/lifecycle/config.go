@@ -52,7 +52,7 @@ func ParseConfig(values map[string]*plugin_pb.ConfigValue) Config {
 	if cfg.MaxDeletesPerBucket <= 0 {
 		cfg.MaxDeletesPerBucket = defaultMaxDeletesPerBucket
 	}
-	if cfg.AbortMPUDays <= 0 {
+	if cfg.AbortMPUDays < 0 {
 		cfg.AbortMPUDays = defaultAbortMPUDaysDefault
 	}
 
