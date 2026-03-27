@@ -864,6 +864,25 @@ func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
 	return v.shipperGroup.ShipperStates()
 }
 
+// ReplicaReceiverAddrInfo holds canonical addresses from the replica receiver.
+type ReplicaReceiverAddrInfo struct {
+	DataAddr string
+	CtrlAddr string
+}
+
+// ReplicaReceiverAddr returns the canonical addresses of the replica receiver,
+// or nil if no receiver is running. Used by the VS to store canonical addresses
+// in heartbeat state instead of raw assignment addresses.
+func (v *BlockVol) ReplicaReceiverAddr() *ReplicaReceiverAddrInfo {
+	if v.replRecv == nil {
+		return nil
+	}
+	return &ReplicaReceiverAddrInfo{
+		DataAddr: v.replRecv.DataAddr(),
+		CtrlAddr: v.replRecv.CtrlAddr(),
+	}
+}
+
 // StartReplicaReceiver starts listening for replicated WAL entries from a primary.
 func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string) error {
 	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr)
