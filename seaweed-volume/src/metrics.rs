@@ -135,6 +135,13 @@ lazy_static::lazy_static! {
         "In flight total upload size.",
     ).expect("metric can be created");
 
+    /// Upload error counter by HTTP status code. Code "0" = transport error (no response).
+    pub static ref UPLOAD_ERROR_COUNTER: IntCounterVec = IntCounterVec::new(
+        Opts::new("SeaweedFS_upload_error_total",
+            "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received)."),
+        &["code"],
+    ).expect("metric can be created");
+
     // ---- Legacy aliases for backward compat with existing code ----
 
     /// Total number of volumes on this server (flat gauge).
@@ -243,6 +250,7 @@ pub fn register_metrics() {
             Box::new(CONCURRENT_UPLOAD_LIMIT.clone()),
             Box::new(INFLIGHT_DOWNLOAD_SIZE.clone()),
             Box::new(INFLIGHT_UPLOAD_SIZE.clone()),
+            Box::new(UPLOAD_ERROR_COUNTER.clone()),
             // Legacy metrics
             Box::new(VOLUMES_TOTAL.clone()),
             Box::new(DISK_SIZE_BYTES.clone()),

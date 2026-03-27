@@ -557,8 +557,18 @@ async fn do_replicated_request(
         futures.push(async move {
             match req_builder.send().await {
                 Ok(r) if r.status().is_success() => Ok(()),
-                Ok(r) => Err(format!("{} returned status {}", url, r.status())),
-                Err(e) => Err(format!("{} failed: {}", url, e)),
+                Ok(r) => {
+                    crate::metrics::UPLOAD_ERROR_COUNTER
+                        .with_label_values(&[&r.status().as_u16().to_string()])
+                        .inc();
+                    Err(format!("{} returned status {}", url, r.status()))
+                }
+                Err(e) => {
+                    crate::metrics::UPLOAD_ERROR_COUNTER
+                        .with_label_values(&["0"])
+                        .inc();
+                    Err(format!("{} failed: {}", url, e))
+                }
             }
         });
     }
