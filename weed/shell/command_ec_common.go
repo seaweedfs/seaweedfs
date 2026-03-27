@@ -1319,16 +1319,16 @@ func (ecb *ecBalancer) doBalanceEcRack(ecRack *EcRack) error {
 			}
 
 			if fullDiskInfo, found := fullNode.info.DiskInfos[string(ecb.diskType)]; found {
-				// Pass 1: prefer moving shards of volumes not on the empty node (best diversity)
-				// Pass 2: move shards of shared volumes where the specific shard ID differs
+				// Pass 0: prefer moving shards of volumes not on the empty node (best diversity)
+				// Pass 1: move shards of shared volumes where the specific shard ID differs
 				for pass := 0; pass < 2 && !hasMove; pass++ {
 					for _, shards := range fullDiskInfo.EcShardInfos {
 						emptyBits, volumeOnEmpty := emptyNodeVolumeShards[shards.Id]
 						if pass == 0 && volumeOnEmpty {
-							continue // Pass 1: skip volumes already on the empty node
+							continue // pass 0: skip volumes already on the empty node
 						}
 						if pass == 1 && !volumeOnEmpty {
-							continue // Pass 2: only consider volumes already on the empty node
+							continue // pass 1: only consider volumes already on the empty node
 						}
 						si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(shards)
 						for _, shardId := range si.Ids() {
