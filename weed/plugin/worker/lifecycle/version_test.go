@@ -105,8 +105,8 @@ func TestVersionsDirectoryNaming(t *testing.T) {
 
 	versionsDir := "/buckets/mybucket/path/to/key.versions"
 	bucketPath := "/buckets/mybucket"
-	relDir := versionsDir[len(bucketPath)+1:]
-	objKey := relDir[:len(relDir)-len(s3_constants.VersionsFolder)]
+	relDir := strings.TrimPrefix(versionsDir, bucketPath+"/")
+	objKey := strings.TrimSuffix(relDir, s3_constants.VersionsFolder)
 	if objKey != "path/to/key" {
 		t.Errorf("expected 'path/to/key', got %q", objKey)
 	}

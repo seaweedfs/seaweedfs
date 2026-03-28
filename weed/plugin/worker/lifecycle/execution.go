@@ -429,12 +429,14 @@ func listExpiredObjectsByRules(
 			objInfo := s3lifecycle.ObjectInfo{
 				Key:      relKey,
 				IsLatest: true, // non-versioned objects are always "latest"
-				Size:     int64(entry.Attributes.GetFileSize()),
 			}
-			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-				objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
-			} else if entry.Attributes != nil && entry.Attributes.Crtime > 0 {
-				objInfo.ModTime = time.Unix(entry.Attributes.Crtime, 0)
+			if entry.Attributes != nil {
+				objInfo.Size = int64(entry.Attributes.GetFileSize())
+				if entry.Attributes.Mtime > 0 {
+					objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+				} else if entry.Attributes.Crtime > 0 {
+					objInfo.ModTime = time.Unix(entry.Attributes.Crtime, 0)
+				}
 			}
 			if needTags {
 				objInfo.Tags = s3lifecycle.ExtractTags(entry.Extended)
@@ -541,10 +543,12 @@ func processVersionsDirectory(
 			SuccessorModTime: successorTime,
 			NumVersions:      len(versions),
 			NoncurrentIndex:  noncurrentIndex,
-			Size:             int64(entry.Attributes.GetFileSize()),
 		}
-		if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-			objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+		if entry.Attributes != nil {
+			objInfo.Size = int64(entry.Attributes.GetFileSize())
+			if entry.Attributes.Mtime > 0 {
+				objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+			}
 		}
 		if needTags {
 			objInfo.Tags = s3lifecycle.ExtractTags(entry.Extended)
