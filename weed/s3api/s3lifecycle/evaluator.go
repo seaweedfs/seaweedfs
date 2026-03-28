@@ -73,6 +73,9 @@ func ShouldExpireNoncurrentVersion(rule Rule, obj ObjectInfo, noncurrentIndex in
 	if rule.NoncurrentVersionExpirationDays <= 0 {
 		return false
 	}
+	if obj.IsLatest || obj.SuccessorModTime.IsZero() {
+		return false
+	}
 	if !matchesFilter(rule, obj) {
 		return false
 	}
