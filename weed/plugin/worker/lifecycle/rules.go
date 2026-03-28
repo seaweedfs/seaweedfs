@@ -107,7 +107,8 @@ func parseLifecycleXML(data []byte) ([]s3lifecycle.Rule, error) {
 
 		// Resolve prefix: Filter.And.Prefix > Filter.Prefix > Rule.Prefix
 		switch {
-		case r.Filter.And.Prefix != "" || len(r.Filter.And.Tags) > 0:
+		case r.Filter.And.Prefix != "" || len(r.Filter.And.Tags) > 0 ||
+			r.Filter.And.ObjectSizeGreaterThan > 0 || r.Filter.And.ObjectSizeLessThan > 0:
 			rule.Prefix = r.Filter.And.Prefix
 			rule.FilterTags = tagsToMap(r.Filter.And.Tags)
 			rule.FilterSizeGreaterThan = r.Filter.And.ObjectSizeGreaterThan
