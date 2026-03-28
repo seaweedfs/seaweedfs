@@ -507,8 +507,11 @@ func processVersionsDirectory(
 		entry := versions[i]
 		scanned++
 
-		// Skip delete markers in noncurrent version evaluation.
+		// Skip delete markers from expiration evaluation, but count
+		// them toward NewerNoncurrentVersions so data versions get
+		// the correct noncurrent index.
 		if isDeleteMarker(entry) {
+			noncurrentIndex++
 			continue
 		}
 
