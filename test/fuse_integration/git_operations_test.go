@@ -122,8 +122,7 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 
 	// ---- Phase 5: Reset to older revision in on-mount clone ----
 	t.Log("Phase 5: reset to older revision on mount clone")
-	ensureMountClone(t, bareRepo, mountClone)
-	gitRun(t, mountClone, "reset", "--hard", commit2)
+	resetToCommitWithRecovery(t, bareRepo, localClone, mountClone, commit2)
 
 	resetHead := gitOutput(t, mountClone, "rev-parse", "HEAD")
 	assert.Equal(t, commit2, resetHead, "should be at commit 2")
@@ -324,13 +323,21 @@ func tryEnsureBareRepo(bareRepo, localClone string) error {
 	if _, err := os.Stat(filepath.Join(bareRepo, "HEAD")); err == nil {
 		return nil
 	}
+	branch, err := tryGitCommand(localClone, "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return fmt.Errorf("detect local branch: %w", err)
+	}
 	os.RemoveAll(bareRepo)
 	time.Sleep(500 * time.Millisecond)
 	if _, err := tryGitCommand("", "init", "--bare", bareRepo); err != nil {
 		return fmt.Errorf("re-init bare repo: %w", err)
 	}
-	if _, err := tryGitCommand(localClone, "push", "--force", bareRepo, "master"); err != nil {
-		return fmt.Errorf("re-push to bare repo: %w", err)
+	refSpec := fmt.Sprintf("%s:refs/heads/%s", branch, branch)
+	if _, err := tryGitCommand(localClone, "push", "--force", bareRepo, refSpec); err != nil {
+		return fmt.Errorf("re-push branch %s to bare repo: %w", branch, err)
+	}
+	if _, err := tryGitCommand("", "--git-dir="+bareRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
+		return fmt.Errorf("set bare repo HEAD to %s: %w", branch, err)
 	}
 	return nil
 }
@@ -385,6 +392,50 @@ func pullFromCommitWithRecovery(t *testing.T, bareRepo, localClone, cloneDir, fr
 	}
 }
 
+// resetToCommitWithRecovery resets the on-mount clone to a given commit. If
+// the FUSE mount loses the directory after a failed reset (the kernel dcache
+// can drop the entry after "Could not write new index file"), it re-clones
+// from the bare repo and retries.
+func resetToCommitWithRecovery(t *testing.T, bareRepo, localClone, mountClone, commit string) {
+	t.Helper()
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if err := tryEnsureBareRepo(bareRepo, localClone); err != nil {
+			lastErr = err
+			t.Logf("reset recovery attempt %d: ensure bare repo: %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if err := tryEnsureMountClone(bareRepo, mountClone); err != nil {
+			lastErr = err
+			t.Logf("reset recovery attempt %d: ensure mount clone: %v", attempt, err)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		if _, err := tryGitCommand(mountClone, "reset", "--hard", commit); err != nil {
+			lastErr = err
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v — removing clone for re-create", attempt, err)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
+		if !waitForDirEventually(t, mountClone, 5*time.Second) {
+			lastErr = fmt.Errorf("clone dir %s did not recover after reset", mountClone)
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v", attempt, lastErr)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
+		return
+	}
+	require.NoError(t, lastErr, "git reset --hard %s failed after %d recovery attempts", commit, maxAttempts)
+}
+
 func tryPullFromCommit(t *testing.T, bareRepo, localClone, cloneDir, fromCommit string) error {
 	t.Helper()
 	// The bare repo lives on the FUSE mount and can also vanish.
@@ -436,4 +487,37 @@ func leftPad(n, width int) string {
 		s = "0" + s
 	}
 	return s
+}
+
+func TestTryEnsureBareRepoPreservesCurrentBranch(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "git_bare_recovery_")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	bareRepo := filepath.Join(tempDir, "repo.git")
+	localClone := filepath.Join(tempDir, "clone")
+	restoredClone := filepath.Join(tempDir, "restored")
+
+	gitRun(t, "", "init", "--bare", bareRepo)
+	gitRun(t, "", "clone", bareRepo, localClone)
+	gitRun(t, localClone, "config", "user.email", "test@seaweedfs.test")
+	gitRun(t, localClone, "config", "user.name", "Test")
+
+	writeFile(t, localClone, "README.md", "hello recovery\n")
+	gitRun(t, localClone, "add", "README.md")
+	gitRun(t, localClone, "commit", "-m", "initial commit")
+
+	branch := gitOutput(t, localClone, "rev-parse", "--abbrev-ref", "HEAD")
+	require.NotEmpty(t, branch)
+
+	require.NoError(t, os.RemoveAll(bareRepo))
+	require.NoError(t, tryEnsureBareRepo(bareRepo, localClone))
+
+	headRef := gitOutput(t, "", "--git-dir="+bareRepo, "symbolic-ref", "--short", "HEAD")
+	assert.Equal(t, branch, headRef, "recovered bare repo should keep the current branch as HEAD")
+
+	gitRun(t, "", "clone", bareRepo, restoredClone)
+	restoredHead := gitOutput(t, restoredClone, "rev-parse", "--abbrev-ref", "HEAD")
+	assert.Equal(t, branch, restoredHead, "clone from recovered bare repo should check out the current branch")
+	assertFileContains(t, filepath.Join(restoredClone, "README.md"), "hello recovery")
 }
