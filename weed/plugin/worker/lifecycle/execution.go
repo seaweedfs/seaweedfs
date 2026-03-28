@@ -349,6 +349,9 @@ func nowUnix() int64 {
 
 // listExpiredObjectsByRules scans a bucket directory tree and evaluates
 // lifecycle rules against each object using the s3lifecycle evaluator.
+// This function handles non-versioned objects (IsLatest=true). Versioned
+// objects in .versions directories are handled by processVersionsDirectory
+// (added in a separate change for NoncurrentVersionExpiration support).
 func listExpiredObjectsByRules(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,

@@ -116,6 +116,8 @@ func parseLifecycleXML(data []byte) ([]s3lifecycle.Rule, error) {
 		case r.Filter.Tag.Key != "":
 			rule.Prefix = r.Filter.Prefix
 			rule.FilterTags = map[string]string{r.Filter.Tag.Key: r.Filter.Tag.Value}
+			rule.FilterSizeGreaterThan = r.Filter.ObjectSizeGreaterThan
+			rule.FilterSizeLessThan = r.Filter.ObjectSizeLessThan
 		default:
 			if r.Filter.Prefix != "" {
 				rule.Prefix = r.Filter.Prefix

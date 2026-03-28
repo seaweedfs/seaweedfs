@@ -65,6 +65,9 @@ func TestParseLifecycleXML_PrefixFilter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseLifecycleXML: %v", err)
 	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
+	}
 	if rules[0].Prefix != "logs/" {
 		t.Errorf("expected Prefix='logs/', got %q", rules[0].Prefix)
 	}
@@ -84,6 +87,9 @@ func TestParseLifecycleXML_LegacyPrefix(t *testing.T) {
 	rules, err := parseLifecycleXML(xml)
 	if err != nil {
 		t.Fatalf("parseLifecycleXML: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
 	if rules[0].Prefix != "archive/" {
 		t.Errorf("expected Prefix='archive/', got %q", rules[0].Prefix)
@@ -105,6 +111,9 @@ func TestParseLifecycleXML_TagFilter(t *testing.T) {
 	rules, err := parseLifecycleXML(xml)
 	if err != nil {
 		t.Fatalf("parseLifecycleXML: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
 	r := rules[0]
 	if len(r.FilterTags) != 1 || r.FilterTags["env"] != "dev" {
@@ -131,6 +140,9 @@ func TestParseLifecycleXML_AndFilter(t *testing.T) {
 	rules, err := parseLifecycleXML(xml)
 	if err != nil {
 		t.Fatalf("parseLifecycleXML: %v", err)
+	}
+	if len(rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(rules))
 	}
 	r := rules[0]
 	if r.Prefix != "data/" {
