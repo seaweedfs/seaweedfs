@@ -272,19 +272,6 @@ func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint
 	return stream
 }
 
-// addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
-func addCounterToIV(iv []byte, counter uint64) {
-	// Use the last 8 bytes as a big-endian counter
-	for i := 7; i >= 0; i-- {
-		carry := counter & 0xff
-		iv[len(iv)-8+i] += byte(carry)
-		if iv[len(iv)-8+i] >= byte(carry) {
-			break // No overflow
-		}
-		counter >>= 8
-	}
-}
-
 // GetSourceSSECInfo extracts SSE-C information from source object metadata
 func GetSourceSSECInfo(metadata map[string][]byte) (algorithm string, keyMD5 string, isEncrypted bool) {
 	if alg, exists := metadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm]; exists {
