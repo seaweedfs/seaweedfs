@@ -43,14 +43,18 @@ func (h *Handler) executeLifecycleForBucket(
 
 	// Try to load lifecycle rules from stored XML first (full rule evaluation).
 	// Fall back to filer.conf TTL-only evaluation only if no XML is configured.
-	// If XML exists but fails to parse, fail closed (don't fall back to TTL,
+	// If XML exists but is malformed, fail closed (don't fall back to TTL,
 	// which could apply broader rules and delete objects the XML rules would keep).
+	// Transient filer errors fall back to TTL with a warning.
 	lifecycleRules, xmlErr := loadLifecycleRulesFromBucket(ctx, filerClient, bucketsPath, bucket)
-	if xmlErr != nil {
-		glog.Errorf("s3_lifecycle: bucket %s: failed to load lifecycle XML: %v (skipping bucket)", bucket, xmlErr)
-		return result, fmt.Errorf("load lifecycle XML for bucket %s: %w", bucket, xmlErr)
+	if xmlErr != nil && errors.Is(xmlErr, errMalformedLifecycleXML) {
+		glog.Errorf("s3_lifecycle: bucket %s: %v (skipping bucket)", bucket, xmlErr)
+		return result, xmlErr
 	}
-	useRuleEval := len(lifecycleRules) > 0
+	if xmlErr != nil {
+		glog.V(1).Infof("s3_lifecycle: bucket %s: transient error loading lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
+	}
+	useRuleEval := xmlErr == nil && len(lifecycleRules) > 0
 
 	if !useRuleEval {
 		// Fall back: check filer.conf TTL rules.
@@ -389,7 +393,11 @@ func listExpiredObjectsByRules(
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 					// Process versioned object.
 					versionsDir := path.Join(dir, entry.Name)
-					vExpired, vScanned := processVersionsDirectory(ctx, client, versionsDir, bucketPath, rules, now, needTags, limit-int64(len(expired)))
+					vExpired, vScanned, vErr := processVersionsDirectory(ctx, client, versionsDir, bucketPath, rules, now, needTags, limit-int64(len(expired)))
+					if vErr != nil {
+						glog.V(1).Infof("s3_lifecycle: %v", vErr)
+						return vErr
+					}
 					expired = append(expired, vExpired...)
 					scanned += vScanned
 					if limit > 0 && int64(len(expired)) >= limit {
@@ -461,7 +469,7 @@ func processVersionsDirectory(
 	now time.Time,
 	needTags bool,
 	limit int64,
-) ([]expiredObject, int64) {
+) ([]expiredObject, int64, error) {
 	var expired []expiredObject
 	var scanned int64
 
@@ -474,7 +482,7 @@ func processVersionsDirectory(
 		}
 	}
 	if !hasNoncurrentRules {
-		return nil, 0
+		return nil, 0, nil
 	}
 
 	// List all versions in this directory.
@@ -486,15 +494,14 @@ func processVersionsDirectory(
 		return nil
 	}, "", false, 10000)
 	if listErr != nil {
-		glog.V(1).Infof("s3_lifecycle: failed to list versions in %s: %v", versionsDir, listErr)
-		return nil, 0
+		return nil, 0, fmt.Errorf("list versions in %s: %w", versionsDir, listErr)
 	}
 	if len(versions) <= 1 {
-		return nil, 0 // only one version (the latest), nothing to expire
+		return nil, 0, nil // only one version (the latest), nothing to expire
 	}
 
 	// Sort by version timestamp, newest first.
-	sortVersionsByTimestamp(versions)
+	sortVersionsByVersionId(versions)
 
 	// Derive the object key from the .versions directory path.
 	// e.g., /buckets/mybucket/path/to/key.versions -> path/to/key
@@ -554,31 +561,25 @@ func processVersionsDirectory(
 		}
 	}
 
-	return expired, scanned
+	return expired, scanned, nil
 }
 
-// sortVersionsByTimestamp sorts version entries by their version ID timestamp,
-// newest first.
-func sortVersionsByTimestamp(versions []*filer_pb.Entry) {
+// sortVersionsByVersionId sorts version entries newest-first using full
+// version ID comparison (matching compareVersionIds in s3api_version_id.go).
+// This uses the complete version ID string, not just the decoded timestamp,
+// so entries with the same timestamp prefix are correctly ordered by their
+// random suffix.
+func sortVersionsByVersionId(versions []*filer_pb.Entry) {
 	for i := 1; i < len(versions); i++ {
 		for j := i; j > 0; j-- {
-			tsJ := getEntryVersionTimestamp(versions[j])
-			tsJm1 := getEntryVersionTimestamp(versions[j-1])
-			if tsJ.After(tsJm1) {
+			vidJ := strings.TrimPrefix(versions[j].Name, "v_")
+			vidJm1 := strings.TrimPrefix(versions[j-1].Name, "v_")
+			if s3lifecycle.CompareVersionIds(vidJ, vidJm1) < 0 {
+				// vidJ is newer; swap to maintain newest-first order.
 				versions[j], versions[j-1] = versions[j-1], versions[j]
 			} else {
 				break
 			}
 		}
 	}
-}
-
-// getEntryVersionTimestamp extracts the timestamp from a version entry's name.
-func getEntryVersionTimestamp(entry *filer_pb.Entry) time.Time {
-	versionId := strings.TrimPrefix(entry.Name, "v_")
-	ts := s3lifecycle.GetVersionTimestamp(versionId)
-	if ts.IsZero() && entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-		return time.Unix(entry.Attributes.Mtime, 0)
-	}
-	return ts
 }
