@@ -7,6 +7,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -78,9 +79,9 @@ func (s *testFilerServer) LookupDirectoryEntry(_ context.Context, req *filer_pb.
 }
 
 func (s *testFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream grpc.ServerStreamingServer[filer_pb.ListEntriesResponse]) error {
+	// Snapshot entries under lock, then stream without holding the lock
+	// (streaming callbacks may trigger DeleteEntry which needs a write lock).
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	var names []string
 	for key := range s.entries {
 		dir, name := s.splitKey(key)
@@ -88,7 +89,7 @@ func (s *testFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream g
 			if req.StartFromFileName != "" && name <= req.StartFromFileName {
 				continue
 			}
-			if req.Prefix != "" && len(name) < len(req.Prefix) {
+			if req.Prefix != "" && !strings.HasPrefix(name, req.Prefix) {
 				continue
 			}
 			names = append(names, name)
@@ -96,16 +97,28 @@ func (s *testFilerServer) ListEntries(req *filer_pb.ListEntriesRequest, stream g
 	}
 	sort.Strings(names)
 
-	sent := 0
+	// Clone entries while still holding the lock.
+	type namedEntry struct {
+		name  string
+		entry *filer_pb.Entry
+	}
+	snapshot := make([]namedEntry, 0, len(names))
 	for _, name := range names {
-		if req.Limit > 0 && uint32(sent) >= req.Limit {
+		if req.Limit > 0 && uint32(len(snapshot)) >= req.Limit {
 			break
 		}
-		entry := proto.Clone(s.entries[s.key(req.Directory, name)]).(*filer_pb.Entry)
-		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: entry}); err != nil {
+		snapshot = append(snapshot, namedEntry{
+			name:  name,
+			entry: proto.Clone(s.entries[s.key(req.Directory, name)]).(*filer_pb.Entry),
+		})
+	}
+	s.mu.RUnlock()
+
+	// Stream responses without holding any lock.
+	for _, ne := range snapshot {
+		if err := stream.Send(&filer_pb.ListEntriesResponse{Entry: ne.entry}); err != nil {
 			return err
 		}
-		sent++
 	}
 	return nil
 }
@@ -126,9 +139,12 @@ func (s *testFilerServer) DeleteEntry(_ context.Context, req *filer_pb.DeleteEnt
 	}
 	delete(s.entries, k)
 	if req.IsRecursive {
-		prefix := req.Directory + "/" + req.Name + "\x00"
+		// Delete all descendants: any entry whose directory starts with
+		// the deleted path (handles nested subdirectories).
+		deletedPath := req.Directory + "/" + req.Name
 		for key := range s.entries {
-			if key >= prefix && key < req.Directory+"/"+req.Name+"\x01" {
+			dir, _ := s.splitKey(key)
+			if dir == deletedPath || strings.HasPrefix(dir, deletedPath+"/") {
 				delete(s.entries, key)
 			}
 		}
@@ -155,8 +171,14 @@ func startTestFiler(t *testing.T) (*testFilerServer, filer_pb.SeaweedFilerClient
 		_ = lis.Close()
 	})
 
-	host, portStr, _ := net.SplitHostPort(lis.Addr().String())
-	port, _ := strconv.Atoi(portStr)
+	host, portStr, err := net.SplitHostPort(lis.Addr().String())
+	if err != nil {
+		t.Fatalf("split host port: %v", err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("parse port: %v", err)
+	}
 	addr := pb.NewServerAddress(host, 1, port)
 
 	conn, err := pb.GrpcDial(context.Background(), addr.ToGrpcAddress(), false, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -386,6 +408,16 @@ func TestIntegration_ProcessVersionsDirectory_NewerNoncurrentVersions(t *testing
 	// Expire vids[1] and vids[0].
 	if len(expired) != 2 {
 		t.Fatalf("expected 2 expired (keep 2 newest noncurrent), got %d", len(expired))
+	}
+	expiredNames := map[string]bool{}
+	for _, e := range expired {
+		expiredNames[e.name] = true
+	}
+	if !expiredNames["v_"+vids[0]] {
+		t.Errorf("expected vids[0] (oldest) to be expired")
+	}
+	if !expiredNames["v_"+vids[1]] {
+		t.Errorf("expected vids[1] to be expired")
 	}
 }
 
