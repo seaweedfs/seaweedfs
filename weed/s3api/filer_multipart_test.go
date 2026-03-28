@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/hex"
+	"net/http"
 	"testing"
 	"time"
 
@@ -189,4 +190,23 @@ func TestValidateCompletePartETag(t *testing.T) {
 		assert.False(t, match)
 		assert.True(t, invalid)
 	})
+}
+
+func TestCompleteMultipartUploadRejectsOutOfOrderParts(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String("bucket"),
+		Key:      aws.String("object"),
+		UploadId: aws.String("upload"),
+	}
+	parts := &CompleteMultipartUpload{
+		Parts: []CompletedPart{
+			{PartNumber: 2, ETag: "\"etag-2\""},
+			{PartNumber: 1, ETag: "\"etag-1\""},
+		},
+	}
+
+	result, errCode := s3a.completeMultipartUpload(&http.Request{Header: make(http.Header)}, input, parts)
+	assert.Nil(t, result)
+	assert.Equal(t, s3err.ErrInvalidPartOrder, errCode)
 }

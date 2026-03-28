@@ -14,7 +14,6 @@ import (
 	"net/url"
 	"path"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -362,15 +361,17 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	completedPartMap := make(map[int][]string)
 
 	maxPartNo := 1
+	lastSeenPartNo := 0
 
 	for _, part := range parts.Parts {
-		if _, ok := completedPartMap[part.PartNumber]; !ok {
-			completedPartNumbers = append(completedPartNumbers, part.PartNumber)
+		if part.PartNumber <= lastSeenPartNo {
+			return nil, s3err.ErrInvalidPartOrder
 		}
+		lastSeenPartNo = part.PartNumber
+		completedPartNumbers = append(completedPartNumbers, part.PartNumber)
 		completedPartMap[part.PartNumber] = append(completedPartMap[part.PartNumber], part.ETag)
 		maxPartNo = maxInt(maxPartNo, part.PartNumber)
 	}
-	sort.Ints(completedPartNumbers)
 
 	uploadDirectory := s3a.genUploadsFolder(*input.Bucket) + "/" + *input.UploadId
 	entryName, dirName := s3a.getEntryNameAndDir(input)
