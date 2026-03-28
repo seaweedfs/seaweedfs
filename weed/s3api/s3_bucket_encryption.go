@@ -36,18 +36,6 @@ type ApplyServerSideEncryptionByDefault struct {
 	KMSMasterKeyID string `xml:"KMSMasterKeyID,omitempty"`
 }
 
-// encryptionConfigToProto converts EncryptionConfiguration to protobuf format
-func encryptionConfigToProto(config *s3_pb.EncryptionConfiguration) *s3_pb.EncryptionConfiguration {
-	if config == nil {
-		return nil
-	}
-	return &s3_pb.EncryptionConfiguration{
-		SseAlgorithm:     config.SseAlgorithm,
-		KmsKeyId:         config.KmsKeyId,
-		BucketKeyEnabled: config.BucketKeyEnabled,
-	}
-}
-
 // encryptionConfigFromXML converts XML ServerSideEncryptionConfiguration to protobuf
 func encryptionConfigFromXML(xmlConfig *ServerSideEncryptionConfiguration) *s3_pb.EncryptionConfiguration {
 	if xmlConfig == nil || len(xmlConfig.Rules) == 0 {
