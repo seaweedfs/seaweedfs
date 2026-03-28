@@ -973,13 +973,20 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 			rulePrefix = rule.Prefix.val
 		}
 
-		// Only create filer.conf TTL entries for Expiration.Days rules
-		// (the fast path handled by RocksDB compaction filter).
-		// Other rule types (NoncurrentVersionExpiration, AbortIncompleteMultipartUpload,
-		// Expiration.Date, ExpiredObjectDeleteMarker) are evaluated at scan time by
-		// the lifecycle plugin worker from the stored lifecycle XML.
+		// Only create filer.conf TTL entries for simple Expiration.Days rules
+		// with prefix-only filters (the fast path handled by RocksDB compaction
+		// filter). Rules with tag or size filters must be evaluated at scan time
+		// by the lifecycle worker, because TTL applies to all objects under the
+		// prefix regardless of tags or size.
 		if rule.Expiration.Days == 0 {
 			continue
+		}
+		hasTagOrSizeFilter := rule.Filter.tagSet ||
+			rule.Filter.ObjectSizeGreaterThan > 0 || rule.Filter.ObjectSizeLessThan > 0 ||
+			(rule.Filter.andSet && (len(rule.Filter.And.Tags) > 0 ||
+				rule.Filter.And.ObjectSizeGreaterThan > 0 || rule.Filter.And.ObjectSizeLessThan > 0))
+		if hasTagOrSizeFilter {
+			continue // evaluated by lifecycle worker at scan time
 		}
 		locationPrefix := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix)
 		locConf := &filer_pb.FilerConf_PathConf{
