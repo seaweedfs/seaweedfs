@@ -956,17 +956,28 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Status != Enabled {
 			continue
 		}
-		var rulePrefix string
-		switch {
-		case rule.Filter.Prefix.set:
-			rulePrefix = rule.Filter.Prefix.val
-		case rule.Prefix.set:
-			rulePrefix = rule.Prefix.val
-		case !rule.Expiration.Date.IsZero() || rule.Transition.Days > 0 || !rule.Transition.Date.IsZero():
+		// Reject Transition rules — they require storage class migration
+		// infrastructure that does not exist yet.
+		if rule.Transition.set || rule.NoncurrentVersionTransition.set {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
 		}
 
+		var rulePrefix string
+		switch {
+		case rule.Filter.andSet:
+			rulePrefix = rule.Filter.And.Prefix.val
+		case rule.Filter.Prefix.set:
+			rulePrefix = rule.Filter.Prefix.val
+		case rule.Prefix.set:
+			rulePrefix = rule.Prefix.val
+		}
+
+		// Only create filer.conf TTL entries for Expiration.Days rules
+		// (the fast path handled by RocksDB compaction filter).
+		// Other rule types (NoncurrentVersionExpiration, AbortIncompleteMultipartUpload,
+		// Expiration.Date, ExpiredObjectDeleteMarker) are evaluated at scan time by
+		// the lifecycle plugin worker from the stored lifecycle XML.
 		if rule.Expiration.Days == 0 {
 			continue
 		}

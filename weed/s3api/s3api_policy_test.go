@@ -177,6 +177,51 @@ func TestLifecycleXMLRoundTrip_FilterWithSizeOnly(t *testing.T) {
 	}
 }
 
+func TestLifecycleXML_TransitionSetFlag(t *testing.T) {
+	// Verify that Transition.set is true after unmarshaling.
+	input := `<LifecycleConfiguration>
+  <Rule>
+    <ID>transition</ID>
+    <Status>Enabled</Status>
+    <Filter><Prefix></Prefix></Filter>
+    <Transition>
+      <Days>30</Days>
+      <StorageClass>GLACIER</StorageClass>
+    </Transition>
+  </Rule>
+</LifecycleConfiguration>`
+
+	var lc Lifecycle
+	if err := xml.Unmarshal([]byte(input), &lc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !lc.Rules[0].Transition.set {
+		t.Error("expected Transition.set=true after unmarshal")
+	}
+}
+
+func TestLifecycleXML_NoncurrentVersionTransitionSetFlag(t *testing.T) {
+	input := `<LifecycleConfiguration>
+  <Rule>
+    <ID>nv-transition</ID>
+    <Status>Enabled</Status>
+    <Filter><Prefix></Prefix></Filter>
+    <NoncurrentVersionTransition>
+      <NoncurrentDays>60</NoncurrentDays>
+      <StorageClass>GLACIER</StorageClass>
+    </NoncurrentVersionTransition>
+  </Rule>
+</LifecycleConfiguration>`
+
+	var lc Lifecycle
+	if err := xml.Unmarshal([]byte(input), &lc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if !lc.Rules[0].NoncurrentVersionTransition.set {
+		t.Error("expected NoncurrentVersionTransition.set=true after unmarshal")
+	}
+}
+
 func TestLifecycleXMLRoundTrip_CompleteRule(t *testing.T) {
 	// A complete lifecycle config similar to what Terraform sends.
 	input := `<LifecycleConfiguration>
