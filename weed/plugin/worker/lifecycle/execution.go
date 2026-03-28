@@ -187,7 +187,7 @@ func (h *Handler) executeLifecycleForBucket(
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
 			Stage: "cleaning_delete_markers", Message: "cleaning expired delete markers",
 		})
-		cleaned, cleanErrs, cleanCtxErr := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, remaining)
+		cleaned, cleanErrs, cleanCtxErr := cleanupDeleteMarkers(ctx, filerClient, bucketsPath, bucket, lifecycleRules, remaining)
 		result.deleteMarkersClean = int64(cleaned)
 		result.errors += int64(cleanErrs)
 		if cleanCtxErr != nil {
@@ -217,18 +217,19 @@ func (h *Handler) executeLifecycleForBucket(
 	return result, nil
 }
 
-// cleanupDeleteMarkers scans the bucket for entries marked as delete markers
-// (via the S3 versioning extended attribute) and removes them.
+// cleanupDeleteMarkers scans versioned objects and removes delete markers
+// that are the sole remaining version. This matches AWS S3
+// ExpiredObjectDeleteMarker semantics: a delete marker is only removed when
+// it is the only version of an object (no non-current versions behind it).
 //
-// NOTE: This currently removes delete markers unconditionally without checking
-// whether prior non-expired versions exist. In versioned buckets, removing a
-// delete marker can resurface an older version. A future enhancement should
-// query version metadata before removal to match AWS ExpiredObjectDeleteMarker
-// semantics (only remove when no non-current versions remain).
+// This phase should run AFTER NoncurrentVersionExpiration (PR 4) so that
+// non-current versions have already been cleaned up, potentially leaving
+// delete markers as sole versions eligible for removal.
 func cleanupDeleteMarkers(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
 	bucketsPath, bucket string,
+	rules []s3lifecycle.Rule,
 	limit int64,
 ) (cleaned, errors int, ctxErr error) {
 	bucketPath := path.Join(bucketsPath, bucket)
@@ -244,14 +245,72 @@ func cleanupDeleteMarkers(
 
 		listErr := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				// Skip .uploads directories.
-				if entry.Name != ".uploads" {
-					dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
+				if dir == bucketPath && entry.Name == s3_constants.MultipartUploadsFolder {
+					return nil
 				}
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					versionsDir := path.Join(dir, entry.Name)
+					// Check if the latest version is a delete marker.
+					latestIsMarker := string(entry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true"
+					if !latestIsMarker {
+						return nil
+					}
+					// Count versions in the directory.
+					versionCount := 0
+					countErr := filer_pb.SeaweedList(ctx, client, versionsDir, "", func(ve *filer_pb.Entry, _ bool) error {
+						if !ve.IsDirectory {
+							versionCount++
+						}
+						return nil
+					}, "", false, 10000)
+					if countErr != nil {
+						glog.V(1).Infof("s3_lifecycle: failed to count versions in %s: %v", versionsDir, countErr)
+						errors++
+						return nil
+					}
+					// Only remove if the delete marker is the sole version.
+					if versionCount != 1 {
+						return nil
+					}
+					// Check that a matching ExpiredObjectDeleteMarker rule exists.
+					// The rule's prefix filter must match this object's key.
+					relDir := strings.TrimPrefix(versionsDir, bucketPath+"/")
+					objKey := strings.TrimSuffix(relDir, s3_constants.VersionsFolder)
+					if len(rules) > 0 && !matchesDeleteMarkerRule(rules, objKey) {
+						return nil
+					}
+					// Find and remove the sole delete marker entry.
+					removedHere := false
+					removeErr := filer_pb.SeaweedList(ctx, client, versionsDir, "", func(ve *filer_pb.Entry, _ bool) error {
+						if !ve.IsDirectory && isDeleteMarker(ve) {
+							if err := filer_pb.DoRemove(ctx, client, versionsDir, ve.Name, true, false, false, false, nil); err != nil {
+								glog.V(1).Infof("s3_lifecycle: failed to remove delete marker %s/%s: %v", versionsDir, ve.Name, err)
+								errors++
+							} else {
+								cleaned++
+								removedHere = true
+							}
+						}
+						return nil
+					}, "", false, 10)
+					if removeErr != nil {
+						glog.V(1).Infof("s3_lifecycle: failed to scan for delete marker in %s: %v", versionsDir, removeErr)
+					}
+					// Remove the now-empty .versions directory only if we
+					// actually deleted the marker in this specific directory.
+					if removedHere {
+						_ = filer_pb.DoRemove(ctx, client, dir, entry.Name, true, true, true, false, nil)
+					}
+					return nil
+				}
+				dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
 				return nil
 			}
 
-			if isDeleteMarker(entry) {
+			// For non-versioned objects: only clean up if explicitly a delete marker
+			// and a matching rule exists.
+			relKey := strings.TrimPrefix(path.Join(dir, entry.Name), bucketPath+"/")
+			if isDeleteMarker(entry) && matchesDeleteMarkerRule(rules, relKey) {
 				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, true, false, false, false, nil); err != nil {
 					glog.V(1).Infof("s3_lifecycle: failed to remove delete marker %s/%s: %v", dir, entry.Name, err)
 					errors++
@@ -283,6 +342,26 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 		return false
 	}
 	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
+// matchesDeleteMarkerRule checks if any enabled ExpiredObjectDeleteMarker rule
+// matches the given object key using the full filter model (prefix, tags, size).
+// When no lifecycle rules are provided (nil means no XML configured),
+// falls back to legacy behavior (returns true to allow cleanup).
+// A non-nil empty slice means XML was present but had no matching rules,
+// so cleanup is not allowed.
+func matchesDeleteMarkerRule(rules []s3lifecycle.Rule, objKey string) bool {
+	if rules == nil {
+		return true // legacy fallback: no lifecycle XML configured
+	}
+	// Delete markers have no size or tags, so build a minimal ObjectInfo.
+	obj := s3lifecycle.ObjectInfo{Key: objKey}
+	for _, r := range rules {
+		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker && s3lifecycle.MatchesFilter(r, obj) {
+			return true
+		}
+	}
+	return false
 }
 
 // abortIncompleteMPUs scans the .uploads directory under a bucket and

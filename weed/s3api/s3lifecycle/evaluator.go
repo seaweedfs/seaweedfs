@@ -18,7 +18,7 @@ func Evaluate(rules []Rule, obj ObjectInfo, now time.Time) EvalResult {
 			if rule.Status != "Enabled" {
 				continue
 			}
-			if !matchesFilter(rule, obj) {
+			if !MatchesFilter(rule, obj) {
 				continue
 			}
 			if rule.ExpiredObjectDeleteMarker {
@@ -42,7 +42,7 @@ func Evaluate(rules []Rule, obj ObjectInfo, now time.Time) EvalResult {
 			if rule.Status != "Enabled" {
 				continue
 			}
-			if !matchesFilter(rule, obj) {
+			if !MatchesFilter(rule, obj) {
 				continue
 			}
 			// Date-based expiration
@@ -76,7 +76,7 @@ func ShouldExpireNoncurrentVersion(rule Rule, obj ObjectInfo, noncurrentIndex in
 	if obj.IsLatest || obj.SuccessorModTime.IsZero() {
 		return false
 	}
-	if !matchesFilter(rule, obj) {
+	if !MatchesFilter(rule, obj) {
 		return false
 	}
 
