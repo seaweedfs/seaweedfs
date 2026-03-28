@@ -391,7 +391,7 @@ func listExpiredObjectsByRules(
 					scanned += vScanned
 					if limit > 0 && int64(len(expired)) >= limit {
 						limitReached = true
-						return fmt.Errorf("limit reached")
+						return errLimitReached
 					}
 					return nil
 				}
@@ -522,6 +522,7 @@ func processVersionsDirectory(
 			IsLatest:         false,
 			SuccessorModTime: successorTime,
 			NumVersions:      len(versions),
+			NoncurrentIndex:  noncurrentIndex,
 			Size:             int64(entry.Attributes.GetFileSize()),
 		}
 		if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
