@@ -60,6 +60,11 @@ type ObjectInfo struct {
 	// ID timestamp. Zero value for the latest version.
 	SuccessorModTime time.Time
 
+	// NoncurrentIndex is the 0-based position among non-current versions
+	// sorted newest-first (0 = newest non-current version). Used by
+	// NewerNoncurrentVersions evaluation. -1 or unset for current versions.
+	NoncurrentIndex int
+
 	// Tags are the object's user-defined tags, extracted from the entry's
 	// Extended metadata (keys prefixed with "X-Amz-Tagging-").
 	Tags map[string]string

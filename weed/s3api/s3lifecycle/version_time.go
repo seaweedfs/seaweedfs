@@ -31,12 +31,12 @@ func getVersionTimestampNanos(versionId string) int64 {
 	if err != nil {
 		return 0
 	}
+	if timestampPart > math.MaxInt64 {
+		return 0
+	}
 	if timestampPart > versionIdFormatThreshold {
 		// New format: inverted timestamp, convert back.
 		return int64(math.MaxInt64 - timestampPart)
-	}
-	if timestampPart > math.MaxInt64 {
-		return 0
 	}
 	return int64(timestampPart)
 }

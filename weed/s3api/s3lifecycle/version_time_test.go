@@ -55,6 +55,16 @@ func TestGetVersionTimestamp(t *testing.T) {
 		}
 	})
 
+	t.Run("high_bit_overflow_returns_zero", func(t *testing.T) {
+		// Version ID with first 16 hex chars > math.MaxInt64 should return zero,
+		// not a wrapped negative timestamp.
+		versionId := "80000000000000000000000000000000"
+		got := GetVersionTimestamp(versionId)
+		if !got.IsZero() {
+			t.Errorf("expected zero time for overflow version ID, got %v", got)
+		}
+	})
+
 	t.Run("invalid_hex", func(t *testing.T) {
 		got := GetVersionTimestamp("zzzzzzzzzzzzzzzz0000000000000000")
 		if !got.IsZero() {

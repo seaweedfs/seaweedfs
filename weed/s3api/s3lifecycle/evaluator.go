@@ -30,17 +30,7 @@ func Evaluate(rules []Rule, obj ObjectInfo, now time.Time) EvalResult {
 	// Phase 2: NoncurrentVersionExpiration
 	if !obj.IsLatest && !obj.SuccessorModTime.IsZero() {
 		for _, rule := range rules {
-			if rule.Status != "Enabled" {
-				continue
-			}
-			if rule.NoncurrentVersionExpirationDays <= 0 {
-				continue
-			}
-			if !matchesFilter(rule, obj) {
-				continue
-			}
-			expiryTime := expectedExpiryTime(obj.SuccessorModTime, rule.NoncurrentVersionExpirationDays)
-			if now.After(expiryTime) {
+			if ShouldExpireNoncurrentVersion(rule, obj, obj.NoncurrentIndex, now) {
 				return EvalResult{Action: ActionDeleteVersion, RuleID: rule.ID}
 			}
 		}
@@ -56,13 +46,13 @@ func Evaluate(rules []Rule, obj ObjectInfo, now time.Time) EvalResult {
 				continue
 			}
 			// Date-based expiration
-			if !rule.ExpirationDate.IsZero() && now.After(rule.ExpirationDate) {
+			if !rule.ExpirationDate.IsZero() && !now.Before(rule.ExpirationDate) {
 				return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
 			}
 			// Days-based expiration
 			if rule.ExpirationDays > 0 {
 				expiryTime := expectedExpiryTime(obj.ModTime, rule.ExpirationDays)
-				if now.After(expiryTime) {
+				if !now.Before(expiryTime) {
 					return EvalResult{Action: ActionDeleteObject, RuleID: rule.ID}
 				}
 			}
@@ -89,7 +79,7 @@ func ShouldExpireNoncurrentVersion(rule Rule, obj ObjectInfo, noncurrentIndex in
 
 	// Check age threshold.
 	expiryTime := expectedExpiryTime(obj.SuccessorModTime, rule.NoncurrentVersionExpirationDays)
-	if !now.After(expiryTime) {
+	if now.Before(expiryTime) {
 		return false
 	}
 
@@ -115,7 +105,7 @@ func EvaluateMPUAbort(rules []Rule, uploadKey string, createdAt time.Time, now t
 			continue
 		}
 		cutoff := createdAt.Add(time.Duration(rule.AbortMPUDaysAfterInitiation) * 24 * time.Hour)
-		if now.After(cutoff) {
+		if !now.Before(cutoff) {
 			return EvalResult{Action: ActionAbortMultipartUpload, RuleID: rule.ID}
 		}
 	}
