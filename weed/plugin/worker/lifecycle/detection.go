@@ -10,11 +10,15 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
+const lifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"
+
 // detectBucketsWithLifecycleRules scans all S3 buckets to find those
-// with lifecycle (TTL) rules configured in filer.conf.
+// with lifecycle rules, either TTL entries in filer.conf or lifecycle
+// XML stored in bucket metadata.
 func (h *Handler) detectBucketsWithLifecycleRules(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
@@ -53,25 +57,38 @@ func (h *Handler) detectBucketsWithLifecycleRules(
 			continue
 		}
 
-		// Derive the collection name for this bucket.
+		// Check for lifecycle rules from two sources:
+		// 1. filer.conf TTLs (legacy Expiration.Days fast path)
+		// 2. Stored lifecycle XML in bucket metadata (full rule support)
 		collection := bucketName
 		ttls := fc.GetCollectionTtls(collection)
-		if len(ttls) == 0 {
+
+		hasLifecycleXML := entry.Extended != nil && len(entry.Extended[lifecycleXMLKey]) > 0
+		versioningStatus := ""
+		if entry.Extended != nil {
+			versioningStatus = string(entry.Extended[s3_constants.ExtVersioningKey])
+		}
+
+		ruleCount := int64(len(ttls))
+		if !hasLifecycleXML && ruleCount == 0 {
 			continue
 		}
 
-		glog.V(2).Infof("s3_lifecycle: bucket %s has %d lifecycle rule(s)", bucketName, len(ttls))
+		glog.V(2).Infof("s3_lifecycle: bucket %s has %d TTL rule(s), lifecycle_xml=%v, versioning=%s",
+			bucketName, ruleCount, hasLifecycleXML, versioningStatus)
 
 		proposal := &plugin_pb.JobProposal{
 			ProposalId: fmt.Sprintf("s3_lifecycle:%s", bucketName),
 			JobType:    jobType,
-			Summary:    fmt.Sprintf("Lifecycle management for bucket %s (%d rules)", bucketName, len(ttls)),
+			Summary:    fmt.Sprintf("Lifecycle management for bucket %s", bucketName),
 			DedupeKey:  fmt.Sprintf("s3_lifecycle:%s", bucketName),
 			Parameters: map[string]*plugin_pb.ConfigValue{
-				"bucket":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketName}},
-				"buckets_path": {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketsPath}},
-				"collection":   {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: collection}},
-				"rule_count":   {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(ttls))}},
+				"bucket":             {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketName}},
+				"buckets_path":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: bucketsPath}},
+				"collection":         {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: collection}},
+				"rule_count":         {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: ruleCount}},
+				"has_lifecycle_xml":  {Kind: &plugin_pb.ConfigValue_BoolValue{BoolValue: hasLifecycleXML}},
+				"versioning_status":  {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: versioningStatus}},
 			},
 			Labels: map[string]string{
 				"bucket": bucketName,
