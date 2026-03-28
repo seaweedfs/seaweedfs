@@ -234,15 +234,6 @@ func cleanupDeleteMarkers(
 ) (cleaned, errors int, ctxErr error) {
 	bucketPath := path.Join(bucketsPath, bucket)
 
-	// Check if any rule has ExpiredObjectDeleteMarker enabled.
-	hasDeleteMarkerRule := false
-	for _, r := range rules {
-		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker {
-			hasDeleteMarkerRule = true
-			break
-		}
-	}
-
 	dirsToProcess := []string{bucketPath}
 	for len(dirsToProcess) > 0 {
 		if ctx.Err() != nil {
@@ -281,9 +272,11 @@ func cleanupDeleteMarkers(
 					if versionCount != 1 {
 						return nil
 					}
-					// Only remove if a rule with ExpiredObjectDeleteMarker exists
-					// (or fall back to legacy behavior when no lifecycle XML rules are provided).
-					if len(rules) > 0 && !hasDeleteMarkerRule {
+					// Check that a matching ExpiredObjectDeleteMarker rule exists.
+					// The rule's prefix filter must match this object's key.
+					relDir := strings.TrimPrefix(versionsDir, bucketPath+"/")
+					objKey := strings.TrimSuffix(relDir, s3_constants.VersionsFolder)
+					if len(rules) > 0 && !matchesDeleteMarkerRule(rules, objKey) {
 						return nil
 					}
 					// Find and remove the sole delete marker entry.
@@ -312,8 +305,9 @@ func cleanupDeleteMarkers(
 			}
 
 			// For non-versioned objects: only clean up if explicitly a delete marker
-			// (shouldn't normally happen, but handle gracefully).
-			if isDeleteMarker(entry) && hasDeleteMarkerRule {
+			// and a matching rule exists.
+			relKey := strings.TrimPrefix(path.Join(dir, entry.Name), bucketPath+"/")
+			if isDeleteMarker(entry) && matchesDeleteMarkerRule(rules, relKey) {
 				if err := filer_pb.DoRemove(ctx, client, dir, entry.Name, true, false, false, false, nil); err != nil {
 					glog.V(1).Infof("s3_lifecycle: failed to remove delete marker %s/%s: %v", dir, entry.Name, err)
 					errors++
@@ -345,6 +339,22 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 		return false
 	}
 	return string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+}
+
+// matchesDeleteMarkerRule checks if any enabled ExpiredObjectDeleteMarker rule
+// matches the given object key (respecting the rule's prefix filter).
+// When no lifecycle rules are provided (nil/empty), falls back to legacy
+// behavior (returns true to allow cleanup).
+func matchesDeleteMarkerRule(rules []s3lifecycle.Rule, objKey string) bool {
+	if len(rules) == 0 {
+		return true // legacy fallback
+	}
+	for _, r := range rules {
+		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker && strings.HasPrefix(objKey, r.Prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // abortIncompleteMPUs scans the .uploads directory under a bucket and
