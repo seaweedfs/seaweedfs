@@ -184,6 +184,17 @@ func (e Expiration) MarshalXML(enc *xml.Encoder, startElement xml.StartElement) 
 	return enc.EncodeElement(expirationWrapper(e), startElement)
 }
 
+func (e *Expiration) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type wrapper Expiration
+	var w wrapper
+	if err := d.DecodeElement(&w, &start); err != nil {
+		return err
+	}
+	*e = Expiration(w)
+	e.set = true
+	return nil
+}
+
 // ExpireDeleteMarker represents value of ExpiredObjectDeleteMarker field in Expiration XML element.
 type ExpireDeleteMarker struct {
 	val bool
@@ -196,6 +207,15 @@ func (b ExpireDeleteMarker) MarshalXML(e *xml.Encoder, startElement xml.StartEle
 		return nil
 	}
 	return e.EncodeElement(b.val, startElement)
+}
+
+func (b *ExpireDeleteMarker) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	var v bool
+	if err := d.DecodeElement(&v, &start); err != nil {
+		return err
+	}
+	*b = ExpireDeleteMarker{val: v, set: true}
+	return nil
 }
 
 // ExpirationDate is a embedded type containing time.Time to unmarshal
@@ -230,6 +250,17 @@ func (t Transition) MarshalXML(enc *xml.Encoder, start xml.StartElement) error {
 	}
 	type transitionWrapper Transition
 	return enc.EncodeElement(transitionWrapper(t), start)
+}
+
+func (t *Transition) UnmarshalXML(d *xml.Decoder, start xml.StartElement) error {
+	type wrapper Transition
+	var w wrapper
+	if err := d.DecodeElement(&w, &start); err != nil {
+		return err
+	}
+	*t = Transition(w)
+	t.set = true
+	return nil
 }
 
 // TransitionDays is a type alias to unmarshal Days in Transition
