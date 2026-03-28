@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -380,54 +379,6 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	objectKey = strings.TrimPrefix(objectKey, "/")
 
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
-}
-
-// hasSpecificQueryParameters checks if the request has query parameters that indicate specific granular operations
-func hasSpecificQueryParameters(query url.Values) bool {
-	// Check for object-level operation indicators
-	objectParams := []string{
-		"acl",        // ACL operations
-		"tagging",    // Tagging operations
-		"retention",  // Object retention
-		"legal-hold", // Legal hold
-		"versions",   // Versioning operations
-	}
-
-	// Check for multipart operation indicators
-	multipartParams := []string{
-		"uploads",    // List/initiate multipart uploads
-		"uploadId",   // Part operations, complete, abort
-		"partNumber", // Upload part
-	}
-
-	// Check for bucket-level operation indicators
-	bucketParams := []string{
-		"policy",         // Bucket policy operations
-		"website",        // Website configuration
-		"cors",           // CORS configuration
-		"lifecycle",      // Lifecycle configuration
-		"notification",   // Event notification
-		"replication",    // Cross-region replication
-		"encryption",     // Server-side encryption
-		"accelerate",     // Transfer acceleration
-		"requestPayment", // Request payment
-		"logging",        // Access logging
-		"versioning",     // Versioning configuration
-		"inventory",      // Inventory configuration
-		"analytics",      // Analytics configuration
-		"metrics",        // CloudWatch metrics
-		"location",       // Bucket location
-	}
-
-	// Check if any of these parameters are present
-	allParams := append(append(objectParams, multipartParams...), bucketParams...)
-	for _, param := range allParams {
-		if _, exists := query[param]; exists {
-			return true
-		}
-	}
-
-	return false
 }
 
 // mapLegacyActionToIAM provides fallback mapping for legacy actions
