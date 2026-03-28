@@ -12,6 +12,7 @@ const (
 	bucketLifecycleTransitionMinimumObjectSizeKey    = "s3-bucket-lifecycle-transition-default-minimum-object-size"
 	bucketLifecycleTransitionMinimumObjectSizeHeader = "X-Amz-Transition-Default-Minimum-Object-Size"
 	defaultLifecycleTransitionMinimumObjectSize      = "all_storage_classes_128K"
+	maxBucketLifecycleConfigurationSize              = 1 << 20
 )
 
 func normalizeBucketLifecycleTransitionMinimumObjectSize(value string) string {

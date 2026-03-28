@@ -904,10 +904,16 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxBucketLifecycleConfigurationSize)
 	lifecycleXML, err := io.ReadAll(r.Body)
 	if err != nil {
 		glog.Warningf("PutBucketLifecycleConfigurationHandler read body: %s", err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrMalformedXML)
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			s3err.WriteErrorResponse(w, r, s3err.ErrEntityTooLarge)
+			return
+		}
+		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidRequest)
 		return
 	}
 
