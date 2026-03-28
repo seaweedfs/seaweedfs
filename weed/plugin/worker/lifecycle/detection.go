@@ -17,7 +17,8 @@ import (
 const lifecycleXMLKey = "s3-bucket-lifecycle-configuration-xml"
 
 // detectBucketsWithLifecycleRules scans all S3 buckets to find those
-// with lifecycle (TTL) rules configured in filer.conf.
+// with lifecycle rules, either TTL entries in filer.conf or lifecycle
+// XML stored in bucket metadata.
 func (h *Handler) detectBucketsWithLifecycleRules(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,
