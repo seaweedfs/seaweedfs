@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,15 +43,26 @@ func (h *Handler) executeLifecycleForBucket(
 	result := &executionResult{}
 
 	// Try to load lifecycle rules from stored XML first (full rule evaluation).
-	// Fall back to filer.conf TTL-only evaluation if no XML exists.
+	// Fall back to filer.conf TTL-only evaluation only if no XML is configured.
+	// If XML exists but is malformed, fail closed (don't fall back to TTL,
+	// which could apply broader rules and delete objects the XML rules would keep).
+	// Transient filer errors fall back to TTL with a warning.
 	lifecycleRules, xmlErr := loadLifecycleRulesFromBucket(ctx, filerClient, bucketsPath, bucket)
-	if xmlErr != nil {
-		glog.V(1).Infof("s3_lifecycle: bucket %s: failed to load lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
+	if xmlErr != nil && errors.Is(xmlErr, errMalformedLifecycleXML) {
+		glog.Errorf("s3_lifecycle: bucket %s: %v (skipping bucket)", bucket, xmlErr)
+		return result, xmlErr
 	}
-	useRuleEval := xmlErr == nil && len(lifecycleRules) > 0
+	if xmlErr != nil {
+		glog.V(1).Infof("s3_lifecycle: bucket %s: transient error loading lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
+	}
+	// lifecycleRules is non-nil when XML was present (even if empty/all disabled).
+	// Only fall back to TTL when XML was truly absent (nil).
+	xmlPresent := xmlErr == nil && lifecycleRules != nil
+	useRuleEval := xmlPresent && len(lifecycleRules) > 0
 
-	if !useRuleEval {
-		// Fall back: check filer.conf TTL rules.
+	if !useRuleEval && !xmlPresent {
+		// Fall back to filer.conf TTL rules only when no lifecycle XML exists.
+		// When XML is present but has no effective rules, skip TTL fallback.
 		fc, err := loadFilerConf(ctx, filerClient)
 		if err != nil {
 			return result, fmt.Errorf("load filer conf: %w", err)
@@ -81,9 +93,11 @@ func (h *Handler) executeLifecycleForBucket(
 	var err error
 	if useRuleEval {
 		expired, scanned, err = listExpiredObjectsByRules(ctx, filerClient, bucketsPath, bucket, lifecycleRules, remaining)
-	} else {
+	} else if !xmlPresent {
+		// TTL-only scan when no lifecycle XML exists.
 		expired, scanned, err = listExpiredObjects(ctx, filerClient, bucketsPath, bucket, remaining)
 	}
+	// When xmlPresent but no effective rules (all disabled), skip object scanning.
 	result.objectsScanned = scanned
 	if err != nil {
 		return result, fmt.Errorf("list expired objects: %w", err)
@@ -380,11 +394,26 @@ func listExpiredObjectsByRules(
 		limitReached := false
 		err := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				// Skip .uploads and .versions directories.
-				if entry.Name != s3_constants.MultipartUploadsFolder &&
-					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
+				if dir == bucketPath && entry.Name == s3_constants.MultipartUploadsFolder {
+					return nil // skip .uploads at bucket root only
 				}
+				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					// Process versioned object.
+					versionsDir := path.Join(dir, entry.Name)
+					vExpired, vScanned, vErr := processVersionsDirectory(ctx, client, versionsDir, bucketPath, rules, now, needTags, limit-int64(len(expired)))
+					if vErr != nil {
+						glog.V(1).Infof("s3_lifecycle: %v", vErr)
+						return vErr
+					}
+					expired = append(expired, vExpired...)
+					scanned += vScanned
+					if limit > 0 && int64(len(expired)) >= limit {
+						limitReached = true
+						return errLimitReached
+					}
+					return nil
+				}
+				dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
 				return nil
 			}
 			scanned++
@@ -402,12 +431,14 @@ func listExpiredObjectsByRules(
 			objInfo := s3lifecycle.ObjectInfo{
 				Key:      relKey,
 				IsLatest: true, // non-versioned objects are always "latest"
-				Size:     int64(entry.Attributes.GetFileSize()),
 			}
-			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
-				objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
-			} else if entry.Attributes != nil && entry.Attributes.Crtime > 0 {
-				objInfo.ModTime = time.Unix(entry.Attributes.Crtime, 0)
+			if entry.Attributes != nil {
+				objInfo.Size = int64(entry.Attributes.GetFileSize())
+				if entry.Attributes.Mtime > 0 {
+					objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+				} else if entry.Attributes.Crtime > 0 {
+					objInfo.ModTime = time.Unix(entry.Attributes.Crtime, 0)
+				}
 			}
 			if needTags {
 				objInfo.Tags = s3lifecycle.ExtractTags(entry.Extended)
@@ -435,4 +466,124 @@ func listExpiredObjectsByRules(
 	}
 
 	return expired, scanned, nil
+}
+
+// processVersionsDirectory evaluates NoncurrentVersionExpiration rules
+// against all versions in a .versions directory.
+func processVersionsDirectory(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	versionsDir, bucketPath string,
+	rules []s3lifecycle.Rule,
+	now time.Time,
+	needTags bool,
+	limit int64,
+) ([]expiredObject, int64, error) {
+	var expired []expiredObject
+	var scanned int64
+
+	// Check if any rule has NoncurrentVersionExpiration.
+	hasNoncurrentRules := false
+	for _, r := range rules {
+		if r.Status == "Enabled" && r.NoncurrentVersionExpirationDays > 0 {
+			hasNoncurrentRules = true
+			break
+		}
+	}
+	if !hasNoncurrentRules {
+		return nil, 0, nil
+	}
+
+	// List all versions in this directory.
+	var versions []*filer_pb.Entry
+	listErr := filer_pb.SeaweedList(ctx, client, versionsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if !entry.IsDirectory {
+			versions = append(versions, entry)
+		}
+		return nil
+	}, "", false, 10000)
+	if listErr != nil {
+		return nil, 0, fmt.Errorf("list versions in %s: %w", versionsDir, listErr)
+	}
+	if len(versions) <= 1 {
+		return nil, 0, nil // only one version (the latest), nothing to expire
+	}
+
+	// Sort by version timestamp, newest first.
+	sortVersionsByVersionId(versions)
+
+	// Derive the object key from the .versions directory path.
+	// e.g., /buckets/mybucket/path/to/key.versions -> path/to/key
+	relDir := strings.TrimPrefix(versionsDir, bucketPath+"/")
+	objKey := strings.TrimSuffix(relDir, s3_constants.VersionsFolder)
+
+	// Walk versions: first is latest, rest are non-current.
+	noncurrentIndex := 0
+	for i := 1; i < len(versions); i++ {
+		entry := versions[i]
+		scanned++
+
+		// Skip delete markers from expiration evaluation, but count
+		// them toward NewerNoncurrentVersions so data versions get
+		// the correct noncurrent index.
+		if isDeleteMarker(entry) {
+			noncurrentIndex++
+			continue
+		}
+
+		// Determine successor's timestamp (the version that replaced this one).
+		successorEntry := versions[i-1]
+		successorVersionId := strings.TrimPrefix(successorEntry.Name, "v_")
+		successorTime := s3lifecycle.GetVersionTimestamp(successorVersionId)
+		if successorTime.IsZero() && successorEntry.Attributes != nil && successorEntry.Attributes.Mtime > 0 {
+			successorTime = time.Unix(successorEntry.Attributes.Mtime, 0)
+		}
+
+		objInfo := s3lifecycle.ObjectInfo{
+			Key:              objKey,
+			IsLatest:         false,
+			SuccessorModTime: successorTime,
+			NumVersions:      len(versions),
+			NoncurrentIndex:  noncurrentIndex,
+		}
+		if entry.Attributes != nil {
+			objInfo.Size = int64(entry.Attributes.GetFileSize())
+			if entry.Attributes.Mtime > 0 {
+				objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+			}
+		}
+		if needTags {
+			objInfo.Tags = s3lifecycle.ExtractTags(entry.Extended)
+		}
+
+		// Evaluate using the detailed ShouldExpireNoncurrentVersion which
+		// handles NewerNoncurrentVersions.
+		for _, rule := range rules {
+			if s3lifecycle.ShouldExpireNoncurrentVersion(rule, objInfo, noncurrentIndex, now) {
+				expired = append(expired, expiredObject{dir: versionsDir, name: entry.Name})
+				break
+			}
+		}
+
+		noncurrentIndex++
+
+		if limit > 0 && int64(len(expired)) >= limit {
+			break
+		}
+	}
+
+	return expired, scanned, nil
+}
+
+// sortVersionsByVersionId sorts version entries newest-first using full
+// version ID comparison (matching compareVersionIds in s3api_version_id.go).
+// This uses the complete version ID string, not just the decoded timestamp,
+// so entries with the same timestamp prefix are correctly ordered by their
+// random suffix.
+func sortVersionsByVersionId(versions []*filer_pb.Entry) {
+	sort.Slice(versions, func(i, j int) bool {
+		vidI := strings.TrimPrefix(versions[i].Name, "v_")
+		vidJ := strings.TrimPrefix(versions[j].Name, "v_")
+		return s3lifecycle.CompareVersionIds(vidI, vidJ) < 0
+	})
 }
