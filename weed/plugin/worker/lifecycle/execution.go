@@ -93,9 +93,11 @@ func (h *Handler) executeLifecycleForBucket(
 	var err error
 	if useRuleEval {
 		expired, scanned, err = listExpiredObjectsByRules(ctx, filerClient, bucketsPath, bucket, lifecycleRules, remaining)
-	} else {
+	} else if !xmlPresent {
+		// TTL-only scan when no lifecycle XML exists.
 		expired, scanned, err = listExpiredObjects(ctx, filerClient, bucketsPath, bucket, remaining)
 	}
+	// When xmlPresent but no effective rules (all disabled), skip object scanning.
 	result.objectsScanned = scanned
 	if err != nil {
 		return result, fmt.Errorf("list expired objects: %w", err)

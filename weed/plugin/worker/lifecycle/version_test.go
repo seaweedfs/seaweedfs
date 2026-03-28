@@ -23,25 +23,24 @@ func TestSortVersionsByVersionId(t *testing.T) {
 	t2 := time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC)
 	t3 := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
 
+	vid1 := makeVersionId(t1)
+	vid2 := makeVersionId(t2)
+	vid3 := makeVersionId(t3)
+
 	entries := []*filer_pb.Entry{
-		{Name: "v_" + makeVersionId(t1)},
-		{Name: "v_" + makeVersionId(t3)},
-		{Name: "v_" + makeVersionId(t2)},
+		{Name: "v_" + vid1},
+		{Name: "v_" + vid3},
+		{Name: "v_" + vid2},
 	}
 
 	sortVersionsByVersionId(entries)
 
 	// Should be sorted newest first: t3, t2, t1.
-	// Verify using CompareVersionIds (same as canonical s3api ordering).
-	vid0 := strings.TrimPrefix(entries[0].Name, "v_")
-	vid1 := strings.TrimPrefix(entries[1].Name, "v_")
-	vid2 := strings.TrimPrefix(entries[2].Name, "v_")
-
-	if s3lifecycle.CompareVersionIds(vid0, vid1) >= 0 {
-		t.Errorf("expected entries[0] newer than entries[1]")
-	}
-	if s3lifecycle.CompareVersionIds(vid1, vid2) >= 0 {
-		t.Errorf("expected entries[1] newer than entries[2]")
+	expected := []string{"v_" + vid3, "v_" + vid2, "v_" + vid1}
+	for i, want := range expected {
+		if entries[i].Name != want {
+			t.Errorf("entries[%d].Name = %s, want %s", i, entries[i].Name, want)
+		}
 	}
 }
 
