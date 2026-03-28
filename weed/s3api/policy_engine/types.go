@@ -172,6 +172,10 @@ type PolicyEvaluationArgs struct {
 	ObjectEntry map[string][]byte
 	// Claims are JWT claims for jwt:* policy variables (can be nil)
 	Claims map[string]interface{}
+	// InheritedSSEAlgorithm is the canonical SSE algorithm ("AES256" or "aws:kms")
+	// inherited from the CreateMultipartUpload request for UploadPart and
+	// UploadPartCopy actions. The empty string means no SSE was used.
+	InheritedSSEAlgorithm string
 }
 
 // PolicyCache for caching compiled policies

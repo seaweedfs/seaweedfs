@@ -100,6 +100,16 @@ func evalArgs(action string, conditions map[string][]string) *PolicyEvaluationAr
 	}
 }
 
+func evalArgsWithSSE(action, inheritedSSE string) *PolicyEvaluationArgs {
+	return &PolicyEvaluationArgs{
+		Action:                action,
+		Resource:              "arn:aws:s3:::test-bucket/object.txt",
+		Principal:             "*",
+		Conditions:            map[string][]string{},
+		InheritedSSEAlgorithm: inheritedSSE,
+	}
+}
+
 // TestSSEStringEqualsPresent – StringEquals with AES256 header present should Allow.
 func TestSSEStringEqualsPresent(t *testing.T) {
 	engine := newEngineWithPolicy(t, requiresAES256Policy)
@@ -184,24 +194,47 @@ func TestSSECaseInsensitiveNormalizationKMS(t *testing.T) {
 	}
 }
 
-// TestSSEMultipartContinuationExempt – UploadPart should not be blocked by SSE Null condition.
-func TestSSEMultipartContinuationExempt(t *testing.T) {
+// TestSSEMultipartAES256Exempt – UploadPart with AES256 inherited from
+// CreateMultipartUpload is not blocked by the Null("true") deny condition.
+func TestSSEMultipartAES256Exempt(t *testing.T) {
 	engine := newEngineWithPolicy(t, multipartPolicy)
 
-	// UploadPart carries no SSE header (inherited from CreateMultipartUpload)
-	result := engine.EvaluatePolicy("test-bucket", evalArgs("s3:UploadPart", map[string][]string{}))
+	result := engine.EvaluatePolicy("test-bucket", evalArgsWithSSE("s3:UploadPart", "AES256"))
 	if result == PolicyResultDeny {
-		t.Errorf("UploadPart should not be denied by SSE Null condition, got Deny")
+		t.Errorf("UploadPart with inherited AES256 should not be Deny, got Deny")
 	}
 }
 
-// TestSSEUploadPartCopyExempt – UploadPartCopy should also be exempt.
-func TestSSEUploadPartCopyExempt(t *testing.T) {
+// TestSSEMultipartKMSExempt – UploadPart with aws:kms inherited from
+// CreateMultipartUpload is not blocked by the Null("true") deny condition.
+func TestSSEMultipartKMSExempt(t *testing.T) {
 	engine := newEngineWithPolicy(t, multipartPolicy)
 
-	result := engine.EvaluatePolicy("test-bucket", evalArgs("s3:UploadPartCopy", map[string][]string{}))
+	result := engine.EvaluatePolicy("test-bucket", evalArgsWithSSE("s3:UploadPart", "aws:kms"))
 	if result == PolicyResultDeny {
-		t.Errorf("UploadPartCopy should not be denied by SSE Null condition, got Deny")
+		t.Errorf("UploadPart with inherited aws:kms should not be Deny, got Deny")
+	}
+}
+
+// TestSSEMultipartNoSSEDenied – UploadPart for an upload that had no SSE
+// must still be denied by the Null("true") deny condition.
+func TestSSEMultipartNoSSEDenied(t *testing.T) {
+	engine := newEngineWithPolicy(t, multipartPolicy)
+
+	// inheritedSSE="" means CreateMultipartUpload was sent without SSE
+	result := engine.EvaluatePolicy("test-bucket", evalArgsWithSSE("s3:UploadPart", ""))
+	if result != PolicyResultDeny {
+		t.Errorf("UploadPart with no inherited SSE should be Deny, got %v", result)
+	}
+}
+
+// TestSSEUploadPartCopyKMSExempt – UploadPartCopy with aws:kms is also exempt.
+func TestSSEUploadPartCopyKMSExempt(t *testing.T) {
+	engine := newEngineWithPolicy(t, multipartPolicy)
+
+	result := engine.EvaluatePolicy("test-bucket", evalArgsWithSSE("s3:UploadPartCopy", "aws:kms"))
+	if result == PolicyResultDeny {
+		t.Errorf("UploadPartCopy with inherited aws:kms should not be Deny, got Deny")
 	}
 }
 

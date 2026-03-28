@@ -213,10 +213,10 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 		condCtx := args.Conditions
 		// Multipart continuation actions (UploadPart, UploadPartCopy) inherit SSE
 		// from CreateMultipartUpload and do not carry their own SSE header.
-		// Treat the SSE header as "present" so Null("true") conditions do not
-		// accidentally deny these operations.
-		if isMultipartContinuationAction(args.Action) {
-			condCtx = injectSSEForMultipart(args.Conditions)
+		// Inject the real inherited algorithm so Null/StringEquals conditions
+		// evaluate against the value that was set at upload initiation.
+		if IsMultipartContinuationAction(args.Action) {
+			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
 		}
 		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
 		if !match {
@@ -465,33 +465,37 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	return values
 }
 
-// isMultipartContinuationAction returns true for actions that do not carry
+// IsMultipartContinuationAction returns true for actions that do not carry
 // their own SSE header because SSE is inherited from CreateMultipartUpload.
-func isMultipartContinuationAction(action string) bool {
+func IsMultipartContinuationAction(action string) bool {
 	return action == "s3:UploadPart" || action == "s3:UploadPartCopy"
 }
 
-// injectSSEForMultipart returns a condition context with
-// "s3:x-amz-server-side-encryption" set to "AES256" when the key is absent.
-// UploadPart and UploadPartCopy inherit their SSE algorithm from the original
-// CreateMultipartUpload request and therefore do not re-send the SSE header.
-// Injecting "AES256" makes Null("true") evaluate to false (SSE is treated as
-// present), preventing those actions from being incorrectly denied.
+// injectSSEForMultipart returns a condition context augmented with the
+// inherited SSE algorithm for multipart continuation actions.
 //
-// TODO: look up the actual SSE algorithm stored with the upload ID and inject
-// that value instead. Until then, StringEquals("aws:kms") conditions on
-// s3:x-amz-server-side-encryption will not match KMS-encrypted multipart
-// uploads because "AES256" is used as the stand-in value.
-func injectSSEForMultipart(conditions map[string][]string) map[string][]string {
+// UploadPart and UploadPartCopy do not re-send the SSE header because
+// encryption is set once at CreateMultipartUpload. The caller supplies
+// inheritedSSE (the canonical algorithm, e.g. "AES256" or "aws:kms") so
+// that Null/StringEquals conditions on s3:x-amz-server-side-encryption
+// evaluate against the real value.
+//
+// If inheritedSSE is empty (no SSE was requested at initiation), the
+// conditions map is returned unchanged so Null("true") will correctly
+// match and deny the request.
+func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) map[string][]string {
 	const sseKey = "s3:x-amz-server-side-encryption"
+	if inheritedSSE == "" {
+		return conditions // no SSE at upload initiation; let Null("true") fire
+	}
 	if _, exists := conditions[sseKey]; exists {
-		return conditions // SSE header was actually sent; no injection needed
+		return conditions // SSE header was actually sent on this request
 	}
 	modified := make(map[string][]string, len(conditions)+1)
 	for k, v := range conditions {
 		modified[k] = v
 	}
-	modified[sseKey] = []string{"AES256"}
+	modified[sseKey] = []string{inheritedSSE}
 	return modified
 }
 

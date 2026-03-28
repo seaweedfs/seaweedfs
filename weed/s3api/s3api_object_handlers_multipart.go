@@ -471,6 +471,25 @@ func (s3a *S3ApiServer) genUploadsFolder(bucket string) string {
 	return fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.MultipartUploadsFolder)
 }
 
+// getMultipartSSEAlgorithm returns the canonical SSE algorithm ("AES256" or
+// "aws:kms") that was stored when the multipart upload was initiated, or ""
+// if the upload entry is not found or had no SSE. It is used by the bucket
+// policy engine to evaluate s3:x-amz-server-side-encryption conditions for
+// UploadPart and UploadPartCopy, which do not re-send the SSE header.
+func (s3a *S3ApiServer) getMultipartSSEAlgorithm(bucket, uploadID string) string {
+	entry, err := s3a.getEntry(s3a.genUploadsFolder(bucket), uploadID)
+	if err != nil || entry == nil || entry.Extended == nil {
+		return ""
+	}
+	if _, ok := entry.Extended[s3_constants.SeaweedFSSSEKMSKeyID]; ok {
+		return "aws:kms"
+	}
+	if _, ok := entry.Extended[s3_constants.SeaweedFSSSES3Encryption]; ok {
+		return "AES256"
+	}
+	return ""
+}
+
 func (s3a *S3ApiServer) genPartUploadPath(bucket, uploadID string, partID int) string {
 	// Returns just the file path - no filer address needed
 	// Upload traffic goes directly to volume servers, not through filer
