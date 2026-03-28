@@ -246,3 +246,22 @@ func TestCompleteMultipartUploadRejectsOutOfOrderParts(t *testing.T) {
 	assert.Nil(t, result)
 	assert.Equal(t, s3err.ErrInvalidPartOrder, errCode)
 }
+
+func TestCompleteMultipartUploadAllowsDuplicatePartNumbers(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String("bucket"),
+		Key:      aws.String("object"),
+		UploadId: aws.String("upload"),
+	}
+	parts := &CompleteMultipartUpload{
+		Parts: []CompletedPart{
+			{PartNumber: 1, ETag: "\"etag-older\""},
+			{PartNumber: 1, ETag: "\"etag-newer\""},
+		},
+	}
+
+	result, errCode := s3a.completeMultipartUpload(&http.Request{Header: make(http.Header)}, input, parts)
+	assert.Nil(t, result)
+	assert.Equal(t, s3err.ErrNoSuchUpload, errCode)
+}

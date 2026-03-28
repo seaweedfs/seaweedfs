@@ -373,11 +373,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	lastSeenPartNo := 0
 
 	for _, part := range parts.Parts {
-		if part.PartNumber <= lastSeenPartNo {
+		if part.PartNumber < lastSeenPartNo {
 			return nil, s3err.ErrInvalidPartOrder
 		}
 		lastSeenPartNo = part.PartNumber
-		completedPartNumbers = append(completedPartNumbers, part.PartNumber)
+		if _, ok := completedPartMap[part.PartNumber]; !ok {
+			completedPartNumbers = append(completedPartNumbers, part.PartNumber)
+		}
 		completedPartMap[part.PartNumber] = append(completedPartMap[part.PartNumber], part.ETag)
 		maxPartNo = maxInt(maxPartNo, part.PartNumber)
 	}

@@ -778,6 +778,7 @@ func NewS3ApiServerForTest() *S3ApiServer {
 		option: &S3ApiServerOption{
 			BucketsPath: "/buckets",
 		},
+		bucketConfigCache: NewBucketConfigCache(60 * time.Minute),
 	}
 }
 
