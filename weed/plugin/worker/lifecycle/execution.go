@@ -42,12 +42,15 @@ func (h *Handler) executeLifecycleForBucket(
 	result := &executionResult{}
 
 	// Try to load lifecycle rules from stored XML first (full rule evaluation).
-	// Fall back to filer.conf TTL-only evaluation if no XML exists.
+	// Fall back to filer.conf TTL-only evaluation only if no XML is configured.
+	// If XML exists but fails to parse, fail closed (don't fall back to TTL,
+	// which could apply broader rules and delete objects the XML rules would keep).
 	lifecycleRules, xmlErr := loadLifecycleRulesFromBucket(ctx, filerClient, bucketsPath, bucket)
 	if xmlErr != nil {
-		glog.V(1).Infof("s3_lifecycle: bucket %s: failed to load lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
+		glog.Errorf("s3_lifecycle: bucket %s: failed to load lifecycle XML: %v (skipping bucket)", bucket, xmlErr)
+		return result, fmt.Errorf("load lifecycle XML for bucket %s: %w", bucket, xmlErr)
 	}
-	useRuleEval := xmlErr == nil && len(lifecycleRules) > 0
+	useRuleEval := len(lifecycleRules) > 0
 
 	if !useRuleEval {
 		// Fall back: check filer.conf TTL rules.
@@ -513,7 +516,7 @@ func processVersionsDirectory(
 		successorEntry := versions[i-1]
 		successorVersionId := strings.TrimPrefix(successorEntry.Name, "v_")
 		successorTime := s3lifecycle.GetVersionTimestamp(successorVersionId)
-		if successorTime.IsZero() && successorEntry.Attributes != nil {
+		if successorTime.IsZero() && successorEntry.Attributes != nil && successorEntry.Attributes.Mtime > 0 {
 			successorTime = time.Unix(successorEntry.Attributes.Mtime, 0)
 		}
 
@@ -571,7 +574,7 @@ func sortVersionsByTimestamp(versions []*filer_pb.Entry) {
 func getEntryVersionTimestamp(entry *filer_pb.Entry) time.Time {
 	versionId := strings.TrimPrefix(entry.Name, "v_")
 	ts := s3lifecycle.GetVersionTimestamp(versionId)
-	if ts.IsZero() && entry.Attributes != nil {
+	if ts.IsZero() && entry.Attributes != nil && entry.Attributes.Mtime > 0 {
 		return time.Unix(entry.Attributes.Mtime, 0)
 	}
 	return ts
