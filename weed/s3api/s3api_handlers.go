@@ -100,6 +100,11 @@ func writeSuccessResponseXML(w http.ResponseWriter, r *http.Request, response in
 	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
 }
 
+func writeSuccessResponseXMLBytes(w http.ResponseWriter, r *http.Request, response []byte) {
+	s3err.WriteResponse(w, r, http.StatusOK, response, s3err.MimeXML)
+	s3err.PostLog(r, http.StatusOK, s3err.ErrNone)
+}
+
 func writeSuccessResponseEmpty(w http.ResponseWriter, r *http.Request) {
 	s3err.WriteEmptyResponse(w, r, http.StatusOK)
 }
