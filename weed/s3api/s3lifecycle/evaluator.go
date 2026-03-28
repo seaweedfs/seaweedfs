@@ -107,7 +107,7 @@ func EvaluateMPUAbort(rules []Rule, uploadKey string, createdAt time.Time, now t
 		if !matchesPrefix(rule.Prefix, uploadKey) {
 			continue
 		}
-		cutoff := createdAt.Add(time.Duration(rule.AbortMPUDaysAfterInitiation) * 24 * time.Hour)
+		cutoff := expectedExpiryTime(createdAt, rule.AbortMPUDaysAfterInitiation)
 		if !now.Before(cutoff) {
 			return EvalResult{Action: ActionAbortMultipartUpload, RuleID: rule.ID}
 		}

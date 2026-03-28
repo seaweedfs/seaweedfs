@@ -87,6 +87,7 @@ func (f Filter) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		return err
 	}
 	if f.andSet {
+		// And already contains its own size filters; don't emit at Filter level.
 		if err := e.EncodeElement(f.And, xml.StartElement{Name: xml.Name{Local: "And"}}); err != nil {
 			return err
 		}
@@ -94,19 +95,29 @@ func (f Filter) MarshalXML(e *xml.Encoder, start xml.StartElement) error {
 		if err := e.EncodeElement(f.Tag, xml.StartElement{Name: xml.Name{Local: "Tag"}}); err != nil {
 			return err
 		}
+		if f.ObjectSizeGreaterThan > 0 {
+			if err := e.EncodeElement(f.ObjectSizeGreaterThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeGreaterThan"}}); err != nil {
+				return err
+			}
+		}
+		if f.ObjectSizeLessThan > 0 {
+			if err := e.EncodeElement(f.ObjectSizeLessThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeLessThan"}}); err != nil {
+				return err
+			}
+		}
 	} else {
 		if err := e.EncodeElement(f.Prefix, xml.StartElement{Name: xml.Name{Local: "Prefix"}}); err != nil {
 			return err
 		}
-	}
-	if f.ObjectSizeGreaterThan > 0 {
-		if err := e.EncodeElement(f.ObjectSizeGreaterThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeGreaterThan"}}); err != nil {
-			return err
+		if f.ObjectSizeGreaterThan > 0 {
+			if err := e.EncodeElement(f.ObjectSizeGreaterThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeGreaterThan"}}); err != nil {
+				return err
+			}
 		}
-	}
-	if f.ObjectSizeLessThan > 0 {
-		if err := e.EncodeElement(f.ObjectSizeLessThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeLessThan"}}); err != nil {
-			return err
+		if f.ObjectSizeLessThan > 0 {
+			if err := e.EncodeElement(f.ObjectSizeLessThan, xml.StartElement{Name: xml.Name{Local: "ObjectSizeLessThan"}}); err != nil {
+				return err
+			}
 		}
 	}
 	return e.EncodeToken(xml.EndElement{Name: start.Name})

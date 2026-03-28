@@ -69,6 +69,9 @@ func TestLifecycleXMLRoundTrip_AbortIncompleteMultipartUpload(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
+	if len(lc.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(lc.Rules))
+	}
 	rule := lc.Rules[0]
 	if rule.AbortIncompleteMultipartUpload.DaysAfterInitiation != 7 {
 		t.Errorf("expected DaysAfterInitiation=7, got %d", rule.AbortIncompleteMultipartUpload.DaysAfterInitiation)
@@ -100,6 +103,9 @@ func TestLifecycleXMLRoundTrip_FilterWithTag(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
+	if len(lc.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(lc.Rules))
+	}
 	rule := lc.Rules[0]
 	if !rule.Filter.tagSet {
 		t.Error("expected Filter.tagSet to be true")
@@ -132,6 +138,9 @@ func TestLifecycleXMLRoundTrip_FilterWithAnd(t *testing.T) {
 		t.Fatalf("unmarshal: %v", err)
 	}
 
+	if len(lc.Rules) != 1 {
+		t.Fatalf("expected 1 rule, got %d", len(lc.Rules))
+	}
 	rule := lc.Rules[0]
 	if !rule.Filter.andSet {
 		t.Error("expected Filter.andSet to be true")
