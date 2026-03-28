@@ -280,6 +280,7 @@ func cleanupDeleteMarkers(
 						return nil
 					}
 					// Find and remove the sole delete marker entry.
+					removedHere := false
 					removeErr := filer_pb.SeaweedList(ctx, client, versionsDir, "", func(ve *filer_pb.Entry, _ bool) error {
 						if !ve.IsDirectory && isDeleteMarker(ve) {
 							if err := filer_pb.DoRemove(ctx, client, versionsDir, ve.Name, true, false, false, false, nil); err != nil {
@@ -287,6 +288,7 @@ func cleanupDeleteMarkers(
 								errors++
 							} else {
 								cleaned++
+								removedHere = true
 							}
 						}
 						return nil
@@ -294,8 +296,9 @@ func cleanupDeleteMarkers(
 					if removeErr != nil {
 						glog.V(1).Infof("s3_lifecycle: failed to scan for delete marker in %s: %v", versionsDir, removeErr)
 					}
-					// Also remove the now-empty .versions directory.
-					if cleaned > 0 {
+					// Remove the now-empty .versions directory only if we
+					// actually deleted the marker in this specific directory.
+					if removedHere {
 						_ = filer_pb.DoRemove(ctx, client, dir, entry.Name, true, true, true, false, nil)
 					}
 					return nil
@@ -343,11 +346,13 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 
 // matchesDeleteMarkerRule checks if any enabled ExpiredObjectDeleteMarker rule
 // matches the given object key (respecting the rule's prefix filter).
-// When no lifecycle rules are provided (nil/empty), falls back to legacy
-// behavior (returns true to allow cleanup).
+// When no lifecycle rules are provided (nil means no XML configured),
+// falls back to legacy behavior (returns true to allow cleanup).
+// A non-nil empty slice means XML was present but had no matching rules,
+// so cleanup is not allowed.
 func matchesDeleteMarkerRule(rules []s3lifecycle.Rule, objKey string) bool {
-	if len(rules) == 0 {
-		return true // legacy fallback
+	if rules == nil {
+		return true // legacy fallback: no lifecycle XML configured
 	}
 	for _, r := range rules {
 		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker && strings.HasPrefix(objKey, r.Prefix) {
