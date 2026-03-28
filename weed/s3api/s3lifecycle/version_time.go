@@ -40,3 +40,60 @@ func getVersionTimestampNanos(versionId string) int64 {
 	}
 	return int64(timestampPart)
 }
+
+// isNewFormatVersionId returns true if the version ID uses inverted timestamps.
+func isNewFormatVersionId(versionId string) bool {
+	if len(versionId) < 16 || versionId == "null" {
+		return false
+	}
+	timestampPart, err := strconv.ParseUint(versionId[:16], 16, 64)
+	if err != nil {
+		return false
+	}
+	return timestampPart > versionIdFormatThreshold && timestampPart <= math.MaxInt64
+}
+
+// CompareVersionIds compares two version IDs for sorting (newest first).
+// Returns negative if a is newer, positive if b is newer, 0 if equal.
+// Handles both old and new format version IDs and uses full lexicographic
+// comparison (not just timestamps) to break ties from the random suffix.
+func CompareVersionIds(a, b string) int {
+	if a == b {
+		return 0
+	}
+	if a == "null" {
+		return 1
+	}
+	if b == "null" {
+		return -1
+	}
+
+	aIsNew := isNewFormatVersionId(a)
+	bIsNew := isNewFormatVersionId(b)
+
+	if aIsNew == bIsNew {
+		if aIsNew {
+			// New format: smaller hex = newer (inverted timestamps).
+			if a < b {
+				return -1
+			}
+			return 1
+		}
+		// Old format: smaller hex = older.
+		if a < b {
+			return 1
+		}
+		return -1
+	}
+
+	// Mixed formats: compare by actual timestamp.
+	aTime := getVersionTimestampNanos(a)
+	bTime := getVersionTimestampNanos(b)
+	if aTime > bTime {
+		return -1
+	}
+	if aTime < bTime {
+		return 1
+	}
+	return 0
+}

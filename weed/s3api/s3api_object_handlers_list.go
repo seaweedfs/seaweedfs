@@ -762,60 +762,6 @@ func getListObjectsV1Args(values url.Values) (prefix, marker, delimiter string, 
 	return
 }
 
-func (s3a *S3ApiServer) ensureDirectoryAllEmpty(filerClient filer_pb.SeaweedFilerClient, parentDir, name string) (isEmpty bool, err error) {
-	// println("+ ensureDirectoryAllEmpty", dir, name)
-	glog.V(4).Infof("+ isEmpty %s/%s", parentDir, name)
-	defer glog.V(4).Infof("- isEmpty %s/%s %v", parentDir, name, isEmpty)
-	var fileCounter int
-	var subDirs []string
-	currentDir := parentDir + "/" + name
-	var startFrom string
-	var isExhausted bool
-	var foundEntry bool
-	for fileCounter == 0 && !isExhausted && err == nil {
-		err = filer_pb.SeaweedList(context.Background(), filerClient, currentDir, "", func(entry *filer_pb.Entry, isLast bool) error {
-			foundEntry = true
-			if entry.IsOlderDir() {
-				subDirs = append(subDirs, entry.Name)
-			} else {
-				fileCounter++
-			}
-			startFrom = entry.Name
-			isExhausted = isExhausted || isLast
-			glog.V(4).Infof("    * %s/%s isLast: %t", currentDir, startFrom, isLast)
-			return nil
-		}, startFrom, false, 8)
-		if !foundEntry {
-			break
-		}
-	}
-
-	if err != nil {
-		return false, err
-	}
-
-	if fileCounter > 0 {
-		return false, nil
-	}
-
-	for _, subDir := range subDirs {
-		isSubEmpty, subErr := s3a.ensureDirectoryAllEmpty(filerClient, currentDir, subDir)
-		if subErr != nil {
-			return false, subErr
-		}
-		if !isSubEmpty {
-			return false, nil
-		}
-	}
-
-	glog.V(1).Infof("deleting empty folder %s", currentDir)
-	if err = doDeleteEntry(filerClient, parentDir, name, true, false); err != nil {
-		return
-	}
-
-	return true, nil
-}
-
 // compareWithDelimiter compares two strings for sorting, treating the delimiter character
 // as having lower precedence than other characters to match AWS S3 behavior.
 // For example, with delimiter '/', 'foo/' should come before 'foo+1/' even though '+' < '/' in ASCII.

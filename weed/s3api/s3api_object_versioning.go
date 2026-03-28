@@ -72,16 +72,6 @@ func setCachedListMetadata(versionsEntry, versionEntry *filer_pb.Entry) {
 	}
 }
 
-// clearCachedListMetadata removes all cached list metadata from the .versions directory entry
-func clearCachedListMetadata(extended map[string][]byte) {
-	if extended == nil {
-		return
-	}
-	delete(extended, s3_constants.ExtLatestVersionIdKey)
-	delete(extended, s3_constants.ExtLatestVersionFileNameKey)
-	clearCachedVersionMetadata(extended)
-}
-
 // S3ListObjectVersionsResult - Custom struct for S3 list-object-versions response.
 // This avoids conflicts with the XSD generated ListVersionsResult struct.
 //

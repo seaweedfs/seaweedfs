@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"time"
 
@@ -65,8 +66,18 @@ type abortMPU struct {
 	DaysAfterInitiation int `xml:"DaysAfterInitiation"`
 }
 
+// errMalformedLifecycleXML indicates the lifecycle XML exists but could not be parsed.
+// Callers should fail closed (not fall back to TTL) to avoid broader deletions.
+var errMalformedLifecycleXML = errors.New("malformed lifecycle XML")
+
 // loadLifecycleRulesFromBucket reads the lifecycle XML from a bucket's
 // metadata and converts it to evaluator-friendly rules.
+//
+// Returns:
+//   - (rules, nil) when lifecycle XML is configured and parseable
+//   - (nil, nil) when no lifecycle XML is configured (caller should use TTL fallback)
+//   - (nil, errMalformedLifecycleXML) when XML exists but is malformed (fail closed)
+//   - (nil, err) for transient filer errors (caller should use TTL fallback with warning)
 func loadLifecycleRulesFromBucket(
 	ctx context.Context,
 	client filer_pb.SeaweedFilerClient,
@@ -78,6 +89,7 @@ func loadLifecycleRulesFromBucket(
 		Name:      bucket,
 	})
 	if err != nil {
+		// Transient filer error — not the same as malformed XML.
 		return nil, fmt.Errorf("lookup bucket %s: %w", bucket, err)
 	}
 	if resp.Entry == nil || resp.Entry.Extended == nil {
@@ -87,7 +99,17 @@ func loadLifecycleRulesFromBucket(
 	if len(xmlData) == 0 {
 		return nil, nil
 	}
-	return parseLifecycleXML(xmlData)
+	rules, parseErr := parseLifecycleXML(xmlData)
+	if parseErr != nil {
+		return nil, fmt.Errorf("%w: bucket %s: %v", errMalformedLifecycleXML, bucket, parseErr)
+	}
+	// Return non-nil empty slice when XML was present but yielded no rules
+	// (e.g., all rules disabled). This lets callers distinguish "no XML" (nil)
+	// from "XML present, no effective rules" (empty slice).
+	if rules == nil {
+		rules = []s3lifecycle.Rule{}
+	}
+	return rules, nil
 }
 
 // parseLifecycleXML parses lifecycle configuration XML and converts it

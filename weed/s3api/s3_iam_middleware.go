@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -382,84 +381,6 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
 }
 
-// hasSpecificQueryParameters checks if the request has query parameters that indicate specific granular operations
-func hasSpecificQueryParameters(query url.Values) bool {
-	// Check for object-level operation indicators
-	objectParams := []string{
-		"acl",        // ACL operations
-		"tagging",    // Tagging operations
-		"retention",  // Object retention
-		"legal-hold", // Legal hold
-		"versions",   // Versioning operations
-	}
-
-	// Check for multipart operation indicators
-	multipartParams := []string{
-		"uploads",    // List/initiate multipart uploads
-		"uploadId",   // Part operations, complete, abort
-		"partNumber", // Upload part
-	}
-
-	// Check for bucket-level operation indicators
-	bucketParams := []string{
-		"policy",         // Bucket policy operations
-		"website",        // Website configuration
-		"cors",           // CORS configuration
-		"lifecycle",      // Lifecycle configuration
-		"notification",   // Event notification
-		"replication",    // Cross-region replication
-		"encryption",     // Server-side encryption
-		"accelerate",     // Transfer acceleration
-		"requestPayment", // Request payment
-		"logging",        // Access logging
-		"versioning",     // Versioning configuration
-		"inventory",      // Inventory configuration
-		"analytics",      // Analytics configuration
-		"metrics",        // CloudWatch metrics
-		"location",       // Bucket location
-	}
-
-	// Check if any of these parameters are present
-	allParams := append(append(objectParams, multipartParams...), bucketParams...)
-	for _, param := range allParams {
-		if _, exists := query[param]; exists {
-			return true
-		}
-	}
-
-	return false
-}
-
-// isMethodActionMismatch detects when HTTP method doesn't align with the intended S3 action
-// This provides a mechanism to use fallback action mapping when there's a semantic mismatch
-func isMethodActionMismatch(method string, fallbackAction Action) bool {
-	switch fallbackAction {
-	case s3_constants.ACTION_WRITE:
-		// WRITE actions should typically use PUT, POST, or DELETE methods
-		// GET/HEAD methods indicate read-oriented operations
-		return method == "GET" || method == "HEAD"
-
-	case s3_constants.ACTION_READ:
-		// READ actions should typically use GET or HEAD methods
-		// PUT, POST, DELETE methods indicate write-oriented operations
-		return method == "PUT" || method == "POST" || method == "DELETE"
-
-	case s3_constants.ACTION_LIST:
-		// LIST actions should typically use GET method
-		// PUT, POST, DELETE methods indicate write-oriented operations
-		return method == "PUT" || method == "POST" || method == "DELETE"
-
-	case s3_constants.ACTION_DELETE_BUCKET:
-		// DELETE_BUCKET should use DELETE method
-		// Other methods indicate different operation types
-		return method != "DELETE"
-
-	default:
-		// For unknown actions or actions that already have s3: prefix, don't assume mismatch
-		return false
-	}
-}
-
 // mapLegacyActionToIAM provides fallback mapping for legacy actions
 // This ensures backward compatibility while the system transitions to granular actions
 func mapLegacyActionToIAM(legacyAction Action) string {
@@ -614,14 +535,6 @@ func ParseUnverifiedJWTToken(tokenString string) (jwt.MapClaims, error) {
 	}
 
 	return nil, fmt.Errorf("invalid token claims")
-}
-
-// minInt returns the minimum of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // SetIAMIntegration adds advanced IAM integration to the S3ApiServer

@@ -167,12 +167,6 @@ func (s3a *S3ApiServer) exists(parentDirectoryPath string, entryName string, isD
 
 }
 
-func (s3a *S3ApiServer) touch(parentDirectoryPath string, entryName string, entry *filer_pb.Entry) (err error) {
-
-	return filer_pb.Touch(context.Background(), s3a, parentDirectoryPath, entryName, entry)
-
-}
-
 func (s3a *S3ApiServer) getEntry(parentDirectoryPath, entryName string) (entry *filer_pb.Entry, err error) {
 	fullPath := util.NewFullPath(parentDirectoryPath, entryName)
 	return filer_pb.GetEntry(context.Background(), s3a, fullPath)
