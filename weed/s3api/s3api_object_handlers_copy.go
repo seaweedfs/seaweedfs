@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -148,11 +149,13 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 
 			updatedEntry := cloneProtoEntry(currentEntry)
-			updatedEntry.Extended, currentErr = processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
+			updatedMetadata, metadataErr := processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
+			currentErr = metadataErr
 			if currentErr != nil {
 				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, currentErr)
 				return s3err.ErrInvalidTag
 			}
+			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
 			if updatedEntry.Attributes == nil {
 				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
 			}
@@ -351,6 +354,11 @@ func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
 }
 
 func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
+	if entry != nil && entry.Extended != nil {
+		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
+			return string(etag)
+		}
+	}
 	attr := filer.Attr{}
 	if entry.Attributes != nil {
 		attr = filer.Attr{
@@ -430,10 +438,6 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-		if err = s3a.removeExistingCopyDestination(dstDir, dstName); err != nil {
-			return "", "", err
-		}
-
 		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
 		}); err != nil {
@@ -449,10 +453,6 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 	default:
 		cleanupVersioningMetadata(dstEntry.Extended)
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
-
-		if err = s3a.removeExistingCopyDestination(dstDir, dstName); err != nil {
-			return "", "", err
-		}
 
 		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
 			copyEntryToTarget(entry, dstEntry)
@@ -470,17 +470,6 @@ func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string)
 	return s3a.rmObject(versionDir, versionName, true, false)
 }
 
-func (s3a *S3ApiServer) removeExistingCopyDestination(dstDir, dstName string) error {
-	exists, err := s3a.exists(dstDir, dstName, false)
-	if err != nil {
-		return fmt.Errorf("check existing copy destination %s/%s: %w", dstDir, dstName, err)
-	}
-	if !exists {
-		return nil
-	}
-	return s3a.rmObject(dstDir, dstName, false, false)
-}
-
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
 	normalizedObject := s3_constants.NormalizeObjectKey(object)
 
@@ -492,19 +481,57 @@ func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versio
 	case s3_constants.VersioningEnabled:
 		return s3a.getLatestObjectVersion(bucket, normalizedObject)
 	case s3_constants.VersioningSuspended:
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
-		dir, name := srcPath.DirAndName()
-		entry, err := s3a.getEntry(dir, name)
-		if err == nil {
-			return entry, nil
-		}
-		glog.V(2).Infof("CopyObject: regular file not found for suspended versioning, trying latest version")
-		return s3a.getLatestObjectVersion(bucket, normalizedObject)
+		return s3a.resolveSuspendedCopySourceEntry(bucket, normalizedObject, "CopyObject")
 	default:
 		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
 		dir, name := srcPath.DirAndName()
 		return s3a.getEntry(dir, name)
 	}
+}
+
+func mergeCopyMetadata(existing, updated map[string][]byte) map[string][]byte {
+	merged := make(map[string][]byte, len(existing)+len(updated))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k := range merged {
+		if isManagedCopyMetadataKey(k) {
+			delete(merged, k)
+		}
+	}
+	for k, v := range updated {
+		merged[k] = v
+	}
+	return merged
+}
+
+func isManagedCopyMetadataKey(key string) bool {
+	switch key {
+	case s3_constants.AmzStorageClass,
+		s3_constants.AmzServerSideEncryption,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.AmzTagCount:
+		return true
+	}
+	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
+}
+
+func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
+	dir, name := srcPath.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err == nil {
+		return entry, nil
+	}
+	if !errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+	glog.V(2).Infof("%s: regular file not found for suspended versioning, trying latest version", operation)
+	return s3a.getLatestObjectVersion(bucket, normalizedObject)
 }
 
 func (s3a *S3ApiServer) canUseMetadataOnlySelfCopy(entry *filer_pb.Entry, r *http.Request, bucket, object string) bool {
@@ -652,14 +679,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	} else if srcVersioningState == s3_constants.VersioningSuspended {
 		// Versioning suspended - current object is stored as regular file ("null" version)
 		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-		if err != nil {
-			// If regular file doesn't exist, try latest version as fallback
-			glog.V(2).Infof("CopyObjectPart: regular file not found for suspended versioning, trying latest version")
-			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-		}
+		entry, err = s3a.resolveSuspendedCopySourceEntry(srcBucket, s3_constants.NormalizeObjectKey(srcObject), "CopyObjectPart")
 	} else {
 		// No versioning configured - use regular retrieval
 		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))

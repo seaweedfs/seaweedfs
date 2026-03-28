@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type H map[string]string
@@ -393,6 +395,58 @@ func TestProcessMetadataBytes(t *testing.T) {
 				"\nActual:%v",
 				tc.caseId, tc.request, tc.existing, tc.want, result))
 		}
+	}
+}
+
+func TestMergeCopyMetadataPreservesInternalFields(t *testing.T) {
+	existing := map[string][]byte{
+		s3_constants.SeaweedFSSSEKMSKey: []byte("kms-secret"),
+		s3_constants.SeaweedFSSSEIV:     []byte("iv"),
+		"X-Amz-Meta-Old":                []byte("old"),
+		"X-Amz-Tagging-Old":             []byte("old-tag"),
+		s3_constants.AmzStorageClass:    []byte("STANDARD"),
+	}
+	updated := map[string][]byte{
+		"X-Amz-Meta-New":             []byte("new"),
+		"X-Amz-Tagging-New":          []byte("new-tag"),
+		s3_constants.AmzStorageClass: []byte("GLACIER"),
+	}
+
+	merged := mergeCopyMetadata(existing, updated)
+
+	if got := string(merged[s3_constants.SeaweedFSSSEKMSKey]); got != "kms-secret" {
+		t.Fatalf("expected internal KMS key to be preserved, got %q", got)
+	}
+	if got := string(merged[s3_constants.SeaweedFSSSEIV]); got != "iv" {
+		t.Fatalf("expected internal IV to be preserved, got %q", got)
+	}
+	if _, ok := merged["X-Amz-Meta-Old"]; ok {
+		t.Fatalf("expected stale user metadata to be removed, got %#v", merged)
+	}
+	if _, ok := merged["X-Amz-Tagging-Old"]; ok {
+		t.Fatalf("expected stale tagging metadata to be removed, got %#v", merged)
+	}
+	if got := string(merged["X-Amz-Meta-New"]); got != "new" {
+		t.Fatalf("expected replacement user metadata to be applied, got %q", got)
+	}
+	if got := string(merged["X-Amz-Tagging-New"]); got != "new-tag" {
+		t.Fatalf("expected replacement tagging metadata to be applied, got %q", got)
+	}
+	if got := string(merged[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("expected storage class to be updated, got %q", got)
+	}
+}
+
+func TestCopyEntryETagPrefersStoredETag(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtETagKey: []byte("\"stored-etag\""),
+		},
+		Attributes: &filer_pb.FuseAttributes{},
+	}
+
+	if got := copyEntryETag(util.FullPath("/buckets/test-bucket/object.txt"), entry); got != "\"stored-etag\"" {
+		t.Fatalf("copyEntryETag() = %q, want %q", got, "\"stored-etag\"")
 	}
 }
 
