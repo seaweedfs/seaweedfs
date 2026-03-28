@@ -100,6 +100,11 @@ func NewStringOrStringSlicePtr(values ...string) *StringOrStringSlice {
 	return &StringOrStringSlice{values: values}
 }
 
+// CloneStringOrStringSlice returns a copy with its own backing slice.
+func CloneStringOrStringSlice(value StringOrStringSlice) StringOrStringSlice {
+	return StringOrStringSlice{values: append([]string(nil), value.values...)}
+}
+
 // PolicyConditions represents policy conditions with proper typing
 type PolicyConditions map[string]map[string]StringOrStringSlice
 

@@ -29,6 +29,10 @@ func TestUpdateBucketConfigDoesNotMutateCacheOnPersistFailure(t *testing.T) {
 		},
 	})
 
+	// This test server only has in-memory IAM state and no filer connection, so
+	// updateBucketConfig is expected to fail during the persist step with an
+	// internal error. The assertion below verifies that the cached config stays
+	// unchanged when that write path fails.
 	errCode := s3a.updateBucketConfig(bucket, func(config *BucketConfig) error {
 		config.Versioning = s3_constants.VersioningEnabled
 		return nil

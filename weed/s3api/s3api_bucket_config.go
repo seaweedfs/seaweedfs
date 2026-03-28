@@ -611,14 +611,14 @@ func clonePolicyStatement(statement policy_engine.PolicyStatement) policy_engine
 }
 
 func cloneStringOrStringSlice(value policy_engine.StringOrStringSlice) policy_engine.StringOrStringSlice {
-	return policy_engine.NewStringOrStringSlice(value.Strings()...)
+	return policy_engine.CloneStringOrStringSlice(value)
 }
 
 func cloneStringOrStringSlicePtr(value *policy_engine.StringOrStringSlice) *policy_engine.StringOrStringSlice {
 	if value == nil {
 		return nil
 	}
-	cloned := cloneStringOrStringSlice(*value)
+	cloned := policy_engine.CloneStringOrStringSlice(*value)
 	return &cloned
 }
 
