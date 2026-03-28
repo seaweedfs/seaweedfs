@@ -463,24 +463,6 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 // PROTECTION ENFORCEMENT
 // ====================================================================
 
-// isObjectRetentionActive checks if object has active retention
-func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string) (bool, error) {
-	retention, err := s3a.getObjectRetention(bucket, object, versionId)
-	if err != nil {
-		// If no retention found, object is not under retention
-		if errors.Is(err, ErrNoRetentionConfiguration) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if retention.RetainUntilDate != nil && retention.RetainUntilDate.After(time.Now()) {
-		return true, nil
-	}
-
-	return false, nil
-}
-
 // getRetentionFromEntry extracts retention configuration from filer entry
 func (s3a *S3ApiServer) getRetentionFromEntry(entry *filer_pb.Entry) (*ObjectRetention, bool, error) {
 	if entry.Extended == nil {
