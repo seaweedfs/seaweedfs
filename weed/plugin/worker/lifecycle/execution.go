@@ -245,7 +245,7 @@ func cleanupDeleteMarkers(
 
 		listErr := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				if entry.Name == s3_constants.MultipartUploadsFolder {
+				if dir == bucketPath && entry.Name == s3_constants.MultipartUploadsFolder {
 					return nil
 				}
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
