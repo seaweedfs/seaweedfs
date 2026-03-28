@@ -397,7 +397,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 		etagQuote := "\"" + completionState.multipartETag + "\""
 		// Check if versioning is configured for this bucket BEFORE creating any files.
 		versioningState, vErr := s3a.getVersioningState(*input.Bucket)
-		if vErr == nil && versioningState == s3_constants.VersioningEnabled {
+		if vErr != nil {
+			glog.Errorf("completeMultipartUpload: failed to get versioning state for bucket %s: %v", *input.Bucket, vErr)
+			return s3err.ErrInternalError
+		}
+		if versioningState == s3_constants.VersioningEnabled {
 			// Use full object key (not just entryName) to ensure correct .versions directory is checked
 			normalizedKey := strings.TrimPrefix(*input.Key, "/")
 			useInvertedFormat := s3a.getVersionIdFormat(*input.Bucket, normalizedKey)
@@ -474,6 +478,9 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// Update the .versions directory metadata to indicate this is the latest version
 			// Pass entry to cache its metadata for single-scan list efficiency
 			if err := s3a.updateLatestVersionInDirectory(*input.Bucket, *input.Key, versionId, versionFileName, versionEntryForCache); err != nil {
+				if rollbackErr := s3a.rollbackMultipartVersion(versionDir, versionFileName); rollbackErr != nil {
+					glog.Errorf("completeMultipartUpload: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, *input.Bucket, *input.Key, rollbackErr)
+				}
 				glog.Errorf("completeMultipartUpload: failed to update latest version in directory: %v", err)
 				return s3err.ErrInternalError
 			}
@@ -490,7 +497,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			return s3err.ErrNone
 		}
 
-		if vErr == nil && versioningState == s3_constants.VersioningSuspended {
+		if versioningState == s3_constants.VersioningSuspended {
 			// For suspended versioning, add "null" version ID metadata and return "null" version ID
 			if err := s3a.mkFile(dirName, entryName, completionState.finalParts, func(entry *filer_pb.Entry) {
 				if entry.Extended == nil {
@@ -620,6 +627,10 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 	}
 
 	return
+}
+
+func (s3a *S3ApiServer) rollbackMultipartVersion(versionDir, versionFileName string) error {
+	return s3a.rmObject(versionDir, versionFileName, true, false)
 }
 
 func (s3a *S3ApiServer) getEntryNameAndDir(input *s3.CompleteMultipartUploadInput) (string, string) {
