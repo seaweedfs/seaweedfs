@@ -2,9 +2,9 @@ package s3lifecycle
 
 import "strings"
 
-// matchesFilter checks if an object matches the rule's filter criteria
+// MatchesFilter checks if an object matches the rule's filter criteria
 // (prefix, tags, and size constraints).
-func matchesFilter(rule Rule, obj ObjectInfo) bool {
+func MatchesFilter(rule Rule, obj ObjectInfo) bool {
 	if !matchesPrefix(rule.Prefix, obj.Key) {
 		return false
 	}

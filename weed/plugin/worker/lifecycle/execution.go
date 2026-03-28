@@ -345,7 +345,7 @@ func isDeleteMarker(entry *filer_pb.Entry) bool {
 }
 
 // matchesDeleteMarkerRule checks if any enabled ExpiredObjectDeleteMarker rule
-// matches the given object key (respecting the rule's prefix filter).
+// matches the given object key using the full filter model (prefix, tags, size).
 // When no lifecycle rules are provided (nil means no XML configured),
 // falls back to legacy behavior (returns true to allow cleanup).
 // A non-nil empty slice means XML was present but had no matching rules,
@@ -354,8 +354,10 @@ func matchesDeleteMarkerRule(rules []s3lifecycle.Rule, objKey string) bool {
 	if rules == nil {
 		return true // legacy fallback: no lifecycle XML configured
 	}
+	// Delete markers have no size or tags, so build a minimal ObjectInfo.
+	obj := s3lifecycle.ObjectInfo{Key: objKey}
 	for _, r := range rules {
-		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker && strings.HasPrefix(objKey, r.Prefix) {
+		if r.Status == "Enabled" && r.ExpiredObjectDeleteMarker && s3lifecycle.MatchesFilter(r, obj) {
 			return true
 		}
 	}
