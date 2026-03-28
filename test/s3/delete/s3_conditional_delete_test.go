@@ -104,9 +104,22 @@ func TestConditionalMultiDeletePerObjectETag(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, deleteResp.Deleted, 1, "One object should satisfy its ETag precondition")
 	require.Len(t, deleteResp.Errors, 1, "One object should report a precondition failure")
-	assert.Equal(t, okKey, aws.ToString(deleteResp.Deleted[0].Key))
-	assert.Equal(t, failKey, aws.ToString(deleteResp.Errors[0].Key))
-	assert.Equal(t, "PreconditionFailed", aws.ToString(deleteResp.Errors[0].Code))
+	deletedKeys := make([]string, 0, len(deleteResp.Deleted))
+	for _, deleted := range deleteResp.Deleted {
+		deletedKeys = append(deletedKeys, aws.ToString(deleted.Key))
+	}
+	assert.Contains(t, deletedKeys, okKey)
+
+	var matchedError *types.Error
+	for i := range deleteResp.Errors {
+		if aws.ToString(deleteResp.Errors[i].Key) == failKey {
+			matchedError = &deleteResp.Errors[i]
+			break
+		}
+	}
+	if assert.NotNil(t, matchedError, "Expected error entry for failed key") {
+		assert.Equal(t, "PreconditionFailed", aws.ToString(matchedError.Code))
+	}
 
 	_, err = client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket: aws.String(bucket),
