@@ -387,8 +387,8 @@ func listExpiredObjectsByRules(
 		limitReached := false
 		err := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			if entry.IsDirectory {
-				if entry.Name == s3_constants.MultipartUploadsFolder {
-					return nil // skip .uploads
+				if dir == bucketPath && entry.Name == s3_constants.MultipartUploadsFolder {
+					return nil // skip .uploads at bucket root only
 				}
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
 					// Process versioned object.
