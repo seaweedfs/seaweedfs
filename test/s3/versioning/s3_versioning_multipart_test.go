@@ -582,7 +582,9 @@ func TestVersioningCompleteMultipartUploadIsIdempotent(t *testing.T) {
 	secondCompleteResp, err := client.CompleteMultipartUpload(context.TODO(), completeInput)
 	require.NoError(t, err, "Repeated CompleteMultipartUpload should return the existing object instead of creating a second version")
 	require.NotNil(t, secondCompleteResp.ETag)
+	require.NotNil(t, secondCompleteResp.VersionId, "Repeated complete should report the existing version ID")
 	assert.Equal(t, *firstCompleteResp.ETag, *secondCompleteResp.ETag, "Repeated complete should report the same ETag")
+	assert.Equal(t, *firstCompleteResp.VersionId, *secondCompleteResp.VersionId, "Repeated complete should report the same version ID")
 
 	versionsResp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
 		Bucket: aws.String(bucketName),

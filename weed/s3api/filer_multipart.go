@@ -184,13 +184,22 @@ type multipartCompletionState struct {
 	entityWithTtl  bool
 }
 
-func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadInput, etag string) *CompleteMultipartUploadResult {
-	return &CompleteMultipartUploadResult{
+func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadInput, etag string, entry *filer_pb.Entry) *CompleteMultipartUploadResult {
+	result := &CompleteMultipartUploadResult{
 		Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
 		Bucket:   input.Bucket,
 		ETag:     aws.String(etag),
 		Key:      objectKey(input.Key),
 	}
+	if entry != nil && entry.Extended != nil {
+		if versionIdBytes, ok := entry.Extended[s3_constants.ExtVersionIdKey]; ok {
+			versionId := string(versionIdBytes)
+			if versionId != "" && versionId != "null" {
+				result.VersionId = aws.String(versionId)
+			}
+		}
+	}
+	return result
 }
 
 func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *s3.CompleteMultipartUploadInput, uploadDirectory, entryName, dirName string, completedPartNumbers []int, completedPartMap map[int][]string, maxPartNo int) (*multipartCompletionState, *CompleteMultipartUploadResult, s3err.ErrorCode) {
@@ -200,7 +209,7 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 			if cleanupErr != nil && !errors.Is(cleanupErr, filer_pb.ErrNotFound) {
 				glog.Warningf("completeMultipartUpload: failed to list stale upload directory %s for cleanup: %v", uploadDirectory, cleanupErr)
 			}
-			return &multipartCompletionState{deleteEntries: cleanupEntries}, completeMultipartResult(r, input, getEtagFromEntry(entry)), s3err.ErrNone
+			return &multipartCompletionState{deleteEntries: cleanupEntries}, completeMultipartResult(r, input, getEtagFromEntry(entry), entry), s3err.ErrNone
 		}
 	}
 
@@ -488,6 +497,7 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 					entry.Extended = make(map[string][]byte)
 				}
 				entry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+				entry.Extended[s3_constants.SeaweedFSUploadId] = []byte(*input.UploadId)
 				// Store parts count for x-amz-mp-parts-count header
 				entry.Extended[s3_constants.SeaweedFSMultipartPartsCount] = []byte(fmt.Sprintf("%d", len(completedPartNumbers)))
 				// Store part boundaries for GetObject with PartNumber

@@ -55,6 +55,42 @@ func TestListPartsResult(t *testing.T) {
 
 }
 
+func TestCompleteMultipartResultIncludesVersionId(t *testing.T) {
+	r := &http.Request{Host: "localhost", Header: make(http.Header)}
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String("example-bucket"),
+		Key:    aws.String("example-object"),
+	}
+
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("version-123"),
+		},
+	}
+
+	result := completeMultipartResult(r, input, "\"etag-value\"", entry)
+	if assert.NotNil(t, result.VersionId) {
+		assert.Equal(t, "version-123", *result.VersionId)
+	}
+}
+
+func TestCompleteMultipartResultOmitsNullVersionId(t *testing.T) {
+	r := &http.Request{Host: "localhost", Header: make(http.Header)}
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String("example-bucket"),
+		Key:    aws.String("example-object"),
+	}
+
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("null"),
+		},
+	}
+
+	result := completeMultipartResult(r, input, "\"etag-value\"", entry)
+	assert.Nil(t, result.VersionId)
+}
+
 func Test_parsePartNumber(t *testing.T) {
 	tests := []struct {
 		name     string
