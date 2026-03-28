@@ -200,27 +200,29 @@ func (h *Handler) executeLifecycleForBucket(
 	}
 
 	// Abort incomplete multipart uploads.
-	// Use lifecycle rule AbortIncompleteMultipartUpload.DaysAfterInitiation if
-	// available; fall back to worker config abort_mpu_days only when no
-	// lifecycle XML is configured for the bucket.
-	var mpuAbortDays int64
-	if useRuleEval {
-		for _, r := range lifecycleRules {
-			if r.Status == "Enabled" && r.AbortMPUDaysAfterInitiation > 0 {
-				mpuAbortDays = int64(r.AbortMPUDaysAfterInitiation)
-				break
-			}
-		}
-	} else {
-		mpuAbortDays = config.AbortMPUDays
-	}
-	if mpuAbortDays > 0 && remaining > 0 {
+	// When lifecycle XML exists, evaluate each upload against the rules
+	// (respecting per-rule prefix filters and DaysAfterInitiation).
+	// Fall back to worker config abort_mpu_days only when no lifecycle
+	// XML is configured for the bucket.
+	if xmlPresent && remaining > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId: jobID, JobType: jobType,
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
-			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", mpuAbortDays),
+			Stage: "aborting_mpus", Message: "evaluating MPU abort rules",
 		})
-		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, mpuAbortDays, remaining)
+		aborted, abortErrs, abortCtxErr := abortMPUsByRules(ctx, filerClient, bucketsPath, bucket, lifecycleRules, remaining)
+		result.mpuAborted = int64(aborted)
+		result.errors += int64(abortErrs)
+		if abortCtxErr != nil {
+			return result, abortCtxErr
+		}
+	} else if !xmlPresent && config.AbortMPUDays > 0 && remaining > 0 {
+		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
+			JobId: jobID, JobType: jobType,
+			State: plugin_pb.JobState_JOB_STATE_RUNNING,
+			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", config.AbortMPUDays),
+		})
+		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, remaining)
 		result.mpuAborted = int64(aborted)
 		result.errors += int64(abortErrs)
 		if abortCtxErr != nil {
@@ -376,6 +378,54 @@ func matchesDeleteMarkerRule(rules []s3lifecycle.Rule, objKey string) bool {
 		}
 	}
 	return false
+}
+
+// abortMPUsByRules scans the .uploads directory and evaluates each upload
+// against lifecycle rules using EvaluateMPUAbort, which respects per-rule
+// prefix filters and DaysAfterInitiation thresholds.
+func abortMPUsByRules(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	bucketsPath, bucket string,
+	rules []s3lifecycle.Rule,
+	limit int64,
+) (aborted, errs int, ctxErr error) {
+	uploadsDir := path.Join(bucketsPath, bucket, ".uploads")
+	now := time.Now()
+
+	listErr := filer_pb.SeaweedList(ctx, client, uploadsDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if !entry.IsDirectory {
+			return nil
+		}
+		if entry.Attributes == nil || entry.Attributes.Crtime <= 0 {
+			return nil
+		}
+
+		createdAt := time.Unix(entry.Attributes.Crtime, 0)
+		result := s3lifecycle.EvaluateMPUAbort(rules, entry.Name, createdAt, now)
+		if result.Action == s3lifecycle.ActionAbortMultipartUpload {
+			uploadPath := path.Join(uploadsDir, entry.Name)
+			if err := filer_pb.DoRemove(ctx, client, uploadsDir, entry.Name, true, true, true, false, nil); err != nil {
+				glog.V(1).Infof("s3_lifecycle: failed to abort MPU %s: %v", uploadPath, err)
+				errs++
+			} else {
+				aborted++
+			}
+		}
+
+		if limit > 0 && int64(aborted+errs) >= limit {
+			return errLimitReached
+		}
+		return nil
+	}, "", false, 10000)
+
+	if listErr != nil && !errors.Is(listErr, errLimitReached) {
+		return aborted, errs, fmt.Errorf("list uploads in %s: %w", uploadsDir, listErr)
+	}
+	return aborted, errs, nil
 }
 
 // abortIncompleteMPUs scans the .uploads directory under a bucket and
