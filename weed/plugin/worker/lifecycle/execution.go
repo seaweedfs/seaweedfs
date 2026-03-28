@@ -187,8 +187,9 @@ func (h *Handler) executeLifecycleForBucket(
 
 	// Abort incomplete multipart uploads.
 	// Use lifecycle rule AbortIncompleteMultipartUpload.DaysAfterInitiation if
-	// available; fall back to worker config abort_mpu_days.
-	mpuAbortDays := config.AbortMPUDays
+	// available; fall back to worker config abort_mpu_days only when no
+	// lifecycle XML is configured for the bucket.
+	var mpuAbortDays int64
 	if useRuleEval {
 		for _, r := range lifecycleRules {
 			if r.Status == "Enabled" && r.AbortMPUDaysAfterInitiation > 0 {
@@ -196,6 +197,8 @@ func (h *Handler) executeLifecycleForBucket(
 				break
 			}
 		}
+	} else {
+		mpuAbortDays = config.AbortMPUDays
 	}
 	if mpuAbortDays > 0 && remaining > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
