@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -81,33 +83,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
-	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
-		fullPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject))
-		dir, name := fullPath.DirAndName()
-		entry, err := s3a.getEntry(dir, name)
-		if err != nil || entry.IsDirectory {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-			return
-		}
-		entry.Extended, err = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
-		entry.Attributes.Mtime = t.Unix()
-		if err != nil {
-			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
-		err = s3a.touch(dir, name, entry)
-		if err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-			return
-		}
-		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         filer.ETag(entry),
-			LastModified: t,
-		})
-		return
-	}
-
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -122,38 +97,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get the source entry with version awareness based on versioning state
-	var entry *filer_pb.Entry
-	if srcVersionId != "" {
-		// Specific version requested - always use version-aware retrieval
-		entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
-	} else if srcVersioningState == s3_constants.VersioningEnabled {
-		// Versioning enabled - get latest version from .versions directory
-		entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-	} else if srcVersioningState == s3_constants.VersioningSuspended {
-		// Versioning suspended - current object is stored as regular file ("null" version)
-		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-		if err != nil {
-			// If regular file doesn't exist, try latest version as fallback
-			glog.V(2).Infof("CopyObject: regular file not found for suspended versioning, trying latest version")
-			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-		}
-	} else {
-		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-	}
-
+	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
-	if srcBucket == dstBucket && srcObject == dstObject {
+	sameDestination := srcBucket == dstBucket && srcObject == dstObject
+	if sameDestination && !(replaceMeta || replaceTagging) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
@@ -163,12 +114,72 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		s3err.WriteErrorResponse(w, r, err)
 		return
 	}
+	if errCode := s3a.checkConditionalHeaders(r, dstBucket, dstObject); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
 
 	// Validate encryption parameters
 	if err := ValidateCopyEncryption(entry.Extended, r.Header); err != nil {
 		glog.V(2).Infof("CopyObjectHandler encryption validation error: %v", err)
 		errCode := MapCopyValidationError(err)
 		s3err.WriteErrorResponse(w, r, errCode)
+		return
+	}
+
+	dstVersioningState, err := s3a.getVersioningState(dstBucket)
+	if err != nil {
+		glog.Errorf("Error checking versioning state for destination bucket %s: %v", dstBucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if sameDestination && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+		var dstVersionId string
+		var etag string
+		updateCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+		}, func() s3err.ErrorCode {
+			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+			if currentErr != nil || currentEntry.IsDirectory {
+				return s3err.ErrInvalidCopySource
+			}
+			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
+				return errCode
+			}
+
+			updatedEntry := cloneProtoEntry(currentEntry)
+			updatedMetadata, metadataErr := processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
+			currentErr = metadataErr
+			if currentErr != nil {
+				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, currentErr)
+				return s3err.ErrInvalidTag
+			}
+			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
+			if updatedEntry.Attributes == nil {
+				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
+			}
+			updatedEntry.Attributes.Mtime = t.Unix()
+
+			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
+			if currentErr != nil {
+				return filerErrorToS3Error(currentErr)
+			}
+			return s3err.ErrNone
+		})
+		if updateCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, updateCode)
+			return
+		}
+
+		if dstVersionId != "" {
+			w.Header().Set("x-amz-version-id", dstVersionId)
+		}
+		setEtag(w, etag)
+		writeSuccessResponseXML(w, r, CopyObjectResult{
+			ETag:         etag,
+			LastModified: t,
+		})
 		return
 	}
 
@@ -302,107 +313,26 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	// Check if destination bucket has versioning enabled
-	// Only create versions if versioning is explicitly "Enabled", not "Suspended" or unconfigured
-	dstVersioningState, err := s3a.getVersioningState(dstBucket)
-	if err != nil {
-		glog.Errorf("Error checking versioning state for destination bucket %s: %v", dstBucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
-	}
-
 	var dstVersionId string
 	var etag string
 
-	if shouldCreateVersionForCopy(dstVersioningState) {
-		// For versioned destination, create a new version using appropriate format
-		dstVersionId = s3a.generateVersionIdForObject(dstBucket, dstObject)
-		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
-
-		// Add version metadata to the entry
-		if dstEntry.Extended == nil {
-			dstEntry.Extended = make(map[string][]byte)
+	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+	}, func() s3err.ErrorCode {
+		var finalizeErr error
+		dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry)
+		if finalizeErr != nil {
+			return filerErrorToS3Error(finalizeErr)
 		}
-		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(dstVersionId)
+		return s3err.ErrNone
+	})
+	if finalizeCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, finalizeCode)
+		return
+	}
 
-		// Calculate ETag for versioning
-		filerEntry := &filer.Entry{
-			FullPath: util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)),
-			Attr: filer.Attr{
-				FileSize: dstEntry.Attributes.FileSize,
-				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-				Mime:     dstEntry.Attributes.Mime,
-			},
-			Chunks: dstEntry.Chunks,
-		}
-		etag = filer.ETagEntry(filerEntry)
-		if !strings.HasPrefix(etag, "\"") {
-			etag = "\"" + etag + "\""
-		}
-		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
-
-		// Create version file
-		versionFileName := s3a.getVersionFileName(dstVersionId)
-		versionObjectPath := dstObject + ".versions/" + versionFileName
-		bucketDir := s3a.bucketDir(dstBucket)
-
-		if err := s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
-			entry.Attributes = dstEntry.Attributes
-			entry.Extended = dstEntry.Extended
-		}); err != nil {
-			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
-			return
-		}
-
-		// Update the .versions directory metadata
-		// Pass dstEntry to cache its metadata for single-scan list efficiency
-		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName, dstEntry)
-		if err != nil {
-			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-
-		// Set version ID in response header
+	if dstVersionId != "" {
 		w.Header().Set("x-amz-version-id", dstVersionId)
-	} else {
-		// For non-versioned destination, use regular copy
-		// Remove any versioning-related metadata from source that shouldn't carry over
-		cleanupVersioningMetadata(dstEntry.Extended)
-
-		dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject))
-		dstDir, dstName := dstPath.DirAndName()
-
-		// Check if destination exists and remove it first (S3 copy overwrites)
-		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err := s3a.rmObject(dstDir, dstName, false, false); err != nil {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return
-			}
-		}
-
-		// Create the new file
-		if err := s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
-			entry.Attributes = dstEntry.Attributes
-			entry.Extended = dstEntry.Extended
-		}); err != nil {
-			s3err.WriteErrorResponse(w, r, filerErrorToS3Error(err))
-			return
-		}
-
-		// Calculate ETag
-		filerEntry := &filer.Entry{
-			FullPath: dstPath,
-			Attr: filer.Attr{
-				FileSize: dstEntry.Attributes.FileSize,
-				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-				Mime:     dstEntry.Attributes.Mime,
-			},
-			Chunks: dstEntry.Chunks,
-		}
-		etag = filer.ETagEntry(filerEntry)
 	}
 
 	setEtag(w, etag)
@@ -414,6 +344,202 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	writeSuccessResponseXML(w, r, response)
 
+}
+
+func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
+	if entry == nil {
+		return nil
+	}
+	return proto.Clone(entry).(*filer_pb.Entry)
+}
+
+func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
+	if entry != nil && entry.Extended != nil {
+		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
+			return string(etag)
+		}
+	}
+	attr := filer.Attr{}
+	if entry.Attributes != nil {
+		attr = filer.Attr{
+			FileSize: entry.Attributes.FileSize,
+			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
+			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5,
+		}
+	}
+	return filer.ETagEntry(&filer.Entry{
+		FullPath: fullPath,
+		Attr:     attr,
+		Chunks:   entry.Chunks,
+		Content:  entry.Content,
+		Remote:   entry.RemoteEntry,
+	})
+}
+
+func copyEntryToTarget(dst, src *filer_pb.Entry) {
+	dst.IsDirectory = src.IsDirectory
+	dst.Attributes = src.Attributes
+	dst.Extended = src.Extended
+	dst.Chunks = src.Chunks
+	dst.Content = src.Content
+	dst.RemoteEntry = src.RemoteEntry
+	dst.HardLinkId = src.HardLinkId
+	dst.HardLinkCounter = src.HardLinkCounter
+	dst.Quota = src.Quota
+	dst.WormEnforcedAtTsNs = src.WormEnforcedAtTsNs
+}
+
+func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersioningState string, dstEntry *filer_pb.Entry) (versionId string, etag string, err error) {
+	normalizedObject := s3_constants.NormalizeObjectKey(dstObject)
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), normalizedObject))
+	dstDir, dstName := dstPath.DirAndName()
+
+	if dstEntry.Attributes == nil {
+		dstEntry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	if dstEntry.Extended == nil {
+		dstEntry.Extended = make(map[string][]byte)
+	}
+
+	etag = copyEntryETag(dstPath, dstEntry)
+
+	switch dstVersioningState {
+	case s3_constants.VersioningEnabled:
+		versionId = s3a.generateVersionIdForObject(dstBucket, normalizedObject)
+		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", versionId, dstBucket, normalizedObject)
+
+		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		versionFileName := s3a.getVersionFileName(versionId)
+		versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
+		bucketDir := s3a.bucketDir(dstBucket)
+
+		if err = s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
+			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+			}
+			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
+			return "", "", fmt.Errorf("update latest version metadata: %w", err)
+		}
+
+		return versionId, etag, nil
+
+	case s3_constants.VersioningSuspended:
+		cleanupVersioningMetadata(dstEntry.Extended)
+		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		if err = s3a.updateIsLatestFlagsForSuspendedVersioning(dstBucket, normalizedObject); err != nil {
+			glog.Warningf("CopyObjectHandler: failed to update suspended version latest flags for %s/%s: %v", dstBucket, normalizedObject, err)
+		}
+
+		return "", etag, nil
+
+	default:
+		cleanupVersioningMetadata(dstEntry.Extended)
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		return "", etag, nil
+	}
+}
+
+func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
+	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
+	versionDir, versionName := versionPath.DirAndName()
+	return s3a.rmObject(versionDir, versionName, true, false)
+}
+
+func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
+
+	if versionId != "" {
+		return s3a.getSpecificObjectVersion(bucket, normalizedObject, versionId)
+	}
+
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		return s3a.getLatestObjectVersion(bucket, normalizedObject)
+	case s3_constants.VersioningSuspended:
+		return s3a.resolveSuspendedCopySourceEntry(bucket, normalizedObject, "CopyObject")
+	default:
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
+		dir, name := srcPath.DirAndName()
+		return s3a.getEntry(dir, name)
+	}
+}
+
+func mergeCopyMetadata(existing, updated map[string][]byte) map[string][]byte {
+	merged := make(map[string][]byte, len(existing)+len(updated))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k := range merged {
+		if isManagedCopyMetadataKey(k) {
+			delete(merged, k)
+		}
+	}
+	for k, v := range updated {
+		merged[k] = v
+	}
+	return merged
+}
+
+func isManagedCopyMetadataKey(key string) bool {
+	switch key {
+	case s3_constants.AmzStorageClass,
+		s3_constants.AmzServerSideEncryption,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.AmzTagCount:
+		return true
+	}
+	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
+}
+
+func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
+	dir, name := srcPath.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err == nil {
+		return entry, nil
+	}
+	if !errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+	glog.V(2).Infof("%s: regular file not found for suspended versioning, trying latest version", operation)
+	return s3a.getLatestObjectVersion(bucket, normalizedObject)
+}
+
+func (s3a *S3ApiServer) canUseMetadataOnlySelfCopy(entry *filer_pb.Entry, r *http.Request, bucket, object string) bool {
+	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.NormalizeObjectKey(object))
+	state := DetectEncryptionStateWithEntry(entry, r, srcPath, srcPath)
+	s3a.applyCopyBucketDefaultEncryption(state, bucket)
+	strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r)
+	return err == nil && strategy == CopyStrategyDirect
 }
 
 func pathToBucketAndObject(path string) (bucket, object string) {
@@ -553,14 +679,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	} else if srcVersioningState == s3_constants.VersioningSuspended {
 		// Versioning suspended - current object is stored as regular file ("null" version)
 		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-		if err != nil {
-			// If regular file doesn't exist, try latest version as fallback
-			glog.V(2).Infof("CopyObjectPart: regular file not found for suspended versioning, trying latest version")
-			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-		}
+		entry, err = s3a.resolveSuspendedCopySourceEntry(srcBucket, s3_constants.NormalizeObjectKey(srcObject), "CopyObjectPart")
 	} else {
 		// No versioning configured - use regular retrieval
 		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))

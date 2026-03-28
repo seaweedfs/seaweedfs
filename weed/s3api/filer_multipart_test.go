@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"encoding/hex"
+	"net/http"
 	"testing"
 	"time"
 
@@ -52,6 +53,42 @@ func TestListPartsResult(t *testing.T) {
 		t.Errorf("unexpected output: %s\nexpecting:%s", encoded, expected)
 	}
 
+}
+
+func TestCompleteMultipartResultIncludesVersionId(t *testing.T) {
+	r := &http.Request{Host: "localhost", Header: make(http.Header)}
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String("example-bucket"),
+		Key:    aws.String("example-object"),
+	}
+
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("version-123"),
+		},
+	}
+
+	result := completeMultipartResult(r, input, "\"etag-value\"", entry)
+	if assert.NotNil(t, result.VersionId) {
+		assert.Equal(t, "version-123", *result.VersionId)
+	}
+}
+
+func TestCompleteMultipartResultOmitsNullVersionId(t *testing.T) {
+	r := &http.Request{Host: "localhost", Header: make(http.Header)}
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket: aws.String("example-bucket"),
+		Key:    aws.String("example-object"),
+	}
+
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte("null"),
+		},
+	}
+
+	result := completeMultipartResult(r, input, "\"etag-value\"", entry)
+	assert.Nil(t, result.VersionId)
 }
 
 func Test_parsePartNumber(t *testing.T) {
@@ -189,4 +226,42 @@ func TestValidateCompletePartETag(t *testing.T) {
 		assert.False(t, match)
 		assert.True(t, invalid)
 	})
+}
+
+func TestCompleteMultipartUploadRejectsOutOfOrderParts(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String("bucket"),
+		Key:      aws.String("object"),
+		UploadId: aws.String("upload"),
+	}
+	parts := &CompleteMultipartUpload{
+		Parts: []CompletedPart{
+			{PartNumber: 2, ETag: "\"etag-2\""},
+			{PartNumber: 1, ETag: "\"etag-1\""},
+		},
+	}
+
+	result, errCode := s3a.completeMultipartUpload(&http.Request{Header: make(http.Header)}, input, parts)
+	assert.Nil(t, result)
+	assert.Equal(t, s3err.ErrInvalidPartOrder, errCode)
+}
+
+func TestCompleteMultipartUploadAllowsDuplicatePartNumbers(t *testing.T) {
+	s3a := NewS3ApiServerForTest()
+	input := &s3.CompleteMultipartUploadInput{
+		Bucket:   aws.String("bucket"),
+		Key:      aws.String("object"),
+		UploadId: aws.String("upload"),
+	}
+	parts := &CompleteMultipartUpload{
+		Parts: []CompletedPart{
+			{PartNumber: 1, ETag: "\"etag-older\""},
+			{PartNumber: 1, ETag: "\"etag-newer\""},
+		},
+	}
+
+	result, errCode := s3a.completeMultipartUpload(&http.Request{Header: make(http.Header)}, input, parts)
+	assert.Nil(t, result)
+	assert.Equal(t, s3err.ErrNoSuchUpload, errCode)
 }

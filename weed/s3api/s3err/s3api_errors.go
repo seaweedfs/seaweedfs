@@ -68,6 +68,7 @@ const (
 	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidPartOrder
 	ErrInvalidRange
 	ErrInternalError
 	ErrInvalidCopyDest
@@ -289,6 +290,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrInvalidPart: {
 		Code:           "InvalidPart",
 		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+	ErrInvalidPartOrder: {
+		Code:           "InvalidPartOrder",
+		Description:    "The list of parts was not in ascending order. The parts list must be specified in order by part number.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
 

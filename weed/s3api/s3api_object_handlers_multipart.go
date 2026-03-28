@@ -447,7 +447,7 @@ func (s3a *S3ApiServer) PutObjectPartHandler(w http.ResponseWriter, r *http.Requ
 	glog.V(2).Infof("PutObjectPart: bucket=%s, object=%s, uploadId=%s, partNumber=%d, size=%d",
 		bucket, object, uploadID, partID, r.ContentLength)
 
-	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, partID)
+	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, dataReader, bucket, "", partID, nil)
 	if errCode != s3err.ErrNone {
 		glog.Errorf("PutObjectPart: putToFiler failed with error code %v for bucket=%s, object=%s, partNumber=%d",
 			errCode, bucket, object, partID)
