@@ -13,6 +13,11 @@ import (
 // BucketPolicyEngine wraps the policy_engine to provide bucket policy evaluation
 type BucketPolicyEngine struct {
 	engine *policy_engine.PolicyEngine
+	// MultipartSSELookup retrieves the canonical SSE algorithm ("AES256" or
+	// "aws:kms") that was stored when a multipart upload was initiated.
+	// Returns "" when the upload had no SSE or when the entry cannot be found.
+	// Set by S3ApiServer after construction to give the engine filer access.
+	MultipartSSELookup func(bucket, uploadID string) string
 }
 
 // NewBucketPolicyEngine creates a new bucket policy engine
@@ -155,6 +160,16 @@ func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal 
 			// If claims were not provided directly, try to get them from context Identity?
 			// But the caller is responsible for passing them.
 			// Falling back to empty claims if not provided.
+		}
+
+		// For multipart continuation actions look up the SSE algorithm that was
+		// set at CreateMultipartUpload time. UploadPart/UploadPartCopy do not
+		// re-send the SSE header, so we inject the stored value so that bucket
+		// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
+		if policy_engine.IsMultipartContinuationAction(s3Action) && bpe.MultipartSSELookup != nil {
+			if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
+				args.InheritedSSEAlgorithm = bpe.MultipartSSELookup(bucket, uploadID)
+			}
 		}
 	}
 

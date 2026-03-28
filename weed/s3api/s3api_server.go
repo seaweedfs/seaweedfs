@@ -213,6 +213,11 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// This avoids circular dependency by not passing the entire S3ApiServer
 	iam.policyEngine = policyEngine
 
+	// Give the policy engine a way to look up the SSE algorithm that was
+	// stored at CreateMultipartUpload time, so that UploadPart/UploadPartCopy
+	// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
+	policyEngine.MultipartSSELookup = s3ApiServer.getMultipartSSEAlgorithm
+
 	// Initialize advanced IAM system if config is provided or explicitly enabled
 	if option.IamConfig != "" || option.EnableIam {
 		configSource := "defaults"

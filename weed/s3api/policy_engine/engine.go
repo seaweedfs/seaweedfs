@@ -210,7 +210,15 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		match := EvaluateConditions(stmt.Statement.Condition, args.Conditions, args.ObjectEntry, args.Claims)
+		condCtx := args.Conditions
+		// Multipart continuation actions (UploadPart, UploadPartCopy) inherit SSE
+		// from CreateMultipartUpload and do not carry their own SSE header.
+		// Inject the real inherited algorithm so Null/StringEquals conditions
+		// evaluate against the value that was set at upload initiation.
+		if IsMultipartContinuationAction(args.Action) {
+			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
+		}
+		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
 		if !match {
 			return false
 		}
@@ -435,7 +443,60 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 		}
 	}
 
+	// Normalize s3:x-amz-server-side-encryption value to canonical form.
+	// AWS accepts "AES256" case-insensitively; normalise so that policy
+	// StringEquals conditions work regardless of client capitalisation.
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if sseVals, ok := values[sseKey]; ok {
+		normalized := make([]string, len(sseVals))
+		for i, v := range sseVals {
+			switch strings.ToUpper(v) {
+			case "AES256":
+				normalized[i] = "AES256"
+			case "AWS:KMS":
+				normalized[i] = "aws:kms"
+			default:
+				normalized[i] = v
+			}
+		}
+		values[sseKey] = normalized
+	}
+
 	return values
+}
+
+// IsMultipartContinuationAction returns true for actions that do not carry
+// their own SSE header because SSE is inherited from CreateMultipartUpload.
+func IsMultipartContinuationAction(action string) bool {
+	return action == "s3:UploadPart" || action == "s3:UploadPartCopy"
+}
+
+// injectSSEForMultipart returns a condition context augmented with the
+// inherited SSE algorithm for multipart continuation actions.
+//
+// UploadPart and UploadPartCopy do not re-send the SSE header because
+// encryption is set once at CreateMultipartUpload. The caller supplies
+// inheritedSSE (the canonical algorithm, e.g. "AES256" or "aws:kms") so
+// that Null/StringEquals conditions on s3:x-amz-server-side-encryption
+// evaluate against the real value.
+//
+// If inheritedSSE is empty (no SSE was requested at initiation), the
+// conditions map is returned unchanged so Null("true") will correctly
+// match and deny the request.
+func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) map[string][]string {
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if inheritedSSE == "" {
+		return conditions // no SSE at upload initiation; let Null("true") fire
+	}
+	if _, exists := conditions[sseKey]; exists {
+		return conditions // SSE header was actually sent on this request
+	}
+	modified := make(map[string][]string, len(conditions)+1)
+	for k, v := range conditions {
+		modified[k] = v
+	}
+	modified[sseKey] = []string{inheritedSSE}
+	return modified
 }
 
 // extractSourceIP returns the best-effort client IP address for condition evaluation.
