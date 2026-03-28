@@ -2099,18 +2099,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	return dstChunk, nil
 }
 
-// getEncryptionTypeString returns a string representation of encryption type for logging
-func (s3a *S3ApiServer) getEncryptionTypeString(isSSEC, isSSEKMS, isSSES3 bool) string {
-	if isSSEC {
-		return s3_constants.SSETypeC
-	} else if isSSEKMS {
-		return s3_constants.SSETypeKMS
-	} else if isSSES3 {
-		return s3_constants.SSETypeS3
-	}
-	return "Plain"
-}
-
 // copyChunksWithSSEC handles SSE-C aware copying with smart fast/slow path selection
 // Returns chunks and destination metadata that should be applied to the destination entry
 func (s3a *S3ApiServer) copyChunksWithSSEC(entry *filer_pb.Entry, r *http.Request) ([]*filer_pb.FileChunk, map[string][]byte, error) {

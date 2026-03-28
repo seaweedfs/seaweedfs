@@ -244,11 +244,6 @@ func (e *StreamError) Unwrap() error {
 	return e.Err
 }
 
-// newStreamError creates a StreamError for cases where response hasn't been written yet
-func newStreamError(err error) *StreamError {
-	return &StreamError{Err: err, ResponseWritten: false}
-}
-
 // newStreamErrorWithResponse creates a StreamError for cases where response was already written
 func newStreamErrorWithResponse(err error) *StreamError {
 	return &StreamError{Err: err, ResponseWritten: true}
