@@ -186,13 +186,24 @@ func (h *Handler) executeLifecycleForBucket(
 	}
 
 	// Abort incomplete multipart uploads.
-	if config.AbortMPUDays > 0 && remaining > 0 {
+	// Use lifecycle rule AbortIncompleteMultipartUpload.DaysAfterInitiation if
+	// available; fall back to worker config abort_mpu_days.
+	mpuAbortDays := config.AbortMPUDays
+	if useRuleEval {
+		for _, r := range lifecycleRules {
+			if r.Status == "Enabled" && r.AbortMPUDaysAfterInitiation > 0 {
+				mpuAbortDays = int64(r.AbortMPUDaysAfterInitiation)
+				break
+			}
+		}
+	}
+	if mpuAbortDays > 0 && remaining > 0 {
 		_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
 			JobId: jobID, JobType: jobType,
 			State: plugin_pb.JobState_JOB_STATE_RUNNING,
-			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", config.AbortMPUDays),
+			Stage: "aborting_mpus", Message: fmt.Sprintf("aborting multipart uploads older than %d days", mpuAbortDays),
 		})
-		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, config.AbortMPUDays, remaining)
+		aborted, abortErrs, abortCtxErr := abortIncompleteMPUs(ctx, filerClient, bucketsPath, bucket, mpuAbortDays, remaining)
 		result.mpuAborted = int64(aborted)
 		result.errors += int64(abortErrs)
 		if abortCtxErr != nil {
