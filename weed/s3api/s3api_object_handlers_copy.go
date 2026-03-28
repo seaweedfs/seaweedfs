@@ -430,10 +430,8 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err = s3a.rmObject(dstDir, dstName, false, false); err != nil {
-				return "", "", err
-			}
+		if err = s3a.removeExistingCopyDestination(dstDir, dstName); err != nil {
+			return "", "", err
 		}
 
 		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
@@ -452,10 +450,8 @@ func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersion
 		cleanupVersioningMetadata(dstEntry.Extended)
 		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
-		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err = s3a.rmObject(dstDir, dstName, false, false); err != nil {
-				return "", "", err
-			}
+		if err = s3a.removeExistingCopyDestination(dstDir, dstName); err != nil {
+			return "", "", err
 		}
 
 		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
@@ -472,6 +468,17 @@ func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string)
 	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
 	versionDir, versionName := versionPath.DirAndName()
 	return s3a.rmObject(versionDir, versionName, true, false)
+}
+
+func (s3a *S3ApiServer) removeExistingCopyDestination(dstDir, dstName string) error {
+	exists, err := s3a.exists(dstDir, dstName, false)
+	if err != nil {
+		return fmt.Errorf("check existing copy destination %s/%s: %w", dstDir, dstName, err)
+	}
+	if !exists {
+		return nil
+	}
+	return s3a.rmObject(dstDir, dstName, false, false)
 }
 
 func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
