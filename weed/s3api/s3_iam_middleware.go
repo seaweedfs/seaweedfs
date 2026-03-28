@@ -616,14 +616,6 @@ func ParseUnverifiedJWTToken(tokenString string) (jwt.MapClaims, error) {
 	return nil, fmt.Errorf("invalid token claims")
 }
 
-// minInt returns the minimum of two integers
-func minInt(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // SetIAMIntegration adds advanced IAM integration to the S3ApiServer
 func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 	if s3a.iam != nil {
