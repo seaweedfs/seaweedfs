@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"path"
@@ -13,7 +14,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	pluginworker "github.com/seaweedfs/seaweedfs/weed/plugin/worker"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
+
+var errLimitReached = errors.New("limit reached")
 
 type executionResult struct {
 	objectsExpired     int64
@@ -37,17 +41,26 @@ func (h *Handler) executeLifecycleForBucket(
 ) (*executionResult, error) {
 	result := &executionResult{}
 
-	// Load filer.conf to verify TTL rules still exist.
-	fc, err := loadFilerConf(ctx, filerClient)
-	if err != nil {
-		return result, fmt.Errorf("load filer conf: %w", err)
+	// Try to load lifecycle rules from stored XML first (full rule evaluation).
+	// Fall back to filer.conf TTL-only evaluation if no XML exists.
+	lifecycleRules, xmlErr := loadLifecycleRulesFromBucket(ctx, filerClient, bucketsPath, bucket)
+	if xmlErr != nil {
+		glog.V(1).Infof("s3_lifecycle: bucket %s: failed to load lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
 	}
+	useRuleEval := xmlErr == nil && len(lifecycleRules) > 0
 
-	collection := bucket
-	ttlRules := fc.GetCollectionTtls(collection)
-	if len(ttlRules) == 0 {
-		glog.V(1).Infof("s3_lifecycle: bucket %s has no lifecycle rules, skipping", bucket)
-		return result, nil
+	if !useRuleEval {
+		// Fall back: check filer.conf TTL rules.
+		fc, err := loadFilerConf(ctx, filerClient)
+		if err != nil {
+			return result, fmt.Errorf("load filer conf: %w", err)
+		}
+		collection := bucket
+		ttlRules := fc.GetCollectionTtls(collection)
+		if len(ttlRules) == 0 {
+			glog.V(1).Infof("s3_lifecycle: bucket %s has no lifecycle rules, skipping", bucket)
+			return result, nil
+		}
 	}
 
 	_ = sender.SendProgress(&plugin_pb.JobProgressUpdate{
@@ -56,14 +69,21 @@ func (h *Handler) executeLifecycleForBucket(
 		State:           plugin_pb.JobState_JOB_STATE_RUNNING,
 		ProgressPercent: 10,
 		Stage:           "scanning",
-		Message:         fmt.Sprintf("scanning bucket %s for expired objects (%d rules)", bucket, len(ttlRules)),
+		Message:         fmt.Sprintf("scanning bucket %s for expired objects", bucket),
 	})
 
 	// Shared budget across all phases so we don't exceed MaxDeletesPerBucket.
 	remaining := config.MaxDeletesPerBucket
 
-	// Find expired objects.
-	expired, scanned, err := listExpiredObjects(ctx, filerClient, bucketsPath, bucket, remaining)
+	// Find expired objects using rule-based evaluation or TTL fallback.
+	var expired []expiredObject
+	var scanned int64
+	var err error
+	if useRuleEval {
+		expired, scanned, err = listExpiredObjectsByRules(ctx, filerClient, bucketsPath, bucket, lifecycleRules, remaining)
+	} else {
+		expired, scanned, err = listExpiredObjects(ctx, filerClient, bucketsPath, bucket, remaining)
+	}
 	result.objectsScanned = scanned
 	if err != nil {
 		return result, fmt.Errorf("list expired objects: %w", err)
@@ -325,4 +345,94 @@ func deleteExpiredObjects(
 // nowUnix returns the current time as a Unix timestamp.
 func nowUnix() int64 {
 	return time.Now().Unix()
+}
+
+// listExpiredObjectsByRules scans a bucket directory tree and evaluates
+// lifecycle rules against each object using the s3lifecycle evaluator.
+// This function handles non-versioned objects (IsLatest=true). Versioned
+// objects in .versions directories are handled by processVersionsDirectory
+// (added in a separate change for NoncurrentVersionExpiration support).
+func listExpiredObjectsByRules(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	bucketsPath, bucket string,
+	rules []s3lifecycle.Rule,
+	limit int64,
+) ([]expiredObject, int64, error) {
+	var expired []expiredObject
+	var scanned int64
+
+	bucketPath := path.Join(bucketsPath, bucket)
+	now := time.Now()
+	needTags := s3lifecycle.HasTagRules(rules)
+
+	dirsToProcess := []string{bucketPath}
+	for len(dirsToProcess) > 0 {
+		select {
+		case <-ctx.Done():
+			return expired, scanned, ctx.Err()
+		default:
+		}
+
+		dir := dirsToProcess[0]
+		dirsToProcess = dirsToProcess[1:]
+
+		limitReached := false
+		err := filer_pb.SeaweedList(ctx, client, dir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			if entry.IsDirectory {
+				// Skip .uploads and .versions directories.
+				if entry.Name != s3_constants.MultipartUploadsFolder &&
+					!strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
+					dirsToProcess = append(dirsToProcess, path.Join(dir, entry.Name))
+				}
+				return nil
+			}
+			scanned++
+
+			// Skip objects already handled by TTL fast path.
+			if entry.Attributes != nil && entry.Attributes.TtlSec > 0 {
+				expirationUnix := entry.Attributes.Crtime + int64(entry.Attributes.TtlSec)
+				if expirationUnix > nowUnix() {
+					return nil // will be expired by RocksDB compaction
+				}
+			}
+
+			// Build ObjectInfo for the evaluator.
+			relKey := strings.TrimPrefix(path.Join(dir, entry.Name), bucketPath+"/")
+			objInfo := s3lifecycle.ObjectInfo{
+				Key:      relKey,
+				IsLatest: true, // non-versioned objects are always "latest"
+				Size:     int64(entry.Attributes.GetFileSize()),
+			}
+			if entry.Attributes != nil && entry.Attributes.Mtime > 0 {
+				objInfo.ModTime = time.Unix(entry.Attributes.Mtime, 0)
+			} else if entry.Attributes != nil && entry.Attributes.Crtime > 0 {
+				objInfo.ModTime = time.Unix(entry.Attributes.Crtime, 0)
+			}
+			if needTags {
+				objInfo.Tags = s3lifecycle.ExtractTags(entry.Extended)
+			}
+
+			result := s3lifecycle.Evaluate(rules, objInfo, now)
+			if result.Action == s3lifecycle.ActionDeleteObject {
+				expired = append(expired, expiredObject{dir: dir, name: entry.Name})
+			}
+
+			if limit > 0 && int64(len(expired)) >= limit {
+				limitReached = true
+				return errLimitReached
+			}
+			return nil
+		}, "", false, 10000)
+
+		if err != nil && !errors.Is(err, errLimitReached) {
+			return expired, scanned, fmt.Errorf("list %s: %w", dir, err)
+		}
+
+		if limitReached || (limit > 0 && int64(len(expired)) >= limit) {
+			break
+		}
+	}
+
+	return expired, scanned, nil
 }
