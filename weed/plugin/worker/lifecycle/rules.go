@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
-	"path"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -73,7 +72,7 @@ func loadLifecycleRulesFromBucket(
 	client filer_pb.SeaweedFilerClient,
 	bucketsPath, bucket string,
 ) ([]s3lifecycle.Rule, error) {
-	bucketDir := path.Dir(path.Join(bucketsPath, bucket))
+	bucketDir := bucketsPath
 	resp, err := filer_pb.LookupEntry(ctx, client, &filer_pb.LookupDirectoryEntryRequest{
 		Directory: bucketDir,
 		Name:      bucket,

@@ -2,6 +2,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"path"
@@ -15,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3lifecycle"
 )
+
+var errLimitReached = errors.New("limit reached")
 
 type executionResult struct {
 	objectsExpired     int64
@@ -414,12 +417,12 @@ func listExpiredObjectsByRules(
 
 			if limit > 0 && int64(len(expired)) >= limit {
 				limitReached = true
-				return fmt.Errorf("limit reached")
+				return errLimitReached
 			}
 			return nil
 		}, "", false, 10000)
 
-		if err != nil && !strings.Contains(err.Error(), "limit reached") {
+		if err != nil && !errors.Is(err, errLimitReached) {
 			return expired, scanned, fmt.Errorf("list %s: %w", dir, err)
 		}
 
