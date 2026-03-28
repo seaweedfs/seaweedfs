@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,10 +55,14 @@ func (h *Handler) executeLifecycleForBucket(
 	if xmlErr != nil {
 		glog.V(1).Infof("s3_lifecycle: bucket %s: transient error loading lifecycle XML: %v, falling back to TTL", bucket, xmlErr)
 	}
-	useRuleEval := xmlErr == nil && len(lifecycleRules) > 0
+	// lifecycleRules is non-nil when XML was present (even if empty/all disabled).
+	// Only fall back to TTL when XML was truly absent (nil).
+	xmlPresent := xmlErr == nil && lifecycleRules != nil
+	useRuleEval := xmlPresent && len(lifecycleRules) > 0
 
-	if !useRuleEval {
-		// Fall back: check filer.conf TTL rules.
+	if !useRuleEval && !xmlPresent {
+		// Fall back to filer.conf TTL rules only when no lifecycle XML exists.
+		// When XML is present but has no effective rules, skip TTL fallback.
 		fc, err := loadFilerConf(ctx, filerClient)
 		if err != nil {
 			return result, fmt.Errorf("load filer conf: %w", err)
@@ -570,16 +575,9 @@ func processVersionsDirectory(
 // so entries with the same timestamp prefix are correctly ordered by their
 // random suffix.
 func sortVersionsByVersionId(versions []*filer_pb.Entry) {
-	for i := 1; i < len(versions); i++ {
-		for j := i; j > 0; j-- {
-			vidJ := strings.TrimPrefix(versions[j].Name, "v_")
-			vidJm1 := strings.TrimPrefix(versions[j-1].Name, "v_")
-			if s3lifecycle.CompareVersionIds(vidJ, vidJm1) < 0 {
-				// vidJ is newer; swap to maintain newest-first order.
-				versions[j], versions[j-1] = versions[j-1], versions[j]
-			} else {
-				break
-			}
-		}
-	}
+	sort.Slice(versions, func(i, j int) bool {
+		vidI := strings.TrimPrefix(versions[i].Name, "v_")
+		vidJ := strings.TrimPrefix(versions[j].Name, "v_")
+		return s3lifecycle.CompareVersionIds(vidI, vidJ) < 0
+	})
 }

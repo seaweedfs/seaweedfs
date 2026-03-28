@@ -103,6 +103,12 @@ func loadLifecycleRulesFromBucket(
 	if parseErr != nil {
 		return nil, fmt.Errorf("%w: bucket %s: %v", errMalformedLifecycleXML, bucket, parseErr)
 	}
+	// Return non-nil empty slice when XML was present but yielded no rules
+	// (e.g., all rules disabled). This lets callers distinguish "no XML" (nil)
+	// from "XML present, no effective rules" (empty slice).
+	if rules == nil {
+		rules = []s3lifecycle.Rule{}
+	}
 	return rules, nil
 }
 

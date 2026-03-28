@@ -65,6 +65,39 @@ func TestSortVersionsByVersionId_SameTimestampDifferentSuffix(t *testing.T) {
 	}
 }
 
+func TestCompareVersionIdsMixedFormats(t *testing.T) {
+	// Old format: raw nanosecond timestamp (below threshold ~0x17...).
+	// New format: inverted timestamp (above threshold ~0x68...).
+	oldTs := time.Date(2023, 6, 15, 12, 0, 0, 0, time.UTC)
+	newTs := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	oldFormatId := fmt.Sprintf("%016x", oldTs.UnixNano()) + "abcdef0123456789"
+	newFormatId := makeVersionId(newTs) // uses inverted timestamp
+
+	// newTs is more recent, so newFormatId should sort as "newer".
+	cmp := s3lifecycle.CompareVersionIds(newFormatId, oldFormatId)
+	if cmp >= 0 {
+		t.Errorf("expected new-format ID (2026) to be newer than old-format ID (2023), got cmp=%d", cmp)
+	}
+
+	// Reverse comparison.
+	cmp2 := s3lifecycle.CompareVersionIds(oldFormatId, newFormatId)
+	if cmp2 <= 0 {
+		t.Errorf("expected old-format ID (2023) to be older than new-format ID (2026), got cmp=%d", cmp2)
+	}
+
+	// Sort a mixed slice: should be newest-first.
+	entries := []*filer_pb.Entry{
+		{Name: "v_" + oldFormatId},
+		{Name: "v_" + newFormatId},
+	}
+	sortVersionsByVersionId(entries)
+
+	if strings.TrimPrefix(entries[0].Name, "v_") != newFormatId {
+		t.Errorf("expected new-format (newer) entry first after sort")
+	}
+}
+
 func TestVersionsDirectoryNaming(t *testing.T) {
 	if s3_constants.VersionsFolder != ".versions" {
 		t.Fatalf("unexpected VersionsFolder constant: %q", s3_constants.VersionsFolder)
