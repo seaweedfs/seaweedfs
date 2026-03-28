@@ -19,17 +19,21 @@ func TestOutcome_ZeroGap(t *testing.T) {
 	}
 }
 
-func TestOutcome_ZeroGap_ReplicaAtCommitted(t *testing.T) {
-	// Replica has exactly the committed prefix — zero gap.
-	// Note: replica may have uncommitted tail beyond CommittedLSN;
-	// that is handled by truncation, not by recovery classification.
+func TestOutcome_ReplicaAhead_NotZeroGap(t *testing.T) {
+	// Replica FlushedLSN > CommittedLSN — has divergent/uncommitted tail.
+	// Must NOT be classified as zero-gap (would skip truncation).
+	// Classified as CatchUp because the committed prefix is present and
+	// the "ahead" tail needs explicit handling before InSync.
 	o := ClassifyRecoveryOutcome(HandshakeResult{
-		ReplicaFlushedLSN: 100,
+		ReplicaFlushedLSN: 105,
 		CommittedLSN:      100,
 		RetentionStartLSN: 50,
 	})
-	if o != OutcomeZeroGap {
-		t.Fatalf("got %s, want zero_gap", o)
+	if o == OutcomeZeroGap {
+		t.Fatal("replica ahead of committed must NOT be zero_gap")
+	}
+	if o != OutcomeCatchUp {
+		t.Fatalf("got %s, want catchup", o)
 	}
 }
 

@@ -158,6 +158,10 @@ func (s *Sender) CompleteSessionByID(sessionID uint64) bool {
 		return false
 	}
 	sess := s.session
+	// Truncation gate: if truncation was required, it must be recorded.
+	if sess.TruncateRequired && !sess.TruncateRecorded {
+		return false
+	}
 	switch sess.Phase {
 	case PhaseCatchUp:
 		if !sess.Converged() {
@@ -255,9 +259,37 @@ func (s *Sender) RecordHandshakeWithOutcome(sessionID uint64, result HandshakeRe
 	case OutcomeZeroGap:
 		s.session.SetRange(result.ReplicaFlushedLSN, result.ReplicaFlushedLSN)
 	case OutcomeCatchUp:
-		s.session.SetRange(result.ReplicaFlushedLSN, result.CommittedLSN)
+		if result.ReplicaFlushedLSN > result.CommittedLSN {
+			// Replica ahead of committed — divergent tail needs truncation.
+			s.session.TruncateRequired = true
+			s.session.TruncateToLSN = result.CommittedLSN
+			// Catch-up range is zero after truncation (already has committed prefix).
+			s.session.SetRange(result.CommittedLSN, result.CommittedLSN)
+		} else {
+			s.session.SetRange(result.ReplicaFlushedLSN, result.CommittedLSN)
+		}
 	}
 	return outcome, nil
+}
+
+// RecordTruncation confirms that the replica's divergent tail has been truncated.
+// Must be called before completion when session.TruncateRequired is true.
+// Rejects: wrong sessionID, truncation not required, already recorded.
+func (s *Sender) RecordTruncation(sessionID uint64, truncatedToLSN uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if !s.session.TruncateRequired {
+		return fmt.Errorf("truncation not required for this session")
+	}
+	if truncatedToLSN != s.session.TruncateToLSN {
+		return fmt.Errorf("truncation LSN mismatch: expected %d, got %d",
+			s.session.TruncateToLSN, truncatedToLSN)
+	}
+	s.session.TruncateRecorded = true
+	return nil
 }
 
 // BeginCatchUp transitions the session from handshake to catch-up phase.

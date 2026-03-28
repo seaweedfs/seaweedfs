@@ -58,6 +58,11 @@ type RecoverySession struct {
 	StartLSN    uint64 // gap start (exclusive)
 	TargetLSN   uint64 // gap end (inclusive)
 	RecoveredTo uint64 // highest LSN recovered so far
+
+	// Truncation tracking: set when replica has divergent tail beyond committed.
+	TruncateRequired bool   // true if replica FlushedLSN > CommittedLSN at handshake
+	TruncateToLSN    uint64 // truncate entries beyond this LSN
+	TruncateRecorded bool   // true after truncation is confirmed
 }
 
 func newRecoverySession(replicaID string, epoch uint64, kind SessionKind) *RecoverySession {

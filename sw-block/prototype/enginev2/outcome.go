@@ -20,16 +20,21 @@ const (
 // ClassifyRecoveryOutcome determines the recovery path from handshake data.
 //
 // Uses CommittedLSN (not WAL head) as the target boundary. This is the
-// lineage-safe recovery point — only acknowledged data counts. A replica
-// with FlushedLSN > CommittedLSN has divergent/uncommitted tail that must
-// NOT be treated as "already in sync."
+// lineage-safe recovery point — only acknowledged data counts.
 //
-// Decision matrix (matches CP13-5 gap analysis):
-//   - ReplicaFlushedLSN >= CommittedLSN        → zero gap, has full committed prefix
+// Zero-gap requires exact equality (ReplicaFlushedLSN == CommittedLSN).
+// A replica with FlushedLSN > CommittedLSN has divergent/uncommitted tail
+// that requires truncation before InSync — this prototype does not model
+// truncation, so that case is classified as CatchUp (the catch-up path
+// will set the correct range and the completion check ensures convergence
+// to CommittedLSN exactly).
+//
+// Decision matrix:
+//   - ReplicaFlushedLSN == CommittedLSN        → zero gap, exact match
 //   - ReplicaFlushedLSN+1 >= RetentionStartLSN → recoverable via WAL catch-up
 //   - otherwise                                 → gap too large, needs rebuild
 func ClassifyRecoveryOutcome(result HandshakeResult) RecoveryOutcome {
-	if result.ReplicaFlushedLSN >= result.CommittedLSN {
+	if result.ReplicaFlushedLSN == result.CommittedLSN {
 		return OutcomeZeroGap
 	}
 	if result.RetentionStartLSN == 0 || result.ReplicaFlushedLSN+1 >= result.RetentionStartLSN {
