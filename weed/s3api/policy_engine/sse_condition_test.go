@@ -1,7 +1,7 @@
 package policy_engine
 
 import (
-	"strings"
+	"net/http"
 	"testing"
 )
 
@@ -38,6 +38,25 @@ const requiresAES256Policy = `{
       "Condition": {
         "StringEquals": {
           "s3:x-amz-server-side-encryption": "AES256"
+        }
+      }
+    }
+  ]
+}`
+
+// requiresKMSPolicy allows PutObject only when aws:kms encryption is requested.
+const requiresKMSPolicy = `{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowKMSOnly",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::test-bucket/*",
+      "Condition": {
+        "StringEquals": {
+          "s3:x-amz-server-side-encryption": "aws:kms"
         }
       }
     }
@@ -132,27 +151,36 @@ func TestSSENullConditionPresent(t *testing.T) {
 	}
 }
 
-// TestSSECaseInsensitiveNormalization – "aes256" lowercase should normalise to "AES256".
-// Use the normalisation function directly since ExtractConditionValuesFromRequest does it.
-func TestSSECaseInsensitiveNormalization(t *testing.T) {
+// TestSSECaseInsensitiveNormalizationAES256 drives the AES256 normalisation
+// through EvaluatePolicyForRequest so that a regression in the production
+// code path would be caught. The request carries the header in lowercase
+// ("aes256"); after normalisation it must match the policy's "AES256" value.
+func TestSSECaseInsensitiveNormalizationAES256(t *testing.T) {
 	engine := newEngineWithPolicy(t, requiresAES256Policy)
 
-	// Simulate what ExtractConditionValuesFromRequest does: normalise the value
-	raw := "aes256"
-	var normalized string
-	switch strings.ToUpper(raw) {
-	case "AES256":
-		normalized = "AES256"
-	default:
-		normalized = raw
-	}
+	req, _ := http.NewRequest(http.MethodPut, "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	req.Header.Set("X-Amz-Server-Side-Encryption", "aes256") // lowercase
 
-	conditions := map[string][]string{
-		"s3:x-amz-server-side-encryption": {normalized},
-	}
-	result := engine.EvaluatePolicy("test-bucket", evalArgs("s3:PutObject", conditions))
+	result := engine.EvaluatePolicyForRequest("test-bucket", "object.txt", "PutObject", "*", req)
 	if result != PolicyResultAllow {
-		t.Errorf("expected Allow after case normalisation, got %v", result)
+		t.Errorf("expected Allow after AES256 case normalisation, got %v", result)
+	}
+}
+
+// TestSSECaseInsensitiveNormalizationKMS drives the aws:kms branch of the
+// normalisation through the production code path. The request carries
+// "AWS:KMS" (mixed case); after normalisation it must match "aws:kms".
+func TestSSECaseInsensitiveNormalizationKMS(t *testing.T) {
+	engine := newEngineWithPolicy(t, requiresKMSPolicy)
+
+	req, _ := http.NewRequest(http.MethodPut, "/", nil)
+	req.RemoteAddr = "1.2.3.4:1234"
+	req.Header.Set("X-Amz-Server-Side-Encryption", "AWS:KMS") // mixed case
+
+	result := engine.EvaluatePolicyForRequest("test-bucket", "object.txt", "PutObject", "*", req)
+	if result != PolicyResultAllow {
+		t.Errorf("expected Allow after aws:kms case normalisation, got %v", result)
 	}
 }
 

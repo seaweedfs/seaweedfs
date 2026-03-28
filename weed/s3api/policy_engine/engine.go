@@ -471,12 +471,17 @@ func isMultipartContinuationAction(action string) bool {
 	return action == "s3:UploadPart" || action == "s3:UploadPartCopy"
 }
 
-// injectSSEForMultipart returns a condition context that has the
-// "s3:x-amz-server-side-encryption" key set to a synthetic value when it is
-// absent. This makes Null("true") evaluate to false, preventing Deny
-// statements from blocking UploadPart/UploadPartCopy, which inherit SSE from
-// the initial CreateMultipartUpload request and therefore do not re-send the
-// SSE header.
+// injectSSEForMultipart returns a condition context with
+// "s3:x-amz-server-side-encryption" set to "AES256" when the key is absent.
+// UploadPart and UploadPartCopy inherit their SSE algorithm from the original
+// CreateMultipartUpload request and therefore do not re-send the SSE header.
+// Injecting "AES256" makes Null("true") evaluate to false (SSE is treated as
+// present), preventing those actions from being incorrectly denied.
+//
+// TODO: look up the actual SSE algorithm stored with the upload ID and inject
+// that value instead. Until then, StringEquals("aws:kms") conditions on
+// s3:x-amz-server-side-encryption will not match KMS-encrypted multipart
+// uploads because "AES256" is used as the stand-in value.
 func injectSSEForMultipart(conditions map[string][]string) map[string][]string {
 	const sseKey = "s3:x-amz-server-side-encryption"
 	if _, exists := conditions[sseKey]; exists {
@@ -486,7 +491,7 @@ func injectSSEForMultipart(conditions map[string][]string) map[string][]string {
 	for k, v := range conditions {
 		modified[k] = v
 	}
-	modified[sseKey] = []string{"inherited"}
+	modified[sseKey] = []string{"AES256"}
 	return modified
 }
 
