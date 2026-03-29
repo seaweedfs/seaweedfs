@@ -1,3 +1,5 @@
+ARG RUST_BASE_IMAGE=rust:1-alpine
+
 FROM golang:1.25-alpine AS builder
 RUN apk add git g++ fuse
 RUN mkdir -p /go/src/github.com/seaweedfs/
@@ -17,11 +19,12 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
 # Rust volume server builder (amd64/arm64 only)
-FROM rust:1-alpine as rust_builder
+FROM ${RUST_BASE_IMAGE} as rust_builder
 ARG TARGETARCH
 RUN apk add musl-dev protobuf-dev git
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
-COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/proto /build/proto
+# seaweed-volume/build.rs imports filer.proto from ../weed/pb.
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed/pb /build/weed/pb
 WORKDIR /build/seaweed-volume
 ARG TAGS
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
