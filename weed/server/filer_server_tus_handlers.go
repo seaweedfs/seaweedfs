@@ -321,6 +321,11 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		return 0, fmt.Errorf("detect storage option: %w", err)
 	}
 
+	// When DiskType is empty, use filer's -disk
+	if so.DiskType == "" {
+		so.DiskType = fs.option.DiskType
+	}
+
 	// Read first bytes for MIME type detection
 	sniffSize := int64(512)
 	if contentLength < sniffSize {
