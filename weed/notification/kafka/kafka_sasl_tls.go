@@ -57,6 +57,7 @@ func ConfigureSASLTLS(config *sarama.Config, st SASLTLSConfig) error {
 		}
 
 		tlsConfig := &tls.Config{
+			MinVersion:         tls.VersionTLS12,
 			InsecureSkipVerify: st.TLSInsecureSkipVerify,
 		}
 
