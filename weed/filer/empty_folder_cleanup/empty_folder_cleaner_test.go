@@ -742,84 +742,69 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 	}
 }
 
-func TestEmptyFolderCleaner_executeCleanup_skipsExplicitDirectoryMarker(t *testing.T) {
-	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
-
-	var deleted []string
-	mock := &mockFilerOps{
-		countFn: func(_ util.FullPath) (int, error) {
-			return 0, nil // folder is empty
+func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
+	testCases := []struct {
+		name           string
+		isDirKeyObj    bool
+		expectDeletion bool
+	}{
+		{
+			name:           "skips explicit directory marker",
+			isDirKeyObj:    true,
+			expectDeletion: false,
 		},
-		deleteFn: func(path util.FullPath) error {
-			deleted = append(deleted, string(path))
-			return nil
-		},
-		isDirKeyObjFn: func(path util.FullPath) (bool, error) {
-			// This folder was explicitly created (has MIME type)
-			return true, nil
-		},
-	}
-
-	cleaner := &EmptyFolderCleaner{
-		filer:          mock,
-		lockRing:       lockRing,
-		host:           "filer1:8888",
-		bucketPath:     "/buckets",
-		enabled:        true,
-		folderCounts:   make(map[string]*folderState),
-		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
-		maxCountCheck:  1000,
-		cacheExpiry:    time.Minute,
-		processorSleep: time.Second,
-		stopCh:         make(chan struct{}),
-	}
-
-	folder := "/buckets/test/folder"
-	cleaner.executeCleanup(folder, "triggered_item")
-
-	if len(deleted) != 0 {
-		t.Fatalf("expected explicit directory marker %s to be preserved, got deletions %v", folder, deleted)
-	}
-}
-
-func TestEmptyFolderCleaner_executeCleanup_deletesImplicitEmptyFolder(t *testing.T) {
-	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
-
-	var deleted []string
-	mock := &mockFilerOps{
-		countFn: func(_ util.FullPath) (int, error) {
-			return 0, nil // folder is empty
-		},
-		deleteFn: func(path util.FullPath) error {
-			deleted = append(deleted, string(path))
-			return nil
-		},
-		isDirKeyObjFn: func(path util.FullPath) (bool, error) {
-			// This is an implicit directory (no MIME type)
-			return false, nil
+		{
+			name:           "deletes implicit empty folder",
+			isDirKeyObj:    false,
+			expectDeletion: true,
 		},
 	}
 
-	cleaner := &EmptyFolderCleaner{
-		filer:          mock,
-		lockRing:       lockRing,
-		host:           "filer1:8888",
-		bucketPath:     "/buckets",
-		enabled:        true,
-		folderCounts:   make(map[string]*folderState),
-		cleanupQueue:   NewCleanupQueue(1000, time.Minute),
-		maxCountCheck:  1000,
-		cacheExpiry:    time.Minute,
-		processorSleep: time.Second,
-		stopCh:         make(chan struct{}),
-	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			lockRing := lock_manager.NewLockRing(5 * time.Second)
+			lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
 
-	folder := "/buckets/test/folder"
-	cleaner.executeCleanup(folder, "triggered_item")
+			var deleted []string
+			mock := &mockFilerOps{
+				countFn: func(_ util.FullPath) (int, error) {
+					return 0, nil
+				},
+				deleteFn: func(path util.FullPath) error {
+					deleted = append(deleted, string(path))
+					return nil
+				},
+				isDirKeyObjFn: func(path util.FullPath) (bool, error) {
+					return tc.isDirKeyObj, nil
+				},
+			}
 
-	if len(deleted) != 1 || deleted[0] != folder {
-		t.Fatalf("expected implicit empty folder %s to be deleted, got deletions %v", folder, deleted)
+			cleaner := &EmptyFolderCleaner{
+				filer:          mock,
+				lockRing:       lockRing,
+				host:           "filer1:8888",
+				bucketPath:     "/buckets",
+				enabled:        true,
+				folderCounts:   make(map[string]*folderState),
+				cleanupQueue:   NewCleanupQueue(1000, time.Minute),
+				maxCountCheck:  1000,
+				cacheExpiry:    time.Minute,
+				processorSleep: time.Second,
+				stopCh:         make(chan struct{}),
+			}
+
+			folder := "/buckets/test/folder"
+			cleaner.executeCleanup(folder, "triggered_item")
+
+			if tc.expectDeletion {
+				if len(deleted) != 1 || deleted[0] != folder {
+					t.Fatalf("expected implicit empty folder %s to be deleted, got deletions %v", folder, deleted)
+				}
+			} else {
+				if len(deleted) != 0 {
+					t.Fatalf("expected explicit directory marker %s to be preserved, got deletions %v", folder, deleted)
+				}
+			}
+		})
 	}
 }
