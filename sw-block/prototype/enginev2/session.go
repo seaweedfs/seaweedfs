@@ -73,13 +73,17 @@ type RecoverySession struct {
 }
 
 func newRecoverySession(replicaID string, epoch uint64, kind SessionKind) *RecoverySession {
-	return &RecoverySession{
+	rs := &RecoverySession{
 		ID:        sessionIDCounter.Add(1),
 		ReplicaID: replicaID,
 		Epoch:     epoch,
 		Kind:      kind,
 		Phase:     PhaseInit,
 	}
+	if kind == SessionRebuild {
+		rs.Rebuild = NewRebuildState()
+	}
+	return rs
 }
 
 // Active returns true if the session has not been completed or invalidated.

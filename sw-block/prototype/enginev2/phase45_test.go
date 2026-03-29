@@ -98,7 +98,7 @@ func TestSender_Budget_ProgressStall_Escalates(t *testing.T) {
 	s.RecordHandshake(sess.ID, 0, 100)
 	s.BeginCatchUp(sess.ID, 10)
 
-	s.RecordCatchUpProgressAt(sess.ID, 20, 12) // progress at tick 12
+	s.RecordCatchUpProgress(sess.ID, 20, 12) // progress at tick 12
 
 	// Stalled: no progress for 6 ticks (12→18 > deadline 5).
 	v, _ := s.CheckBudget(sess.ID, 18)
@@ -237,6 +237,116 @@ func TestRebuild_TransferRegression_Rejected(t *testing.T) {
 	}
 }
 
+// --- Target-frozen enforcement ---
+
+func TestSender_TargetFrozen_RejectsProgressBeyond(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionCatchUp)
+	sess.Budget = &CatchUpBudget{} // budget present = target freezes
+
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 50, 100) // target = 100
+	s.BeginCatchUp(sess.ID)
+
+	// Budget.TargetLSNAtStart should be frozen to 100.
+	if sess.Budget.TargetLSNAtStart != 100 {
+		t.Fatalf("frozen target=%d, want 100", sess.Budget.TargetLSNAtStart)
+	}
+
+	// Progress within target works.
+	if err := s.RecordCatchUpProgress(sess.ID, 80); err != nil {
+		t.Fatalf("progress to 80: %v", err)
+	}
+
+	// Progress AT target works.
+	if err := s.RecordCatchUpProgress(sess.ID, 100); err != nil {
+		t.Fatalf("progress to 100: %v", err)
+	}
+
+	// Progress BEYOND frozen target — rejected.
+	if err := s.RecordCatchUpProgress(sess.ID, 101); err == nil {
+		t.Fatal("progress beyond frozen target should be rejected")
+	}
+}
+
+func TestSender_NoBudget_TargetNotFrozen(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionCatchUp)
+	// No budget = no target freeze.
+
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 50, 100)
+	s.BeginCatchUp(sess.ID)
+
+	// Without budget, no frozen target. Progress beyond 100 is allowed.
+	s.RecordCatchUpProgress(sess.ID, 100)
+	// Session target can be manually updated if needed (no freeze enforced).
+}
+
+// --- Sender-level rebuild test ---
+
+func TestSender_RebuildViaRebuildAPIs(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionRebuild)
+
+	if sess.Rebuild == nil {
+		t.Fatal("rebuild session should auto-initialize RebuildState")
+	}
+
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 0, 100)
+
+	// Select source via sender.
+	if err := s.SelectRebuildSource(sess.ID, 40, true, 100); err != nil {
+		t.Fatalf("select source: %v", err)
+	}
+	if sess.Rebuild.Source != RebuildSnapshotTail {
+		t.Fatalf("source=%s", sess.Rebuild.Source)
+	}
+
+	// Transfer via sender.
+	s.BeginRebuildTransfer(sess.ID)
+	s.RecordRebuildTransferProgress(sess.ID, 40)
+
+	// Tail replay via sender.
+	s.BeginRebuildTailReplay(sess.ID)
+	s.RecordRebuildTailProgress(sess.ID, 100)
+
+	// Complete via sender.
+	if err := s.CompleteRebuild(sess.ID); err != nil {
+		t.Fatalf("complete rebuild: %v", err)
+	}
+	if s.State != StateInSync {
+		t.Fatalf("state=%s, want in_sync", s.State)
+	}
+	if s.Session() != nil {
+		t.Fatal("session should be nil after rebuild completion")
+	}
+}
+
+func TestSender_RebuildAPIs_RejectNonRebuild(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionCatchUp) // NOT rebuild
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 0, 100)
+
+	if err := s.SelectRebuildSource(sess.ID, 40, true, 100); err == nil {
+		t.Fatal("rebuild API should reject non-rebuild session")
+	}
+}
+
+func TestSender_RebuildAPIs_RejectStaleID(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionRebuild)
+	oldID := sess.ID
+	s.UpdateEpoch(2)
+	s.AttachSession(2, SessionRebuild)
+
+	if err := s.SelectRebuildSource(oldID, 40, true, 100); err == nil {
+		t.Fatal("stale sessionID should be rejected by rebuild APIs")
+	}
+}
+
 // --- E2E: Bounded catch-up → budget exceeded → rebuild ---
 
 func TestE2E_BoundedCatchUp_EscalatesToRebuild(t *testing.T) {
@@ -293,11 +403,24 @@ func TestE2E_BoundedCatchUp_EscalatesToRebuild(t *testing.T) {
 	})
 
 	rebuildSess := r1.Session()
+	if rebuildSess.Rebuild == nil {
+		t.Fatal("rebuild session should have RebuildState initialized")
+	}
+
+	// Drive rebuild through the sender-owned rebuild path.
 	r1.BeginConnect(rebuildSess.ID)
 	r1.RecordHandshake(rebuildSess.ID, 0, 100)
-	r1.BeginCatchUp(rebuildSess.ID)
-	r1.RecordCatchUpProgress(rebuildSess.ID, 100)
-	r1.CompleteSessionByID(rebuildSess.ID)
+
+	// Select snapshot+tail source.
+	r1.SelectRebuildSource(rebuildSess.ID, 30, true, 100)
+	r1.BeginRebuildTransfer(rebuildSess.ID)
+	r1.RecordRebuildTransferProgress(rebuildSess.ID, 30)
+	r1.BeginRebuildTailReplay(rebuildSess.ID)
+	r1.RecordRebuildTailProgress(rebuildSess.ID, 100)
+
+	if err := r1.CompleteRebuild(rebuildSess.ID); err != nil {
+		t.Fatalf("rebuild completion: %v", err)
+	}
 
 	if r1.State != StateInSync {
 		t.Fatalf("after rebuild: state=%s", r1.State)

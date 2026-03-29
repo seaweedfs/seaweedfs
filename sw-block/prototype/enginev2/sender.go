@@ -293,8 +293,9 @@ func (s *Sender) RecordTruncation(sessionID uint64, truncatedToLSN uint64) error
 }
 
 // BeginCatchUp transitions the session from handshake to catch-up phase.
+// Freezes TargetLSNAtStart from the session's TargetLSN — catch-up will not
+// chase a moving head beyond this boundary.
 // Mutates: session.Phase → PhaseCatchUp. Sender.State → StateCatchingUp.
-// Initializes budget tracker with startTick (pass 0 if no budget enforcement).
 // Rejects: wrong sessionID, wrong phase.
 func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 	s.mu.Lock()
@@ -306,6 +307,10 @@ func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 		return fmt.Errorf("cannot begin catch-up: session phase=%s", s.session.Phase)
 	}
 	s.State = StateCatchingUp
+	// Freeze the target: catch-up will not chase beyond this.
+	if s.session.Budget != nil {
+		s.session.Budget.TargetLSNAtStart = s.session.TargetLSN
+	}
 	if len(startTick) > 0 {
 		s.session.Tracker.StartTick = startTick[0]
 		s.session.Tracker.LastProgressTick = startTick[0]
@@ -314,9 +319,12 @@ func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 }
 
 // RecordCatchUpProgress records catch-up progress (highest LSN recovered).
-// Mutates: session.RecoveredTo (monotonic only), session.Tracker.EntriesReplayed.
-// Rejects: wrong sessionID, wrong phase, progress regression, invalidated session.
-func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64) error {
+// Uses LSN delta (recoveredTo - previous RecoveredTo) for entry counting,
+// not per-call increment. This ensures MaxEntries budget is accurate even
+// with batched reporting.
+// Rejects: wrong sessionID, wrong phase, progress regression, progress
+// beyond frozen TargetLSNAtStart (if budget is set).
+func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64, tick ...uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkSessionAuthority(sessionID); err != nil {
@@ -328,28 +336,19 @@ func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64) err
 	if recoveredTo <= s.session.RecoveredTo {
 		return fmt.Errorf("progress regression: current=%d proposed=%d", s.session.RecoveredTo, recoveredTo)
 	}
+	// Enforce frozen target: reject progress beyond the contract boundary.
+	if s.session.Budget != nil && s.session.Budget.TargetLSNAtStart > 0 &&
+		recoveredTo > s.session.Budget.TargetLSNAtStart {
+		return fmt.Errorf("progress %d exceeds frozen target %d",
+			recoveredTo, s.session.Budget.TargetLSNAtStart)
+	}
+	// Entry counting by LSN delta, not call count.
+	delta := recoveredTo - s.session.RecoveredTo
+	s.session.Tracker.EntriesReplayed += delta
 	s.session.UpdateProgress(recoveredTo)
-	s.session.Tracker.EntriesReplayed++
-	return nil
-}
-
-// RecordCatchUpProgressAt is like RecordCatchUpProgress but also records the tick
-// for budget stall detection.
-func (s *Sender) RecordCatchUpProgressAt(sessionID uint64, recoveredTo uint64, tick uint64) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.checkSessionAuthority(sessionID); err != nil {
-		return err
+	if len(tick) > 0 {
+		s.session.Tracker.LastProgressTick = tick[0]
 	}
-	if s.session.Phase != PhaseCatchUp {
-		return fmt.Errorf("cannot record progress: session phase=%s, want catchup", s.session.Phase)
-	}
-	if recoveredTo <= s.session.RecoveredTo {
-		return fmt.Errorf("progress regression: current=%d proposed=%d", s.session.RecoveredTo, recoveredTo)
-	}
-	s.session.UpdateProgress(recoveredTo)
-	s.session.Tracker.EntriesReplayed++
-	s.session.Tracker.LastProgressTick = tick
 	return nil
 }
 
@@ -373,6 +372,97 @@ func (s *Sender) CheckBudget(sessionID uint64, currentTick uint64) (BudgetViolat
 		s.State = StateNeedsRebuild
 	}
 	return violation, nil
+}
+
+// === Rebuild execution APIs (sender-owned) ===
+
+// SelectRebuildSource chooses the rebuild source and initializes the rebuild FSM.
+// Requires: active rebuild session, sessionID match, session in PhaseHandshake.
+func (s *Sender) SelectRebuildSource(sessionID uint64, snapshotLSN uint64, snapshotValid bool, committedLSN uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Kind != SessionRebuild {
+		return fmt.Errorf("not a rebuild session (kind=%s)", s.session.Kind)
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("rebuild state not initialized")
+	}
+	return s.session.Rebuild.SelectSource(snapshotLSN, snapshotValid, committedLSN)
+}
+
+// BeginRebuildTransfer starts the base data transfer phase.
+func (s *Sender) BeginRebuildTransfer(sessionID uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("no rebuild state")
+	}
+	return s.session.Rebuild.BeginTransfer()
+}
+
+// RecordRebuildTransferProgress records base transfer progress.
+func (s *Sender) RecordRebuildTransferProgress(sessionID uint64, transferredTo uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("no rebuild state")
+	}
+	return s.session.Rebuild.RecordTransferProgress(transferredTo)
+}
+
+// BeginRebuildTailReplay starts WAL tail replay after base transfer (snapshot+tail only).
+func (s *Sender) BeginRebuildTailReplay(sessionID uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("no rebuild state")
+	}
+	return s.session.Rebuild.BeginTailReplay()
+}
+
+// RecordRebuildTailProgress records WAL tail replay progress.
+func (s *Sender) RecordRebuildTailProgress(sessionID uint64, replayedTo uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("no rebuild state")
+	}
+	return s.session.Rebuild.RecordTailReplayProgress(replayedTo)
+}
+
+// CompleteRebuild completes the rebuild session and transitions the sender
+// to InSync. Requires the rebuild FSM to be ReadyToComplete.
+func (s *Sender) CompleteRebuild(sessionID uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Rebuild == nil {
+		return fmt.Errorf("no rebuild state")
+	}
+	if err := s.session.Rebuild.Complete(); err != nil {
+		return err
+	}
+	s.session.complete()
+	s.session = nil
+	s.State = StateInSync
+	return nil
 }
 
 // checkSessionAuthority validates that the sender has an active session
