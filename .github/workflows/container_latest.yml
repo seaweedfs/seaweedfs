@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write
 
 jobs:
   setup:
@@ -149,9 +150,43 @@ jobs:
           # Remove Go build cache
           sudo rm -rf /tmp/go-build*
 
-  create-manifest:
+  trivy-scan:
     runs-on: ubuntu-latest
     needs: [setup, build]
+    strategy:
+      matrix:
+        variant: ${{ fromJSON(needs.setup.outputs.variants) }}
+    steps:
+      - name: Configure variant
+        id: config
+        run: |
+          if [ "${{ matrix.variant }}" == "large_disk" ]; then
+            echo "tag_suffix=_large_disk" >> $GITHUB_OUTPUT
+          else
+            echo "tag_suffix=" >> $GITHUB_OUTPUT
+          fi
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ghcr.io/chrislusf/seaweedfs:${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}-amd64
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+      - name: Upload Trivy scan results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  create-manifest:
+    runs-on: ubuntu-latest
+    needs: [setup, build, trivy-scan]
     if: github.event_name != 'pull_request'
     strategy:
       matrix:
