@@ -27,6 +27,7 @@ type FilerOperations interface {
 	CountDirectoryEntries(ctx context.Context, dirPath util.FullPath, limit int) (count int, err error)
 	DeleteEntryMetaAndData(ctx context.Context, p util.FullPath, isRecursive, ignoreRecursiveError, shouldDeleteChunks, isFromOtherCluster bool, signatures []int32, ifNotModifiedAfter int64) error
 	GetEntryAttributes(ctx context.Context, p util.FullPath) (attributes map[string][]byte, err error)
+	IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error)
 }
 
 // folderState tracks the state of a folder for empty folder cleanup
@@ -309,6 +310,16 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 
 	if count > 0 {
 		glog.V(4).Infof("EmptyFolderCleaner: folder %s (triggered by %s) has %d items, not empty", folder, triggeredBy, count)
+		return
+	}
+
+	// Skip explicitly created directory markers (e.g., PUT /bucket/folder/)
+	// These have a MIME type set and should be preserved even when empty
+	if isKeyObj, err := efc.filer.IsDirectoryKeyObject(ctx, util.FullPath(folder)); err != nil {
+		glog.V(2).Infof("EmptyFolderCleaner: error checking directory key object %s: %v", folder, err)
+		return
+	} else if isKeyObj {
+		glog.V(3).Infof("EmptyFolderCleaner: skipping %s (triggered by %s), explicit directory marker", folder, triggeredBy)
 		return
 	}
 
