@@ -37,9 +37,5 @@ RUN mkdir -p /data/filerldb2 && \
 VOLUME /data
 WORKDIR /data
 
-# Run as non-root by default (satisfies security scanners).
-# Use `docker run --user root` if you need the entrypoint to fix
-# /data volume ownership before dropping privileges.
-USER seaweed
-
+# Entrypoint will handle permission fixes and user switching
 ENTRYPOINT ["/entrypoint.sh"]
