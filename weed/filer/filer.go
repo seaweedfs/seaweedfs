@@ -562,6 +562,9 @@ func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[st
 
 func (f *Filer) IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error) {
 	entry, err := f.FindEntry(ctx, p)
+	if errors.Is(err, filer_pb.ErrNotFound) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
 	}
