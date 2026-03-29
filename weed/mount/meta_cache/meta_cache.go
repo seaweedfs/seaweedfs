@@ -27,18 +27,19 @@ type MetaCache struct {
 	localStore   filer.VirtualFilerStore
 	leveldbStore *leveldb.LevelDBStore // direct reference for batch operations
 	sync.RWMutex
-	uidGidMapper      *UidGidMapper
-	markCachedFn      func(fullpath util.FullPath)
-	isCachedFn        func(fullpath util.FullPath) bool
-	invalidateFunc    func(fullpath util.FullPath, entry *filer_pb.Entry)
-	onDirectoryUpdate func(dir util.FullPath)
-	visitGroup        singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
-	applyCh           chan metadataApplyRequest
-	applyDone         chan struct{}
-	applyStateMu      sync.Mutex
-	applyClosed       bool
-	buildingDirs      map[util.FullPath]*directoryBuildState
-	dedupRing         dedupRingBuffer
+	uidGidMapper         *UidGidMapper
+	markCachedFn         func(fullpath util.FullPath)
+	isCachedFn           func(fullpath util.FullPath) bool
+	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
+	onDirectoryUpdate    func(dir util.FullPath)
+	visitGroup           singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	applyCh              chan metadataApplyRequest
+	applyDone            chan struct{}
+	applyStateMu         sync.Mutex
+	applyClosed          bool
+	buildingDirs         map[util.FullPath]*directoryBuildState
+	dedupRing            dedupRingBuffer
+	includeSystemEntries bool
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -84,17 +85,18 @@ type metadataApplyRequest struct {
 	done         chan error
 }
 
-func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
+func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
-		root:              root,
-		localStore:        virtualStore,
-		leveldbStore:      leveldbStore,
-		markCachedFn:      markCachedFn,
-		isCachedFn:        isCachedFn,
-		uidGidMapper:      uidGidMapper,
-		onDirectoryUpdate: onDirectoryUpdate,
+		root:                 root,
+		localStore:           virtualStore,
+		leveldbStore:         leveldbStore,
+		markCachedFn:         markCachedFn,
+		isCachedFn:           isCachedFn,
+		uidGidMapper:         uidGidMapper,
+		onDirectoryUpdate:    onDirectoryUpdate,
+		includeSystemEntries: includeSystemEntries,
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
@@ -177,6 +179,29 @@ func (mc *MetaCache) atomicUpdateEntryFromFilerLocked(ctx context.Context, oldPa
 			if err := mc.localStore.InsertEntry(ctx, newEntry); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func (mc *MetaCache) shouldHideEntry(fullpath util.FullPath) bool {
+	if mc.includeSystemEntries {
+		return false
+	}
+	dir, name := fullpath.DirAndName()
+	return IsHiddenSystemEntry(dir, name)
+}
+
+func (mc *MetaCache) purgeEntryLocked(ctx context.Context, fullpath util.FullPath, isDirectory bool) error {
+	if fullpath == "" {
+		return nil
+	}
+	if err := mc.localStore.DeleteEntry(ctx, fullpath); err != nil {
+		return err
+	}
+	if isDirectory {
+		if err := mc.localStore.DeleteFolderChildren(ctx, fullpath); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -520,7 +545,9 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 	}
 
 	var oldPath util.FullPath
+	var newPath util.FullPath
 	var newEntry *filer.Entry
+	hideNewPath := false
 	if message.OldEntry != nil {
 		oldPath = util.NewFullPath(resp.Directory, message.OldEntry.Name)
 	}
@@ -530,11 +557,20 @@ func (mc *MetaCache) applyMetadataResponseLocked(ctx context.Context, resp *file
 		if message.NewParentPath != "" {
 			dir = message.NewParentPath
 		}
-		newEntry = filer.FromPbEntry(dir, message.NewEntry)
+		newPath = util.NewFullPath(dir, message.NewEntry.Name)
+		hideNewPath = mc.shouldHideEntry(newPath)
+		if !hideNewPath {
+			newEntry = filer.FromPbEntry(dir, message.NewEntry)
+		}
 	}
 
 	mc.Lock()
 	err := mc.atomicUpdateEntryFromFilerLocked(ctx, oldPath, newEntry, allowUncachedInsert)
+	if err == nil && hideNewPath {
+		if purgeErr := mc.purgeEntryLocked(ctx, newPath, message.NewEntry.IsDirectory); purgeErr != nil {
+			err = purgeErr
+		}
+	}
 	// When a directory is deleted or moved, remove its cached descendants
 	// so stale children cannot be served from the local cache.
 	if err == nil && oldPath != "" && message.OldEntry != nil && message.OldEntry.IsDirectory {

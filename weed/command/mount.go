@@ -31,6 +31,7 @@ type MountOptions struct {
 	uidMap             *string
 	gidMap             *string
 	readOnly           *bool
+	includeSystemEntries *bool
 	debug              *bool
 	debugPort          *int
 	localSocket        *string
@@ -99,6 +100,7 @@ func init() {
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 	mountOptions.readOnly = cmdMount.Flag.Bool("readOnly", false, "read only")
+	mountOptions.includeSystemEntries = cmdMount.Flag.Bool("includeSystemEntries", false, "show filer system entries (e.g. /topics, /etc) in directory listings")
 	mountOptions.debug = cmdMount.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
