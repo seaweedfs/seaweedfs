@@ -338,6 +338,7 @@ func newCopyRangeTestWFSWithMetaCache(t *testing.T) *WFS {
 		filepath.Join(t.TempDir(), "meta"),
 		uidGidMapper,
 		root,
+		false,
 		func(path util.FullPath) {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		},

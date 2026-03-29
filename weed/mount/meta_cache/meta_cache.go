@@ -27,18 +27,18 @@ type MetaCache struct {
 	localStore   filer.VirtualFilerStore
 	leveldbStore *leveldb.LevelDBStore // direct reference for batch operations
 	sync.RWMutex
-	uidGidMapper      *UidGidMapper
-	markCachedFn      func(fullpath util.FullPath)
-	isCachedFn        func(fullpath util.FullPath) bool
-	invalidateFunc    func(fullpath util.FullPath, entry *filer_pb.Entry)
-	onDirectoryUpdate func(dir util.FullPath)
-	visitGroup        singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
-	applyCh           chan metadataApplyRequest
-	applyDone         chan struct{}
-	applyStateMu      sync.Mutex
-	applyClosed       bool
-	buildingDirs      map[util.FullPath]*directoryBuildState
-	dedupRing         dedupRingBuffer
+	uidGidMapper         *UidGidMapper
+	markCachedFn         func(fullpath util.FullPath)
+	isCachedFn           func(fullpath util.FullPath) bool
+	invalidateFunc       func(fullpath util.FullPath, entry *filer_pb.Entry)
+	onDirectoryUpdate    func(dir util.FullPath)
+	visitGroup           singleflight.Group // deduplicates concurrent EnsureVisited calls for the same path
+	applyCh              chan metadataApplyRequest
+	applyDone            chan struct{}
+	applyStateMu         sync.Mutex
+	applyClosed          bool
+	buildingDirs         map[util.FullPath]*directoryBuildState
+	dedupRing            dedupRingBuffer
 	includeSystemEntries bool
 }
 
@@ -85,17 +85,18 @@ type metadataApplyRequest struct {
 	done         chan error
 }
 
-func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath,
+func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPath, includeSystemEntries bool,
 	markCachedFn func(path util.FullPath), isCachedFn func(path util.FullPath) bool, invalidateFunc func(util.FullPath, *filer_pb.Entry), onDirectoryUpdate func(dir util.FullPath)) *MetaCache {
 	leveldbStore, virtualStore := openMetaStore(dbFolder)
 	mc := &MetaCache{
-		root:              root,
-		localStore:        virtualStore,
-		leveldbStore:      leveldbStore,
-		markCachedFn:      markCachedFn,
-		isCachedFn:        isCachedFn,
-		uidGidMapper:      uidGidMapper,
-		onDirectoryUpdate: onDirectoryUpdate,
+		root:                 root,
+		localStore:           virtualStore,
+		leveldbStore:         leveldbStore,
+		markCachedFn:         markCachedFn,
+		isCachedFn:           isCachedFn,
+		uidGidMapper:         uidGidMapper,
+		onDirectoryUpdate:    onDirectoryUpdate,
+		includeSystemEntries: includeSystemEntries,
 		invalidateFunc: func(fullpath util.FullPath, entry *filer_pb.Entry) {
 			invalidateFunc(fullpath, entry)
 		},
@@ -106,10 +107,6 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 	}
 	go mc.runApplyLoop()
 	return mc
-}
-
-func (mc *MetaCache) SetIncludeSystemEntries(include bool) {
-	mc.includeSystemEntries = include
 }
 
 func openMetaStore(dbFolder string) (*leveldb.LevelDBStore, filer.VirtualFilerStore) {

@@ -23,6 +23,7 @@ func TestHandleRenameResponseLeavesUncachedTargetOutOfCache(t *testing.T) {
 		filepath.Join(t.TempDir(), "meta"),
 		uidGidMapper,
 		root,
+		false,
 		func(path util.FullPath) {
 			inodeToPath.MarkChildrenCached(path)
 		},

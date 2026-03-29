@@ -204,6 +204,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
 		util.FullPath(option.FilerMountRootPath),
+		option.ShowSystemEntries,
 		func(path util.FullPath) {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {
@@ -234,7 +235,6 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
 		})
-	wfs.metaCache.SetIncludeSystemEntries(option.ShowSystemEntries)
 	grace.OnInterrupt(func() {
 		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
 		// after server.Serve() would never execute.  Drain here first.

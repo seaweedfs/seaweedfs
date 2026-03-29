@@ -312,6 +312,7 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 		filepath.Join(t.TempDir(), "meta"),
 		mapper,
 		util.FullPath("/"),
+		false,
 		func(path util.FullPath) {
 			cachedMu.Lock()
 			defer cachedMu.Unlock()
