@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -106,6 +107,14 @@ func (r *Plugin) schedulerLoop() {
 
 // runLaneSchedulerIteration runs one scheduling pass for a single lane,
 // processing only the job types assigned to that lane.
+//
+// For lanes that require a lock (e.g. LaneDefault), all job types are
+// processed sequentially under one admin lock because their volume
+// management operations share global state.
+//
+// For lanes that do not require a lock (e.g. LaneIceberg, LaneLifecycle),
+// each job type runs independently in its own goroutine so they do not
+// block each other.
 func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 	r.expireStaleJobs(time.Now().UTC())
 
@@ -122,21 +131,23 @@ func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 		return false
 	}
 
-	r.setLaneLoopState(ls, "", "waiting_for_lock")
-	lockName := fmt.Sprintf("plugin scheduler:%s", ls.lane)
-	releaseLock, err := r.acquireAdminLock(lockName)
-	if err != nil {
-		glog.Warningf("Plugin scheduler [%s] failed to acquire lock: %v", ls.lane, err)
-		r.setLaneLoopState(ls, "", "idle")
-		return false
+	if LaneRequiresLock(ls.lane) {
+		return r.runLaneSchedulerIterationLocked(ls, jobTypes)
 	}
-	if releaseLock != nil {
-		defer releaseLock()
-	}
+	return r.runLaneSchedulerIterationConcurrent(ls, jobTypes)
+}
 
-	active := make(map[string]struct{}, len(jobTypes))
-	hadJobs := false
+// dueJobType pairs a job type with its resolved scheduling policy.
+type dueJobType struct {
+	jobType string
+	policy  schedulerPolicy
+}
 
+// collectDueJobTypes loads policies for all job types in the lane and
+// returns those whose detection interval has elapsed. It also returns
+// the full set of active job type names for later pruning.
+func (r *Plugin) collectDueJobTypes(ls *schedulerLaneState, jobTypes []string) (active map[string]struct{}, due []dueJobType) {
+	active = make(map[string]struct{}, len(jobTypes))
 	for _, jobType := range jobTypes {
 		active[jobType] = struct{}{}
 
@@ -156,9 +167,31 @@ func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
 			continue
 		}
+		due = append(due, dueJobType{jobType: jobType, policy: policy})
+	}
+	return active, due
+}
 
-		detected := r.runJobTypeIteration(jobType, policy)
-		if detected {
+// runLaneSchedulerIterationLocked processes job types sequentially under a
+// single admin lock. Used by the default lane where volume management
+// operations must be serialised.
+func (r *Plugin) runLaneSchedulerIterationLocked(ls *schedulerLaneState, jobTypes []string) bool {
+	r.setLaneLoopState(ls, "", "waiting_for_lock")
+	lockName := fmt.Sprintf("plugin scheduler:%s", ls.lane)
+	releaseLock, err := r.acquireAdminLock(lockName)
+	if err != nil {
+		glog.Warningf("Plugin scheduler [%s] failed to acquire lock: %v", ls.lane, err)
+		r.setLaneLoopState(ls, "", "idle")
+		return false
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+
+	active, due := r.collectDueJobTypes(ls, jobTypes)
+	hadJobs := false
+	for _, w := range due {
+		if r.runJobTypeIteration(w.jobType, w.policy) {
 			hadJobs = true
 		}
 	}
@@ -167,6 +200,33 @@ func (r *Plugin) runLaneSchedulerIteration(ls *schedulerLaneState) bool {
 	r.pruneDetectorLeases(active)
 	r.setLaneLoopState(ls, "", "idle")
 	return hadJobs
+}
+
+// runLaneSchedulerIterationConcurrent processes each job type in its own
+// goroutine so they run independently. Used by lanes (e.g. iceberg,
+// lifecycle) whose job types do not share global state.
+func (r *Plugin) runLaneSchedulerIterationConcurrent(ls *schedulerLaneState, jobTypes []string) bool {
+	active, due := r.collectDueJobTypes(ls, jobTypes)
+
+	r.setLaneLoopState(ls, "", "busy")
+
+	var hadJobs atomic.Bool
+	var wg sync.WaitGroup
+	for _, w := range due {
+		wg.Add(1)
+		go func(jobType string, policy schedulerPolicy) {
+			defer wg.Done()
+			if r.runJobTypeIteration(jobType, policy) {
+				hadJobs.Store(true)
+			}
+		}(w.jobType, w.policy)
+	}
+	wg.Wait()
+
+	r.pruneSchedulerState(active)
+	r.pruneDetectorLeases(active)
+	r.setLaneLoopState(ls, "", "idle")
+	return hadJobs.Load()
 }
 
 // runSchedulerIteration is kept for backward compatibility. It runs a
@@ -267,7 +327,7 @@ func (r *Plugin) wakeScheduler() {
 func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {
 	r.recordSchedulerRunStart(jobType)
 	r.clearWaitingJobQueue(jobType)
-	r.setSchedulerLoopState(jobType, "detecting")
+	r.setSchedulerLoopStateForJobType(jobType, "detecting")
 	r.markJobTypeInFlight(jobType)
 	defer r.finishDetection(jobType)
 
@@ -399,7 +459,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return detected
 	}
 
-	r.setSchedulerLoopState(jobType, "executing")
+	r.setSchedulerLoopStateForJobType(jobType, "executing")
 
 	// Scan proposals for the maximum estimated_runtime_seconds so the
 	// execution phase gets enough time for large jobs (e.g. vacuum on

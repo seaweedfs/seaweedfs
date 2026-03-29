@@ -27,6 +27,26 @@ func TestAllLanesHaveIdleSleep(t *testing.T) {
 	}
 }
 
+func TestLaneRequiresLock(t *testing.T) {
+	tests := []struct {
+		name string
+		lane SchedulerLane
+		want bool
+	}{
+		{"Default", LaneDefault, true},
+		{"Iceberg", LaneIceberg, false},
+		{"Lifecycle", LaneLifecycle, false},
+		{"Unknown", "unknown_lane", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LaneRequiresLock(tt.lane); got != tt.want {
+				t.Errorf("LaneRequiresLock(%q) = %v, want %v", tt.lane, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestKnownJobTypesInMap(t *testing.T) {
 	// Ensure the well-known job types are mapped. This catches drift
 	// if a handler's job type string changes without updating the map.
