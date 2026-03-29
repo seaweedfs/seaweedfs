@@ -7,6 +7,7 @@ import (
 	"math"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -173,6 +174,9 @@ func (h *Handler) executeLifecycleForBucket(
 				Message:         fmt.Sprintf("deleted %d/%d expired objects", result.objectsExpired, len(expired)),
 			})
 		}
+
+		// Clean up .versions directories left empty after version deletion.
+		cleanupEmptyVersionsDirectories(ctx, filerClient, expired)
 
 		remaining -= result.objectsExpired + result.errors
 		if remaining < 0 {
@@ -541,8 +545,22 @@ func listExpiredObjectsByRules(
 					return nil // skip .uploads at bucket root only
 				}
 				if strings.HasSuffix(entry.Name, s3_constants.VersionsFolder) {
-					// Process versioned object.
 					versionsDir := path.Join(dir, entry.Name)
+
+					// Evaluate Expiration rules against the latest version.
+					// In versioned buckets, data lives in .versions/ directories,
+					// so we must evaluate the latest version here — it is never
+					// seen as a regular file entry in the parent directory.
+					if obj, ok := latestVersionExpiredByRules(entry, versionsDir, bucketPath, rules, now, needTags); ok {
+						expired = append(expired, obj)
+						scanned++
+						if limit > 0 && int64(len(expired)) >= limit {
+							limitReached = true
+							return errLimitReached
+						}
+					}
+
+					// Process noncurrent versions.
 					vExpired, vScanned, vErr := processVersionsDirectory(ctx, client, versionsDir, bucketPath, rules, now, needTags, limit-int64(len(expired)))
 					if vErr != nil {
 						glog.V(1).Infof("s3_lifecycle: %v", vErr)
@@ -716,6 +734,119 @@ func processVersionsDirectory(
 	}
 
 	return expired, scanned, nil
+}
+
+// latestVersionExpiredByRules evaluates Expiration rules (Days/Date) against
+// the latest version in a .versions directory. In versioned buckets all data
+// lives inside .versions/ directories, so the latest version is never seen as
+// a regular file entry during the bucket walk. Without this check, Expiration
+// rules would never fire for versioned objects (issue #8757).
+//
+// The .versions directory entry caches metadata about the latest version in
+// its Extended attributes, so we can evaluate expiration without an extra
+// filer round-trip.
+func latestVersionExpiredByRules(
+	dirEntry *filer_pb.Entry,
+	versionsDir, bucketPath string,
+	rules []s3lifecycle.Rule,
+	now time.Time,
+	needTags bool,
+) (expiredObject, bool) {
+	if dirEntry.Extended == nil {
+		return expiredObject{}, false
+	}
+
+	// Skip if the latest version is a delete marker — those are handled
+	// by the ExpiredObjectDeleteMarker rule in cleanupDeleteMarkers.
+	if string(dirEntry.Extended[s3_constants.ExtLatestVersionIsDeleteMarker]) == "true" {
+		return expiredObject{}, false
+	}
+
+	latestFileName := string(dirEntry.Extended[s3_constants.ExtLatestVersionFileNameKey])
+	if latestFileName == "" {
+		return expiredObject{}, false
+	}
+
+	// Derive the object key: /buckets/b/path/key.versions → path/key
+	relDir := strings.TrimPrefix(versionsDir, bucketPath+"/")
+	objKey := strings.TrimSuffix(relDir, s3_constants.VersionsFolder)
+
+	objInfo := s3lifecycle.ObjectInfo{
+		Key:      objKey,
+		IsLatest: true,
+	}
+
+	// Populate ModTime from cached metadata.
+	if mtimeStr := string(dirEntry.Extended[s3_constants.ExtLatestVersionMtimeKey]); mtimeStr != "" {
+		if mtime, err := strconv.ParseInt(mtimeStr, 10, 64); err == nil {
+			objInfo.ModTime = time.Unix(mtime, 0)
+		}
+	}
+	if objInfo.ModTime.IsZero() && dirEntry.Attributes != nil && dirEntry.Attributes.Mtime > 0 {
+		objInfo.ModTime = time.Unix(dirEntry.Attributes.Mtime, 0)
+	}
+
+	// Populate Size from cached metadata.
+	if sizeStr := string(dirEntry.Extended[s3_constants.ExtLatestVersionSizeKey]); sizeStr != "" {
+		if size, err := strconv.ParseInt(sizeStr, 10, 64); err == nil {
+			objInfo.Size = size
+		}
+	}
+
+	if needTags {
+		objInfo.Tags = s3lifecycle.ExtractTags(dirEntry.Extended)
+	}
+
+	result := s3lifecycle.Evaluate(rules, objInfo, now)
+	if result.Action == s3lifecycle.ActionDeleteObject {
+		return expiredObject{dir: versionsDir, name: latestFileName}, true
+	}
+
+	return expiredObject{}, false
+}
+
+// cleanupEmptyVersionsDirectories removes .versions directories that became
+// empty after their contents were deleted. This is called after
+// deleteExpiredObjects to avoid leaving orphaned directories.
+func cleanupEmptyVersionsDirectories(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
+	deleted []expiredObject,
+) int {
+	// Collect unique .versions directories that had entries deleted.
+	versionsDirs := map[string]struct{}{}
+	for _, obj := range deleted {
+		if strings.HasSuffix(obj.dir, s3_constants.VersionsFolder) {
+			versionsDirs[obj.dir] = struct{}{}
+		}
+	}
+
+	cleaned := 0
+	for vDir := range versionsDirs {
+		if ctx.Err() != nil {
+			break
+		}
+		// Check if the directory is now empty.
+		empty := true
+		_ = filer_pb.SeaweedList(ctx, client, vDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+			empty = false
+			return errLimitReached // stop after first entry
+		}, "", false, 1)
+
+		if !empty {
+			continue
+		}
+
+		// Remove the empty .versions directory.
+		parentDir, dirName := path.Split(vDir)
+		parentDir = strings.TrimSuffix(parentDir, "/")
+		if err := filer_pb.DoRemove(ctx, client, parentDir, dirName, false, true, true, false, nil); err != nil {
+			glog.V(1).Infof("s3_lifecycle: failed to clean up empty versions dir %s: %v", vDir, err)
+		} else {
+			cleaned++
+		}
+	}
+	return cleaned
 }
 
 // sortVersionsByVersionId sorts version entries newest-first using full
