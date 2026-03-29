@@ -828,10 +828,15 @@ func cleanupEmptyVersionsDirectories(
 		}
 		// Check if the directory is now empty.
 		empty := true
-		_ = filer_pb.SeaweedList(ctx, client, vDir, "", func(entry *filer_pb.Entry, isLast bool) error {
+		listErr := filer_pb.SeaweedList(ctx, client, vDir, "", func(entry *filer_pb.Entry, isLast bool) error {
 			empty = false
 			return errLimitReached // stop after first entry
 		}, "", false, 1)
+
+		if listErr != nil && !errors.Is(listErr, errLimitReached) {
+			glog.V(1).Infof("s3_lifecycle: failed to check if versions dir %s is empty: %v", vDir, listErr)
+			continue
+		}
 
 		if !empty {
 			continue
