@@ -302,7 +302,7 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 	if input.Offset >= dh.entryStreamOffset {
 		if len(dh.entryStream) == 0 && input.Offset > dh.entryStreamOffset {
 			skipCount := uint32(input.Offset-dh.entryStreamOffset) + batchSize
-			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs)
+			entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, "", false, skipCount, dh.snapshotTsNs, wfs.option.ShowSystemEntries)
 			if err != nil {
 				glog.Errorf("list filer directory: %v", err)
 				return fuse.EIO
@@ -331,7 +331,7 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 			}
 		}
 
-		entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs)
+		entries, snapshotTs, err := loadDirectoryEntriesDirect(context.Background(), wfs, wfs.option.UidGidMapper, dirPath, lastEntryName, false, batchSize, dh.snapshotTsNs, wfs.option.ShowSystemEntries)
 		if err != nil {
 			glog.Errorf("list filer directory: %v", err)
 			return fuse.EIO
@@ -360,13 +360,13 @@ func (wfs *WFS) readDirectoryDirect(input *fuse.ReadIn, out *fuse.DirEntryList, 
 	return fuse.OK
 }
 
-func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32, snapshotTsNs int64) ([]*filer.Entry, int64, error) {
+func loadDirectoryEntriesDirect(ctx context.Context, client filer_pb.FilerClient, uidGidMapper *meta_cache.UidGidMapper, dirPath util.FullPath, startFileName string, includeStart bool, limit uint32, snapshotTsNs int64, showSystemEntries bool) ([]*filer.Entry, int64, error) {
 	entries := make([]*filer.Entry, 0, limit)
 	var actualSnapshotTsNs int64
 	err := client.WithFilerClient(false, func(sc filer_pb.SeaweedFilerClient) error {
 		var innerErr error
 		actualSnapshotTsNs, innerErr = filer_pb.DoSeaweedListWithSnapshot(ctx, sc, dirPath, "", func(entry *filer_pb.Entry, isLast bool) error {
-			if meta_cache.IsHiddenSystemEntry(string(dirPath), entry.Name) {
+			if !showSystemEntries && meta_cache.IsHiddenSystemEntry(string(dirPath), entry.Name) {
 				return nil
 			}
 			if uidGidMapper != nil && entry.Attributes != nil {

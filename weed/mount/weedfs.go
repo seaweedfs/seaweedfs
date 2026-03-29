@@ -65,6 +65,7 @@ type Option struct {
 	VolumeServerAccess string // how to access volume servers
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
+	ShowSystemEntries  bool
 
 	// Periodic metadata flush interval in seconds (0 to disable)
 	// This protects chunks from being purged by volume.fsck for long-running writes
@@ -233,6 +234,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				wfs.markDirectoryReadThrough(dirPath)
 			}
 		})
+	wfs.metaCache.SetIncludeSystemEntries(option.ShowSystemEntries)
 	grace.OnInterrupt(func() {
 		// grace calls os.Exit(0) after all hooks, so WaitForAsyncFlush
 		// after server.Serve() would never execute.  Drain here first.

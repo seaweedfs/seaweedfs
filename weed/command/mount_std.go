@@ -340,6 +340,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		VolumeServerAccess:          *mountOptions.volumeServerAccess,
 		Cipher:                      cipher,
 		UidGidMapper:                uidGidMapper,
+		ShowSystemEntries:           *option.showSystemEntries,
 		DisableXAttr:                *option.disableXAttr,
 		IsMacOs:                     runtime.GOOS == "darwin",
 		MetadataFlushSeconds:        *option.metadataFlushSeconds,

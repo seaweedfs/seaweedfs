@@ -39,6 +39,7 @@ type MetaCache struct {
 	applyClosed       bool
 	buildingDirs      map[util.FullPath]*directoryBuildState
 	dedupRing         dedupRingBuffer
+	includeSystemEntries bool
 }
 
 var errMetaCacheClosed = errors.New("metadata cache is shut down")
@@ -105,6 +106,10 @@ func NewMetaCache(dbFolder string, uidGidMapper *UidGidMapper, root util.FullPat
 	}
 	go mc.runApplyLoop()
 	return mc
+}
+
+func (mc *MetaCache) SetIncludeSystemEntries(include bool) {
+	mc.includeSystemEntries = include
 }
 
 func openMetaStore(dbFolder string) (*leveldb.LevelDBStore, filer.VirtualFilerStore) {
