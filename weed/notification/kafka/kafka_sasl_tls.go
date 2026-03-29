@@ -13,15 +13,15 @@ import (
 
 // SASLTLSConfig holds SASL and TLS configuration for Kafka connections.
 type SASLTLSConfig struct {
-	SASLEnabled  bool
+	SASLEnabled   bool
 	SASLMechanism string
 	SASLUsername  string
 	SASLPassword  string
 
-	TLSEnabled           bool
-	TLSCACert            string
-	TLSClientCert        string
-	TLSClientKey         string
+	TLSEnabled            bool
+	TLSCACert             string
+	TLSClientCert         string
+	TLSClientKey          string
 	TLSInsecureSkipVerify bool
 }
 
@@ -52,6 +52,10 @@ func ConfigureSASLTLS(config *sarama.Config, st SASLTLSConfig) error {
 	}
 
 	if st.TLSEnabled {
+		if (st.TLSClientCert == "") != (st.TLSClientKey == "") {
+			return fmt.Errorf("both tls_client_cert and tls_client_key must be provided for mTLS, or neither")
+		}
+
 		tlsConfig := &tls.Config{
 			InsecureSkipVerify: st.TLSInsecureSkipVerify,
 		}
