@@ -527,3 +527,255 @@ func TestIntegration_DeleteExpiredObjects(t *testing.T) {
 		t.Error("to-keep.txt should still exist")
 	}
 }
+
+// TestIntegration_VersionedBucket_ExpirationDays verifies that Expiration.Days
+// rules correctly detect and delete the latest version in a versioned bucket
+// where all data lives in .versions/ directories (issue #8757).
+func TestIntegration_VersionedBucket_ExpirationDays(t *testing.T) {
+	server, client := startTestFiler(t)
+	bucketsPath := "/buckets"
+	bucket := "versioned-expire"
+	bucketDir := bucketsPath + "/" + bucket
+
+	now := time.Now()
+	old := now.Add(-60 * 24 * time.Hour)    // 60 days ago — should expire
+	recent := now.Add(-5 * 24 * time.Hour)  // 5 days ago — should NOT expire
+
+	vidOld := testVersionId(old)
+	vidRecent := testVersionId(recent)
+
+	server.putEntry(bucketsPath, &filer_pb.Entry{Name: bucket, IsDirectory: true})
+
+	// --- Single-version object (old, should expire) ---
+	server.putEntry(bucketDir, &filer_pb.Entry{
+		Name: "old-file.txt" + s3_constants.VersionsFolder, IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:         []byte(vidOld),
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_" + vidOld),
+			s3_constants.ExtLatestVersionMtimeKey:       []byte(strconv.FormatInt(old.Unix(), 10)),
+			s3_constants.ExtLatestVersionSizeKey:        []byte("3400000000"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("false"),
+		},
+	})
+	oldVersionsDir := bucketDir + "/old-file.txt" + s3_constants.VersionsFolder
+	server.putEntry(oldVersionsDir, &filer_pb.Entry{
+		Name:       "v_" + vidOld,
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 3400000000},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte(vidOld),
+		},
+	})
+
+	// --- Single-version object (recent, should NOT expire) ---
+	server.putEntry(bucketDir, &filer_pb.Entry{
+		Name: "recent-file.txt" + s3_constants.VersionsFolder, IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:         []byte(vidRecent),
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_" + vidRecent),
+			s3_constants.ExtLatestVersionMtimeKey:       []byte(strconv.FormatInt(recent.Unix(), 10)),
+			s3_constants.ExtLatestVersionSizeKey:        []byte("3400000000"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("false"),
+		},
+	})
+	recentVersionsDir := bucketDir + "/recent-file.txt" + s3_constants.VersionsFolder
+	server.putEntry(recentVersionsDir, &filer_pb.Entry{
+		Name:       "v_" + vidRecent,
+		Attributes: &filer_pb.FuseAttributes{Mtime: recent.Unix(), FileSize: 3400000000},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte(vidRecent),
+		},
+	})
+
+	// --- Object with delete marker as latest (should NOT be expired by Expiration.Days) ---
+	vidMarker := testVersionId(old)
+	server.putEntry(bucketDir, &filer_pb.Entry{
+		Name: "deleted-obj.txt" + s3_constants.VersionsFolder, IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:         []byte(vidMarker),
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_" + vidMarker),
+			s3_constants.ExtLatestVersionMtimeKey:       []byte(strconv.FormatInt(old.Unix(), 10)),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("true"),
+		},
+	})
+
+	rules := []s3lifecycle.Rule{{
+		ID: "expire-30d", Status: "Enabled",
+		ExpirationDays: 30,
+	}}
+
+	expired, scanned, err := listExpiredObjectsByRules(context.Background(), client, bucketsPath, bucket, rules, 100)
+	if err != nil {
+		t.Fatalf("listExpiredObjectsByRules: %v", err)
+	}
+
+	// Only old-file.txt's latest version should be expired.
+	// recent-file.txt is too young; deleted-obj.txt is a delete marker.
+	if len(expired) != 1 {
+		t.Fatalf("expected 1 expired, got %d: %+v", len(expired), expired)
+	}
+	if expired[0].dir != oldVersionsDir {
+		t.Errorf("expected dir=%s, got %s", oldVersionsDir, expired[0].dir)
+	}
+	if expired[0].name != "v_"+vidOld {
+		t.Errorf("expected name=v_%s, got %s", vidOld, expired[0].name)
+	}
+	// The old-file.txt latest version should count as scanned.
+	if scanned < 1 {
+		t.Errorf("expected at least 1 scanned, got %d", scanned)
+	}
+}
+
+// TestIntegration_VersionedBucket_ExpirationDays_DeleteAndCleanup verifies
+// end-to-end deletion and .versions directory cleanup for a single-version
+// versioned object expired by Expiration.Days.
+func TestIntegration_VersionedBucket_ExpirationDays_DeleteAndCleanup(t *testing.T) {
+	server, client := startTestFiler(t)
+	bucketsPath := "/buckets"
+	bucket := "versioned-cleanup"
+	bucketDir := bucketsPath + "/" + bucket
+
+	now := time.Now()
+	old := now.Add(-60 * 24 * time.Hour)
+	vidOld := testVersionId(old)
+
+	server.putEntry(bucketsPath, &filer_pb.Entry{Name: bucket, IsDirectory: true})
+
+	// Single-version object that should expire.
+	versionsDir := bucketDir + "/data.bin" + s3_constants.VersionsFolder
+	server.putEntry(bucketDir, &filer_pb.Entry{
+		Name: "data.bin" + s3_constants.VersionsFolder, IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:         []byte(vidOld),
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_" + vidOld),
+			s3_constants.ExtLatestVersionMtimeKey:       []byte(strconv.FormatInt(old.Unix(), 10)),
+			s3_constants.ExtLatestVersionSizeKey:        []byte("1024"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("false"),
+		},
+	})
+	server.putEntry(versionsDir, &filer_pb.Entry{
+		Name:       "v_" + vidOld,
+		Attributes: &filer_pb.FuseAttributes{Mtime: old.Unix(), FileSize: 1024},
+		Extended: map[string][]byte{
+			s3_constants.ExtVersionIdKey: []byte(vidOld),
+		},
+	})
+
+	rules := []s3lifecycle.Rule{{
+		ID: "expire-30d", Status: "Enabled",
+		ExpirationDays: 30,
+	}}
+
+	// Step 1: Detect expired.
+	expired, _, err := listExpiredObjectsByRules(context.Background(), client, bucketsPath, bucket, rules, 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(expired) != 1 {
+		t.Fatalf("expected 1 expired, got %d", len(expired))
+	}
+
+	// Step 2: Delete the expired version file.
+	deleted, errs, delErr := deleteExpiredObjects(context.Background(), client, expired)
+	if delErr != nil {
+		t.Fatalf("delete: %v", delErr)
+	}
+	if deleted != 1 || errs != 0 {
+		t.Errorf("expected 1 deleted 0 errors, got %d deleted %d errors", deleted, errs)
+	}
+
+	// Version file should be gone.
+	if server.hasEntry(versionsDir, "v_"+vidOld) {
+		t.Error("version file should have been removed")
+	}
+
+	// Step 3: Cleanup empty .versions directory.
+	cleaned := cleanupEmptyVersionsDirectories(context.Background(), client, expired)
+	if cleaned != 1 {
+		t.Errorf("expected 1 directory cleaned, got %d", cleaned)
+	}
+
+	// The .versions directory itself should be gone.
+	if server.hasEntry(bucketDir, "data.bin"+s3_constants.VersionsFolder) {
+		t.Error(".versions directory should have been removed after cleanup")
+	}
+}
+
+// TestIntegration_VersionedBucket_MultiVersion_ExpirationDays verifies that
+// when a multi-version object's latest version expires, only the latest
+// version is deleted and noncurrent versions remain.
+func TestIntegration_VersionedBucket_MultiVersion_ExpirationDays(t *testing.T) {
+	server, client := startTestFiler(t)
+	bucketsPath := "/buckets"
+	bucket := "versioned-multi"
+	bucketDir := bucketsPath + "/" + bucket
+
+	now := time.Now()
+	tOld := now.Add(-60 * 24 * time.Hour)
+	tNoncurrent := now.Add(-90 * 24 * time.Hour)
+	vidLatest := testVersionId(tOld)
+	vidNoncurrent := testVersionId(tNoncurrent)
+
+	server.putEntry(bucketsPath, &filer_pb.Entry{Name: bucket, IsDirectory: true})
+
+	versionsDir := bucketDir + "/multi.txt" + s3_constants.VersionsFolder
+	server.putEntry(bucketDir, &filer_pb.Entry{
+		Name: "multi.txt" + s3_constants.VersionsFolder, IsDirectory: true,
+		Extended: map[string][]byte{
+			s3_constants.ExtLatestVersionIdKey:         []byte(vidLatest),
+			s3_constants.ExtLatestVersionFileNameKey:    []byte("v_" + vidLatest),
+			s3_constants.ExtLatestVersionMtimeKey:       []byte(strconv.FormatInt(tOld.Unix(), 10)),
+			s3_constants.ExtLatestVersionSizeKey:        []byte("500"),
+			s3_constants.ExtLatestVersionIsDeleteMarker: []byte("false"),
+		},
+	})
+	server.putEntry(versionsDir, &filer_pb.Entry{
+		Name:       "v_" + vidLatest,
+		Attributes: &filer_pb.FuseAttributes{Mtime: tOld.Unix(), FileSize: 500},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte(vidLatest)},
+	})
+	server.putEntry(versionsDir, &filer_pb.Entry{
+		Name:       "v_" + vidNoncurrent,
+		Attributes: &filer_pb.FuseAttributes{Mtime: tNoncurrent.Unix(), FileSize: 500},
+		Extended:   map[string][]byte{s3_constants.ExtVersionIdKey: []byte(vidNoncurrent)},
+	})
+
+	rules := []s3lifecycle.Rule{{
+		ID: "expire-30d", Status: "Enabled",
+		ExpirationDays: 30,
+	}}
+
+	expired, _, err := listExpiredObjectsByRules(context.Background(), client, bucketsPath, bucket, rules, 100)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	// Only the latest version should be detected as expired.
+	if len(expired) != 1 {
+		t.Fatalf("expected 1 expired (latest only), got %d", len(expired))
+	}
+	if expired[0].name != "v_"+vidLatest {
+		t.Errorf("expected latest version expired, got %s", expired[0].name)
+	}
+
+	// Delete it.
+	deleted, errs, delErr := deleteExpiredObjects(context.Background(), client, expired)
+	if delErr != nil {
+		t.Fatalf("delete: %v", delErr)
+	}
+	if deleted != 1 || errs != 0 {
+		t.Errorf("expected 1 deleted 0 errors, got %d deleted %d errors", deleted, errs)
+	}
+
+	// Noncurrent version should still exist.
+	if !server.hasEntry(versionsDir, "v_"+vidNoncurrent) {
+		t.Error("noncurrent version should still exist")
+	}
+
+	// .versions directory should NOT be cleaned up (not empty).
+	cleaned := cleanupEmptyVersionsDirectories(context.Background(), client, expired)
+	if cleaned != 0 {
+		t.Errorf("expected 0 directories cleaned (not empty), got %d", cleaned)
+	}
+	if !server.hasEntry(bucketDir, "multi.txt"+s3_constants.VersionsFolder) {
+		t.Error(".versions directory should still exist (has noncurrent version)")
+	}
+}
