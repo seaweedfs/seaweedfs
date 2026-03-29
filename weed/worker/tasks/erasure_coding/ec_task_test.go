@@ -56,13 +56,16 @@ func TestCopyVolumeFilesToWorkerUsesCurrentCompactionRevision(t *testing.T) {
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)
 
-	require.NoError(t, task.markVolumeReadonly())
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 
-	fileStatus, err := task.readSourceVolumeFileStatus()
+	require.NoError(t, task.markVolumeReadonly(ctx))
+
+	fileStatus, err := task.readSourceVolumeFileStatus(ctx)
 	require.NoError(t, err)
 	require.Greater(t, fileStatus.GetCompactionRevision(), uint32(0))
 
-	localFiles, err := task.copyVolumeFilesToWorker(t.TempDir())
+	localFiles, err := task.copyVolumeFilesToWorker(ctx, t.TempDir())
 	require.NoError(t, err)
 
 	datInfo, err := os.Stat(localFiles["dat"])
