@@ -38,6 +38,25 @@ var laneIdleSleep = map[SchedulerLane]time.Duration{
 	LaneLifecycle: 5 * time.Minute,
 }
 
+// laneRequiresLock maps each lane to whether its job types must be
+// serialised under a single admin lock. The default lane needs this
+// because volume-management operations share global state. Other
+// lanes run each job type independently.
+var laneRequiresLock = map[SchedulerLane]bool{
+	LaneDefault:   true,
+	LaneIceberg:   false,
+	LaneLifecycle: false,
+}
+
+// LaneRequiresLock returns true if the given lane needs a single admin
+// lock to serialise its job types. Unknown lanes default to true.
+func LaneRequiresLock(lane SchedulerLane) bool {
+	if v, ok := laneRequiresLock[lane]; ok {
+		return v
+	}
+	return true
+}
+
 // LaneIdleSleep returns the idle sleep duration for the given lane,
 // falling back to defaultSchedulerIdleSleep if the lane is unknown.
 func LaneIdleSleep(lane SchedulerLane) time.Duration {
