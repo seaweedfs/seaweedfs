@@ -22,6 +22,17 @@ hosts = [
 topic = "seaweedfs_filer"
 offsetFile = "./last.offset"
 offsetSaveIntervalSeconds = 10
+# SASL Authentication
+sasl_enabled = false
+sasl_mechanism = "PLAIN"            # PLAIN, SCRAM-SHA-256, SCRAM-SHA-512
+sasl_username = ""
+sasl_password = ""
+# TLS/SSL
+tls_enabled = false
+tls_ca_cert = ""                    # path to CA certificate PEM file
+tls_client_cert = ""                # path to client certificate PEM file (for mTLS)
+tls_client_key = ""                 # path to client private key PEM file (for mTLS)
+tls_insecure_skip_verify = false
 
 
 [notification.aws_sqs]
