@@ -956,19 +956,37 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Status != Enabled {
 			continue
 		}
-		var rulePrefix string
-		switch {
-		case rule.Filter.Prefix.set:
-			rulePrefix = rule.Filter.Prefix.val
-		case rule.Prefix.set:
-			rulePrefix = rule.Prefix.val
-		case !rule.Expiration.Date.IsZero() || rule.Transition.Days > 0 || !rule.Transition.Date.IsZero():
+		// Reject Transition rules — they require storage class migration
+		// infrastructure that does not exist yet.
+		if rule.Transition.set || rule.NoncurrentVersionTransition.set {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
 		}
 
+		var rulePrefix string
+		switch {
+		case rule.Filter.andSet:
+			rulePrefix = rule.Filter.And.Prefix.val
+		case rule.Filter.Prefix.set:
+			rulePrefix = rule.Filter.Prefix.val
+		case rule.Prefix.set:
+			rulePrefix = rule.Prefix.val
+		}
+
+		// Only create filer.conf TTL entries for simple Expiration.Days rules
+		// with prefix-only filters (the fast path handled by RocksDB compaction
+		// filter). Rules with tag or size filters must be evaluated at scan time
+		// by the lifecycle worker, because TTL applies to all objects under the
+		// prefix regardless of tags or size.
 		if rule.Expiration.Days == 0 {
 			continue
+		}
+		hasTagOrSizeFilter := rule.Filter.tagSet ||
+			rule.Filter.ObjectSizeGreaterThan > 0 || rule.Filter.ObjectSizeLessThan > 0 ||
+			(rule.Filter.andSet && (len(rule.Filter.And.Tags) > 0 ||
+				rule.Filter.And.ObjectSizeGreaterThan > 0 || rule.Filter.And.ObjectSizeLessThan > 0))
+		if hasTagOrSizeFilter {
+			continue // evaluated by lifecycle worker at scan time
 		}
 		locationPrefix := fmt.Sprintf("%s/%s/%s", s3a.option.BucketsPath, bucket, rulePrefix)
 		locConf := &filer_pb.FilerConf_PathConf{
