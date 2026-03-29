@@ -12,9 +12,10 @@ import (
 )
 
 type mockFilerOps struct {
-	countFn  func(path util.FullPath) (int, error)
-	deleteFn func(path util.FullPath) error
-	attrsFn  func(path util.FullPath) (map[string][]byte, error)
+	countFn        func(path util.FullPath) (int, error)
+	deleteFn       func(path util.FullPath) error
+	attrsFn        func(path util.FullPath) (map[string][]byte, error)
+	isDirKeyObjFn  func(path util.FullPath) (bool, error)
 }
 
 func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.FullPath, _ int) (int, error) {
@@ -36,6 +37,13 @@ func (m *mockFilerOps) GetEntryAttributes(_ context.Context, p util.FullPath) (m
 		return nil, nil
 	}
 	return m.attrsFn(p)
+}
+
+func (m *mockFilerOps) IsDirectoryKeyObject(_ context.Context, p util.FullPath) (bool, error) {
+	if m.isDirKeyObjFn == nil {
+		return false, nil
+	}
+	return m.isDirKeyObjFn(p)
 }
 
 func Test_isUnderPath(t *testing.T) {
@@ -731,5 +739,72 @@ func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.
 
 	if len(deleted) != 0 {
 		t.Fatalf("expected folder %s to be skipped, got deletions %v", folder, deleted)
+	}
+}
+
+func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
+	testCases := []struct {
+		name           string
+		isDirKeyObj    bool
+		expectDeletion bool
+	}{
+		{
+			name:           "skips explicit directory marker",
+			isDirKeyObj:    true,
+			expectDeletion: false,
+		},
+		{
+			name:           "deletes implicit empty folder",
+			isDirKeyObj:    false,
+			expectDeletion: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			lockRing := lock_manager.NewLockRing(5 * time.Second)
+			lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+
+			var deleted []string
+			mock := &mockFilerOps{
+				countFn: func(_ util.FullPath) (int, error) {
+					return 0, nil
+				},
+				deleteFn: func(path util.FullPath) error {
+					deleted = append(deleted, string(path))
+					return nil
+				},
+				isDirKeyObjFn: func(path util.FullPath) (bool, error) {
+					return tc.isDirKeyObj, nil
+				},
+			}
+
+			cleaner := &EmptyFolderCleaner{
+				filer:          mock,
+				lockRing:       lockRing,
+				host:           "filer1:8888",
+				bucketPath:     "/buckets",
+				enabled:        true,
+				folderCounts:   make(map[string]*folderState),
+				cleanupQueue:   NewCleanupQueue(1000, time.Minute),
+				maxCountCheck:  1000,
+				cacheExpiry:    time.Minute,
+				processorSleep: time.Second,
+				stopCh:         make(chan struct{}),
+			}
+
+			folder := "/buckets/test/folder"
+			cleaner.executeCleanup(folder, "triggered_item")
+
+			if tc.expectDeletion {
+				if len(deleted) != 1 || deleted[0] != folder {
+					t.Fatalf("expected implicit empty folder %s to be deleted, got deletions %v", folder, deleted)
+				}
+			} else {
+				if len(deleted) != 0 {
+					t.Fatalf("expected explicit directory marker %s to be preserved, got deletions %v", folder, deleted)
+				}
+			}
+		})
 	}
 }

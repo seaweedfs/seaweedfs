@@ -559,3 +559,17 @@ func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[st
 	}
 	return entry.Extended, nil
 }
+
+func (f *Filer) IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if entry == nil {
+		return false, nil
+	}
+	return entry.IsDirectory() && entry.Mime != "", nil
+}
