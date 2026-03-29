@@ -3,6 +3,7 @@ package plugin
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -592,5 +593,83 @@ func TestPickDetectorReassignsWhenLeaseIsStale(t *testing.T) {
 	lease := pluginSvc.getDetectorLease("vacuum")
 	if lease != "worker-a" {
 		t.Fatalf("expected detector lease to be updated to worker-a, got=%s", lease)
+	}
+}
+
+// trackingLockManager records whether Acquire was called and how many times.
+type trackingLockManager struct {
+	mu       sync.Mutex
+	acquired int
+}
+
+func (m *trackingLockManager) Acquire(reason string) (func(), error) {
+	m.mu.Lock()
+	m.acquired++
+	m.mu.Unlock()
+	return func() {}, nil
+}
+
+func (m *trackingLockManager) count() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.acquired
+}
+
+func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		lane       SchedulerLane
+		jobType    string
+		wantLock   bool
+	}{
+		{"Default", LaneDefault, "vacuum", true},
+		{"Iceberg", LaneIceberg, "iceberg_maintenance", false},
+		{"Lifecycle", LaneLifecycle, "s3_lifecycle", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			lm := &trackingLockManager{}
+			pluginSvc, err := New(Options{
+				LockManager: lm,
+				ClusterContextProvider: func(context.Context) (*plugin_pb.ClusterContext, error) {
+					return &plugin_pb.ClusterContext{}, nil
+				},
+			})
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+			defer pluginSvc.Shutdown()
+
+			// Register a detectable worker for the job type.
+			pluginSvc.registry.UpsertFromHello(&plugin_pb.WorkerHello{
+				WorkerId: "worker-a",
+				Capabilities: []*plugin_pb.JobTypeCapability{
+					{JobType: tt.jobType, CanDetect: true},
+				},
+			})
+
+			// Enable the job type so the scheduler picks it up.
+			err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+				JobType: tt.jobType,
+				AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+					Enabled:                  true,
+					DetectionIntervalSeconds: 1,
+				},
+			})
+			if err != nil {
+				t.Fatalf("SaveJobTypeConfig: %v", err)
+			}
+
+			ls := pluginSvc.lanes[tt.lane]
+			pluginSvc.runLaneSchedulerIteration(ls)
+
+			if got := lm.count(); (got > 0) != tt.wantLock {
+				t.Errorf("lock acquired %d times, wantLock=%v", got, tt.wantLock)
+			}
+		})
 	}
 }

@@ -28,18 +28,22 @@ func TestAllLanesHaveIdleSleep(t *testing.T) {
 }
 
 func TestLaneRequiresLock(t *testing.T) {
-	if !LaneRequiresLock(LaneDefault) {
-		t.Error("LaneRequiresLock(LaneDefault) = false, want true")
+	tests := []struct {
+		name string
+		lane SchedulerLane
+		want bool
+	}{
+		{"Default", LaneDefault, true},
+		{"Iceberg", LaneIceberg, false},
+		{"Lifecycle", LaneLifecycle, false},
+		{"Unknown", "unknown_lane", true},
 	}
-	if LaneRequiresLock(LaneIceberg) {
-		t.Error("LaneRequiresLock(LaneIceberg) = true, want false")
-	}
-	if LaneRequiresLock(LaneLifecycle) {
-		t.Error("LaneRequiresLock(LaneLifecycle) = true, want false")
-	}
-	// Unknown lanes should default to requiring a lock.
-	if !LaneRequiresLock("unknown_lane") {
-		t.Error("LaneRequiresLock(unknown) = false, want true")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LaneRequiresLock(tt.lane); got != tt.want {
+				t.Errorf("LaneRequiresLock(%q) = %v, want %v", tt.lane, got, tt.want)
+			}
+		})
 	}
 }
 

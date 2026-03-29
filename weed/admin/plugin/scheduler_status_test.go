@@ -69,17 +69,21 @@ func TestGetLaneSchedulerStatusShowsActiveConcurrentLaneWork(t *testing.T) {
 	clusterContextStarted := make(chan struct{})
 	releaseClusterContext := make(chan struct{})
 
-	pluginSvc, err := New(Options{
-		ClusterContextProvider: func(context.Context) (*plugin_pb.ClusterContext, error) {
-			close(clusterContextStarted)
-			<-releaseClusterContext
-			return nil, context.Canceled
-		},
-	})
+	// Create the Plugin without a ClusterContextProvider so no background
+	// scheduler goroutines are started; they would race with the direct
+	// runJobTypeIteration call below.
+	pluginSvc, err := New(Options{})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
 	defer pluginSvc.Shutdown()
+
+	// Set the provider after construction so runJobTypeIteration can use it.
+	pluginSvc.clusterContextProvider = func(context.Context) (*plugin_pb.ClusterContext, error) {
+		close(clusterContextStarted)
+		<-releaseClusterContext
+		return nil, context.Canceled
+	}
 
 	const jobType = "s3_lifecycle"
 	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
