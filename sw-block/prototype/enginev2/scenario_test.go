@@ -363,9 +363,10 @@ func TestBoundary_NeedsRebuild_PersistsAcrossUpdate(t *testing.T) {
 	rebuildSess := r1.Session()
 	r1.BeginConnect(rebuildSess.ID)
 	r1.RecordHandshake(rebuildSess.ID, 0, 100)
-	r1.BeginCatchUp(rebuildSess.ID)
-	r1.RecordCatchUpProgress(rebuildSess.ID, 100)
-	r1.CompleteSessionByID(rebuildSess.ID)
+	r1.SelectRebuildSource(rebuildSess.ID, 0, false, 100) // full base
+	r1.BeginRebuildTransfer(rebuildSess.ID)
+	r1.RecordRebuildTransferProgress(rebuildSess.ID, 100)
+	r1.CompleteRebuild(rebuildSess.ID)
 
 	if r1.State != StateInSync {
 		t.Fatalf("after rebuild: state=%s", r1.State)

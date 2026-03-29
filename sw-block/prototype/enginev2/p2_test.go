@@ -379,14 +379,15 @@ func TestE2E_NeedsRebuild_Escalation(t *testing.T) {
 		t.Fatal("should have rebuild session")
 	}
 
-	// Step 5: Execute rebuild recovery (simulated).
+	// Step 5: Execute rebuild recovery via rebuild APIs.
 	r1.BeginConnect(rebuildSess.ID)
-	r1.RecordHandshake(rebuildSess.ID, 0, 100) // full rebuild range
-	r1.BeginCatchUp(rebuildSess.ID)
-	r1.RecordCatchUpProgress(rebuildSess.ID, 100)
+	r1.RecordHandshake(rebuildSess.ID, 0, 100)
+	r1.SelectRebuildSource(rebuildSess.ID, 0, false, 100) // full base
+	r1.BeginRebuildTransfer(rebuildSess.ID)
+	r1.RecordRebuildTransferProgress(rebuildSess.ID, 100)
 
-	if !r1.CompleteSessionByID(rebuildSess.ID) {
-		t.Fatal("rebuild completion should succeed")
+	if err := r1.CompleteRebuild(rebuildSess.ID); err != nil {
+		t.Fatalf("rebuild completion: %v", err)
 	}
 	if r1.State != StateInSync {
 		t.Fatalf("after rebuild: state=%s, want in_sync", r1.State)

@@ -296,12 +296,15 @@ func (s *Sender) RecordTruncation(sessionID uint64, truncatedToLSN uint64) error
 // Freezes TargetLSNAtStart from the session's TargetLSN — catch-up will not
 // chase a moving head beyond this boundary.
 // Mutates: session.Phase → PhaseCatchUp. Sender.State → StateCatchingUp.
-// Rejects: wrong sessionID, wrong phase.
+// Rejects: wrong sessionID, wrong phase, SessionRebuild (must use rebuild APIs).
 func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkSessionAuthority(sessionID); err != nil {
 		return err
+	}
+	if s.session.Kind == SessionRebuild {
+		return fmt.Errorf("rebuild sessions must use rebuild APIs, not catch-up")
 	}
 	if !s.session.Advance(PhaseCatchUp) {
 		return fmt.Errorf("cannot begin catch-up: session phase=%s", s.session.Phase)
@@ -330,6 +333,9 @@ func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64, tic
 	if err := s.checkSessionAuthority(sessionID); err != nil {
 		return err
 	}
+	if s.session.Kind == SessionRebuild {
+		return fmt.Errorf("rebuild sessions must use rebuild APIs, not catch-up progress")
+	}
 	if s.session.Phase != PhaseCatchUp {
 		return fmt.Errorf("cannot record progress: session phase=%s, want catchup", s.session.Phase)
 	}
@@ -341,6 +347,10 @@ func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64, tic
 		recoveredTo > s.session.Budget.TargetLSNAtStart {
 		return fmt.Errorf("progress %d exceeds frozen target %d",
 			recoveredTo, s.session.Budget.TargetLSNAtStart)
+	}
+	// Tick is mandatory when ProgressDeadlineTicks is configured.
+	if s.session.Budget != nil && s.session.Budget.ProgressDeadlineTicks > 0 && len(tick) == 0 {
+		return fmt.Errorf("tick is required when ProgressDeadlineTicks is configured")
 	}
 	// Entry counting by LSN delta, not call count.
 	delta := recoveredTo - s.session.RecoveredTo
@@ -386,6 +396,9 @@ func (s *Sender) SelectRebuildSource(sessionID uint64, snapshotLSN uint64, snaps
 	}
 	if s.session.Kind != SessionRebuild {
 		return fmt.Errorf("not a rebuild session (kind=%s)", s.session.Kind)
+	}
+	if s.session.Phase != PhaseHandshake {
+		return fmt.Errorf("rebuild source select requires PhaseHandshake, got %s", s.session.Phase)
 	}
 	if s.session.Rebuild == nil {
 		return fmt.Errorf("rebuild state not initialized")

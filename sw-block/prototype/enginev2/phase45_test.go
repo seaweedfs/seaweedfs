@@ -347,6 +347,69 @@ func TestSender_RebuildAPIs_RejectStaleID(t *testing.T) {
 	}
 }
 
+// --- Rebuild exclusivity ---
+
+func TestSender_RebuildExclusive_CatchUpAPIsRejected(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionRebuild)
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 0, 100)
+
+	// BeginCatchUp rejects rebuild session.
+	if err := s.BeginCatchUp(sess.ID); err == nil {
+		t.Fatal("BeginCatchUp should reject rebuild session")
+	}
+
+	// RecordCatchUpProgress rejects rebuild session (even if we could somehow reach catchup phase).
+	if err := s.RecordCatchUpProgress(sess.ID, 50); err == nil {
+		t.Fatal("RecordCatchUpProgress should reject rebuild session")
+	}
+
+	// CompleteSessionByID rejects (no catch-up convergence possible for rebuild).
+	if s.CompleteSessionByID(sess.ID) {
+		t.Fatal("catch-up completion should not work for rebuild session")
+	}
+}
+
+func TestSender_RebuildSourceSelect_RequiresHandshakePhase(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionRebuild)
+
+	// Skip BeginConnect + RecordHandshake → should fail at SelectRebuildSource.
+	if err := s.SelectRebuildSource(sess.ID, 40, true, 100); err == nil {
+		t.Fatal("source select should require PhaseHandshake")
+	}
+
+	// After proper phase entry.
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 0, 100)
+
+	// Now it works.
+	if err := s.SelectRebuildSource(sess.ID, 40, true, 100); err != nil {
+		t.Fatalf("source select after handshake: %v", err)
+	}
+}
+
+func TestSender_StallBudget_RequiresTick(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sess, _ := s.AttachSession(1, SessionCatchUp)
+	sess.Budget = &CatchUpBudget{ProgressDeadlineTicks: 5}
+
+	s.BeginConnect(sess.ID)
+	s.RecordHandshake(sess.ID, 0, 100)
+	s.BeginCatchUp(sess.ID, 0)
+
+	// Without tick, progress is rejected when stall budget is configured.
+	if err := s.RecordCatchUpProgress(sess.ID, 10); err == nil {
+		t.Fatal("progress without tick should be rejected when ProgressDeadlineTicks > 0")
+	}
+
+	// With tick, progress works.
+	if err := s.RecordCatchUpProgress(sess.ID, 10, 1); err != nil {
+		t.Fatalf("progress with tick: %v", err)
+	}
+}
+
 // --- E2E: Bounded catch-up → budget exceeded → rebuild ---
 
 func TestE2E_BoundedCatchUp_EscalatesToRebuild(t *testing.T) {
