@@ -158,6 +158,10 @@ func (s *Sender) CompleteSessionByID(sessionID uint64) bool {
 		return false
 	}
 	sess := s.session
+	// Rebuild sessions must use CompleteRebuild, not this path.
+	if sess.Kind == SessionRebuild {
+		return false
+	}
 	// Truncation gate: if truncation was required, it must be recorded.
 	if sess.TruncateRequired && !sess.TruncateRecorded {
 		return false
@@ -310,7 +314,9 @@ func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 		return fmt.Errorf("cannot begin catch-up: session phase=%s", s.session.Phase)
 	}
 	s.State = StateCatchingUp
-	// Freeze the target: catch-up will not chase beyond this.
+	// Freeze the target unconditionally: catch-up is a bounded (R, H0] contract.
+	// The session will not chase a moving head beyond this boundary.
+	s.session.FrozenTargetLSN = s.session.TargetLSN
 	if s.session.Budget != nil {
 		s.session.Budget.TargetLSNAtStart = s.session.TargetLSN
 	}
@@ -342,11 +348,10 @@ func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64, tic
 	if recoveredTo <= s.session.RecoveredTo {
 		return fmt.Errorf("progress regression: current=%d proposed=%d", s.session.RecoveredTo, recoveredTo)
 	}
-	// Enforce frozen target: reject progress beyond the contract boundary.
-	if s.session.Budget != nil && s.session.Budget.TargetLSNAtStart > 0 &&
-		recoveredTo > s.session.Budget.TargetLSNAtStart {
+	// Enforce frozen target unconditionally: catch-up is bounded to (R, H0].
+	if s.session.FrozenTargetLSN > 0 && recoveredTo > s.session.FrozenTargetLSN {
 		return fmt.Errorf("progress %d exceeds frozen target %d",
-			recoveredTo, s.session.Budget.TargetLSNAtStart)
+			recoveredTo, s.session.FrozenTargetLSN)
 	}
 	// Tick is mandatory when ProgressDeadlineTicks is configured.
 	if s.session.Budget != nil && s.session.Budget.ProgressDeadlineTicks > 0 && len(tick) == 0 {

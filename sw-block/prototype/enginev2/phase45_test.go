@@ -269,18 +269,25 @@ func TestSender_TargetFrozen_RejectsProgressBeyond(t *testing.T) {
 	}
 }
 
-func TestSender_NoBudget_TargetNotFrozen(t *testing.T) {
+func TestSender_NoBudget_TargetStillFrozen(t *testing.T) {
+	// Target freeze is intrinsic to catch-up, not budget-dependent.
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
 	sess, _ := s.AttachSession(1, SessionCatchUp)
-	// No budget = no target freeze.
 
 	s.BeginConnect(sess.ID)
 	s.RecordHandshake(sess.ID, 50, 100)
 	s.BeginCatchUp(sess.ID)
 
-	// Without budget, no frozen target. Progress beyond 100 is allowed.
-	s.RecordCatchUpProgress(sess.ID, 100)
-	// Session target can be manually updated if needed (no freeze enforced).
+	// Frozen target enforced even without budget.
+	if sess.FrozenTargetLSN != 100 {
+		t.Fatalf("frozen target=%d, want 100", sess.FrozenTargetLSN)
+	}
+	if err := s.RecordCatchUpProgress(sess.ID, 100); err != nil {
+		t.Fatalf("at target: %v", err)
+	}
+	if err := s.RecordCatchUpProgress(sess.ID, 101); err == nil {
+		t.Fatal("beyond frozen target should be rejected even without budget")
+	}
 }
 
 // --- Sender-level rebuild test ---

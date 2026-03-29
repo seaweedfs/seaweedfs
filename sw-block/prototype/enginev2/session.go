@@ -55,9 +55,10 @@ type RecoverySession struct {
 	InvalidateReason string // non-empty when invalidated
 
 	// Progress tracking.
-	StartLSN    uint64 // gap start (exclusive)
-	TargetLSN   uint64 // gap end (inclusive)
-	RecoveredTo uint64 // highest LSN recovered so far
+	StartLSN        uint64 // gap start (exclusive)
+	TargetLSN       uint64 // gap end (inclusive)
+	FrozenTargetLSN uint64 // frozen at BeginCatchUp — catch-up will not chase beyond this
+	RecoveredTo     uint64 // highest LSN recovered so far
 
 	// Truncation tracking: set when replica has divergent tail beyond committed.
 	TruncateRequired bool   // true if replica FlushedLSN > CommittedLSN at handshake
