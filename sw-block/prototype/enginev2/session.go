@@ -63,6 +63,13 @@ type RecoverySession struct {
 	TruncateRequired bool   // true if replica FlushedLSN > CommittedLSN at handshake
 	TruncateToLSN    uint64 // truncate entries beyond this LSN
 	TruncateRecorded bool   // true after truncation is confirmed
+
+	// Bounded CatchUp budget (Phase 4.5).
+	Budget  *CatchUpBudget // nil = no budget enforcement
+	Tracker BudgetCheck    // runtime consumption
+
+	// Rebuild state (Phase 4.5). Non-nil when Kind == SessionRebuild.
+	Rebuild *RebuildState
 }
 
 func newRecoverySession(replicaID string, epoch uint64, kind SessionKind) *RecoverySession {

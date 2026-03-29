@@ -294,8 +294,9 @@ func (s *Sender) RecordTruncation(sessionID uint64, truncatedToLSN uint64) error
 
 // BeginCatchUp transitions the session from handshake to catch-up phase.
 // Mutates: session.Phase → PhaseCatchUp. Sender.State → StateCatchingUp.
+// Initializes budget tracker with startTick (pass 0 if no budget enforcement).
 // Rejects: wrong sessionID, wrong phase.
-func (s *Sender) BeginCatchUp(sessionID uint64) error {
+func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if err := s.checkSessionAuthority(sessionID); err != nil {
@@ -305,11 +306,15 @@ func (s *Sender) BeginCatchUp(sessionID uint64) error {
 		return fmt.Errorf("cannot begin catch-up: session phase=%s", s.session.Phase)
 	}
 	s.State = StateCatchingUp
+	if len(startTick) > 0 {
+		s.session.Tracker.StartTick = startTick[0]
+		s.session.Tracker.LastProgressTick = startTick[0]
+	}
 	return nil
 }
 
 // RecordCatchUpProgress records catch-up progress (highest LSN recovered).
-// Mutates: session.RecoveredTo (monotonic only).
+// Mutates: session.RecoveredTo (monotonic only), session.Tracker.EntriesReplayed.
 // Rejects: wrong sessionID, wrong phase, progress regression, invalidated session.
 func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64) error {
 	s.mu.Lock()
@@ -324,7 +329,50 @@ func (s *Sender) RecordCatchUpProgress(sessionID uint64, recoveredTo uint64) err
 		return fmt.Errorf("progress regression: current=%d proposed=%d", s.session.RecoveredTo, recoveredTo)
 	}
 	s.session.UpdateProgress(recoveredTo)
+	s.session.Tracker.EntriesReplayed++
 	return nil
+}
+
+// RecordCatchUpProgressAt is like RecordCatchUpProgress but also records the tick
+// for budget stall detection.
+func (s *Sender) RecordCatchUpProgressAt(sessionID uint64, recoveredTo uint64, tick uint64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return err
+	}
+	if s.session.Phase != PhaseCatchUp {
+		return fmt.Errorf("cannot record progress: session phase=%s, want catchup", s.session.Phase)
+	}
+	if recoveredTo <= s.session.RecoveredTo {
+		return fmt.Errorf("progress regression: current=%d proposed=%d", s.session.RecoveredTo, recoveredTo)
+	}
+	s.session.UpdateProgress(recoveredTo)
+	s.session.Tracker.EntriesReplayed++
+	s.session.Tracker.LastProgressTick = tick
+	return nil
+}
+
+// CheckBudget evaluates the session's catch-up budget at the current tick.
+// Returns BudgetOK if within bounds, or the specific violation.
+// If a violation is detected, the session is invalidated and the sender
+// transitions to NeedsRebuild.
+func (s *Sender) CheckBudget(sessionID uint64, currentTick uint64) (BudgetViolation, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := s.checkSessionAuthority(sessionID); err != nil {
+		return BudgetOK, err
+	}
+	if s.session.Budget == nil {
+		return BudgetOK, nil // no budget enforcement
+	}
+	violation := s.session.Budget.Check(s.session.Tracker, currentTick)
+	if violation != BudgetOK {
+		s.session.invalidate(fmt.Sprintf("budget_%s", violation))
+		s.session = nil
+		s.State = StateNeedsRebuild
+	}
+	return violation, nil
 }
 
 // checkSessionAuthority validates that the sender has an active session
