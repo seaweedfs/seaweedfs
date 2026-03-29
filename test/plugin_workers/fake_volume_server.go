@@ -196,11 +196,24 @@ func (v *VolumeServer) CopyFile(req *volume_server_pb.CopyFileRequest, stream vo
 	defer file.Close()
 
 	buf := make([]byte, 64*1024)
+	remaining := int64(req.GetStopOffset())
 	for {
-		n, readErr := file.Read(buf)
+		if remaining == 0 {
+			break
+		}
+
+		readBuf := buf
+		if remaining > 0 && remaining < int64(len(buf)) {
+			readBuf = buf[:remaining]
+		}
+
+		n, readErr := file.Read(readBuf)
 		if n > 0 {
-			if err := stream.Send(&volume_server_pb.CopyFileResponse{FileContent: buf[:n]}); err != nil {
+			if err := stream.Send(&volume_server_pb.CopyFileResponse{FileContent: readBuf[:n]}); err != nil {
 				return err
+			}
+			if remaining > 0 {
+				remaining -= int64(n)
 			}
 		}
 		if readErr == io.EOF {
@@ -307,10 +320,21 @@ func (v *VolumeServer) ReadVolumeFileStatus(ctx context.Context, req *volume_ser
 	v.mu.Lock()
 	v.readFileStatusCalls++
 	v.mu.Unlock()
+
+	datInfo, err := os.Stat(v.filePath(req.VolumeId, ".dat"))
+	if err != nil {
+		return nil, err
+	}
+
+	idxInfo, err := os.Stat(v.filePath(req.VolumeId, ".idx"))
+	if err != nil {
+		return nil, err
+	}
+
 	return &volume_server_pb.ReadVolumeFileStatusResponse{
 		VolumeId:    req.VolumeId,
-		DatFileSize: 1024,
-		IdxFileSize: 16,
+		DatFileSize: uint64(datInfo.Size()),
+		IdxFileSize: uint64(idxInfo.Size()),
 		FileCount:   1,
 	}, nil
 }
