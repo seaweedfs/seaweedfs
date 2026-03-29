@@ -77,6 +77,11 @@ func UpdateConfigFromPersistence(configPersistence interface{}) error {
 	}
 
 	globalTaskDef.Config = newConfig
+	// Sync the runtime scheduling fields read by GenericDetector/GenericScheduler
+	// so that persisted changes to intervals and concurrency take effect.
+	globalTaskDef.ScanInterval = time.Duration(newConfig.ScanIntervalSeconds) * time.Second
+	globalTaskDef.MaxConcurrent = newConfig.MaxConcurrent
+	globalTaskDef.RepeatInterval = time.Duration(newConfig.ScanIntervalSeconds) * time.Second
 	glog.V(1).Infof("Updated compaction task configuration from persistence")
 	return nil
 }
