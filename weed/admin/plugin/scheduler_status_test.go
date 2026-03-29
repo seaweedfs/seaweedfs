@@ -1,7 +1,9 @@
 package plugin
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 )
@@ -60,5 +62,82 @@ func TestGetSchedulerStatusIncludesLastDetectionCount(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected job type status for %s", jobType)
+	}
+}
+
+func TestGetLaneSchedulerStatusShowsActiveConcurrentLaneWork(t *testing.T) {
+	clusterContextStarted := make(chan struct{})
+	releaseClusterContext := make(chan struct{})
+
+	pluginSvc, err := New(Options{
+		ClusterContextProvider: func(context.Context) (*plugin_pb.ClusterContext, error) {
+			close(clusterContextStarted)
+			<-releaseClusterContext
+			return nil, context.Canceled
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	defer pluginSvc.Shutdown()
+
+	const jobType = "s3_lifecycle"
+	err = pluginSvc.SaveJobTypeConfig(&plugin_pb.PersistedJobTypeConfig{
+		JobType: jobType,
+		AdminRuntime: &plugin_pb.AdminRuntimeConfig{
+			Enabled:                  true,
+			DetectionIntervalSeconds: 30,
+			DetectionTimeoutSeconds:  15,
+		},
+	})
+	if err != nil {
+		t.Fatalf("SaveJobTypeConfig: %v", err)
+	}
+
+	policy, enabled, err := pluginSvc.loadSchedulerPolicy(jobType)
+	if err != nil {
+		t.Fatalf("loadSchedulerPolicy: %v", err)
+	}
+	if !enabled {
+		t.Fatalf("expected enabled policy")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		pluginSvc.runJobTypeIteration(jobType, policy)
+	}()
+
+	select {
+	case <-clusterContextStarted:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for job type iteration to start")
+	}
+
+	var laneStatus SchedulerStatus
+	var aggregateStatus SchedulerStatus
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		laneStatus = pluginSvc.GetLaneSchedulerStatus(LaneLifecycle)
+		aggregateStatus = pluginSvc.GetSchedulerStatus()
+		if laneStatus.CurrentJobType == jobType && laneStatus.CurrentPhase == "detecting" &&
+			aggregateStatus.CurrentJobType == jobType && aggregateStatus.CurrentPhase == "detecting" {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if laneStatus.CurrentJobType != jobType || laneStatus.CurrentPhase != "detecting" {
+		t.Fatalf("unexpected lane status while work is active: job=%q phase=%q", laneStatus.CurrentJobType, laneStatus.CurrentPhase)
+	}
+	if aggregateStatus.CurrentJobType != jobType || aggregateStatus.CurrentPhase != "detecting" {
+		t.Fatalf("unexpected aggregate status while work is active: job=%q phase=%q", aggregateStatus.CurrentJobType, aggregateStatus.CurrentPhase)
+	}
+
+	close(releaseClusterContext)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("timed out waiting for job type iteration to finish")
 	}
 }

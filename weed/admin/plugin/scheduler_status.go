@@ -195,6 +195,21 @@ func (r *Plugin) setSchedulerLoopState(jobType, phase string) {
 	r.schedulerLoopMu.Unlock()
 }
 
+// setSchedulerLoopStateForJobType keeps the aggregate scheduler state and the
+// owning lane state in sync while a specific job type is active.
+func (r *Plugin) setSchedulerLoopStateForJobType(jobType, phase string) {
+	if r == nil {
+		return
+	}
+	r.setSchedulerLoopState(jobType, phase)
+	if jobType == "" {
+		return
+	}
+	if ls := r.lanes[JobTypeLane(jobType)]; ls != nil {
+		r.setLaneLoopState(ls, jobType, phase)
+	}
+}
+
 func (r *Plugin) recordSchedulerIterationComplete(hadJobs bool) {
 	if r == nil {
 		return
@@ -250,7 +265,6 @@ func (r *Plugin) aggregateLaneLoopStates() schedulerLoopState {
 	}
 	return agg
 }
-
 
 // --- Per-lane loop state helpers ---
 

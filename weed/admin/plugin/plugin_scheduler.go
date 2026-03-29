@@ -351,7 +351,7 @@ func (r *Plugin) wakeScheduler() {
 func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) bool {
 	r.recordSchedulerRunStart(jobType)
 	r.clearWaitingJobQueue(jobType)
-	r.setSchedulerLoopState(jobType, "detecting")
+	r.setSchedulerLoopStateForJobType(jobType, "detecting")
 	r.markJobTypeInFlight(jobType)
 	defer r.finishDetection(jobType)
 
@@ -483,7 +483,7 @@ func (r *Plugin) runJobTypeIteration(jobType string, policy schedulerPolicy) boo
 		return detected
 	}
 
-	r.setSchedulerLoopState(jobType, "executing")
+	r.setSchedulerLoopStateForJobType(jobType, "executing")
 
 	// Scan proposals for the maximum estimated_runtime_seconds so the
 	// execution phase gets enough time for large jobs (e.g. vacuum on
