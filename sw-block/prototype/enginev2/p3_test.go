@@ -112,6 +112,103 @@ func TestWAL_StateAt_HistoricalCorrectness(t *testing.T) {
 	}
 }
 
+// --- IsRecoverable: strengthened checks ---
+
+func TestWAL_IsRecoverable_FalseWhenEndBeyondHead(t *testing.T) {
+	w := NewWALHistory()
+	for i := uint64(1); i <= 50; i++ {
+		w.Append(WALEntry{LSN: i})
+	}
+	// End is 100 but head is only 50.
+	if w.IsRecoverable(0, 100) {
+		t.Fatal("should be false when endInclusive > headLSN")
+	}
+}
+
+func TestWAL_IsRecoverable_FalseWhenEntriesMissing(t *testing.T) {
+	w := NewWALHistory()
+	// Append non-contiguous: 1, 2, 3, 5, 6 (missing 4).
+	w.Append(WALEntry{LSN: 1})
+	w.Append(WALEntry{LSN: 2})
+	w.Append(WALEntry{LSN: 3})
+	w.entries = append(w.entries, WALEntry{LSN: 5}) // skip 4
+	w.entries = append(w.entries, WALEntry{LSN: 6})
+	w.headLSN = 6
+
+	// Range 0→6 has a hole at LSN 4.
+	if w.IsRecoverable(0, 6) {
+		t.Fatal("should be false when entries are non-contiguous")
+	}
+	// Range 0→3 is contiguous.
+	if !w.IsRecoverable(0, 3) {
+		t.Fatal("range 0→3 should be recoverable (contiguous)")
+	}
+}
+
+// --- StateAt: correctness after tail advancement ---
+
+func TestWAL_StateAt_CorrectAfterTailAdvance(t *testing.T) {
+	w := NewWALHistory()
+	w.Append(WALEntry{LSN: 1, Block: 1, Value: 100})
+	w.Append(WALEntry{LSN: 2, Block: 2, Value: 200})
+	w.Append(WALEntry{LSN: 3, Block: 1, Value: 300}) // overwrites block 1
+	w.Append(WALEntry{LSN: 4, Block: 3, Value: 400})
+	w.Append(WALEntry{LSN: 5, Block: 2, Value: 500}) // overwrites block 2
+
+	w.AdvanceTail(3) // recycle LSNs 1-3, snapshot captures block1=300, block2=200
+
+	// StateAt(5): should include snapshot state + retained entries.
+	s := w.StateAt(5)
+	if s[1] != 300 { // from snapshot (LSN 3)
+		t.Fatalf("block 1=%d, want 300", s[1])
+	}
+	if s[2] != 500 { // from retained entry (LSN 5)
+		t.Fatalf("block 2=%d, want 500", s[2])
+	}
+	if s[3] != 400 { // from retained entry (LSN 4)
+		t.Fatalf("block 3=%d, want 400", s[3])
+	}
+}
+
+func TestWAL_StateAt_ReturnsNilBeforeSnapshot(t *testing.T) {
+	w := NewWALHistory()
+	for i := uint64(1); i <= 10; i++ {
+		w.Append(WALEntry{LSN: i, Block: i, Value: i * 10})
+	}
+	w.AdvanceTail(5) // snapshot at LSN 5
+
+	// StateAt(3) — before snapshot boundary, entries recycled.
+	s := w.StateAt(3)
+	if s != nil {
+		t.Fatal("StateAt before snapshot should return nil")
+	}
+
+	// StateAt(5) — at snapshot boundary, valid.
+	s = w.StateAt(5)
+	if s == nil {
+		t.Fatal("StateAt at snapshot boundary should work")
+	}
+}
+
+func TestWAL_StateAt_BlockLastWrittenBeforeTail(t *testing.T) {
+	w := NewWALHistory()
+	w.Append(WALEntry{LSN: 1, Block: 99, Value: 42}) // block 99 only written once
+	w.Append(WALEntry{LSN: 2, Block: 1, Value: 100})
+	w.Append(WALEntry{LSN: 3, Block: 1, Value: 200})
+
+	w.AdvanceTail(2) // snapshot captures block99=42, block1=100
+
+	// StateAt(3): block 99's last write was LSN 1 (recycled), but
+	// captured in snapshot. Must still be present.
+	s := w.StateAt(3)
+	if s[99] != 42 {
+		t.Fatalf("block 99=%d, want 42 (from snapshot of recycled entry)", s[99])
+	}
+	if s[1] != 200 {
+		t.Fatalf("block 1=%d, want 200 (from retained entry)", s[1])
+	}
+}
+
 // --- Recoverability proof: "why is catch-up allowed?" ---
 
 func TestRecoverability_Provable_GapWithinRetention(t *testing.T) {

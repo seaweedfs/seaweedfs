@@ -19,6 +19,11 @@ type WALHistory struct {
 	headLSN      uint64 // highest LSN written
 	tailLSN      uint64 // oldest retained LSN (exclusive: entries with LSN > tailLSN are kept)
 	committedLSN uint64 // lineage-safe boundary
+
+	// Base snapshot: block→value state at tailLSN. Captured when tail advances.
+	// Required for correct StateAt() after entries are recycled.
+	baseSnapshot    map[uint64]uint64
+	baseSnapshotLSN uint64
 }
 
 // NewWALHistory creates an empty WAL history.
@@ -47,14 +52,26 @@ func (w *WALHistory) Commit(lsn uint64) error {
 	return nil
 }
 
-// AdvanceTail recycles entries at or below lsn. After this, entries with
-// LSN <= lsn are no longer available for catch-up recovery.
+// AdvanceTail recycles entries at or below lsn. Before recycling,
+// captures a base snapshot of block state at the new tail boundary
+// so that StateAt() remains correct after entries are gone.
 func (w *WALHistory) AdvanceTail(lsn uint64) {
 	if lsn <= w.tailLSN {
 		return
 	}
+	// Capture base snapshot: replay all entries up to new tail.
+	if w.baseSnapshot == nil {
+		w.baseSnapshot = map[uint64]uint64{}
+	}
+	for _, e := range w.entries {
+		if e.LSN > lsn {
+			break
+		}
+		w.baseSnapshot[e.Block] = e.Value
+	}
+	w.baseSnapshotLSN = lsn
 	w.tailLSN = lsn
-	// Remove recycled entries from storage.
+	// Remove recycled entries.
 	kept := w.entries[:0]
 	for _, e := range w.entries {
 		if e.LSN > lsn {
@@ -101,8 +118,33 @@ func (w *WALHistory) EntriesInRange(startExclusive, endInclusive uint64) ([]WALE
 // IsRecoverable checks whether all entries from startExclusive+1 to
 // endInclusive are retained in the WAL. This is the executable proof
 // of "why catch-up is allowed."
+//
+// Verifies three conditions:
+//  1. startExclusive >= tailLSN (gap start not recycled)
+//  2. endInclusive <= headLSN (gap end within WAL)
+//  3. All LSNs in (startExclusive, endInclusive] exist contiguously
 func (w *WALHistory) IsRecoverable(startExclusive, endInclusive uint64) bool {
-	return startExclusive >= w.tailLSN
+	if startExclusive < w.tailLSN {
+		return false // start is in recycled region
+	}
+	if endInclusive > w.headLSN {
+		return false // end is beyond WAL head
+	}
+	// Verify contiguous coverage.
+	expect := startExclusive + 1
+	for _, e := range w.entries {
+		if e.LSN <= startExclusive {
+			continue
+		}
+		if e.LSN > endInclusive {
+			break
+		}
+		if e.LSN != expect {
+			return false // gap in retained entries
+		}
+		expect++
+	}
+	return expect > endInclusive // all LSNs covered
 }
 
 // MakeHandshakeResult generates a HandshakeResult from the WAL state
@@ -132,10 +174,24 @@ func (w *WALHistory) CommittedLSN() uint64 { return w.committedLSN }
 // Len returns the number of retained entries.
 func (w *WALHistory) Len() int { return len(w.entries) }
 
-// StateAt replays entries up to lsn and returns block→value state.
-// Used to verify historical data correctness after recovery.
+// StateAt returns block→value state at a given LSN.
+//
+// If lsn >= baseSnapshotLSN, starts from the base snapshot and replays
+// retained entries up to lsn. This is correct even after tail advancement
+// because the snapshot captures all block state from recycled entries.
+//
+// If lsn < baseSnapshotLSN, the required entries have been recycled and
+// the state cannot be reconstructed — returns nil.
 func (w *WALHistory) StateAt(lsn uint64) map[uint64]uint64 {
+	if w.baseSnapshotLSN > 0 && lsn < w.baseSnapshotLSN {
+		return nil // state unreconstructable: entries recycled
+	}
+	// Start from base snapshot (if any).
 	state := map[uint64]uint64{}
+	for k, v := range w.baseSnapshot {
+		state[k] = v
+	}
+	// Replay retained entries up to lsn.
 	for _, e := range w.entries {
 		if e.LSN > lsn {
 			break
