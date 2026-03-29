@@ -962,8 +962,15 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	//     marker — it does not delete data. TTL has no such nuance.
 	// For versioned buckets the lifecycle worker handles all rule evaluation
 	// at scan time, which correctly operates on individual versions.
-	bucketVersioning, _ := s3a.getBucketVersioningStatus(bucket)
-	isVersioned := bucketVersioning == s3_constants.VersioningEnabled ||
+	bucketVersioning, versioningErr := s3a.getBucketVersioningStatus(bucket)
+	if versioningErr != s3err.ErrNone {
+		// Fail closed: if we cannot determine versioning status, treat the
+		// bucket as versioned to avoid creating TTL entries that would
+		// destroy noncurrent versions.
+		glog.V(1).Infof("PutBucketLifecycleConfigurationHandler: could not determine versioning status for %s (err %v), skipping TTL fast-path", bucket, versioningErr)
+	}
+	isVersioned := versioningErr != s3err.ErrNone ||
+		bucketVersioning == s3_constants.VersioningEnabled ||
 		bucketVersioning == s3_constants.VersioningSuspended
 
 	for _, rule := range lifeCycleConfig.Rules {

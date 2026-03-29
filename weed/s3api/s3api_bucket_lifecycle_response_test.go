@@ -126,24 +126,35 @@ func (f failingReadCloser) Close() error {
 	return nil
 }
 
-// TestShouldSkipTTLFastPathForVersionedBuckets verifies that the TTL
-// fast-path (filer.conf TTL entries + updateEntriesTTL) is skipped for
-// versioned buckets. On AWS S3, Expiration.Days on a versioned bucket
-// creates a delete marker — it does not delete data. TTL volumes would
-// destroy all versions indiscriminately, so the lifecycle worker must
+// TestShouldSkipTTLFastPathForVersionedBuckets verifies the versioning guard
+// logic that PutBucketLifecycleConfigurationHandler uses to decide whether
+// to create filer.conf TTL entries. On AWS S3, Expiration.Days on a versioned
+// bucket creates a delete marker — it does not delete data. TTL volumes
+// would destroy all versions indiscriminately, so the lifecycle worker must
 // handle versioned buckets at scan time instead. (issue #8757)
+//
+// Note: an integration test that invokes PutBucketLifecycleConfigurationHandler
+// directly is not feasible here because the handler requires filer gRPC
+// connectivity (ReadFilerConfFromFilers, WithFilerClient) before it reaches
+// the versioning check. The lifecycle worker integration tests in
+// weed/plugin/worker/lifecycle/ cover the end-to-end versioned-bucket behavior.
 func TestShouldSkipTTLFastPathForVersionedBuckets(t *testing.T) {
 	tests := []struct {
 		name       string
 		versioning string
 		expectSkip bool
 	}{
-		{"versioning_enabled", s3_constants.VersioningEnabled, true},
-		{"versioning_suspended", s3_constants.VersioningSuspended, true},
-		{"no_versioning", "", false},
+		{"versioning_enabled_skips_ttl", s3_constants.VersioningEnabled, true},
+		{"versioning_suspended_skips_ttl", s3_constants.VersioningSuspended, true},
+		{"unversioned_allows_ttl", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// This mirrors the guard in PutBucketLifecycleConfigurationHandler:
+			//   isVersioned := versioningErr != s3err.ErrNone ||
+			//       bucketVersioning == s3_constants.VersioningEnabled ||
+			//       bucketVersioning == s3_constants.VersioningSuspended
+			// When isVersioned is true, the TTL fast-path is skipped entirely.
 			isVersioned := tt.versioning == s3_constants.VersioningEnabled ||
 				tt.versioning == s3_constants.VersioningSuspended
 			assert.Equal(t, tt.expectSkip, isVersioned)

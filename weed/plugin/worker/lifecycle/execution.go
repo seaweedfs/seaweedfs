@@ -551,7 +551,7 @@ func listExpiredObjectsByRules(
 					// In versioned buckets, data lives in .versions/ directories,
 					// so we must evaluate the latest version here — it is never
 					// seen as a regular file entry in the parent directory.
-					if obj, ok := latestVersionExpiredByRules(entry, versionsDir, bucketPath, rules, now, needTags); ok {
+					if obj, ok := latestVersionExpiredByRules(ctx, client, entry, versionsDir, bucketPath, rules, now, needTags); ok {
 						expired = append(expired, obj)
 						scanned++
 						if limit > 0 && int64(len(expired)) >= limit {
@@ -746,6 +746,8 @@ func processVersionsDirectory(
 // its Extended attributes, so we can evaluate expiration without an extra
 // filer round-trip.
 func latestVersionExpiredByRules(
+	ctx context.Context,
+	client filer_pb.SeaweedFilerClient,
 	dirEntry *filer_pb.Entry,
 	versionsDir, bucketPath string,
 	rules []s3lifecycle.Rule,
@@ -794,7 +796,15 @@ func latestVersionExpiredByRules(
 	}
 
 	if needTags {
-		objInfo.Tags = s3lifecycle.ExtractTags(dirEntry.Extended)
+		// Tags are stored on the version file entry, not the .versions
+		// directory. Fetch the actual version file to get them.
+		resp, err := client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: versionsDir,
+			Name:      latestFileName,
+		})
+		if err == nil && resp.Entry != nil {
+			objInfo.Tags = s3lifecycle.ExtractTags(resp.Entry.Extended)
+		}
 	}
 
 	result := s3lifecycle.Evaluate(rules, objInfo, now)

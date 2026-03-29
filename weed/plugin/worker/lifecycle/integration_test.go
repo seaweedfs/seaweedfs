@@ -757,7 +757,13 @@ func TestIntegration_VersionedBucket_MultiVersion_ExpirationDays(t *testing.T) {
 	}
 
 	// Delete it.
-	deleteExpiredObjects(context.Background(), client, expired)
+	deleted, errs, delErr := deleteExpiredObjects(context.Background(), client, expired)
+	if delErr != nil {
+		t.Fatalf("delete: %v", delErr)
+	}
+	if deleted != 1 || errs != 0 {
+		t.Errorf("expected 1 deleted 0 errors, got %d deleted %d errors", deleted, errs)
+	}
 
 	// Noncurrent version should still exist.
 	if !server.hasEntry(versionsDir, "v_"+vidNoncurrent) {
