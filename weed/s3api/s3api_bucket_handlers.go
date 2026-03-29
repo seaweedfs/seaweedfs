@@ -952,6 +952,20 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 	collectionTtls := fc.GetCollectionTtls(collectionName)
 	changed := false
 
+	// Check whether the bucket has versioning enabled. Versioned buckets must
+	// NOT use the TTL fast-path because:
+	//  1. TTL volumes expire as a unit, destroying all data — including
+	//     noncurrent versions that should be preserved.
+	//  2. Filer-backend TTL (RocksDB compaction, Redis expire) removes entries
+	//     without triggering chunk deletion, leaving orphaned volume data.
+	//  3. On AWS S3, Expiration.Days on a versioned bucket creates a delete
+	//     marker — it does not delete data. TTL has no such nuance.
+	// For versioned buckets the lifecycle worker handles all rule evaluation
+	// at scan time, which correctly operates on individual versions.
+	bucketVersioning, _ := s3a.getBucketVersioningStatus(bucket)
+	isVersioned := bucketVersioning == s3_constants.VersioningEnabled ||
+		bucketVersioning == s3_constants.VersioningSuspended
+
 	for _, rule := range lifeCycleConfig.Rules {
 		if rule.Status != Enabled {
 			continue
@@ -961,6 +975,10 @@ func (s3a *S3ApiServer) PutBucketLifecycleConfigurationHandler(w http.ResponseWr
 		if rule.Transition.set || rule.NoncurrentVersionTransition.set {
 			s3err.WriteErrorResponse(w, r, s3err.ErrNotImplemented)
 			return
+		}
+
+		if isVersioned {
+			continue // all rules evaluated by lifecycle worker at scan time
 		}
 
 		var rulePrefix string

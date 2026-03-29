@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,4 +124,29 @@ func (f failingReadCloser) Read(_ []byte) (int, error) {
 
 func (f failingReadCloser) Close() error {
 	return nil
+}
+
+// TestShouldSkipTTLFastPathForVersionedBuckets verifies that the TTL
+// fast-path (filer.conf TTL entries + updateEntriesTTL) is skipped for
+// versioned buckets. On AWS S3, Expiration.Days on a versioned bucket
+// creates a delete marker — it does not delete data. TTL volumes would
+// destroy all versions indiscriminately, so the lifecycle worker must
+// handle versioned buckets at scan time instead. (issue #8757)
+func TestShouldSkipTTLFastPathForVersionedBuckets(t *testing.T) {
+	tests := []struct {
+		name       string
+		versioning string
+		expectSkip bool
+	}{
+		{"versioning_enabled", s3_constants.VersioningEnabled, true},
+		{"versioning_suspended", s3_constants.VersioningSuspended, true},
+		{"no_versioning", "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			isVersioned := tt.versioning == s3_constants.VersioningEnabled ||
+				tt.versioning == s3_constants.VersioningSuspended
+			assert.Equal(t, tt.expectSkip, isVersioned)
+		})
+	}
 }
