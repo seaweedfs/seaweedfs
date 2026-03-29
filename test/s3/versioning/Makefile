@@ -1,7 +1,7 @@
 # S3 API Test Makefile
 # This Makefile provides comprehensive targets for running S3 versioning tests
 
-.PHONY: help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-comprehensive test-all clean logs check-deps
+.PHONY: all test help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-regressions test-versioning-comprehensive test-all clean logs check-deps
 
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
@@ -11,6 +11,12 @@ VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestVersioning
+
+.DEFAULT_GOAL := help
+
+all: test
+
+test: test-with-server
 
 # Default target
 help:
@@ -25,6 +31,7 @@ help:
 	@echo "  stop-server            - Stop SeaweedFS server"
 	@echo "  test-versioning        - Run all versioning tests"
 	@echo "  test-versioning-quick  - Run core versioning tests only"
+	@echo "  test-versioning-regressions - Run targeted versioning regression tests"
 	@echo "  test-versioning-simple - Run tests without server management"
 	@echo "  test-versioning-comprehensive - Run comprehensive versioning tests"
 	@echo "  test-all               - Run all S3 API tests"
@@ -178,6 +185,12 @@ test-versioning-quick: check-deps
 	@echo "Running core S3 versioning tests..."
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers" .
 	@echo "✅ Core versioning tests completed"
+
+# Targeted regressions for conditional mutation, multipart, copy, and suspended delete flows.
+test-versioning-regressions: check-deps
+	@echo "Running targeted S3 versioning regression tests..."
+	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestVersioningCompleteMultipartUploadIsIdempotent|TestVersioningSelfCopyMetadataReplaceCreatesNewVersion|TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion|TestSuspendedDeleteCreatesDeleteMarker" .
+	@echo "✅ Targeted versioning regression tests completed"
 
 # All versioning tests
 test-versioning: check-deps

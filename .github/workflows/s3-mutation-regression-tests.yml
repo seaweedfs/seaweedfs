@@ -1,0 +1,133 @@
+name: "S3 Mutation Regression Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/s3api/**'
+      - 'test/s3/delete/**'
+      - 'test/s3/distributed_lock/**'
+      - 'test/s3/versioning/**'
+      - 'test/volume_server/framework/**'
+      - 'docker/compose/s3.json'
+      - '.github/workflows/s3-mutation-regression-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/s3-mutation-regression-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  s3-versioning-regressions:
+    name: S3 Versioning Regression Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run S3 versioning regression tests
+        timeout-minutes: 20
+        working-directory: test/s3/versioning
+        run: |
+          set -x
+          make test-with-server TEST_PATTERN="TestVersioningCompleteMultipartUploadIsIdempotent|TestVersioningSelfCopyMetadataReplaceCreatesNewVersion|TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion|TestSuspendedDeleteCreatesDeleteMarker"
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/versioning
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            tail -100 weed-test.log
+          fi
+
+      - name: Upload versioning logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-versioning-regression-logs
+          path: test/s3/versioning/weed-test*.log
+          retention-days: 3
+
+  s3-delete-regressions:
+    name: S3 Delete Regression Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Run S3 delete regression tests
+        timeout-minutes: 15
+        working-directory: test/s3/delete
+        run: |
+          set -x
+          make test-with-server
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/delete
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            tail -100 weed-test.log
+          fi
+
+      - name: Upload delete logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-delete-regression-logs
+          path: test/s3/delete/weed-test*.log
+          retention-days: 3
+
+  s3-distributed-lock-regressions:
+    name: S3 Distributed Lock Regression Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Build SeaweedFS
+        run: |
+          go build -o weed/weed -buildvcs=false ./weed
+
+      - name: Run distributed lock regressions
+        timeout-minutes: 25
+        env:
+          TMPDIR: ${{ github.workspace }}/test/s3/distributed_lock/tmp
+          S3_DISTRIBUTED_LOCK_KEEP_LOGS: "1"
+          WEED_BINARY: ${{ github.workspace }}/weed/weed
+        run: |
+          set -x
+          mkdir -p "$TMPDIR"
+          go test -v -count=1 -timeout=20m ./test/s3/distributed_lock
+
+      - name: Upload distributed lock logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-distributed-lock-regression-logs
+          path: test/s3/distributed_lock/tmp/seaweedfs_s3_distributed_lock_*
+          retention-days: 3

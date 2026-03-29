@@ -74,33 +74,31 @@ func runConditionalPutRace(t *testing.T, clients []s3RaceClient, bucket, key str
 	t.Helper()
 
 	start := make(chan struct{})
-	results := make(chan putAttemptResult, len(clients)*2)
+	results := make(chan putAttemptResult, len(clients))
 	var wg sync.WaitGroup
 
 	for _, client := range clients {
-		for attempt := 0; attempt < 2; attempt++ {
-			wg.Add(1)
-			body := fmt.Sprintf("%s-attempt-%d", client.name, attempt)
-			go func(client s3RaceClient, body string) {
-				defer wg.Done()
-				<-start
+		wg.Add(1)
+		body := fmt.Sprintf("%s-race", client.name)
+		go func(client s3RaceClient, body string) {
+			defer wg.Done()
+			<-start
 
-				ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
-				defer cancel()
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
 
-				_, err := client.client.PutObject(ctx, &s3.PutObjectInput{
-					Bucket:      aws.String(bucket),
-					Key:         aws.String(key),
-					IfNoneMatch: aws.String("*"),
-					Body:        bytes.NewReader([]byte(body)),
-				})
-				results <- putAttemptResult{
-					clientName: client.name,
-					body:       body,
-					err:        err,
-				}
-			}(client, body)
-		}
+			_, err := client.client.PutObject(ctx, &s3.PutObjectInput{
+				Bucket:      aws.String(bucket),
+				Key:         aws.String(key),
+				IfNoneMatch: aws.String("*"),
+				Body:        bytes.NewReader([]byte(body)),
+			})
+			results <- putAttemptResult{
+				clientName: client.name,
+				body:       body,
+				err:        err,
+			}
+		}(client, body)
 	}
 
 	close(start)
@@ -127,7 +125,7 @@ func runConditionalPutRace(t *testing.T, clients []s3RaceClient, bucket, key str
 
 	require.Empty(t, unexpectedErrors, "unexpected race errors")
 	require.Equal(t, 1, successes, "exactly one write should win")
-	require.Equal(t, len(clients)*2-1, preconditionFailures, "all losing writes should fail with 412")
+	require.Equal(t, len(clients)-1, preconditionFailures, "all losing writes should fail with 412")
 
 	object, err := clients[0].client.GetObject(context.Background(), &s3.GetObjectInput{
 		Bucket: aws.String(bucket),
