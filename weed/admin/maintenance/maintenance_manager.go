@@ -74,14 +74,11 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 		}
 	}
 
-	// Load compaction task configuration (task type: "compaction")
+	// Load compaction task configuration (task type: "compaction").
+	// Use ToTaskPolicy() so the CheckIntervalSeconds → QuietForSeconds
+	// contract is honoured without duplicating the mapping here.
 	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
-		policy.TaskPolicies["compaction"] = &worker_pb.TaskPolicy{
-			Enabled:               deConfig.Enabled,
-			MaxConcurrent:         int32(deConfig.MaxConcurrent),
-			RepeatIntervalSeconds: int32(deConfig.ScanIntervalSeconds),
-			CheckIntervalSeconds:  int32(deConfig.ScanIntervalSeconds),
-		}
+		policy.TaskPolicies["compaction"] = deConfig.ToTaskPolicy()
 	}
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
