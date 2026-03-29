@@ -59,17 +59,16 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 	}
 	k.consumer, err = sarama.NewConsumer(hosts, config)
 	if err != nil {
-		panic(err)
-	} else {
-		glog.V(0).Infof("connected to %v", hosts)
+		return fmt.Errorf("create kafka consumer: %w", err)
 	}
+	glog.V(0).Infof("connected to %v", hosts)
 
 	k.topic = topic
 	k.messageChan = make(chan *sarama.ConsumerMessage, 1)
 
 	partitions, err := k.consumer.Partitions(topic)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("get kafka partitions for topic %q: %w", topic, err)
 	}
 
 	progress := loadProgress(offsetFile)
@@ -92,7 +91,7 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 		}
 		partitionConsumer, err := k.consumer.ConsumePartition(topic, partition, offset)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("consume kafka topic %q partition %d: %w", topic, partition, err)
 		}
 		go func() {
 			for {
