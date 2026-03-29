@@ -330,6 +330,9 @@ func (t *ErasureCodingTask) readSourceVolumeFileStatus(ctx context.Context) (*vo
 	if statusResp.GetDatFileSize() == 0 {
 		return nil, fmt.Errorf("volume %d on %s reports zero dat file size", t.volumeID, t.server)
 	}
+	if statusResp.GetIdxFileSize() == 0 {
+		return nil, fmt.Errorf("volume %d on %s reports zero idx file size with non-empty dat", t.volumeID, t.server)
+	}
 	return statusResp, nil
 }
 
