@@ -1,7 +1,7 @@
 # S3 API Test Makefile
 # This Makefile provides comprehensive targets for running S3 versioning tests
 
-.PHONY: help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-regressions test-versioning-comprehensive test-all clean logs check-deps
+.PHONY: all test help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-regressions test-versioning-comprehensive test-all clean logs check-deps
 
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
@@ -11,6 +11,12 @@ VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestVersioning
+
+.DEFAULT_GOAL := help
+
+all: test
+
+test: test-with-server
 
 # Default target
 help:

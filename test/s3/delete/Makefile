@@ -1,12 +1,18 @@
 # S3 delete regression test harness
 
-.PHONY: help build-weed check-deps start-server stop-server test-delete test-with-server clean logs
+.PHONY: all test help build-weed check-deps start-server stop-server test-delete test-with-server clean logs
 
 WEED_BINARY := ../../../weed/weed_binary
 S3_PORT := 8333
 TEST_TIMEOUT := 10m
 SERVER_DIR := ./test-volume-data
 S3_CONFIG := ./test_s3.json
+
+.DEFAULT_GOAL := help
+
+all: test
+
+test: test-with-server
 
 help:
 	@echo "S3 delete regression test harness"
@@ -58,7 +64,15 @@ stop-server:
 	@if [ -f weed-server.pid ]; then \
 		SERVER_PID=$$(cat weed-server.pid); \
 		kill -TERM $$SERVER_PID 2>/dev/null || true; \
-		wait $$SERVER_PID 2>/dev/null || true; \
+		for i in $$(seq 1 20); do \
+			if ! kill -0 $$SERVER_PID >/dev/null 2>&1; then \
+				break; \
+			fi; \
+			sleep 0.1; \
+		done; \
+		if kill -0 $$SERVER_PID >/dev/null 2>&1; then \
+			kill -KILL $$SERVER_PID 2>/dev/null || true; \
+		fi; \
 		rm -f weed-server.pid; \
 	fi
 
