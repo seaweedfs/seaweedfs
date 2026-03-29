@@ -172,12 +172,17 @@ jobs:
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        # Pin to specific release to avoid unexpected upstream changes
+        uses: aquasecurity/trivy-action@0.28.0
         with:
+          # Scan amd64 only — OS packages are identical across architectures
+          # since they all use the same alpine base, so a single-arch scan
+          # provides sufficient coverage without multiplying CI time.
           image-ref: ghcr.io/chrislusf/seaweedfs:${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || 'latest' }}${{ steps.config.outputs.tag_suffix }}-amd64
           format: sarif
           output: trivy-results.sarif
           severity: HIGH,CRITICAL
+          exit-code: '1'
       - name: Upload Trivy scan results to GitHub Security
         uses: github/codeql-action/upload-sarif@v3
         if: always()
