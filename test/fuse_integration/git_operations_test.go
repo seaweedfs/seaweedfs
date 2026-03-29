@@ -431,6 +431,17 @@ func resetToCommitWithRecovery(t *testing.T, bareRepo, localClone, mountClone, c
 			}
 			continue
 		}
+		// Verify git commands actually work in the directory — the kernel
+		// dcache can transiently show the dir then lose it after reset.
+		if _, err := tryGitCommand(mountClone, "rev-parse", "HEAD"); err != nil {
+			lastErr = fmt.Errorf("post-reset verification failed: %w", err)
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v — removing clone for re-create", attempt, lastErr)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
 		return
 	}
 	require.NoError(t, lastErr, "git reset --hard %s failed after %d recovery attempts", commit, maxAttempts)
