@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"os"
 	"path/filepath"
 	"strings"
@@ -264,15 +263,23 @@ func (t *ErasureCodingTask) markVolumeReadonly() error {
 func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]string, error) {
 	localFiles := make(map[string]string)
 
+	fileStatus, err := t.readSourceVolumeFileStatus()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read source volume file status: %v", err)
+	}
+
 	t.GetLogger().WithFields(map[string]interface{}{
-		"volume_id":   t.volumeID,
-		"source":      t.server,
-		"working_dir": workDir,
+		"volume_id":           t.volumeID,
+		"source":              t.server,
+		"working_dir":         workDir,
+		"compaction_revision": fileStatus.GetCompactionRevision(),
+		"dat_file_size_bytes": fileStatus.GetDatFileSize(),
+		"idx_file_size_bytes": fileStatus.GetIdxFileSize(),
 	}).Info("Starting volume file copy from source server")
 
 	// Copy .dat file
 	datFile := filepath.Join(workDir, fmt.Sprintf("%d.dat", t.volumeID))
-	if err := t.copyFileFromSource(".dat", datFile); err != nil {
+	if err := t.copyFileFromSource(".dat", datFile, fileStatus.GetCompactionRevision(), fileStatus.GetDatFileSize()); err != nil {
 		return nil, fmt.Errorf("failed to copy .dat file: %v", err)
 	}
 	localFiles["dat"] = datFile
@@ -289,7 +296,7 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]
 
 	// Copy .idx file
 	idxFile := filepath.Join(workDir, fmt.Sprintf("%d.idx", t.volumeID))
-	if err := t.copyFileFromSource(".idx", idxFile); err != nil {
+	if err := t.copyFileFromSource(".idx", idxFile, fileStatus.GetCompactionRevision(), fileStatus.GetIdxFileSize()); err != nil {
 		return nil, fmt.Errorf("failed to copy .idx file: %v", err)
 	}
 	localFiles["idx"] = idxFile
@@ -307,15 +314,32 @@ func (t *ErasureCodingTask) copyVolumeFilesToWorker(workDir string) (map[string]
 	return localFiles, nil
 }
 
+func (t *ErasureCodingTask) readSourceVolumeFileStatus() (*volume_server_pb.ReadVolumeFileStatusResponse, error) {
+	var statusResp *volume_server_pb.ReadVolumeFileStatusResponse
+	err := operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			var readErr error
+			statusResp, readErr = client.ReadVolumeFileStatus(context.Background(), &volume_server_pb.ReadVolumeFileStatusRequest{
+				VolumeId: t.volumeID,
+			})
+			return readErr
+		})
+	if err != nil {
+		return nil, err
+	}
+	return statusResp, nil
+}
+
 // copyFileFromSource copies a file from source server to local path using gRPC streaming
-func (t *ErasureCodingTask) copyFileFromSource(ext, localPath string) error {
+func (t *ErasureCodingTask) copyFileFromSource(ext, localPath string, compactionRevision uint32, stopOffset uint64) error {
 	return operation.WithVolumeServerClient(false, pb.ServerAddress(t.server), t.grpcDialOption,
 		func(client volume_server_pb.VolumeServerClient) error {
 			stream, err := client.CopyFile(context.Background(), &volume_server_pb.CopyFileRequest{
-				VolumeId:   t.volumeID,
-				Collection: t.collection,
-				Ext:        ext,
-				StopOffset: uint64(math.MaxInt64),
+				VolumeId:           t.volumeID,
+				Collection:         t.collection,
+				Ext:                ext,
+				CompactionRevision: compactionRevision,
+				StopOffset:         stopOffset,
 			})
 			if err != nil {
 				return fmt.Errorf("failed to initiate file copy: %v", err)
