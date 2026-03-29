@@ -327,6 +327,9 @@ func (t *ErasureCodingTask) readSourceVolumeFileStatus(ctx context.Context) (*vo
 	if err != nil {
 		return nil, err
 	}
+	if statusResp.GetDatFileSize() == 0 {
+		return nil, fmt.Errorf("volume %d on %s reports zero dat file size", t.volumeID, t.server)
+	}
 	return statusResp, nil
 }
 
@@ -372,6 +375,9 @@ func (t *ErasureCodingTask) copyFileFromSource(ctx context.Context, ext, localPa
 				}
 			}
 
+			if totalBytes != int64(stopOffset) {
+				return fmt.Errorf("short copy of %s: got %d bytes, expected %d", ext, totalBytes, stopOffset)
+			}
 			glog.V(1).Infof("Successfully copied %s (%d bytes) from %s to %s", ext, totalBytes, t.server, localPath)
 			return nil
 		})
