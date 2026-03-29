@@ -42,7 +42,7 @@ start-server: check-deps
 		-master.peers=none \
 		> weed-test.log 2>&1 & echo $$! > weed-server.pid
 	@for i in $$(seq 1 60); do \
-		if curl -sf http://127.0.0.1:$(S3_PORT) >/dev/null 2>&1; then \
+		if curl -sS -o /dev/null http://127.0.0.1:$(S3_PORT)/ >/dev/null 2>&1; then \
 			echo "SeaweedFS S3 server is ready on port $(S3_PORT)"; \
 			exit 0; \
 		fi; \
