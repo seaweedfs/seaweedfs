@@ -7,10 +7,9 @@ package enginev2
 //
 // A zero value for any field means "no limit" for that dimension.
 type CatchUpBudget struct {
-	// TargetLSNAtStart is frozen at handshake time. The catch-up target
-	// does not drift — if the primary writes more, the session completes
-	// at the original target and then transitions to normal shipping.
-	TargetLSNAtStart uint64
+	// Note: the frozen target is on RecoverySession.FrozenTargetLSN, not here.
+	// That field is set unconditionally by BeginCatchUp and enforced by
+	// RecordCatchUpProgress regardless of budget presence.
 
 	// MaxDurationTicks is the hard time budget. If the session has not
 	// converged within this many ticks, it escalates.

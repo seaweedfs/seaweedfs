@@ -248,9 +248,9 @@ func TestSender_TargetFrozen_RejectsProgressBeyond(t *testing.T) {
 	s.RecordHandshake(sess.ID, 50, 100) // target = 100
 	s.BeginCatchUp(sess.ID)
 
-	// Budget.TargetLSNAtStart should be frozen to 100.
-	if sess.Budget.TargetLSNAtStart != 100 {
-		t.Fatalf("frozen target=%d, want 100", sess.Budget.TargetLSNAtStart)
+	// FrozenTargetLSN should be frozen to 100.
+	if sess.FrozenTargetLSN != 100 {
+		t.Fatalf("frozen target=%d, want 100", sess.FrozenTargetLSN)
 	}
 
 	// Progress within target works.

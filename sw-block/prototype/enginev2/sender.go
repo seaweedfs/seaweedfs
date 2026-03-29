@@ -317,9 +317,6 @@ func (s *Sender) BeginCatchUp(sessionID uint64, startTick ...uint64) error {
 	// Freeze the target unconditionally: catch-up is a bounded (R, H0] contract.
 	// The session will not chase a moving head beyond this boundary.
 	s.session.FrozenTargetLSN = s.session.TargetLSN
-	if s.session.Budget != nil {
-		s.session.Budget.TargetLSNAtStart = s.session.TargetLSN
-	}
 	if len(startTick) > 0 {
 		s.session.Tracker.StartTick = startTick[0]
 		s.session.Tracker.LastProgressTick = startTick[0]
