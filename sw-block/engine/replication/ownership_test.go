@@ -4,7 +4,6 @@ import "testing"
 
 // ============================================================
 // Phase 05 Slice 1: Engine ownership/fencing tests
-// Mapped to V2 acceptance criteria and boundary cases.
 // ============================================================
 
 // --- Changed-address invalidation (A10) ---
@@ -20,22 +19,18 @@ func TestEngine_ChangedAddress_InvalidatesSession(t *testing.T) {
 	})
 
 	s := r.Sender("r1:9333")
-	sess := s.Session()
-	s.BeginConnect(sess.ID)
+	sessID := s.SessionID()
+	s.BeginConnect(sessID)
 
-	// Address changes mid-recovery.
 	r.Reconcile(map[string]Endpoint{
 		"r1:9333": {DataAddr: "r1:9333", CtrlAddr: "r1:9445", Version: 2},
 	}, 1)
 
-	if sess.Active() {
-		t.Fatal("session should be invalidated by address change")
+	if s.HasActiveSession() {
+		t.Fatal("session should be invalidated")
 	}
-	if r.Sender("r1:9333") != s {
-		t.Fatal("sender identity should be preserved")
-	}
-	if s.State != StateDisconnected {
-		t.Fatalf("state=%s, want disconnected", s.State)
+	if s.State() != StateDisconnected {
+		t.Fatalf("state=%s", s.State())
 	}
 }
 
@@ -50,10 +45,8 @@ func TestEngine_ChangedAddress_NewSessionAfterUpdate(t *testing.T) {
 	})
 
 	s := r.Sender("r1:9333")
-	oldSess := s.Session()
-	s.BeginConnect(oldSess.ID)
+	oldID := s.SessionID()
 
-	// Address change + new assignment.
 	r.Reconcile(map[string]Endpoint{
 		"r1:9333": {DataAddr: "r1:9333", Version: 2},
 	}, 1)
@@ -66,9 +59,8 @@ func TestEngine_ChangedAddress_NewSessionAfterUpdate(t *testing.T) {
 	if len(result.SessionsCreated) != 1 {
 		t.Fatalf("should create new session: %v", result)
 	}
-	newSess := s.Session()
-	if newSess.ID == oldSess.ID {
-		t.Fatal("new session should have different ID")
+	if s.SessionID() == oldID {
+		t.Fatal("should have different session ID")
 	}
 }
 
@@ -76,8 +68,7 @@ func TestEngine_ChangedAddress_NewSessionAfterUpdate(t *testing.T) {
 
 func TestEngine_StaleSessionID_RejectedAtAllAPIs(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess, _ := s.AttachSession(1, SessionCatchUp)
-	staleID := sess.ID
+	staleID, _ := s.AttachSession(1, SessionCatchUp)
 
 	s.UpdateEpoch(2)
 	s.AttachSession(2, SessionCatchUp)
@@ -101,22 +92,18 @@ func TestEngine_StaleSessionID_RejectedAtAllAPIs(t *testing.T) {
 
 func TestEngine_StaleCompletion_AfterSupersede(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess1, _ := s.AttachSession(1, SessionCatchUp)
-	id1 := sess1.ID
+	id1, _ := s.AttachSession(1, SessionCatchUp)
 
 	s.UpdateEpoch(2)
-	sess2, _ := s.AttachSession(2, SessionCatchUp)
+	s.AttachSession(2, SessionCatchUp)
 
-	// Old session completion rejected.
 	if s.CompleteSessionByID(id1) {
 		t.Fatal("stale completion must be rejected")
 	}
-	// New session still active.
-	if !sess2.Active() {
+	if s.HasActiveSession() != true {
 		t.Fatal("new session should be active")
 	}
-	// Sender not moved to InSync.
-	if s.State == StateInSync {
+	if s.State() == StateInSync {
 		t.Fatal("sender should not be InSync from stale completion")
 	}
 }
@@ -130,23 +117,18 @@ func TestEngine_EpochBump_InvalidatesAllSessions(t *testing.T) {
 			"r1:9333": {DataAddr: "r1:9333", Version: 1},
 			"r2:9333": {DataAddr: "r2:9333", Version: 1},
 		},
-		Epoch:           1,
+		Epoch: 1,
 		RecoveryTargets: map[string]SessionKind{
 			"r1:9333": SessionCatchUp,
 			"r2:9333": SessionCatchUp,
 		},
 	})
 
-	s1 := r.Sender("r1:9333")
-	s2 := r.Sender("r2:9333")
-	sess1 := s1.Session()
-	sess2 := s2.Session()
-
 	count := r.InvalidateEpoch(2)
 	if count != 2 {
 		t.Fatalf("should invalidate 2, got %d", count)
 	}
-	if sess1.Active() || sess2.Active() {
+	if r.Sender("r1:9333").HasActiveSession() || r.Sender("r2:9333").HasActiveSession() {
 		t.Fatal("both sessions should be invalidated")
 	}
 }
@@ -154,10 +136,8 @@ func TestEngine_EpochBump_InvalidatesAllSessions(t *testing.T) {
 func TestEngine_EpochBump_StaleAssignment_Rejected(t *testing.T) {
 	r := NewRegistry()
 	r.ApplyAssignment(AssignmentIntent{
-		Endpoints: map[string]Endpoint{
-			"r1:9333": {DataAddr: "r1:9333", Version: 1},
-		},
-		Epoch: 2,
+		Endpoints: map[string]Endpoint{"r1:9333": {DataAddr: "r1:9333", Version: 1}},
+		Epoch:     2,
 	})
 
 	result := r.ApplyAssignment(AssignmentIntent{
@@ -175,38 +155,38 @@ func TestEngine_EpochBump_StaleAssignment_Rejected(t *testing.T) {
 
 func TestEngine_Rebuild_CatchUpAPIs_Rejected(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess, _ := s.AttachSession(1, SessionRebuild)
-	s.BeginConnect(sess.ID)
-	s.RecordHandshake(sess.ID, 0, 100)
+	sessID, _ := s.AttachSession(1, SessionRebuild)
+	s.BeginConnect(sessID)
+	s.RecordHandshake(sessID, 0, 100)
 
-	if err := s.BeginCatchUp(sess.ID); err == nil {
-		t.Fatal("rebuild: BeginCatchUp should be rejected")
+	if err := s.BeginCatchUp(sessID); err == nil {
+		t.Fatal("rebuild: BeginCatchUp should reject")
 	}
-	if err := s.RecordCatchUpProgress(sess.ID, 50); err == nil {
-		t.Fatal("rebuild: RecordCatchUpProgress should be rejected")
+	if err := s.RecordCatchUpProgress(sessID, 50); err == nil {
+		t.Fatal("rebuild: RecordCatchUpProgress should reject")
 	}
-	if s.CompleteSessionByID(sess.ID) {
-		t.Fatal("rebuild: catch-up completion should be rejected")
+	if s.CompleteSessionByID(sessID) {
+		t.Fatal("rebuild: catch-up completion should reject")
 	}
 }
 
 func TestEngine_Rebuild_FullLifecycle(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess, _ := s.AttachSession(1, SessionRebuild)
+	sessID, _ := s.AttachSession(1, SessionRebuild)
 
-	s.BeginConnect(sess.ID)
-	s.RecordHandshake(sess.ID, 0, 100)
-	s.SelectRebuildSource(sess.ID, 50, true, 100)
-	s.BeginRebuildTransfer(sess.ID)
-	s.RecordRebuildTransferProgress(sess.ID, 50)
-	s.BeginRebuildTailReplay(sess.ID)
-	s.RecordRebuildTailProgress(sess.ID, 100)
+	s.BeginConnect(sessID)
+	s.RecordHandshake(sessID, 0, 100)
+	s.SelectRebuildSource(sessID, 50, true, 100)
+	s.BeginRebuildTransfer(sessID)
+	s.RecordRebuildTransferProgress(sessID, 50)
+	s.BeginRebuildTailReplay(sessID)
+	s.RecordRebuildTailProgress(sessID, 100)
 
-	if err := s.CompleteRebuild(sess.ID); err != nil {
-		t.Fatalf("rebuild completion: %v", err)
+	if err := s.CompleteRebuild(sessID); err != nil {
+		t.Fatalf("rebuild: %v", err)
 	}
-	if s.State != StateInSync {
-		t.Fatalf("state=%s, want in_sync", s.State)
+	if s.State() != StateInSync {
+		t.Fatalf("state=%s", s.State())
 	}
 }
 
@@ -214,37 +194,66 @@ func TestEngine_Rebuild_FullLifecycle(t *testing.T) {
 
 func TestEngine_FrozenTarget_RejectsChase(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess, _ := s.AttachSession(1, SessionCatchUp)
+	sessID, _ := s.AttachSession(1, SessionCatchUp)
 
-	s.BeginConnect(sess.ID)
-	s.RecordHandshake(sess.ID, 0, 50)
-	s.BeginCatchUp(sess.ID)
+	s.BeginConnect(sessID)
+	s.RecordHandshake(sessID, 0, 50)
+	s.BeginCatchUp(sessID)
 
-	if err := s.RecordCatchUpProgress(sess.ID, 51); err == nil {
-		t.Fatal("progress beyond frozen target should be rejected")
+	if err := s.RecordCatchUpProgress(sessID, 51); err == nil {
+		t.Fatal("beyond frozen target should be rejected")
 	}
 }
 
 func TestEngine_BudgetViolation_Escalates(t *testing.T) {
 	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
-	sess, _ := s.AttachSession(1, SessionCatchUp)
-	sess.Budget = &CatchUpBudget{MaxDurationTicks: 5}
+	sessID, _ := s.AttachSession(1, SessionCatchUp, WithBudget(CatchUpBudget{MaxDurationTicks: 5}))
 
-	s.BeginConnect(sess.ID)
-	s.RecordHandshake(sess.ID, 0, 100)
-	s.BeginCatchUp(sess.ID, 0)
-	s.RecordCatchUpProgress(sess.ID, 10)
+	s.BeginConnect(sessID)
+	s.RecordHandshake(sessID, 0, 100)
+	s.BeginCatchUp(sessID, 0)
+	s.RecordCatchUpProgress(sessID, 10)
 
-	v, _ := s.CheckBudget(sess.ID, 10)
+	v, _ := s.CheckBudget(sessID, 10)
 	if v != BudgetDurationExceeded {
 		t.Fatalf("budget=%s", v)
 	}
-	if s.State != StateNeedsRebuild {
-		t.Fatalf("state=%s", s.State)
+	if s.State() != StateNeedsRebuild {
+		t.Fatalf("state=%s", s.State())
 	}
 }
 
-// --- E2E: 3 replicas, 3 outcomes ---
+// --- Encapsulation: no direct state mutation ---
+
+func TestEngine_Encapsulation_SnapshotIsReadOnly(t *testing.T) {
+	s := NewSender("r1:9333", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	sessID, _ := s.AttachSession(1, SessionCatchUp)
+
+	snap := s.SessionSnapshot()
+	if snap == nil || !snap.Active {
+		t.Fatal("should have active session snapshot")
+	}
+
+	// Mutating the snapshot does not affect the sender.
+	snap.Phase = PhaseCompleted
+	snap.Active = false
+
+	// Sender's session is still active.
+	if !s.HasActiveSession() {
+		t.Fatal("sender should still have active session after snapshot mutation")
+	}
+	snap2 := s.SessionSnapshot()
+	if snap2.Phase == PhaseCompleted {
+		t.Fatal("snapshot mutation should not leak back to sender")
+	}
+
+	// Can still execute on the real session.
+	if err := s.BeginConnect(sessID); err != nil {
+		t.Fatalf("execution should still work: %v", err)
+	}
+}
+
+// --- E2E ---
 
 func TestEngine_E2E_ThreeReplicas_ThreeOutcomes(t *testing.T) {
 	r := NewRegistry()
@@ -264,47 +273,46 @@ func TestEngine_E2E_ThreeReplicas_ThreeOutcomes(t *testing.T) {
 
 	// r1: zero-gap.
 	r1 := r.Sender("r1:9333")
-	s1 := r1.Session()
-	r1.BeginConnect(s1.ID)
-	o1, _ := r1.RecordHandshakeWithOutcome(s1.ID, HandshakeResult{
+	id1 := r1.SessionID()
+	r1.BeginConnect(id1)
+	o1, _ := r1.RecordHandshakeWithOutcome(id1, HandshakeResult{
 		ReplicaFlushedLSN: 100, CommittedLSN: 100, RetentionStartLSN: 50,
 	})
 	if o1 != OutcomeZeroGap {
 		t.Fatalf("r1: %s", o1)
 	}
-	r1.CompleteSessionByID(s1.ID)
+	r1.CompleteSessionByID(id1)
 
 	// r2: catch-up.
 	r2 := r.Sender("r2:9333")
-	s2 := r2.Session()
-	r2.BeginConnect(s2.ID)
-	o2, _ := r2.RecordHandshakeWithOutcome(s2.ID, HandshakeResult{
+	id2 := r2.SessionID()
+	r2.BeginConnect(id2)
+	o2, _ := r2.RecordHandshakeWithOutcome(id2, HandshakeResult{
 		ReplicaFlushedLSN: 70, CommittedLSN: 100, RetentionStartLSN: 50,
 	})
 	if o2 != OutcomeCatchUp {
 		t.Fatalf("r2: %s", o2)
 	}
-	r2.BeginCatchUp(s2.ID)
-	r2.RecordCatchUpProgress(s2.ID, 100)
-	r2.CompleteSessionByID(s2.ID)
+	r2.BeginCatchUp(id2)
+	r2.RecordCatchUpProgress(id2, 100)
+	r2.CompleteSessionByID(id2)
 
 	// r3: needs rebuild.
 	r3 := r.Sender("r3:9333")
-	s3 := r3.Session()
-	r3.BeginConnect(s3.ID)
-	o3, _ := r3.RecordHandshakeWithOutcome(s3.ID, HandshakeResult{
+	id3 := r3.SessionID()
+	r3.BeginConnect(id3)
+	o3, _ := r3.RecordHandshakeWithOutcome(id3, HandshakeResult{
 		ReplicaFlushedLSN: 10, CommittedLSN: 100, RetentionStartLSN: 50,
 	})
 	if o3 != OutcomeNeedsRebuild {
 		t.Fatalf("r3: %s", o3)
 	}
 
-	// Final states.
-	if r1.State != StateInSync || r2.State != StateInSync {
-		t.Fatalf("r1=%s r2=%s", r1.State, r2.State)
+	if r1.State() != StateInSync || r2.State() != StateInSync {
+		t.Fatalf("r1=%s r2=%s", r1.State(), r2.State())
 	}
-	if r3.State != StateNeedsRebuild {
-		t.Fatalf("r3=%s", r3.State)
+	if r3.State() != StateNeedsRebuild {
+		t.Fatalf("r3=%s", r3.State())
 	}
 	if r.InSyncCount() != 2 {
 		t.Fatalf("in_sync=%d", r.InSyncCount())

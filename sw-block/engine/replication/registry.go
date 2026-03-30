@@ -75,14 +75,14 @@ func (r *Registry) ApplyAssignment(intent AssignmentIntent) AssignmentResult {
 			result.SessionsFailed = append(result.SessionsFailed, replicaID)
 			continue
 		}
-		if intent.Epoch < sender.Epoch {
+		if intent.Epoch < sender.Epoch() {
 			result.SessionsFailed = append(result.SessionsFailed, replicaID)
 			continue
 		}
 		_, err := sender.AttachSession(intent.Epoch, kind)
 		if err != nil {
-			sess := sender.SupersedeSession(kind, "assignment_intent")
-			if sess != nil {
+			id := sender.SupersedeSession(kind, "assignment_intent")
+			if id != 0 {
 				result.SessionsSuperseded = append(result.SessionsSuperseded, replicaID)
 			} else {
 				result.SessionsFailed = append(result.SessionsFailed, replicaID)
@@ -110,7 +110,7 @@ func (r *Registry) All() []*Sender {
 		out = append(out, s)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].ReplicaID < out[j].ReplicaID
+		return out[i].ReplicaID() < out[j].ReplicaID()
 	})
 	return out
 }
@@ -137,7 +137,7 @@ func (r *Registry) InSyncCount() int {
 	defer r.mu.RUnlock()
 	count := 0
 	for _, s := range r.senders {
-		if s.State == StateInSync {
+		if s.State() == StateInSync {
 			count++
 		}
 	}
@@ -150,8 +150,8 @@ func (r *Registry) InvalidateEpoch(currentEpoch uint64) int {
 	defer r.mu.RUnlock()
 	count := 0
 	for _, s := range r.senders {
-		sess := s.Session()
-		if sess != nil && sess.Epoch < currentEpoch && sess.Active() {
+		snap := s.SessionSnapshot()
+		if snap != nil && snap.Epoch < currentEpoch && snap.Active {
 			s.InvalidateSession("epoch_bump", StateDisconnected)
 			count++
 		}

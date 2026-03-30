@@ -6,98 +6,100 @@ import "sync/atomic"
 var sessionIDCounter atomic.Uint64
 
 // Session represents one recovery attempt for a specific replica at a
-// specific epoch. It is owned by a Sender and gated by session ID at
-// every execution step.
-//
-// Lifecycle:
-//   - Created via Sender.AttachSession or Sender.SupersedeSession
-//   - Advanced through phases: init → connecting → handshake → catchup → completed
-//   - Invalidated by: epoch bump, endpoint change, sender stop, timeout
-//   - Stale sessions (wrong ID) are rejected at every execution API
+// specific epoch. All mutable state is unexported — external code interacts
+// through Sender execution APIs only.
 type Session struct {
-	ID               uint64
-	ReplicaID        string
-	Epoch            uint64
-	Kind             SessionKind
-	Phase            SessionPhase
-	InvalidateReason string
+	id               uint64
+	replicaID        string
+	epoch            uint64
+	kind             SessionKind
+	phase            SessionPhase
+	invalidateReason string
 
-	// Progress tracking.
-	StartLSN        uint64 // gap start (exclusive)
-	TargetLSN       uint64 // gap end (inclusive)
-	FrozenTargetLSN uint64 // frozen at BeginCatchUp — catch-up will not chase beyond
-	RecoveredTo     uint64 // highest LSN recovered so far
+	startLSN        uint64
+	targetLSN       uint64
+	frozenTargetLSN uint64
+	recoveredTo     uint64
 
-	// Truncation.
-	TruncateRequired bool
-	TruncateToLSN    uint64
-	TruncateRecorded bool
+	truncateRequired bool
+	truncateToLSN    uint64
+	truncateRecorded bool
 
-	// Budget (nil = no enforcement).
-	Budget  *CatchUpBudget
-	Tracker BudgetCheck
+	budget  *CatchUpBudget
+	tracker BudgetCheck
 
-	// Rebuild state (non-nil when Kind == SessionRebuild).
-	Rebuild *RebuildState
+	rebuild *RebuildState
 }
 
 func newSession(replicaID string, epoch uint64, kind SessionKind) *Session {
 	s := &Session{
-		ID:        sessionIDCounter.Add(1),
-		ReplicaID: replicaID,
-		Epoch:     epoch,
-		Kind:      kind,
-		Phase:     PhaseInit,
+		id:        sessionIDCounter.Add(1),
+		replicaID: replicaID,
+		epoch:     epoch,
+		kind:      kind,
+		phase:     PhaseInit,
 	}
 	if kind == SessionRebuild {
-		s.Rebuild = NewRebuildState()
+		s.rebuild = NewRebuildState()
 	}
 	return s
 }
 
+// Read-only accessors.
+
+func (s *Session) ID() uint64              { return s.id }
+func (s *Session) ReplicaID() string       { return s.replicaID }
+func (s *Session) Epoch() uint64           { return s.epoch }
+func (s *Session) Kind() SessionKind       { return s.kind }
+func (s *Session) Phase() SessionPhase     { return s.phase }
+func (s *Session) InvalidateReason() string { return s.invalidateReason }
+func (s *Session) StartLSN() uint64        { return s.startLSN }
+func (s *Session) TargetLSN() uint64       { return s.targetLSN }
+func (s *Session) FrozenTargetLSN() uint64 { return s.frozenTargetLSN }
+func (s *Session) RecoveredTo() uint64     { return s.recoveredTo }
+
 // Active returns true if the session is not completed or invalidated.
 func (s *Session) Active() bool {
-	return s.Phase != PhaseCompleted && s.Phase != PhaseInvalidated
-}
-
-// Advance moves to the next phase. Returns false if the transition is invalid.
-func (s *Session) Advance(phase SessionPhase) bool {
-	if !s.Active() {
-		return false
-	}
-	if !validTransitions[s.Phase][phase] {
-		return false
-	}
-	s.Phase = phase
-	return true
-}
-
-// SetRange sets the recovery LSN range.
-func (s *Session) SetRange(start, target uint64) {
-	s.StartLSN = start
-	s.TargetLSN = target
-}
-
-// UpdateProgress records catch-up progress (monotonic).
-func (s *Session) UpdateProgress(recoveredTo uint64) {
-	if recoveredTo > s.RecoveredTo {
-		s.RecoveredTo = recoveredTo
-	}
+	return s.phase != PhaseCompleted && s.phase != PhaseInvalidated
 }
 
 // Converged returns true if recovery reached the target.
 func (s *Session) Converged() bool {
-	return s.TargetLSN > 0 && s.RecoveredTo >= s.TargetLSN
+	return s.targetLSN > 0 && s.recoveredTo >= s.targetLSN
+}
+
+// Internal mutation methods — called by Sender under its lock.
+
+func (s *Session) advance(phase SessionPhase) bool {
+	if !s.Active() {
+		return false
+	}
+	if !validTransitions[s.phase][phase] {
+		return false
+	}
+	s.phase = phase
+	return true
+}
+
+func (s *Session) setRange(start, target uint64) {
+	s.startLSN = start
+	s.targetLSN = target
+}
+
+func (s *Session) updateProgress(recoveredTo uint64) {
+	if recoveredTo > s.recoveredTo {
+		s.recoveredTo = recoveredTo
+	}
 }
 
 func (s *Session) complete() {
-	s.Phase = PhaseCompleted
+	s.phase = PhaseCompleted
 }
 
 func (s *Session) invalidate(reason string) {
 	if !s.Active() {
 		return
 	}
-	s.Phase = PhaseInvalidated
-	s.InvalidateReason = reason
+	s.phase = PhaseInvalidated
+	s.invalidateReason = reason
 }
