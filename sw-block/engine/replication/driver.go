@@ -155,6 +155,7 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 		// Pin snapshot.
 		snapPin, err := d.Storage.PinSnapshot(snapLSN)
 		if err != nil {
+			s.InvalidateSession("snapshot_pin_failed", StateNeedsRebuild)
 			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "snapshot_pin_failed", err.Error())
 			return nil, fmt.Errorf("snapshot pin failed: %w", err)
 		}
@@ -175,16 +176,37 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 		// Full-base rebuild: pin a consistent full-extent base image.
 		basePin, err := d.Storage.PinFullBase(history.CommittedLSN)
 		if err != nil {
+			// Fail closed: invalidate session so sender is not left dangling.
+			s.InvalidateSession("full_base_pin_failed", StateNeedsRebuild)
 			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "full_base_pin_failed", err.Error())
 			return nil, fmt.Errorf("full base pin failed: %w", err)
 		}
 		plan.FullBasePin = &basePin
 
+		// Log causal reason for full-base selection.
+		reason := "no_checkpoint"
+		if history.CheckpointLSN > 0 && !history.CheckpointTrusted {
+			reason = "untrusted_checkpoint"
+		} else if history.CheckpointTrusted && !history.IsRecoverable(history.CheckpointLSN, history.CommittedLSN) {
+			reason = fmt.Sprintf("trusted_checkpoint_unreplayable_tail: checkpoint=%d tail=%d",
+				history.CheckpointLSN, history.TailLSN)
+		}
 		d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_rebuild_full_base",
-			fmt.Sprintf("committed=%d", history.CommittedLSN))
+			fmt.Sprintf("reason=%s committed=%d", reason, history.CommittedLSN))
 	}
 
 	return plan, nil
+}
+
+// CancelPlan releases all resources and invalidates the associated session.
+// Used when a plan becomes stale (e.g., address change, epoch bump).
+func (d *RecoveryDriver) CancelPlan(plan *RecoveryPlan, reason string) {
+	d.ReleasePlan(plan)
+	s := d.Orchestrator.Registry.Sender(plan.ReplicaID)
+	if s != nil && s.SessionID() == plan.SessionID {
+		s.InvalidateSession(reason, StateDisconnected)
+	}
+	d.Orchestrator.Log.Record(plan.ReplicaID, plan.SessionID, "plan_cancelled", reason)
 }
 
 // ReleasePlan releases any resources acquired by a plan.
