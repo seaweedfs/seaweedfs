@@ -136,28 +136,75 @@ func (o *RecoveryOrchestrator) ExecuteRecovery(replicaID string, replicaFlushedL
 	return RecoveryResult{ReplicaID: replicaID, Outcome: outcome, Proof: proof, FinalState: s.State()}
 }
 
-// CompleteCatchUp drives catch-up from startLSN to targetLSN and completes.
-// Called after ExecuteRecovery returns OutcomeCatchUp.
-func (o *RecoveryOrchestrator) CompleteCatchUp(replicaID string, targetLSN uint64) error {
+// CatchUpOptions configures the orchestrated catch-up flow.
+type CatchUpOptions struct {
+	TargetLSN    uint64 // required: what to catch up to
+	StartTick    uint64 // tick when catch-up begins (for budget tracking)
+	CompleteTick uint64 // tick when catch-up is evaluated (for budget checking)
+	TruncateLSN  uint64 // if non-zero, record truncation before completion
+}
+
+// CompleteCatchUp drives the full catch-up lifecycle:
+//   1. BeginCatchUp (freezes target)
+//   2. RecordCatchUpProgress
+//   3. CheckBudget (if budget configured)
+//   4. RecordTruncation (if truncation required)
+//   5. CompleteSessionByID
+//
+// Logs causal reason for every rejection, escalation, or completion.
+func (o *RecoveryOrchestrator) CompleteCatchUp(replicaID string, opts CatchUpOptions) error {
 	s := o.Registry.Sender(replicaID)
 	if s == nil {
 		return fmt.Errorf("sender not found")
 	}
 	sessID := s.SessionID()
 
-	if err := s.BeginCatchUp(sessID); err != nil {
-		o.Log.Record(replicaID, sessID, "catchup_failed", err.Error())
+	// Step 1: begin catch-up (freezes target, records start tick).
+	if err := s.BeginCatchUp(sessID, opts.StartTick); err != nil {
+		o.Log.Record(replicaID, sessID, "catchup_begin_failed", err.Error())
 		return err
 	}
-	o.Log.Record(replicaID, sessID, "catchup_started", "")
+	o.Log.Record(replicaID, sessID, "catchup_started",
+		fmt.Sprintf("target=%d start_tick=%d", opts.TargetLSN, opts.StartTick))
 
-	if err := s.RecordCatchUpProgress(sessID, targetLSN); err != nil {
-		o.Log.Record(replicaID, sessID, "catchup_progress_failed", err.Error())
-		return err
+	// Step 2: record progress (skip if already converged, e.g., truncation-only case).
+	snap := s.SessionSnapshot()
+	if snap != nil && snap.RecoveredTo < opts.TargetLSN {
+		var progressTick []uint64
+		if opts.CompleteTick > 0 {
+			progressTick = []uint64{opts.CompleteTick}
+		}
+		if err := s.RecordCatchUpProgress(sessID, opts.TargetLSN, progressTick...); err != nil {
+			o.Log.Record(replicaID, sessID, "catchup_progress_failed", err.Error())
+			return err
+		}
 	}
 
+	// Step 3: check budget at completion time.
+	if opts.CompleteTick > 0 {
+		violation, err := s.CheckBudget(sessID, opts.CompleteTick)
+		if err != nil {
+			return err
+		}
+		if violation != BudgetOK {
+			o.Log.Record(replicaID, sessID, "budget_escalated", string(violation))
+			return fmt.Errorf("budget violation: %s", violation)
+		}
+	}
+
+	// Step 4: handle truncation (if required).
+	if opts.TruncateLSN > 0 {
+		if err := s.RecordTruncation(sessID, opts.TruncateLSN); err != nil {
+			o.Log.Record(replicaID, sessID, "truncation_failed", err.Error())
+			return err
+		}
+		o.Log.Record(replicaID, sessID, "truncation_recorded",
+			fmt.Sprintf("truncated_to=%d", opts.TruncateLSN))
+	}
+
+	// Step 5: complete.
 	if !s.CompleteSessionByID(sessID) {
-		o.Log.Record(replicaID, sessID, "completion_rejected", "")
+		o.Log.Record(replicaID, sessID, "completion_rejected", "session not convergent or truncation missing")
 		return fmt.Errorf("completion rejected")
 	}
 	o.Log.Record(replicaID, sessID, "completed", "in_sync")
