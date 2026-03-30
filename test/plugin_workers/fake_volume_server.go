@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 // VolumeServer provides a minimal volume server for erasure coding tests.
@@ -373,7 +375,27 @@ func (v *VolumeServer) VolumeCopy(req *volume_server_pb.VolumeCopyRequest, strea
 	v.volumeCopyCalls++
 	v.mu.Unlock()
 
-	if err := stream.Send(&volume_server_pb.VolumeCopyResponse{ProcessedBytes: 1024}); err != nil {
+	dialOption := grpc.WithTransportCredentials(insecure.NewCredentials())
+	var statusResp *volume_server_pb.ReadVolumeFileStatusResponse
+	if err := operation.WithVolumeServerClient(false, pb.ServerAddress(req.SourceDataNode), dialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			var readErr error
+			statusResp, readErr = client.ReadVolumeFileStatus(stream.Context(), &volume_server_pb.ReadVolumeFileStatusRequest{
+				VolumeId: req.VolumeId,
+			})
+			return readErr
+		}); err != nil {
+		return err
+	}
+
+	if err := v.copyRemoteFile(stream.Context(), req.SourceDataNode, req.VolumeId, ".dat", statusResp.DatFileSize, dialOption); err != nil {
+		return err
+	}
+	if err := v.copyRemoteFile(stream.Context(), req.SourceDataNode, req.VolumeId, ".idx", statusResp.IdxFileSize, dialOption); err != nil {
+		return err
+	}
+
+	if err := stream.Send(&volume_server_pb.VolumeCopyResponse{ProcessedBytes: int64(statusResp.DatFileSize + statusResp.IdxFileSize)}); err != nil {
 		return err
 	}
 	return stream.Send(&volume_server_pb.VolumeCopyResponse{LastAppendAtNs: uint64(time.Now().UnixNano())})
@@ -391,4 +413,45 @@ func (v *VolumeServer) VolumeTailReceiver(ctx context.Context, req *volume_serve
 	v.tailReceiverCalls++
 	v.mu.Unlock()
 	return &volume_server_pb.VolumeTailReceiverResponse{}, nil
+}
+
+func (v *VolumeServer) copyRemoteFile(ctx context.Context, sourceDataNode string, volumeID uint32, ext string, fileSize uint64, dialOption grpc.DialOption) error {
+	path := v.filePath(volumeID, ext)
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return operation.WithVolumeServerClient(true, pb.ServerAddress(sourceDataNode), dialOption,
+		func(client volume_server_pb.VolumeServerClient) error {
+			stream, err := client.CopyFile(ctx, &volume_server_pb.CopyFileRequest{
+				VolumeId:   volumeID,
+				Ext:        ext,
+				StopOffset: fileSize,
+			})
+			if err != nil {
+				return err
+			}
+
+			for {
+				resp, recvErr := stream.Recv()
+				if recvErr == io.EOF {
+					return nil
+				}
+				if recvErr != nil {
+					return recvErr
+				}
+				if len(resp.FileContent) == 0 {
+					continue
+				}
+				if _, err := file.Write(resp.FileContent); err != nil {
+					return err
+				}
+			}
+		})
 }

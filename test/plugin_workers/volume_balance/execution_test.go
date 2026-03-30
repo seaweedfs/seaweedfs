@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const testVolumeDatSize = 1 * 1024 * 1024
+
 func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 	volumeID := uint32(303)
 
@@ -31,6 +33,7 @@ func TestVolumeBalanceExecutionIntegration(t *testing.T) {
 
 	source := pluginworkers.NewVolumeServer(t, "")
 	target := pluginworkers.NewVolumeServer(t, "")
+	pluginworkers.WriteTestVolumeFiles(t, source.BaseDir(), volumeID, testVolumeDatSize)
 
 	job := &plugin_pb.JobSpec{
 		JobId:   fmt.Sprintf("balance-job-%d", volumeID),
@@ -84,6 +87,9 @@ func TestVolumeBalanceBatchExecutionIntegration(t *testing.T) {
 
 	// Build a batch job with 3 volume moves from source → target.
 	volumeIDs := []uint32{401, 402, 403}
+	for _, vid := range volumeIDs {
+		pluginworkers.WriteTestVolumeFiles(t, source.BaseDir(), vid, testVolumeDatSize)
+	}
 	moves := make([]*worker_pb.BalanceMoveSpec, len(volumeIDs))
 	for i, vid := range volumeIDs {
 		moves[i] = &worker_pb.BalanceMoveSpec{
@@ -139,10 +145,11 @@ func TestVolumeBalanceBatchExecutionIntegration(t *testing.T) {
 		require.True(t, deletedVols[vid], "volume %d should have been deleted from source", vid)
 	}
 
-	// Pre-delete verification should have called ReadVolumeFileStatus on both
-	// source and target for each volume.
-	require.Equal(t, len(volumeIDs), source.ReadFileStatusCount(),
-		"each move should read source volume status before delete")
+	// Each move reads source status once before copy and once inside the
+	// target's fake VolumeCopy implementation, then reads target status once
+	// before deleting the source.
+	require.Equal(t, len(volumeIDs)*2, source.ReadFileStatusCount(),
+		"each move should read source volume status before copy and during target copy")
 	require.Equal(t, len(volumeIDs), target.ReadFileStatusCount(),
 		"each move should read target volume status before delete")
 
