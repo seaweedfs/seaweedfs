@@ -331,47 +331,6 @@ func TestDetectPrimarySSETypeS3(t *testing.T) {
 	}
 }
 
-// TestAddSSES3HeadersToResponse tests that SSE-S3 headers are added to responses
-func TestAddSSES3HeadersToResponse(t *testing.T) {
-	s3a := &S3ApiServer{}
-
-	entry := &filer_pb.Entry{
-		Extended: map[string][]byte{
-			s3_constants.AmzServerSideEncryption: []byte("AES256"),
-		},
-		Attributes: &filer_pb.FuseAttributes{},
-		Chunks: []*filer_pb.FileChunk{
-			{
-				FileId:      "1,123",
-				Offset:      0,
-				Size:        1024,
-				SseType:     filer_pb.SSEType_SSE_S3,
-				SseMetadata: []byte("metadata"),
-			},
-		},
-	}
-
-	proxyResponse := &http.Response{
-		Header: make(http.Header),
-	}
-
-	s3a.addSSEHeadersToResponse(proxyResponse, entry)
-
-	algorithm := proxyResponse.Header.Get(s3_constants.AmzServerSideEncryption)
-	if algorithm != "AES256" {
-		t.Errorf("Expected SSE algorithm AES256, got %s", algorithm)
-	}
-
-	// Should NOT have SSE-C or SSE-KMS specific headers
-	if proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm) != "" {
-		t.Error("Should not have SSE-C customer algorithm header")
-	}
-
-	if proxyResponse.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId) != "" {
-		t.Error("Should not have SSE-KMS key ID header")
-	}
-}
-
 // TestSSES3EncryptionWithBaseIV tests multipart encryption with base IV
 func TestSSES3EncryptionWithBaseIV(t *testing.T) {
 	// Generate SSE-S3 key

@@ -539,10 +539,6 @@ func testJWTAuthentication(t *testing.T, iam *IdentityAccessManagement, token st
 	return iam.authenticateJWTWithIAM(req)
 }
 
-func testJWTAuthorization(t *testing.T, iam *IdentityAccessManagement, identity *Identity, action Action, bucket, object, token string) bool {
-	return testJWTAuthorizationWithRole(t, iam, identity, action, bucket, object, token, "TestRole")
-}
-
 func testJWTAuthorizationWithRole(t *testing.T, iam *IdentityAccessManagement, identity *Identity, action Action, bucket, object, token, roleName string) bool {
 	// Create test request
 	req := httptest.NewRequest("GET", "/"+bucket+"/"+object, http.NoBody)
