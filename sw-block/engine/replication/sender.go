@@ -47,7 +47,7 @@ func (s *Sender) SessionSnapshot() *SessionSnapshot {
 	if s.session == nil {
 		return nil
 	}
-	return &SessionSnapshot{
+	snap := &SessionSnapshot{
 		ID:               s.session.id,
 		ReplicaID:        s.session.replicaID,
 		Epoch:            s.session.epoch,
@@ -59,7 +59,15 @@ func (s *Sender) SessionSnapshot() *SessionSnapshot {
 		FrozenTargetLSN:  s.session.frozenTargetLSN,
 		RecoveredTo:      s.session.recoveredTo,
 		Active:           s.session.Active(),
+		TruncateRequired: s.session.truncateRequired,
+		TruncateToLSN:    s.session.truncateToLSN,
+		TruncateRecorded: s.session.truncateRecorded,
 	}
+	if s.session.rebuild != nil {
+		snap.RebuildSource = s.session.rebuild.Source
+		snap.RebuildPhase = s.session.rebuild.Phase
+	}
+	return snap
 }
 
 // SessionSnapshot is a read-only copy of session state for external inspection.
@@ -75,6 +83,15 @@ type SessionSnapshot struct {
 	FrozenTargetLSN  uint64
 	RecoveredTo      uint64
 	Active           bool
+
+	// Truncation state.
+	TruncateRequired bool
+	TruncateToLSN    uint64
+	TruncateRecorded bool
+
+	// Rebuild state (nil if not a rebuild session).
+	RebuildSource RebuildSource
+	RebuildPhase  RebuildPhase
 }
 
 // SessionID returns the current session ID, or 0 if no session.
