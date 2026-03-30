@@ -16,6 +16,11 @@ type CatchUpExecutor struct {
 	replicaID string
 	sessID    uint64
 	released  bool
+
+	// OnStep is an optional callback invoked between executor-managed steps.
+	// Used for deterministic fault injection in tests (e.g., epoch bump).
+	// step is the 0-based index of the completed step.
+	OnStep func(step int)
 }
 
 // NewCatchUpExecutor creates an executor from a plan. The plan's resources
@@ -66,6 +71,11 @@ func (e *CatchUpExecutor) Execute(progressLSNs []uint64, startTick uint64) error
 		if err := s.RecordCatchUpProgress(e.sessID, lsn, tick); err != nil {
 			e.release(fmt.Sprintf("progress_failed_step_%d: %s", i, err))
 			return err
+		}
+
+		// Fire step callback (test hook for fault injection).
+		if e.OnStep != nil {
+			e.OnStep(i)
 		}
 
 		// Check budget after each step.

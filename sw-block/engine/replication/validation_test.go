@@ -99,9 +99,10 @@ func TestP3_E1_ChangedAddress_OldPlanCancelledByDriver(t *testing.T) {
 
 // --- E2 / FC2: Epoch bump during active executor step ---
 
-func TestP3_E2_EpochBump_AfterExecutorProgress(t *testing.T) {
-	// True mid-execution: executor makes progress, THEN epoch bumps,
-	// THEN next step fails.
+func TestP3_E2_EpochBump_MidExecutorLoop(t *testing.T) {
+	// True mid-execution through executor's own loop:
+	// executor makes progress steps, epoch bumps BETWEEN executor-managed
+	// steps via OnStep hook, executor detects invalidation at next step.
 	storage := newMockStorage(RetainedHistory{
 		HeadLSN: 100, TailLSN: 0, CommittedLSN: 100,
 	})
@@ -116,39 +117,29 @@ func TestP3_E2_EpochBump_AfterExecutorProgress(t *testing.T) {
 	})
 
 	plan, _ := driver.PlanRecovery("r1", 50)
-	s := driver.Orchestrator.Registry.Sender("r1")
-	sessID := plan.SessionID
-
-	// Manually drive the executor steps to place the epoch bump BETWEEN steps.
-	// Step 1: begin catch-up.
-	s.BeginCatchUp(sessID, 0)
-
-	// Step 2: first progress step succeeds.
-	s.RecordCatchUpProgress(sessID, 60, 1)
-
-	// Step 3: second progress step succeeds.
-	s.RecordCatchUpProgress(sessID, 70, 2)
-
-	// EPOCH BUMPS between progress steps (real mid-execution).
-	driver.Orchestrator.InvalidateEpoch(2)
-	driver.Orchestrator.UpdateSenderEpoch("r1", 2)
-
-	// Step 4: third progress step fails — session invalidated.
-	err := s.RecordCatchUpProgress(sessID, 80, 3)
-	if err == nil {
-		t.Fatal("E2: progress after mid-execution epoch bump must fail")
-	}
-
-	// Executor cancel releases resources.
 	exec := NewCatchUpExecutor(driver, plan)
-	exec.Cancel("epoch_bump_after_progress")
 
-	// WAL pin released.
-	if len(storage.pinnedWAL) != 0 {
-		t.Fatal("E2: WAL pin must be released after mid-execution epoch bump")
+	// OnStep hook: bump epoch after step 1 (executor has made real progress).
+	exec.OnStep = func(step int) {
+		if step == 1 { // after second progress step succeeds
+			driver.Orchestrator.InvalidateEpoch(2)
+			driver.Orchestrator.UpdateSenderEpoch("r1", 2)
+		}
 	}
 
-	// E5: Log shows per-replica invalidation + resource release.
+	// Executor runs 5 steps. After step 1, epoch bumps.
+	// Step 2's invalidation check catches the stale session.
+	err := exec.Execute([]uint64{60, 70, 80, 90, 100}, 0)
+	if err == nil {
+		t.Fatal("E2: executor must fail when epoch bumps between its managed steps")
+	}
+
+	// Resources released by executor's own release path.
+	if len(storage.pinnedWAL) != 0 {
+		t.Fatal("E2: WAL pin must be released by executor after mid-loop invalidation")
+	}
+
+	// E5: Log shows per-replica invalidation + executor resource release.
 	hasInvalidation := false
 	hasRelease := false
 	for _, e := range driver.Orchestrator.Log.EventsFor("r1") {
@@ -160,10 +151,10 @@ func TestP3_E2_EpochBump_AfterExecutorProgress(t *testing.T) {
 		}
 	}
 	if !hasInvalidation {
-		t.Fatal("E2/E5: log must show session invalidation with epoch cause")
+		t.Fatal("E2/E5: log must show session invalidation")
 	}
 	if !hasRelease {
-		t.Fatal("E2/E5: log must show resource release on cancellation")
+		t.Fatal("E2/E5: log must show executor resource release")
 	}
 }
 
