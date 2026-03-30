@@ -19,25 +19,25 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
+	oldDir := event.Directory
+	newDir := filer_pb.MetadataEventTargetDirectory(event)
 
-	if f.DirBucketsPath == event.Directory {
-		if filer_pb.IsCreate(event) {
-			if message.NewEntry.IsDirectory {
-				f.Store.OnBucketCreation(message.NewEntry.Name)
-			}
+	if filer_pb.IsCreate(event) {
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
 		}
-		if filer_pb.IsDelete(event) {
-			if message.OldEntry.IsDirectory {
-				f.Store.OnBucketDeletion(message.OldEntry.Name)
-			}
+	}
+	if filer_pb.IsDelete(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
 		}
-		if filer_pb.IsRename(event) {
-			if message.OldEntry.IsDirectory {
-				f.Store.OnBucketDeletion(message.OldEntry.Name)
-			}
-			if message.NewEntry.IsDirectory {
-				f.Store.OnBucketCreation(message.NewEntry.Name)
-			}
+	}
+	if filer_pb.IsRename(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
+		}
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
 		}
 	}
 }
@@ -80,10 +80,8 @@ func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResp
 }
 
 func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataResponse) {
-	if DirectoryEtcSeaweedFS != event.Directory {
-		if DirectoryEtcSeaweedFS != event.EventNotification.NewParentPath {
-			return
-		}
+	if !filer_pb.MetadataEventTouchesDirectory(event, DirectoryEtcSeaweedFS) {
+		return
 	}
 
 	entry := event.EventNotification.NewEntry

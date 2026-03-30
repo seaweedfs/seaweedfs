@@ -127,7 +127,7 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if strings.HasPrefix(resp.Directory, filer.DirectoryEtcRemote) {
+		if filer_pb.MetadataEventTouchesDirectoryPrefix(resp, filer.DirectoryEtcRemote) {
 			return handleEtcRemoteChanges(resp)
 		}
 
