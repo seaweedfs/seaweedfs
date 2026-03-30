@@ -461,13 +461,16 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			return nil
 		}
 
-		if !strings.HasPrefix(resp.Directory+"/", sourcePath) {
+		// For rename events the key/directory is the old (source) path.
+		// Check both old and new directories so cross-boundary renames
+		// are not silently dropped. The downstream old/new key handling
+		// (lines below) already converts these to create or delete.
+		oldDirInScope := strings.HasPrefix(resp.Directory+"/", sourcePath) && !matchesExcludePath(resp.Directory+"/", excludePaths)
+		newDirInScope := message.NewParentPath != "" &&
+			strings.HasPrefix(message.NewParentPath+"/", sourcePath) &&
+			!matchesExcludePath(message.NewParentPath+"/", excludePaths)
+		if !oldDirInScope && !newDirInScope {
 			return nil
-		}
-		for _, excludePath := range excludePaths {
-			if strings.HasPrefix(resp.Directory+"/", excludePath) {
-				return nil
-			}
 		}
 		// Compute per-side exclusion so that rename events crossing an
 		// exclude boundary are handled as delete + create rather than
@@ -617,6 +620,15 @@ func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regex
 			return true
 		}
 		if matchesAnyWildcard(excludePathPatterns, entry.Name) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesExcludePath(dir string, excludePaths []string) bool {
+	for _, excludePath := range excludePaths {
+		if strings.HasPrefix(dir, excludePath) {
 			return true
 		}
 	}
