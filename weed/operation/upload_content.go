@@ -97,6 +97,13 @@ var (
 	once        sync.Once
 )
 
+var uploadRetryableAssignErrList = []string{
+	"transport",
+	"is read only",
+	"failed to write to local disk",
+	"Volume Size ",
+}
+
 // HTTPClient interface for testing
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -128,6 +135,34 @@ func newUploader(httpClient HTTPClient) *Uploader {
 	}
 }
 
+func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, data []byte) (fileId string, uploadResult *UploadResult, err error) {
+	doUploadFunc := func() error {
+		var host string
+		var auth security.EncodedJwt
+		fileId, host, auth, err = assignFn()
+		if err != nil {
+			return err
+		}
+
+		uploadOption.UploadUrl = genFileUrlFn(host, fileId)
+		uploadOption.Jwt = auth
+
+		uploadResult, err = uploader.retriedUploadData(context.Background(), data, uploadOption)
+		return err
+	}
+
+	if uploadOption.RetryForever {
+		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
+			glog.V(0).Infof("upload content: %v", err)
+			return true
+		})
+	} else {
+		err = util.MultiRetry("uploadWithRetry", uploadRetryableAssignErrList, doUploadFunc)
+	}
+
+	return
+}
+
 // UploadWithRetry will retry both assigning volume request and uploading content
 // The option parameter does not need to specify UploadUrl and Jwt, which will come from assigning volume.
 func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.AssignVolumeRequest, uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (fileId string, uploadResult *UploadResult, err error, data []byte) {
@@ -144,11 +179,7 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
 	}
 
-	doUploadFunc := func() error {
-
-		var host string
-		var auth security.EncodedJwt
-
+	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, assignErr := client.AssignVolume(context.Background(), assignRequest)
@@ -166,26 +197,10 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 
 			return nil
 		}); grpcAssignErr != nil {
-			return fmt.Errorf("filerGrpcAddress assign volume: %w", grpcAssignErr)
+			err = fmt.Errorf("filerGrpcAddress assign volume: %w", grpcAssignErr)
 		}
-
-		uploadOption.UploadUrl = genFileUrlFn(host, fileId)
-		uploadOption.Jwt = auth
-
-		var uploadErr error
-		uploadResult, uploadErr = uploader.retriedUploadData(context.Background(), data, uploadOption)
-		return uploadErr
-	}
-	if uploadOption.RetryForever {
-		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
-			glog.V(0).Infof("upload content: %v", err)
-			return true
-		})
-	} else {
-		uploadErrList := []string{"transport", "is read only"}
-		err = util.MultiRetry("uploadWithRetry", uploadErrList, doUploadFunc)
-	}
-
+		return
+	}, uploadOption, genFileUrlFn, data)
 	return
 }
 
