@@ -15,10 +15,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
-const (
-	maxCursorIndex = 4096
-)
-
 type HasLookupFileIdFunction interface {
 	GetLookupFileIdFunction() LookupFileIdFunctionType
 }
@@ -52,16 +48,6 @@ func newVidMap(dataCenter string) *vidMap {
 		DataCenter:      dataCenter,
 		cursor:          -1,
 	}
-}
-
-func (vc *vidMap) getLocationIndex(length int) (int, error) {
-	if length <= 0 {
-		return 0, fmt.Errorf("invalid length: %d", length)
-	}
-	if atomic.LoadInt32(&vc.cursor) == maxCursorIndex {
-		atomic.CompareAndSwapInt32(&vc.cursor, maxCursorIndex, -1)
-	}
-	return int(atomic.AddInt32(&vc.cursor, 1)) % length, nil
 }
 
 func (vc *vidMap) isSameDataCenter(loc *Location) bool {
