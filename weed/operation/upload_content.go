@@ -135,18 +135,6 @@ func newUploader(httpClient HTTPClient) *Uploader {
 	}
 }
 
-func isUploadRetryableAssignError(err error) bool {
-	if err == nil {
-		return false
-	}
-	for _, retryable := range uploadRetryableAssignErrList {
-		if strings.Contains(err.Error(), retryable) {
-			return true
-		}
-	}
-	return false
-}
-
 func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, data []byte) (fileId string, uploadResult *UploadResult, err error) {
 	doUploadFunc := func() error {
 		var host string

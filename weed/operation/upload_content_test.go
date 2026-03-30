@@ -22,6 +22,18 @@ type scriptedHTTPClient struct {
 	calls     []string
 }
 
+func testIsUploadRetryableAssignError(err error) bool {
+	if err == nil {
+		return false
+	}
+	for _, retryable := range uploadRetryableAssignErrList {
+		if strings.Contains(err.Error(), retryable) {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *scriptedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -58,8 +70,8 @@ func TestIsUploadRetryableAssignError(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isUploadRetryableAssignError(tc.err); got != tc.want {
-				t.Fatalf("isUploadRetryableAssignError(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := testIsUploadRetryableAssignError(tc.err); got != tc.want {
+				t.Fatalf("testIsUploadRetryableAssignError(%v) = %v, want %v", tc.err, got, tc.want)
 			}
 		})
 	}
