@@ -272,6 +272,9 @@ func (s *Sender) RecordHandshakeWithOutcome(sessionID uint64, result HandshakeRe
 // preferred engine-level API — it ensures recovery decisions are backed
 // by actual retention state, not caller-supplied values.
 func (s *Sender) RecordHandshakeFromHistory(sessionID uint64, replicaFlushedLSN uint64, history *RetainedHistory) (RecoveryOutcome, *RecoverabilityProof, error) {
+	if history == nil {
+		return OutcomeNeedsRebuild, nil, fmt.Errorf("nil RetainedHistory")
+	}
 	proof := history.ProveRecoverability(replicaFlushedLSN)
 	hr := history.MakeHandshakeResult(replicaFlushedLSN)
 	outcome, err := s.RecordHandshakeWithOutcome(sessionID, hr)
@@ -283,6 +286,9 @@ func (s *Sender) RecordHandshakeFromHistory(sessionID uint64, replicaFlushedLSN 
 // the rebuild-source decision accounts for both checkpoint trust AND
 // tail replayability.
 func (s *Sender) SelectRebuildFromHistory(sessionID uint64, history *RetainedHistory) error {
+	if history == nil {
+		return fmt.Errorf("nil RetainedHistory")
+	}
 	source, snapLSN := history.RebuildSourceDecision()
 	valid := source == RebuildSnapshotTail
 	return s.SelectRebuildSource(sessionID, snapLSN, valid, history.CommittedLSN)
