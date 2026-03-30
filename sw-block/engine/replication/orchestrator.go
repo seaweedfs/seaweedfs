@@ -28,10 +28,11 @@ func NewRecoveryOrchestrator() *RecoveryOrchestrator {
 // ProcessAssignment applies an assignment intent and logs the result.
 // Detects endpoint-change invalidations automatically.
 func (o *RecoveryOrchestrator) ProcessAssignment(intent AssignmentIntent) AssignmentResult {
-	// Snapshot pre-assignment session state for invalidation detection.
+	// Snapshot pre-assignment state for invalidation detection.
 	type preState struct {
 		hadSession bool
 		sessionID  uint64
+		endpoint   Endpoint
 	}
 	pre := map[string]preState{}
 	for _, ra := range intent.Replicas {
@@ -39,6 +40,7 @@ func (o *RecoveryOrchestrator) ProcessAssignment(intent AssignmentIntent) Assign
 			pre[ra.ReplicaID] = preState{
 				hadSession: s.HasActiveSession(),
 				sessionID:  s.SessionID(),
+				endpoint:   s.Endpoint(),
 			}
 		}
 	}
@@ -52,12 +54,12 @@ func (o *RecoveryOrchestrator) ProcessAssignment(intent AssignmentIntent) Assign
 		o.Log.Record(id, 0, "sender_removed", "")
 	}
 
-	// Detect endpoint-change invalidations: if the session ID changed
-	// (old session was invalidated and possibly replaced), log the old one.
+	// Detect endpoint-change invalidations: only log "endpoint_changed" when
+	// the endpoint actually changed, not on normal session supersede.
 	for id, p := range pre {
 		if p.hadSession {
 			s := o.Registry.Sender(id)
-			if s != nil && s.SessionID() != p.sessionID {
+			if s != nil && s.SessionID() != p.sessionID && s.Endpoint().Changed(p.endpoint) {
 				o.Log.Record(id, p.sessionID, "session_invalidated", "endpoint_changed")
 			}
 		}
