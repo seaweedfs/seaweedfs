@@ -84,6 +84,10 @@ func (s *Session) advance(phase SessionPhase) bool {
 func (s *Session) setRange(start, target uint64) {
 	s.startLSN = start
 	s.targetLSN = target
+	// Initialize recoveredTo to startLSN so that delta-based entry counting
+	// in RecordCatchUpProgress measures only the actual catch-up work,
+	// not the replica's pre-existing prefix.
+	s.recoveredTo = start
 }
 
 func (s *Session) updateProgress(recoveredTo uint64) {

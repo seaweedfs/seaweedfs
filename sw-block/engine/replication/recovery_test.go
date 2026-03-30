@@ -197,6 +197,77 @@ func TestRecovery_BudgetStall_Escalates(t *testing.T) {
 	}
 }
 
+func TestRecovery_BudgetEntries_NonZeroStart_CountsOnlyDelta(t *testing.T) {
+	// Replica starts at LSN 70. Catching up to 100 = 30 entries.
+	// With MaxEntries=50, this should NOT exceed budget.
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionCatchUp, WithBudget(CatchUpBudget{MaxEntries: 50}))
+
+	s.BeginConnect(id)
+	s.RecordHandshakeWithOutcome(id, HandshakeResult{
+		ReplicaFlushedLSN: 70, CommittedLSN: 100, RetentionStartLSN: 50,
+	})
+	s.BeginCatchUp(id)
+
+	// Progress from 70 → 100 = 30 entries (not 100).
+	s.RecordCatchUpProgress(id, 100)
+
+	v, _ := s.CheckBudget(id, 0)
+	if v != BudgetOK {
+		t.Fatalf("30 entries should be within 50-entry budget, got %s", v)
+	}
+
+	// Verify: only 30 entries counted, not 100.
+	snap := s.SessionSnapshot()
+	if snap == nil {
+		t.Fatal("session should exist")
+	}
+}
+
+func TestRecovery_BudgetEntries_NonZeroStart_ExceedsBudget(t *testing.T) {
+	// Replica starts at LSN 70. Catching up to 100 = 30 entries.
+	// With MaxEntries=20, this SHOULD exceed budget.
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionCatchUp, WithBudget(CatchUpBudget{MaxEntries: 20}))
+
+	s.BeginConnect(id)
+	s.RecordHandshakeWithOutcome(id, HandshakeResult{
+		ReplicaFlushedLSN: 70, CommittedLSN: 100, RetentionStartLSN: 50,
+	})
+	s.BeginCatchUp(id)
+	s.RecordCatchUpProgress(id, 100) // 30 entries > 20 limit
+
+	v, _ := s.CheckBudget(id, 0)
+	if v != BudgetEntriesExceeded {
+		t.Fatalf("30 entries should exceed 20-entry budget, got %s", v)
+	}
+}
+
+func TestRecovery_Rebuild_PartialTransfer_BlocksTailReplay(t *testing.T) {
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionRebuild)
+
+	s.BeginConnect(id)
+	s.RecordHandshake(id, 0, 100)
+	s.SelectRebuildSource(id, 50, true, 100) // snapshot at LSN 50
+
+	s.BeginRebuildTransfer(id)
+	s.RecordRebuildTransferProgress(id, 30) // only transferred to 30 < snapshot 50
+
+	// Tail replay should be blocked: base transfer incomplete.
+	if err := s.BeginRebuildTailReplay(id); err == nil {
+		t.Fatal("tail replay should be blocked when transfer < snapshotLSN")
+	}
+
+	// Complete transfer to snapshot LSN.
+	s.RecordRebuildTransferProgress(id, 50)
+
+	// Now tail replay allowed.
+	if err := s.BeginRebuildTailReplay(id); err != nil {
+		t.Fatalf("tail replay should work after full transfer: %v", err)
+	}
+}
+
 func TestRecovery_CompletionBeforeConvergence_Rejected(t *testing.T) {
 	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
 	id, _ := s.AttachSession(1, SessionCatchUp)

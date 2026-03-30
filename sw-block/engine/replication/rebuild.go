@@ -85,6 +85,12 @@ func (rs *RebuildState) BeginTailReplay() error {
 	if rs.Source != RebuildSnapshotTail {
 		return fmt.Errorf("rebuild: tail replay only for snapshot_tail")
 	}
+	// Gate: base transfer must have reached at least the snapshot LSN.
+	// Without this, tail replay could start on an incomplete base.
+	if rs.TransferredTo < rs.SnapshotLSN {
+		return fmt.Errorf("rebuild: base transfer incomplete (%d < snapshot %d)",
+			rs.TransferredTo, rs.SnapshotLSN)
+	}
 	rs.Phase = RebuildPhaseTailReplay
 	return nil
 }
