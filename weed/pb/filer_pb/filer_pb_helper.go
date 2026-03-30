@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
 	"google.golang.org/protobuf/proto"
 )
@@ -245,6 +246,119 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 		event.EventNotification.OldEntry != nil &&
 		(event.Directory != event.EventNotification.NewParentPath ||
 			event.EventNotification.NewEntry.Name != event.EventNotification.OldEntry.Name)
+}
+
+func MetadataEventSourceDirectory(event *SubscribeMetadataResponse) string {
+	if event == nil {
+		return ""
+	}
+	return event.Directory
+}
+
+func MetadataEventTargetDirectory(event *SubscribeMetadataResponse) string {
+	if event == nil {
+		return ""
+	}
+	if event.EventNotification != nil && event.EventNotification.NewParentPath != "" {
+		return event.EventNotification.NewParentPath
+	}
+	return event.Directory
+}
+
+func metadataEventSourceEntryName(event *SubscribeMetadataResponse) string {
+	if event == nil || event.EventNotification == nil {
+		return ""
+	}
+	if event.EventNotification.OldEntry != nil {
+		return event.EventNotification.OldEntry.Name
+	}
+	if event.EventNotification.NewEntry != nil {
+		return event.EventNotification.NewEntry.Name
+	}
+	return ""
+}
+
+func metadataEventTargetEntryName(event *SubscribeMetadataResponse) string {
+	if event == nil || event.EventNotification == nil {
+		return ""
+	}
+	if event.EventNotification.NewEntry != nil {
+		return event.EventNotification.NewEntry.Name
+	}
+	if event.EventNotification.OldEntry != nil {
+		return event.EventNotification.OldEntry.Name
+	}
+	return ""
+}
+
+func MetadataEventSourceFullPath(event *SubscribeMetadataResponse) string {
+	return util.Join(MetadataEventSourceDirectory(event), metadataEventSourceEntryName(event))
+}
+
+func MetadataEventTargetFullPath(event *SubscribeMetadataResponse) string {
+	return util.Join(MetadataEventTargetDirectory(event), metadataEventTargetEntryName(event))
+}
+
+func MetadataEventTouchesDirectory(event *SubscribeMetadataResponse, dir string) bool {
+	if MetadataEventSourceDirectory(event) == dir {
+		return true
+	}
+	return event != nil &&
+		event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		MetadataEventTargetDirectory(event) == dir
+}
+
+func MetadataEventTouchesDirectoryPrefix(event *SubscribeMetadataResponse, prefix string) bool {
+	if strings.HasPrefix(MetadataEventSourceDirectory(event), prefix) {
+		return true
+	}
+	return event != nil &&
+		event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		strings.HasPrefix(MetadataEventTargetDirectory(event), prefix)
+}
+
+func MetadataEventMatchesSubscription(event *SubscribeMetadataResponse, pathPrefix string, pathPrefixes []string, directories []string) bool {
+	if event == nil {
+		return false
+	}
+
+	if metadataEventMatchesPath(MetadataEventSourceFullPath(event), MetadataEventSourceDirectory(event), pathPrefix, pathPrefixes, directories) {
+		return true
+	}
+
+	return event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		metadataEventMatchesPath(MetadataEventTargetFullPath(event), MetadataEventTargetDirectory(event), pathPrefix, pathPrefixes, directories)
+}
+
+func metadataEventMatchesPath(fullPath, dirPath, pathPrefix string, pathPrefixes []string, directories []string) bool {
+	if hasPrefixIn(fullPath, pathPrefixes) {
+		return true
+	}
+	if matchByDirectory(dirPath, directories) {
+		return true
+	}
+	return strings.HasPrefix(fullPath, pathPrefix)
+}
+
+func hasPrefixIn(text string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchByDirectory(dirPath string, directories []string) bool {
+	for _, dir := range directories {
+		if dirPath == dir {
+			return true
+		}
+	}
+	return false
 }
 
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})

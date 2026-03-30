@@ -255,53 +255,14 @@ func processOneLogEntry(logEntry *filer_pb.LogEntry, filter PathFilter, processE
 const systemLogDir = "/topics/.system/log"
 
 func matchesFilter(resp *filer_pb.SubscribeMetadataResponse, filter PathFilter) bool {
-	var entryName string
-	if resp.EventNotification != nil {
-		if resp.EventNotification.OldEntry != nil {
-			entryName = resp.EventNotification.OldEntry.Name
-		} else if resp.EventNotification.NewEntry != nil {
-			entryName = resp.EventNotification.NewEntry.Name
-		}
-	}
-
-	fullpath := util.Join(resp.Directory, entryName)
+	fullpath := filer_pb.MetadataEventSourceFullPath(resp)
 
 	// Skip internal meta log entries
 	if strings.HasPrefix(fullpath, systemLogDir) {
 		return false
 	}
 
-	// Check AdditionalPathPrefixes
-	for _, p := range filter.AdditionalPathPrefixes {
-		if strings.HasPrefix(fullpath, p) {
-			return true
-		}
-	}
-
-	// Check DirectoriesToWatch (exact directory match)
-	for _, dir := range filter.DirectoriesToWatch {
-		if resp.Directory == dir {
-			return true
-		}
-	}
-
-	// Check primary PathPrefix
-	if filter.PathPrefix == "" || filter.PathPrefix == "/" {
-		return true
-	}
-	if strings.HasPrefix(fullpath, filter.PathPrefix) {
-		return true
-	}
-
-	// Check rename target
-	if resp.EventNotification != nil && resp.EventNotification.NewParentPath != "" {
-		newFullPath := util.Join(resp.EventNotification.NewParentPath, entryName)
-		if strings.HasPrefix(newFullPath, filter.PathPrefix) {
-			return true
-		}
-	}
-
-	return false
+	return filer_pb.MetadataEventMatchesSubscription(resp, filter.PathPrefix, filter.AdditionalPathPrefixes, filter.DirectoriesToWatch)
 }
 
 // isChunkNotFound checks if an error indicates a missing volume chunk.
@@ -323,10 +284,10 @@ type logEntryHeapItem struct {
 
 type logEntryHeap []*logEntryHeapItem
 
-func (h logEntryHeap) Len() int            { return len(h) }
-func (h logEntryHeap) Less(i, j int) bool  { return h[i].entry.TsNs < h[j].entry.TsNs }
-func (h logEntryHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *logEntryHeap) Push(x any)         { *h = append(*h, x.(*logEntryHeapItem)) }
+func (h logEntryHeap) Len() int           { return len(h) }
+func (h logEntryHeap) Less(i, j int) bool { return h[i].entry.TsNs < h[j].entry.TsNs }
+func (h logEntryHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *logEntryHeap) Push(x any)        { *h = append(*h, x.(*logEntryHeapItem)) }
 func (h *logEntryHeap) Pop() any {
 	old := *h
 	n := len(old)

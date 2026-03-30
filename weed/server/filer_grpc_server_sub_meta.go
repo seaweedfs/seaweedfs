@@ -47,10 +47,10 @@ const (
 // current time (backlog catch-up), multiple events are packed into a single
 // stream.Send() using the Events field. Otherwise events are sent one-by-one.
 type pipelinedSender struct {
-	sendCh         chan *filer_pb.SubscribeMetadataResponse
-	errCh          chan error
-	done           chan struct{}
-	canBatch       bool // true only if client set ClientSupportsBatching
+	sendCh   chan *filer_pb.SubscribeMetadataResponse
+	errCh    chan error
+	done     chan struct{}
+	canBatch bool // true only if client set ClientSupportsBatching
 }
 
 func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
@@ -529,35 +529,19 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			return nil
 		}
 
-		if hasPrefixIn(fullpath, req.PathPrefixes) {
-			// good
-		} else if matchByDirectory(dirPath, req.Directories) {
-			// good
-		} else {
-			if !strings.HasPrefix(fullpath, req.PathPrefix) {
-				if eventNotification.NewParentPath != "" {
-					newEntryName := entryName
-					if eventNotification.NewEntry != nil {
-						newEntryName = eventNotification.NewEntry.Name
-					}
-					newFullPath := util.Join(eventNotification.NewParentPath, newEntryName)
-					if !strings.HasPrefix(newFullPath, req.PathPrefix) {
-						return nil
-					}
-				} else {
-					return nil
-				}
-			}
-		}
-
-		// collect timestamps for path
-		stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(tsNs))
-
 		message := &filer_pb.SubscribeMetadataResponse{
 			Directory:         dirPath,
 			EventNotification: eventNotification,
 			TsNs:              tsNs,
 		}
+
+		if !filer_pb.MetadataEventMatchesSubscription(message, req.PathPrefix, req.PathPrefixes, req.Directories) {
+			return nil
+		}
+
+		// collect timestamps for path
+		stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(tsNs))
+
 		// println("sending", dirPath, entryName)
 		if err := sender.Send(message); err != nil {
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
@@ -566,24 +550,6 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 		filtered = 0
 		return nil
 	}
-}
-
-func hasPrefixIn(text string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(text, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchByDirectory(dirPath string, directories []string) bool {
-	for _, dir := range directories {
-		if dirPath == dir {
-			return true
-		}
-	}
-	return false
 }
 
 func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {

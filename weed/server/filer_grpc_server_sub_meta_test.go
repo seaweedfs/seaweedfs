@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
@@ -22,6 +24,15 @@ func (s *slowStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
 	time.Sleep(s.sendDelay)
 	atomic.AddInt64(&s.sends, 1)
 	atomic.AddInt64(&s.eventsSent, 1+int64(len(msg.Events)))
+	return nil
+}
+
+type collectingStream struct {
+	messages []*filer_pb.SubscribeMetadataResponse
+}
+
+func (s *collectingStream) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	s.messages = append(s.messages, msg)
 	return nil
 }
 
@@ -69,11 +80,11 @@ func makeRecentEvents(n int) []*filer_pb.SubscribeMetadataResponse {
 //   - Pipelined+batched: file I/O overlaps with batched sending
 func TestPipelinedSenderThroughput(t *testing.T) {
 	const (
-		eventsPerFile = 300                       // events in one minute-log file
-		numFiles      = 7                         // files to process
-		totalEvents   = eventsPerFile * numFiles  // 2100
-		fileReadDelay = 5 * time.Millisecond      // volume server read per log file
-		sendDelay     = 50 * time.Microsecond     // gRPC round-trip per Send()
+		eventsPerFile = 300                      // events in one minute-log file
+		numFiles      = 7                        // files to process
+		totalEvents   = eventsPerFile * numFiles // 2100
+		fileReadDelay = 5 * time.Millisecond     // volume server read per log file
+		sendDelay     = 50 * time.Microsecond    // gRPC round-trip per Send()
 	)
 
 	// Partition old events into file-sized bursts
@@ -135,6 +146,58 @@ func TestPipelinedSenderThroughput(t *testing.T) {
 
 	if directRate > 0 {
 		t.Logf("Speedup: %.1fx (pipelined+batched vs direct)", batchedRate/directRate)
+	}
+}
+
+func TestEachEventNotificationFnMatchesRenameTargetsForAllWatchTypes(t *testing.T) {
+	fs := &FilerServer{
+		option: &FilerOption{Host: pb.ServerAddress("127.0.0.1:8888")},
+		filer:  &filer.Filer{Signature: 123},
+	}
+
+	tests := []struct {
+		name string
+		req  *filer_pb.SubscribeMetadataRequest
+	}{
+		{
+			name: "additional path prefix",
+			req: &filer_pb.SubscribeMetadataRequest{
+				ClientName:   "test",
+				PathPrefix:   "/data/",
+				PathPrefixes: []string{"/etc/remote"},
+			},
+		},
+		{
+			name: "directory watch",
+			req: &filer_pb.SubscribeMetadataRequest{
+				ClientName:  "test",
+				PathPrefix:  "/data/",
+				Directories: []string{"/etc/iam/identities"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := &collectingStream{}
+			eachEventFn := fs.eachEventNotificationFn(tt.req, stream, "client")
+
+			newDir := "/etc/remote"
+			if len(tt.req.Directories) > 0 {
+				newDir = tt.req.Directories[0]
+			}
+			err := eachEventFn("/tmp", &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: "old"},
+				NewEntry:      &filer_pb.Entry{Name: "new"},
+				NewParentPath: newDir,
+			}, time.Now().UnixNano())
+			if err != nil {
+				t.Fatalf("eachEventFn: %v", err)
+			}
+			if len(stream.messages) != 1 {
+				t.Fatalf("messages sent = %d, want 1", len(stream.messages))
+			}
+		})
 	}
 }
 
@@ -243,8 +306,8 @@ func TestPipelinedSenderErrorPropagation(t *testing.T) {
 func TestPipelinedSingleVsParallelStreams(t *testing.T) {
 	const (
 		numDirs       = 10
-		filesPerDir   = 7   // log files per directory
-		eventsPerFile = 300 // events per log file
+		filesPerDir   = 7                                     // log files per directory
+		eventsPerFile = 300                                   // events per log file
 		totalEvents   = numDirs * filesPerDir * eventsPerFile // 21000
 		fileReadDelay = 5 * time.Millisecond
 		sendDelay     = 50 * time.Microsecond
