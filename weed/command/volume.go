@@ -415,6 +415,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 			glog.Fatalf("start gRPC service failed, %s", err)
 		}
 	}()
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 	return grpcS
 }
 

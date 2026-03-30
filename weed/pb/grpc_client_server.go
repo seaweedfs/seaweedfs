@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +44,12 @@ var (
 	// cache grpc connections
 	grpcClients     = make(map[string]*versionedGrpcClient)
 	grpcClientsLock sync.Mutex
+
+	// localGrpcSockets maps gRPC port numbers to Unix socket paths.
+	// When registered (by mini mode), gRPC clients connect via Unix socket
+	// instead of TCP for local services.
+	localGrpcSockets     = make(map[int]string)
+	localGrpcSocketsLock sync.RWMutex
 )
 
 type versionedGrpcClient struct {
@@ -53,6 +61,54 @@ type versionedGrpcClient struct {
 func init() {
 	http.DefaultTransport.(*http.Transport).MaxIdleConnsPerHost = 1024
 	http.DefaultTransport.(*http.Transport).MaxIdleConns = 1024
+}
+
+// RegisterLocalGrpcSocket registers a Unix socket path for a gRPC port.
+// When a gRPC client dials an address on this port, it uses the Unix socket.
+func RegisterLocalGrpcSocket(grpcPort int, socketPath string) {
+	localGrpcSocketsLock.Lock()
+	defer localGrpcSocketsLock.Unlock()
+	localGrpcSockets[grpcPort] = socketPath
+}
+
+// GetLocalGrpcSocket returns the Unix socket path for a gRPC port, or empty if not registered.
+func GetLocalGrpcSocket(grpcPort int) string {
+	localGrpcSocketsLock.RLock()
+	defer localGrpcSocketsLock.RUnlock()
+	return localGrpcSockets[grpcPort]
+}
+
+// resolveLocalGrpcSocket extracts the port from a gRPC address and returns
+// the registered Unix socket path, if any.
+func resolveLocalGrpcSocket(address string) string {
+	_, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		return ""
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return ""
+	}
+	return GetLocalGrpcSocket(port)
+}
+
+// ServeGrpcOnLocalSocket starts serving a gRPC server on a Unix socket
+// if one is registered for the given port.
+func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
+	socketPath := GetLocalGrpcSocket(grpcPort)
+	if socketPath == "" {
+		return
+	}
+	if err := os.Remove(socketPath); err != nil && !os.IsNotExist(err) {
+		glog.Warningf("Failed to remove old gRPC socket %s: %v", socketPath, err)
+	}
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		glog.Errorf("Failed to listen on gRPC Unix socket %s: %v", socketPath, err)
+		return
+	}
+	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
+	go grpcServer.Serve(listener)
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
@@ -96,6 +152,14 @@ func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
 //     WARNING: This is NOT thread-safe, and mutates global resolver state affecting all grpc.NewClient calls in the process.
 func GrpcDial(ctx context.Context, address string, waitForReady bool, opts ...grpc.DialOption) (*grpc.ClientConn, error) {
 	var options []grpc.DialOption
+
+	// Route through Unix socket if one is registered for this address's port
+	if socketPath := resolveLocalGrpcSocket(address); socketPath != "" {
+		options = append(options, grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, "unix", socketPath)
+		}))
+	}
 
 	options = append(options,
 		grpc.WithDefaultCallOptions(
