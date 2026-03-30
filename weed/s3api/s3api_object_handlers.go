@@ -27,6 +27,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // corsHeaders defines the CORS headers that need to be preserved
@@ -249,8 +251,12 @@ func newStreamErrorWithResponse(err error) *StreamError {
 	return &StreamError{Err: err, ResponseWritten: true}
 }
 
+func isCanceledStreamingError(err error) bool {
+	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+}
+
 func shouldWriteStreamingErrorResponse(err error) bool {
-	return err != nil && !errors.Is(err, context.Canceled)
+	return err != nil && !isCanceledStreamingError(err)
 }
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -885,7 +891,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	streamTime = time.Since(tStream)
 	if err != nil {
 		switch {
-		case errors.Is(err, context.Canceled):
+		case isCanceledStreamingError(err):
 			glog.V(3).Infof("GetObjectHandler: client disconnected while streaming %s/%s: %v", bucket, object, err)
 			return
 		case errors.Is(err, context.DeadlineExceeded):
@@ -1040,7 +1046,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
 	chunkResolveTime = time.Since(tChunkResolve)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if isCanceledStreamingError(err) {
 			glog.V(3).Infof("streamFromVolumeServers: request canceled while resolving chunks: %v", err)
 			return err
 		}
@@ -1068,7 +1074,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	)
 	streamPrepTime = time.Since(tStreamPrep)
 	if err != nil {
-		if errors.Is(err, context.Canceled) {
+		if isCanceledStreamingError(err) {
 			glog.V(3).Infof("streamFromVolumeServers: request canceled while preparing stream: %v", err)
 			return err
 		}
@@ -1117,7 +1123,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, context.Canceled):
+		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
 			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
 		case errors.Is(err, context.DeadlineExceeded):
