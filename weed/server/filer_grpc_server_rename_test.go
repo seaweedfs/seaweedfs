@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -20,8 +21,10 @@ import (
 )
 
 type renameTestStore struct {
-	mu      sync.Mutex
-	entries map[string]*filer.Entry
+	mu        sync.Mutex
+	entries   map[string]*filer.Entry
+	commitErr error
+	deleteErr error
 }
 
 func newRenameTestStore() *renameTestStore {
@@ -36,7 +39,7 @@ func (s *renameTestStore) Shutdown()                                   {}
 func (s *renameTestStore) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return ctx, nil
 }
-func (s *renameTestStore) CommitTransaction(context.Context) error   { return nil }
+func (s *renameTestStore) CommitTransaction(context.Context) error   { return s.commitErr }
 func (s *renameTestStore) RollbackTransaction(context.Context) error { return nil }
 func (s *renameTestStore) KvPut(context.Context, []byte, []byte) error {
 	return nil
@@ -71,6 +74,9 @@ func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.
 }
 
 func (s *renameTestStore) DeleteEntry(_ context.Context, p util.FullPath) error {
+	if s.deleteErr != nil {
+		return s.deleteErr
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.entries, string(p))
@@ -107,6 +113,8 @@ type captureQueue struct {
 	events []capturedEvent
 }
 
+var notificationQueueSwapMu sync.Mutex
+
 func (q *captureQueue) GetName() string                             { return "capture" }
 func (q *captureQueue) Initialize(util.Configuration, string) error { return nil }
 func (q *captureQueue) SendMessage(key string, message proto.Message) error {
@@ -130,6 +138,17 @@ func (q *captureQueue) snapshot() []capturedEvent {
 	events := make([]capturedEvent, len(q.events))
 	copy(events, q.events)
 	return events
+}
+
+func swapNotificationQueue(t *testing.T, q notification.MessageQueue) {
+	t.Helper()
+	notificationQueueSwapMu.Lock()
+	prevQueue := notification.Queue
+	notification.Queue = q
+	t.Cleanup(func() {
+		notification.Queue = prevQueue
+		notificationQueueSwapMu.Unlock()
+	})
 }
 
 func newRenameTestFiler(store *renameTestStore) *filer.Filer {
@@ -178,11 +197,7 @@ func TestAtomicRenameEntryEmitsLogicalRenameEvent(t *testing.T) {
 	store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
 
 	queue := &captureQueue{}
-	prevQueue := notification.Queue
-	notification.Queue = queue
-	t.Cleanup(func() {
-		notification.Queue = prevQueue
-	})
+	swapNotificationQueue(t, queue)
 
 	server := &FilerServer{filer: newRenameTestFiler(store)}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
@@ -232,11 +247,7 @@ func TestAtomicRenameEntryOverwriteEmitsDeleteThenRename(t *testing.T) {
 	store.entries["/dst.txt"] = newFileEntry("/dst.txt", 202)
 
 	queue := &captureQueue{}
-	prevQueue := notification.Queue
-	notification.Queue = queue
-	t.Cleanup(func() {
-		notification.Queue = prevQueue
-	})
+	swapNotificationQueue(t, queue)
 
 	server := &FilerServer{filer: newRenameTestFiler(store)}
 	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
@@ -291,5 +302,53 @@ func TestAtomicRenameEntryOverwriteEmitsDeleteThenRename(t *testing.T) {
 	}
 	if dst.Attr.Inode != 101 {
 		t.Fatalf("destination inode = %d, want 101", dst.Attr.Inode)
+	}
+}
+
+func TestAtomicRenameEntryDoesNotEmitEventOnDeleteFailure(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
+	store.deleteErr = errors.New("delete failed")
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	server := &FilerServer{filer: newRenameTestFiler(store)}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/",
+		OldName:      "src.txt",
+		NewDirectory: "/",
+		NewName:      "dst.txt",
+	})
+	if err == nil {
+		t.Fatal("expected delete failure")
+	}
+
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("event count = %d, want 0", len(events))
+	}
+}
+
+func TestAtomicRenameEntryDoesNotEmitEventOnCommitFailure(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/src.txt"] = newFileEntry("/src.txt", 101)
+	store.commitErr = errors.New("commit failed")
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	server := &FilerServer{filer: newRenameTestFiler(store)}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/",
+		OldName:      "src.txt",
+		NewDirectory: "/",
+		NewName:      "dst.txt",
+	})
+	if err == nil {
+		t.Fatal("expected commit failure")
+	}
+
+	if events := queue.snapshot(); len(events) != 0 {
+		t.Fatalf("event count = %d, want 0", len(events))
 	}
 }
