@@ -40,13 +40,17 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		return nil
 	}
 
+	oldEntry := message.OldEntry
+	newEntry := message.NewEntry
+	newParentPath := message.NewParentPath
+
 	oldInSource := strings.HasPrefix(key, r.source.Dir) && !r.isExcluded(key)
 
 	// For rename events (both old and new entry present), check both paths
 	// against the source directory. Convert cross-boundary renames to
 	// create or delete so the sink stays consistent.
-	if message.OldEntry != nil && message.NewEntry != nil && message.NewParentPath != "" {
-		newFullPath := util.Join(message.NewParentPath, message.NewEntry.Name)
+	if oldEntry != nil && newEntry != nil {
+		newFullPath, targetParent := metadataEventTarget(key, newEntry, newParentPath)
 		newInSource := strings.HasPrefix(newFullPath, r.source.Dir) && !r.isExcluded(newFullPath)
 
 		if !oldInSource && !newInSource {
@@ -54,12 +58,13 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		}
 		if !oldInSource {
 			// Rename into watched directory: treat as create
-			message.OldEntry = nil
+			oldEntry = nil
 			key = newFullPath
+			newParentPath = targetParent
 		} else if !newInSource {
 			// Rename out of watched directory: treat as delete
-			message.NewEntry = nil
-			message.NewParentPath = ""
+			newEntry = nil
+			newParentPath = ""
 		}
 	} else if !oldInSource {
 		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
@@ -69,48 +74,60 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	var dateKey string
 	if r.sink.IsIncremental() {
 		var mTime int64
-		if message.NewEntry != nil {
-			mTime = message.NewEntry.Attributes.Mtime
-		} else if message.OldEntry != nil {
-			mTime = message.OldEntry.Attributes.Mtime
+		if newEntry != nil {
+			mTime = newEntry.Attributes.Mtime
+		} else if oldEntry != nil {
+			mTime = oldEntry.Attributes.Mtime
 		}
 		dateKey = time.Unix(mTime, 0).Format("2006-01-02")
 	}
-	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
-	glog.V(3).Infof("replicate %s => %s", key, newKey)
-	key = newKey
+	oldSinkKey := r.sourceToSinkKey(key, dateKey)
+	glog.V(3).Infof("replicate %s => %s", key, oldSinkKey)
 
-	// Remap NewParentPath to the sink's directory structure
-	if message.NewParentPath != "" && strings.HasPrefix(message.NewParentPath, r.source.Dir) {
-		message.NewParentPath = util.Join(r.sink.GetSinkToDirectory(), dateKey, message.NewParentPath[len(r.source.Dir):])
+	newSinkKey := oldSinkKey
+	newSinkParentPath := newParentPath
+	if oldEntry != nil && newEntry != nil {
+		targetSourceKey, targetSourceParent := metadataEventTarget(key, newEntry, newParentPath)
+		newSinkKey = r.sourceToSinkKey(targetSourceKey, dateKey)
+		newSinkParentPath = r.sourceToSinkPath(targetSourceParent, dateKey)
+	} else if newParentPath != "" && strings.HasPrefix(newParentPath, r.source.Dir) {
+		newSinkParentPath = r.sourceToSinkPath(newParentPath, dateKey)
 	}
 
-	if message.OldEntry != nil && message.NewEntry == nil {
-		glog.V(4).Infof("deleting %v", key)
-		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
+	if oldEntry != nil && newEntry == nil {
+		glog.V(4).Infof("deleting %v", oldSinkKey)
+		return r.sink.DeleteEntry(oldSinkKey, oldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
 	}
-	if message.OldEntry == nil && message.NewEntry != nil {
-		glog.V(4).Infof("creating %v", key)
-		return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
+	if oldEntry == nil && newEntry != nil {
+		glog.V(4).Infof("creating %v", oldSinkKey)
+		return r.sink.CreateEntry(oldSinkKey, newEntry, message.Signatures)
 	}
-	if message.OldEntry == nil && message.NewEntry == nil {
+	if oldEntry == nil && newEntry == nil {
 		glog.V(0).Infof("weird message %+v", message)
 		return nil
 	}
 
-	foundExisting, err := r.sink.UpdateEntry(key, message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
+	if oldSinkKey != newSinkKey && r.sink.GetName() != "filer" {
+		if err := r.sink.DeleteEntry(oldSinkKey, oldEntry.IsDirectory, false, message.Signatures); err != nil {
+			return fmt.Errorf("delete old entry %v: %w", oldSinkKey, err)
+		}
+		glog.V(4).Infof("creating renamed %v", newSinkKey)
+		return r.sink.CreateEntry(newSinkKey, newEntry, message.Signatures)
+	}
+
+	foundExisting, err := r.sink.UpdateEntry(oldSinkKey, oldEntry, newSinkParentPath, newEntry, message.DeleteChunks, message.Signatures)
 	if foundExisting {
-		glog.V(4).Infof("updated %v", key)
+		glog.V(4).Infof("updated %v", oldSinkKey)
 		return err
 	}
 
-	err = r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, false, message.Signatures)
+	err = r.sink.DeleteEntry(oldSinkKey, oldEntry.IsDirectory, false, message.Signatures)
 	if err != nil {
-		return fmt.Errorf("delete old entry %v: %w", key, err)
+		return fmt.Errorf("delete old entry %v: %w", oldSinkKey, err)
 	}
 
-	glog.V(4).Infof("creating missing %v", key)
-	return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
+	glog.V(4).Infof("creating missing %v", newSinkKey)
+	return r.sink.CreateEntry(newSinkKey, newEntry, message.Signatures)
 }
 
 func (r *Replicator) isExcluded(path string) bool {
@@ -120,6 +137,27 @@ func (r *Replicator) isExcluded(path string) bool {
 		}
 	}
 	return false
+}
+
+func (r *Replicator) sourceToSinkKey(sourceKey, dateKey string) string {
+	return util.Join(r.sink.GetSinkToDirectory(), dateKey, sourceKey[len(r.source.Dir):])
+}
+
+func (r *Replicator) sourceToSinkPath(sourcePath, dateKey string) string {
+	return util.Join(r.sink.GetSinkToDirectory(), dateKey, sourcePath[len(r.source.Dir):])
+}
+
+func metadataEventTarget(key string, newEntry *filer_pb.Entry, newParentPath string) (targetKey, targetParent string) {
+	if newEntry == nil {
+		return "", ""
+	}
+
+	targetParent = newParentPath
+	if targetParent == "" {
+		targetParent, _ = util.FullPath(key).DirAndName()
+	}
+
+	return util.Join(targetParent, newEntry.Name), targetParent
 }
 
 func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {
