@@ -503,53 +503,15 @@ func (fc *FilerClient) shouldSkipUnhealthyFilerWithHealth(health *filerHealth) b
 	return true // Skip this unhealthy filer
 }
 
-// Deprecated: Use shouldSkipUnhealthyFilerWithHealth instead
-// This function is kept for backward compatibility but requires array access
-// Note: This function is now thread-safe.
-func (fc *FilerClient) shouldSkipUnhealthyFiler(index int32) bool {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return true // Invalid index - skip
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	return fc.shouldSkipUnhealthyFilerWithHealth(health)
-}
-
 // recordFilerSuccessWithHealth resets failure tracking for a successful filer
 func (fc *FilerClient) recordFilerSuccessWithHealth(health *filerHealth) {
 	atomic.StoreInt32(&health.failureCount, 0)
-}
-
-// recordFilerSuccess resets failure tracking for a successful filer
-func (fc *FilerClient) recordFilerSuccess(index int32) {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return // Invalid index
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	fc.recordFilerSuccessWithHealth(health)
 }
 
 // recordFilerFailureWithHealth increments failure count for an unhealthy filer
 func (fc *FilerClient) recordFilerFailureWithHealth(health *filerHealth) {
 	atomic.AddInt32(&health.failureCount, 1)
 	atomic.StoreInt64(&health.lastFailureTimeNs, time.Now().UnixNano())
-}
-
-// recordFilerFailure increments failure count for an unhealthy filer
-func (fc *FilerClient) recordFilerFailure(index int32) {
-	fc.filerAddressesMu.RLock()
-	if index >= int32(len(fc.filerHealth)) {
-		fc.filerAddressesMu.RUnlock()
-		return // Invalid index
-	}
-	health := fc.filerHealth[index]
-	fc.filerAddressesMu.RUnlock()
-	fc.recordFilerFailureWithHealth(health)
 }
 
 // LookupVolumeIds queries the filer for volume locations with automatic failover
