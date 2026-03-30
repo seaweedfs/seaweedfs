@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,9 +94,9 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	env.masterPort = mustFreePort(t, "Master")
-	env.filerPort = mustFreePort(t, "Filer")
-	env.s3Port = mustFreePort(t, "S3")
+	env.masterPort = testutil.MustFreeMiniPort(t, "Master")
+	env.filerPort = testutil.MustFreeMiniPort(t, "Filer")
+	env.s3Port = testutil.MustFreeMiniPort(t, "S3")
 
 	bindIP := testutil.FindBindIP()
 	iamConfigPath, err := testutil.WriteIAMConfig(env.seaweedfsDataDir, env.accessKey, env.secretKey)
@@ -135,14 +133,14 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	}
 	registerMiniProcess(env.masterProcess)
 
-	if !waitForPort(env.masterPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.masterPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - master port %d not listening", env.masterPort)
 	}
-	if !waitForPort(env.filerPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.filerPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - filer port %d not listening", env.filerPort)
 	}
-	if !waitForPort(env.s3Port, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/status", env.s3Port), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - s3 endpoint http://127.0.0.1:%d/status not responding", env.s3Port)
 	}
 }
 
@@ -206,46 +204,6 @@ func (env *TestEnvironment) Cleanup(t *testing.T) {
 	if env.seaweedfsDataDir != "" {
 		_ = os.RemoveAll(env.seaweedfsDataDir)
 	}
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	for i := 0; i < 200; i++ {
-		port := 20000 + rand.Intn(30000)
-		listener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", port))
-		if err != nil {
-			continue
-		}
-		_ = listener.Close()
-
-		grpcPort := port + 10000
-		if grpcPort > 65535 {
-			continue
-		}
-		grpcListener, err := net.Listen("tcp", fmt.Sprintf("0.0.0.0:%d", grpcPort))
-		if err != nil {
-			continue
-		}
-		_ = grpcListener.Close()
-		return port
-	}
-
-	t.Fatalf("failed to get free port for %s", name)
-	return 0
-}
-
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
 }
 
 func runSparkPyScript(t *testing.T, container testcontainers.Container, script string, s3Port int) (int, string) {

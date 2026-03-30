@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -115,11 +114,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	env.masterPort = mustFreePort(t, "Master")
-	env.filerPort = mustFreePort(t, "Filer")
-	env.s3Port = mustFreePort(t, "S3")
-	env.icebergRestPort = mustFreePort(t, "Iceberg")
-	env.risingwavePort = mustFreePort(t, "RisingWave")
+	env.masterPort = testutil.MustFreeMiniPort(t, "Master")
+	env.filerPort = testutil.MustFreeMiniPort(t, "Filer")
+	env.s3Port = testutil.MustFreeMiniPort(t, "S3")
+	env.icebergRestPort = testutil.MustFreeMiniPort(t, "Iceberg")
+	env.risingwavePort = testutil.MustFreeMiniPort(t, "RisingWave")
 
 	env.bindIP = testutil.FindBindIP()
 
@@ -161,60 +160,18 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	registerMiniProcess(env.masterProcess)
 
 	// Wait for all services to be ready
-	if !waitForPort(env.masterPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.masterPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - master port %d not listening", env.masterPort)
 	}
-	if !waitForPort(env.filerPort, 15*time.Second) {
+	if !testutil.WaitForPort(env.filerPort, testutil.SeaweedMiniStartupTimeout) {
 		t.Fatalf("weed mini failed to start - filer port %d not listening", env.filerPort)
 	}
-	if !waitForPort(env.s3Port, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - s3 port %d not listening", env.s3Port)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/status", env.s3Port), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - s3 endpoint http://127.0.0.1:%d/status not responding", env.s3Port)
 	}
-	if !waitForPort(env.icebergRestPort, 15*time.Second) {
-		t.Fatalf("weed mini failed to start - iceberg rest port %d not listening", env.icebergRestPort)
+	if !testutil.WaitForService(fmt.Sprintf("http://127.0.0.1:%d/v1/config", env.icebergRestPort), testutil.SeaweedMiniStartupTimeout) {
+		t.Fatalf("weed mini failed to start - iceberg rest endpoint http://127.0.0.1:%d/v1/config not responding", env.icebergRestPort)
 	}
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-	minPort := 10000
-	maxPort := 55000 // Ensure port+10000 < 65535
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
-	for i := 0; i < 1000; i++ {
-		port := minPort + r.Intn(maxPort-minPort)
-
-		// Check http port
-		ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-		if err != nil {
-			continue
-		}
-		ln.Close()
-
-		// Check grpc port (weed mini uses port+10000)
-		ln2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port+10000))
-		if err != nil {
-			continue
-		}
-		ln2.Close()
-
-		return port
-	}
-	t.Fatalf("failed to find a free port < %d for %s after 1000 attempts", maxPort, name)
-	return 0
-}
-
-func waitForPort(port int, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", port), 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return false
 }
 
 func (env *TestEnvironment) StartRisingWave(t *testing.T) {
@@ -253,7 +210,7 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 	}
 
 	// Wait for RisingWave port to be open on host
-	if !waitForPort(env.risingwavePort, 120*time.Second) {
+	if !testutil.WaitForPort(env.risingwavePort, 120*time.Second) {
 		t.Fatalf("timed out waiting for RisingWave port %d to be open", env.risingwavePort)
 	}
 

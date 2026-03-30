@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"os/exec"
@@ -63,4 +64,18 @@ func WaitForService(url string, timeout time.Duration) bool {
 			}
 		}
 	}
+}
+
+func WaitForPort(port int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	address := fmt.Sprintf("127.0.0.1:%d", port)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", address, 500*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false
 }
