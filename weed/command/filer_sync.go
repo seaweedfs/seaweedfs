@@ -26,37 +26,37 @@ import (
 )
 
 type SyncOptions struct {
-	isActivePassive *bool
-	filerA          *string
-	filerB          *string
-	aPath           *string
-	aExcludePaths   *string
-	bPath           *string
-	bExcludePaths   *string
-	aReplication    *string
-	bReplication    *string
-	aCollection     *string
-	bCollection     *string
-	aTtlSec         *int
-	bTtlSec         *int
-	aDiskType       *string
-	bDiskType       *string
-	aDebug          *bool
-	bDebug          *bool
-	aFromTsMs       *int64
-	bFromTsMs       *int64
-	aProxyByFiler   *bool
-	bProxyByFiler   *bool
-	metricsHttpIp   *string
-	metricsHttpPort *int
+	isActivePassive  *bool
+	filerA           *string
+	filerB           *string
+	aPath            *string
+	aExcludePaths    *string
+	bPath            *string
+	bExcludePaths    *string
+	aReplication     *string
+	bReplication     *string
+	aCollection      *string
+	bCollection      *string
+	aTtlSec          *int
+	bTtlSec          *int
+	aDiskType        *string
+	bDiskType        *string
+	aDebug           *bool
+	bDebug           *bool
+	aFromTsMs        *int64
+	bFromTsMs        *int64
+	aProxyByFiler    *bool
+	bProxyByFiler    *bool
+	metricsHttpIp    *string
+	metricsHttpPort  *int
 	concurrency      *int
 	chunkConcurrency *int
 	aDoDeleteFiles   *bool
-	bDoDeleteFiles  *bool
-	clientId        int32
-	clientEpoch     atomic.Int32
-	debug           *bool
-	debugPort       *int
+	bDoDeleteFiles   *bool
+	clientId         int32
+	clientEpoch      atomic.Int32
+	debug            *bool
+	debugPort        *int
 }
 
 const (
@@ -465,18 +465,20 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		// Check both old and new directories so cross-boundary renames
 		// are not silently dropped. The downstream old/new key handling
 		// (lines below) already converts these to create or delete.
-		oldDirInScope := strings.HasPrefix(resp.Directory+"/", sourcePath) && !matchesExcludePath(resp.Directory+"/", excludePaths)
+		oldDirExcluded := matchesExcludePath(resp.Directory, excludePaths)
+		newDirExcluded := matchesExcludePath(message.NewParentPath, excludePaths)
+		oldDirInScope := pathIsEqualOrUnder(resp.Directory, sourcePath) && !oldDirExcluded
 		newDirInScope := message.NewParentPath != "" &&
-			strings.HasPrefix(message.NewParentPath+"/", sourcePath) &&
-			!matchesExcludePath(message.NewParentPath+"/", excludePaths)
+			pathIsEqualOrUnder(message.NewParentPath, sourcePath) &&
+			!newDirExcluded
 		if !oldDirInScope && !newDirInScope {
 			return nil
 		}
 		// Compute per-side exclusion so that rename events crossing an
 		// exclude boundary are handled as delete + create rather than
 		// being entirely skipped.
-		oldExcluded := isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
-		newExcluded := isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+		oldExcluded := oldDirExcluded || isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+		newExcluded := newDirExcluded || isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
 
 		if oldExcluded && newExcluded {
 			return nil
@@ -498,7 +500,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if !doDeleteFiles {
 				return nil
 			}
-			if !strings.HasPrefix(string(sourceOldKey), sourcePath) {
+			if !pathIsEqualOrUnder(string(sourceOldKey), sourcePath) {
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
@@ -507,7 +509,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 
 		// handle new entries
 		if filer_pb.IsCreate(resp) {
-			if !strings.HasPrefix(string(sourceNewKey), sourcePath) {
+			if !pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
@@ -524,9 +526,9 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		}
 
 		// handle updates
-		if strings.HasPrefix(string(sourceOldKey), sourcePath) {
+		if pathIsEqualOrUnder(string(sourceOldKey), sourcePath) {
 			// old key is in the watched directory
-			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
+			if pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
@@ -562,7 +564,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			}
 		} else {
 			// old key is outside the watched directory
-			if strings.HasPrefix(string(sourceNewKey), sourcePath) {
+			if pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is in the watched directory
 				key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
 				if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
@@ -628,11 +630,31 @@ func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regex
 
 func matchesExcludePath(dir string, excludePaths []string) bool {
 	for _, excludePath := range excludePaths {
-		if strings.HasPrefix(dir, excludePath) {
+		if pathIsEqualOrUnder(dir, excludePath) {
 			return true
 		}
 	}
 	return false
+}
+
+func pathIsEqualOrUnder(candidate, other string) bool {
+	candidatePath := normalizeScopedPath(candidate)
+	otherPath := normalizeScopedPath(other)
+	if candidatePath == "" || otherPath == "" {
+		return false
+	}
+	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
+}
+
+func normalizeScopedPath(p string) util.FullPath {
+	if p == "" {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return util.FullPath(trimmed)
 }
 
 // compileExcludePattern compiles a regexp pattern string, returning nil if empty.
