@@ -39,15 +39,31 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	if message.IsFromOtherCluster && r.sink.GetName() == "filer" {
 		return nil
 	}
-	if !strings.HasPrefix(key, r.source.Dir) {
-		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
-		return nil
-	}
-	for _, excludeDir := range r.excludeDirs {
-		if strings.HasPrefix(key, excludeDir) {
-			glog.V(4).Infof("skipping %v of exclude dir %v", key, excludeDir)
+
+	oldInSource := strings.HasPrefix(key, r.source.Dir) && !r.isExcluded(key)
+
+	// For rename events (both old and new entry present), check both paths
+	// against the source directory. Convert cross-boundary renames to
+	// create or delete so the sink stays consistent.
+	if message.OldEntry != nil && message.NewEntry != nil && message.NewParentPath != "" {
+		newFullPath := util.Join(message.NewParentPath, message.NewEntry.Name)
+		newInSource := strings.HasPrefix(newFullPath, r.source.Dir) && !r.isExcluded(newFullPath)
+
+		if !oldInSource && !newInSource {
 			return nil
 		}
+		if !oldInSource {
+			// Rename into watched directory: treat as create
+			message.OldEntry = nil
+			key = newFullPath
+		} else if !newInSource {
+			// Rename out of watched directory: treat as delete
+			message.NewEntry = nil
+			message.NewParentPath = ""
+		}
+	} else if !oldInSource {
+		glog.V(4).Infof("skipping %v outside of %v", key, r.source.Dir)
+		return nil
 	}
 
 	var dateKey string
@@ -63,6 +79,12 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	newKey := util.Join(r.sink.GetSinkToDirectory(), dateKey, key[len(r.source.Dir):])
 	glog.V(3).Infof("replicate %s => %s", key, newKey)
 	key = newKey
+
+	// Remap NewParentPath to the sink's directory structure
+	if message.NewParentPath != "" && strings.HasPrefix(message.NewParentPath, r.source.Dir) {
+		message.NewParentPath = util.Join(r.sink.GetSinkToDirectory(), dateKey, message.NewParentPath[len(r.source.Dir):])
+	}
+
 	if message.OldEntry != nil && message.NewEntry == nil {
 		glog.V(4).Infof("deleting %v", key)
 		return r.sink.DeleteEntry(key, message.OldEntry.IsDirectory, message.DeleteChunks, message.Signatures)
@@ -89,6 +111,15 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 
 	glog.V(4).Infof("creating missing %v", key)
 	return r.sink.CreateEntry(key, message.NewEntry, message.Signatures)
+}
+
+func (r *Replicator) isExcluded(path string) bool {
+	for _, excludeDir := range r.excludeDirs {
+		if strings.HasPrefix(path, excludeDir) {
+			return true
+		}
+	}
+	return false
 }
 
 func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {
