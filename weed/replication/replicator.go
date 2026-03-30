@@ -44,14 +44,14 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 	newEntry := message.NewEntry
 	newParentPath := message.NewParentPath
 
-	oldInSource := strings.HasPrefix(key, r.source.Dir) && !r.isExcluded(key)
+	oldInSource := pathIsEqualOrUnder(key, r.source.Dir) && !r.isExcluded(key)
 
 	// For rename events (both old and new entry present), check both paths
 	// against the source directory. Convert cross-boundary renames to
 	// create or delete so the sink stays consistent.
 	if oldEntry != nil && newEntry != nil {
 		newFullPath, targetParent := metadataEventTarget(key, newEntry, newParentPath)
-		newInSource := strings.HasPrefix(newFullPath, r.source.Dir) && !r.isExcluded(newFullPath)
+		newInSource := pathIsEqualOrUnder(newFullPath, r.source.Dir) && !r.isExcluded(newFullPath)
 
 		if !oldInSource && !newInSource {
 			return nil
@@ -90,7 +90,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 		targetSourceKey, targetSourceParent := metadataEventTarget(key, newEntry, newParentPath)
 		newSinkKey = r.sourceToSinkKey(targetSourceKey, dateKey)
 		newSinkParentPath = r.sourceToSinkPath(targetSourceParent, dateKey)
-	} else if newParentPath != "" && strings.HasPrefix(newParentPath, r.source.Dir) {
+	} else if newParentPath != "" && pathIsEqualOrUnder(newParentPath, r.source.Dir) {
 		newSinkParentPath = r.sourceToSinkPath(newParentPath, dateKey)
 	}
 
@@ -132,7 +132,7 @@ func (r *Replicator) Replicate(ctx context.Context, key string, message *filer_p
 
 func (r *Replicator) isExcluded(path string) bool {
 	for _, excludeDir := range r.excludeDirs {
-		if strings.HasPrefix(path, excludeDir) {
+		if pathIsEqualOrUnder(path, excludeDir) {
 			return true
 		}
 	}
@@ -158,6 +158,26 @@ func metadataEventTarget(key string, newEntry *filer_pb.Entry, newParentPath str
 	}
 
 	return util.Join(targetParent, newEntry.Name), targetParent
+}
+
+func pathIsEqualOrUnder(candidate, other string) bool {
+	candidatePath := normalizeScopedPath(candidate)
+	otherPath := normalizeScopedPath(other)
+	if candidatePath == "" || otherPath == "" {
+		return false
+	}
+	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
+}
+
+func normalizeScopedPath(p string) util.FullPath {
+	if p == "" {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return util.FullPath(trimmed)
 }
 
 func ReadFilerSignature(grpcDialOption grpc.DialOption, filer pb.ServerAddress) (filerSignature int32, readErr error) {

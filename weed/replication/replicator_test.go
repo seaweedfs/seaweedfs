@@ -191,3 +191,94 @@ func TestReplicateRenameFallbackCreatesTargetKey(t *testing.T) {
 		t.Fatalf("create calls = %+v, want target sink key", s.createCalls)
 	}
 }
+
+func TestPathIsEqualOrUnderUsesDirectoryBoundaries(t *testing.T) {
+	tests := []struct {
+		name      string
+		candidate string
+		other     string
+		expected  bool
+	}{
+		{name: "equal", candidate: "/foo", other: "/foo", expected: true},
+		{name: "descendant", candidate: "/foo/bar", other: "/foo", expected: true},
+		{name: "sibling prefix", candidate: "/foobar/bar", other: "/foo", expected: false},
+		{name: "root", candidate: "/foo/bar", other: "/", expected: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pathIsEqualOrUnder(tt.candidate, tt.other); got != tt.expected {
+				t.Fatalf("pathIsEqualOrUnder(%q, %q) = %v, want %v", tt.candidate, tt.other, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestReplicateRenameOutToSiblingPrefixBecomesDelete(t *testing.T) {
+	s := &recordingSink{name: "local", sinkToDirectory: "/dest"}
+	r := &Replicator{
+		sink:   s,
+		source: &source.FilerSource{Dir: "/foo"},
+	}
+
+	err := r.Replicate(context.Background(), "/foo/old/file.txt", &filer_pb.EventNotification{
+		OldEntry: &filer_pb.Entry{
+			Name: "file.txt",
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: 123,
+			},
+		},
+		NewEntry: &filer_pb.Entry{
+			Name: "file.txt",
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: 123,
+			},
+		},
+		NewParentPath: "/foobar/new",
+	})
+	if err != nil {
+		t.Fatalf("Replicate rename out to sibling prefix: %v", err)
+	}
+
+	if len(s.deleteCalls) != 1 || s.deleteCalls[0].key != "/dest/old/file.txt" {
+		t.Fatalf("delete calls = %+v, want old sink key", s.deleteCalls)
+	}
+	if len(s.createCalls) != 0 || len(s.updateCalls) != 0 {
+		t.Fatalf("unexpected create/update calls: creates=%+v updates=%+v", s.createCalls, s.updateCalls)
+	}
+}
+
+func TestReplicateRenameFromExcludedDirBecomesCreate(t *testing.T) {
+	s := &recordingSink{name: "local", sinkToDirectory: "/dest"}
+	r := &Replicator{
+		sink:        s,
+		source:      &source.FilerSource{Dir: "/foo"},
+		excludeDirs: []string{"/foo/excluded"},
+	}
+
+	err := r.Replicate(context.Background(), "/foo/excluded/file.txt", &filer_pb.EventNotification{
+		OldEntry: &filer_pb.Entry{
+			Name: "file.txt",
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: 123,
+			},
+		},
+		NewEntry: &filer_pb.Entry{
+			Name: "file.txt",
+			Attributes: &filer_pb.FuseAttributes{
+				Mtime: 123,
+			},
+		},
+		NewParentPath: "/foo/live",
+	})
+	if err != nil {
+		t.Fatalf("Replicate rename from excluded dir: %v", err)
+	}
+
+	if len(s.createCalls) != 1 || s.createCalls[0].key != "/dest/live/file.txt" {
+		t.Fatalf("create calls = %+v, want target sink key", s.createCalls)
+	}
+	if len(s.deleteCalls) != 0 || len(s.updateCalls) != 0 {
+		t.Fatalf("unexpected delete/update calls: deletes=%+v updates=%+v", s.deleteCalls, s.updateCalls)
+	}
+}
