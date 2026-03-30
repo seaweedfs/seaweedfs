@@ -53,13 +53,14 @@ func TestIntegration_ChangedAddress_ViaOrchestrator(t *testing.T) {
 		t.Fatalf("endpoint not updated: %s", s.Endpoint().DataAddr)
 	}
 
-	// Zero-gap recovery on new endpoint.
+	// Zero-gap recovery on new endpoint — orchestrator handles completion.
 	result2 := o.ExecuteRecovery("vol1-r1", 100, &primary)
 	if result2.Outcome != OutcomeZeroGap {
 		t.Fatalf("outcome=%s", result2.Outcome)
 	}
-	// Zero-gap completes in handshake phase.
-	s.CompleteSessionByID(s.SessionID())
+	if result2.FinalState != StateInSync {
+		t.Fatalf("zero-gap should complete to InSync, got %s", result2.FinalState)
+	}
 
 	// Verify log has events from both cycles.
 	events := o.Log.EventsFor("vol1-r1")
@@ -151,9 +152,9 @@ func TestIntegration_EpochBump_ViaOrchestrator(t *testing.T) {
 		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp},
 	})
 
-	// Epoch bumps mid-recovery.
+	// Epoch bumps mid-recovery — all via orchestrator.
 	o.InvalidateEpoch(2)
-	o.Registry.Sender("r1").UpdateEpoch(2)
+	o.UpdateSenderEpoch("r1", 2)
 
 	// Old session is dead — ExecuteRecovery should fail.
 	result := o.ExecuteRecovery("r1", 100, &primary)
@@ -174,21 +175,51 @@ func TestIntegration_EpochBump_ViaOrchestrator(t *testing.T) {
 	if result2.Outcome != OutcomeZeroGap {
 		t.Fatalf("epoch 2: %s", result2.Outcome)
 	}
-	o.Registry.Sender("r1").CompleteSessionByID(o.Registry.Sender("r1").SessionID())
-
-	if o.Registry.Sender("r1").State() != StateInSync {
-		t.Fatalf("state=%s", o.Registry.Sender("r1").State())
+	if result2.FinalState != StateInSync {
+		t.Fatalf("state=%s", result2.FinalState)
 	}
 
-	// Log should show epoch invalidation.
+	// Log should show per-replica session invalidation.
+	hasPerReplicaInvalidation := false
+	for _, e := range o.Log.EventsFor("r1") {
+		if e.Event == "session_invalidated" {
+			hasPerReplicaInvalidation = true
+		}
+	}
+	if !hasPerReplicaInvalidation {
+		t.Fatal("log should contain per-replica session_invalidated event")
+	}
+}
+
+func TestIntegration_EndpointChange_LogsInvalidation(t *testing.T) {
+	o := NewRecoveryOrchestrator()
+
+	o.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp},
+	})
+
+	// Address changes in next assignment — should log invalidation.
+	o.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9444", Version: 2}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp},
+	})
+
+	// Check per-replica invalidation event.
 	hasInvalidation := false
-	for _, e := range o.Log.Events() {
-		if e.Event == "epoch_invalidation" {
+	for _, e := range o.Log.EventsFor("r1") {
+		if e.Event == "session_invalidated" {
 			hasInvalidation = true
 		}
 	}
 	if !hasInvalidation {
-		t.Fatal("log should contain epoch_invalidation event")
+		t.Fatal("endpoint change should produce per-replica session_invalidated event")
 	}
 }
 
@@ -215,12 +246,11 @@ func TestIntegration_MultiReplica_ViaOrchestrator(t *testing.T) {
 		},
 	})
 
-	// r1: zero-gap.
+	// r1: zero-gap — orchestrator completes automatically.
 	r1 := o.ExecuteRecovery("r1", 100, &primary)
-	if r1.Outcome != OutcomeZeroGap {
-		t.Fatalf("r1: %s", r1.Outcome)
+	if r1.Outcome != OutcomeZeroGap || r1.FinalState != StateInSync {
+		t.Fatalf("r1: outcome=%s state=%s", r1.Outcome, r1.FinalState)
 	}
-	o.Registry.Sender("r1").CompleteSessionByID(o.Registry.Sender("r1").SessionID())
 
 	// r2: catch-up.
 	r2 := o.ExecuteRecovery("r2", 60, &primary)

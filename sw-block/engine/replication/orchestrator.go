@@ -26,14 +26,43 @@ func NewRecoveryOrchestrator() *RecoveryOrchestrator {
 }
 
 // ProcessAssignment applies an assignment intent and logs the result.
+// Detects endpoint-change invalidations automatically.
 func (o *RecoveryOrchestrator) ProcessAssignment(intent AssignmentIntent) AssignmentResult {
+	// Snapshot pre-assignment session state for invalidation detection.
+	type preState struct {
+		hadSession bool
+		sessionID  uint64
+	}
+	pre := map[string]preState{}
+	for _, ra := range intent.Replicas {
+		if s := o.Registry.Sender(ra.ReplicaID); s != nil {
+			pre[ra.ReplicaID] = preState{
+				hadSession: s.HasActiveSession(),
+				sessionID:  s.SessionID(),
+			}
+		}
+	}
+
 	result := o.Registry.ApplyAssignment(intent)
+
 	for _, id := range result.Added {
 		o.Log.Record(id, 0, "sender_added", "")
 	}
 	for _, id := range result.Removed {
 		o.Log.Record(id, 0, "sender_removed", "")
 	}
+
+	// Detect endpoint-change invalidations: if the session ID changed
+	// (old session was invalidated and possibly replaced), log the old one.
+	for id, p := range pre {
+		if p.hadSession {
+			s := o.Registry.Sender(id)
+			if s != nil && s.SessionID() != p.sessionID {
+				o.Log.Record(id, p.sessionID, "session_invalidated", "endpoint_changed")
+			}
+		}
+	}
+
 	for _, id := range result.SessionsCreated {
 		s := o.Registry.Sender(id)
 		o.Log.Record(id, s.SessionID(), "session_created", "")
@@ -92,6 +121,14 @@ func (o *RecoveryOrchestrator) ExecuteRecovery(replicaID string, replicaFlushedL
 	if outcome == OutcomeNeedsRebuild {
 		o.Log.Record(replicaID, sessID, "escalated", fmt.Sprintf("needs_rebuild: %s", proof.Reason))
 		return RecoveryResult{ReplicaID: replicaID, Outcome: outcome, Proof: proof, FinalState: StateNeedsRebuild}
+	}
+
+	// Zero-gap: complete immediately (no catch-up needed).
+	if outcome == OutcomeZeroGap {
+		if s.CompleteSessionByID(sessID) {
+			o.Log.Record(replicaID, sessID, "completed", "zero_gap")
+			return RecoveryResult{ReplicaID: replicaID, Outcome: outcome, Proof: proof, FinalState: StateInSync}
+		}
 	}
 
 	return RecoveryResult{ReplicaID: replicaID, Outcome: outcome, Proof: proof, FinalState: s.State()}
@@ -176,11 +213,48 @@ func (o *RecoveryOrchestrator) CompleteRebuild(replicaID string, history *Retain
 	return nil
 }
 
-// InvalidateEpoch invalidates all stale sessions and logs the event.
+// UpdateSenderEpoch advances a specific sender's epoch via the orchestrator.
+// Logs the transition and any session invalidation.
+func (o *RecoveryOrchestrator) UpdateSenderEpoch(replicaID string, newEpoch uint64) {
+	s := o.Registry.Sender(replicaID)
+	if s == nil {
+		return
+	}
+	hadSession := s.HasActiveSession()
+	oldSessID := s.SessionID()
+	s.UpdateEpoch(newEpoch)
+	if hadSession && !s.HasActiveSession() {
+		o.Log.Record(replicaID, oldSessID, "session_invalidated",
+			fmt.Sprintf("epoch_advanced_to_%d", newEpoch))
+	}
+}
+
+// InvalidateEpoch invalidates all stale sessions with per-replica logging.
 func (o *RecoveryOrchestrator) InvalidateEpoch(newEpoch uint64) int {
+	// Collect per-replica state before invalidation.
+	type pre struct {
+		id    string
+		sess  uint64
+		had   bool
+	}
+	var senders []pre
+	for _, s := range o.Registry.All() {
+		senders = append(senders, pre{
+			id:   s.ReplicaID(),
+			sess: s.SessionID(),
+			had:  s.HasActiveSession(),
+		})
+	}
+
 	count := o.Registry.InvalidateEpoch(newEpoch)
-	if count > 0 {
-		o.Log.Record("", 0, "epoch_invalidation", fmt.Sprintf("epoch=%d invalidated=%d", newEpoch, count))
+
+	// Log per-replica invalidations.
+	for _, p := range senders {
+		s := o.Registry.Sender(p.id)
+		if s != nil && p.had && !s.HasActiveSession() {
+			o.Log.Record(p.id, p.sess, "session_invalidated",
+				fmt.Sprintf("epoch_bump_to_%d", newEpoch))
+		}
 	}
 	return count
 }
