@@ -1,8 +1,11 @@
 package filer
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -171,5 +174,108 @@ func TestRetryLogicSkipsSameUrls(t *testing.T) {
 	// Different URLs should return false (and thus allow retry)
 	if urlSlicesEqual(sameUrls, differentUrls) {
 		t.Error("Expected different URLs to not be equal")
+	}
+}
+
+func TestCanceledStreamSkipsCacheInvalidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fileId := "3,canceled"
+
+	mock := &mockMasterClient{
+		lookupFunc: func(ctx context.Context, fid string) ([]string, error) {
+			return []string{"http://server:8080"}, nil
+		},
+	}
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId: fileId,
+			Offset: 0,
+			Size:   10,
+		},
+	}
+
+	streamFn, err := PrepareStreamContentWithThrottler(ctx, mock, noJwtFunc, chunks, 0, 10, 0)
+	if err != nil {
+		t.Fatalf("PrepareStreamContentWithThrottler failed: %v", err)
+	}
+
+	cancel()
+
+	err = streamFn(&bytes.Buffer{})
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if len(mock.invalidatedFileIds) != 0 {
+		t.Fatalf("expected no cache invalidation on cancellation, got %v", mock.invalidatedFileIds)
+	}
+}
+
+func TestPrepareStreamContentSkipsLookupWhenContextAlreadyCanceled(t *testing.T) {
+	oldSchedule := getLookupFileIdBackoffSchedule
+	getLookupFileIdBackoffSchedule = []time.Duration{time.Millisecond}
+	t.Cleanup(func() {
+		getLookupFileIdBackoffSchedule = oldSchedule
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	lookupCalls := 0
+	mock := &mockMasterClient{
+		lookupFunc: func(ctx context.Context, fileId string) ([]string, error) {
+			lookupCalls++
+			return nil, errors.New("lookup should not run")
+		},
+	}
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId: "3,precanceled",
+			Offset: 0,
+			Size:   10,
+		},
+	}
+
+	_, err := PrepareStreamContentWithThrottler(ctx, mock, noJwtFunc, chunks, 0, 10, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if lookupCalls != 0 {
+		t.Fatalf("expected no lookup calls after cancellation, got %d", lookupCalls)
+	}
+}
+
+func TestPrepareStreamContentStopsLookupRetriesAfterContextCancellation(t *testing.T) {
+	oldSchedule := getLookupFileIdBackoffSchedule
+	getLookupFileIdBackoffSchedule = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	t.Cleanup(func() {
+		getLookupFileIdBackoffSchedule = oldSchedule
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	lookupCalls := 0
+	mock := &mockMasterClient{
+		lookupFunc: func(ctx context.Context, fileId string) ([]string, error) {
+			lookupCalls++
+			cancel()
+			return nil, context.Canceled
+		},
+	}
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId: "3,cancel-during-lookup",
+			Offset: 0,
+			Size:   10,
+		},
+	}
+
+	_, err := PrepareStreamContentWithThrottler(ctx, mock, noJwtFunc, chunks, 0, 10, 0)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if lookupCalls != 1 {
+		t.Fatalf("expected lookup retries to stop after cancellation, got %d calls", lookupCalls)
 	}
 }

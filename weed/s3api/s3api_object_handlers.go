@@ -26,6 +26,8 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // corsHeaders defines the CORS headers that need to be preserved
@@ -246,6 +248,14 @@ func (e *StreamError) Unwrap() error {
 // newStreamErrorWithResponse creates a StreamError for cases where response was already written
 func newStreamErrorWithResponse(err error) *StreamError {
 	return &StreamError{Err: err, ResponseWritten: true}
+}
+
+func isCanceledStreamingError(err error) bool {
+	return errors.Is(err, context.Canceled) || status.Code(err) == codes.Canceled
+}
+
+func shouldWriteStreamingErrorResponse(err error) bool {
+	return err != nil && !isCanceledStreamingError(err)
 }
 
 func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
@@ -879,7 +889,15 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 	err = s3a.streamFromVolumeServersWithSSE(w, r, objectEntryForSSE, primarySSEType, bucket, object, versionId)
 	streamTime = time.Since(tStream)
 	if err != nil {
-		glog.Errorf("GetObjectHandler: failed to stream %s/%s from volume servers: %v", bucket, object, err)
+		switch {
+		case isCanceledStreamingError(err):
+			glog.V(3).Infof("GetObjectHandler: client disconnected while streaming %s/%s: %v", bucket, object, err)
+			return
+		case errors.Is(err, context.DeadlineExceeded):
+			glog.Warningf("GetObjectHandler: deadline exceeded while streaming %s/%s: %v", bucket, object, err)
+		default:
+			glog.Errorf("GetObjectHandler: failed to stream %s/%s from volume servers: %v", bucket, object, err)
+		}
 		// Check if the streaming function already wrote an HTTP response
 		var streamErr *StreamError
 		if errors.As(err, &streamErr) && streamErr.ResponseWritten {
@@ -891,7 +909,7 @@ func (s3a *S3ApiServer) GetObjectHandler(w http.ResponseWriter, r *http.Request)
 		// Check if error is due to volume server rate limiting (HTTP 429)
 		if errors.Is(err, util_http.ErrTooManyRequests) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrRequestBytesExceed)
-		} else {
+		} else if shouldWriteStreamingErrorResponse(err) {
 			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		}
 		return
@@ -1027,7 +1045,15 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
 	chunkResolveTime = time.Since(tChunkResolve)
 	if err != nil {
-		glog.Errorf("streamFromVolumeServers: failed to resolve chunks: %v", err)
+		if isCanceledStreamingError(err) {
+			glog.V(3).Infof("streamFromVolumeServers: request canceled while resolving chunks: %v", err)
+			return err
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			glog.Warningf("streamFromVolumeServers: request deadline exceeded while resolving chunks: %v", err)
+		} else {
+			glog.Errorf("streamFromVolumeServers: failed to resolve chunks: %v", err)
+		}
 		// Write S3-compliant XML error response
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return newStreamErrorWithResponse(fmt.Errorf("failed to resolve chunks: %v", err))
@@ -1047,7 +1073,15 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	)
 	streamPrepTime = time.Since(tStreamPrep)
 	if err != nil {
-		glog.Errorf("streamFromVolumeServers: failed to prepare stream: %v", err)
+		if isCanceledStreamingError(err) {
+			glog.V(3).Infof("streamFromVolumeServers: request canceled while preparing stream: %v", err)
+			return err
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			glog.Warningf("streamFromVolumeServers: request deadline exceeded while preparing stream: %v", err)
+		} else {
+			glog.Errorf("streamFromVolumeServers: failed to prepare stream: %v", err)
+		}
 		// Write S3-compliant XML error response
 		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
 		return newStreamErrorWithResponse(fmt.Errorf("failed to prepare stream: %v", err))
@@ -1088,7 +1122,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	}
 	if err != nil {
 		switch {
-		case errors.Is(err, context.Canceled):
+		case isCanceledStreamingError(err):
 			// Client disconnected mid-stream (e.g. Nginx upstream timeout, browser cancel) - expected
 			glog.V(3).Infof("streamFromVolumeServers: client disconnected after writing %d bytes: %v", cw.written, err)
 		case errors.Is(err, context.DeadlineExceeded):

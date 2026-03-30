@@ -141,12 +141,26 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 		var urlStrings []string
 		var err error
 		for _, backoff := range getLookupFileIdBackoffSchedule {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			urlStrings, err = masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
 			if err == nil && len(urlStrings) > 0 {
 				break
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			glog.V(4).InfofCtx(ctx, "waiting for chunk: %s", chunkView.FileId)
-			time.Sleep(backoff)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
 		}
 		if err != nil {
 			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
@@ -178,6 +192,10 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			start := time.Now()
 			jwt := jwtFunc(chunkView.FileId)
 			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
+
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
 
 			// If read failed, try to invalidate cache and re-lookup
 			if err != nil && written == 0 {
