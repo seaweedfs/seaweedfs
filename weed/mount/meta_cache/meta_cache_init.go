@@ -107,7 +107,7 @@ func doEnsureVisited(ctx context.Context, mc *MetaCache, client filer_pb.FilerCl
 			var err error
 			snapshotTsNs, err = filer_pb.ReadDirAllEntriesWithSnapshot(ctx, client, path, "", func(pbEntry *filer_pb.Entry, isLast bool) error {
 				entry := filer.FromPbEntry(string(path), pbEntry)
-				if IsHiddenSystemEntry(string(path), entry.Name()) {
+				if !mc.includeSystemEntries && IsHiddenSystemEntry(string(path), entry.Name()) {
 					return nil
 				}
 

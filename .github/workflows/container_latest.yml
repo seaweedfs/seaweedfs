@@ -98,11 +98,6 @@ jobs:
             echo "tag_suffix=" >> $GITHUB_OUTPUT
             echo "build_args=" >> $GITHUB_OUTPUT
           fi
-          if [ "${{ matrix.platform }}" = "amd64" ] || [ "${{ matrix.platform }}" = "arm64" ]; then
-            echo "rust_base_image=rust:1-alpine" >> $GITHUB_OUTPUT
-          else
-            echo "rust_base_image=alpine" >> $GITHUB_OUTPUT
-          fi
 
       - name: Docker meta
         id: docker_meta
@@ -160,7 +155,6 @@ jobs:
           build-args: |
             BUILDKIT_INLINE_CACHE=1
             BRANCH=${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.sha }}
-            RUST_BASE_IMAGE=${{ steps.config.outputs.rust_base_image }}
             ${{ steps.config.outputs.build_args }}
       - name: Clean up build artifacts
         if: always()

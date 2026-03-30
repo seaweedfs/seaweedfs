@@ -84,7 +84,7 @@ func TestLoadDirectoryEntriesDirectFiltersHiddenEntriesAndMapsIds(t *testing.T) 
 		},
 	}
 
-	entries, _, err := loadDirectoryEntriesDirect(context.Background(), client, mapper, util.FullPath("/"), "", false, 10, 0)
+	entries, _, err := loadDirectoryEntriesDirect(context.Background(), client, mapper, util.FullPath("/"), "", false, 10, 0, false)
 	if err != nil {
 		t.Fatalf("loadDirectoryEntriesDirect: %v", err)
 	}
@@ -96,5 +96,27 @@ func TestLoadDirectoryEntriesDirectFiltersHiddenEntriesAndMapsIds(t *testing.T) 
 	}
 	if entries[0].Attr.Uid != 10 || entries[0].Attr.Gid != 20 {
 		t.Fatalf("mapped uid/gid = %d/%d, want 10/20", entries[0].Attr.Uid, entries[0].Attr.Gid)
+	}
+}
+
+func TestLoadDirectoryEntriesDirectShowsSystemEntriesWhenEnabled(t *testing.T) {
+	client := &directoryFilerAccessor{
+		client: &directoryListClient{
+			responses: []*filer_pb.ListEntriesResponse{
+				{Entry: &filer_pb.Entry{Name: "topics"}},
+				{Entry: &filer_pb.Entry{Name: "visible"}},
+			},
+		},
+	}
+
+	entries, _, err := loadDirectoryEntriesDirect(context.Background(), client, nil, util.FullPath("/"), "", false, 10, 0, true)
+	if err != nil {
+		t.Fatalf("loadDirectoryEntriesDirect: %v", err)
+	}
+	if got := len(entries); got != 2 {
+		t.Fatalf("entry count = %d, want 2", got)
+	}
+	if entries[0].Name() != "topics" || entries[1].Name() != "visible" {
+		t.Fatalf("entry names = %q, %q, want topics, visible", entries[0].Name(), entries[1].Name())
 	}
 }

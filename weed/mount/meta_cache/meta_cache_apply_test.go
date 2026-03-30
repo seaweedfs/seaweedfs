@@ -2,6 +2,7 @@ package meta_cache
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -296,6 +297,114 @@ func TestApplyMetadataResponseDeduplicatesRepeatedFilerEvent(t *testing.T) {
 	}
 }
 
+func TestApplyMetadataResponseSkipsHiddenSystemEntryWhenDisabled(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/": true,
+	})
+	defer mc.Shutdown()
+
+	createResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/",
+		EventNotification: &filer_pb.EventNotification{
+			NewEntry: &filer_pb.Entry{
+				Name: "topics",
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   1,
+					Mtime:    1,
+					FileMode: uint32(os.ModeDir | 0o755),
+				},
+				IsDirectory: true,
+			},
+		},
+	}
+
+	if err := mc.ApplyMetadataResponse(context.Background(), createResp, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply create: %v", err)
+	}
+
+	entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics"))
+	if err != filer_pb.ErrNotFound {
+		t.Fatalf("find hidden entry error = %v, want %v", err, filer_pb.ErrNotFound)
+	}
+	if entry != nil {
+		t.Fatalf("hidden entry still cached: %+v", entry)
+	}
+}
+
+func TestApplyMetadataResponsePurgesHiddenDestinationPath(t *testing.T) {
+	mc, _, _, _ := newTestMetaCache(t, map[util.FullPath]bool{
+		"/":    true,
+		"/src": true,
+	})
+	defer mc.Shutdown()
+
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/topics",
+		Attr: filer.Attr{
+			Crtime: time.Unix(1, 0),
+			Mtime:  time.Unix(1, 0),
+			Mode:   os.ModeDir | 0o755,
+		},
+	}); err != nil {
+		t.Fatalf("insert stale hidden dir: %v", err)
+	}
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/topics/leaked.txt",
+		Attr: filer.Attr{
+			Crtime:   time.Unix(1, 0),
+			Mtime:    time.Unix(1, 0),
+			Mode:     0o644,
+			FileSize: 7,
+		},
+	}); err != nil {
+		t.Fatalf("insert leaked hidden child: %v", err)
+	}
+	if err := mc.InsertEntry(context.Background(), &filer.Entry{
+		FullPath: "/src/visible",
+		Attr: filer.Attr{
+			Crtime: time.Unix(1, 0),
+			Mtime:  time.Unix(1, 0),
+			Mode:   os.ModeDir | 0o755,
+		},
+	}); err != nil {
+		t.Fatalf("insert source dir: %v", err)
+	}
+
+	renameResp := &filer_pb.SubscribeMetadataResponse{
+		Directory: "/src",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name:        "visible",
+				IsDirectory: true,
+			},
+			NewEntry: &filer_pb.Entry{
+				Name: "topics",
+				Attributes: &filer_pb.FuseAttributes{
+					Crtime:   2,
+					Mtime:    2,
+					FileMode: uint32(os.ModeDir | 0o755),
+				},
+				IsDirectory: true,
+			},
+			NewParentPath: "/",
+		},
+	}
+
+	if err := mc.ApplyMetadataResponse(context.Background(), renameResp, SubscriberMetadataResponseApplyOptions); err != nil {
+		t.Fatalf("apply rename: %v", err)
+	}
+
+	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/src/visible")); err != filer_pb.ErrNotFound || entry != nil {
+		t.Fatalf("source dir after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
+	}
+	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics")); err != filer_pb.ErrNotFound || entry != nil {
+		t.Fatalf("hidden destination after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
+	}
+	if entry, err := mc.FindEntry(context.Background(), util.FullPath("/topics/leaked.txt")); err != filer_pb.ErrNotFound || entry != nil {
+		t.Fatalf("hidden child after rename = %+v, %v; want nil, %v", entry, err, filer_pb.ErrNotFound)
+	}
+}
+
 func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, map[util.FullPath]bool, *recordedPaths, *recordedPaths) {
 	t.Helper()
 
@@ -312,6 +421,7 @@ func newTestMetaCache(t *testing.T, cached map[util.FullPath]bool) (*MetaCache, 
 		filepath.Join(t.TempDir(), "meta"),
 		mapper,
 		util.FullPath("/"),
+		false,
 		func(path util.FullPath) {
 			cachedMu.Lock()
 			defer cachedMu.Unlock()

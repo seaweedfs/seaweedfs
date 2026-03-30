@@ -65,6 +65,7 @@ type Option struct {
 	VolumeServerAccess string // how to access volume servers
 	Cipher             bool   // whether encrypt data on volume server
 	UidGidMapper       *meta_cache.UidGidMapper
+	IncludeSystemEntries bool
 
 	// Periodic metadata flush interval in seconds (0 to disable)
 	// This protects chunks from being purged by volume.fsck for long-running writes
@@ -203,6 +204,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
 		util.FullPath(option.FilerMountRootPath),
+		option.IncludeSystemEntries,
 		func(path util.FullPath) {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		}, func(path util.FullPath) bool {

@@ -120,6 +120,7 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 		filepath.Join(t.TempDir(), "meta"),
 		uidGidMapper,
 		root,
+		false,
 		func(path util.FullPath) {
 			wfs.inodeToPath.MarkChildrenCached(path)
 		},
