@@ -31,6 +31,14 @@ func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 				f.Store.OnBucketDeletion(message.OldEntry.Name)
 			}
 		}
+		if filer_pb.IsRename(event) {
+			if message.OldEntry.IsDirectory {
+				f.Store.OnBucketDeletion(message.OldEntry.Name)
+			}
+			if message.NewEntry.IsDirectory {
+				f.Store.OnBucketCreation(message.NewEntry.Name)
+			}
+		}
 	}
 }
 
