@@ -22,6 +22,8 @@ FROM alpine:3.23 as rust_builder
 ARG TARGETARCH
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed/pb /build/weed/pb
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed/static /build/weed/static
+COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed/util/version /build/weed/util/version
 WORKDIR /build/seaweed-volume
 ARG TAGS
 RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
