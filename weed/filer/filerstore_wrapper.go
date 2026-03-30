@@ -25,6 +25,7 @@ type VirtualFilerStore interface {
 	FilerStore
 	DeleteHardLink(ctx context.Context, hardLinkId HardLinkId) error
 	DeleteOneEntry(ctx context.Context, entry *Entry) error
+	InsertEntryKnownAbsent(ctx context.Context, entry *Entry) error
 	AddPathSpecificStore(path string, storeId string, store FilerStore)
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
@@ -140,6 +141,31 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 	}
 
 	// glog.V(4).Infof("InsertEntry %s", entry.FullPath)
+	return actualStore.InsertEntry(ctx, entry)
+}
+
+// InsertEntryKnownAbsent skips the pre-insert FindEntry path when the caller has
+// already established that the target path does not exist.
+func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry *Entry) error {
+	ctx = context.WithoutCancel(ctx)
+	actualStore := fsw.getActualStore(entry.FullPath)
+	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
+	start := time.Now()
+	defer func() {
+		stats.FilerStoreHistogram.WithLabelValues(actualStore.GetName(), "insert").Observe(time.Since(start).Seconds())
+	}()
+
+	filer_pb.BeforeEntrySerialization(entry.GetChunks())
+	normalizeEntryMimeForStore(entry)
+
+	if len(entry.HardLinkId) > 0 {
+		glog.V(4).InfofCtx(ctx, "InsertEntryKnownAbsent %s has HardLinkId %x counter=%d",
+			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
+		if err := fsw.setHardLink(ctx, entry); err != nil {
+			return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+		}
+	}
+
 	return actualStore.InsertEntry(ctx, entry)
 }
 

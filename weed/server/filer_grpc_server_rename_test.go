@@ -3,6 +3,9 @@ package weed_server
 import (
 	"context"
 	"errors"
+	"os"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,13 +26,15 @@ import (
 type renameTestStore struct {
 	mu        sync.Mutex
 	entries   map[string]*filer.Entry
+	findCalls map[string]int
 	commitErr error
 	deleteErr error
 }
 
 func newRenameTestStore() *renameTestStore {
 	return &renameTestStore{
-		entries: make(map[string]*filer.Entry),
+		entries:   make(map[string]*filer.Entry),
+		findCalls: make(map[string]int),
 	}
 }
 
@@ -66,6 +71,7 @@ func (s *renameTestStore) UpdateEntry(_ context.Context, entry *filer.Entry) err
 func (s *renameTestStore) FindEntry(_ context.Context, p util.FullPath) (*filer.Entry, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.findCalls[string(p)]++
 	entry, found := s.entries[string(p)]
 	if !found {
 		return nil, filer_pb.ErrNotFound
@@ -95,12 +101,74 @@ func (s *renameTestStore) DeleteFolderChildren(_ context.Context, p util.FullPat
 	return nil
 }
 
-func (s *renameTestStore) ListDirectoryEntries(_ context.Context, _ util.FullPath, _ string, _ bool, _ int64, _ filer.ListEachEntryFunc) (string, error) {
-	return "", nil
+func (s *renameTestStore) listDirectoryEntries(dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
+	s.mu.Lock()
+	var entries []*filer.Entry
+	for path, entry := range s.entries {
+		if path == string(dirPath) {
+			continue
+		}
+		parent, _ := util.FullPath(path).DirAndName()
+		if parent != string(dirPath) {
+			continue
+		}
+		if prefix != "" && !strings.HasPrefix(entry.Name(), prefix) {
+			continue
+		}
+		entries = append(entries, entry.ShallowClone())
+	}
+	s.mu.Unlock()
+
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name() < entries[j].Name()
+	})
+
+	count := int64(0)
+	lastFileName := ""
+	for _, entry := range entries {
+		name := entry.Name()
+		if startFileName != "" {
+			if includeStartFile {
+				if name < startFileName {
+					continue
+				}
+			} else if name <= startFileName {
+				continue
+			}
+		}
+
+		lastFileName = name
+		if eachEntryFunc != nil {
+			includeMore, err := eachEntryFunc(entry)
+			if err != nil {
+				return lastFileName, err
+			}
+			if !includeMore {
+				return lastFileName, nil
+			}
+		}
+
+		count++
+		if limit > 0 && count >= limit {
+			break
+		}
+	}
+
+	return lastFileName, nil
 }
 
-func (s *renameTestStore) ListDirectoryPrefixedEntries(_ context.Context, _ util.FullPath, _ string, _ bool, _ int64, _ string, _ filer.ListEachEntryFunc) (string, error) {
-	return "", nil
+func (s *renameTestStore) ListDirectoryEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
+	return s.listDirectoryEntries(dirPath, startFileName, includeStartFile, limit, "", eachEntryFunc)
+}
+
+func (s *renameTestStore) ListDirectoryPrefixedEntries(_ context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
+	return s.listDirectoryEntries(dirPath, startFileName, includeStartFile, limit, prefix, eachEntryFunc)
+}
+
+func (s *renameTestStore) findEntryCallCount(path string) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.findCalls[path]
 }
 
 type capturedEvent struct {
@@ -187,6 +255,19 @@ func newFileEntry(path string, inode uint64) *filer.Entry {
 			Mtime:  now,
 			Crtime: now,
 			Mode:   0644,
+			Inode:  inode,
+		},
+	}
+}
+
+func newDirectoryEntry(path string, inode uint64) *filer.Entry {
+	now := time.Unix(1700000000, 0)
+	return &filer.Entry{
+		FullPath: util.FullPath(path),
+		Attr: filer.Attr{
+			Mtime:  now,
+			Crtime: now,
+			Mode:   os.ModeDir | 0755,
 			Inode:  inode,
 		},
 	}
@@ -350,5 +431,42 @@ func TestAtomicRenameEntryDoesNotEmitEventOnCommitFailure(t *testing.T) {
 
 	if events := queue.snapshot(); len(events) != 0 {
 		t.Fatalf("event count = %d, want 0", len(events))
+	}
+}
+
+func TestAtomicRenameEntrySkipsDescendantTargetLookups(t *testing.T) {
+	store := newRenameTestStore()
+	store.entries["/srcdir"] = newDirectoryEntry("/srcdir", 100)
+	store.entries["/srcdir/subdir"] = newDirectoryEntry("/srcdir/subdir", 101)
+	store.entries["/srcdir/subdir/file.txt"] = newFileEntry("/srcdir/subdir/file.txt", 102)
+
+	queue := &captureQueue{}
+	swapNotificationQueue(t, queue)
+
+	server := &FilerServer{filer: newRenameTestFiler(store)}
+	_, err := server.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+		OldDirectory: "/",
+		OldName:      "srcdir",
+		NewDirectory: "/",
+		NewName:      "dstdir",
+	})
+	if err != nil {
+		t.Fatalf("AtomicRenameEntry: %v", err)
+	}
+
+	for _, target := range []string{"/dstdir/subdir", "/dstdir/subdir/file.txt"} {
+		if calls := store.findEntryCallCount(target); calls != 0 {
+			t.Fatalf("FindEntry(%q) called %d times, want 0", target, calls)
+		}
+	}
+
+	for _, target := range []string{"/dstdir", "/dstdir/subdir", "/dstdir/subdir/file.txt"} {
+		if _, err := store.FindEntry(context.Background(), util.FullPath(target)); err != nil {
+			t.Fatalf("find renamed target %q: %v", target, err)
+		}
+	}
+
+	if got := len(queue.snapshot()); got != 3 {
+		t.Fatalf("event count = %d, want 3", got)
 	}
 }
