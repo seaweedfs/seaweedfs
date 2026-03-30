@@ -94,7 +94,7 @@ require (
 	gocloud.dev/pubsub/rabbitpubsub v0.45.0
 	golang.org/x/crypto v0.49.0
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
-	golang.org/x/image v0.36.0
+	golang.org/x/image v0.38.0
 	golang.org/x/net v0.51.0
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sys v0.42.0
