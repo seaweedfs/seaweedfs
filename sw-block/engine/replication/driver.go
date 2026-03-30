@@ -82,25 +82,31 @@ func (d *RecoveryDriver) PlanRecovery(replicaID string, replicaFlushedLSN uint64
 		return plan, nil
 
 	case OutcomeCatchUp:
-		// Acquire WAL retention pin BEFORE continuing execution.
-		// If pin fails, invalidate the session to avoid a dangling live session.
-		pin, err := d.Storage.PinWALRetention(replicaFlushedLSN)
-		if err != nil {
-			s.InvalidateSession("wal_pin_failed", StateDisconnected)
-			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "wal_pin_failed", err.Error())
-			return nil, fmt.Errorf("WAL retention pin failed: %w", err)
-		}
-		plan.RetentionPin = &pin
 		plan.CatchUpTarget = history.CommittedLSN
 
 		// Check if truncation is needed (replica ahead).
 		proof := history.ProveRecoverability(replicaFlushedLSN)
 		if proof.Reason == "replica_ahead_needs_truncation" {
 			plan.TruncateLSN = history.CommittedLSN
+			// Truncation-only: no WAL replay needed. No pin required.
+			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_truncate_only",
+				fmt.Sprintf("truncate_to=%d", plan.TruncateLSN))
+			return plan, nil
 		}
 
+		// Real catch-up: pin WAL from the session's actual replay start.
+		// The replay start is replicaFlushedLSN (where the replica left off).
+		replayStart := replicaFlushedLSN
+		pin, err := d.Storage.PinWALRetention(replayStart)
+		if err != nil {
+			s.InvalidateSession("wal_pin_failed", StateDisconnected)
+			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "wal_pin_failed", err.Error())
+			return nil, fmt.Errorf("WAL retention pin failed: %w", err)
+		}
+		plan.RetentionPin = &pin
+
 		d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_catchup",
-			fmt.Sprintf("target=%d pin=%d truncate=%d", plan.CatchUpTarget, pin.PinID, plan.TruncateLSN))
+			fmt.Sprintf("replay=%d→%d pin=%d", replayStart, plan.CatchUpTarget, pin.PinID))
 		return plan, nil
 
 	case OutcomeNeedsRebuild:
@@ -113,13 +119,27 @@ func (d *RecoveryDriver) PlanRecovery(replicaID string, replicaFlushedLSN uint64
 
 // PlanRebuild acquires rebuild resources (snapshot pin + optional WAL pin)
 // from real storage state. Called after a rebuild assignment.
+// Fails closed on: missing sender, no active session, non-rebuild session.
 func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
+	s := d.Orchestrator.Registry.Sender(replicaID)
+	if s == nil {
+		return nil, fmt.Errorf("sender %q not found", replicaID)
+	}
+	sessID := s.SessionID()
+	if sessID == 0 {
+		return nil, fmt.Errorf("no active session for %q", replicaID)
+	}
+	snap := s.SessionSnapshot()
+	if snap == nil || snap.Kind != SessionRebuild {
+		return nil, fmt.Errorf("session for %q is not a rebuild session (kind=%s)", replicaID, snap.Kind)
+	}
+
 	history := d.Storage.GetRetainedHistory()
 	source, snapLSN := history.RebuildSourceDecision()
 
 	plan := &RecoveryPlan{
 		ReplicaID:     replicaID,
-		SessionID:     d.Orchestrator.Registry.Sender(replicaID).SessionID(),
+		SessionID:     sessID,
 		Outcome:       OutcomeNeedsRebuild,
 		RebuildSource: source,
 	}

@@ -316,6 +316,86 @@ func TestDriver_PlanRecovery_ReplicaAhead_Truncation(t *testing.T) {
 	driver.ReleasePlan(plan)
 }
 
+// --- Truncation-only: no WAL pin needed ---
+
+func TestDriver_PlanRecovery_ReplicaAhead_NoWALPin(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{
+		HeadLSN: 100, TailLSN: 0, CommittedLSN: 100,
+	})
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp},
+	})
+
+	// Replica ahead — truncation only, no WAL replay.
+	plan, err := driver.PlanRecovery("r1", 105)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.RetentionPin != nil {
+		t.Fatal("truncation-only should NOT pin WAL")
+	}
+	if plan.TruncateLSN != 100 {
+		t.Fatalf("truncate=%d, want 100", plan.TruncateLSN)
+	}
+	if len(storage.pinnedWAL) != 0 {
+		t.Fatal("no WAL pins should exist for truncation-only")
+	}
+}
+
+// --- PlanRebuild precondition checks ---
+
+func TestDriver_PlanRebuild_MissingSender(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{CommittedLSN: 100})
+	driver := NewRecoveryDriver(storage)
+
+	_, err := driver.PlanRebuild("nonexistent")
+	if err == nil {
+		t.Fatal("should fail for missing sender")
+	}
+}
+
+func TestDriver_PlanRebuild_NoSession(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{CommittedLSN: 100})
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch: 1,
+		// No recovery target → no session.
+	})
+
+	_, err := driver.PlanRebuild("r1")
+	if err == nil {
+		t.Fatal("should fail when no session exists")
+	}
+}
+
+func TestDriver_PlanRebuild_NonRebuildSession(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{CommittedLSN: 100})
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp}, // NOT rebuild
+	})
+
+	_, err := driver.PlanRebuild("r1")
+	if err == nil {
+		t.Fatal("should fail when session is not rebuild")
+	}
+}
+
 // --- Full-base rebuild pin ---
 
 func TestDriver_PlanRebuild_FullBase_PinsBaseImage(t *testing.T) {
