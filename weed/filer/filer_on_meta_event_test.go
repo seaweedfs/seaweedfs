@@ -20,7 +20,7 @@ func (s *bucketTrackingStore) Initialize(configuration util.Configuration, prefi
 func (s *bucketTrackingStore) InsertEntry(context.Context, *Entry) error { return nil }
 func (s *bucketTrackingStore) UpdateEntry(context.Context, *Entry) error { return nil }
 func (s *bucketTrackingStore) FindEntry(context.Context, util.FullPath) (*Entry, error) {
-	return nil, nil
+	return nil, filer_pb.ErrNotFound
 }
 func (s *bucketTrackingStore) DeleteEntry(context.Context, util.FullPath) error          { return nil }
 func (s *bucketTrackingStore) DeleteFolderChildren(context.Context, util.FullPath) error { return nil }

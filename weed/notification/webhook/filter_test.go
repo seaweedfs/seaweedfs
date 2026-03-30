@@ -70,6 +70,18 @@ func TestFilterEventTypes(t *testing.T) {
 			shouldPublish: true,
 		},
 		{
+			name:       "rename event same name different parent - allowed",
+			key:        "/old/path/file.txt",
+			eventTypes: []string{"rename"},
+			notification: &filer_pb.EventNotification{
+				OldEntry:      &filer_pb.Entry{Name: "file.txt"},
+				NewEntry:      &filer_pb.Entry{Name: "file.txt"},
+				NewParentPath: "/new/path",
+			},
+			expectedType:  eventTypeRename,
+			shouldPublish: true,
+		},
+		{
 			name:       "rename event - not allowed",
 			key:        "/old/path/old.txt",
 			eventTypes: []string{"create", "delete", "update"},
