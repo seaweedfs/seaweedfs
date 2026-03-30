@@ -92,34 +92,38 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 
 	handleEtcRemoteChanges := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if message.NewEntry == nil {
-			return nil
-		}
-		if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
-			mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
-			if readErr != nil {
-				return fmt.Errorf("unmarshal mappings: %w", readErr)
-			}
-			if remoteLoc, found := mappings.Mappings[mountedDir]; found {
-				if remoteStorageMountLocation.Bucket != remoteLoc.Bucket || remoteStorageMountLocation.Path != remoteLoc.Path {
-					glog.Fatalf("Unexpected mount changes %+v => %+v", remoteStorageMountLocation, remoteLoc)
+		if metadataEventUpdatesDirectory(resp, filer.DirectoryEtcRemote) {
+			if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
+				mappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
+				if readErr != nil {
+					return fmt.Errorf("unmarshal mappings: %w", readErr)
 				}
-			} else {
-				glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
-				os.Exit(0)
+				if remoteLoc, found := mappings.Mappings[mountedDir]; found {
+					if remoteStorageMountLocation.Bucket != remoteLoc.Bucket || remoteStorageMountLocation.Path != remoteLoc.Path {
+						glog.Fatalf("Unexpected mount changes %+v => %+v", remoteStorageMountLocation, remoteLoc)
+					}
+				} else {
+					glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
+					os.Exit(0)
+				}
+			}
+			if message.NewEntry.Name == remoteStorage.Name+filer.REMOTE_STORAGE_CONF_SUFFIX {
+				conf := &remote_pb.RemoteConf{}
+				if err := proto.Unmarshal(message.NewEntry.Content, conf); err != nil {
+					return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, message.NewEntry.Name, err)
+				}
+				remoteStorage = conf
+				if newClient, err := remote_storage.GetRemoteStorage(remoteStorage); err == nil {
+					client = newClient
+				} else {
+					return err
+				}
 			}
 		}
-		if message.NewEntry.Name == remoteStorage.Name+filer.REMOTE_STORAGE_CONF_SUFFIX {
-			conf := &remote_pb.RemoteConf{}
-			if err := proto.Unmarshal(message.NewEntry.Content, conf); err != nil {
-				return fmt.Errorf("unmarshal %s/%s: %v", filer.DirectoryEtcRemote, message.NewEntry.Name, err)
-			}
-			remoteStorage = conf
-			if newClient, err := remote_storage.GetRemoteStorage(remoteStorage); err == nil {
-				client = newClient
-			} else {
-				return err
-			}
+		if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) &&
+			message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
+			glog.V(0).Infof("unmounted %s exiting ...", mountedDir)
+			os.Exit(0)
 		}
 
 		return nil
@@ -127,7 +131,8 @@ func (option *RemoteSyncOptions) makeEventProcessor(remoteStorage *remote_pb.Rem
 
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if filer_pb.MetadataEventTouchesDirectoryPrefix(resp, filer.DirectoryEtcRemote) {
+		sourceInEtcRemote, targetInEtcRemote := metadataEventDirectoryMembership(resp, filer.DirectoryEtcRemote)
+		if sourceInEtcRemote || targetInEtcRemote {
 			return handleEtcRemoteChanges(resp)
 		}
 

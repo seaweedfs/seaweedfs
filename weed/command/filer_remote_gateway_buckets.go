@@ -164,7 +164,7 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 
 	handleEtcRemoteChanges := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if message.NewEntry != nil {
+		if metadataEventUpdatesDirectory(resp, filer.DirectoryEtcRemote) {
 			// update
 			if message.NewEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
 				newMappings, readErr := filer.UnmarshalRemoteStorageMappings(message.NewEntry.Content)
@@ -180,8 +180,11 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 				}
 				option.remoteConfs[conf.Name] = conf
 			}
-		} else if message.OldEntry != nil {
+		} else if metadataEventRemovesFromDirectory(resp, filer.DirectoryEtcRemote) {
 			// deletion
+			if message.OldEntry.Name == filer.REMOTE_STORAGE_MOUNT_FILE {
+				option.mappings = &remote_pb.RemoteStorageMapping{}
+			}
 			if strings.HasSuffix(message.OldEntry.Name, filer.REMOTE_STORAGE_CONF_SUFFIX) {
 				conf := &remote_pb.RemoteConf{}
 				if err := proto.Unmarshal(message.OldEntry.Content, conf); err != nil {
@@ -196,7 +199,8 @@ func (option *RemoteGatewayOptions) makeBucketedEventProcessor(filerSource *sour
 
 	eachEntryFunc := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
-		if filer_pb.MetadataEventTouchesDirectoryPrefix(resp, filer.DirectoryEtcRemote) {
+		sourceInEtcRemote, targetInEtcRemote := metadataEventDirectoryMembership(resp, filer.DirectoryEtcRemote)
+		if sourceInEtcRemote || targetInEtcRemote {
 			return handleEtcRemoteChanges(resp)
 		}
 
