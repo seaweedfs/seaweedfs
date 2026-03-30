@@ -5,11 +5,18 @@ import (
 	"sync"
 )
 
+// ReplicaAssignment describes one replica's identity + endpoint in an assignment.
+type ReplicaAssignment struct {
+	ReplicaID string   // stable identity (e.g., volume-scoped replica name)
+	Endpoint  Endpoint // current network address (may change)
+}
+
 // AssignmentIntent represents a coordinator-driven assignment update.
+// Replicas are identified by stable ReplicaID, not by address.
 type AssignmentIntent struct {
-	Endpoints       map[string]Endpoint
+	Replicas        []ReplicaAssignment        // desired replica set with stable IDs
 	Epoch           uint64
-	RecoveryTargets map[string]SessionKind
+	RecoveryTargets map[string]SessionKind     // keyed by ReplicaID
 }
 
 // AssignmentResult records the outcome of applying an assignment.
@@ -32,19 +39,30 @@ func NewRegistry() *Registry {
 	return &Registry{senders: map[string]*Sender{}}
 }
 
-// Reconcile diffs current senders against new endpoints.
-func (r *Registry) Reconcile(endpoints map[string]Endpoint, epoch uint64) (added, removed []string) {
+// Reconcile diffs current senders against new replicas (by stable ReplicaID).
+// Matching senders are preserved with endpoint/epoch update.
+// Removed senders are stopped. New senders are created.
+func (r *Registry) Reconcile(replicas []ReplicaAssignment, epoch uint64) (added, removed []string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	// Build target set keyed by stable ReplicaID.
+	target := make(map[string]Endpoint, len(replicas))
+	for _, ra := range replicas {
+		target[ra.ReplicaID] = ra.Endpoint
+	}
+
+	// Stop and remove senders not in the new set.
 	for id, s := range r.senders {
-		if _, keep := endpoints[id]; !keep {
+		if _, keep := target[id]; !keep {
 			s.Stop()
 			delete(r.senders, id)
 			removed = append(removed, id)
 		}
 	}
-	for id, ep := range endpoints {
+
+	// Add new senders; update endpoint+epoch for existing.
+	for id, ep := range target {
 		if existing, ok := r.senders[id]; ok {
 			existing.UpdateEndpoint(ep)
 			existing.UpdateEpoch(epoch)
@@ -61,7 +79,7 @@ func (r *Registry) Reconcile(endpoints map[string]Endpoint, epoch uint64) (added
 // ApplyAssignment reconciles topology and creates recovery sessions.
 func (r *Registry) ApplyAssignment(intent AssignmentIntent) AssignmentResult {
 	var result AssignmentResult
-	result.Added, result.Removed = r.Reconcile(intent.Endpoints, intent.Epoch)
+	result.Added, result.Removed = r.Reconcile(intent.Replicas, intent.Epoch)
 
 	if intent.RecoveryTargets == nil {
 		return result

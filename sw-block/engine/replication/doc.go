@@ -12,12 +12,15 @@
 //   - Rebuild is a separate, exclusive sender-owned execution path
 //   - Completion requires convergence (catch-up) or ReadyToComplete (rebuild)
 //
-// File layout (Slice 1):
+// File layout:
 //
+// Slice 1 core (ownership/fencing):
 //   types.go     — Endpoint, ReplicaState, SessionKind, SessionPhase
 //   sender.go    — Sender: per-replica owner with execution APIs
 //   session.go   — Session: recovery lifecycle with FSM phases
 //   registry.go  — Registry: sender group with reconcile + assignment intent
+//
+// Carried forward from prototype (accepted in Phase 4.5):
 //   budget.go    — CatchUpBudget: bounded catch-up enforcement
 //   rebuild.go   — RebuildState: rebuild execution FSM
 //   outcome.go   — HandshakeResult, RecoveryOutcome classification
