@@ -165,6 +165,7 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 		retPin, err := d.Storage.PinWALRetention(snapLSN)
 		if err != nil {
 			d.Storage.ReleaseSnapshot(snapPin)
+			s.InvalidateSession("wal_pin_failed_during_rebuild", StateNeedsRebuild)
 			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "wal_pin_failed", err.Error())
 			return nil, fmt.Errorf("WAL retention pin failed: %w", err)
 		}
