@@ -179,6 +179,10 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 			jwt := jwtFunc(chunkView.FileId)
 			written, err := retriedStreamFetchChunkData(ctx, writer, urlStrings, jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize))
 
+			if err != nil && ctx.Err() != nil {
+				return ctx.Err()
+			}
+
 			// If read failed, try to invalidate cache and re-lookup
 			if err != nil && written == 0 {
 				if invalidator, ok := masterClient.(CacheInvalidator); ok {

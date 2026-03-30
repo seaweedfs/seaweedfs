@@ -1,6 +1,7 @@
 package filer
 
 import (
+	"bytes"
 	"context"
 	"testing"
 
@@ -171,5 +172,39 @@ func TestRetryLogicSkipsSameUrls(t *testing.T) {
 	// Different URLs should return false (and thus allow retry)
 	if urlSlicesEqual(sameUrls, differentUrls) {
 		t.Error("Expected different URLs to not be equal")
+	}
+}
+
+func TestCanceledStreamSkipsCacheInvalidation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	fileId := "3,canceled"
+
+	mock := &mockMasterClient{
+		lookupFunc: func(ctx context.Context, fid string) ([]string, error) {
+			return []string{"http://server:8080"}, nil
+		},
+	}
+
+	chunks := []*filer_pb.FileChunk{
+		{
+			FileId: fileId,
+			Offset: 0,
+			Size:   10,
+		},
+	}
+
+	streamFn, err := PrepareStreamContentWithThrottler(ctx, mock, noJwtFunc, chunks, 0, 10, 0)
+	if err != nil {
+		t.Fatalf("PrepareStreamContentWithThrottler failed: %v", err)
+	}
+
+	cancel()
+
+	err = streamFn(&bytes.Buffer{})
+	if err != context.Canceled {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+	if len(mock.invalidatedFileIds) != 0 {
+		t.Fatalf("expected no cache invalidation on cancellation, got %v", mock.invalidatedFileIds)
 	}
 }
