@@ -59,9 +59,14 @@ func (rh *RetainedHistory) IsRecoverable(startExclusive, endInclusive uint64) bo
 }
 
 // RebuildSourceDecision determines the optimal rebuild source from
-// the current retained history state.
+// the current retained history state. Snapshot+tail is only chosen
+// when BOTH conditions are met:
+//   1. A trusted checkpoint exists
+//   2. The WAL tail from CheckpointLSN to CommittedLSN is replayable
+//      (i.e., CheckpointLSN >= TailLSN and CommittedLSN <= HeadLSN)
 func (rh *RetainedHistory) RebuildSourceDecision() (source RebuildSource, snapshotLSN uint64) {
-	if rh.CheckpointTrusted && rh.CheckpointLSN > 0 {
+	if rh.CheckpointTrusted && rh.CheckpointLSN > 0 &&
+		rh.IsRecoverable(rh.CheckpointLSN, rh.CommittedLSN) {
 		return RebuildSnapshotTail, rh.CheckpointLSN
 	}
 	return RebuildFullBase, 0

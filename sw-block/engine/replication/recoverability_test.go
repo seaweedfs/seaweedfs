@@ -78,9 +78,11 @@ func TestHistory_BeyondHead_Unrecoverable(t *testing.T) {
 
 func TestHistory_RebuildSource_TrustedCheckpoint(t *testing.T) {
 	rh := RetainedHistory{
+		HeadLSN:           100,
+		TailLSN:           30, // tail covers checkpoint→committed range
+		CommittedLSN:      100,
 		CheckpointLSN:     50,
 		CheckpointTrusted: true,
-		CommittedLSN:      100,
 	}
 
 	source, snapLSN := rh.RebuildSourceDecision()
@@ -103,6 +105,24 @@ func TestHistory_RebuildSource_NoCheckpoint(t *testing.T) {
 	}
 	if snapLSN != 0 {
 		t.Fatalf("snapshot LSN=%d, want 0", snapLSN)
+	}
+}
+
+func TestHistory_RebuildSource_TrustedCheckpoint_UnreplayableTail(t *testing.T) {
+	// Trusted checkpoint at 50, but TailLSN advanced to 80.
+	// WAL from 50 to 100 is NOT fully retained (51-80 recycled).
+	// Must fall back to full base, not snapshot+tail.
+	rh := RetainedHistory{
+		HeadLSN:           100,
+		TailLSN:           80,
+		CommittedLSN:      100,
+		CheckpointLSN:     50,
+		CheckpointTrusted: true,
+	}
+
+	source, _ := rh.RebuildSourceDecision()
+	if source != RebuildFullBase {
+		t.Fatalf("trusted checkpoint with unreplayable tail: source=%s, want full_base", source)
 	}
 }
 
@@ -268,6 +288,91 @@ func TestHistory_E2E_RecoveryDrivenByRetainedHistory(t *testing.T) {
 		t.Fatalf("r1=%s r2=%s", r1.State(), r2.State())
 	}
 	t.Log("e2e: r1 caught up (proof: gap within retention), r2 rebuilt (proof: gap beyond retention, snapshot+tail)")
+}
+
+// --- Sender-level history-driven APIs ---
+
+func TestHistory_SenderDriven_CatchUp(t *testing.T) {
+	primary := RetainedHistory{HeadLSN: 100, TailLSN: 30, CommittedLSN: 100}
+
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionCatchUp)
+	s.BeginConnect(id)
+
+	// Use history-driven API.
+	outcome, proof, err := s.RecordHandshakeFromHistory(id, 70, &primary)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome != OutcomeCatchUp {
+		t.Fatalf("outcome=%s", outcome)
+	}
+	if !proof.Recoverable {
+		t.Fatalf("proof should be recoverable: %s", proof.Reason)
+	}
+
+	s.BeginCatchUp(id)
+	s.RecordCatchUpProgress(id, 100)
+	s.CompleteSessionByID(id)
+
+	if s.State() != StateInSync {
+		t.Fatalf("state=%s", s.State())
+	}
+}
+
+func TestHistory_SenderDriven_Rebuild_SnapshotTail(t *testing.T) {
+	primary := RetainedHistory{
+		HeadLSN: 100, TailLSN: 30, CommittedLSN: 100,
+		CheckpointLSN: 50, CheckpointTrusted: true,
+	}
+
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionRebuild)
+	s.BeginConnect(id)
+	s.RecordHandshake(id, 0, 100)
+
+	// Use history-driven rebuild source selection.
+	if err := s.SelectRebuildFromHistory(id, &primary); err != nil {
+		t.Fatal(err)
+	}
+
+	// Should have selected snapshot+tail (checkpoint at 50, tail at 30, replayable).
+	s.BeginRebuildTransfer(id)
+	s.RecordRebuildTransferProgress(id, 50)
+	s.BeginRebuildTailReplay(id)
+	s.RecordRebuildTailProgress(id, 100)
+	s.CompleteRebuild(id)
+
+	if s.State() != StateInSync {
+		t.Fatalf("state=%s", s.State())
+	}
+}
+
+func TestHistory_SenderDriven_Rebuild_FallsBackToFullBase(t *testing.T) {
+	// Trusted checkpoint at 50 but tail advanced to 80 — tail unreplayable.
+	primary := RetainedHistory{
+		HeadLSN: 100, TailLSN: 80, CommittedLSN: 100,
+		CheckpointLSN: 50, CheckpointTrusted: true,
+	}
+
+	s := NewSender("r1", Endpoint{DataAddr: "r1:9333", Version: 1}, 1)
+	id, _ := s.AttachSession(1, SessionRebuild)
+	s.BeginConnect(id)
+	s.RecordHandshake(id, 0, 100)
+
+	// History-driven: should fall back to full base.
+	if err := s.SelectRebuildFromHistory(id, &primary); err != nil {
+		t.Fatal(err)
+	}
+
+	// Full base: transfer to 100, no tail replay.
+	s.BeginRebuildTransfer(id)
+	s.RecordRebuildTransferProgress(id, 100)
+	s.CompleteRebuild(id)
+
+	if s.State() != StateInSync {
+		t.Fatalf("state=%s", s.State())
+	}
 }
 
 // --- Truncation / safe-boundary handling ---
