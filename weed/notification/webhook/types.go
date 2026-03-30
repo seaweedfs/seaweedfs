@@ -59,7 +59,7 @@ func newWebhookMessage(key string, message proto.Message) *webhookMessage {
 		return nil
 	}
 
-	eventType := string(detectEventType(notification))
+	eventType := string(detectEventType(key, notification))
 
 	return &webhookMessage{
 		Key:          key,
@@ -157,10 +157,9 @@ func (c *config) validate() error {
 	return nil
 }
 
-func detectEventType(notification *filer_pb.EventNotification) eventType {
+func detectEventType(key string, notification *filer_pb.EventNotification) eventType {
 	hasOldEntry := notification.OldEntry != nil
 	hasNewEntry := notification.NewEntry != nil
-	hasNewParentPath := notification.NewParentPath != ""
 
 	if !hasOldEntry && hasNewEntry {
 		return eventTypeCreate
@@ -171,7 +170,12 @@ func detectEventType(notification *filer_pb.EventNotification) eventType {
 	}
 
 	if hasOldEntry && hasNewEntry {
-		if hasNewParentPath {
+		oldDir, _ := util.FullPath(key).DirAndName()
+		newDir := notification.NewParentPath
+		if newDir == "" {
+			newDir = oldDir
+		}
+		if oldDir != newDir || notification.OldEntry.Name != notification.NewEntry.Name {
 			return eventTypeRename
 		}
 

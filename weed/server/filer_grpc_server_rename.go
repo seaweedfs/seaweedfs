@@ -161,6 +161,16 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		return nil
 	}
 
+	sourceEntry := entry.ShallowClone()
+	sourceEntry.FullPath = oldPath
+
+	var existingTarget *filer.Entry
+	if targetEntry, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+		existingTarget = targetEntry.ShallowClone()
+	} else if findErr != filer_pb.ErrNotFound {
+		return findErr
+	}
+
 	// add to new directory
 	newEntry := &filer.Entry{
 		FullPath:        newPath,
@@ -173,7 +183,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Remote:          entry.Remote,
 		Quota:           entry.Quota,
 	}
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
+	if createErr := fs.filer.CreateEntry(filer.WithSuppressedMetadataEvents(ctx), newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
 		return createErr
 	}
 	if stream != nil {
@@ -195,6 +205,11 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		}
 	}
 
+	if existingTarget != nil {
+		fs.filer.NotifyUpdateEvent(ctx, existingTarget, nil, true, false, signatures)
+	}
+	fs.filer.NotifyUpdateEvent(ctx, sourceEntry, newEntry, false, false, signatures)
+
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
@@ -203,7 +218,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	// delete old entry
 	ctx = context.WithValue(ctx, "OP", "MV")
-	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false, false, signatures, 0)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(filer.WithSuppressedMetadataEvents(ctx), oldPath, false, false, false, false, signatures, 0)
 	if deleteErr != nil {
 		return deleteErr
 	}
