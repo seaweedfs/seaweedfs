@@ -9,22 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// mockAccountManager implements AccountManager for testing
-type mockAccountManager struct {
-	accounts map[string]string
-}
-
-func (m *mockAccountManager) GetAccountNameById(id string) string {
-	if name, exists := m.accounts[id]; exists {
-		return name
-	}
-	return ""
-}
-
-func (m *mockAccountManager) GetAccountIdByEmail(email string) string {
-	return ""
-}
-
 func TestNewListEntryOwnerDisplayName(t *testing.T) {
 	// Create S3ApiServer with a properly initialized IAM
 	s3a := &S3ApiServer{
