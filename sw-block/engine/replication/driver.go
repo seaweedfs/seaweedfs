@@ -30,8 +30,9 @@ type RecoveryPlan struct {
 	Proof        *RecoverabilityProof
 
 	// Resource pins (non-nil when resources are acquired).
-	RetentionPin *RetentionPin // for catch-up
-	SnapshotPin  *SnapshotPin  // for rebuild
+	RetentionPin *RetentionPin // for catch-up or snapshot+tail rebuild
+	SnapshotPin  *SnapshotPin  // for snapshot+tail rebuild
+	FullBasePin  *FullBasePin  // for full-base rebuild
 
 	// Targets.
 	CatchUpTarget uint64 // for catch-up: target LSN
@@ -67,9 +68,10 @@ func (d *RecoveryDriver) PlanRecovery(replicaID string, replicaFlushedLSN uint64
 		return nil, result.Error
 	}
 
+	s := d.Orchestrator.Registry.Sender(replicaID)
 	plan := &RecoveryPlan{
 		ReplicaID: replicaID,
-		SessionID: d.Orchestrator.Registry.Sender(replicaID).SessionID(),
+		SessionID: s.SessionID(),
 		Outcome:   result.Outcome,
 		Proof:     result.Proof,
 	}
@@ -80,9 +82,11 @@ func (d *RecoveryDriver) PlanRecovery(replicaID string, replicaFlushedLSN uint64
 		return plan, nil
 
 	case OutcomeCatchUp:
-		// Acquire WAL retention pin.
+		// Acquire WAL retention pin BEFORE continuing execution.
+		// If pin fails, invalidate the session to avoid a dangling live session.
 		pin, err := d.Storage.PinWALRetention(replicaFlushedLSN)
 		if err != nil {
+			s.InvalidateSession("wal_pin_failed", StateDisconnected)
 			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "wal_pin_failed", err.Error())
 			return nil, fmt.Errorf("WAL retention pin failed: %w", err)
 		}
@@ -141,7 +145,16 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 		d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_rebuild_snapshot_tail",
 			fmt.Sprintf("snapshot=%d", snapLSN))
 	} else {
-		d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_rebuild_full_base", "")
+		// Full-base rebuild: pin a consistent full-extent base image.
+		basePin, err := d.Storage.PinFullBase(history.CommittedLSN)
+		if err != nil {
+			d.Orchestrator.Log.Record(replicaID, plan.SessionID, "full_base_pin_failed", err.Error())
+			return nil, fmt.Errorf("full base pin failed: %w", err)
+		}
+		plan.FullBasePin = &basePin
+
+		d.Orchestrator.Log.Record(replicaID, plan.SessionID, "plan_rebuild_full_base",
+			fmt.Sprintf("committed=%d", history.CommittedLSN))
 	}
 
 	return plan, nil
@@ -156,5 +169,9 @@ func (d *RecoveryDriver) ReleasePlan(plan *RecoveryPlan) {
 	if plan.SnapshotPin != nil {
 		d.Storage.ReleaseSnapshot(*plan.SnapshotPin)
 		plan.SnapshotPin = nil
+	}
+	if plan.FullBasePin != nil {
+		d.Storage.ReleaseFullBase(*plan.FullBasePin)
+		plan.FullBasePin = nil
 	}
 }

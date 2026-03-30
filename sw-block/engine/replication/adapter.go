@@ -30,6 +30,22 @@ type StorageAdapter interface {
 
 	// ReleaseWALRetention releases a WAL retention hold.
 	ReleaseWALRetention(pin RetentionPin)
+
+	// PinFullBase pins a consistent full-extent base image for full-base
+	// rebuild. The image must not be mutated while pinned. This is the
+	// resource contract for the RebuildFullBase path — the hardest rebuild
+	// case must also have a real pinned source.
+	PinFullBase(committedLSN uint64) (FullBasePin, error)
+
+	// ReleaseFullBase releases a pinned full base image.
+	ReleaseFullBase(pin FullBasePin)
+}
+
+// FullBasePin represents a held reference to a pinned full-extent base image.
+type FullBasePin struct {
+	CommittedLSN uint64
+	PinID        uint64
+	Valid        bool
 }
 
 // SnapshotPin represents a held reference to a pinned snapshot/checkpoint.

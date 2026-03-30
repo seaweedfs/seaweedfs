@@ -13,19 +13,22 @@ import (
 // --- Mock storage adapter ---
 
 type mockStorage struct {
-	history       RetainedHistory
-	nextPinID     atomic.Uint64
-	pinnedSnaps   map[uint64]bool
-	pinnedWAL     map[uint64]bool
+	history         RetainedHistory
+	nextPinID       atomic.Uint64
+	pinnedSnaps     map[uint64]bool
+	pinnedWAL       map[uint64]bool
+	pinnedFullBase  map[uint64]bool
 	failSnapshotPin bool
 	failWALPin      bool
+	failFullBasePin bool
 }
 
 func newMockStorage(history RetainedHistory) *mockStorage {
 	return &mockStorage{
-		history:     history,
-		pinnedSnaps: map[uint64]bool{},
-		pinnedWAL:   map[uint64]bool{},
+		history:        history,
+		pinnedSnaps:    map[uint64]bool{},
+		pinnedWAL:      map[uint64]bool{},
+		pinnedFullBase: map[uint64]bool{},
 	}
 }
 
@@ -55,6 +58,19 @@ func (m *mockStorage) PinWALRetention(startLSN uint64) (RetentionPin, error) {
 
 func (m *mockStorage) ReleaseWALRetention(pin RetentionPin) {
 	delete(m.pinnedWAL, pin.PinID)
+}
+
+func (m *mockStorage) PinFullBase(committedLSN uint64) (FullBasePin, error) {
+	if m.failFullBasePin {
+		return FullBasePin{}, fmt.Errorf("full base pin refused")
+	}
+	id := m.nextPinID.Add(1)
+	m.pinnedFullBase[id] = true
+	return FullBasePin{CommittedLSN: committedLSN, PinID: id, Valid: true}, nil
+}
+
+func (m *mockStorage) ReleaseFullBase(pin FullBasePin) {
+	delete(m.pinnedFullBase, pin.PinID)
 }
 
 // --- Plan + execute: catch-up ---
@@ -298,6 +314,108 @@ func TestDriver_PlanRecovery_ReplicaAhead_Truncation(t *testing.T) {
 	}
 
 	driver.ReleasePlan(plan)
+}
+
+// --- Full-base rebuild pin ---
+
+func TestDriver_PlanRebuild_FullBase_PinsBaseImage(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{
+		HeadLSN: 100, TailLSN: 60, CommittedLSN: 100,
+		CheckpointLSN: 40, CheckpointTrusted: true,
+	})
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionRebuild},
+	})
+
+	plan, err := driver.PlanRebuild("r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Checkpoint at 40, tail at 60 → unreplayable → full base.
+	if plan.RebuildSource != RebuildFullBase {
+		t.Fatalf("source=%s", plan.RebuildSource)
+	}
+	if plan.FullBasePin == nil {
+		t.Fatal("full_base rebuild must have a pinned base image")
+	}
+	if len(storage.pinnedFullBase) != 1 {
+		t.Fatalf("expected 1 full base pin, got %d", len(storage.pinnedFullBase))
+	}
+
+	driver.ReleasePlan(plan)
+	if len(storage.pinnedFullBase) != 0 {
+		t.Fatal("full base pin should be released")
+	}
+}
+
+func TestDriver_PlanRebuild_FullBase_PinFailure(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{
+		HeadLSN: 100, TailLSN: 60, CommittedLSN: 100,
+		CheckpointLSN: 40, CheckpointTrusted: true,
+	})
+	storage.failFullBasePin = true
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionRebuild},
+	})
+
+	_, err := driver.PlanRebuild("r1")
+	if err == nil {
+		t.Fatal("should fail when full base pin is refused")
+	}
+
+	hasFailure := false
+	for _, e := range driver.Orchestrator.Log.EventsFor("r1") {
+		if e.Event == "full_base_pin_failed" {
+			hasFailure = true
+		}
+	}
+	if !hasFailure {
+		t.Fatal("log should contain full_base_pin_failed")
+	}
+}
+
+// --- WAL pin failure cleans up session ---
+
+func TestDriver_PlanRecovery_WALPinFailure_CleansUpSession(t *testing.T) {
+	storage := newMockStorage(RetainedHistory{
+		HeadLSN: 100, TailLSN: 30, CommittedLSN: 100,
+	})
+	storage.failWALPin = true
+	driver := NewRecoveryDriver(storage)
+
+	driver.Orchestrator.ProcessAssignment(AssignmentIntent{
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "r1", Endpoint: Endpoint{DataAddr: "r1:9333", Version: 1}},
+		},
+		Epoch:           1,
+		RecoveryTargets: map[string]SessionKind{"r1": SessionCatchUp},
+	})
+
+	_, err := driver.PlanRecovery("r1", 70)
+	if err == nil {
+		t.Fatal("should fail when WAL pin is refused")
+	}
+
+	// Session must be invalidated — no dangling live session.
+	s := driver.Orchestrator.Registry.Sender("r1")
+	if s.HasActiveSession() {
+		t.Fatal("session should be invalidated after WAL pin failure")
+	}
+	if s.State() != StateDisconnected {
+		t.Fatalf("sender should be disconnected after pin failure, got %s", s.State())
+	}
 }
 
 // --- Cross-layer contract: storage proves recoverability ---
