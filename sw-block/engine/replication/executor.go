@@ -36,8 +36,10 @@ func NewCatchUpExecutor(driver *RecoveryDriver, plan *RecoveryPlan) *CatchUpExec
 //   4. CompleteSessionByID
 //   5. Release resources
 //
+// progressLSNs are the stepwise LSN targets. startTick is the time when
+// catch-up begins. Each step is assigned tick = startTick + stepIndex + 1.
 // On any failure or cancellation, resources are released before returning.
-func (e *CatchUpExecutor) Execute(progressLSNs []uint64, startTick, completeTick uint64) error {
+func (e *CatchUpExecutor) Execute(progressLSNs []uint64, startTick uint64) error {
 	s := e.driver.Orchestrator.Registry.Sender(e.replicaID)
 	if s == nil {
 		e.release("sender_not_found")
@@ -135,39 +137,45 @@ func NewRebuildExecutor(driver *RecoveryDriver, plan *RecoveryPlan) *RebuildExec
 	}
 }
 
-// Execute runs the full rebuild lifecycle stepwise:
-//   1. BeginConnect + RecordHandshake
-//   2. SelectRebuildFromHistory
-//   3. BeginRebuildTransfer + progress steps
-//   4. BeginRebuildTailReplay + progress steps (snapshot+tail only)
+// Execute runs the full rebuild lifecycle from the bound plan.
+// Does NOT re-derive policy from caller-supplied history — uses
+// plan.RebuildSource, plan.RebuildSnapshotLSN, plan.RebuildTargetLSN.
+//
+// Steps:
+//   1. BeginConnect + RecordHandshake (target from plan)
+//   2. SelectRebuildSource (source/snapshot from plan)
+//   3. BeginRebuildTransfer + progress
+//   4. BeginRebuildTailReplay + progress (snapshot+tail only)
 //   5. CompleteRebuild
 //   6. Release resources
-func (e *RebuildExecutor) Execute(history *RetainedHistory) error {
+func (e *RebuildExecutor) Execute() error {
 	s := e.driver.Orchestrator.Registry.Sender(e.replicaID)
 	if s == nil {
 		e.release("sender_not_found")
 		return fmt.Errorf("sender %q not found", e.replicaID)
 	}
 
-	// Step 1: connect + handshake.
+	plan := e.plan
+
+	// Step 1: connect + handshake with plan-bound target.
 	if err := s.BeginConnect(e.sessID); err != nil {
 		e.release(fmt.Sprintf("connect_failed: %s", err))
 		return err
 	}
-	if err := s.RecordHandshake(e.sessID, 0, history.CommittedLSN); err != nil {
+	if err := s.RecordHandshake(e.sessID, 0, plan.RebuildTargetLSN); err != nil {
 		e.release(fmt.Sprintf("handshake_failed: %s", err))
 		return err
 	}
 
-	// Step 2: select source from history.
-	if err := s.SelectRebuildFromHistory(e.sessID, history); err != nil {
+	// Step 2: select source from plan-bound values (not re-derived).
+	valid := plan.RebuildSource == RebuildSnapshotTail
+	if err := s.SelectRebuildSource(e.sessID, plan.RebuildSnapshotLSN, valid, plan.RebuildTargetLSN); err != nil {
 		e.release(fmt.Sprintf("source_select_failed: %s", err))
 		return err
 	}
 
-	source, snapLSN := history.RebuildSourceDecision()
 	e.driver.Orchestrator.Log.Record(e.replicaID, e.sessID, "exec_rebuild_started",
-		fmt.Sprintf("source=%s", source))
+		fmt.Sprintf("source=%s target=%d", plan.RebuildSource, plan.RebuildTargetLSN))
 
 	// Step 3: transfer.
 	if err := s.BeginRebuildTransfer(e.sessID); err != nil {
@@ -175,9 +183,8 @@ func (e *RebuildExecutor) Execute(history *RetainedHistory) error {
 		return err
 	}
 
-	if source == RebuildSnapshotTail {
-		// Transfer snapshot base.
-		if err := s.RecordRebuildTransferProgress(e.sessID, snapLSN); err != nil {
+	if plan.RebuildSource == RebuildSnapshotTail {
+		if err := s.RecordRebuildTransferProgress(e.sessID, plan.RebuildSnapshotLSN); err != nil {
 			e.release(fmt.Sprintf("transfer_progress_failed: %s", err))
 			return err
 		}
@@ -193,13 +200,12 @@ func (e *RebuildExecutor) Execute(history *RetainedHistory) error {
 			e.release(fmt.Sprintf("tail_replay_failed: %s", err))
 			return err
 		}
-		if err := s.RecordRebuildTailProgress(e.sessID, history.CommittedLSN); err != nil {
+		if err := s.RecordRebuildTailProgress(e.sessID, plan.RebuildTargetLSN); err != nil {
 			e.release(fmt.Sprintf("tail_progress_failed: %s", err))
 			return err
 		}
 	} else {
-		// Full base transfer.
-		if err := s.RecordRebuildTransferProgress(e.sessID, history.CommittedLSN); err != nil {
+		if err := s.RecordRebuildTransferProgress(e.sessID, plan.RebuildTargetLSN); err != nil {
 			e.release(fmt.Sprintf("transfer_progress_failed: %s", err))
 			return err
 		}

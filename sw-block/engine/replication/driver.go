@@ -23,6 +23,7 @@ import "fmt"
 // a stepwise execution interface.
 
 // RecoveryPlan represents a planned recovery operation with acquired resources.
+// The executor consumes this plan — it does not re-derive policy.
 type RecoveryPlan struct {
 	ReplicaID    string
 	SessionID    uint64
@@ -34,10 +35,14 @@ type RecoveryPlan struct {
 	SnapshotPin  *SnapshotPin  // for snapshot+tail rebuild
 	FullBasePin  *FullBasePin  // for full-base rebuild
 
-	// Targets.
-	CatchUpTarget uint64 // for catch-up: target LSN
+	// Catch-up targets (bound at plan time).
+	CatchUpTarget uint64 // for catch-up: committed LSN at plan time
 	TruncateLSN   uint64 // non-zero if truncation required
-	RebuildSource RebuildSource
+
+	// Rebuild targets (bound at plan time).
+	RebuildSource     RebuildSource
+	RebuildSnapshotLSN uint64 // for snapshot+tail: the snapshot LSN
+	RebuildTargetLSN   uint64 // committed LSN at plan time
 }
 
 // RecoveryDriver plans and executes recovery operations using real
@@ -138,10 +143,12 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 	source, snapLSN := history.RebuildSourceDecision()
 
 	plan := &RecoveryPlan{
-		ReplicaID:     replicaID,
-		SessionID:     sessID,
-		Outcome:       OutcomeNeedsRebuild,
-		RebuildSource: source,
+		ReplicaID:          replicaID,
+		SessionID:          sessID,
+		Outcome:            OutcomeNeedsRebuild,
+		RebuildSource:      source,
+		RebuildSnapshotLSN: snapLSN,
+		RebuildTargetLSN:   history.CommittedLSN,
 	}
 
 	if source == RebuildSnapshotTail {

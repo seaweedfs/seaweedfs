@@ -79,7 +79,7 @@ func TestExecutor_E1_PartialCatchUp_ProgressFailure_ReleasesWAL(t *testing.T) {
 	exec := NewCatchUpExecutor(driver, plan)
 
 	// Progress with LSN that will exceed frozen target (target=100, try 101).
-	err := exec.Execute([]uint64{80, 90, 101}, 0, 0)
+	err := exec.Execute([]uint64{80, 90, 101}, 0)
 	if err == nil {
 		t.Fatal("should fail on progress beyond frozen target")
 	}
@@ -124,7 +124,7 @@ func TestExecutor_E1_BudgetEscalation_ReleasesWAL(t *testing.T) {
 	exec := NewCatchUpExecutor(driver, plan)
 
 	// Execute with ticks that exceed budget (3 steps, each +1 tick, budget=3).
-	err := exec.Execute([]uint64{600, 700, 800, 900}, 0, 0)
+	err := exec.Execute([]uint64{600, 700, 800, 900}, 0)
 	if err == nil {
 		t.Fatal("should escalate on budget")
 	}
@@ -153,7 +153,7 @@ func TestExecutor_E2_PartialRebuild_TransferFailure_ReleasesAll(t *testing.T) {
 	// Invalidate session before execution → will fail at connect.
 	driver.Orchestrator.Registry.Sender("r1").UpdateEpoch(2)
 
-	err := exec.Execute(&storage.history)
+	err := exec.Execute()
 	if err == nil {
 		t.Fatal("should fail on invalidated session")
 	}
@@ -178,7 +178,7 @@ func TestExecutor_E3_EpochBump_MidCatchUp_ReleasesWAL(t *testing.T) {
 	driver.Orchestrator.UpdateSenderEpoch("r1", 2)
 
 	exec := NewCatchUpExecutor(driver, plan)
-	err := exec.Execute([]uint64{80, 90, 100}, 0, 0)
+	err := exec.Execute([]uint64{80, 90, 100}, 0)
 	if err == nil {
 		t.Fatal("should fail on stale session")
 	}
@@ -228,7 +228,7 @@ func TestExecutor_E4_SuccessfulCatchUp_ReleasesWAL(t *testing.T) {
 	storage := driver.Storage.(*mockStorage)
 
 	exec := NewCatchUpExecutor(driver, plan)
-	err := exec.Execute([]uint64{80, 90, 100}, 0, 0)
+	err := exec.Execute([]uint64{80, 90, 100}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +245,7 @@ func TestExecutor_E4_SuccessfulRebuild_ReleasesAll(t *testing.T) {
 	driver, plan, storage := setupRebuildDriver(t)
 
 	exec := NewRebuildExecutor(driver, plan)
-	err := exec.Execute(&storage.history)
+	err := exec.Execute()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -258,13 +258,45 @@ func TestExecutor_E4_SuccessfulRebuild_ReleasesAll(t *testing.T) {
 	}
 }
 
+// --- Plan/execute consistency ---
+
+func TestExecutor_PlanExecuteConsistency_RebuildCannotSwitchSource(t *testing.T) {
+	// Plan acquires snapshot+tail resources.
+	// Prove the executor uses plan-bound source, not re-derived policy.
+	driver, plan, storage := setupRebuildDriver(t)
+
+	if plan.RebuildSource != RebuildSnapshotTail {
+		t.Fatalf("plan source=%s", plan.RebuildSource)
+	}
+	if plan.RebuildSnapshotLSN != 50 {
+		t.Fatalf("plan snapshot=%d", plan.RebuildSnapshotLSN)
+	}
+	if plan.RebuildTargetLSN != 100 {
+		t.Fatalf("plan target=%d", plan.RebuildTargetLSN)
+	}
+
+	// Even if storage history changes after planning, executor uses plan.
+	storage.history.CheckpointTrusted = false // would cause full_base if re-derived
+	storage.history.TailLSN = 80              // would make snapshot unreplayable
+
+	exec := NewRebuildExecutor(driver, plan)
+	err := exec.Execute() // uses plan-bound values, not storage.history
+	if err != nil {
+		t.Fatalf("execution should succeed from plan-bound values: %v", err)
+	}
+
+	if driver.Orchestrator.Registry.Sender("r1").State() != StateInSync {
+		t.Fatalf("state=%s", driver.Orchestrator.Registry.Sender("r1").State())
+	}
+}
+
 // --- E5: Executor drives sender APIs stepwise ---
 
 func TestExecutor_E5_CatchUp_StepwiseNotConvenience(t *testing.T) {
 	driver, plan := setupCatchUpDriver(t, 70)
 
 	exec := NewCatchUpExecutor(driver, plan)
-	err := exec.Execute([]uint64{80, 90, 100}, 0, 0)
+	err := exec.Execute([]uint64{80, 90, 100}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,10 +319,10 @@ func TestExecutor_E5_CatchUp_StepwiseNotConvenience(t *testing.T) {
 }
 
 func TestExecutor_E5_Rebuild_StepwiseNotConvenience(t *testing.T) {
-	driver, plan, storage := setupRebuildDriver(t)
+	driver, plan, _ := setupRebuildDriver(t)
 
 	exec := NewRebuildExecutor(driver, plan)
-	err := exec.Execute(&storage.history)
+	err := exec.Execute()
 	if err != nil {
 		t.Fatal(err)
 	}
