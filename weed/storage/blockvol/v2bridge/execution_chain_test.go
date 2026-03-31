@@ -110,20 +110,19 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 		}
 
 		t.Log("catch-up: ONE CHAIN proven: plan → CatchUpExecutor → complete → InSync → pins released")
-	} else if plan.Outcome == engine.OutcomeZeroGap {
-		// V1 interim: committed = checkpoint. If replica at committed-1 is still
-		// within the tail, it's CatchUp. If not, it's ZeroGap or NeedsRebuild.
-		t.Logf("catch-up: V1 interim → %s (replica=%d committed=%d tail=%d)",
-			plan.Outcome, replicaLSN, state.CommittedLSN, state.WALTailLSN)
-		t.Log("catch-up: V1 interim prevents engine-triggered CatchUp when committed=tail")
 	} else {
-		t.Logf("catch-up: outcome=%s", plan.Outcome)
+		// V1 interim: CommittedLSN = TailLSN after flush.
+		// No gap between tail and committed → OutcomeCatchUp structurally unreachable.
+		// This is a known V1 limitation, NOT a test failure.
+		t.Skipf("catch-up: V1 interim → %s (replica=%d committed=%d tail=%d). "+
+			"One-chain wiring exists but V1 model prevents OutcomeCatchUp when committed=tail.",
+			plan.Outcome, replicaLSN, state.CommittedLSN, state.WALTailLSN)
 	}
 }
 
 // --- ONE CHAIN: Full-base rebuild closure ---
 
-func TestP2_RebuildClosure_FullBase_OneChain(t *testing.T) {
+func TestP2_RebuildClosure_OneChain(t *testing.T) {
 	driver, ca, reader, executor, pinner := setupChainTest(t)
 	vol := reader.vol
 
@@ -175,7 +174,8 @@ func TestP2_RebuildClosure_FullBase_OneChain(t *testing.T) {
 		t.Fatalf("rebuild: %d pins leaked", pinner.ActiveHoldCount())
 	}
 
-	t.Logf("rebuild: ONE CHAIN proven: plan → RebuildExecutor → TransferFullBase → complete → InSync → pins released")
+	t.Logf("rebuild: ONE CHAIN proven: plan(source=%s) → RebuildExecutor(IO=v2bridge) → complete → InSync → pins released",
+		rebuildPlan.RebuildSource)
 }
 
 // --- Cleanup: cancel releases all resources ---
