@@ -309,6 +309,16 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				glog.V(0).Infof("Volume Server Failed to update to master %s: %v", masterAddress, err)
 				return "", err
 			}
+		case <-vs.blockStateChangeChan:
+			// Immediate block heartbeat on shipper state change (degraded/recovered).
+			if vs.blockService == nil {
+				continue
+			}
+			glog.V(0).Infof("volume server %s:%d block state change → immediate heartbeat", vs.store.Ip, vs.store.Port)
+			if err = stream.Send(vs.collectBlockVolumeHeartbeat(ip, port, dataCenter, rack)); err != nil {
+				glog.V(0).Infof("Volume Server Failed to send block state-change heartbeat to master %s: %v", masterAddress, err)
+				return "", err
+			}
 		case <-blockVolTickChan.C:
 			if vs.blockService == nil {
 				continue

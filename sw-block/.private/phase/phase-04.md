@@ -1,7 +1,7 @@
 # Phase 04
 
 Date: 2026-03-27
-Status: active
+Status: complete
 Purpose: start the first standalone V2 implementation slice under `sw-block/`, centered on per-replica sender ownership and explicit recovery-session ownership
 
 ## Goal
@@ -93,6 +93,7 @@ Delivered in this phase so far:
 - execution APIs implemented:
   - `BeginConnect`
   - `RecordHandshake`
+  - `RecordHandshakeWithOutcome`
   - `BeginCatchUp`
   - `RecordCatchUpProgress`
   - `CompleteSessionByID`
@@ -101,15 +102,42 @@ Delivered in this phase so far:
   - zero-gap handshake fast path allowed
 - attach/supersede now establish ownership only
 - sender-group orchestration tests added
+- recovery outcome branching implemented:
+  - `OutcomeZeroGap`
+  - `OutcomeCatchUp`
+  - `OutcomeNeedsRebuild`
+- assignment-intent orchestration implemented:
+  - reconcile + recovery target session creation
+  - stale assignment epoch rejected
+  - created/superseded/failed outcomes distinguished
+- P2 data-boundary correction accepted:
+  - zero-gap now requires exact equality to committed boundary
+  - replica-ahead is not zero-gap
+- minimal historical-data prototype implemented:
+  - `WALHistory`
+  - retained-prefix / recycled-range semantics
+  - executable recoverability proof
+  - base snapshot for historical state after tail advance
+- explicit safe-boundary handling implemented:
+  - divergent tail requires truncation before `InSync`
+  - truncation recorded via sender-owned execution API
+- WAL-backed prototype tests added:
+  - catch-up recovery with data verification
+  - rebuild fallback with proof of unrecoverability
+  - truncate-then-`InSync` with committed-boundary verification
 - current `enginev2` test state at latest review:
-  - 46 tests passing
+-  - 95 tests passing
+- prototype scenario closure completed:
+  - acceptance criteria mapped to prototype evidence
+  - V2-boundary scenarios expressed against `enginev2`
+  - small end-to-end prototype harness added
 
-Next focus for `sw`:
+Next phase:
 
-- continue Phase 04 beyond execution gating:
-  - recovery outcome branching
-  - sender-group orchestration from assignment intent
-  - prototype-level end-to-end recovery flow
+- `Phase 4.5`
+  - bounded `CatchUp`
+  - first-class `Rebuild`
+  - crash-consistency / recoverability / liveness proof hardening
 - do not integrate into V1 production tree yet
 
 ### P1
@@ -141,6 +169,39 @@ Next focus for `sw`:
 - completion / invalidation
 - rebuild escalation
 
+### P3
+
+10. add minimal historical-data prototype
+- retained prefix/window
+- minimal recoverability state
+- explicit "why catch-up is allowed" proof
+
+11. make safe-boundary data handling explicit
+- divergent tail cleanup / truncate rule
+- or equivalent explicit boundary handling before `InSync`
+
+12. strengthen recoverability/rebuild tests
+- executable proof of:
+- recoverable gap
+- unrecoverable gap
+- rebuild fallback boundary
+
+### P4
+
+13. close prototype scenario coverage
+- map key acceptance criteria onto `enginev2` scenarios/tests
+- make prototype evidence reviewable scenario-by-scenario
+
+14. express the 4 V2-boundary cases against the prototype
+- changed-address identity-preserving recovery
+- `NeedsRebuild` persistence
+- catch-up without overwriting safe data
+- repeated disconnect/reconnect cycles
+
+15. add one small prototype harness if needed
+- enough to show assignment -> recovery -> outcome flow end-to-end
+- no product/backend integration yet
+
 ## Exit Criteria
 
 Phase 04 is done when:
@@ -151,3 +212,5 @@ Phase 04 is done when:
 4. endpoint update and epoch invalidation are tested
 5. sender-owned execution flow is validated
 6. recovery outcome branching exists at prototype level
+7. minimal historical-data / recoverability model exists at prototype level
+8. prototype scenario closure is achieved for key V2 acceptance cases

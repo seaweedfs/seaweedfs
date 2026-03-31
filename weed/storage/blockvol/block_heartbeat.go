@@ -47,6 +47,7 @@ type BlockVolumeAssignment struct {
 	LeaseTtlMs      uint32        // lease TTL in milliseconds (0 = no lease)
 	ReplicaDataAddr string        // where primary ships WAL data (scalar, RF=2 compat)
 	ReplicaCtrlAddr string        // where primary sends barriers (scalar, RF=2 compat)
+	ReplicaServerID string        // V2: stable server identity for scalar replica (from registry)
 	RebuildAddr     string        // where rebuild server listens
 	ReplicaAddrs    []ReplicaAddr // CP8-2: multi-replica addrs (precedence over scalar)
 }

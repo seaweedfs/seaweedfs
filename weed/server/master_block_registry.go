@@ -353,7 +353,21 @@ func (r *BlockVolumeRegistry) ListByServer(server string) []BlockVolumeEntry {
 // Called on the first heartbeat from a volume server.
 // Marks reported volumes as Active, removes entries for this server
 // that are not reported (stale).
-func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage, nvmeAddr string) {
+// ReplicaAddrChange records a replica whose advertised address changed,
+// requiring a Primary assignment refresh so the shipper gets the new address.
+// Detected only in the full heartbeat path (UpdateFullHeartbeat). Delta
+// heartbeats do not carry replica addresses and cannot trigger this.
+type ReplicaAddrChange struct {
+	VolumeName    string
+	PrimaryServer string
+	OldDataAddr   string
+	OldCtrlAddr   string
+	NewDataAddr   string
+	NewCtrlAddr   string
+}
+
+func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage, nvmeAddr string) []ReplicaAddrChange {
+	var addrChanges []ReplicaAddrChange
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -495,6 +509,31 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 						} else {
 							existing.Replicas[i].WALLag = 0
 						}
+						// CP13-8: detect address change on replica restart.
+						// If either the data or control address changed, the primary's
+						// shipper has a stale endpoint. Queue a Primary refresh.
+						if info.ReplicaDataAddr != "" || info.ReplicaCtrlAddr != "" {
+							oldData := existing.Replicas[i].DataAddr
+							oldCtrl := existing.Replicas[i].CtrlAddr
+							dataChanged := info.ReplicaDataAddr != "" && oldData != "" && oldData != info.ReplicaDataAddr
+							ctrlChanged := info.ReplicaCtrlAddr != "" && oldCtrl != "" && oldCtrl != info.ReplicaCtrlAddr
+							if dataChanged || ctrlChanged {
+								addrChanges = append(addrChanges, ReplicaAddrChange{
+									VolumeName:    existingName,
+									PrimaryServer: existing.VolumeServer,
+									OldDataAddr:   oldData,
+									OldCtrlAddr:   oldCtrl,
+									NewDataAddr:   info.ReplicaDataAddr,
+									NewCtrlAddr:   info.ReplicaCtrlAddr,
+								})
+							}
+							if info.ReplicaDataAddr != "" {
+								existing.Replicas[i].DataAddr = info.ReplicaDataAddr
+							}
+							if info.ReplicaCtrlAddr != "" {
+								existing.Replicas[i].CtrlAddr = info.ReplicaCtrlAddr
+							}
+						}
 						break
 					}
 				}
@@ -509,6 +548,14 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			// This recovers state after master restart.
 			name := nameFromPath(info.Path)
 			if name == "" {
+				continue
+			}
+			// Skip auto-register if a create is in progress for this volume.
+			// Without this gate, the replica VS heartbeat can race ahead of
+			// CreateBlockVolume.Register and create a bare entry that lacks
+			// replica info, causing the real Register to hit "already registered"
+			// and fall back to the incomplete auto-registered entry.
+			if r.IsInflight(name) {
 				continue
 			}
 			existing, dup := r.volumes[name]
@@ -545,6 +592,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			}
 		}
 	}
+	return addrChanges
 }
 
 // reconcileOnRestart handles the case where a second server reports a volume
@@ -767,6 +815,12 @@ func (r *BlockVolumeRegistry) AcquireInflight(name string) bool {
 // ReleaseInflight releases the per-name create lock.
 func (r *BlockVolumeRegistry) ReleaseInflight(name string) {
 	r.inflight.Delete(name)
+}
+
+// IsInflight returns true if a create is in progress for the given volume name.
+func (r *BlockVolumeRegistry) IsInflight(name string) bool {
+	_, ok := r.inflight.Load(name)
+	return ok
 }
 
 // countForServer returns the number of volumes on the given server.

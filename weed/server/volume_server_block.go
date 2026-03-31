@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/nvme"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/v2bridge"
 )
 
 // volReplState tracks active replication addresses per volume.
@@ -45,6 +46,23 @@ type BlockService struct {
 	// Replication state (CP6-3).
 	replMu     sync.RWMutex
 	replStates map[string]*volReplState // keyed by volume path
+
+	// V2 engine bridge (Phase 08 P1).
+	v2Bridge *v2bridge.ControlBridge
+}
+
+// WireStateChangeNotify sets up shipper state change callbacks on all
+// registered volumes so that degradation/recovery triggers an immediate
+// heartbeat via the provided channel. Non-blocking send (buffered chan 1).
+func (bs *BlockService) WireStateChangeNotify(ch chan bool) {
+	bs.blockStore.IterateBlockVolumes(func(path string, vol *blockvol.BlockVol) {
+		vol.SetOnShipperStateChange(func(from, to blockvol.ReplicaState) {
+			select {
+			case ch <- true:
+			default: // already pending
+			}
+		})
+	})
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -70,6 +88,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		blockDir:       blockDir,
 		listenAddr:     listenAddr,
 		nvmeListenAddr: nvmeCfg.ListenAddr,
+		v2Bridge:       v2bridge.NewControlBridge(),
 	}
 
 	// iSCSI target setup.
@@ -312,7 +331,18 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 }
 
 // ProcessAssignments applies assignments from master, including replication setup.
+// V2 bridge: also delivers each assignment to the V2 engine for recovery ownership.
 func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAssignment) {
+	// V2 bridge: convert and deliver to engine (Phase 08 P1).
+	if bs.v2Bridge != nil {
+		for _, a := range assignments {
+			intent := bs.v2Bridge.ConvertAssignment(a, bs.listenAddr)
+			_ = intent // TODO(P2): deliver to engine orchestrator
+			glog.V(1).Infof("v2bridge: converted assignment %s epoch=%d → %d replicas",
+				a.Path, a.Epoch, len(intent.Replicas))
+		}
+	}
+
 	for _, a := range assignments {
 		role := blockvol.RoleFromWire(a.Role)
 		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
@@ -645,6 +675,8 @@ func (bs *BlockService) Shutdown() {
 
 // SetBlockService wires a BlockService into the VolumeServer so that
 // heartbeats include block volume info and the server is marked block-capable.
+// Also wires shipper state change callbacks for immediate heartbeat on degradation.
 func (vs *VolumeServer) SetBlockService(bs *BlockService) {
 	vs.blockService = bs
+	bs.WireStateChangeNotify(vs.blockStateChangeChan)
 }

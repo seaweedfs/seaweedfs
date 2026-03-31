@@ -277,7 +277,12 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// (BlockVolumeInfos on first heartbeat) or deltas (NewBlockVolumes/DeletedBlockVolumes
 		// on subsequent heartbeats), never both in the same message.
 		if len(heartbeat.BlockVolumeInfos) > 0 || heartbeat.HasNoBlockVolumes {
-			ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos, heartbeat.BlockNvmeAddr)
+			addrChanges := ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos, heartbeat.BlockNvmeAddr)
+			// CP13-8: If a replica's receiver address changed (e.g., restart with port conflict),
+			// immediately refresh the primary's assignment with the new addresses.
+			for _, ac := range addrChanges {
+				ms.refreshPrimaryForAddrChange(ac)
+			}
 			// T2 (B-06): After updating registry from heartbeat, check if this server
 			// is a replica for any volume whose primary is dead. If so, promote.
 			ms.reevaluateOrphanedPrimaries(dn.Url())

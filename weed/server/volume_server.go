@@ -55,7 +55,8 @@ type VolumeServer struct {
 	isHeartbeating           bool
 	stopChan                 chan bool
 
-	blockService *BlockService // block volume iSCSI service (nil if disabled)
+	blockService         *BlockService // block volume iSCSI service (nil if disabled)
+	blockStateChangeChan chan bool      // triggers immediate block heartbeat on shipper state change
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
@@ -103,6 +104,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
+		blockStateChangeChan:          make(chan bool, 1),
 		inFlightUploadDataLimitCond:   sync.NewCond(new(sync.Mutex)),
 		inFlightDownloadDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		concurrentUploadLimit:         concurrentUploadLimit,
@@ -135,6 +137,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 			adminMux.HandleFunc("/stats/disk", vs.guard.WhiteList(vs.statsDiskHandler))
 		*/
 	}
+	adminMux.HandleFunc("/debug/block/shipper", vs.debugBlockShipperHandler)
 	adminMux.HandleFunc("/", requestIDMiddleware(vs.privateStoreHandler))
 	if publicMux != adminMux {
 		// separated admin and public port

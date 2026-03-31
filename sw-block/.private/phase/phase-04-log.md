@@ -1,7 +1,7 @@
 # Phase 04 Log
 
 Date: 2026-03-27
-Status: active
+Status: complete
 
 ## 2026-03-27
 
@@ -40,7 +40,37 @@ Status: active
   - attach/supersede now establish ownership only
   - handshake range validation added
   - enginev2 tests increased to 46 passing
-- Next phase focus narrowed to P2:
-  - recovery outcome branching
-  - assignment-intent orchestration
-  - prototype end-to-end recovery flow
+- Phase 04 P2 delivered and accepted:
+  - outcome branching added:
+    - `OutcomeZeroGap`
+    - `OutcomeCatchUp`
+    - `OutcomeNeedsRebuild`
+  - assignment-intent orchestration added
+  - stale assignment epoch now rejected
+  - assignment result now distinguishes created / superseded / failed
+  - end-to-end prototype recovery tests added
+  - zero-gap classification tightened:
+    - exact equality to committed boundary only
+    - replica-ahead is not zero-gap
+  - enginev2 tests increased to 63 passing
+- Phase 04 P3 delivered and accepted:
+  - `WALHistory` added as minimal historical-data model
+  - recoverability proof strengthened:
+    - retained start
+    - end within head
+    - contiguous coverage
+  - base snapshot added for correct `StateAt()` after tail advance
+  - divergent-tail truncation made explicit in sender/session execution
+  - WAL-backed prototype recovery tests added
+  - enginev2 tests increased to 83 passing
+- Phase 04 P4 delivered and accepted:
+  - acceptance criteria mapped to prototype evidence
+  - V2-boundary scenarios expressed against `enginev2`
+  - prototype scenario closure achieved
+  - enginev2 tests increased to 95 passing
+- Phase 04 is now complete for its intended prototype scope.
+- Next recommended phase:
+  - `Phase 4.5`
+  - tighten bounded `CatchUp`
+  - formalize `Rebuild`
+  - strengthen crash-consistency / recoverability / liveness proof

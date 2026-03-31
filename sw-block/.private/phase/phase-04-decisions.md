@@ -1,7 +1,7 @@
 # Phase 04 Decisions
 
 Date: 2026-03-27
-Status: initial
+Status: complete
 
 ## First Slice Decision
 
@@ -95,3 +95,106 @@ It is:
 - recovery outcome branching
 - assignment-intent orchestration
 - prototype-level end-to-end recovery flow
+
+## Accepted P2 Refinements
+
+### Recovery boundary
+
+Recovery classification must use a lineage-safe boundary, not a raw primary WAL head.
+
+So:
+
+- handshake outcome classification uses committed/safe recovery boundary
+- stale or divergent extra tail must not be treated as zero-gap by default
+
+### Stale assignment fencing
+
+Assignment intent must not create current live sessions from stale epoch input.
+
+So:
+
+- stale assignment epoch is rejected
+- assignment result distinguishes:
+  - created
+  - superseded
+  - failed
+
+### Phase discipline on outcome classification
+
+The outcome API must respect execution entry rules.
+
+So:
+
+- handshake-with-outcome requires valid connecting phase before acting
+
+## P3 Direction
+
+The next prototype step is:
+
+- minimal historical-data model
+- recoverability proof
+- explicit safe-boundary / divergent-tail handling
+
+## Accepted P3 Refinements
+
+### Recoverability proof
+
+The historical-data prototype must prove why catch-up is allowed.
+
+So:
+
+- recoverability now checks retained start, end within head, and contiguous coverage
+- rebuild fallback is backed by executable unrecoverability
+
+### Historical state after recycling
+
+Retained-prefix modeling needs a base state, not only remaining WAL entries.
+
+So:
+
+- tail advance captures a base snapshot
+- historical state reconstruction uses snapshot + retained WAL
+
+### Divergent tail handling
+
+Replica-ahead state must not collapse directly to `InSync`.
+
+So:
+
+- divergent tail requires explicit truncation
+- completion is gated on recorded truncation when required
+
+## P4 Direction
+
+The next prototype step is:
+
+- prototype scenario closure
+- acceptance-criteria to prototype traceability
+- explicit expression of the 4 V2-boundary cases against `enginev2`
+
+## Accepted P4 Refinements
+
+### Prototype scenario closure
+
+The prototype must stop being only a set of local mechanisms.
+
+So:
+
+- acceptance criteria are mapped to prototype evidence
+- key V2-boundary scenarios are expressed directly against `enginev2`
+- prototype behavior is reviewable scenario-by-scenario
+
+### Phase 04 completion decision
+
+Phase 04 has now met its intended prototype scope:
+
+- ownership
+- execution gating
+- outcome branching
+- minimal historical-data model
+- prototype scenario closure
+
+So:
+
+- no broad new Phase 04 work should be added
+- next work should move to `Phase 4.5` gate-hardening

@@ -84,6 +84,15 @@ func (bs *BlockVolumeStore) ListBlockVolumes() []string {
 	return paths
 }
 
+// IterateBlockVolumes calls fn for each registered block volume.
+func (bs *BlockVolumeStore) IterateBlockVolumes(fn func(path string, vol *blockvol.BlockVol)) {
+	bs.mu.RLock()
+	defer bs.mu.RUnlock()
+	for path, vol := range bs.volumes {
+		fn(path, vol)
+	}
+}
+
 // CollectBlockVolumeHeartbeat returns status for all registered
 // block volumes, suitable for inclusion in a heartbeat message.
 func (bs *BlockVolumeStore) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfoMessage {

@@ -83,6 +83,9 @@ type BlockVol struct {
 	// Observability (CP8-4).
 	Metrics *EngineMetrics
 
+	// Shipper state change callback — triggers immediate heartbeat.
+	onShipperStateChange func(from, to ReplicaState)
+
 	// Snapshot fields (Phase 5 CP5-2).
 	snapMu    sync.RWMutex
 	snapshots map[uint32]*activeSnapshot
@@ -782,6 +785,7 @@ func (v *BlockVol) SyncCache() error {
 type ReplicaAddr struct {
 	DataAddr string
 	CtrlAddr string
+	ServerID string // V2: stable server identity from registry (not address-derived)
 }
 
 // WALAccess provides the shipper with the minimal WAL interface needed
@@ -824,6 +828,18 @@ func (a *walAccess) StreamEntries(fromLSN uint64, fn func(*WALEntry) error) erro
 	return a.vol.wal.ScanFrom(a.vol.fd, a.vol.super.WALOffset, checkpointLSN, fromLSN, fn)
 }
 
+// SetOnShipperStateChange registers a callback for shipper state transitions.
+// Called by the volume server to trigger immediate heartbeat on degradation/recovery.
+func (v *BlockVol) SetOnShipperStateChange(fn func(from, to ReplicaState)) {
+	v.onShipperStateChange = fn
+}
+
+// GetShipperGroup returns the shipper group for debug/observability.
+// Returns nil if no replication is configured.
+func (v *BlockVol) GetShipperGroup() *ShipperGroup {
+	return v.shipperGroup
+}
+
 // SetReplicaAddr configures a single replica endpoint. Backward-compatible wrapper
 // around SetReplicaAddrs for RF=2 callers.
 func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
@@ -841,6 +857,11 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 		}, wa, v.Metrics)
 	}
 	v.shipperGroup = NewShipperGroup(shippers)
+
+	// Wire state change callback so shipper degradation triggers immediate heartbeat.
+	if v.onShipperStateChange != nil {
+		v.shipperGroup.SetOnStateChange(v.onShipperStateChange)
+	}
 
 	// Replace the group committer's sync function with a distributed version.
 	v.groupCommit.Stop()

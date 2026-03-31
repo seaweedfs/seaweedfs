@@ -104,28 +104,46 @@ phases:
         iqn: "{{ vol_iqn }}"
         save_as: device
 
-  - name: inject-partition
+  - name: inject-delay
     actions:
       - action: print
-        msg: "=== Blocking replication ports (3295) from primary to replica ==="
+        msg: "=== Blocking replication ports (4000-6000) from primary to replica ==="
 
-      # Block only replication port — SSH and master heartbeat still work.
-      - action: inject_partition
-        node: m02
-        target_ip: "192.168.1.181"
-        ports: "3295"
-
-      # Trigger a write so barrier fires and times out.
+      # Block the replication port range. Replication data/ctrl ports are
+      # basePort(3295) + 1000 + hash*3, landing in ~4295-5794 range.
+      # Blocking 4000-6000 covers all possible replication ports while
+      # leaving SSH (22) and master heartbeat (9433/18480) open.
       - action: exec
-        node: m01
-        cmd: "timeout 10 dd if=/dev/urandom of={{ device }} bs=4k count=1 oflag=direct 2>/dev/null; true"
+        node: m02
+        cmd: "iptables -A OUTPUT -d 192.168.1.181 -p tcp --dport 4000:6000 -j REJECT --reject-with tcp-reset"
         root: "true"
+
+      - action: print
+        msg: "=== Writing to trigger Ship failure + degradation ==="
+
+      # Write in background via fio (best_effort: writes succeed locally).
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        runtime: "10"
+        time_based: "true"
+        name: write-during-fault
+        save_as: fio_fault
         ignore_error: true
 
-      # Wait for barrier timeout (5s) + degradation detection.
-      - action: sleep
-        duration: 10s
+      - action: fio_parse
+        json_var: fio_fault
+        metric: iops
+        save_as: iops_fault
+        ignore_error: true
 
+      - action: print
+        msg: "Write IOPS during fault: {{ iops_fault }}"
+
+      # Check degraded state after writes.
       - action: assert_block_field
         name: "{{ volume_name }}"
         field: replica_degraded
@@ -134,16 +152,17 @@ phases:
         ignore_error: true
 
       - action: print
-        msg: "During partition: degraded={{ degraded_during }}"
+        msg: "During fault: degraded={{ degraded_during }}"
 
   - name: clear-and-measure
     actions:
       - action: print
-        msg: "=== Clearing partition, measuring shipper recovery ==="
+        msg: "=== Clearing fault, measuring shipper recovery ==="
 
-      - action: clear_fault
+      - action: exec
         node: m02
-        type: partition
+        cmd: "iptables -D OUTPUT -d 192.168.1.181 -p tcp --dport 4000:6000 -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
 
       # Check at 5s — V1.5 background reconnect interval is 5s.
       - action: sleep
@@ -221,9 +240,10 @@ phases:
   - name: cleanup
     always: true
     actions:
-      - action: clear_fault
+      - action: exec
         node: m02
-        type: netem
+        cmd: "iptables -D OUTPUT -d 192.168.1.181 -p tcp --dport 4000:6000 -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
         ignore_error: true
       - action: stop_weed
         node: m01

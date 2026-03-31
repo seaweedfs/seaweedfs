@@ -71,6 +71,17 @@ type WALShipper struct {
 	catchupFailures    int           // consecutive catch-up failures; reset on success
 	lastContactTime    atomic.Value  // time.Time: last successful barrier/handshake/catch-up
 	stopped            atomic.Bool
+
+	// onStateChange is called when the shipper transitions between states.
+	// Used to trigger immediate heartbeat on degradation/recovery.
+	// Set via SetOnStateChange. Nil = no callback.
+	onStateChange func(from, to ReplicaState)
+}
+
+// SetOnStateChange registers a callback for shipper state transitions.
+// The callback is invoked synchronously from markDegraded/markInSync.
+func (s *WALShipper) SetOnStateChange(fn func(from, to ReplicaState)) {
+	s.onStateChange = fn
 }
 
 const maxCatchupRetries = 3
@@ -345,8 +356,11 @@ func (s *WALShipper) ensureCtrlConn() error {
 }
 
 func (s *WALShipper) markDegraded() {
-	s.state.Store(uint32(ReplicaDegraded))
-	log.Printf("wal_shipper: replica degraded (data=%s, ctrl=%s, state=%s)", s.dataAddr, s.controlAddr, s.State())
+	prev := ReplicaState(s.state.Swap(uint32(ReplicaDegraded)))
+	log.Printf("wal_shipper: replica degraded (data=%s, ctrl=%s, prev=%s)", s.dataAddr, s.controlAddr, prev)
+	if prev != ReplicaDegraded && s.onStateChange != nil {
+		s.onStateChange(prev, ReplicaDegraded)
+	}
 }
 
 // resetConnections closes both data and control connections for a clean retry.
@@ -404,10 +418,13 @@ func (s *WALShipper) doReconnectAndCatchUp() error {
 }
 
 func (s *WALShipper) markInSync() {
-	s.state.Store(uint32(ReplicaInSync))
+	prev := ReplicaState(s.state.Swap(uint32(ReplicaInSync)))
 	s.catchupFailures = 0
 	s.touchContactTime()
-	log.Printf("wal_shipper: replica in-sync (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
+	log.Printf("wal_shipper: replica in-sync (data=%s, ctrl=%s, prev=%s)", s.dataAddr, s.controlAddr, prev)
+	if prev != ReplicaInSync && s.onStateChange != nil {
+		s.onStateChange(prev, ReplicaInSync)
+	}
 }
 
 const catchupTimeout = 30 * time.Second

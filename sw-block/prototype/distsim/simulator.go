@@ -300,8 +300,11 @@ func (s *Simulator) execute(e Event) {
 
 	case EvFlusherTick:
 		if node != nil && node.Running {
-			node.Storage.AdvanceCheckpoint(node.Storage.FlushedLSN)
-			s.record(e, fmt.Sprintf("flusher tick %s checkpoint=%d", e.NodeID, node.Storage.CheckpointLSN))
+			// Phase 4.5: flusher first materializes WAL to extent, then checkpoints.
+			node.Storage.ApplyToExtent(node.Storage.WALDurableLSN)
+			node.Storage.AdvanceCheckpoint(node.Storage.WALDurableLSN)
+			s.record(e, fmt.Sprintf("flusher tick %s applied=%d checkpoint=%d",
+				e.NodeID, node.Storage.ExtentAppliedLSN, node.Storage.CheckpointLSN))
 		}
 
 	case EvPromote:

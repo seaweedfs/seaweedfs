@@ -188,6 +188,17 @@ func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration) {
 	}
 }
 
+// SetOnStateChange registers a callback on all current shippers for state transitions.
+// Used by the volume server to trigger an immediate block heartbeat when a shipper
+// transitions to/from degraded.
+func (sg *ShipperGroup) SetOnStateChange(fn func(from, to ReplicaState)) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		s.SetOnStateChange(fn)
+	}
+}
+
 // ShipperStates returns per-replica status for heartbeat reporting.
 // Master uses this to identify which replicas need rebuild.
 func (sg *ShipperGroup) ShipperStates() []ReplicaShipperStatus {

@@ -1066,9 +1066,10 @@ type CandidateEligibility struct {
 }
 
 // EvaluateCandidateEligibility checks all promotion prerequisites for a node.
-// A candidate must have the full committed prefix (FlushedLSN >= CommittedLSN)
-// to be eligible. Promoting a replica that is missing committed data would
-// lose acknowledged writes.
+// Phase 4.5: uses RecoverableLSN (not just FlushedLSN) to verify that the
+// candidate can actually recover the committed prefix after a crash+restart,
+// not just that it received durable WAL entries. RecoverableLSN accounts for
+// checkpoint + WAL replay availability.
 func (c *Cluster) EvaluateCandidateEligibility(candidateID string) CandidateEligibility {
 	n := c.Nodes[candidateID]
 	if n == nil {
@@ -1084,7 +1085,11 @@ func (c *Cluster) EvaluateCandidateEligibility(candidateID string) CandidateElig
 	if n.ReplicaState == NodeStateNeedsRebuild || n.ReplicaState == NodeStateRebuilding {
 		reasons = append(reasons, "state_ineligible")
 	}
-	if n.Storage.FlushedLSN < c.Coordinator.CommittedLSN {
+	// Phase 4.5: check recoverable committed prefix, not just durable watermark.
+	// RecoverableLSN = the highest LSN that would survive crash + restart.
+	// This is stronger than FlushedLSN when checkpoint + WAL GC may have
+	// created gaps in the replay path.
+	if n.Storage.RecoverableLSN() < c.Coordinator.CommittedLSN {
 		reasons = append(reasons, "insufficient_committed_prefix")
 	}
 	return CandidateEligibility{

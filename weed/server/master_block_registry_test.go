@@ -1900,3 +1900,63 @@ func TestUpdateEntry_NotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent volume")
 	}
 }
+
+// TestRegistry_InflightBlocksAutoRegister verifies that heartbeat auto-register
+// is suppressed while a create is in-flight for the same volume. This prevents
+// a race where the replica VS heartbeat arrives before CreateBlockVolume.Register
+// completes, creating a bare entry that lacks replica info.
+func TestRegistry_InflightBlocksAutoRegister(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	// Simulate CreateBlockVolume acquiring the inflight lock.
+	if !r.AcquireInflight("vol1") {
+		t.Fatal("AcquireInflight should succeed")
+	}
+
+	// Replica VS sends heartbeat reporting vol1 — while create is in-flight.
+	// This should be silently skipped (not auto-registered).
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/blocks/vol1.blk", Epoch: 1, Role: 2, VolumeSize: 1 << 30},
+	}, "")
+
+	// vol1 should NOT be in the registry (auto-register was blocked).
+	if _, ok := r.Lookup("vol1"); ok {
+		t.Fatal("vol1 should not be auto-registered while inflight lock is held")
+	}
+
+	// Now simulate CreateBlockVolume completing: register with replicas.
+	r.Register(&BlockVolumeEntry{
+		Name:         "vol1",
+		VolumeServer: "primary-server:8080",
+		Path:         "/blocks/vol1.blk",
+		SizeBytes:    1 << 30,
+		Epoch:        1,
+		Status:       StatusActive,
+		Replicas: []ReplicaInfo{
+			{Server: "replica-server:8080", Path: "/blocks/vol1.blk"},
+		},
+	})
+	r.ReleaseInflight("vol1")
+
+	// Entry should have the replica.
+	entry, ok := r.Lookup("vol1")
+	if !ok {
+		t.Fatal("vol1 should exist after Register")
+	}
+	if len(entry.Replicas) != 1 {
+		t.Fatalf("replicas=%d, want 1", len(entry.Replicas))
+	}
+	if entry.Replicas[0].Server != "replica-server:8080" {
+		t.Fatalf("replica server=%s", entry.Replicas[0].Server)
+	}
+
+	// After inflight released, subsequent heartbeats should update normally.
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{
+		{Path: "/blocks/vol1.blk", Epoch: 2, Role: 2, VolumeSize: 1 << 30, HealthScore: 0.9},
+	}, "")
+
+	entry, _ = r.Lookup("vol1")
+	if entry.Replicas[0].HealthScore != 0.9 {
+		t.Fatalf("replica health not updated after inflight released: %f", entry.Replicas[0].HealthScore)
+	}
+}

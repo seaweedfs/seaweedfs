@@ -166,7 +166,7 @@ func TestZombieOldPrimaryWritesAreFenced(t *testing.T) {
 	if c.Coordinator.CommittedLSN != 1 {
 		t.Fatalf("stale message changed committed lsn: got=%d", c.Coordinator.CommittedLSN)
 	}
-	if got := c.Nodes["r1"].Storage.Extent[42]; got != 0 {
+	if got := c.Nodes["r1"].Storage.LiveExtent[42]; got != 0 {
 		t.Fatalf("stale message mutated new primary extent: block42=%d", got)
 	}
 }

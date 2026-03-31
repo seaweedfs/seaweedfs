@@ -353,6 +353,7 @@ func TestP02_CandidateEligibility_InsufficientCommittedPrefix(t *testing.T) {
 
 	// Manually set r1 behind committed prefix.
 	c.Nodes["r1"].Storage.FlushedLSN = 0
+	c.Nodes["r1"].Storage.WALDurableLSN = 0
 	e = c.EvaluateCandidateEligibility("r1")
 	if e.Eligible {
 		t.Fatal("FlushedLSN=0 with CommittedLSN=1 should not be eligible")
@@ -379,14 +380,19 @@ func TestP02_CandidateEligibility_InSyncButLagging_Rejected(t *testing.T) {
 	// r1: InSync, correct epoch, but FlushedLSN=1. Ineligible.
 	c.Nodes["r1"].ReplicaState = NodeStateInSync
 	c.Nodes["r1"].Storage.FlushedLSN = 1
+	c.Nodes["r1"].Storage.WALDurableLSN = 1
 
 	// r2: CatchingUp, correct epoch, FlushedLSN=100. Eligible.
 	c.Nodes["r2"].ReplicaState = NodeStateCatchingUp
 	c.Nodes["r2"].Storage.FlushedLSN = 100
+	c.Nodes["r2"].Storage.WALDurableLSN = 100
+	c.Nodes["r2"].Storage.CheckpointLSN = 100
 
 	// r3: InSync, correct epoch, FlushedLSN=100. Eligible.
 	c.Nodes["r3"].ReplicaState = NodeStateInSync
 	c.Nodes["r3"].Storage.FlushedLSN = 100
+	c.Nodes["r3"].Storage.WALDurableLSN = 100
+	c.Nodes["r3"].Storage.CheckpointLSN = 100
 
 	// r1 is ineligible despite being InSync.
 	e1 := c.EvaluateCandidateEligibility("r1")

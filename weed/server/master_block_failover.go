@@ -10,10 +10,12 @@ import (
 
 // pendingRebuild records a volume that needs rebuild when a dead VS reconnects.
 type pendingRebuild struct {
-	VolumeName string
-	OldPath    string // path on dead server
-	NewPrimary string // promoted replica server
-	Epoch      uint64
+	VolumeName      string
+	OldPath         string // path on dead server
+	NewPrimary      string // promoted replica server
+	Epoch           uint64
+	ReplicaDataAddr string // CP13-8: saved from before death for catch-up-first recovery
+	ReplicaCtrlAddr string // CP13-8: saved from before death for catch-up-first recovery
 }
 
 // blockFailoverState holds failover and rebuild state on the master.
@@ -88,6 +90,8 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 			ri := entry.ReplicaByServer(deadServer)
 			if ri != nil {
 				replicaPath := ri.Path
+				replicaDataAddr := ri.DataAddr // CP13-8: save before removal
+				replicaCtrlAddr := ri.CtrlAddr
 				// Remove dead replica from registry.
 				if err := ms.blockRegistry.RemoveReplica(entry.Name, deadServer); err != nil {
 					glog.Warningf("failover: RemoveReplica %q on %s: %v", entry.Name, deadServer, err)
@@ -95,10 +99,12 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 				}
 				// Record pending rebuild for when dead server reconnects.
 				ms.recordPendingRebuild(deadServer, pendingRebuild{
-					VolumeName: entry.Name,
-					OldPath:    replicaPath,
-					NewPrimary: entry.VolumeServer, // current primary (unchanged)
-					Epoch:      entry.Epoch,
+					VolumeName:      entry.Name,
+					OldPath:         replicaPath,
+					NewPrimary:      entry.VolumeServer,
+					Epoch:           entry.Epoch,
+					ReplicaDataAddr: replicaDataAddr,
+					ReplicaCtrlAddr: replicaCtrlAddr,
 				})
 				glog.V(0).Infof("failover: removed dead replica %s for %q, pending rebuild",
 					deadServer, entry.Name)
@@ -238,20 +244,73 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 			continue
 		}
 
-		// Update registry: reconnected server becomes a replica (via AddReplica for RF≥2 support).
+		// CP13-8: Use replica addresses saved before death for catch-up-first recovery.
+		// These are deterministic (derived from volume path hash in ReplicationPorts),
+		// so they should be the same after VS restart. If the VS somehow gets different
+		// ports (e.g., port conflict), the catch-up attempt will fail at the TCP level
+		// and fall through to the shipper's NeedsRebuild → master rebuild path.
+		// This is an optimization, not a source of truth — the master remains the
+		// authority for topology/assignment changes.
+		dataAddr := rb.ReplicaDataAddr
+		ctrlAddr := rb.ReplicaCtrlAddr
+
+		// Update registry: reconnected server becomes a replica.
 		ms.blockRegistry.AddReplica(rb.VolumeName, ReplicaInfo{
-			Server: reconnectedServer,
-			Path:   rb.OldPath,
+			Server:   reconnectedServer,
+			Path:     rb.OldPath,
+			DataAddr: dataAddr,
+			CtrlAddr: ctrlAddr,
 		})
 
-		// T4: Warn if RebuildListenAddr is empty (new primary hasn't heartbeated yet).
+		// CP13-8: Try catch-up first (Replica assignment), fall back to rebuild.
+		// If the replica can catch up from the primary's retained WAL, this is
+		// much faster than a full rebuild. The shipper's reconnect handshake
+		// (CP13-5) determines whether catch-up or rebuild is actually needed.
+		// If catch-up fails, the shipper marks NeedsRebuild, and the master
+		// sends a Rebuilding assignment on the next heartbeat cycle.
+		if dataAddr != "" {
+			leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
+			// Send Replica assignment to the reconnected server.
+			ms.blockAssignmentQueue.Enqueue(reconnectedServer, blockvol.BlockVolumeAssignment{
+				Path:            rb.OldPath,
+				Epoch:           entry.Epoch,
+				Role:            blockvol.RoleToWire(blockvol.RoleReplica),
+				LeaseTtlMs:      leaseTTLMs,
+				ReplicaDataAddr: dataAddr,
+				ReplicaCtrlAddr: ctrlAddr,
+			})
+			// Also re-send Primary assignment so the primary gets fresh replica addresses.
+			primaryAssignment := blockvol.BlockVolumeAssignment{
+				Path:       entry.Path,
+				Epoch:      entry.Epoch,
+				Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+				LeaseTtlMs: leaseTTLMs,
+			}
+			// Include all replica addresses.
+			for _, ri := range entry.Replicas {
+				primaryAssignment.ReplicaAddrs = append(primaryAssignment.ReplicaAddrs, blockvol.ReplicaAddr{
+					DataAddr: ri.DataAddr,
+					CtrlAddr: ri.CtrlAddr,
+				})
+			}
+			if len(entry.Replicas) == 1 {
+				primaryAssignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
+				primaryAssignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+			}
+			ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, primaryAssignment)
+
+			glog.V(0).Infof("recover: enqueued catch-up (Replica) for %q on %s (epoch=%d, data=%s) + Primary refresh on %s",
+				rb.VolumeName, reconnectedServer, entry.Epoch, dataAddr, entry.VolumeServer)
+			continue
+		}
+
+		// Fallback: no known addresses — use rebuild path.
 		rebuildAddr := entry.RebuildListenAddr
 		if rebuildAddr == "" {
 			glog.Warningf("rebuild: %q RebuildListenAddr is empty (new primary %s may not have heartbeated yet), "+
 				"queuing rebuild anyway — VS should retry on empty addr", rb.VolumeName, entry.VolumeServer)
 		}
 
-		// Enqueue rebuild assignment for the reconnected server.
 		ms.blockAssignmentQueue.Enqueue(reconnectedServer, blockvol.BlockVolumeAssignment{
 			Path:        rb.OldPath,
 			Epoch:       entry.Epoch,
@@ -268,6 +327,39 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 // reevaluateOrphanedPrimaries checks if the given server is a replica for any
 // volumes whose primary is dead (not block-capable). If so, promotes the best
 // available replica — but only after the old primary's lease has expired, to
+// refreshPrimaryForAddrChange sends a fresh Primary assignment when a replica's
+// receiver address changed (e.g., restart with port conflict). This ensures the
+// primary's shipper gets the new address without waiting for the next heartbeat cycle.
+func (ms *MasterServer) refreshPrimaryForAddrChange(ac ReplicaAddrChange) {
+	entry, ok := ms.blockRegistry.Lookup(ac.VolumeName)
+	if !ok {
+		return
+	}
+	leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
+	assignment := blockvol.BlockVolumeAssignment{
+		Path:       entry.Path,
+		Epoch:      entry.Epoch,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: leaseTTLMs,
+	}
+	for _, ri := range entry.Replicas {
+		assignment.ReplicaAddrs = append(assignment.ReplicaAddrs, blockvol.ReplicaAddr{
+			DataAddr: ri.DataAddr,
+			CtrlAddr: ri.CtrlAddr,
+		})
+	}
+	if len(entry.Replicas) == 1 {
+		assignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
+		assignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+	}
+	// Use current registry primary (not stale ac.PrimaryServer) in case
+	// failover happened between address-change detection and this refresh.
+	currentPrimary := entry.VolumeServer
+	ms.blockAssignmentQueue.Enqueue(currentPrimary, assignment)
+	glog.V(0).Infof("recover: replica addr changed for %q (data: %s→%s, ctrl: %s→%s), refreshed Primary on %s",
+		ac.VolumeName, ac.OldDataAddr, ac.NewDataAddr, ac.OldCtrlAddr, ac.NewCtrlAddr, currentPrimary)
+}
+
 // maintain the same split-brain protection as failoverBlockVolumes().
 // This fixes B-06 (orphaned primary after replica re-register)
 // and partially B-08 (fast reconnect skips failover window).
