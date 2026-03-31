@@ -169,18 +169,19 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("generate normal volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
+	// mount the decoded volume after server-side offline compaction succeeded
+	err = mountDecodedVolume(commandEnv.option.GrpcDialOption, targetNodeLocation, vid)
+	if err != nil {
+		return fmt.Errorf("mount decoded volume %d on %s: %v", vid, targetNodeLocation, err)
+	}
+
 	// delete the previous ec shards
-	err = mountVolumeAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, targetNodeLocation, nodeToEcShardsInfo, vid)
+	err = unmountAndDeleteEcShardsWithPrefix("deleteDecodedEcShards", commandEnv.option.GrpcDialOption, collection, nodeToEcShardsInfo, vid)
 	if err != nil {
 		return fmt.Errorf("delete ec shards for volume %d: %v", vid, err)
 	}
 	if diskUsageState != nil {
 		diskUsageState.applyDecode(targetNodeLocation, originalShardCounts, true)
-	}
-
-	// vacuum the decoded volume to compact out deleted needle data
-	if err := vacuumDecodedVolume(commandEnv.option.GrpcDialOption, vid, targetNodeLocation); err != nil {
-		fmt.Printf("warning: vacuum decoded volume %d on %s: %v\n", vid, targetNodeLocation, err)
 	}
 
 	return nil
@@ -224,23 +225,20 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 	return ewg.Wait()
 }
 
-func mountVolumeAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, targetNodeLocation pb.ServerAddress, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, vid needle.VolumeId) error {
-
-	// mount volume
+func mountDecodedVolume(grpcDialOption grpc.DialOption, targetNodeLocation pb.ServerAddress, vid needle.VolumeId) error {
 	if err := operation.WithVolumeServerClient(false, targetNodeLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, mountErr := volumeServerClient.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
 			VolumeId: uint32(vid),
 		})
 		return mountErr
 	}); err != nil {
-		return fmt.Errorf("mountVolumeAndDeleteEcShards mount volume %d on %s: %v", vid, targetNodeLocation, err)
+		return fmt.Errorf("mount volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
-	return unmountAndDeleteEcShardsWithPrefix("mountVolumeAndDeleteEcShards", grpcDialOption, collection, nodeToShardsInfo, vid)
+	return nil
 }
 
 func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
-
 	fmt.Printf("generateNormalVolume from ec volume %d on %s\n", vid, sourceVolumeServer)
 
 	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -436,59 +434,4 @@ func (state *decodeDiskUsageState) applyDecode(targetNodeLocation pb.ServerAddre
 			usage.volumeCount++
 		}
 	}
-}
-
-// vacuumDecodedVolume compacts the decoded volume to remove deleted needle data.
-// The decoded .dat file contains all data including deleted needles; vacuuming
-// reclaims that space.
-func vacuumDecodedVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, server pb.ServerAddress) error {
-	fmt.Printf("vacuum decoded volume %d on %s\n", vid, server)
-
-	// compact
-	err := operation.WithVolumeServerClient(true, server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-		stream, err := client.VacuumVolumeCompact(context.Background(), &volume_server_pb.VacuumVolumeCompactRequest{
-			VolumeId: uint32(vid),
-		})
-		if err != nil {
-			return err
-		}
-		for {
-			_, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					break
-				}
-				return recvErr
-			}
-		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("compact decoded volume %d: %v", vid, err)
-	}
-
-	// commit
-	err = operation.WithVolumeServerClient(false, server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-		_, err := client.VacuumVolumeCommit(context.Background(), &volume_server_pb.VacuumVolumeCommitRequest{
-			VolumeId: uint32(vid),
-		})
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("commit vacuum for decoded volume %d: %v", vid, err)
-	}
-
-	// cleanup
-	err = operation.WithVolumeServerClient(false, server, grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
-		_, err := client.VacuumVolumeCleanup(context.Background(), &volume_server_pb.VacuumVolumeCleanupRequest{
-			VolumeId: uint32(vid),
-		})
-		return err
-	})
-	if err != nil {
-		return fmt.Errorf("cleanup vacuum for decoded volume %d: %v", vid, err)
-	}
-
-	fmt.Printf("vacuum decoded volume %d on %s completed\n", vid, server)
-	return nil
 }

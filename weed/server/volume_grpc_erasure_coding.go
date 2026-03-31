@@ -644,6 +644,29 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
 	}
 
+	var volumeLocation *storage.DiskLocation
+	for _, location := range vs.store.Locations {
+		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
+			volumeLocation = location
+			break
+		}
+	}
+	if volumeLocation == nil {
+		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
+	}
+
+	if err := vs.store.CompactVolumeFiles(
+		needle.VolumeId(req.VolumeId),
+		v.Collection,
+		volumeLocation,
+		vs.needleMapKind,
+		vs.ldbTimout,
+		0,
+		vs.compactionBytePerSecond,
+	); err != nil {
+		return nil, fmt.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
+	}
+
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
 }
 
