@@ -132,25 +132,27 @@ func (fs *FilerServer) FindLockOwner(ctx context.Context, req *filer_pb.FindLock
 	}, nil
 }
 
-// TransferLocks is a grpc handler to handle FilerServer's TransferLocksRequest
+// TransferLocks is a grpc handler to handle FilerServer's TransferLocksRequest.
+// Preserves generation/seq and re-replicates to this node's backup.
 func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.TransferLocksRequest) (*filer_pb.TransferLocksResponse, error) {
 
 	for _, lock := range req.Locks {
-		fs.filer.Dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken, lock.Owner)
+		fs.filer.Dlm.InsertLock(lock.Name, lock.ExpiredAtNs, lock.RenewToken, lock.Owner, lock.Generation, lock.Seq)
 	}
 
 	return &filer_pb.TransferLocksResponse{}, nil
 
 }
 
-// ReplicateLock handles lock replication from a primary to this backup node
+// ReplicateLock handles lock replication from a primary to this backup node.
+// Uses seq for causal ordering — rejects stale mutations.
 func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.ReplicateLockRequest) (*filer_pb.ReplicateLockResponse, error) {
 	if req.IsUnlock {
-		fs.filer.Dlm.RemoveBackupLock(req.Name)
-		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s", req.Name)
+		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Seq)
+		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s seq=%d", req.Name, req.Seq)
 	} else {
-		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.Owner, req.Generation)
-		glog.V(4).Infof("FILER REPLICATE: inserted backup lock %s owner=%s generation=%d", req.Name, req.Owner, req.Generation)
+		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.Owner, req.Generation, req.Seq)
+		glog.V(4).Infof("FILER REPLICATE: inserted backup lock %s owner=%s generation=%d seq=%d", req.Name, req.Owner, req.Generation, req.Seq)
 	}
 	return &filer_pb.ReplicateLockResponse{}, nil
 }
@@ -177,14 +179,12 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 			}
 			// Replicate to (possibly new) backup
 			if backup != "" && fs.filer.Dlm.ReplicateFn != nil {
-				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, false)
+				go fs.filer.Dlm.ReplicateFn(backup, lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
 			}
 		} else if backup == fs.option.Host {
 			if !lock.IsBackup {
-				// We were primary, now we're backup → demote, transfer to new primary
-				fs.filer.Dlm.DemoteLock(lock.Key)
-				glog.V(0).Infof("DLM: demoted primary lock %s to backup, new primary=%s", lock.Key, primary)
-				// Replicate to new primary as a transfer
+				// We were primary, now we're backup → transfer to new primary first, then demote
+				glog.V(0).Infof("DLM: transferring primary lock %s to new primary=%s", lock.Key, primary)
 				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 				err := pb.WithFilerClient(false, 0, primary, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 					_, err := client.TransferLocks(ctx, &filer_pb.TransferLocksRequest{
@@ -195,6 +195,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 								ExpiredAtNs: lock.ExpiredAtNs,
 								Owner:       lock.Owner,
 								Generation:  lock.Generation,
+								Seq:         lock.Seq,
 							},
 						},
 					})
@@ -202,7 +203,11 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 				})
 				cancel()
 				if err != nil {
-					glog.Errorf("DLM: failed to transfer lock %s to new primary %s: %v", lock.Key, primary, err)
+					glog.Errorf("DLM: failed to transfer lock %s to new primary %s: %v, keeping as primary", lock.Key, primary, err)
+				} else {
+					// Only demote after successful handoff
+					fs.filer.Dlm.DemoteLock(lock.Key)
+					glog.V(0).Infof("DLM: demoted lock %s to backup after successful transfer", lock.Key)
 				}
 			}
 			// else: already backup, keep as is
@@ -218,6 +223,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 							ExpiredAtNs: lock.ExpiredAtNs,
 							Owner:       lock.Owner,
 							Generation:  lock.Generation,
+							Seq:         lock.Seq,
 						},
 					},
 				})
@@ -236,7 +242,7 @@ func (fs *FilerServer) OnDlmChangeSnapshot(snapshot []pb.ServerAddress) {
 // SetupDlmReplication sets up the replication callback for the DLM.
 // Called during filer server initialization.
 func (fs *FilerServer) SetupDlmReplication() {
-	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+	fs.filer.Dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		err := pb.WithFilerClient(false, 0, server, fs.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -246,6 +252,7 @@ func (fs *FilerServer) SetupDlmReplication() {
 				ExpiredAtNs: expiredAtNs,
 				Owner:       owner,
 				Generation:  generation,
+				Seq:         seq,
 				IsUnlock:    isUnlock,
 			})
 			return err

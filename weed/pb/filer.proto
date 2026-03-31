@@ -549,6 +549,7 @@ message Lock {
     string owner = 4;
     int64 generation = 5;
     bool is_backup = 6;
+    int64 seq = 7;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;
@@ -562,6 +563,7 @@ message ReplicateLockRequest {
     string owner = 4;
     int64 generation = 5;
     bool is_unlock = 6;
+    int64 seq = 7;
 }
 message ReplicateLockResponse {
 }

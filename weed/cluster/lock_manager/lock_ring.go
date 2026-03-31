@@ -84,7 +84,8 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
 
 	r.Lock()
 	r.lastUpdateTime = time.Now()
-	// init candidateServers
+	// Replace candidateServers entirely so removed servers don't linger
+	r.candidateServers = make(map[pb.ServerAddress]struct{}, len(servers))
 	for _, server := range servers {
 		r.candidateServers[server] = struct{}{}
 	}

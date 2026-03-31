@@ -33,7 +33,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 	// Wire up replication: each node's ReplicateFn calls the backup's DLM directly
 	for _, dlm := range c.nodes {
 		d := dlm // capture
-		d.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+		d.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
 			c.mu.Lock()
 			target, ok := c.nodes[server]
 			c.mu.Unlock()
@@ -41,9 +41,9 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 				return // server is down
 			}
 			if isUnlock {
-				target.RemoveBackupLock(key)
+				target.RemoveBackupLockIfSeq(key, seq)
 			} else {
-				target.InsertBackupLock(key, expiredAtNs, token, owner, generation)
+				target.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
 			}
 		}
 	}
@@ -70,7 +70,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 	c.mu.Unlock()
 
 	// Wire up replication
-	dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+	dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
 		c.mu.Lock()
 		target, ok := c.nodes[server]
 		c.mu.Unlock()
@@ -78,9 +78,9 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 			return
 		}
 		if isUnlock {
-			target.RemoveBackupLock(key)
+			target.RemoveBackupLockIfSeq(key, seq)
 		} else {
-			target.InsertBackupLock(key, expiredAtNs, token, owner, generation)
+			target.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
 		}
 	}
 
@@ -291,16 +291,25 @@ func TestDLM_RollingRestart(t *testing.T) {
 		locks[i] = lockState{key: key, owner: fmt.Sprintf("owner-%d", i), token: token, generation: gen, primary: primary}
 	}
 
-	// Rolling restart: remove and re-add each node one at a time
+	// Rolling restart: remove and re-add each node one at a time.
+	// After removing a node, promote backups and re-replicate to new backups
+	// to maintain the invariant that each lock has a backup copy.
 	for _, host := range hosts {
 		cluster.removeNode(host)
 
-		// Simulate topology change promotion on remaining nodes
+		// Simulate full OnDlmChangeSnapshot: promote backups and re-replicate
 		for _, dlm := range cluster.getNodes() {
 			for _, lock := range dlm.AllLocks() {
 				newPrimary, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
 				if newPrimary == dlm.Host && lock.IsBackup {
 					dlm.PromoteLock(lock.Key)
+				}
+			}
+			// Re-replicate all primary locks to their new backups
+			for _, lock := range dlm.AllLocks() {
+				newPrimary, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+				if newPrimary == dlm.Host && !lock.IsBackup {
+					dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
 				}
 			}
 		}
@@ -312,12 +321,9 @@ func TestDLM_RollingRestart(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// After rolling restart, all locks should be acquirable
-	// (some may have been lost if both primary+backup restarted simultaneously,
-	// but since we restart one at a time, backups should preserve them)
+	// After rolling restart, locks should survive via backup promotion
 	survivedCount := 0
 	for _, ls := range locks {
-		// Try to find the lock on any node
 		for _, dlm := range cluster.getNodes() {
 			lock, found := dlm.GetLock(ls.key)
 			if found && !lock.IsBackup {
@@ -326,8 +332,8 @@ func TestDLM_RollingRestart(t *testing.T) {
 			}
 		}
 	}
-	// In a rolling restart, at least some locks should survive via backup
 	t.Logf("Locks survived rolling restart: %d / %d", survivedCount, len(locks))
+	require.Greater(t, survivedCount, 0, "at least some locks should survive a rolling restart via backup promotion")
 }
 
 func TestDLM_GenerationIncrementsOnNewAcquisition(t *testing.T) {
@@ -362,7 +368,7 @@ func TestDLM_ReplicationFailure_PrimaryStillWorks(t *testing.T) {
 
 	// Break replication by setting a no-op ReplicateFn on all nodes
 	for _, dlm := range cluster.getNodes() {
-		dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+		dlm.ReplicateFn = func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
 			// Simulate replication failure: do nothing
 		}
 	}
@@ -487,4 +493,42 @@ func TestDLM_ConsistentHashing_MinimalDisruption(t *testing.T) {
 	// Only locks from filer2 should have changed
 	assert.Equal(t, countBefore["filer2:8888"], changed,
 		"only locks from removed server should change primary")
+}
+
+func TestDLM_StaleReplicationRejected(t *testing.T) {
+	// Verify that a stale replication (lower seq) does not overwrite a newer one
+	lm := NewLockManager()
+
+	// Insert backup with seq=3
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-new", "owner1", 1, 3)
+	lock, found := lm.GetLock("key1")
+	require.True(t, found)
+	assert.Equal(t, "token-new", lock.Token)
+	assert.Equal(t, int64(3), lock.Seq)
+
+	// Try to overwrite with stale seq=2 — should be rejected
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-old", "owner1", 1, 2)
+	lock, found = lm.GetLock("key1")
+	require.True(t, found)
+	assert.Equal(t, "token-new", lock.Token, "stale replication should be rejected")
+	assert.Equal(t, int64(3), lock.Seq)
+
+	// Update with higher seq=4 — should succeed
+	lm.InsertBackupLock("key1", time.Now().Add(30*time.Second).UnixNano(), "token-newer", "owner1", 1, 4)
+	lock, found = lm.GetLock("key1")
+	require.True(t, found)
+	assert.Equal(t, "token-newer", lock.Token, "newer replication should be accepted")
+	assert.Equal(t, int64(4), lock.Seq)
+
+	// Stale unlock (seq=2) should not delete the lock
+	removed := lm.RemoveBackupLockIfSeq("key1", 2)
+	assert.False(t, removed, "stale unlock should be rejected")
+	_, found = lm.GetLock("key1")
+	assert.True(t, found, "lock should still exist after stale unlock")
+
+	// Valid unlock (seq=5) should delete
+	removed = lm.RemoveBackupLockIfSeq("key1", 5)
+	assert.True(t, removed, "valid unlock should be accepted")
+	_, found = lm.GetLock("key1")
+	assert.False(t, found, "lock should be removed after valid unlock")
 }

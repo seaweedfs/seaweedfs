@@ -14,6 +14,12 @@ const DefaultVnodeCount = 50
 // When a server is removed, only the keys that hashed to that server
 // are remapped (to the next server on the ring), leaving all other
 // key-to-server mappings stable.
+//
+// UPGRADE NOTE: This replaces the previous modulo-based hashing
+// (hash % len(servers)). The two schemes compute different primaries
+// for the same key, so all filer nodes in the cluster must be upgraded
+// together (or via a rolling restart that completes within the lock TTL
+// window of ~7 seconds) to avoid routing disagreements.
 type HashRing struct {
 	mu            sync.RWMutex
 	vnodeCount    int

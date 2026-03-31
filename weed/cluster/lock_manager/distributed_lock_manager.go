@@ -15,7 +15,9 @@ var NoLockServerError = fmt.Errorf("no lock server found")
 
 // ReplicateFunc is called to replicate a lock operation to a backup server.
 // The caller (filer server) provides this to avoid a circular dependency.
-type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool)
+// seq is a per-lock monotonic sequence number for causal ordering — the backup
+// rejects mutations with seq <= its current seq for that key.
+type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool)
 
 type DistributedLockManager struct {
 	lockManager   *LockManager
@@ -42,9 +44,10 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 		movedTo = primary
 		return
 	}
-	lockOwner, renewToken, generation, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	var seq int64
+	lockOwner, renewToken, generation, seq, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 	if err == nil && renewToken != "" {
-		dlm.replicateToBackup(key, expiredAtNs, renewToken, owner, generation, false)
+		dlm.replicateToBackup(key, expiredAtNs, renewToken, owner, generation, seq, false)
 	}
 	return
 }
@@ -76,27 +79,35 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 		return
 	}
 	var isUnlocked bool
-	isUnlocked, err = dlm.lockManager.Unlock(key, token)
+	var seq int64
+	isUnlocked, seq, err = dlm.lockManager.Unlock(key, token)
 	if isUnlocked {
-		dlm.replicateToBackup(key, 0, "", "", 0, true)
+		dlm.replicateToBackup(key, 0, "", "", 0, seq, true)
 	}
 	return
 }
 
-// InsertLock is used to insert a lock to a server unconditionally
-// It is used when a server is down and the lock is moved to another server
-func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string) {
-	dlm.lockManager.InsertLock(key, expiredAtNs, token, owner)
+// InsertLock is used to insert a lock to a server unconditionally.
+// It is used when a server is down and the lock is moved to another server.
+// After inserting, it replicates to the backup for this key.
+func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
+	dlm.lockManager.InsertLock(key, expiredAtNs, token, owner, generation, seq)
+	dlm.replicateToBackup(key, expiredAtNs, token, owner, generation, seq, false)
 }
 
-// InsertBackupLock inserts a lock as a backup copy
-func (dlm *DistributedLockManager) InsertBackupLock(key string, expiredAtNs int64, token string, owner string, generation int64) {
-	dlm.lockManager.InsertBackupLock(key, expiredAtNs, token, owner, generation)
+// InsertBackupLock inserts a lock as a backup copy, rejecting stale seq
+func (dlm *DistributedLockManager) InsertBackupLock(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
+	dlm.lockManager.InsertBackupLock(key, expiredAtNs, token, owner, generation, seq)
 }
 
-// RemoveBackupLock removes a backup lock
+// RemoveBackupLock removes a backup lock unconditionally
 func (dlm *DistributedLockManager) RemoveBackupLock(key string) {
 	dlm.lockManager.RemoveLock(key)
+}
+
+// RemoveBackupLockIfSeq removes a backup lock only if seq >= current
+func (dlm *DistributedLockManager) RemoveBackupLockIfSeq(key string, seq int64) {
+	dlm.lockManager.RemoveBackupLockIfSeq(key, seq)
 }
 
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(servers []pb.ServerAddress) (locks []*Lock) {
@@ -138,12 +149,12 @@ func (dlm *DistributedLockManager) GetLock(key string) (*Lock, bool) {
 }
 
 // replicateToBackup asynchronously replicates a lock operation to the backup server
-func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64, isUnlock bool) {
 	_, backup := dlm.LockRing.GetPrimaryAndBackup(key)
 	if backup == "" {
 		return // single-server deployment, no backup
 	}
 	if dlm.ReplicateFn != nil {
-		go dlm.ReplicateFn(backup, key, expiredAtNs, token, owner, generation, isUnlock)
+		go dlm.ReplicateFn(backup, key, expiredAtNs, token, owner, generation, seq, isUnlock)
 	}
 }

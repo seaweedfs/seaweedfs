@@ -4277,6 +4277,7 @@ type Lock struct {
 	Owner         string                 `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"`
 	Generation    int64                  `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`
 	IsBackup      bool                   `protobuf:"varint,6,opt,name=is_backup,json=isBackup,proto3" json:"is_backup,omitempty"`
+	Seq           int64                  `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4351,6 +4352,13 @@ func (x *Lock) GetIsBackup() bool {
 		return x.IsBackup
 	}
 	return false
+}
+
+func (x *Lock) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type TransferLocksRequest struct {
@@ -4441,6 +4449,7 @@ type ReplicateLockRequest struct {
 	Owner         string                 `protobuf:"bytes,4,opt,name=owner,proto3" json:"owner,omitempty"`
 	Generation    int64                  `protobuf:"varint,5,opt,name=generation,proto3" json:"generation,omitempty"`
 	IsUnlock      bool                   `protobuf:"varint,6,opt,name=is_unlock,json=isUnlock,proto3" json:"is_unlock,omitempty"`
+	Seq           int64                  `protobuf:"varint,7,opt,name=seq,proto3" json:"seq,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4515,6 +4524,13 @@ func (x *ReplicateLockRequest) GetIsUnlock() bool {
 		return x.IsUnlock
 	}
 	return false
+}
+
+func (x *ReplicateLockRequest) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
 }
 
 type ReplicateLockResponse struct {
@@ -5425,7 +5441,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x19\n" +
 	"\bis_moved\x18\x02 \x01(\bR\aisMoved\"-\n" +
 	"\x15FindLockOwnerResponse\x12\x14\n" +
-	"\x05owner\x18\x01 \x01(\tR\x05owner\"\xb2\x01\n" +
+	"\x05owner\x18\x01 \x01(\tR\x05owner\"\xc4\x01\n" +
 	"\x04Lock\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vrenew_token\x18\x02 \x01(\tR\n" +
@@ -5435,10 +5451,11 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\x05 \x01(\x03R\n" +
 	"generation\x12\x1b\n" +
-	"\tis_backup\x18\x06 \x01(\bR\bisBackup\"<\n" +
+	"\tis_backup\x18\x06 \x01(\bR\bisBackup\x12\x10\n" +
+	"\x03seq\x18\a \x01(\x03R\x03seq\"<\n" +
 	"\x14TransferLocksRequest\x12$\n" +
 	"\x05locks\x18\x01 \x03(\v2\x0e.filer_pb.LockR\x05locks\"\x17\n" +
-	"\x15TransferLocksResponse\"\xc2\x01\n" +
+	"\x15TransferLocksResponse\"\xd4\x01\n" +
 	"\x14ReplicateLockRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
 	"\vrenew_token\x18\x02 \x01(\tR\n" +
@@ -5448,7 +5465,8 @@ const file_filer_proto_rawDesc = "" +
 	"\n" +
 	"generation\x18\x05 \x01(\x03R\n" +
 	"generation\x12\x1b\n" +
-	"\tis_unlock\x18\x06 \x01(\bR\bisUnlock\"\x17\n" +
+	"\tis_unlock\x18\x06 \x01(\bR\bisUnlock\x12\x10\n" +
+	"\x03seq\x18\a \x01(\x03R\x03seq\"\x17\n" +
 	"\x15ReplicateLockResponse\"\xe6\x02\n" +
 	"\x18StreamMutateEntryRequest\x12\x1d\n" +
 	"\n" +
