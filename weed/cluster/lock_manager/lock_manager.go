@@ -44,6 +44,33 @@ func (lm *LockManager) NextGeneration() int64 {
 	return lm.nextGeneration.Add(1)
 }
 
+func compareMutationVersion(generation, seq int64, existingGeneration, existingSeq int64) int {
+	switch {
+	case generation < existingGeneration:
+		return -1
+	case generation > existingGeneration:
+		return 1
+	case seq < existingSeq:
+		return -1
+	case seq > existingSeq:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func (lm *LockManager) advanceGenerationFloor(generation int64) {
+	for {
+		current := lm.nextGeneration.Load()
+		if generation < current {
+			return
+		}
+		if lm.nextGeneration.CompareAndSwap(current, generation) {
+			return
+		}
+	}
+}
+
 func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, generation int64, seq int64, err error) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
@@ -106,7 +133,7 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 	}
 }
 
-func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, seq int64, err error) {
+func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, generation int64, seq int64, err error) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -115,6 +142,7 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, seq i
 		if oldValue.ExpiredAtNs > 0 && oldValue.ExpiredAtNs < now.UnixNano() {
 			// lock is expired, delete it
 			isUnlocked = true
+			generation = oldValue.Generation
 			seq = oldValue.Seq + 1
 			glog.V(4).Infof("key %s expired at %v", path, time.Unix(0, oldValue.ExpiredAtNs))
 			delete(lm.locks, path)
@@ -122,6 +150,7 @@ func (lm *LockManager) Unlock(path string, token string) (isUnlocked bool, seq i
 		}
 		if oldValue.Token == token {
 			isUnlocked = true
+			generation = oldValue.Generation
 			seq = oldValue.Seq + 1
 			glog.V(4).Infof("key %s unlocked with %v", path, token)
 			delete(lm.locks, path)
@@ -185,34 +214,43 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if existing, found := lm.locks[path]; found && seq <= existing.Seq {
-		glog.V(4).Infof("lock %s: rejecting stale transfer seq %d (current %d)", path, seq, existing.Seq)
-		return false
+	if existing, found := lm.locks[path]; found {
+		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) <= 0 {
+			glog.V(4).Infof("lock %s: rejecting stale transfer gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
+			return false
+		}
 	}
 	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
-	if cur := lm.nextGeneration.Load(); generation >= cur {
-		lm.nextGeneration.Store(generation)
-	}
+	lm.advanceGenerationFloor(generation)
 	return true
 }
 
 // InsertBackupLock inserts or updates a lock as a backup copy.
-// It rejects stale mutations: if the incoming seq is <= the current seq, the update is ignored.
+// It rejects stale mutations by comparing (generation, seq). If a current primary
+// already exists on this node, newer replicated state refreshes that primary copy
+// without demoting it back to a backup.
 func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if existing, found := lm.locks[path]; found && existing.IsBackup && seq <= existing.Seq {
-		// Stale replication — ignore
-		glog.V(4).Infof("backup lock %s: rejecting stale seq %d (current %d)", path, seq, existing.Seq)
+	if existing, found := lm.locks[path]; found {
+		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) <= 0 {
+			glog.V(4).Infof("backup lock %s: rejecting stale gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
+			return
+		}
+		lm.locks[path] = &Lock{
+			Token:       token,
+			ExpiredAtNs: expiredAtNs,
+			Owner:       owner,
+			IsBackup:    existing.IsBackup,
+			Generation:  generation,
+			Seq:         seq,
+		}
+		lm.advanceGenerationFloor(generation)
 		return
 	}
 	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
-	// Advance nextGeneration so that after failover promotion, new locks
-	// get a generation strictly greater than any replicated lock.
-	if cur := lm.nextGeneration.Load(); generation >= cur {
-		lm.nextGeneration.Store(generation)
-	}
+	lm.advanceGenerationFloor(generation)
 }
 
 // RemoveLock removes a lock by key
@@ -222,22 +260,21 @@ func (lm *LockManager) RemoveLock(path string) {
 	delete(lm.locks, path)
 }
 
-// RemoveBackupLockIfSeq removes a backup lock only if the seq matches or exceeds the current seq.
-// This prevents a late-arriving unlock replication from deleting a newer lock.
-func (lm *LockManager) RemoveBackupLockIfSeq(path string, seq int64) bool {
+// RemoveBackupLockIfSeq removes the local copy only if the incoming mutation is
+// not older than the current (generation, seq). This prevents a late unlock from
+// deleting a newer reacquired lock whose seq has reset.
+func (lm *LockManager) RemoveBackupLockIfSeq(path string, generation int64, seq int64) bool {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
-	if existing, found := lm.locks[path]; found && existing.IsBackup {
-		if seq >= existing.Seq {
+	if existing, found := lm.locks[path]; found {
+		if compareMutationVersion(generation, seq, existing.Generation, existing.Seq) >= 0 {
 			delete(lm.locks, path)
 			return true
 		}
-		glog.V(4).Infof("backup lock %s: rejecting stale unlock seq %d (current %d)", path, seq, existing.Seq)
+		glog.V(4).Infof("backup lock %s: rejecting stale unlock gen=%d seq=%d (current gen=%d seq=%d)", path, generation, seq, existing.Generation, existing.Seq)
 		return false
 	}
-	// Not found or not a backup — remove anyway
-	delete(lm.locks, path)
 	return true
 }
 

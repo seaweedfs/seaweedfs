@@ -97,10 +97,11 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 		// If we still hold this lock locally, serve the unlock here
 		if lock, found := dlm.lockManager.GetLock(key); found && !lock.IsBackup && lock.Token == token {
 			var isUnlocked bool
+			var generation int64
 			var seq int64
-			isUnlocked, seq, err = dlm.lockManager.Unlock(key, token)
+			isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
 			if isUnlocked {
-				dlm.replicateToBackup(key, 0, "", "", 0, seq, true)
+				dlm.replicateToBackup(key, 0, "", "", generation, seq, true)
 			}
 			return
 		}
@@ -108,10 +109,11 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 		return
 	}
 	var isUnlocked bool
+	var generation int64
 	var seq int64
-	isUnlocked, seq, err = dlm.lockManager.Unlock(key, token)
+	isUnlocked, generation, seq, err = dlm.lockManager.Unlock(key, token)
 	if isUnlocked {
-		dlm.replicateToBackup(key, 0, "", "", 0, seq, true)
+		dlm.replicateToBackup(key, 0, "", "", generation, seq, true)
 	}
 	return
 }
@@ -135,9 +137,9 @@ func (dlm *DistributedLockManager) RemoveBackupLock(key string) {
 	dlm.lockManager.RemoveLock(key)
 }
 
-// RemoveBackupLockIfSeq removes a backup lock only if seq >= current
-func (dlm *DistributedLockManager) RemoveBackupLockIfSeq(key string, seq int64) {
-	dlm.lockManager.RemoveBackupLockIfSeq(key, seq)
+// RemoveBackupLockIfSeq removes a local copy only if the incoming mutation is not older.
+func (dlm *DistributedLockManager) RemoveBackupLockIfSeq(key string, generation int64, seq int64) {
+	dlm.lockManager.RemoveBackupLockIfSeq(key, generation, seq)
 }
 
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(servers []pb.ServerAddress) (locks []*Lock) {

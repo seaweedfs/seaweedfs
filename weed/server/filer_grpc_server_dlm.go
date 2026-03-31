@@ -147,8 +147,8 @@ func (fs *FilerServer) TransferLocks(ctx context.Context, req *filer_pb.Transfer
 // Uses seq for causal ordering — rejects stale mutations.
 func (fs *FilerServer) ReplicateLock(ctx context.Context, req *filer_pb.ReplicateLockRequest) (*filer_pb.ReplicateLockResponse, error) {
 	if req.IsUnlock {
-		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Seq)
-		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s seq=%d", req.Name, req.Seq)
+		fs.filer.Dlm.RemoveBackupLockIfSeq(req.Name, req.Generation, req.Seq)
+		glog.V(4).Infof("FILER REPLICATE: removed backup lock %s generation=%d seq=%d", req.Name, req.Generation, req.Seq)
 	} else {
 		fs.filer.Dlm.InsertBackupLock(req.Name, req.ExpiredAtNs, req.RenewToken, req.Owner, req.Generation, req.Seq)
 		glog.V(4).Infof("FILER REPLICATE: inserted backup lock %s owner=%s generation=%d seq=%d", req.Name, req.Owner, req.Generation, req.Seq)
