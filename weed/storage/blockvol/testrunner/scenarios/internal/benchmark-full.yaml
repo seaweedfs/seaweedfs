@@ -1,0 +1,222 @@
+name: benchmark-full
+timeout: 8m
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: bench-full
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # Phase 1: Clean environment
+  - name: cleanup
+    actions:
+      - action: pre_run_cleanup
+        node: m01
+        kill_patterns: "weed,postgres"
+        unmount: "/mnt/sw-bench"
+        nvme_disconnect: "true"
+      - action: pre_run_cleanup
+        node: m02
+        kill_patterns: "weed"
+
+  # Phase 2: Start cluster (M02 master + VS, m01 VS for RF=2)
+  - name: cluster
+    actions:
+      - action: exec
+        node: m02
+        cmd: "rm -rf /tmp/bench-master /tmp/bench-vs1 && mkdir -p /tmp/bench-master /tmp/bench-vs1/blocks"
+        root: "true"
+      - action: exec
+        node: m01
+        cmd: "rm -rf /tmp/bench-vs2 && mkdir -p /tmp/bench-vs2/blocks"
+        root: "true"
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/bench-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/bench-vs1
+        extra_args: "-block.dir=/tmp/bench-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4430 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18481"
+        master: "192.168.1.184:9433"
+        dir: /tmp/bench-vs2
+        extra_args: "-block.dir=/tmp/bench-vs2/blocks -block.listen=:3296 -block.nvme.enable=true -block.nvme.listen=10.0.0.1:4431 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 5s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  # Phase 3: Create RF=2 sync_all volume
+  - name: create
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: sync_all
+      - action: sleep
+        duration: 10s
+
+  # Phase 4: Wait for volume to be healthy (shipper InSync)
+  - name: wait-healthy
+    actions:
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: "60s"
+
+  # Phase 5: Validate replication config
+  - name: validate-replication
+    actions:
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: sync_all
+
+  # Phase 5: Report header
+  - name: report
+    actions:
+      - action: benchmark_report
+        volume_name: "{{ volume_name }}"
+        protocol: nvme-tcp
+        client_node: m01
+        save_as: bench_header
+
+  # Phase 6: Connect NVMe
+  - name: connect
+    actions:
+      - action: nvme_connect_direct
+        node: m01
+        target_addr: "10.0.0.1"
+        target_port: "4431"
+        nqn: "nqn.2024-01.com.seaweedfs:vol.{{ volume_name }}"
+        expected_size: "2G"
+        save_as: device
+      - action: print
+        msg: "Device: {{ device }}"
+
+  # Phase 7: mkfs + mount FIRST (before any fio)
+  - name: mkfs-mount
+    actions:
+      - action: exec
+        node: m01
+        cmd: "mkfs.ext4 -F -E nodiscard {{ device }} && mkdir -p /mnt/sw-bench && mount -o nodiscard {{ device }} /mnt/sw-bench && echo MOUNTED"
+        root: "true"
+        save_as: mount_result
+      - action: assert_contains
+        actual: "{{ mount_result }}"
+        expected: "MOUNTED"
+
+  # Phase 9: Preflight (verify mount + device)
+  - name: preflight
+    actions:
+      - action: benchmark_preflight
+        node: m01
+        volume_name: "{{ volume_name }}"
+        mount_path: /mnt/sw-bench
+        device: "{{ device }}"
+
+  # Phase 10: pgbench
+  - name: pgbench
+    actions:
+      - action: exec
+        node: m01
+        cmd: "mkdir -p /mnt/sw-bench/pgdata && chown postgres:postgres /mnt/sw-bench/pgdata && sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /mnt/sw-bench/pgdata > /dev/null 2>&1 && sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /mnt/sw-bench/pgdata -o '-p 5588 -k /tmp' -l /tmp/pg.log start && sleep 2 && sudo -u postgres createdb -p 5588 -h /tmp pgbench 2>/dev/null && sudo -u postgres pgbench -p 5588 -h /tmp -i -s 10 pgbench > /dev/null 2>&1 && echo PG_READY"
+        root: "true"
+        save_as: pg_status
+
+      - action: exec
+        node: m01
+        cmd: "sudo -u postgres pgbench -p 5588 -h /tmp -c 4 -j 2 -T 30 pgbench 2>&1 | grep 'tps = ' | awk '{print $3}'"
+        root: "true"
+        save_as: pgbench_tps
+        timeout: 60s
+
+      - action: print
+        msg: "pgbench TPS: {{ pgbench_tps }}"
+
+  # Phase 11: Postcheck
+  - name: postcheck
+    actions:
+      - action: benchmark_postcheck
+        node: m01
+        volume_name: "{{ volume_name }}"
+        mount_path: /mnt/sw-bench
+        device: "{{ device }}"
+        pgdata_path: /mnt/sw-bench/pgdata
+        save_as: postcheck_result
+      - action: print
+        msg: "Postcheck: {{ postcheck_result }}"
+
+  # Phase 12: Collect results as markdown
+  - name: results
+    actions:
+      - action: collect_results
+        volume_name: "{{ volume_name }}"
+        title: "Benchmark: sync_all RF=2 NVMe/TCP"
+        write_iops: write_iops
+        read_iops: read_iops
+        pgbench_tps: pgbench_tps
+        postcheck: postcheck_result
+        save_as: report_md
+
+  # Phase 13: Teardown (always runs)
+  - name: teardown
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "sudo -u postgres /usr/lib/postgresql/16/bin/pg_ctl -D /mnt/sw-bench/pgdata -m fast stop 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+
+      - action: pre_run_cleanup
+        node: m01
+        kill_patterns: "postgres"
+        unmount: "/mnt/sw-bench"
+        nvme_disconnect: "true"
+
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

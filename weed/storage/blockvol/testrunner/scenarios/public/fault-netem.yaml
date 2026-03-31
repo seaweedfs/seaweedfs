@@ -1,0 +1,88 @@
+name: fault-netem
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: fault-netem-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    iqn_suffix: fault-netem-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 30s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: inject_delay
+    actions:
+      - action: inject_netem
+        node: target_node
+        target_ip: "127.0.0.1"
+        delay_ms: "200"
+
+  - name: write_under_delay
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        count: "10"
+        save_as: written_md5
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        type: netem
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

@@ -14,7 +14,17 @@ import (
 	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/actions"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/infra"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/packs/block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/packs/kv"
 )
+
+// registerAll registers core actions + all product packs.
+// This is the single composition point — add new packs here.
+func registerAll(r *tr.Registry) {
+	actions.RegisterCore(r)
+	block.RegisterPack(r)
+	kv.RegisterPack(r)
+}
 
 func main() {
 	if len(os.Args) < 2 {
@@ -93,12 +103,14 @@ Console flags:
 
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
-	outputPath := fs.String("output", "", "Write JSON results to file")
-	junitPath := fs.String("junit", "", "Write JUnit XML to file")
-	htmlPath := fs.String("html", "", "Write HTML report to file")
+	outputPath := fs.String("output", "", "Write JSON results to file (also written to run bundle)")
+	junitPath := fs.String("junit", "", "Write JUnit XML to file (also written to run bundle)")
+	htmlPath := fs.String("html", "", "Write HTML report to file (also written to run bundle)")
 	baselinePath := fs.String("baseline", "", "Compare against baseline JSON")
 	artifactsDir := fs.String("artifacts", "", "Collect artifacts on failure to this directory")
 	tiers := fs.String("tiers", "", "Comma-separated list of enabled tiers (core,block,devops,chaos)")
+	resultsDir := fs.String("results-dir", "results", "Root directory for per-run result bundles")
+	noBundle := fs.Bool("no-bundle", false, "Disable automatic run bundle creation")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
@@ -114,13 +126,29 @@ func runCmd(args []string) {
 		logger.Fatalf("parse scenario: %v", err)
 	}
 
+	// Create run bundle (automatic unless --no-bundle).
+	var bundle *tr.RunBundle
+	if !*noBundle {
+		bundle, err = tr.CreateRunBundle(*resultsDir, scenarioFile, os.Args)
+		if err != nil {
+			logger.Printf("warning: failed to create run bundle: %v (continuing without)", err)
+		} else {
+			logger.Printf("run bundle: %s", bundle.Dir)
+			// Inject run_id into scenario env so phases can use {{ run_id }} for data namespacing.
+			if scenario.Env == nil {
+				scenario.Env = make(map[string]string)
+			}
+			scenario.Env["run_id"] = bundle.Manifest.RunID
+		}
+	}
+
 	// Set up signal handling.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
 	// Create registry with all actions.
 	registry := tr.NewRegistry()
-	actions.RegisterAll(registry)
+	registerAll(registry)
 	if *tiers != "" {
 		registry.EnableTiers(parseTiers(*tiers))
 	}
@@ -139,34 +167,52 @@ func runCmd(args []string) {
 	}
 	defer cleanupNodes(actx)
 
+	// Cluster lifecycle: try attach, fall back to managed if needed.
+	clusterMgr := tr.NewClusterManager(scenario.Cluster, logFunc)
+	if err := clusterMgr.Setup(ctx, actx); err != nil {
+		logger.Fatalf("cluster setup: %v", err)
+	}
+	defer clusterMgr.Teardown(ctx)
+
+	if clusterMgr.Skipped() {
+		logger.Printf("scenario skipped: cluster not available (fallback=skip)")
+		os.Exit(0)
+	}
+
+	// If bundle has an artifacts dir, use it as the default.
+	if bundle != nil && *artifactsDir == "" {
+		*artifactsDir = bundle.ArtifactsDir()
+	}
+
 	// Run scenario.
 	result := engine.Run(ctx, scenario, actx)
 
 	// Print summary.
 	tr.PrintSummary(os.Stdout, result)
 
-	// Write outputs.
+	// Finalize run bundle (always writes result.json, result.xml, result.html).
+	if bundle != nil {
+		if err := bundle.Finalize(result); err != nil {
+			logger.Printf("warning: finalize run bundle: %v", err)
+		} else {
+			logger.Printf("run bundle finalized: %s", bundle.Dir)
+		}
+	}
+
+	// Write explicit output files (in addition to the bundle).
 	if *outputPath != "" {
 		if err := tr.WriteJSON(result, *outputPath); err != nil {
 			logger.Printf("write JSON: %v", err)
-		} else {
-			logger.Printf("JSON results written to %s", *outputPath)
 		}
 	}
-
 	if *junitPath != "" {
 		if err := tr.WriteJUnitXML(result, *junitPath); err != nil {
 			logger.Printf("write JUnit: %v", err)
-		} else {
-			logger.Printf("JUnit XML written to %s", *junitPath)
 		}
 	}
-
 	if *htmlPath != "" {
 		if err := tr.WriteHTMLReport(result, *htmlPath); err != nil {
 			logger.Printf("write HTML: %v", err)
-		} else {
-			logger.Printf("HTML report written to %s", *htmlPath)
 		}
 	}
 
@@ -254,7 +300,7 @@ func coordinatorCmd(args []string) {
 
 	// Create registry.
 	registry := tr.NewRegistry()
-	actions.RegisterAll(registry)
+	registerAll(registry)
 	if *coordTiers != "" {
 		registry.EnableTiers(parseTiers(*coordTiers))
 	}
@@ -344,7 +390,7 @@ func agentCmd(args []string) {
 
 	// Create registry.
 	registry := tr.NewRegistry()
-	actions.RegisterAll(registry)
+	registerAll(registry)
 
 	// Create agent.
 	agent := tr.NewAgent(tr.AgentConfig{
@@ -379,7 +425,7 @@ func consoleCmd(args []string) {
 	logger := log.New(os.Stderr, "[console] ", log.LstdFlags)
 
 	registry := tr.NewRegistry()
-	actions.RegisterAll(registry)
+	registerAll(registry)
 	if *consoleTiers != "" {
 		registry.EnableTiers(parseTiers(*consoleTiers))
 	}
@@ -423,7 +469,7 @@ func listCmd() {
 	fs.Parse(os.Args[2:])
 
 	registry := tr.NewRegistry()
-	actions.RegisterAll(registry)
+	registerAll(registry)
 	if *listTiers != "" {
 		registry.EnableTiers(parseTiers(*listTiers))
 	}

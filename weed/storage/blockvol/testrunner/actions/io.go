@@ -40,7 +40,7 @@ func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 		oflag = "direct"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +96,7 @@ func ddReadMD5(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		count = "1"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -136,7 +136,7 @@ func fioAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		return nil, fmt.Errorf("fio: device param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +181,7 @@ func fioVerify(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 		return nil, fmt.Errorf("fio_verify: device param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -216,7 +216,7 @@ func mkfsAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map
 		fstype = "ext4"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func mountAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 		mountpoint = "/mnt/test"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ func umountAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 		mountpoint = "/mnt/test"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -286,7 +286,7 @@ func writeLoopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 		oflag = "direct"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -318,7 +318,7 @@ func stopBg(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[str
 		return nil, fmt.Errorf("stop_bg: pid param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}

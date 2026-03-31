@@ -1,0 +1,138 @@
+name: ha-rebuild
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    rebuild_port: 9020
+    iqn_suffix: rebuild-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    rebuild_port: 9013
+    iqn_suffix: rebuild-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 30s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: write_data
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: written_md5
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: kill_replica
+    actions:
+      - action: kill_target
+        target: replica
+
+  - name: rebuild
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: rebuilding
+        lease_ttl: 30s
+      # Rebuild server auto-starts via rebuild_port in target spec.
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "1"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+
+  - name: verify_rebuild
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 30s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ written_md5 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

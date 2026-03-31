@@ -1,0 +1,159 @@
+# ha-wal-pressure-failover.yaml
+#
+# W2: WAL Pressure + Failover
+#
+# Purpose: Verify that failover under WAL admission backpressure produces no
+# data loss or deadlock. The test writes a known 5M block (dd_write) for
+# checksumming, then hammers the primary with 4K random writes (fio, QD=32,
+# numjobs=4) to saturate WAL admission. While the WAL is under pressure the
+# primary is killed and the replica is promoted. The test then verifies that
+# the original dd-written data survives the failover intact.
+#
+# Priority: P1
+# Infra: m01 (client 192.168.1.181) + M02 (target 192.168.1.184)
+
+name: ha-wal-pressure-failover
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    wal_size: 8M
+    iscsi_port: 3290
+    admin_port: 8097
+    replica_data_port: 9051
+    replica_ctrl_port: 9052
+    rebuild_port: 9055
+    iqn_suffix: wal-pressure-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    wal_size: 8M
+    iscsi_port: 3291
+    admin_port: 8098
+    replica_data_port: 9053
+    replica_ctrl_port: 9054
+    rebuild_port: 9056
+    iqn_suffix: wal-pressure-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 120s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 120s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: write_known_data
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        save_as: written_md5
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 15s
+
+  - name: wal_pressure
+    actions:
+      # Saturate WAL admission with 4K random writes (small WAL = 8M triggers
+      # backpressure quickly). fio runs for 15s which is enough to fill the
+      # WAL multiple times over.
+      - action: fio
+        node: client_node
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "4"
+        runtime: "15"
+        size: 90M
+        name: wal_pressure_writes
+        save_as: fio_pressure
+
+  - name: failover
+    actions:
+      # Kill primary while WAL may still be under pressure from recent fio
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 120s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 10s
+
+  - name: verify
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      # Read back the original 5M block written before fio pressure
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ written_md5 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

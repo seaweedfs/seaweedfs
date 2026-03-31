@@ -1,0 +1,12 @@
+# Template: KV write + verify cycle.
+# Params: node, size (default 64K)
+# Assigns a fid, uploads random data, downloads, asserts md5 match, deletes.
+phases:
+  - name: kv_write_verify
+    actions:
+      - action: kv_verify
+        node: "{{ node }}"
+        size: "{{ size }}"
+        save_as: kv_result
+      - action: print
+        msg: "kv write/verify: {{ size }} — OK"

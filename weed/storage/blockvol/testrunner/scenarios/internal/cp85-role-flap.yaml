@@ -1,0 +1,355 @@
+name: cp85-role-flap
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3270
+    admin_port: 8090
+    replica_data_port: 9034
+    replica_ctrl_port: 9035
+    rebuild_port: 9030
+    iqn_suffix: cp85-flap-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-flap-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # 10 rapid role swaps via demote+promote.
+  # Each swap: demote current primary to stale, promote replica to primary.
+
+  # Swap 1: primary -> stale, replica -> primary
+  - name: swap_1
+    actions:
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: replica
+        replica: primary
+      - action: sleep
+        duration: 500ms
+
+  # Swap 2: replica(now primary) -> stale, primary(now stale) -> need to become replica first
+  # The stale node needs: stale -> rebuilding -> (rebuild) -> replica -> primary
+  # This is too complex for a flap test. Instead, after demote we go:
+  # stale -> rebuilding -> (instant rebuild) -> replica
+  # But that requires actual rebuild which is slow.
+  #
+  # Simpler approach: after demotion, assign stale -> none (restart), then none -> replica/primary.
+  # Actually: let's just do demote+promote cycles where we always keep the same primary.
+  # The test goal is to verify no panic under rapid assign calls.
+
+  # Swap 2: restore original — demote replica(primary) back, re-promote primary(stale)
+  # stale -> none is not a valid transition either. Let's check what transitions from stale are valid:
+  # Stale -> Rebuilding
+  # So we need: primary(stale) -> rebuilding -> rebuild -> replica, then swap back
+  # This makes role-flap very slow (each swap requires a full rebuild).
+  #
+  # Let's redesign: rapid epoch bumps on same role + rapid stale/promote cycles.
+  # Swap 1: primary demotes to stale, replica promotes
+  # Swap 2: replica(now primary) demotes to stale, but primary(stale) can't become primary directly
+  #
+  # The correct design: use kill+restart to reset role to None, then reassign.
+
+  - name: swap_2
+    actions:
+      # Kill stale primary, restart with fresh role
+      - action: kill_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "true"
+      # Demote current primary (replica target) to stale
+      - action: assign
+        target: replica
+        epoch: "3"
+        role: stale
+        lease_ttl: 60s
+      # Assign restarted primary as replica, then promote
+      - action: assign
+        target: primary
+        epoch: "3"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "3"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_3
+    actions:
+      - action: kill_target
+        target: replica
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "4"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "4"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "4"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_4
+    actions:
+      - action: kill_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "5"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "5"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "5"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_5
+    actions:
+      - action: kill_target
+        target: replica
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "6"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "6"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "6"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_6
+    actions:
+      - action: kill_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "7"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "7"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "7"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_7
+    actions:
+      - action: kill_target
+        target: replica
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "8"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "8"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "8"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_8
+    actions:
+      - action: kill_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "9"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "9"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "9"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_9
+    actions:
+      - action: kill_target
+        target: replica
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "10"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "10"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: replica
+        epoch: "10"
+        role: primary
+        lease_ttl: 60s
+      - action: sleep
+        duration: 500ms
+
+  - name: swap_10
+    actions:
+      - action: kill_target
+        target: primary
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "11"
+        role: stale
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "11"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "11"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: verify_no_panic
+    actions:
+      # Verify final state is consistent.
+      - action: assert_status
+        target: primary
+        role: primary
+        healthy: "true"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

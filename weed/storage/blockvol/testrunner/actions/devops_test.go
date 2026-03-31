@@ -43,8 +43,8 @@ func TestDevOpsActions_Tier(t *testing.T) {
 	byTier := registry.ListByTier()
 	devopsActions := byTier[tr.TierDevOps]
 
-	if len(devopsActions) != 15 {
-		t.Errorf("devops tier has %d actions, want 15", len(devopsActions))
+	if len(devopsActions) != 16 {
+		t.Errorf("devops tier has %d actions, want 16", len(devopsActions))
 	}
 
 	// Verify all are in devops tier.
@@ -80,19 +80,28 @@ func TestDevOpsActions_TierGating(t *testing.T) {
 
 func TestAllActions_Registration(t *testing.T) {
 	registry := tr.NewRegistry()
-	RegisterAll(registry)
+	RegisterCore(registry)
+	RegisterBlockActions(registry)
+	RegisterISCSIActions(registry)
+	RegisterNVMeActions(registry)
+	RegisterIOActions(registry)
+	RegisterDevOpsActions(registry)
+	RegisterSnapshotActions(registry)
+	RegisterDatabaseActions(registry)
+	RegisterMetricsActions(registry)
+	RegisterK8sActions(registry)
 
 	byTier := registry.ListByTier()
 
 	// Verify tier counts.
-	if n := len(byTier[tr.TierCore]); n != 11 {
-		t.Errorf("core: %d, want 11", n)
+	if n := len(byTier[tr.TierCore]); n != 17 {
+		t.Errorf("core: %d, want 17", n)
 	}
-	if n := len(byTier[tr.TierBlock]); n != 58 {
-		t.Errorf("block: %d, want 58", n)
+	if n := len(byTier[tr.TierBlock]); n != 62 {
+		t.Errorf("block: %d, want 62", n)
 	}
-	if n := len(byTier[tr.TierDevOps]); n != 15 {
-		t.Errorf("devops: %d, want 15", n)
+	if n := len(byTier[tr.TierDevOps]); n != 16 {
+		t.Errorf("devops: %d, want 16", n)
 	}
 	if n := len(byTier[tr.TierChaos]); n != 5 {
 		t.Errorf("chaos: %d, want 5", n)
@@ -101,13 +110,13 @@ func TestAllActions_Registration(t *testing.T) {
 		t.Errorf("k8s: %d, want 14", n)
 	}
 
-	// Total should be 103 (99 prev + 4 devops: wait_block_primary, assert_block_field, block_status, block_promote).
+	// Total should be 114 (112 prev + 2 recovery: measure_recovery, validate_recovery_regression).
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 103 {
-		t.Errorf("total actions: %d, want 103", total)
+	if total != 114 {
+		t.Errorf("total actions: %d, want 114", total)
 	}
 }
 

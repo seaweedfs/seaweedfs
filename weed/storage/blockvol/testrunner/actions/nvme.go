@@ -33,12 +33,12 @@ func nvmeConnect(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 		return nil, fmt.Errorf("nvme_connect: target %q not in scenario", targetName)
 	}
 
-	host, err := getTargetHost(actx, targetName)
+	host, err := GetTargetHost(actx, targetName)
 	if err != nil {
 		return nil, err
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("nvme_connect: %w", err)
 	}
@@ -77,7 +77,7 @@ func nvmeDisconnect(ctx context.Context, actx *tr.ActionContext, act tr.Action) 
 		return nil, fmt.Errorf("nvme_disconnect: target %q not in scenario", targetName)
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("nvme_disconnect: %w", err)
 	}
@@ -113,7 +113,7 @@ func nvmeGetDevice(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 		return nil, fmt.Errorf("nvme_get_device: target %q not in scenario", targetName)
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("nvme_get_device: %w", err)
 	}
@@ -147,7 +147,7 @@ func nvmeGetDevice(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 
 // nvmeCleanup disconnects all NVMe/TCP subsystems matching our prefix.
 func nvmeCleanup(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("nvme_cleanup: %w", err)
 	}

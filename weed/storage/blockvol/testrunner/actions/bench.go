@@ -18,6 +18,7 @@ func RegisterBenchActions(r *tr.Registry) {
 	r.RegisterFunc("fio_parse", tr.TierCore, fioParse)
 	r.RegisterFunc("bench_compare", tr.TierCore, benchCompare)
 	r.RegisterFunc("bench_stats", tr.TierCore, benchStats)
+	registerBenchmarkValidation(r)
 }
 
 // fioJSON runs fio with JSON output. Supports numjobs for multi-queue testing.
@@ -47,7 +48,7 @@ func fioJSON(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 	size := paramDefault(act.Params, "size", "256M")
 	name := paramDefault(act.Params, "name", "bench")
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}

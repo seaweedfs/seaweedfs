@@ -1,0 +1,91 @@
+name: "CP10-3 NVMe 1-Hour Soak"
+timeout: "75m"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: "testdev"
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  primary:
+    node: server
+    vol_size: "1G"
+    wal_size: "512M"
+    iscsi_port: 3270
+    nvme_port: 4430
+    admin_port: 8090
+    iqn_suffix: "soak-nvme"
+    nqn_suffix: "soak-nvme"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: start_target
+        target: primary
+        create: "true"
+
+  - name: nvme-connect
+    actions:
+      - action: nvme_connect
+        target: primary
+        node: client
+        save_as: nvme_nqn
+      - action: nvme_get_device
+        target: primary
+        node: client
+        save_as: nvme_device
+
+  # 12 x 5-minute segments = 60 minutes
+  # Each segment: mixed read/write workload
+  - name: soak-segment
+    repeat: 12
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randrw
+        bs: 4k
+        iodepth: "16"
+        numjobs: "1"
+        runtime: "300"
+        name: "nvme-soak-rw"
+        save_as: _soak_fio
+      - action: fio_parse
+        json_var: _soak_fio
+        metric: iops
+        save_as: soak_iops
+
+  - name: nvme-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: primary
+        node: client
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

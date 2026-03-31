@@ -1087,3 +1087,49 @@ phases:
 		})
 	}
 }
+
+// TestEngine_EnvMerge_ExistingVarsWin verifies that existing actx.Vars
+// survive engine.Run's env seeding (merge, not overwrite).
+// This is critical for cluster manager: it sets master_url before Run,
+// and Run must not overwrite it from scenario.Env.
+func TestEngine_EnvMerge_ExistingVarsWin(t *testing.T) {
+	registry := NewRegistry()
+	registry.RegisterFunc("print", TierCore, func(ctx context.Context, actx *ActionContext, act Action) (map[string]string, error) {
+		return map[string]string{"value": actx.Vars["master_url"]}, nil
+	})
+
+	scenario := &Scenario{
+		Name:    "merge-test",
+		Timeout: Duration{30 * time.Second},
+		Env:     map[string]string{"master_url": "http://env-value:9333", "other": "from-env"},
+		Phases: []Phase{
+			{Name: "check", Actions: []Action{
+				{Action: "print", SaveAs: "result"},
+			}},
+		},
+	}
+
+	actx := &ActionContext{
+		Scenario: scenario,
+		Vars:     map[string]string{"master_url": "http://cluster-manager:9520"},
+		Nodes:    map[string]NodeRunner{},
+		Targets:  map[string]TargetRunner{},
+		Log:      t.Logf,
+	}
+
+	engine := NewEngine(registry, t.Logf)
+	result := engine.Run(context.Background(), scenario, actx)
+
+	if result.Status != StatusPass {
+		t.Fatalf("status=%s, error=%s", result.Status, result.Error)
+	}
+
+	// master_url should be the cluster manager's value, NOT the env value.
+	if actx.Vars["master_url"] != "http://cluster-manager:9520" {
+		t.Fatalf("master_url overwritten: got %q, want http://cluster-manager:9520", actx.Vars["master_url"])
+	}
+	// other should come from env (no pre-existing value).
+	if actx.Vars["other"] != "from-env" {
+		t.Fatalf("other: got %q, want from-env", actx.Vars["other"])
+	}
+}

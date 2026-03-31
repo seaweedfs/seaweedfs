@@ -1,0 +1,118 @@
+name: e2e-kv
+timeout: 3m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9510"
+
+# End-to-end KV test: M02 runs the cluster, m01 is the client.
+# Proves assign/upload/download across a real network.
+
+topology:
+  nodes:
+    server:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: server
+      - action: exec
+        node: server
+        cmd: "rm -rf /tmp/sw-e2e-kv-master /tmp/sw-e2e-kv-vs1"
+        root: "true"
+
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: server
+        cmd: "mkdir -p /tmp/sw-e2e-kv-master /tmp/sw-e2e-kv-vs1"
+      - action: start_weed_master
+        node: server
+        port: "9510"
+        dir: "/tmp/sw-e2e-kv-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: server
+        master_url: "http://localhost:9510"
+        timeout: 30s
+      - action: start_weed_volume
+        node: server
+        port: "18310"
+        master: "localhost:9510"
+        dir: "/tmp/sw-e2e-kv-vs1"
+        extra_args: "-ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: sleep
+        duration: 3s
+
+  - name: e2e_write_read
+    actions:
+      # Client (m01) assigns via master on M02.
+      - action: kv_assign
+        node: client
+        master_url: "http://192.168.1.184:9510"
+        save_as: file1
+      - action: print
+        msg: "assigned fid={{ file1_fid }} url={{ file1_url }}"
+
+      # Client uploads 64KB random data to volume server on M02.
+      - action: kv_upload
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        size: "64K"
+        save_as: upload_md5
+      - action: print
+        msg: "upload md5={{ upload_md5 }}"
+
+      # Client downloads and verifies md5 — proves data crosses the network intact.
+      - action: kv_download
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        save_as: download_md5
+      - action: assert_equal
+        actual: "{{ download_md5 }}"
+        expected: "{{ upload_md5 }}"
+      - action: print
+        msg: "download md5={{ download_md5 }} — MATCH"
+
+      # Second file: larger (1MB).
+      - action: kv_verify
+        node: client
+        master_url: "http://192.168.1.184:9510"
+        size: "1M"
+        save_as: verify_1m
+
+      # Delete first file.
+      - action: kv_delete
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+
+      - action: print
+        msg: "e2e KV: m01→M02 assign/upload/download/verify/delete — ALL OK"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_weed
+        node: server
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: server
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: server
+        cmd: "rm -rf /tmp/sw-e2e-kv-master /tmp/sw-e2e-kv-vs1"
+        root: "true"
+        ignore_error: true

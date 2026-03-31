@@ -32,7 +32,7 @@ func sqliteCreateDB(ctx context.Context, actx *tr.ActionContext, act tr.Action) 
 		table = "rows"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func sqliteInsertRows(ctx context.Context, actx *tr.ActionContext, act tr.Action
 		table = "rows"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +94,7 @@ func sqliteCountRows(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 		table = "rows"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +116,7 @@ func sqliteIntegrityCheck(ctx context.Context, actx *tr.ActionContext, act tr.Ac
 		return nil, fmt.Errorf("sqlite_integrity_check: path param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func pgbenchInit(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 	fstype := paramDefault(act.Params, "fstype", "ext4")
 	pgBin := paramDefault(act.Params, "pg_bin", "/usr/lib/postgresql/16/bin")
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -247,7 +247,7 @@ func pgbenchRun(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map
 	duration := paramDefault(act.Params, "duration", "30")
 	selectOnly := act.Params["select_only"] == "true"
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -296,7 +296,7 @@ func pgbenchCleanup(ctx context.Context, actx *tr.ActionContext, act tr.Action) 
 		pgdata = mount + "/pgdata"
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}

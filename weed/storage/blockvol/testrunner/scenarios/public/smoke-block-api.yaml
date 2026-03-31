@@ -1,0 +1,115 @@
+name: smoke-block-api
+timeout: 2m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9501"
+
+# Block API smoke test: create → lookup → expand → status → delete.
+# Proves the block control plane works. No iSCSI needed.
+
+topology:
+  nodes:
+    node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: node
+      - action: exec
+        node: node
+        cmd: "rm -rf /tmp/sw-block-smoke-master /tmp/sw-block-smoke-vs1 /tmp/sw-block-smoke-vs2"
+        root: "true"
+
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: node
+        cmd: "mkdir -p /tmp/sw-block-smoke-master /tmp/sw-block-smoke-vs1/blocks /tmp/sw-block-smoke-vs2/blocks"
+      - action: start_weed_master
+        node: node
+        port: "9501"
+        dir: "/tmp/sw-block-smoke-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: node
+        master_url: "http://localhost:9501"
+        timeout: 30s
+      - action: start_weed_volume
+        node: node
+        port: "18301"
+        master: "localhost:9501"
+        dir: "/tmp/sw-block-smoke-vs1"
+        extra_args: "-block.dir=/tmp/sw-block-smoke-vs1/blocks -block.listen=:3350 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: node
+        port: "18302"
+        master: "localhost:9501"
+        dir: "/tmp/sw-block-smoke-vs2"
+        extra_args: "-block.dir=/tmp/sw-block-smoke-vs2/blocks -block.listen=:3351 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 30s
+
+  - name: block_lifecycle
+    actions:
+      - action: create_block_volume
+        name: "smoke-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      - action: assert_block_field
+        name: "smoke-test"
+        field: "epoch"
+        expected: "1"
+      - action: assert_block_field
+        name: "smoke-test"
+        field: "replica_factor"
+        expected: "2"
+      - action: expand_block_volume
+        name: "smoke-test"
+        new_size: "100M"
+        save_as: expanded
+      - action: lookup_block_volume
+        name: "smoke-test"
+        save_as: after_expand
+      - action: assert_equal
+        actual: "{{ after_expand_capacity }}"
+        expected: "104857600"
+      - action: block_status
+        save_as: stats
+      - action: print
+        msg: "block status: volumes={{ stats_volume_count }} servers={{ stats_server_count }}"
+      - action: delete_block_volume
+        name: "smoke-test"
+      - action: print
+        msg: "block smoke: create → lookup → expand → status → delete — OK"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: delete_block_volume
+        name: "smoke-test"
+        ignore_error: true
+      - action: stop_weed
+        node: node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: node
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: node
+        cmd: "rm -rf /tmp/sw-block-smoke-master /tmp/sw-block-smoke-vs1 /tmp/sw-block-smoke-vs2"
+        root: "true"
+        ignore_error: true

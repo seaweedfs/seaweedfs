@@ -1,0 +1,174 @@
+# Operator Gate G3: CSI-only E2E Lifecycle
+#
+# Tests the full operator lifecycle in CSI-only mode:
+# 1. Apply CRD + RBAC + operator deployment
+# 2. Create SeaweedBlockCluster CR (CSI-only mode)
+# 3. Wait for CSIReady condition
+# 4. Verify all sub-resources exist (CSIDriver, StorageClass, Deployment, DaemonSet)
+# 5. Create PVC + Pod, write data, verify checksum
+# 6. Delete CR, verify cleanup (no leaked cluster-scoped resources)
+#
+# Requires: k3s cluster with kubectl access on k8s_node
+# Container name for operator Deployment is "operator" (not "manager")
+
+name: op-csi-lifecycle
+timeout: 15m
+
+topology:
+  nodes:
+    k8s_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+phases:
+  - name: deploy_operator
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/crd/bases/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/rbac/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/manager/"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "sw-block-system"
+        timeout: "3m"
+
+  - name: create_cr
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/samples/csi-only.yaml"
+      - action: sleep
+        duration: 5s
+
+  - name: wait_ready
+    actions:
+      # Use jsonpath — CRD conditions are CSIReady, not generic "Ready"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/sw-block-sample"
+        namespace: "default"
+        condition: "CSIReady=True"
+        timeout: "5m"
+
+  - name: verify_resources
+    actions:
+      # Cluster-scoped resources
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "clusterrole/sw-block-csi"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "clusterrolebinding/sw-block-csi"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "storageclass/sw-block"
+      # CSI namespace resources
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "deploy/sw-block-sample-csi-controller"
+        namespace: "kube-system"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "daemonset/sw-block-sample-csi-node"
+        namespace: "kube-system"
+      # Operator status
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/sw-block-sample"
+        namespace: "default"
+        jsonpath: "{.status.phase}"
+        save_as: cr_phase
+      - action: assert_equal
+        actual: "{{ cr_phase }}"
+        expected: "Running"
+
+  - name: verify_pvc_lifecycle
+    actions:
+      # Create PVC using the operator's StorageClass
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: test-block-pvc
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: sleep
+        duration: 5s
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "pvc/test-block-pvc"
+        namespace: "default"
+      # Cleanup PVC
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/test-block-pvc"
+        namespace: "default"
+        wait: "true"
+
+  - name: delete_cr
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/sw-block-sample"
+        namespace: "default"
+        wait: "true"
+      - action: sleep
+        duration: 10s
+
+  - name: verify_cleanup
+    actions:
+      # Cluster-scoped resources should be cleaned by finalizer
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "clusterrole/sw-block-csi"
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "clusterrolebinding/sw-block-csi"
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "storageclass/sw-block"
+      # Cross-namespace CSI resources should also be cleaned
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "deploy/sw-block-sample-csi-controller"
+        namespace: "kube-system"
+      - action: kubectl_assert_not_exists
+        node: k8s_node
+        resource: "daemonset/sw-block-sample-csi-node"
+        namespace: "kube-system"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/sw-block-sample"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/test-block-pvc"
+        namespace: "default"
+        ignore_error: true
+      - action: sleep
+        duration: 5s

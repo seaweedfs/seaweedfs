@@ -1,0 +1,207 @@
+name: diag-restart-recovery
+timeout: 5m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+
+# Minimal repro for ha-restart-recovery md5 mismatch.
+# Stripped to: create RF=2 → write → kill → restart → reacquire device → read → compare.
+# Extra diagnostics: device path, by-path, lsblk, server-side block read.
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3290
+    admin_port: 8095
+    replica_data_port: 9040
+    replica_ctrl_port: 9041
+    rebuild_port: 9042
+    iqn_suffix: diag-restart
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3291
+    admin_port: 8096
+    replica_data_port: 9043
+    replica_ctrl_port: 9044
+    rebuild_port: 9045
+    iqn_suffix: diag-restart-rep
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: primary
+        role: primary
+        epoch: "1"
+      - action: assign
+        target: replica
+        role: replica
+        epoch: "1"
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: write_and_record
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device1
+      # Record device details BEFORE kill.
+      - action: exec
+        node: client_node
+        cmd: "echo 'BEFORE KILL: device={{ device1 }}' && ls -l /dev/disk/by-path/ 2>/dev/null | grep iscsi || echo 'no by-path' && lsblk {{ device1 }} 2>/dev/null || echo 'lsblk failed'"
+        root: "true"
+        ignore_error: true
+        save_as: before_info
+      - action: print
+        msg: "before_info={{ before_info }}"
+      # Write 1MB at offset 5MB.
+      - action: dd_write
+        node: client_node
+        device: "{{ device1 }}"
+        bs: 1M
+        count: "1"
+        seek: "5"
+        save_as: write_md5
+      - action: print
+        msg: "write_md5={{ write_md5 }}"
+      # Verify immediate read-back.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device1 }}"
+        bs: 1M
+        count: "1"
+        skip: "5"
+        save_as: verify_md5
+      - action: assert_equal
+        actual: "{{ verify_md5 }}"
+        expected: "{{ write_md5 }}"
+      # Add wait_lsn to match ha-restart-recovery (hypothesis A test)
+      - action: wait_lsn
+        target: replica
+        lsn: "1"
+        timeout: 10s
+
+  - name: kill_primary
+    actions:
+      # Logout BEFORE kill to avoid stale sessions.
+      - action: exec
+        node: client_node
+        cmd: "sudo iscsiadm -m node --logoutall=all 2>/dev/null; sudo iscsiadm -m node -o delete 2>/dev/null; sleep 1"
+        root: "true"
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: sleep
+        duration: 2s
+
+  - name: restart_and_verify
+    actions:
+      - action: start_target
+        target: primary
+        create: "false"
+      - action: sleep
+        duration: 2s
+      - action: assign
+        target: primary
+        role: primary
+        epoch: "1"
+      - action: set_replica
+        target: primary
+        replica: replica
+      # Fresh discovery + login — do NOT reuse old device variable.
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device2
+      # CRITICAL: flush kernel page cache. After kill, stale cached pages
+      # from the old session may remain for the same /dev/sdX path.
+      - action: exec
+        node: client_node
+        cmd: "blockdev --flushbufs {{ device2 }} 2>/dev/null; echo 3 > /proc/sys/vm/drop_caches 2>/dev/null; sleep 1"
+        root: "true"
+        ignore_error: true
+      # Record device details AFTER restart.
+      - action: exec
+        node: client_node
+        cmd: "echo 'AFTER RESTART: device={{ device2 }}' && ls -l /dev/disk/by-path/ 2>/dev/null | grep iscsi || echo 'no by-path' && lsblk {{ device2 }} 2>/dev/null || echo 'lsblk failed'"
+        root: "true"
+        ignore_error: true
+        save_as: after_info
+      - action: print
+        msg: "after_info={{ after_info }}"
+      # Read from the NEW device path.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "5"
+        save_as: read_md5
+      - action: print
+        msg: "write_md5={{ write_md5 }} read_md5={{ read_md5 }}"
+      # The critical assertion.
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ write_md5 }}"
+
+  - name: server_side_check
+    always: true
+    actions:
+      - action: status
+        target: primary
+        save_as: primary_status
+      - action: print
+        msg: "primary status: {{ primary_status }}"
+      # Save target log before cleanup deletes it
+      - action: exec
+        node: target_node
+        cmd: "cp /tmp/iscsi-target-primary.log /tmp/saved-primary.log 2>/dev/null; grep -E 'flusher:|blockvol:|WAL|replay|checkpoint|open' /tmp/iscsi-target-primary.log 2>/dev/null | tail -20"
+        ignore_error: true
+        save_as: target_log
+      - action: print
+        msg: "target_log={{ target_log }}"
+      # Read raw extent file to check if data is on disk
+      - action: exec
+        node: target_node
+        cmd: "dd if=/tmp/blockvol-primary.blk bs=4096 skip=1536 count=256 2>/dev/null | md5sum | awk '{print $1}'"
+        ignore_error: true
+        save_as: extent_md5
+      - action: print
+        msg: "extent_md5={{ extent_md5 }} (raw extent at LBA offset 5MB)"
+      - action: exec
+        node: client_node
+        cmd: "sudo iscsiadm -m node --logoutall=all 2>/dev/null; sudo iscsiadm -m node -o delete 2>/dev/null"
+        root: "true"
+        ignore_error: true
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_all_targets
+        ignore_error: true

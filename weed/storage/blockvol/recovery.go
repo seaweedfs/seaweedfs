@@ -2,6 +2,7 @@ package blockvol
 
 import (
 	"fmt"
+	"log"
 	"os"
 )
 
@@ -10,11 +11,18 @@ type RecoveryResult struct {
 	EntriesReplayed int    // number of entries replayed into dirty map
 	HighestLSN      uint64 // highest LSN seen during recovery
 	TornEntries     int    // entries discarded due to CRC failure
+	DefensiveScan   bool   // true if a defensive scan was triggered
 }
 
 // RecoverWAL scans the WAL region from tail to head, replaying valid entries
 // into the dirty map. Entries with LSN <= checkpointLSN are skipped (already
-// in extent). Scanning stops at the first CRC failure (torn write).
+// in extent).
+//
+// After scanning the known [tail, head) range, the scanner continues past
+// head using CRC validation to discover entries written after the last
+// superblock persist. This makes the superblock WALHead advisory (for fast
+// recovery) rather than required for correctness. On a clean shutdown the
+// first entry past head fails CRC immediately — zero overhead.
 //
 // The WAL is a circular buffer. If head >= tail, scan [tail, head).
 // If head < tail (wrapped), scan [tail, walSize) then [0, head).
@@ -27,36 +35,48 @@ func RecoverWAL(fd *os.File, sb *Superblock, dirtyMap *DirtyMap) (RecoveryResult
 	walSize := sb.WALSize
 	checkpointLSN := sb.WALCheckpointLSN
 
-	if logicalHead == logicalTail {
-		// WAL is empty (or fully flushed).
-		return result, nil
-	}
-
-	// Convert logical positions to physical.
-	physHead := logicalHead % walSize
-	physTail := logicalTail % walSize
-
 	// Build the list of byte ranges to scan.
 	type scanRange struct {
 		start, end uint64 // physical positions within WAL
 	}
 
 	var ranges []scanRange
-	if physHead > physTail {
-		// No wrap: scan [tail, head).
-		ranges = append(ranges, scanRange{physTail, physHead})
-	} else if physHead == physTail {
-		// Head and tail at same physical position but different logical positions
-		// means the WAL is completely full. Scan the entire region.
-		ranges = append(ranges, scanRange{physTail, walSize})
-		if physHead > 0 {
-			ranges = append(ranges, scanRange{0, physHead})
+
+	if logicalHead == logicalTail {
+		// Superblock says WAL is empty. Scan the entire WAL region
+		// using CRC validation to find any valid entries.
+		// On a genuinely empty WAL, the first read fails CRC immediately.
+		ranges = append(ranges, scanRange{0, walSize})
+		result.DefensiveScan = true
+		if checkpointLSN == 0 && logicalHead == 0 && logicalTail == 0 {
+			log.Printf("recovery: defensive scan triggered (WALHead=0 WALTail=0 CheckpointLSN=0)")
+		} else {
+			log.Printf("recovery: defensive scan triggered (WALHead==WALTail=%d CheckpointLSN=%d)",
+				logicalHead, checkpointLSN)
 		}
 	} else {
-		// Wrapped: scan [tail, walSize) then [0, head).
-		ranges = append(ranges, scanRange{physTail, walSize})
-		if physHead > 0 {
-			ranges = append(ranges, scanRange{0, physHead})
+		// Normal case: scan the known WAL range, then extend past head.
+		physHead := logicalHead % walSize
+		physTail := logicalTail % walSize
+
+		if physHead > physTail {
+			// [tail ... head ... walSize) — scan [tail, head), then extend [head, walSize) + [0, tail)
+			ranges = append(ranges, scanRange{physTail, physHead})
+			// Extended scan past head: [head, walSize) then [0, tail)
+			ranges = append(ranges, scanRange{physHead, walSize})
+			if physTail > 0 {
+				ranges = append(ranges, scanRange{0, physTail})
+			}
+		} else {
+			// Wrapped or full: [tail, walSize) + [0, head), then extend [head, tail)
+			ranges = append(ranges, scanRange{physTail, walSize})
+			if physHead > 0 {
+				ranges = append(ranges, scanRange{0, physHead})
+			}
+			// Extended scan past head: [head, tail) covers the remaining region
+			if physHead < physTail {
+				ranges = append(ranges, scanRange{physHead, physTail})
+			}
 		}
 	}
 
@@ -151,6 +171,14 @@ func RecoverWAL(fd *os.File, sb *Superblock, dirtyMap *DirtyMap) (RecoveryResult
 
 			pos += entrySize
 		}
+	}
+
+	// If we found entries beyond what the superblock recorded, update
+	// WALHead so the WAL writer starts after the recovered entries.
+	if result.HighestLSN > sb.WALHead {
+		log.Printf("recovery: extended scan found entries past WALHead (%d → %d, %d entries replayed)",
+			sb.WALHead, result.HighestLSN, result.EntriesReplayed)
+		sb.WALHead = result.HighestLSN
 	}
 
 	return result, nil

@@ -1,0 +1,66 @@
+name: e2e-block-auto
+timeout: 3m
+env:
+  master_url: "http://192.168.1.184:9333"
+
+# E2E block test with automatic cluster lifecycle.
+# - Tries to attach to existing cluster with 2 block-capable servers.
+# - Falls back to creating a managed cluster if attach fails.
+# - Tests: create volume, lookup, expand, status, delete.
+# - No iSCSI (control-plane only) — works without kernel iSCSI on client.
+
+cluster:
+  require:
+    servers: 2
+    block_capable: 2
+  fallback: managed
+  managed:
+    master_port: 9521
+    node: server
+    ip: "192.168.1.184"
+    volumes:
+      - port: 18321
+        block_listen: ":3370"
+      - port: 18322
+        block_listen: ":3371"
+
+topology:
+  nodes:
+    server:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: block_lifecycle
+    actions:
+      - action: create_block_volume
+        name: "auto-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      - action: assert_block_field
+        name: "auto-test"
+        field: "epoch"
+        expected: "1"
+      - action: expand_block_volume
+        name: "auto-test"
+        new_size: "100M"
+        save_as: expanded
+      - action: lookup_block_volume
+        name: "auto-test"
+        save_as: after_expand
+      - action: assert_equal
+        actual: "{{ after_expand_capacity }}"
+        expected: "104857600"
+      - action: block_status
+        save_as: stats
+      - action: print
+        msg: "volumes={{ stats_volume_count }} servers={{ stats_server_count }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: delete_block_volume
+        name: "auto-test"
+        ignore_error: true

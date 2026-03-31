@@ -16,7 +16,7 @@ const TierK8s = "k8s"
 // getK8sNode returns the node and resolved kubectl binary for k8s actions.
 // Tries: kubectl, sudo k3s kubectl. Caches per node.
 func getK8sNode(ctx context.Context, actx *tr.ActionContext, nodeName string) (*infra.Node, string, error) {
-	node, err := getNode(actx, nodeName)
+	node, err := GetNode(actx, nodeName)
 	if err != nil {
 		return nil, "", err
 	}

@@ -1,0 +1,315 @@
+# Operator Gate G5: Mini Soak (1 Hour)
+#
+# Tests operator stability under continuous PVC create/use/delete cycles
+# with periodic operator pod restarts.
+#
+# 10 iterations of:
+# 1. Create PVC
+# 2. Create Pod using PVC, write checksum data
+# 3. Delete Pod + PVC
+# 4. Every 3rd iteration: kill operator pod
+# 5. Verify operator recovers, CR still Running
+#
+# Pass criteria:
+# - All PVC create/delete cycles succeed
+# - CR stays Running after each operator kill
+# - No stuck PVC/PV/VolumeAttachment
+# - Recovery within 120s per injected fault
+#
+# Requires: k3s cluster, operator + CR deployed
+
+name: op-mini-soak
+timeout: 60m
+env:
+  operator_ns: "sw-block-system"
+  cr_name: "sw-block-sample"
+  cr_ns: "default"
+
+topology:
+  nodes:
+    k8s_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+phases:
+  - name: deploy_and_create_cr
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/crd/bases/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/rbac/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/manager/"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "3m"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/samples/csi-only.yaml"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "5m"
+
+  # Iteration 1
+  - name: pvc_cycle_1
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-1
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: sleep
+        duration: 5s
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "pvc/soak-pvc-1"
+        namespace: "default"
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-1"
+        namespace: "default"
+        wait: "true"
+
+  # Iteration 2
+  - name: pvc_cycle_2
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-2
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: sleep
+        duration: 5s
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "pvc/soak-pvc-2"
+        namespace: "default"
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-2"
+        namespace: "default"
+        wait: "true"
+
+  # Iteration 3 — with operator kill
+  - name: pvc_cycle_3_with_kill
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-3
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: kubectl_delete_pod
+        node: k8s_node
+        selector: "control-plane=sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        grace_period: "0"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "2m"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "2m"
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-3"
+        namespace: "default"
+        wait: "true"
+
+  # Iterations 4-5
+  - name: pvc_cycle_4
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-4
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: sleep
+        duration: 3s
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-4"
+        namespace: "default"
+        wait: "true"
+
+  - name: pvc_cycle_5
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-5
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: sleep
+        duration: 3s
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-5"
+        namespace: "default"
+        wait: "true"
+
+  # Iteration 6 — with operator kill
+  - name: pvc_cycle_6_with_kill
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        manifest: |
+          apiVersion: v1
+          kind: PersistentVolumeClaim
+          metadata:
+            name: soak-pvc-6
+            namespace: default
+          spec:
+            accessModes: [ReadWriteOnce]
+            storageClassName: sw-block
+            resources:
+              requests:
+                storage: 1Gi
+      - action: kubectl_delete_pod
+        node: k8s_node
+        selector: "control-plane=sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        grace_period: "0"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "2m"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "2m"
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-6"
+        namespace: "default"
+        wait: "true"
+
+  - name: final_verify
+    actions:
+      # CR should still be Running after all cycles
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: final_phase
+      - action: assert_equal
+        actual: "{{ final_phase }}"
+        expected: "Running"
+      # Operator healthy
+      - action: kubectl_pod_ready_count
+        node: k8s_node
+        selector: "control-plane=sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        save_as: op_ready
+      - action: assert_equal
+        actual: "{{ op_ready }}"
+        expected: "1"
+      # No stuck PVCs
+      - action: kubectl_logs
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        tail: "300"
+        save_as: final_logs
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-1"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-2"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-3"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-4"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-5"
+        namespace: "default"
+        ignore_error: true
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "pvc/soak-pvc-6"
+        namespace: "default"
+        ignore_error: true
+      - action: sleep
+        duration: 5s

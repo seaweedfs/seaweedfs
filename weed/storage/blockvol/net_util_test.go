@@ -59,7 +59,7 @@ func TestCanonicalizeAddr_NoAdvertised_FallsBackToOutbound(t *testing.T) {
 }
 
 func TestPreferredOutboundIP_NotEmpty(t *testing.T) {
-	ip := preferredOutboundIP()
+	ip := PreferredOutboundIP()
 	if ip == "" {
 		t.Skip("no network interface available")
 	}

@@ -1,0 +1,160 @@
+# NVMe Failover: End-to-end NVMe/TCP promotion test
+#
+# Tests: Write via NVMe/TCP → kill primary → promote replica →
+# connect NVMe to promoted replica → verify data integrity.
+#
+# This is the NVMe equivalent of ha-failover.yaml (iSCSI).
+# Validates that NVMe fields (NvmeAddr/NQN) are correctly handled
+# through the failover path (PromoteBestReplica).
+#
+# Gap: Previously untested in sw-test-runner (only Go integration tests)
+#
+# Pass criteria:
+# - NVMe connect succeeds to primary
+# - After failover, NVMe connect succeeds to promoted replica
+# - Data integrity: md5 matches before and after failover
+
+name: ha-nvme-failover
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: testdev
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  primary:
+    node: server
+    vol_size: 100M
+    iscsi_port: 3280
+    nvme_port: 4430
+    admin_port: 8095
+    iqn_suffix: nvme-fo-primary
+    nqn_suffix: nvme-fo-primary
+  replica:
+    node: server
+    vol_size: 100M
+    iscsi_port: 3281
+    nvme_port: 4431
+    admin_port: 8096
+    replica_data_port: 9041
+    replica_ctrl_port: 9042
+    rebuild_port: 9043
+    iqn_suffix: nvme-fo-replica
+    nqn_suffix: nvme-fo-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: nvme_write
+    actions:
+      - action: nvme_connect
+        target: primary
+        node: client
+        save_as: nvme_nqn
+      - action: nvme_get_device
+        target: primary
+        node: client
+        save_as: nvme_dev
+      - action: dd_write
+        node: client
+        device: "{{ nvme_dev }}"
+        bs: 1M
+        count: "5"
+        save_as: md5_written
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: failover
+    actions:
+      # Disconnect NVMe from primary before kill.
+      - action: nvme_disconnect
+        target: primary
+        node: client
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: nvme_verify_on_new_primary
+    actions:
+      # Connect NVMe to the promoted replica (now primary).
+      - action: nvme_connect
+        target: replica
+        node: client
+        save_as: nvme_nqn2
+      - action: nvme_get_device
+        target: replica
+        node: client
+        save_as: nvme_dev2
+      - action: dd_read_md5
+        node: client
+        device: "{{ nvme_dev2 }}"
+        bs: 1M
+        count: "5"
+        save_as: md5_read
+      - action: assert_equal
+        actual: "{{ md5_read }}"
+        expected: "{{ md5_written }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

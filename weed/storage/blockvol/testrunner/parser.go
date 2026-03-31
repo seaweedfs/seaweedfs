@@ -3,30 +3,118 @@ package testrunner
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
 // ParseFile reads and parses a YAML scenario file.
+// Include directives are resolved relative to the file's directory.
 func ParseFile(path string) (*Scenario, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read scenario %s: %w", path, err)
 	}
-	return Parse(data)
+	return ParseWithBase(data, filepath.Dir(path))
 }
 
 // Parse parses YAML bytes into a Scenario and validates it.
+// Include directives are resolved relative to the current working directory.
 func Parse(data []byte) (*Scenario, error) {
+	return ParseWithBase(data, ".")
+}
+
+// ParseWithBase parses YAML bytes with a base directory for resolving includes.
+func ParseWithBase(data []byte, baseDir string) (*Scenario, error) {
 	var s Scenario
 	if err := yaml.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("parse YAML: %w", err)
 	}
+	// Resolve include directives.
+	expanded, err := resolveIncludes(s.Phases, baseDir, 0)
+	if err != nil {
+		return nil, fmt.Errorf("resolve includes: %w", err)
+	}
+	s.Phases = expanded
 	if err := validate(&s); err != nil {
 		return nil, fmt.Errorf("validate: %w", err)
 	}
 	return &s, nil
+}
+
+const maxIncludeDepth = 5
+
+// resolveIncludes expands include directives in phases.
+// An include phase is replaced by the phases from the included file.
+// Include params are injected as {{ key }} substitutions in the included actions.
+func resolveIncludes(phases []Phase, baseDir string, depth int) ([]Phase, error) {
+	if depth > maxIncludeDepth {
+		return nil, fmt.Errorf("include depth exceeds %d (circular?)", maxIncludeDepth)
+	}
+
+	var result []Phase
+	for _, p := range phases {
+		if p.Include == "" {
+			result = append(result, p)
+			continue
+		}
+
+		// Resolve include path relative to base directory.
+		includePath := p.Include
+		if !filepath.IsAbs(includePath) {
+			includePath = filepath.Join(baseDir, includePath)
+		}
+
+		data, err := os.ReadFile(includePath)
+		if err != nil {
+			return nil, fmt.Errorf("include %q: %w", p.Include, err)
+		}
+
+		// Parse the included file as a partial scenario (just phases).
+		var included struct {
+			Phases []Phase `yaml:"phases"`
+		}
+		if err := yaml.Unmarshal(data, &included); err != nil {
+			return nil, fmt.Errorf("parse include %q: %w", p.Include, err)
+		}
+
+		// Apply include_params as variable substitutions in action params.
+		if len(p.IncludeParams) > 0 {
+			for i := range included.Phases {
+				for j := range included.Phases[i].Actions {
+					act := &included.Phases[i].Actions[j]
+					for k, v := range act.Params {
+						act.Params[k] = substituteParams(v, p.IncludeParams)
+					}
+					// Also substitute in node, target, replica, save_as fields.
+					act.Node = substituteParams(act.Node, p.IncludeParams)
+					act.Target = substituteParams(act.Target, p.IncludeParams)
+					act.Replica = substituteParams(act.Replica, p.IncludeParams)
+					act.SaveAs = substituteParams(act.SaveAs, p.IncludeParams)
+				}
+			}
+		}
+
+		// Recursively resolve nested includes.
+		includeDir := filepath.Dir(includePath)
+		expanded, err := resolveIncludes(included.Phases, includeDir, depth+1)
+		if err != nil {
+			return nil, fmt.Errorf("include %q: %w", p.Include, err)
+		}
+
+		result = append(result, expanded...)
+	}
+	return result, nil
+}
+
+// substituteParams replaces {{ key }} with values from params.
+func substituteParams(s string, params map[string]string) string {
+	for k, v := range params {
+		s = strings.ReplaceAll(s, "{{ "+k+" }}", v)
+		s = strings.ReplaceAll(s, "{{"+k+"}}", v)
+	}
+	return s
 }
 
 // validate checks referential integrity and required fields.

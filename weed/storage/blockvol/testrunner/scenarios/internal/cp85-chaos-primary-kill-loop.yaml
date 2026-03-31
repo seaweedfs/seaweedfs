@@ -1,0 +1,426 @@
+name: cp85-chaos-primary-kill-loop
+timeout: 20m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3270
+    admin_port: 8090
+    replica_data_port: 9034
+    replica_ctrl_port: 9035
+    rebuild_port: 9030
+    iqn_suffix: cp85-kill-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3271
+    admin_port: 8091
+    replica_data_port: 9031
+    replica_ctrl_port: 9032
+    rebuild_port: 9033
+    iqn_suffix: cp85-kill-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 1 ===
+  - name: iter1_write
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter1
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: iter1_failover
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: dev_iter1
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dev_iter1 }}"
+        bs: 1M
+        count: "1"
+        save_as: read_iter1
+      - action: assert_equal
+        actual: "{{ read_iter1 }}"
+        expected: "{{ md5_iter1 }}"
+      - action: iscsi_logout
+        target: replica
+        node: client_node
+        ignore_error: true
+
+  - name: iter1_rebuild
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: primary
+        primary: replica
+        epoch: "2"
+      - action: wait_role
+        target: primary
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: replica
+        replica: primary
+
+  # === Iteration 2 ===
+  - name: iter2_write
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: dev_iter2
+      - action: dd_write
+        node: client_node
+        device: "{{ dev_iter2 }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter2
+      - action: wait_lsn
+        target: primary
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: iter2_failover
+    actions:
+      - action: kill_target
+        target: replica
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: primary
+        epoch: "3"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: primary
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: dev_iter2v
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dev_iter2v }}"
+        bs: 1M
+        count: "1"
+        save_as: read_iter2
+      - action: assert_equal
+        actual: "{{ read_iter2 }}"
+        expected: "{{ md5_iter2 }}"
+      - action: iscsi_logout
+        target: primary
+        node: client_node
+        ignore_error: true
+
+  - name: iter2_rebuild
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "3"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "3"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 3 ===
+  - name: iter3_write
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: dev_iter3
+      - action: dd_write
+        node: client_node
+        device: "{{ dev_iter3 }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter3
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: iter3_failover
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "4"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: dev_iter3v
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dev_iter3v }}"
+        bs: 1M
+        count: "1"
+        save_as: read_iter3
+      - action: assert_equal
+        actual: "{{ read_iter3 }}"
+        expected: "{{ md5_iter3 }}"
+      - action: iscsi_logout
+        target: replica
+        node: client_node
+        ignore_error: true
+
+  - name: iter3_rebuild
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "4"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: primary
+        primary: replica
+        epoch: "4"
+      - action: wait_role
+        target: primary
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: replica
+        replica: primary
+
+  # === Iteration 4 ===
+  - name: iter4_write
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: dev_iter4
+      - action: dd_write
+        node: client_node
+        device: "{{ dev_iter4 }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter4
+      - action: wait_lsn
+        target: primary
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: iter4_failover
+    actions:
+      - action: kill_target
+        target: replica
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: primary
+        epoch: "5"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: primary
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: dev_iter4v
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dev_iter4v }}"
+        bs: 1M
+        count: "1"
+        save_as: read_iter4
+      - action: assert_equal
+        actual: "{{ read_iter4 }}"
+        expected: "{{ md5_iter4 }}"
+      - action: iscsi_logout
+        target: primary
+        node: client_node
+        ignore_error: true
+
+  - name: iter4_rebuild
+    actions:
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "5"
+        role: rebuilding
+        lease_ttl: 60s
+      - action: start_rebuild_client
+        target: replica
+        primary: primary
+        epoch: "5"
+      - action: wait_role
+        target: replica
+        role: replica
+        timeout: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  # === Iteration 5 ===
+  - name: iter5_write
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: dev_iter5
+      - action: dd_write
+        node: client_node
+        device: "{{ dev_iter5 }}"
+        bs: 1M
+        count: "1"
+        save_as: md5_iter5
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  - name: iter5_failover
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "6"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: dev_iter5v
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dev_iter5v }}"
+        bs: 1M
+        count: "1"
+        save_as: read_iter5
+      - action: assert_equal
+        actual: "{{ read_iter5 }}"
+        expected: "{{ md5_iter5 }}"
+
+  - name: final_verify
+    actions:
+      - action: assert_equal
+        actual: "{{ read_iter5 }}"
+        expected: "{{ md5_iter5 }}"
+      - action: print
+        msg: "All 5 primary-kill iterations passed. Final epoch=6."
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

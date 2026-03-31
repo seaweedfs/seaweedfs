@@ -1,0 +1,154 @@
+name: bench-validated
+timeout: 5m
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: bench-val
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "rm -rf /tmp/sw-bench-master /tmp/sw-bench-vs1 && mkdir -p /tmp/sw-bench-master /tmp/sw-bench-vs1/blocks"
+        root: "true"
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-bench-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-bench-vs1
+        extra_args: "-block.dir=/tmp/sw-bench-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4430 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "1"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+        durability_mode: best_effort
+
+      - action: sleep
+        duration: 2s
+
+  - name: report-header
+    actions:
+      - action: benchmark_report
+        volume_name: "{{ volume_name }}"
+        protocol: nvme-tcp
+        client_node: m01
+        save_as: bench_header
+
+  - name: connect-nvme
+    actions:
+      - action: exec
+        node: m01
+        cmd: "sh -c 'nvme disconnect-all >/dev/null 2>&1; modprobe nvme_tcp; nvme connect -t tcp -a 10.0.0.3 -s 4430 -n nqn.2024-01.com.seaweedfs:vol.{{ volume_name }} >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: nvme_dev
+
+  - name: mkfs-mount
+    actions:
+      - action: exec
+        node: m01
+        cmd: "sh -c 'mkfs.ext4 -F -E nodiscard {{ nvme_dev }} && mkdir -p /mnt/sw-bench && mount -o nodiscard {{ nvme_dev }} /mnt/sw-bench && echo OK'"
+        root: "true"
+
+  - name: preflight
+    actions:
+      - action: benchmark_preflight
+        node: m01
+        volume_name: "{{ volume_name }}"
+        mount_path: /mnt/sw-bench
+        device: "{{ nvme_dev }}"
+
+  - name: fio-write
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ nvme_dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "15"
+        save_as: fio_write
+
+      - action: print
+        msg: "Write IOPS: {{ fio_write }}"
+
+  - name: fio-read
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ nvme_dev }}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        runtime: "15"
+        save_as: fio_read
+
+      - action: print
+        msg: "Read IOPS: {{ fio_read }}"
+
+  - name: postcheck
+    actions:
+      - action: benchmark_postcheck
+        node: m01
+        volume_name: "{{ volume_name }}"
+        mount_path: /mnt/sw-bench
+        device: "{{ nvme_dev }}"
+        save_as: postcheck_result
+
+      - action: print
+        msg: "Postcheck: {{ postcheck_result }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "sh -c 'umount /mnt/sw-bench 2>/dev/null; nvme disconnect-all 2>/dev/null; true'"
+        root: "true"
+        ignore_error: true
+
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

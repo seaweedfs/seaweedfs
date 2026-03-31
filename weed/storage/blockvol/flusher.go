@@ -475,6 +475,17 @@ func (f *Flusher) SetCheckpointLSN(lsn uint64) {
 	f.mu.Unlock()
 }
 
+// RetentionFloorFn returns the current retention floor function.
+func (f *Flusher) RetentionFloorFn() func() (uint64, bool) {
+	return f.retentionFloorFn
+}
+
+// SetRetentionFloorFn replaces the retention floor function.
+// Used by V2 bridge to chain additional retention holds.
+func (f *Flusher) SetRetentionFloorFn(fn func() (uint64, bool)) {
+	f.retentionFloorFn = fn
+}
+
 // CloseBatchIO releases the batch I/O backend resources (e.g. io_uring ring).
 // Must be called after Stop() and the final FlushOnce().
 func (f *Flusher) CloseBatchIO() error {

@@ -57,7 +57,7 @@ func buildDeployAgent(ctx context.Context, actx *tr.ActionContext, repoDir strin
 	binPath := "/tmp/iscsi-target-test"
 	forceBuild := actx.Vars["force_build"] == "true"
 
-	node, _ := getNode(actx, "")
+	node, _ := GetNode(actx, "")
 
 	// Check for pre-deployed binary (preferred: avoids stale source issues).
 	if node != nil && !forceBuild {
@@ -266,7 +266,7 @@ func stopAllTargets(ctx context.Context, actx *tr.ActionContext, act tr.Action) 
 // whether they are tracked. Used at the start of scenarios to clean up
 // leftovers from previous crashed runs.
 func killStale(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("kill_stale: %w", err)
 	}
@@ -323,7 +323,7 @@ func assign(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[str
 	role := parseRole(act.Params["role"])
 	leaseTTL := uint32(30000) // default 30s
 	if ttlStr, ok := act.Params["lease_ttl"]; ok {
-		if ms, err := parseDurationMs(ttlStr); err == nil {
+		if ms, err := ParseDurationMs(ttlStr); err == nil {
 			leaseTTL = ms
 		}
 	}
@@ -365,7 +365,7 @@ func waitRole(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[s
 
 	timeoutCtx := ctx
 	if t, ok := act.Params["timeout"]; ok {
-		if d, err := parseDuration(t); err == nil {
+		if d, err := ParseDuration(t); err == nil {
 			var cancel context.CancelFunc
 			timeoutCtx, cancel = context.WithTimeout(ctx, d)
 			defer cancel()
@@ -385,7 +385,7 @@ func waitLSN(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 
 	timeoutCtx := ctx
 	if t, ok := act.Params["timeout"]; ok {
-		if d, err := parseDuration(t); err == nil {
+		if d, err := ParseDuration(t); err == nil {
 			var cancel context.CancelFunc
 			timeoutCtx, cancel = context.WithTimeout(ctx, d)
 			defer cancel()

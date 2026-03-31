@@ -1,0 +1,132 @@
+name: cp85-snapshot-stress
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 200M
+    iscsi_port: 3270
+    admin_port: 8090
+    iqn_suffix: cp85-snap-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: start_bg_write
+    actions:
+      - action: write_loop_bg
+        node: client_node
+        device: "{{ device }}"
+        bs: 4k
+        save_as: bg_pid
+
+  - name: create_snapshots
+    actions:
+      - action: snapshot_create
+        target: primary
+        id: "1"
+      - action: sleep
+        duration: 5s
+      - action: snapshot_create
+        target: primary
+        id: "2"
+      - action: sleep
+        duration: 5s
+      - action: snapshot_create
+        target: primary
+        id: "3"
+      - action: sleep
+        duration: 5s
+      - action: snapshot_create
+        target: primary
+        id: "4"
+      - action: sleep
+        duration: 5s
+      - action: snapshot_create
+        target: primary
+        id: "5"
+
+  - name: delete_oldest
+    actions:
+      - action: snapshot_delete
+        target: primary
+        id: "1"
+      - action: snapshot_delete
+        target: primary
+        id: "2"
+
+  - name: stop_bg_and_verify
+    actions:
+      - action: stop_bg
+        node: client_node
+        pid: "{{ bg_pid }}"
+      - action: snapshot_list
+        target: primary
+        save_as: snap_count
+      - action: assert_equal
+        actual: "{{ snap_count }}"
+        expected: "3"
+
+  - name: verify_data
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        save_as: md5_final
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        save_as: read_final
+      - action: assert_equal
+        actual: "{{ read_final }}"
+        expected: "{{ md5_final }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_bg
+        node: client_node
+        pid: "{{ bg_pid }}"
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

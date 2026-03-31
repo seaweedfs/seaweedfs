@@ -1,0 +1,148 @@
+name: suite-ha-failover
+timeout: 5m
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: ha-test
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cleanup
+    actions:
+      - action: pre_run_cleanup
+        node: m01
+        kill_patterns: "weed"
+        nvme_disconnect: "true"
+      - action: pre_run_cleanup
+        node: m02
+        kill_patterns: "weed"
+
+  - name: cluster
+    actions:
+      - action: exec
+        node: m02
+        cmd: "rm -rf /tmp/ha-master /tmp/ha-vs1 && mkdir -p /tmp/ha-master /tmp/ha-vs1/blocks"
+        root: "true"
+      - action: exec
+        node: m01
+        cmd: "rm -rf /tmp/ha-vs2 && mkdir -p /tmp/ha-vs2/blocks"
+        root: "true"
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/ha-master
+        save_as: master_pid
+      - action: sleep
+        duration: 3s
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/ha-vs1
+        extra_args: "-block.dir=/tmp/ha-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4430 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: m01
+        port: "18481"
+        master: "192.168.1.184:9433"
+        dir: /tmp/ha-vs2
+        extra_args: "-block.dir=/tmp/ha-vs2/blocks -block.listen=:3296 -block.nvme.enable=true -block.nvme.listen=10.0.0.1:4431 -ip=192.168.1.181"
+        save_as: vs2_pid
+      - action: sleep
+        duration: 5s
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "1073741824"
+        replica_factor: "2"
+        durability_mode: best_effort
+      - action: sleep
+        duration: 10s
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+
+  - name: record-pre-failover
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: pre_info
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: epoch
+        save_as: epoch_before
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: volume_server
+        save_as: primary_before
+      - action: print
+        msg: "Before failover: primary={{ primary_before }} epoch={{ epoch_before }}"
+
+  - name: kill-primary
+    actions:
+      - action: exec
+        node: m02
+        cmd: "pgrep -f 'weed volume.*18480' | head -1"
+        save_as: vs1_real_pid
+      - action: exec
+        node: m01
+        cmd: "pgrep -f 'weed volume.*18481' | head -1"
+        save_as: vs2_real_pid
+      # Kill whichever VS is the primary
+      - action: exec
+        node: m02
+        cmd: "kill -9 $(pgrep -f 'weed volume.*18480') 2>/dev/null; true"
+        root: "true"
+      - action: print
+        msg: "Killed VS on M02 (pid={{ vs1_real_pid }})"
+
+  - name: wait-failover
+    actions:
+      - action: sleep
+        duration: 40s
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: epoch
+        save_as: epoch_after
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: volume_server
+        save_as: primary_after
+      - action: print
+        msg: "After failover: primary={{ primary_after }} epoch={{ epoch_after }}"
+      - action: assert_greater
+        actual: "{{ epoch_after }}"
+        threshold: "{{ epoch_before }}"
+
+  - name: results
+    actions:
+      - action: collect_results
+        title: "HA Failover Test"
+        volume_name: "{{ volume_name }}"
+
+  - name: teardown
+    always: true
+    actions:
+      - action: pre_run_cleanup
+        node: m01
+        kill_patterns: "weed"
+        nvme_disconnect: "true"
+      - action: pre_run_cleanup
+        node: m02
+        kill_patterns: "weed"

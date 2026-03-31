@@ -1,0 +1,271 @@
+name: cp11a2-coordinated-expand
+timeout: 10m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9433"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # Phase 1: Clean slate
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-weed-master-test /tmp/sw-bv1 /tmp/sw-bv2"
+        root: "true"
+      - action: exec
+        node: target_node
+        cmd: "test -x /tmp/sw-test-runner/weed && echo 'weed binary OK'"
+
+  # Phase 2: Start cluster (master + 2 volume servers with block support)
+  - name: start_cluster
+    actions:
+      # Pre-create dirs as testdev so log redirect works (start_weed_* uses RunRoot for the process)
+      # Must include block.dir subdirs so StartBlockService doesn't bail before starting iSCSI listener
+      - action: exec
+        node: target_node
+        cmd: "mkdir -p /tmp/sw-weed-master-test /tmp/sw-bv1/blocks /tmp/sw-bv2/blocks"
+      - action: start_weed_master
+        node: target_node
+        port: "9433"
+        dir: "/tmp/sw-weed-master-test"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: target_node
+        master_url: "http://localhost:9433"
+        timeout: 30s
+      - action: start_weed_volume
+        node: target_node
+        port: "18180"
+        master: "localhost:9433"
+        dir: "/tmp/sw-bv1"
+        extra_args: "-block.dir=/tmp/sw-bv1/blocks -block.listen=:3275 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: target_node
+        port: "18181"
+        master: "localhost:9433"
+        dir: "/tmp/sw-bv2"
+        extra_args: "-block.dir=/tmp/sw-bv2/blocks -block.listen=:3276 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+
+  # Phase 3: Create RF=2 block volume (50M)
+  - name: create_rf2
+    actions:
+      - action: create_block_volume
+        name: "expand-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      - action: lookup_block_volume
+        name: "expand-test"
+        save_as: before
+      - action: assert_equal
+        actual: "{{ before_capacity }}"
+        expected: "52428800"
+
+  # Phase 4: Write data within the original 50M range
+  - name: write_old_range
+    actions:
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ before_iscsi_host }}"
+        port: "{{ before_iscsi_port }}"
+        iqn: "{{ before_iqn }}"
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        seek: "10"
+        save_as: md5_10M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        skip: "10"
+        save_as: verify_10M
+      - action: assert_equal
+        actual: "{{ verify_10M }}"
+        expected: "{{ md5_10M }}"
+
+  # Phase 5: Expand 50M -> 100M via coordinated expand API
+  - name: expand
+    actions:
+      - action: expand_block_volume
+        name: "expand-test"
+        new_size: "100M"
+        save_as: expanded_cap
+      - action: lookup_block_volume
+        name: "expand-test"
+        save_as: after
+      - action: assert_equal
+        actual: "{{ after_capacity }}"
+        expected: "104857600"
+
+  # Phase 6: Write in expanded region + verify old data intact
+  - name: write_new_range
+    actions:
+      - action: iscsi_rescan
+        node: client_node
+      - action: sleep
+        duration: 2s
+      - action: get_block_size
+        node: client_node
+        device: "{{ device }}"
+        save_as: new_block_size
+      - action: assert_equal
+        actual: "{{ new_block_size }}"
+        expected: "104857600"
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        seek: "60"
+        save_as: md5_60M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        skip: "60"
+        save_as: verify_60M
+      - action: assert_equal
+        actual: "{{ verify_60M }}"
+        expected: "{{ md5_60M }}"
+      # Re-verify old data at offset 10M
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        skip: "10"
+        save_as: reverify_10M
+      - action: assert_equal
+        actual: "{{ reverify_10M }}"
+        expected: "{{ md5_10M }}"
+
+  # Phase 7: Restart volume servers, verify persistence
+  - name: restart_verify
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid }}"
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid }}"
+      - action: sleep
+        duration: 3s
+      - action: start_weed_volume
+        node: target_node
+        port: "18180"
+        master: "localhost:9433"
+        dir: "/tmp/sw-bv1"
+        extra_args: "-block.dir=/tmp/sw-bv1/blocks -block.listen=:3275 -ip=192.168.1.184"
+        save_as: vs1_pid2
+      - action: start_weed_volume
+        node: target_node
+        port: "18181"
+        master: "localhost:9433"
+        dir: "/tmp/sw-bv2"
+        extra_args: "-block.dir=/tmp/sw-bv2/blocks -block.listen=:3276 -ip=192.168.1.184"
+        save_as: vs2_pid2
+      - action: wait_block_servers
+        count: "2"
+        timeout: 60s
+      # Verify registry still reports expanded size
+      - action: lookup_block_volume
+        name: "expand-test"
+        save_as: restart
+      - action: assert_equal
+        actual: "{{ restart_capacity }}"
+        expected: "104857600"
+      # Reconnect iSCSI using original VS1 address (failover may have
+      # changed the registry's primary, but the VS1 iSCSI target still
+      # serves the local .blk file with the same expanded data).
+      - action: iscsi_login_direct
+        node: client_node
+        host: "{{ before_iscsi_host }}"
+        port: "{{ before_iscsi_port }}"
+        iqn: "{{ before_iqn }}"
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "10"
+        save_as: final_10M
+      - action: assert_equal
+        actual: "{{ final_10M }}"
+        expected: "{{ md5_10M }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        skip: "60"
+        save_as: final_60M
+      - action: assert_equal
+        actual: "{{ final_60M }}"
+        expected: "{{ md5_60M }}"
+
+  # Phase 8: Cleanup (always runs)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: delete_block_volume
+        name: "expand-test"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid2 }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid2 }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-weed-master-test /tmp/sw-bv1 /tmp/sw-bv2"
+        root: "true"
+        ignore_error: true

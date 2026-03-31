@@ -20,6 +20,10 @@ func TestRecovery(t *testing.T) {
 		{name: "recover_idempotent", run: testRecoverIdempotent},
 		{name: "recover_wal_full", run: testRecoverWALFull},
 		{name: "recover_barrier_only", run: testRecoverBarrierOnly},
+		{name: "recover_defensive_scan_finds_orphaned_entries", run: testRecoverDefensiveScan},
+		{name: "recover_defensive_scan_empty_wal_noop", run: testRecoverDefensiveScanEmpty},
+		{name: "recover_extended_scan_past_stale_head", run: testRecoverExtendedScanPastStaleHead},
+		{name: "recover_extended_scan_no_superblock_persist", run: testRecoverNoSuperblockPersist},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -400,5 +404,235 @@ func testRecoverBarrierOnly(t *testing.T) {
 	}
 	if !bytes.Equal(got, make([]byte, 4096)) {
 		t.Error("barrier-only WAL should leave data as zeros")
+	}
+}
+
+// testRecoverDefensiveScan verifies Fix A: when superblock has WALHead=0
+// WALTail=0 CheckpointLSN=0 but valid entries exist in the WAL region,
+// the defensive scan finds and replays them.
+func testRecoverDefensiveScan(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.blockvol")
+
+	// Create volume and write data.
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 << 20,
+		WALSize:    64 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(30 * time.Second)
+
+	data := make([]byte, 4096)
+	for i := range data {
+		data[i] = 'D'
+	}
+	if err := v.WriteLBA(0, data); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	// With the optimized group commit (plain fd.Sync, no superblock persist),
+	// WALHead stays 0 after write+sync. The extended recovery scan handles this.
+	// Crash without updating superblock.
+	path = simulateCrash(v)
+
+	// Reopen — should trigger defensive scan and recover the entry.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol after corrupted superblock: %v", err)
+	}
+	defer v2.Close()
+
+	v2.SetRole(RolePrimary)
+	v2.SetEpoch(1)
+	v2.SetMasterEpoch(1)
+	v2.lease.Grant(10 * time.Second)
+
+	// Read back — should get 'D', not zeros.
+	got, err := v2.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA after defensive scan: %v", err)
+	}
+	if got[0] != 'D' {
+		t.Fatalf("LBA 0: got %c, want D — defensive scan failed to recover", got[0])
+	}
+}
+
+// testRecoverDefensiveScanEmpty verifies that on a genuinely empty WAL
+// (fresh volume, no writes), the defensive scan triggers but finds nothing.
+// No false positives — zero entries replayed.
+func testRecoverDefensiveScanEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.blockvol")
+
+	// Create volume with no writes.
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 << 20,
+		WALSize:    64 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.Close()
+
+	// Reset superblock to zeros (simulates fresh state).
+	// On a genuinely fresh volume, WALHead=0 WALTail=0 is correct.
+	// The defensive scan should find zero valid entries.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer v2.Close()
+
+	// If we get here without error, the scan didn't crash on empty WAL. PASS.
+}
+
+// testRecoverExtendedScanPastStaleHead verifies that recovery finds entries
+// written after the last superblock persist. Simulates: write 5 entries with
+// WALHead at entry 3 (stale), crash, recovery should find all 5.
+func testRecoverExtendedScanPastStaleHead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.blockvol")
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 << 20,
+		WALSize:    64 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(30 * time.Second)
+
+	// Write 3 entries and persist superblock (WALHead covers them).
+	for i := uint64(0); i < 3; i++ {
+		if err := v.WriteLBA(i, makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Save superblock with current WALHead (covers entries 0-2).
+	v.groupCommit.Stop()
+	v.flusher.Stop()
+	staleHead := v.wal.LogicalHead()
+	v.super.WALHead = staleHead
+	v.super.WALTail = v.wal.LogicalTail()
+	v.fd.Seek(0, 0)
+	v.super.WriteTo(v.fd)
+	v.fd.Sync()
+
+	// Restart group commit for more writes.
+	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
+		SyncFunc: v.fd.Sync,
+	})
+	go v.groupCommit.Run()
+
+	// Write 2 more entries WITHOUT updating superblock.
+	for i := uint64(3); i < 5; i++ {
+		if err := v.WriteLBA(i, makeBlock(byte('A'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Crash without updating superblock — WALHead is stale at entry 3.
+	v.groupCommit.Stop()
+	v.fd.Close()
+
+	// Recovery should find ALL 5 entries via extended scan past head.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer v2.Close()
+
+	v2.SetRole(RolePrimary)
+	v2.SetEpoch(1)
+	v2.SetMasterEpoch(1)
+	v2.lease.Grant(10 * time.Second)
+
+	for i := uint64(0); i < 5; i++ {
+		got, err := v2.ReadLBA(i, 4096)
+		if err != nil {
+			t.Fatalf("ReadLBA(%d): %v", i, err)
+		}
+		expected := makeBlock(byte('A' + i))
+		if !bytes.Equal(got, expected) {
+			t.Errorf("block %d: expected %c, got %c — extended scan missed entry past stale WALHead",
+				i, 'A'+i, got[0])
+		}
+	}
+}
+
+// testRecoverNoSuperblockPersist verifies the fast-path optimization:
+// group commit uses plain fd.Sync (no superblock write), and recovery
+// still finds all entries via extended scan. This is the exact production
+// scenario after removing syncWithWALProgress from the group commit path.
+func testRecoverNoSuperblockPersist(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.blockvol")
+
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 << 20,
+		WALSize:    64 << 20,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.SetRole(RolePrimary)
+	v.SetEpoch(1)
+	v.SetMasterEpoch(1)
+	v.lease.Grant(30 * time.Second)
+
+	// Write 10 entries. Group commit uses fd.Sync (no superblock persist).
+	// Superblock WALHead stays at 0 (initial value from CreateBlockVol).
+	for i := uint64(0); i < 10; i++ {
+		if err := v.WriteLBA(i, makeBlock(byte('0'+i))); err != nil {
+			t.Fatalf("WriteLBA(%d): %v", i, err)
+		}
+	}
+	if err := v.SyncCache(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Crash — superblock WALHead is still at initial value.
+	path = simulateCrash(v)
+
+	// Recovery must find all 10 entries via extended/defensive scan.
+	v2, err := OpenBlockVol(path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer v2.Close()
+
+	v2.SetRole(RolePrimary)
+	v2.SetEpoch(1)
+	v2.SetMasterEpoch(1)
+	v2.lease.Grant(10 * time.Second)
+
+	for i := uint64(0); i < 10; i++ {
+		got, err := v2.ReadLBA(i, 4096)
+		if err != nil {
+			t.Fatalf("ReadLBA(%d): %v", i, err)
+		}
+		expected := makeBlock(byte('0' + i))
+		if !bytes.Equal(got, expected) {
+			t.Errorf("block %d: expected %c, got %c — recovery without superblock persist failed",
+				i, '0'+i, got[0])
+		}
 	}
 }

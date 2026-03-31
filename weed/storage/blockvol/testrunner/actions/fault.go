@@ -18,7 +18,7 @@ func RegisterFaultActions(r *tr.Registry) {
 }
 
 func injectNetemAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("inject_netem: %w", err)
 	}
@@ -27,7 +27,7 @@ func injectNetemAction(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 	if targetIP == "" {
 		return nil, fmt.Errorf("inject_netem: target_ip param required")
 	}
-	delayMs := parseInt(act.Params["delay_ms"], 200)
+	delayMs := ParseInt(act.Params["delay_ms"], 200)
 
 	cleanupCmd, err := infra.InjectNetem(ctx, node, targetIP, delayMs)
 	if err != nil {
@@ -43,7 +43,7 @@ func injectNetemAction(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 }
 
 func injectPartitionAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("inject_partition: %w", err)
 	}
@@ -52,7 +52,7 @@ func injectPartitionAction(ctx context.Context, actx *tr.ActionContext, act tr.A
 	if targetIP == "" {
 		return nil, fmt.Errorf("inject_partition: target_ip param required")
 	}
-	ports := parseIntSlice(act.Params["ports"])
+	ports := ParseIntSlice(act.Params["ports"])
 	if len(ports) == 0 {
 		return nil, fmt.Errorf("inject_partition: ports param required")
 	}
@@ -70,7 +70,7 @@ func injectPartitionAction(ctx context.Context, actx *tr.ActionContext, act tr.A
 }
 
 func fillDiskAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("fill_disk: %w", err)
 	}
@@ -103,7 +103,7 @@ func corruptWALAction(ctx context.Context, actx *tr.ActionContext, act tr.Action
 		return nil, err
 	}
 
-	nBytes := parseInt(act.Params["bytes"], 4096)
+	nBytes := ParseInt(act.Params["bytes"], 4096)
 
 	return nil, infra.CorruptWALRegion(ctx, tgt.Node, tgt.VolFilePath(), nBytes)
 }
@@ -114,7 +114,7 @@ func clearFaultAction(ctx context.Context, actx *tr.ActionContext, act tr.Action
 		return nil, fmt.Errorf("clear_fault: type param required (netem, partition, fill_disk)")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("clear_fault: %w", err)
 	}

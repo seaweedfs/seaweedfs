@@ -1,0 +1,139 @@
+name: "CP10-3 Focused: 4K randwrite QD=32 iSCSI vs NVMe"
+timeout: "5m"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: "testdev"
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  primary:
+    node: server
+    vol_size: "1G"
+    wal_size: "512M"
+    iscsi_port: 3270
+    nvme_port: 4430
+    admin_port: 8090
+    iqn_suffix: "bench-4krw"
+    nqn_suffix: "bench-4krw"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: start_target
+        target: primary
+        create: "true"
+
+  # iSCSI
+  - name: iscsi-connect
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client
+        save_as: iscsi_device
+
+  - name: iscsi-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "10"
+        name: "iscsi-4k-rw-qd32"
+        save_as: _iscsi_fio
+      - action: fio_parse
+        json_var: _iscsi_fio
+        metric: iops
+        save_as: iscsi_4k_rw_qd32
+
+  - name: iscsi-disconnect
+    actions:
+      - action: iscsi_logout
+        target: primary
+        node: client
+
+  # NVMe
+  - name: nvme-connect
+    actions:
+      - action: nvme_connect
+        target: primary
+        node: client
+        save_as: nvme_nqn
+      - action: nvme_get_device
+        target: primary
+        node: client
+        save_as: nvme_device
+
+  - name: nvme-4k-rw-qd32
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "10"
+        name: "nvme-4k-rw-qd32"
+        save_as: _nvme_fio
+      - action: fio_parse
+        json_var: _nvme_fio
+        metric: iops
+        save_as: nvme_4k_rw_qd32
+
+  - name: nvme-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: primary
+        node: client
+
+  # Compare
+  - name: compare
+    actions:
+      - action: bench_compare
+        save_as: cmp_4k_rw_qd32
+        a_var: iscsi_4k_rw_qd32
+        b_var: nvme_4k_rw_qd32
+        metric: iops
+        gate: "0.8"
+        warn_gate: "0.7"
+
+  # Cleanup
+  - name: cleanup
+    always: true
+    actions:
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

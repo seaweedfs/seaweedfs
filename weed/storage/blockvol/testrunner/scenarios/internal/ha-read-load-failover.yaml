@@ -1,0 +1,182 @@
+# ha-read-load-failover.yaml
+#
+# F2: Failover During Read Load
+#
+# Purpose: Verify that data written to a primary and replicated to a replica
+# survives a failover and is correctly served by the promoted replica. The
+# test writes 10M of known data, confirms it reads back correctly on the
+# primary, then kills the primary and promotes the replica. The key assertion
+# is that the promoted replica serves the exact same data (md5 match).
+#
+# This validates the read path on a promoted replica: WAL replay + extent
+# data must produce byte-identical results to what was on the original primary.
+#
+# Priority: P1
+# Infra: m01 (client 192.168.1.181) + M02 (target 192.168.1.184)
+
+name: ha-read-load-failover
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3294
+    admin_port: 8101
+    replica_data_port: 9061
+    replica_ctrl_port: 9062
+    rebuild_port: 9065
+    iqn_suffix: readload-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3295
+    admin_port: 8102
+    replica_data_port: 9063
+    replica_ctrl_port: 9064
+    rebuild_port: 9066
+    iqn_suffix: readload-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 120s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 120s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: write_known_data
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      # Write 10M of known data in two regions for thorough verification
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        save_as: md5_block_a
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        seek: "5"
+        save_as: md5_block_b
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 15s
+
+  - name: verify_reads_on_primary
+    actions:
+      # Confirm reads are correct on primary before failover
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        save_as: primary_read_a
+      - action: assert_equal
+        actual: "{{ primary_read_a }}"
+        expected: "{{ md5_block_a }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        skip: "5"
+        save_as: primary_read_b
+      - action: assert_equal
+        actual: "{{ primary_read_b }}"
+        expected: "{{ md5_block_b }}"
+
+  - name: failover
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 120s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 10s
+
+  - name: verify_on_promoted_replica
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      # Key assertion: promoted replica serves the exact same data
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        save_as: replica_read_a
+      - action: assert_equal
+        actual: "{{ replica_read_a }}"
+        expected: "{{ md5_block_a }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        skip: "5"
+        save_as: replica_read_b
+      - action: assert_equal
+        actual: "{{ replica_read_b }}"
+        expected: "{{ md5_block_b }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

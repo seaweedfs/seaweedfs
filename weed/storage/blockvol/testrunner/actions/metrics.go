@@ -223,7 +223,7 @@ func pprofCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 //
 // Returns: value = remote file path
 func vmstatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +271,7 @@ func vmstatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 //
 // Returns: value = remote file path
 func iostatCapture(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +320,7 @@ func collectArtifactsAction(ctx context.Context, actx *tr.ActionContext, act tr.
 	if clientNodeName == "" {
 		clientNodeName = "client_node"
 	}
-	node, _ := getNode(actx, clientNodeName)
+	node, _ := GetNode(actx, clientNodeName)
 	if node == nil {
 		// Use any available node.
 		for _, n := range actx.Nodes {

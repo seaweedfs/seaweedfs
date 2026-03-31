@@ -1,0 +1,288 @@
+name: stable-netem-sweep
+timeout: 15m
+
+# Stable dimension: measure write IOPS under increasing replication latency.
+# Injects netem delay on the replication link between primary (m02) and
+# replica (m01), runs fio at each latency level, records delta vs baseline.
+#
+# Latency levels: 0ms (baseline), 1ms, 5ms, 20ms
+# Workload: 4K random write, QD16, 30s per level
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: stable-netem
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-netem-master /tmp/sw-netem-vs1 && mkdir -p /tmp/sw-netem-master /tmp/sw-netem-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-netem-vs2 && mkdir -p /tmp/sw-netem-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-netem-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-netem-vs1
+        extra_args: "-block.dir=/tmp/sw-netem-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-netem-vs2
+        extra_args: "-block.dir=/tmp/sw-netem-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "sync_all"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: connect
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+  # === Baseline: 0ms latency ===
+  - name: baseline-0ms
+    actions:
+      - action: print
+        msg: "=== Baseline: 0ms replication latency ==="
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: baseline-0ms
+        save_as: fio_0ms
+
+      - action: fio_parse
+        json_var: fio_0ms
+        metric: iops
+        save_as: iops_0ms
+
+      - action: print
+        msg: "0ms: {{ iops_0ms }} IOPS"
+
+  # === 1ms replication latency ===
+  - name: netem-1ms
+    actions:
+      - action: print
+        msg: "=== Injecting 1ms replication latency ==="
+
+      - action: inject_netem
+        node: m02
+        target_ip: "192.168.1.181"
+        delay_ms: "1"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: netem-1ms
+        save_as: fio_1ms
+
+      - action: fio_parse
+        json_var: fio_1ms
+        metric: iops
+        save_as: iops_1ms
+
+      - action: print
+        msg: "1ms: {{ iops_1ms }} IOPS"
+
+      - action: clear_fault
+        node: m02
+        type: netem
+
+      - action: sleep
+        duration: 2s
+
+  # === 5ms replication latency ===
+  - name: netem-5ms
+    actions:
+      - action: print
+        msg: "=== Injecting 5ms replication latency ==="
+
+      - action: inject_netem
+        node: m02
+        target_ip: "192.168.1.181"
+        delay_ms: "5"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: netem-5ms
+        save_as: fio_5ms
+
+      - action: fio_parse
+        json_var: fio_5ms
+        metric: iops
+        save_as: iops_5ms
+
+      - action: print
+        msg: "5ms: {{ iops_5ms }} IOPS"
+
+      - action: clear_fault
+        node: m02
+        type: netem
+
+      - action: sleep
+        duration: 2s
+
+  # === 20ms replication latency ===
+  - name: netem-20ms
+    actions:
+      - action: print
+        msg: "=== Injecting 20ms replication latency ==="
+
+      - action: inject_netem
+        node: m02
+        target_ip: "192.168.1.181"
+        delay_ms: "20"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: netem-20ms
+        save_as: fio_20ms
+
+      - action: fio_parse
+        json_var: fio_20ms
+        metric: iops
+        save_as: iops_20ms
+
+      - action: print
+        msg: "20ms: {{ iops_20ms }} IOPS"
+
+      - action: clear_fault
+        node: m02
+        type: netem
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Stable Dimension: Netem Sweep (V1 sync_all RF=2) ==="
+      - action: print
+        msg: "0ms  (baseline): {{ iops_0ms }} IOPS"
+      - action: print
+        msg: "1ms  latency:    {{ iops_1ms }} IOPS"
+      - action: print
+        msg: "5ms  latency:    {{ iops_5ms }} IOPS"
+      - action: print
+        msg: "20ms latency:    {{ iops_20ms }} IOPS"
+
+      - action: collect_results
+        title: "Stable: Netem Latency Sweep (V1 sync_all RF=2)"
+        volume_name: "{{ volume_name }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        node: m02
+        type: netem
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

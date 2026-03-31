@@ -1,0 +1,25 @@
+# Template: Block volume CRUD cycle.
+# Params: vol_name, size (default 50M), rf (default 2)
+# Creates, asserts epoch, expands, verifies, deletes.
+phases:
+  - name: block_crud
+    actions:
+      - action: create_block_volume
+        name: "{{ vol_name }}"
+        size: "{{ size }}"
+        replica_factor: "{{ rf }}"
+        save_as: crud_vol
+      - action: assert_block_field
+        name: "{{ vol_name }}"
+        field: "epoch"
+        expected: "1"
+      - action: expand_block_volume
+        name: "{{ vol_name }}"
+        new_size: "100M"
+      - action: lookup_block_volume
+        name: "{{ vol_name }}"
+        save_as: crud_lookup
+      - action: delete_block_volume
+        name: "{{ vol_name }}"
+      - action: print
+        msg: "block CRUD: {{ vol_name }} ({{ size }}, RF={{ rf }}) — OK"

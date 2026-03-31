@@ -111,7 +111,7 @@ func resizeAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 }
 
 func iscsiRescan(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_rescan: %w", err)
 	}
@@ -138,7 +138,7 @@ func getBlockSize(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 		return nil, fmt.Errorf("get_block_size: device param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("get_block_size: %w", err)
 	}

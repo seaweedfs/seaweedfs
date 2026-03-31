@@ -1,0 +1,134 @@
+name: cp85-perf-baseline
+timeout: 15m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 200M
+    wal_size: 128M
+    iscsi_port: 3270
+    admin_port: 8090
+    iqn_suffix: cp85-perf-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: fio_4k_randwrite
+    actions:
+      - action: fio
+        node: client_node
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "8"
+        runtime: "60"
+        size: 180M
+        name: perf_4k_randwrite
+        save_as: fio_4k_rw
+
+  - name: fio_4k_randread
+    actions:
+      - action: fio
+        node: client_node
+        device: "{{ device }}"
+        rw: randread
+        bs: 4k
+        iodepth: "8"
+        runtime: "60"
+        size: 180M
+        name: perf_4k_randread
+        save_as: fio_4k_rr
+
+  - name: fio_64k_seqwrite
+    actions:
+      - action: fio
+        node: client_node
+        device: "{{ device }}"
+        rw: write
+        bs: 64k
+        size: 180M
+        iodepth: "8"
+        runtime: "60"
+        name: perf_64k_seqwrite
+        save_as: fio_64k_sw
+
+  # --- Profiling snapshot (T7) ---
+  - name: profile_capture
+    parallel: true
+    actions:
+      - action: pprof_capture
+        target: primary
+        save_as: pprof_heap
+        profile: heap
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: post-bench-heap
+      - action: pprof_capture
+        target: primary
+        save_as: pprof_cpu
+        profile: profile
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/pprof"
+        label: post-bench-cpu
+      - action: vmstat_capture
+        node: target_node
+        save_as: post_vmstat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: post-bench-vmstat
+      - action: iostat_capture
+        node: target_node
+        save_as: post_iostat
+        seconds: "10"
+        output_dir: "{{ __temp_dir }}/os"
+        label: post-bench-iostat
+
+  - name: collect_metrics
+    actions:
+      - action: scrape_metrics
+        target: primary
+        save_as: metrics_perf
+      - action: perf_summary
+        target: primary
+        save_as: perf_stats
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

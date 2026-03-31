@@ -1,0 +1,279 @@
+name: cp11a4-snapshot-export-import
+timeout: 10m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9433"
+
+# Infrastructure:
+#   M02 (192.168.1.184): master + volume server + filer/S3 + block target (source + dest)
+#   m01 (192.168.1.181): iSCSI initiator (client)
+#
+# Ports (isolated from production):
+#   master:  9433 (gRPC auto: 19433)
+#   volume:  18180, block.listen :3275
+#   filer:   8988 (S3 on 8986)
+#   source target: admin 8501, iscsi 3280
+#   dest target:   admin 8502, iscsi 3281
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+targets:
+  source:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3280
+    admin_port: 8501
+    iqn_suffix: export-src
+  dest:
+    node: target_node
+    vol_size: 50M
+    iscsi_port: 3281
+    admin_port: 8502
+    iqn_suffix: export-dst
+
+phases:
+  # ── Phase 1: Clean slate ──────────────────────────────────
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-weed-master-exp /tmp/sw-bv-exp /tmp/sw-filer-exp /tmp/sw-bv-src /tmp/sw-bv-dst"
+        root: "true"
+      - action: exec
+        node: target_node
+        cmd: "mkdir -p /tmp/sw-weed-master-exp /tmp/sw-bv-exp/blocks /tmp/sw-filer-exp /tmp/sw-bv-src /tmp/sw-bv-dst"
+
+  # ── Phase 2: Start SeaweedFS cluster (master + VS + filer/S3) ──
+  - name: start_cluster
+    actions:
+      - action: start_weed_master
+        node: target_node
+        port: "9433"
+        dir: "/tmp/sw-weed-master-exp"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: target_node
+        master_url: "http://localhost:9433"
+        timeout: 30s
+      - action: start_weed_volume
+        node: target_node
+        port: "18180"
+        master: "localhost:9433"
+        dir: "/tmp/sw-bv-exp"
+        extra_args: "-block.dir=/tmp/sw-bv-exp/blocks -block.listen=:3275 -ip=192.168.1.184"
+        save_as: vs_pid
+      # Start filer with S3 gateway for snapshot artifact storage.
+      - action: exec
+        node: target_node
+        cmd: >
+          nohup /tmp/sw-test-runner/weed filer
+          -master=localhost:9433
+          -port=8988
+          -s3
+          -s3.port=8986
+          -s3.iam=false
+          -defaultStoreDir=/tmp/sw-filer-exp
+          > /tmp/sw-filer-exp/filer.log 2>&1 & echo $!
+        save_as: filer_pid
+      - action: sleep
+        duration: 5s
+      # Create the S3 bucket for snapshot artifacts.
+      - action: exec
+        node: target_node
+        cmd: >
+          curl -s -X PUT http://localhost:8986/sw-snapshots/ &&
+          echo 'bucket created'
+
+  # ── Phase 3: Start source + dest block targets ────────────
+  - name: start_targets
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: source
+        create: "true"
+      - action: assign
+        target: source
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+      - action: start_target
+        target: dest
+        create: "true"
+      - action: assign
+        target: dest
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+
+  # ── Phase 4: Write known data to source via iSCSI ────────
+  - name: write_source_data
+    actions:
+      - action: iscsi_login
+        target: source
+        node: client_node
+        save_as: src_device
+      # Write 5MB at offset 0 and 2MB at offset 20M.
+      - action: dd_write
+        node: client_node
+        device: "{{ src_device }}"
+        bs: 1M
+        count: "5"
+        seek: "0"
+        save_as: md5_0
+      - action: dd_write
+        node: client_node
+        device: "{{ src_device }}"
+        bs: 1M
+        count: "2"
+        seek: "20"
+        save_as: md5_20
+      # Verify reads match.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ src_device }}"
+        bs: 1M
+        count: "5"
+        skip: "0"
+        save_as: verify_0
+      - action: assert_equal
+        actual: "{{ verify_0 }}"
+        expected: "{{ md5_0 }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ src_device }}"
+        bs: 1M
+        count: "2"
+        skip: "20"
+        save_as: verify_20
+      - action: assert_equal
+        actual: "{{ verify_20 }}"
+        expected: "{{ md5_20 }}"
+      - action: iscsi_cleanup
+        node: client_node
+
+  # ── Phase 5: Export source snapshot to SeaweedFS S3 ───────
+  - name: export_to_s3
+    actions:
+      - action: snapshot_export_s3
+        target: source
+        bucket: "sw-snapshots"
+        key_prefix: "cp11a4-test/"
+        s3_endpoint: "http://192.168.1.184:8986"
+        s3_region: "us-east-1"
+        save_as: export
+      - action: print
+        msg: "exported: manifest={{ export_manifest_key }} data={{ export_data_key }} sha256={{ export_sha256 }} size={{ export_size_bytes }}"
+      # Verify the manifest was uploaded (curl GET returns 200).
+      - action: exec
+        node: target_node
+        cmd: "curl -s -o /dev/null -w '%{http_code}' http://localhost:8986/sw-snapshots/{{ export_manifest_key }}"
+        save_as: manifest_check
+      - action: assert_equal
+        actual: "{{ manifest_check }}"
+        expected: "200"
+
+  # ── Phase 6: Import into dest from S3 ────────────────────
+  - name: import_from_s3
+    actions:
+      - action: snapshot_import_s3
+        target: dest
+        bucket: "sw-snapshots"
+        manifest_key: "{{ export_manifest_key }}"
+        s3_endpoint: "http://192.168.1.184:8986"
+        s3_region: "us-east-1"
+        save_as: import_result
+      - action: print
+        msg: "imported: sha256={{ import_result_sha256 }} size={{ import_result_size_bytes }}"
+      # SHA-256 must match export.
+      - action: assert_equal
+        actual: "{{ import_result_sha256 }}"
+        expected: "{{ export_sha256 }}"
+
+  # ── Phase 7: Verify imported data via iSCSI ──────────────
+  - name: verify_import
+    actions:
+      - action: iscsi_login
+        target: dest
+        node: client_node
+        save_as: dst_device
+      # Read same regions and compare MD5 with source writes.
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dst_device }}"
+        bs: 1M
+        count: "5"
+        skip: "0"
+        save_as: import_md5_0
+      - action: assert_equal
+        actual: "{{ import_md5_0 }}"
+        expected: "{{ md5_0 }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ dst_device }}"
+        bs: 1M
+        count: "2"
+        skip: "20"
+        save_as: import_md5_20
+      - action: assert_equal
+        actual: "{{ import_md5_20 }}"
+        expected: "{{ md5_20 }}"
+      - action: iscsi_cleanup
+        node: client_node
+
+  # ── Phase 8: Negative — second import without overwrite rejected ──
+  - name: negative_double_import
+    actions:
+      # Import again without allow_overwrite — should fail.
+      - action: exec
+        node: target_node
+        cmd: >
+          curl -s -w '\n%{http_code}' -X POST -H 'Content-Type: application/json'
+          -d '{"bucket":"sw-snapshots","manifest_key":"{{ export_manifest_key }}","s3_endpoint":"http://127.0.0.1:8986","s3_region":"us-east-1"}'
+          http://127.0.0.1:8502/import
+        save_as: double_import_raw
+      - action: print
+        msg: "double import response: {{ double_import_raw }}"
+      - action: assert_contains
+        actual: "{{ double_import_raw }}"
+        expected: "not empty"
+
+  # ── Phase 9: Cleanup (always) ─────────────────────────────
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ filer_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: target_node
+        cmd: "rm -rf /tmp/sw-weed-master-exp /tmp/sw-bv-exp /tmp/sw-filer-exp /tmp/sw-bv-src /tmp/sw-bv-dst"
+        root: "true"
+        ignore_error: true

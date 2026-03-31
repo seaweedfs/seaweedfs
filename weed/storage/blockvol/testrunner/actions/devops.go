@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/blockapi"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/internal/blockapi"
 	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
 )
 
@@ -30,6 +30,7 @@ func RegisterDevOpsActions(r *tr.Registry) {
 	r.RegisterFunc("assert_block_field", tr.TierDevOps, assertBlockField)
 	r.RegisterFunc("block_status", tr.TierDevOps, blockStatus)
 	r.RegisterFunc("block_promote", tr.TierDevOps, blockPromote)
+	r.RegisterFunc("wait_volume_healthy", tr.TierDevOps, waitVolumeHealthy)
 }
 
 // setISCSIVars sets the save_as_iscsi_host/port/addr/iqn vars from a VolumeInfo.
@@ -103,7 +104,7 @@ func buildDeployWeed(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 
 // startWeedMaster starts a weed master process on the given node.
 func startWeedMaster(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("start_weed_master: %w", err)
 	}
@@ -135,7 +136,7 @@ func startWeedMaster(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 
 // startWeedVolume starts a weed volume process on the given node.
 func startWeedVolume(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("start_weed_volume: %w", err)
 	}
@@ -170,7 +171,7 @@ func startWeedVolume(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 
 // stopWeed stops a weed process by PID.
 func stopWeed(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("stop_weed: %w", err)
 	}
@@ -207,7 +208,7 @@ func stopWeed(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[s
 
 // waitClusterReady polls the master until IsLeader is true.
 func waitClusterReady(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("wait_cluster_ready: %w", err)
 	}
@@ -219,7 +220,7 @@ func waitClusterReady(ctx context.Context, actx *tr.ActionContext, act tr.Action
 
 	timeout := 30 * time.Second
 	if t, ok := act.Params["timeout"]; ok {
-		if d, err := parseDuration(t); err == nil {
+		if d, err := ParseDuration(t); err == nil {
 			timeout = d
 		}
 	}
@@ -273,18 +274,21 @@ func createBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 		if size == "" {
 			size = "1G"
 		}
-		sizeBytes, err = parseSizeBytes(size)
+		sizeBytes, err = ParseSizeBytes(size)
 		if err != nil {
 			return nil, fmt.Errorf("create_block_volume: %w", err)
 		}
 	}
 
-	rf := parseInt(act.Params["replica_factor"], 1)
+	rf := ParseInt(act.Params["replica_factor"], 1)
+
+	durMode := act.Params["durability_mode"]
 
 	info, err := client.CreateVolume(ctx, blockapi.CreateVolumeRequest{
-		Name:          name,
-		SizeBytes:     sizeBytes,
-		ReplicaFactor: rf,
+		Name:           name,
+		SizeBytes:      sizeBytes,
+		ReplicaFactor:  rf,
+		DurabilityMode: durMode,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create_block_volume: %w", err)
@@ -325,7 +329,7 @@ func expandBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 		if ns == "" {
 			return nil, fmt.Errorf("expand_block_volume: new_size or new_size_bytes param required")
 		}
-		newSizeBytes, err = parseSizeBytes(ns)
+		newSizeBytes, err = ParseSizeBytes(ns)
 		if err != nil {
 			return nil, fmt.Errorf("expand_block_volume: %w", err)
 		}
@@ -394,11 +398,11 @@ func waitBlockServers(ctx context.Context, actx *tr.ActionContext, act tr.Action
 		return nil, fmt.Errorf("wait_block_servers: %w", err)
 	}
 
-	want := parseInt(act.Params["count"], 1)
+	want := ParseInt(act.Params["count"], 1)
 
 	timeout := 60 * time.Second
 	if t, ok := act.Params["timeout"]; ok {
-		if d, err := parseDuration(t); err == nil {
+		if d, err := ParseDuration(t); err == nil {
 			timeout = d
 		}
 	}
@@ -459,7 +463,7 @@ func waitBlockPrimary(ctx context.Context, actx *tr.ActionContext, act tr.Action
 
 	timeout := 60 * time.Second
 	if t, ok := act.Params["timeout"]; ok {
-		if d, err := parseDuration(t); err == nil {
+		if d, err := ParseDuration(t); err == nil {
 			timeout = d
 		}
 	}
@@ -654,9 +658,92 @@ func blockPromote(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 	return map[string]string{"value": resp.NewPrimary}, nil
 }
 
+// waitVolumeHealthy polls until a block volume is healthy:
+// - not degraded (all replicas connected)
+// - RF replicas present (if RF > 1)
+// Useful after create_block_volume to wait for shipper bootstrap before
+// operations that require sync_all barrier success (mkfs, pgbench).
+//
+// Params:
+//   - name: volume name (required)
+//   - master_url: master API (or from var)
+//   - timeout: max wait duration (default: "60s")
+//   - poll_interval: poll interval (default: "2s")
+//
+// Returns: value = "healthy" on success
+func waitVolumeHealthy(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("wait_volume_healthy: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		name = actx.Vars["volume_name"]
+	}
+	if name == "" {
+		return nil, fmt.Errorf("wait_volume_healthy: name param required")
+	}
+
+	timeoutStr := act.Params["timeout"]
+	if timeoutStr == "" {
+		timeoutStr = "60s"
+	}
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		return nil, fmt.Errorf("wait_volume_healthy: invalid timeout %q: %w", timeoutStr, err)
+	}
+
+	intervalStr := act.Params["poll_interval"]
+	if intervalStr == "" {
+		intervalStr = "2s"
+	}
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return nil, fmt.Errorf("wait_volume_healthy: invalid poll_interval %q: %w", intervalStr, err)
+	}
+
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	poll := 0
+	for {
+		select {
+		case <-deadline:
+			return nil, fmt.Errorf("wait_volume_healthy: %q not healthy after %s (polled %d times)", name, timeout, poll)
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait_volume_healthy: context cancelled")
+		case <-ticker.C:
+			poll++
+			info, err := client.LookupVolume(ctx, name)
+			if err != nil {
+				actx.Log("  poll %d: lookup error: %v", poll, err)
+				continue
+			}
+
+			// Check RF > 1 volumes have replicas assigned.
+			if info.ReplicaFactor > 1 && len(info.Replicas) == 0 {
+				actx.Log("  poll %d: waiting for replica assignment (RF=%d, replicas=0)", poll, info.ReplicaFactor)
+				continue
+			}
+
+			// Check not degraded.
+			if info.ReplicaDegraded {
+				actx.Log("  poll %d: replica degraded, waiting...", poll)
+				continue
+			}
+
+			actx.Log("  volume %q healthy after %d polls (RF=%d, mode=%s, degraded=%v)",
+				name, poll, info.ReplicaFactor, info.DurabilityMode, info.ReplicaDegraded)
+			return map[string]string{"value": "healthy"}, nil
+		}
+	}
+}
+
 // clusterStatus fetches the full cluster status JSON.
 func clusterStatus(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("cluster_status: %w", err)
 	}

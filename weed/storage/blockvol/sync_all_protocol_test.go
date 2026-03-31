@@ -454,27 +454,40 @@ func TestWalRetention_RequiredReplicaBlocksReclaim(t *testing.T) {
 
 // ---------- Ship degraded behavior ----------
 
-// TestShip_DegradedDoesNotSilentlyCountAsHealthy verifies that when a
-// shipper is degraded, Ship() does not silently pretend entries were
-// delivered. The primary must know that entries were dropped.
-//
-// Currently EXPECTED BEHAVIOR: Ship() returns nil when degraded (fire-and-forget).
-// This is acceptable for best_effort but problematic for sync_all because
-// the primary loses track of the replica gap size.
+// TestShip_DegradedDoesNotSilentlyCountAsHealthy verifies that a shipper
+// pointing at a dead address eventually degrades and does not count as
+// healthy for sync_all durability. Since CP13-4, Ship() allows the
+// Disconnected state (bootstrap path), so the first Ship may succeed
+// before the connection failure is detected. The key invariant: after
+// degradation, the shipper's replicaFlushedLSN stays 0 (no durable
+// confirmation from a dead replica).
 func TestShip_DegradedDoesNotSilentlyCountAsHealthy(t *testing.T) {
 	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
 	defer replica.Close()
 
-	// Point shipper at dead address — will degrade on first Ship.
+	// Point shipper at dead address — connection will fail.
 	primary.SetReplicaAddr("127.0.0.1:1", "127.0.0.1:2")
 
-	// Write — Ship will fail and mark degraded.
+	// Write — Ship attempts connection from Disconnected state.
 	if err := primary.WriteLBA(0, makeBlock('A')); err != nil {
 		t.Fatal(err)
 	}
-	// Give shipper time to attempt connection and degrade.
-	time.Sleep(100 * time.Millisecond)
+
+	// SyncCache will trigger a barrier which will fail (dead address).
+	// This drives the shipper to Degraded.
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- primary.SyncCache()
+	}()
+	select {
+	case err := <-syncDone:
+		if err == nil {
+			t.Fatal("SyncCache should fail with dead replica under sync_all")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SyncCache hung")
+	}
 
 	sg := primary.shipperGroup
 	if sg == nil {
@@ -485,21 +498,15 @@ func TestShip_DegradedDoesNotSilentlyCountAsHealthy(t *testing.T) {
 		t.Fatal("no shipper at index 0")
 	}
 
-	// Shipper should be degraded.
-	if !s0.IsDegraded() {
-		t.Fatal("shipper not degraded after failed Ship to dead address")
+	// Shipper should not be InSync.
+	if s0.State() == ReplicaInSync {
+		t.Fatal("shipper should NOT be InSync with dead replica")
 	}
 
-	// ShippedLSN should NOT advance past what was actually confirmed.
-	// Currently ShippedLSN advances on local Ship (before network ACK),
-	// which is incorrect for sync_all truth tracking.
-	shipped := s0.ShippedLSN()
-	t.Logf("ShippedLSN after degraded Ship: %d", shipped)
-
-	// After CP13-3: ShippedLSN should be 0 (nothing confirmed by replica).
-	// Currently it may be > 0 because Ship() updates it before network delivery.
-	if shipped > 0 {
-		t.Log("NOTE: ShippedLSN advanced despite degraded state — sender-side tracking is not authoritative")
+	// ReplicaFlushedLSN must be 0 — no durable confirmation ever received.
+	flushed := s0.ReplicaFlushedLSN()
+	if flushed > 0 {
+		t.Fatalf("replicaFlushedLSN=%d, expected 0 — dead replica should never confirm durability", flushed)
 	}
 }
 

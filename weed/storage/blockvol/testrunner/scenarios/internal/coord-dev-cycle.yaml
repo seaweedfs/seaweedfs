@@ -1,0 +1,139 @@
+name: coord-dev-cycle
+timeout: 5m
+env:
+  repo_dir: "/c/work/seaweedfs"
+
+topology:
+  agents:
+    target_agent: "192.168.1.184:9100"
+    client_agent: "192.168.1.181:9100"
+
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      agent: target_agent
+    client_node:
+      host: "192.168.1.181"
+      agent: client_agent
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: dev-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    rebuild_port: 9013
+    iqn_suffix: dev-replica
+
+phases:
+  # Phase 0: Kill stale processes from previous runs
+  - name: pre_cleanup
+    actions:
+      - action: kill_stale
+        node: target_node
+        process: iscsi-target-test
+        ignore_error: true
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+        ignore_error: true
+
+  # Phase 1: Build and deploy iscsi-target binary
+  - name: build_deploy
+    actions:
+      - action: build_deploy
+
+  # Phase 2: Start targets, set up HA replication
+  - name: setup
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 30s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 30s
+      - action: set_replica
+        target: primary
+        replica: replica
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  # Phase 3: Write data, verify replication
+  - name: write_and_replicate
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: written_md5
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 10s
+
+  # Phase 4: Kill primary, promote replica
+  - name: failover
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 30s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  # Phase 5: Verify data survived failover
+  - name: verify
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ written_md5 }}"
+
+  # Phase 6: Cleanup (always runs, even on failure)
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        aggressive: "true"
+        ignore_error: true

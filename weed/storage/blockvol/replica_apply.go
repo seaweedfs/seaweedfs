@@ -349,6 +349,15 @@ func (r *ReplicaReceiver) replicaAppendWithRetry(entry *WALEntry) (uint64, error
 	return walOff, err
 }
 
+// ApplyEntryForTest encodes and applies a WAL entry directly. Test-only.
+func (r *ReplicaReceiver) ApplyEntryForTest(entry *WALEntry) error {
+	encoded, err := entry.Encode()
+	if err != nil {
+		return err
+	}
+	return r.applyEntry(encoded)
+}
+
 // ReceivedLSN returns the highest LSN received and written to the local WAL.
 func (r *ReplicaReceiver) ReceivedLSN() uint64 {
 	r.mu.Lock()

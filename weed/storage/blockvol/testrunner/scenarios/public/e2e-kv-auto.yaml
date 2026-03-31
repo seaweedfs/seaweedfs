@@ -1,0 +1,70 @@
+name: e2e-kv-auto
+timeout: 3m
+env:
+  master_url: "http://192.168.1.184:9333"
+
+# E2E KV test with automatic cluster lifecycle.
+# - First tries to attach to an existing cluster at master_url.
+# - If no cluster is running, creates one automatically (fallback: managed).
+# - Test phases are identical in both modes.
+# - Cluster is torn down only if the runner created it.
+
+cluster:
+  require:
+    servers: 1
+    block_capable: 0
+  fallback: managed
+  managed:
+    master_port: 9520
+    node: server
+    volumes:
+      - port: 18320
+
+topology:
+  nodes:
+    server:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: kv_test
+    actions:
+      - action: kv_assign
+        node: client
+        save_as: file1
+      - action: print
+        msg: "cluster_mode={{ cluster_mode }} master={{ master_url }} fid={{ file1_fid }}"
+      - action: kv_upload
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        size: "32K"
+        save_as: upload_md5
+      - action: kv_download
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        save_as: download_md5
+      - action: assert_equal
+        actual: "{{ download_md5 }}"
+        expected: "{{ upload_md5 }}"
+      - action: kv_delete
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+      - action: print
+        msg: "e2e-kv-auto: mode={{ cluster_mode }} — assign/upload/download/verify/delete OK"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kv_delete
+        node: client
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        ignore_error: true

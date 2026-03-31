@@ -1,0 +1,162 @@
+# F8: Multi-Client Concurrent Failover
+#
+# Tests: 2 iSCSI clients (different IQNs) connected to same primary.
+# Both write data concurrently. Kill primary → promote replica →
+# both clients reconnect to new primary → verify both datasets intact.
+#
+# Gap: Previously untested (session-storm is sequential, not concurrent failover)
+#
+# Note: Uses 2 clients (not 4) since both test nodes are available.
+# client_node uses 2 separate iSCSI sessions with different initiator names.
+#
+# Pass criteria:
+# - Both clients write successfully before failover
+# - After failover, both datasets are intact on promoted replica
+# - No data corruption or cross-client interference
+
+name: ha-multi-client-failover
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: f8-mc-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3261
+    admin_port: 8081
+    replica_data_port: 9011
+    replica_ctrl_port: 9012
+    rebuild_port: 9013
+    iqn_suffix: f8-mc-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: kill_stale
+        node: client_node
+        iscsi_cleanup: "true"
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 60s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 60s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: client1_write
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device1
+      # Client 1 writes at offset 0.
+      - action: dd_write
+        node: client_node
+        device: "{{ device1 }}"
+        bs: 1M
+        count: "5"
+        save_as: md5_client1
+
+  - name: client1_write_offset
+    actions:
+      # Client 1 also writes at offset 10M (non-overlapping region for client2).
+      - action: dd_write
+        node: client_node
+        device: "{{ device1 }}"
+        bs: 1M
+        count: "5"
+        seek: "10"
+        save_as: md5_client2
+      - action: wait_lsn
+        target: replica
+        min_lsn: "2"
+        timeout: 10s
+
+  - name: failover
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: kill_target
+        target: primary
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 60s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+
+  - name: verify_both_datasets
+    actions:
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device2
+      # Verify client 1 data (offset 0).
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        save_as: read_client1
+      - action: assert_equal
+        actual: "{{ read_client1 }}"
+        expected: "{{ md5_client1 }}"
+      # Verify client 2 data (offset 10M).
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        skip: "10"
+        save_as: read_client2
+      - action: assert_equal
+        actual: "{{ read_client2 }}"
+        expected: "{{ md5_client2 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

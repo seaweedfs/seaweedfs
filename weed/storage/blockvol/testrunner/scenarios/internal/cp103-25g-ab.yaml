@@ -1,0 +1,455 @@
+name: "CP10-3 25G A/B Benchmark: iSCSI vs NVMe (3-run median)"
+timeout: "45m"
+
+topology:
+  nodes:
+    server:
+      host: "10.0.0.3"
+      user: "testdev"
+      key: "/home/testdev/.ssh/id_ed25519"
+    client:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  primary:
+    node: server
+    vol_size: "1073741824"
+    wal_size: "536870912"
+    iscsi_port: 3270
+    nvme_port: 4430
+    admin_port: 8090
+    iqn_suffix: "bench-25g"
+    nqn_suffix: "bench-25g"
+
+phases:
+  # --- Setup ---
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: client
+        ignore_error: true
+      - action: kill_stale
+        node: server
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: start_target
+        target: primary
+        create: "true"
+
+  # =================================================================
+  # iSCSI fio benchmarks (3 runs, median)
+  # =================================================================
+  - name: iscsi-connect
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client
+        save_as: iscsi_device
+
+  - name: iscsi-fio
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      # 4K randwrite QD=1
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-4k-rw-qd1"
+        save_as: _iscsi_fio_4k_rw_qd1
+      - action: fio_parse
+        json_var: _iscsi_fio_4k_rw_qd1
+        metric: iops
+        save_as: iscsi_4k_rw_qd1
+
+      # 4K randwrite QD=32
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-4k-rw-qd32"
+        save_as: _iscsi_fio_4k_rw_qd32
+      - action: fio_parse
+        json_var: _iscsi_fio_4k_rw_qd32
+        metric: iops
+        save_as: iscsi_4k_rw_qd32
+
+      # 4K randread QD=1
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: randread
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-4k-rd-qd1"
+        save_as: _iscsi_fio_4k_rd_qd1
+      - action: fio_parse
+        json_var: _iscsi_fio_4k_rd_qd1
+        metric: iops
+        save_as: iscsi_4k_rd_qd1
+
+      # 4K randread QD=32
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-4k-rd-qd32"
+        save_as: _iscsi_fio_4k_rd_qd32
+      - action: fio_parse
+        json_var: _iscsi_fio_4k_rd_qd32
+        metric: iops
+        save_as: iscsi_4k_rd_qd32
+
+      # 64K seqwrite QD=32
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-64k-sw-qd8"
+        save_as: _iscsi_fio_64k_sw_qd8
+      - action: fio_parse
+        json_var: _iscsi_fio_64k_sw_qd8
+        metric: bw_mb
+        save_as: iscsi_64k_sw_qd8
+
+      # 64K seqread QD=8
+      - action: fio_json
+        node: client
+        device: "{{iscsi_device}}"
+        rw: read
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "iscsi-64k-sr-qd8"
+        save_as: _iscsi_fio_64k_sr_qd8
+      - action: fio_parse
+        json_var: _iscsi_fio_64k_sr_qd8
+        metric: bw_mb
+        save_as: iscsi_64k_sr_qd8
+
+  - name: iscsi-disconnect
+    actions:
+      - action: iscsi_logout
+        target: primary
+        node: client
+
+  # =================================================================
+  # NVMe fio benchmarks (3 runs, median)
+  # =================================================================
+  - name: nvme-connect
+    actions:
+      - action: nvme_connect
+        target: primary
+        node: client
+        save_as: nvme_nqn
+      - action: nvme_get_device
+        target: primary
+        node: client
+        save_as: nvme_device
+
+  - name: nvme-fio
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      # 4K randwrite QD=1
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-4k-rw-qd1"
+        save_as: _nvme_fio_4k_rw_qd1
+      - action: fio_parse
+        json_var: _nvme_fio_4k_rw_qd1
+        metric: iops
+        save_as: nvme_4k_rw_qd1
+
+      # 4K randwrite QD=32
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-4k-rw-qd32"
+        save_as: _nvme_fio_4k_rw_qd32
+      - action: fio_parse
+        json_var: _nvme_fio_4k_rw_qd32
+        metric: iops
+        save_as: nvme_4k_rw_qd32
+
+      # 4K randread QD=1
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randread
+        bs: 4k
+        iodepth: "1"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-4k-rd-qd1"
+        save_as: _nvme_fio_4k_rd_qd1
+      - action: fio_parse
+        json_var: _nvme_fio_4k_rd_qd1
+        metric: iops
+        save_as: nvme_4k_rd_qd1
+
+      # 4K randread QD=32
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-4k-rd-qd32"
+        save_as: _nvme_fio_4k_rd_qd32
+      - action: fio_parse
+        json_var: _nvme_fio_4k_rd_qd32
+        metric: iops
+        save_as: nvme_4k_rd_qd32
+
+      # 64K seqwrite QD=8
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: write
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-64k-sw-qd8"
+        save_as: _nvme_fio_64k_sw_qd8
+      - action: fio_parse
+        json_var: _nvme_fio_64k_sw_qd8
+        metric: bw_mb
+        save_as: nvme_64k_sw_qd8
+
+      # 64K seqread QD=8
+      - action: fio_json
+        node: client
+        device: "{{nvme_device}}"
+        rw: read
+        bs: 64k
+        iodepth: "8"
+        numjobs: "1"
+        runtime: "30"
+        name: "nvme-64k-sr-qd8"
+        save_as: _nvme_fio_64k_sr_qd8
+      - action: fio_parse
+        json_var: _nvme_fio_64k_sr_qd8
+        metric: bw_mb
+        save_as: nvme_64k_sr_qd8
+
+  - name: nvme-disconnect
+    actions:
+      - action: nvme_disconnect
+        target: primary
+        node: client
+
+  # =================================================================
+  # pgbench: iSCSI (3 runs, median)
+  # =================================================================
+  - name: iscsi-pgbench-setup
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client
+        save_as: iscsi_device
+      - action: pgbench_init
+        node: client
+        device: "{{iscsi_device}}"
+        port: "5434"
+        scale: "10"
+        mount: "/mnt/pgbench-iscsi"
+
+  - name: iscsi-pgbench-tpcb
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: pgbench_run
+        node: client
+        clients: "1"
+        duration: "30"
+        port: "5434"
+        save_as: iscsi_pg_c1
+      - action: pgbench_run
+        node: client
+        clients: "4"
+        duration: "30"
+        port: "5434"
+        save_as: iscsi_pg_c4
+      - action: pgbench_run
+        node: client
+        clients: "16"
+        duration: "30"
+        port: "5434"
+        save_as: iscsi_pg_c16
+
+  - name: iscsi-pgbench-teardown
+    actions:
+      - action: pgbench_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_logout
+        target: primary
+        node: client
+
+  # =================================================================
+  # pgbench: NVMe (3 runs, median)
+  # =================================================================
+  - name: nvme-pgbench-setup
+    actions:
+      - action: nvme_connect
+        target: primary
+        node: client
+        save_as: nvme_nqn
+      - action: nvme_get_device
+        target: primary
+        node: client
+        save_as: nvme_device
+      - action: pgbench_init
+        node: client
+        device: "{{nvme_device}}"
+        port: "5435"
+        scale: "10"
+        mount: "/mnt/pgbench-nvme"
+
+  - name: nvme-pgbench-tpcb
+    repeat: 3
+    aggregate: median
+    trim_pct: 0
+    actions:
+      - action: pgbench_run
+        node: client
+        clients: "1"
+        duration: "30"
+        port: "5435"
+        save_as: nvme_pg_c1
+      - action: pgbench_run
+        node: client
+        clients: "4"
+        duration: "30"
+        port: "5435"
+        save_as: nvme_pg_c4
+      - action: pgbench_run
+        node: client
+        clients: "16"
+        duration: "30"
+        port: "5435"
+        save_as: nvme_pg_c16
+
+  - name: nvme-pgbench-teardown
+    actions:
+      - action: pgbench_cleanup
+        node: client
+        ignore_error: true
+      - action: nvme_disconnect
+        target: primary
+        node: client
+
+  # =================================================================
+  # Compare results (all use median values from aggregation)
+  # =================================================================
+  - name: compare-fio
+    actions:
+      - action: bench_compare
+        save_as: cmp_4k_rw_qd1
+        a_var: iscsi_4k_rw_qd1
+        b_var: nvme_4k_rw_qd1
+        metric: iops
+        gate: "0.8"
+        warn_gate: "0.7"
+
+      - action: bench_compare
+        save_as: cmp_4k_rw_qd32
+        a_var: iscsi_4k_rw_qd32
+        b_var: nvme_4k_rw_qd32
+        metric: iops
+        gate: "0.8"
+        warn_gate: "0.7"
+
+      - action: bench_compare
+        save_as: cmp_4k_rd_qd1
+        a_var: iscsi_4k_rd_qd1
+        b_var: nvme_4k_rd_qd1
+        metric: iops
+        gate: "0.8"
+        warn_gate: "0.7"
+
+      - action: bench_compare
+        save_as: cmp_4k_rd_qd32
+        a_var: iscsi_4k_rd_qd32
+        b_var: nvme_4k_rd_qd32
+        metric: iops
+        gate: "0.8"
+        warn_gate: "0.7"
+
+      - action: bench_compare
+        save_as: cmp_64k_sw
+        a_var: iscsi_64k_sw_qd8
+        b_var: nvme_64k_sw_qd8
+        metric: bw_mb
+        gate: "0.8"
+        warn_gate: "0.7"
+
+      - action: bench_compare
+        save_as: cmp_64k_sr
+        a_var: iscsi_64k_sr_qd8
+        b_var: nvme_64k_sr_qd8
+        metric: bw_mb
+        gate: "0.8"
+        warn_gate: "0.7"
+
+  # =================================================================
+  # Cleanup
+  # =================================================================
+  - name: cleanup
+    always: true
+    actions:
+      - action: pgbench_cleanup
+        node: client
+        ignore_error: true
+      - action: nvme_cleanup
+        node: client
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: stop_all_targets
+        node: server
+        ignore_error: true

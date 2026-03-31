@@ -22,34 +22,30 @@ func NewExecutor(vol *blockvol.BlockVol) *Executor {
 }
 
 // StreamWALEntries reads WAL entries from startExclusive+1 to endInclusive
-// using the real WAL ScanFrom mechanism. Returns the highest LSN transferred.
+// using BlockVol.ScanWALEntries (real ScanFrom mechanism).
+// Returns the highest LSN successfully scanned.
 //
-// This is the real catch-up data path: entries are read from the primary's
-// WAL and would be shipped to the replica (the replica-side apply is not
-// wired here — that's the shipper/network layer's job).
+// This is the real catch-up data path. The callback receives each entry
+// for shipping to the replica (network-layer apply is the caller's job).
 func (e *Executor) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
 	if e.vol == nil {
 		return 0, fmt.Errorf("no blockvol instance")
 	}
 
-	// Use StatusSnapshot to verify the range is available.
-	snap := e.vol.StatusSnapshot()
-	if startExclusive < snap.WALTailLSN {
-		return 0, fmt.Errorf("WAL range start %d < tail %d (recycled)", startExclusive, snap.WALTailLSN)
+	var highestLSN uint64
+	err := e.vol.ScanWALEntries(startExclusive+1, func(entry *blockvol.WALEntry) error {
+		if entry.LSN > endInclusive {
+			return nil // past requested range, stop
+		}
+		// In production: ship entry to replica over network.
+		// Here: track the highest LSN successfully read.
+		highestLSN = entry.LSN
+		return nil
+	})
+	if err != nil {
+		return highestLSN, fmt.Errorf("WAL scan from %d: %w", startExclusive, err)
 	}
-	if endInclusive > snap.WALHeadLSN {
-		return 0, fmt.Errorf("WAL range end %d > head %d", endInclusive, snap.WALHeadLSN)
-	}
-
-	// In production, ScanFrom would read entries and ship them to the replica.
-	// For now, we validate the range is accessible and return success.
-	// The actual ScanFrom call requires file descriptor + WAL offset which
-	// are internal to the WALWriter. The real integration would use:
-	//   vol.wal.ScanFrom(fd, walOffset, startExclusive, callback)
-	//
-	// This stub validates the contract: the executor can confirm the range
-	// is available and return the highest LSN that would be transferred.
-	return endInclusive, nil
+	return highestLSN, nil
 }
 
 // TransferSnapshot transfers a checkpoint/snapshot. Stub for P1.

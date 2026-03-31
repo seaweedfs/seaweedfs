@@ -45,12 +45,14 @@ func (e *Engine) Run(ctx context.Context, s *Scenario, actx *ActionContext) *Sce
 		defer cancel()
 	}
 
-	// Seed vars from env.
+	// Seed vars from env (merge: env provides defaults, existing vars win).
 	if actx.Vars == nil {
 		actx.Vars = make(map[string]string)
 	}
 	for k, v := range s.Env {
-		actx.Vars[k] = v
+		if _, exists := actx.Vars[k]; !exists {
+			actx.Vars[k] = v
+		}
 	}
 
 	// Allocate a unique per-run temp directory (T6).

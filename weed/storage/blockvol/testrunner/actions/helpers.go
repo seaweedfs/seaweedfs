@@ -11,7 +11,7 @@ import (
 )
 
 // getNode retrieves the infra.Node for the named node from the action context.
-func getNode(actx *tr.ActionContext, name string) (*infra.Node, error) {
+func GetNode(actx *tr.ActionContext, name string) (*infra.Node, error) {
 	if name == "" {
 		// Try to get the first available node.
 		for _, n := range actx.Nodes {
@@ -33,16 +33,16 @@ func getNode(actx *tr.ActionContext, name string) (*infra.Node, error) {
 }
 
 // getTargetNode retrieves the node associated with a target.
-func getTargetNode(actx *tr.ActionContext, targetName string) (*infra.Node, error) {
+func GetTargetNode(actx *tr.ActionContext, targetName string) (*infra.Node, error) {
 	spec, ok := actx.Scenario.Targets[targetName]
 	if !ok {
 		return nil, fmt.Errorf("target %q not in scenario", targetName)
 	}
-	return getNode(actx, spec.Node)
+	return GetNode(actx, spec.Node)
 }
 
 // getTargetHost returns the host address for a target's node.
-func getTargetHost(actx *tr.ActionContext, targetName string) (string, error) {
+func GetTargetHost(actx *tr.ActionContext, targetName string) (string, error) {
 	spec, ok := actx.Scenario.Targets[targetName]
 	if !ok {
 		return "", fmt.Errorf("target %q not in scenario", targetName)
@@ -57,11 +57,11 @@ func getTargetHost(actx *tr.ActionContext, targetName string) (string, error) {
 	return nodeSpec.Host, nil
 }
 
-func parseDuration(s string) (time.Duration, error) {
+func ParseDuration(s string) (time.Duration, error) {
 	return time.ParseDuration(s)
 }
 
-func parseDurationMs(s string) (uint32, error) {
+func ParseDurationMs(s string) (uint32, error) {
 	d, err := time.ParseDuration(s)
 	if err != nil {
 		// Try parsing as plain number (milliseconds).
@@ -74,7 +74,7 @@ func parseDurationMs(s string) (uint32, error) {
 	return uint32(d.Milliseconds()), nil
 }
 
-func parseInt(s string, def int) int {
+func ParseInt(s string, def int) int {
 	if s == "" {
 		return def
 	}
@@ -86,7 +86,7 @@ func parseInt(s string, def int) int {
 }
 
 // parseSizeBytes converts a human-readable size string (e.g. "50M", "1G", "104857600") to bytes.
-func parseSizeBytes(s string) (uint64, error) {
+func ParseSizeBytes(s string) (uint64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, fmt.Errorf("empty size string")
@@ -113,7 +113,7 @@ func parseSizeBytes(s string) (uint64, error) {
 	return v * multiplier, nil
 }
 
-func parseIntSlice(s string) []int {
+func ParseIntSlice(s string) []int {
 	var result []int
 	for _, part := range strings.Split(s, ",") {
 		part = strings.TrimSpace(part)

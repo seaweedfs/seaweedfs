@@ -30,7 +30,7 @@ func execAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map
 		return nil, fmt.Errorf("exec: cmd param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -84,19 +84,22 @@ func assertEqual(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 
 func assertGreater(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
 	actualStr := act.Params["actual"]
-	expectedStr := act.Params["expected"]
-
-	actual, err := strconv.ParseInt(actualStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("assert_greater: cannot parse actual %q as int: %w", actualStr, err)
-	}
-	expected, err := strconv.ParseInt(expectedStr, 10, 64)
-	if err != nil {
-		return nil, fmt.Errorf("assert_greater: cannot parse expected %q as int: %w", expectedStr, err)
+	threshStr := act.Params["threshold"]
+	if threshStr == "" {
+		threshStr = act.Params["expected"] // backward compat
 	}
 
-	if actual <= expected {
-		return nil, fmt.Errorf("assert_greater: %d <= %d", actual, expected)
+	actual, err := strconv.ParseFloat(actualStr, 64)
+	if err != nil {
+		return nil, fmt.Errorf("assert_greater: cannot parse actual %q as number: %w", actualStr, err)
+	}
+	threshold, err := strconv.ParseFloat(threshStr, 64)
+	if err != nil {
+		return nil, fmt.Errorf("assert_greater: cannot parse threshold %q as number: %w", threshStr, err)
+	}
+
+	if actual <= threshold {
+		return nil, fmt.Errorf("assert_greater: %.2f <= %.2f", actual, threshold)
 	}
 	return nil, nil
 }
@@ -160,7 +163,7 @@ func fsckExt4(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[s
 		return nil, fmt.Errorf("fsck_ext4: device param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -186,7 +189,7 @@ func fsckXfs(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 		return nil, fmt.Errorf("fsck_xfs: device param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +218,7 @@ func grepLog(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 		return nil, fmt.Errorf("grep_log: pattern param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, err
 	}

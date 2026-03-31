@@ -2,19 +2,48 @@ package testrunner
 
 import (
 	"time"
-
-	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 // Scenario is the top-level YAML structure for a test scenario.
 type Scenario struct {
-	Name     string            `yaml:"name"`
-	Timeout  Duration          `yaml:"timeout"`
-	Env      map[string]string `yaml:"env"`
-	Topology Topology          `yaml:"topology"`
-	Targets  map[string]TargetSpec `yaml:"targets"`
-	Phases   []Phase           `yaml:"phases"`
-	Artifacts ArtifactSpec     `yaml:"artifacts"`
+	Name      string            `yaml:"name"`
+	Timeout   Duration          `yaml:"timeout"`
+	Env       map[string]string `yaml:"env"`
+	Cluster   *ClusterSpec      `yaml:"cluster,omitempty"`
+	Topology  Topology          `yaml:"topology"`
+	Targets   map[string]TargetSpec `yaml:"targets"`
+	Phases    []Phase           `yaml:"phases"`
+	Artifacts ArtifactSpec      `yaml:"artifacts"`
+}
+
+// ClusterSpec declares what cluster the scenario needs.
+// If omitted, the scenario manages its own cluster lifecycle via phases.
+type ClusterSpec struct {
+	Require  ClusterRequire `yaml:"require"`
+	Fallback string         `yaml:"fallback"` // "managed" (default), "fail", "skip"
+	Cleanup  string         `yaml:"cleanup"`  // "auto" (default), "keep", "destroy"
+	Managed  ManagedCluster `yaml:"managed"`
+}
+
+// ClusterRequire specifies minimum cluster requirements for attach.
+type ClusterRequire struct {
+	Servers      int `yaml:"servers"`       // minimum volume servers
+	BlockCapable int `yaml:"block_capable"` // minimum block-capable servers (0 = don't need block)
+}
+
+// ManagedCluster defines how to create a cluster if attach fails.
+type ManagedCluster struct {
+	MasterPort int             `yaml:"master_port"`
+	Volumes    []ManagedVolume `yaml:"volumes"`
+	Node       string          `yaml:"node"` // topology node name to start processes on
+	IP         string          `yaml:"ip"`   // advertised IP (default: node host)
+}
+
+// ManagedVolume defines one volume server in a managed cluster.
+type ManagedVolume struct {
+	Port        int    `yaml:"port"`
+	BlockListen string `yaml:"block_listen"` // e.g. ":3350", empty = no block
+	ExtraArgs   string `yaml:"extra_args"`
 }
 
 // Duration wraps time.Duration for YAML unmarshaling (e.g. "5m", "30s").
@@ -74,7 +103,7 @@ type TargetSpec struct {
 
 // IQN returns the full IQN from the suffix, sanitized via the shared naming helper.
 func (ts TargetSpec) IQN() string {
-	return "iqn.2024.com.seaweedfs:" + blockvol.SanitizeIQN(ts.IQNSuffix)
+	return "iqn.2024.com.seaweedfs:" + SanitizeIQN(ts.IQNSuffix)
 }
 
 // NQN returns the full NQN from the suffix, using the shared BuildNQN helper
@@ -84,7 +113,7 @@ func (ts TargetSpec) NQN() string {
 	if suffix == "" {
 		suffix = ts.IQNSuffix
 	}
-	return blockvol.BuildNQN("nqn.2024-01.com.seaweedfs:vol.", suffix)
+	return BuildNQN("nqn.2024-01.com.seaweedfs:vol.", suffix)
 }
 
 // Phase is a sequential group of actions.
@@ -96,6 +125,11 @@ type Phase struct {
 	Aggregate string `yaml:"aggregate"` // "median" (default when repeat>1), "mean", "none"
 	TrimPct   int    `yaml:"trim_pct"`  // percentage of outliers to trim from each end (default: 20)
 	Actions   []Action `yaml:"actions"`
+	// Include pulls phases from another YAML file.
+	// The included file's phases replace this phase entry.
+	// Params are passed as variable overrides to the included phases.
+	Include       string            `yaml:"include,omitempty"`
+	IncludeParams map[string]string `yaml:"include_params,omitempty"`
 }
 
 // Action is a single step within a phase.

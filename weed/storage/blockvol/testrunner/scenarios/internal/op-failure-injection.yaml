@@ -1,0 +1,199 @@
+# Operator Gate G2: Failure Injection
+#
+# Tests operator and CSI self-recovery under pod kills:
+# 1. Kill operator pod during steady state → verify auto-recovery
+# 2. Kill CSI controller pod → verify it restarts and PVC still works
+# 3. Kill CSI node pod → verify restart, no orphaned mounts
+# 4. Verify no crashloop after recovery
+#
+# Pass criteria:
+# - Operator pod recovers within 120s
+# - CSI controller pod recovers within 120s
+# - CR status returns to Running after each kill
+# - No pod in CrashLoopBackOff
+# - No orphaned resources
+#
+# Requires: k3s cluster, operator + CR deployed
+# Container name for operator Deployment is "operator" (not "manager")
+
+name: op-failure-injection
+timeout: 20m
+env:
+  operator_ns: "sw-block-system"
+  cr_name: "sw-block-sample"
+  cr_ns: "default"
+
+topology:
+  nodes:
+    k8s_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+phases:
+  - name: deploy_operator
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/crd/bases/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/rbac/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/manager/"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "3m"
+
+  - name: create_cr
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/samples/csi-only.yaml"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "5m"
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: phase_baseline
+      - action: assert_equal
+        actual: "{{ phase_baseline }}"
+        expected: "Running"
+
+  - name: kill_operator_pod
+    actions:
+      # Force-kill the operator pod
+      - action: kubectl_delete_pod
+        node: k8s_node
+        selector: "control-plane=sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        grace_period: "0"
+      - action: sleep
+        duration: 5s
+      # Wait for operator to self-recover via Deployment controller
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "2m"
+
+  - name: verify_after_operator_kill
+    actions:
+      # CR should converge back to Running
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "2m"
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: phase_after_op_kill
+      - action: assert_equal
+        actual: "{{ phase_after_op_kill }}"
+        expected: "Running"
+      # Verify operator pod is not crashlooping
+      - action: kubectl_pod_ready_count
+        node: k8s_node
+        selector: "control-plane=sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        save_as: op_ready
+      - action: assert_equal
+        actual: "{{ op_ready }}"
+        expected: "1"
+
+  - name: kill_csi_controller
+    actions:
+      # Force-kill the CSI controller pod
+      - action: kubectl_delete_pod
+        node: k8s_node
+        selector: "app=sw-block-csi-controller"
+        namespace: "kube-system"
+        grace_period: "0"
+      - action: sleep
+        duration: 5s
+      # Wait for CSI controller Deployment to recover
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/{{ cr_name }}-csi-controller"
+        namespace: "kube-system"
+        timeout: "2m"
+
+  - name: verify_after_csi_kill
+    actions:
+      # CSI controller should be back and healthy
+      - action: kubectl_pod_ready_count
+        node: k8s_node
+        selector: "app=sw-block-csi-controller"
+        namespace: "kube-system"
+        save_as: csi_ready
+      - action: assert_equal
+        actual: "{{ csi_ready }}"
+        expected: "1"
+      # CSIReady condition should still hold
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "2m"
+      # CSI resources still intact
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "storageclass/sw-block"
+
+  - name: kill_csi_node
+    actions:
+      # Force-kill the CSI node DaemonSet pod
+      - action: kubectl_delete_pod
+        node: k8s_node
+        selector: "app=sw-block-csi-node"
+        namespace: "kube-system"
+        grace_period: "0"
+      - action: sleep
+        duration: 10s
+
+  - name: verify_after_node_kill
+    actions:
+      # DaemonSet should restart the node pod
+      - action: kubectl_pod_ready_count
+        node: k8s_node
+        selector: "app=sw-block-csi-node"
+        namespace: "kube-system"
+        save_as: node_ready
+      - action: assert_greater
+        actual: "{{ node_ready }}"
+        expected: "0"
+      # Collect operator logs for evidence
+      - action: kubectl_logs
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        tail: "200"
+        save_as: operator_logs
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        ignore_error: true
+      - action: sleep
+        duration: 10s

@@ -1,0 +1,110 @@
+name: smoke-kv
+timeout: 3m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://localhost:9500"
+
+# KV smoke test: start cluster → assign → upload → download → verify md5 → delete.
+# Proves the standard SeaweedFS object storage path works.
+
+topology:
+  nodes:
+    node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: node
+      - action: exec
+        node: node
+        cmd: "rm -rf /tmp/sw-kv-smoke-master /tmp/sw-kv-smoke-vs1"
+        root: "true"
+
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: node
+        cmd: "mkdir -p /tmp/sw-kv-smoke-master /tmp/sw-kv-smoke-vs1"
+      - action: start_weed_master
+        node: node
+        port: "9500"
+        dir: "/tmp/sw-kv-smoke-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: node
+        master_url: "http://localhost:9500"
+        timeout: 30s
+      - action: start_weed_volume
+        node: node
+        port: "18300"
+        master: "localhost:9500"
+        dir: "/tmp/sw-kv-smoke-vs1"
+        extra_args: "-ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: sleep
+        duration: 3s
+
+  - name: kv_write_read
+    actions:
+      # Assign a file ID.
+      - action: kv_assign
+        node: node
+        master_url: "http://localhost:9500"
+        save_as: file1
+      - action: print
+        msg: "assigned fid={{ file1_fid }} url={{ file1_url }}"
+
+      # Upload 4KB random data.
+      - action: kv_upload
+        node: node
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        size: "4K"
+        save_as: upload_md5
+
+      # Download and verify md5.
+      - action: kv_download
+        node: node
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+        save_as: download_md5
+      - action: assert_equal
+        actual: "{{ download_md5 }}"
+        expected: "{{ upload_md5 }}"
+
+      # Quick verify (all-in-one).
+      - action: kv_verify
+        node: node
+        master_url: "http://localhost:9500"
+        size: "8K"
+        save_as: verify_result
+
+      # Delete.
+      - action: kv_delete
+        node: node
+        url: "{{ file1_url }}"
+        fid: "{{ file1_fid }}"
+
+      - action: print
+        msg: "KV smoke: assign → upload → download → verify → delete — OK"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_weed
+        node: node
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: node
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: node
+        cmd: "rm -rf /tmp/sw-kv-smoke-master /tmp/sw-kv-smoke-vs1"
+        root: "true"
+        ignore_error: true

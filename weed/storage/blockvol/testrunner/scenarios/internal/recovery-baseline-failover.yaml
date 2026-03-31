@@ -1,0 +1,158 @@
+name: recovery-baseline-failover
+timeout: 10m
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: rb-failover
+  vol_size: "1073741824"
+  __topology: "m02-primary_m01-replica"
+  __sync_mode: "sync_all"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "rm -rf /tmp/sw-rb-master /tmp/sw-rb-vs1 /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-master /tmp/sw-rb-vs1/blocks /tmp/sw-rb-vs2/blocks"
+        root: "true"
+      - action: exec
+        node: m01
+        cmd: "rm -rf /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-vs2/blocks"
+        root: "true"
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-rb-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-rb-vs1
+        extra_args: "-block.dir=/tmp/sw-rb-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-rb-vs2
+        extra_args: "-block.dir=/tmp/sw-rb-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "sync_all"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: write-data
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: pre-fault-write
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  - name: fault-failover
+    actions:
+      - action: exec
+        node: m02
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: measure_recovery
+        name: "{{ volume_name }}"
+        timeout: 120s
+        poll_interval: 1s
+        fault_type: failover
+        save_as: rp
+
+  - name: verify
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol_after
+
+      - action: collect_results
+        title: "Recovery Baseline: Failover"
+        volume_name: "{{ volume_name }}"
+        recovery_profile: rp
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

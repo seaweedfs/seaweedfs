@@ -1,0 +1,198 @@
+name: e2e-block
+timeout: 5m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+  master_url: "http://192.168.1.184:9511"
+
+# End-to-end block test: M02 runs the cluster, m01 is the iSCSI initiator.
+# Proves: create RF=2 → iSCSI login from m01 → write → read → verify md5 → expand → verify expanded size.
+
+topology:
+  nodes:
+    server:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: server
+      - action: kill_stale
+        node: client
+        iscsi_cleanup: "true"
+      - action: exec
+        node: server
+        cmd: "rm -rf /tmp/sw-e2e-block-master /tmp/sw-e2e-block-vs1 /tmp/sw-e2e-block-vs2"
+        root: "true"
+
+  - name: start_cluster
+    actions:
+      - action: exec
+        node: server
+        cmd: "mkdir -p /tmp/sw-e2e-block-master /tmp/sw-e2e-block-vs1/blocks /tmp/sw-e2e-block-vs2/blocks"
+      - action: start_weed_master
+        node: server
+        port: "9511"
+        dir: "/tmp/sw-e2e-block-master"
+        save_as: master_pid
+      - action: wait_cluster_ready
+        node: server
+        master_url: "http://localhost:9511"
+        timeout: 30s
+      - action: start_weed_volume
+        node: server
+        port: "18311"
+        master: "localhost:9511"
+        dir: "/tmp/sw-e2e-block-vs1"
+        extra_args: "-block.dir=/tmp/sw-e2e-block-vs1/blocks -block.listen=:3360 -ip=192.168.1.184"
+        save_as: vs1_pid
+      - action: start_weed_volume
+        node: server
+        port: "18312"
+        master: "localhost:9511"
+        dir: "/tmp/sw-e2e-block-vs2"
+        extra_args: "-block.dir=/tmp/sw-e2e-block-vs2/blocks -block.listen=:3361 -ip=192.168.1.184"
+        save_as: vs2_pid
+      - action: wait_block_servers
+        count: "2"
+        timeout: 30s
+      # Wait for replica to confirm role via heartbeat.
+      - action: sleep
+        duration: 5s
+
+  - name: create_volume
+    actions:
+      - action: create_block_volume
+        name: "e2e-test"
+        size: "50M"
+        replica_factor: "2"
+        save_as: vol_info
+      - action: assert_block_field
+        name: "e2e-test"
+        field: "epoch"
+        expected: "1"
+      - action: assert_block_field
+        name: "e2e-test"
+        field: "replica_factor"
+        expected: "2"
+      - action: lookup_block_volume
+        name: "e2e-test"
+        save_as: initial
+      - action: print
+        msg: "created: primary={{ initial_iscsi_host }}:{{ initial_iscsi_port }} capacity={{ initial_capacity }}"
+
+  - name: iscsi_write_read
+    actions:
+      # m01 connects to iSCSI target on M02.
+      - action: iscsi_login_direct
+        node: client
+        host: "192.168.1.184"
+        port: "{{ initial_iscsi_port }}"
+        iqn: "{{ initial_iqn }}"
+        save_as: device
+
+      # Write 2MB at offset 5MB.
+      - action: dd_write
+        node: client
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        seek: "5"
+        save_as: write_md5
+      - action: print
+        msg: "write md5={{ write_md5 }}"
+
+      # Read back and verify md5.
+      - action: dd_read_md5
+        node: client
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        skip: "5"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ write_md5 }}"
+      - action: print
+        msg: "read md5={{ read_md5 }} — MATCH"
+
+  - name: expand_and_verify
+    actions:
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      # Expand 50M → 100M.
+      - action: expand_block_volume
+        name: "e2e-test"
+        new_size: "100M"
+        save_as: expanded_cap
+      - action: lookup_block_volume
+        name: "e2e-test"
+        save_as: after_expand
+      - action: assert_equal
+        actual: "{{ after_expand_capacity }}"
+        expected: "104857600"
+      - action: print
+        msg: "expanded to {{ after_expand_capacity }} bytes"
+
+      # Reconnect iSCSI after expand.
+      - action: iscsi_login_direct
+        node: client
+        host: "192.168.1.184"
+        port: "{{ initial_iscsi_port }}"
+        iqn: "{{ initial_iqn }}"
+        save_as: device2
+
+      # Verify original data still intact.
+      - action: dd_read_md5
+        node: client
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "2"
+        skip: "5"
+        save_as: post_expand_md5
+      - action: assert_equal
+        actual: "{{ post_expand_md5 }}"
+        expected: "{{ write_md5 }}"
+      - action: print
+        msg: "post-expand data intact: md5={{ post_expand_md5 }}"
+
+  - name: block_status
+    actions:
+      - action: block_status
+        save_as: stats
+      - action: print
+        msg: "final status: volumes={{ stats_volume_count }} servers={{ stats_server_count }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client
+        ignore_error: true
+      - action: delete_block_volume
+        name: "e2e-test"
+        ignore_error: true
+      - action: stop_weed
+        node: server
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: server
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: server
+        pid: "{{ master_pid }}"
+        ignore_error: true
+      - action: exec
+        node: server
+        cmd: "rm -rf /tmp/sw-e2e-block-master /tmp/sw-e2e-block-vs1 /tmp/sw-e2e-block-vs2"
+        root: "true"
+        ignore_error: true

@@ -1,0 +1,218 @@
+# ha-restart-recovery.yaml
+#
+# R3: Reboot/Restart Recovery
+#
+# Purpose: Verify that a primary target can be killed and restarted without
+# data loss, and that re-assignment + replica catch-up work correctly after
+# the restart. This simulates a planned or unplanned node reboot where the
+# same target comes back as primary (same epoch, no failover to replica).
+#
+# Flow:
+#   1. Setup primary + replica, write 5M, wait for replica catch-up
+#   2. Kill primary (simulating restart / reboot)
+#   3. Restart primary target (create=true to re-open volume)
+#   4. Re-assign primary role (same epoch -- restart, not failover)
+#   5. Re-set replica, verify original data via iSCSI
+#   6. Write more data, wait for replica catch-up, verify new data too
+#
+# Priority: P1
+# Infra: m01 (client 192.168.1.181) + M02 (target 192.168.1.184)
+
+name: ha-restart-recovery
+timeout: 10m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3292
+    admin_port: 8099
+    replica_data_port: 9056
+    replica_ctrl_port: 9057
+    rebuild_port: 9060
+    iqn_suffix: restart-primary
+  replica:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3293
+    admin_port: 8100
+    replica_data_port: 9058
+    replica_ctrl_port: 9059
+    rebuild_port: 9061
+    iqn_suffix: restart-replica
+
+phases:
+  - name: setup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: start_target
+        target: replica
+        create: "true"
+      - action: assign
+        target: replica
+        epoch: "1"
+        role: replica
+        lease_ttl: 120s
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 120s
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: write_initial_data
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "5"
+        save_as: md5_initial
+      - action: wait_lsn
+        target: replica
+        min_lsn: "1"
+        timeout: 15s
+
+  - name: kill_primary
+    actions:
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      # Brief pause to let kernel state settle
+      - action: sleep
+        duration: 2s
+
+  - name: restart_primary
+    actions:
+      # Restart the same target process (create=true to re-open volume file)
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: sleep
+        duration: 1s
+      # Re-assign primary role at the same epoch (restart, not failover)
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 120s
+      - action: wait_role
+        target: primary
+        role: primary
+        timeout: 5s
+      # Re-establish replication
+      - action: set_replica
+        target: primary
+        replica: replica
+
+  - name: verify_original_data
+    actions:
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "5"
+        save_as: read_md5_initial
+      - action: assert_equal
+        actual: "{{ read_md5_initial }}"
+        expected: "{{ md5_initial }}"
+
+  - name: write_more_data
+    actions:
+      # Write additional data at offset 5M (seek=5) to verify post-restart writes work
+      - action: dd_write
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "3"
+        seek: "5"
+        save_as: md5_additional
+      - action: wait_lsn
+        target: replica
+        min_lsn: "2"
+        timeout: 15s
+
+  - name: verify_new_data_on_replica
+    actions:
+      # Failover to replica to verify the new data was replicated
+      - action: kill_target
+        target: primary
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: assign
+        target: replica
+        epoch: "2"
+        role: primary
+        lease_ttl: 120s
+      - action: wait_role
+        target: replica
+        role: primary
+        timeout: 5s
+      - action: iscsi_login
+        target: replica
+        node: client_node
+        save_as: device3
+      # Verify both the original and additional data survived
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device3 }}"
+        bs: 1M
+        count: "5"
+        save_as: read_md5_orig_on_replica
+      - action: assert_equal
+        actual: "{{ read_md5_orig_on_replica }}"
+        expected: "{{ md5_initial }}"
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device3 }}"
+        bs: 1M
+        count: "3"
+        skip: "5"
+        save_as: read_md5_add_on_replica
+      - action: assert_equal
+        actual: "{{ read_md5_add_on_replica }}"
+        expected: "{{ md5_additional }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

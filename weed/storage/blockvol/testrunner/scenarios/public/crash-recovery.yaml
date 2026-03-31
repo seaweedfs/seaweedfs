@@ -1,0 +1,87 @@
+name: crash-recovery
+timeout: 5m
+env:
+  repo_dir: "C:/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    client_node:
+      host: "192.168.1.181"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 100M
+    iscsi_port: 3260
+    admin_port: 8080
+    iqn_suffix: crash-primary
+
+phases:
+  - name: setup
+    actions:
+      - action: build_deploy
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: write_data
+    actions:
+      - action: dd_write
+        node: client_node
+        device: "{{ device }}"
+        bs: 1M
+        count: "1"
+        save_as: written_md5
+
+  - name: crash
+    actions:
+      # Brief pause to ensure fsync fully completes on target.
+      - action: sleep
+        duration: 1s
+      # Kill while session is still active (like the existing Kill9Fsync test).
+      - action: kill_target
+        target: primary
+      # Clean up stale iSCSI kernel state after kill.
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+
+  - name: restart_and_verify
+    actions:
+      - action: start_target
+        target: primary
+        create: "false"
+      - action: sleep
+        duration: 2s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device2
+      - action: dd_read_md5
+        node: client_node
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "1"
+        save_as: read_md5
+      - action: assert_equal
+        actual: "{{ read_md5 }}"
+        expected: "{{ written_md5 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

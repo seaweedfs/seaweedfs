@@ -30,13 +30,13 @@ func iscsiLogin(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map
 		return nil, fmt.Errorf("iscsi_login: target %q not in scenario", targetName)
 	}
 
-	host, err := getTargetHost(actx, targetName)
+	host, err := GetTargetHost(actx, targetName)
 	if err != nil {
 		return nil, err
 	}
 
 	// Get the initiator node (first available or explicit).
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_login: %w", err)
 	}
@@ -94,7 +94,7 @@ func iscsiLoginDirect(ctx context.Context, actx *tr.ActionContext, act tr.Action
 		return nil, fmt.Errorf("iscsi_login_direct: iqn param required")
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_login_direct: %w", err)
 	}
@@ -139,7 +139,7 @@ func iscsiLogout(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 		return nil, fmt.Errorf("iscsi_logout: target %q not in scenario", targetName)
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_logout: %w", err)
 	}
@@ -159,12 +159,12 @@ func iscsiDiscover(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 		return nil, fmt.Errorf("iscsi_discover: target %q not in scenario", targetName)
 	}
 
-	host, err := getTargetHost(actx, targetName)
+	host, err := GetTargetHost(actx, targetName)
 	if err != nil {
 		return nil, err
 	}
 
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_discover: %w", err)
 	}
@@ -179,7 +179,7 @@ func iscsiDiscover(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 }
 
 func iscsiCleanup(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
-	node, err := getNode(actx, act.Node)
+	node, err := GetNode(actx, act.Node)
 	if err != nil {
 		return nil, fmt.Errorf("iscsi_cleanup: %w", err)
 	}

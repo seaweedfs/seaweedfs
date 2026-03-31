@@ -24,12 +24,18 @@ type hold struct {
 	startLSN uint64
 }
 
-// NewPinner creates a pinner for a real blockvol instance.
+// NewPinner creates a pinner for a real blockvol instance and wires
+// its MinWALRetentionFloor into the flusher's retention floor function.
+// This ensures that held positions actually prevent WAL reclaim.
 func NewPinner(vol *blockvol.BlockVol) *Pinner {
-	return &Pinner{
+	p := &Pinner{
 		vol:   vol,
 		holds: map[uint64]*hold{},
 	}
+	// Wire into real retention: the flusher will check this floor before
+	// advancing the WAL tail, preventing reclaim past any held position.
+	vol.SetV2RetentionFloor(p.MinWALRetentionFloor)
+	return p
 }
 
 // HoldWALRetention prevents WAL entries from startLSN from being recycled.

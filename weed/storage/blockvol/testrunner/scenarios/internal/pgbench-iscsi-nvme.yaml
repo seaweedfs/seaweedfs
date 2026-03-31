@@ -1,0 +1,126 @@
+name: pgbench-iscsi-nvme
+timeout: 15m
+env:
+  repo_dir: "/opt/work/seaweedfs"
+
+topology:
+  nodes:
+    target_node:
+      host: "10.0.0.3"
+      user: testdev
+      key: "/home/testdev/.ssh/id_ed25519"
+    client_node:
+      host: "10.0.0.1"
+      is_local: true
+
+targets:
+  primary:
+    node: target_node
+    vol_size: 1G
+    wal_size: 512M
+    iscsi_port: 3270
+    admin_port: 8090
+    iqn_suffix: pgbench
+    nvme_port: 4430
+    nqn_suffix: pgbench
+
+phases:
+  - name: pre_cleanup
+    actions:
+      - action: kill_stale
+        node: target_node
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+
+  # ═══════════ iSCSI pgbench ═══════════
+  - name: iscsi_setup
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "1"
+        role: primary
+        lease_ttl: 300s
+      - action: iscsi_login
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: iscsi_pgbench
+    actions:
+      - action: pgbench_init
+        node: client_node
+        device: "{{ device }}"
+        scale: "10"
+      - action: pgbench_run
+        node: client_node
+        duration: "60"
+        clients: "4"
+        save_as: iscsi_tps
+      - action: pgbench_cleanup
+        node: client_node
+
+  - name: iscsi_teardown
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: stop_target
+        target: primary
+
+  # ═══════════ NVMe pgbench ═══════════
+  - name: nvme_setup
+    actions:
+      - action: start_target
+        target: primary
+        create: "true"
+      - action: assign
+        target: primary
+        epoch: "2"
+        role: primary
+        lease_ttl: 300s
+      - action: nvme_connect
+        target: primary
+        node: client_node
+        save_as: device
+
+  - name: nvme_pgbench
+    actions:
+      - action: pgbench_init
+        node: client_node
+        device: "{{ device }}"
+        scale: "10"
+      - action: pgbench_run
+        node: client_node
+        duration: "60"
+        clients: "4"
+        save_as: nvme_tps
+      - action: pgbench_cleanup
+        node: client_node
+
+  - name: nvme_teardown
+    actions:
+      - action: nvme_disconnect
+        node: client_node
+        target: primary
+        ignore_error: true
+      - action: stop_target
+        target: primary
+
+  # ═══════════ Cleanup ═══════════
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: client_node
+        ignore_error: true
+      - action: nvme_disconnect
+        node: client_node
+        target: primary
+        ignore_error: true
+      - action: stop_all_targets
+        ignore_error: true

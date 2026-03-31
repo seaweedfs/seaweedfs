@@ -1,0 +1,60 @@
+name: e2e-combined-auto
+timeout: 3m
+env:
+  master_url: "http://192.168.1.184:9333"
+
+# Combined KV + Block test using includes and run_id namespacing.
+# Demonstrates: attach-or-create, reusable templates, data isolation.
+
+cluster:
+  require:
+    servers: 2
+    block_capable: 2
+  fallback: managed
+  managed:
+    master_port: 9522
+    node: server
+    ip: "192.168.1.184"
+    volumes:
+      - port: 18330
+        block_listen: ":3380"
+      - port: 18331
+        block_listen: ":3381"
+
+topology:
+  nodes:
+    server:
+      host: "192.168.1.184"
+      user: testdev
+      key: "/opt/work/testdev_key"
+    client:
+      host: "192.168.1.181"
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  # KV test via include template.
+  - include: ../templates/kv-write-verify.yaml
+    include_params:
+      node: client
+      size: "32K"
+
+  # Block test via include template with run_id namespacing.
+  - include: ../templates/block-crud.yaml
+    include_params:
+      vol_name: "test-{{ run_id }}"
+      size: "50M"
+      rf: "2"
+
+  # Inline verification that both worked.
+  - name: summary
+    actions:
+      - action: print
+        msg: "e2e-combined: KV + Block with includes — run_id={{ run_id }} — ALL OK"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: delete_block_volume
+        name: "test-{{ run_id }}"
+        ignore_error: true

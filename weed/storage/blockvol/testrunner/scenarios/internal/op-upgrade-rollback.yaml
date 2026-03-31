@@ -1,0 +1,154 @@
+# Operator Gate G1: Upgrade and Rollback Safety
+#
+# Tests operator upgrade N → N+1 and rollback N+1 → N with active CR.
+# Container name for operator Deployment is "operator" (not "manager").
+#
+# Pass criteria:
+# - No stuck PVC/PV/VolumeAttachment
+# - No CR stuck in Failed due to upgrade path
+# - Reconcile converges within 5 minutes after each transition
+#
+# Requires: k3s cluster, two operator image tags (v1 and v2)
+
+name: op-upgrade-rollback
+timeout: 20m
+env:
+  operator_image_v1: "sw-block-operator:v1"
+  operator_image_v2: "sw-block-operator:v2"
+  operator_ns: "sw-block-system"
+  cr_name: "sw-block-upgrade-test"
+  cr_ns: "default"
+
+topology:
+  nodes:
+    k8s_node:
+      host: "192.168.1.184"
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+phases:
+  - name: baseline_deploy
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/crd/bases/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/rbac/"
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/manager/"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "3m"
+
+  - name: create_cr
+    actions:
+      - action: kubectl_apply
+        node: k8s_node
+        file: "/opt/work/seaweedfs/operator/config/samples/csi-only.yaml"
+      - action: kubectl_wait_condition
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        condition: "CSIReady=True"
+        timeout: "5m"
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: phase_pre_upgrade
+      - action: assert_equal
+        actual: "{{ phase_pre_upgrade }}"
+        expected: "Running"
+
+  - name: upgrade_operator
+    actions:
+      # Upgrade: N → N+1 (container name is "operator")
+      - action: kubectl_set_image
+        node: k8s_node
+        deployment: "deploy/sw-block-operator"
+        container: "operator"
+        image: "{{ operator_image_v2 }}"
+        namespace: "{{ operator_ns }}"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "5m"
+      - action: sleep
+        duration: 10s
+
+  - name: verify_after_upgrade
+    actions:
+      # CR should still be Running after upgrade
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: phase_post_upgrade
+      - action: assert_equal
+        actual: "{{ phase_post_upgrade }}"
+        expected: "Running"
+      # CSI resources should still exist
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "storageclass/sw-block"
+
+  - name: rollback_operator
+    actions:
+      # Rollback: N+1 → N (container name is "operator")
+      - action: kubectl_set_image
+        node: k8s_node
+        deployment: "deploy/sw-block-operator"
+        container: "operator"
+        image: "{{ operator_image_v1 }}"
+        namespace: "{{ operator_ns }}"
+      - action: kubectl_rollout_status
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        timeout: "5m"
+      - action: sleep
+        duration: 10s
+
+  - name: verify_after_rollback
+    actions:
+      - action: kubectl_get_field
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        jsonpath: "{.status.phase}"
+        save_as: phase_post_rollback
+      - action: assert_equal
+        actual: "{{ phase_post_rollback }}"
+        expected: "Running"
+      # Verify no stuck resources
+      - action: kubectl_assert_exists
+        node: k8s_node
+        resource: "csidriver/block.seaweedfs.com"
+      # Collect operator logs for evidence
+      - action: kubectl_logs
+        node: k8s_node
+        resource: "deploy/sw-block-operator"
+        namespace: "{{ operator_ns }}"
+        tail: "200"
+        save_as: operator_logs
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: kubectl_delete
+        node: k8s_node
+        resource: "seaweedblockcluster/{{ cr_name }}"
+        namespace: "{{ cr_ns }}"
+        ignore_error: true
+      - action: sleep
+        duration: 10s

@@ -906,6 +906,42 @@ func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
 	}
 }
 
+// SetV2RetentionFloor registers an additional retention floor function from the
+// V2 bridge pinner. The flusher will check this floor before advancing the WAL
+// tail, preventing reclaim past any held position.
+func (v *BlockVol) SetV2RetentionFloor(fn func() (uint64, bool)) {
+	if v.flusher != nil {
+		// Chain with existing retention floor (from shipper group).
+		existing := v.flusher.RetentionFloorFn()
+		v.flusher.SetRetentionFloorFn(func() (uint64, bool) {
+			var min uint64
+			found := false
+			if existing != nil {
+				if lsn, ok := existing(); ok {
+					min = lsn
+					found = true
+				}
+			}
+			if lsn, ok := fn(); ok {
+				if !found || lsn < min {
+					min = lsn
+					found = true
+				}
+			}
+			return min, found
+		})
+	}
+}
+
+// ScanWALEntries reads WAL entries from fromLSN using the real ScanFrom mechanism.
+// This is the entry point for the V2 bridge executor's catch-up path.
+func (v *BlockVol) ScanWALEntries(fromLSN uint64, fn func(*WALEntry) error) error {
+	if v.wal == nil {
+		return fmt.Errorf("WAL not initialized")
+	}
+	return v.wal.ScanFrom(v.fd, v.super.WALOffset, v.flusher.CheckpointLSN(), fromLSN, fn)
+}
+
 // ReplicaReceiverAddrInfo holds canonical addresses from the replica receiver.
 type ReplicaReceiverAddrInfo struct {
 	DataAddr string

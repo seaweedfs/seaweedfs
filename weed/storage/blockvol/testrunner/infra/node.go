@@ -154,7 +154,14 @@ func (n *Node) runSSH(ctx context.Context, cmd string) (string, string, int, err
 }
 
 // RunRoot executes a command with sudo -n (non-interactive).
+// Compound commands (containing ; && || |) are wrapped in sh -c '...'
+// to ensure the entire command runs under sudo, not just the first part.
 func (n *Node) RunRoot(ctx context.Context, cmd string) (string, string, int, error) {
+	if strings.ContainsAny(cmd, ";|&") {
+		// Escape single quotes in cmd for sh -c wrapping.
+		escaped := strings.ReplaceAll(cmd, "'", "'\"'\"'")
+		return n.Run(ctx, "sudo -n sh -c '"+escaped+"'")
+	}
 	return n.Run(ctx, "sudo -n "+cmd)
 }
 
