@@ -333,29 +333,23 @@ func runServer(cmd *Command, args []string) bool {
 	// Register Unix socket paths for gRPC services running in this process
 	// so local inter-service communication uses Unix sockets instead of TCP.
 	// Resolve gRPC ports early (same calculation each service does internally).
-	if *isStartingMasterServer {
-		if *masterOptions.portGrpc == 0 {
-			*masterOptions.portGrpc = 10000 + *masterOptions.port
+	for _, svc := range []struct {
+		starting *bool
+		portGrpc *int
+		port     *int
+		name     string
+	}{
+		{isStartingMasterServer, masterOptions.portGrpc, masterOptions.port, "master"},
+		{isStartingVolumeServer, serverOptions.v.portGrpc, serverOptions.v.port, "volume"},
+		{isStartingFiler, filerOptions.portGrpc, filerOptions.port, "filer"},
+		{isStartingS3, s3Options.portGrpc, s3Options.port, "s3"},
+	} {
+		if *svc.starting {
+			if *svc.portGrpc == 0 {
+				*svc.portGrpc = 10000 + *svc.port
+			}
+			pb.RegisterLocalGrpcSocket(*svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
 		}
-		pb.RegisterLocalGrpcSocket(*masterOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-master-grpc-%d.sock", *masterOptions.portGrpc))
-	}
-	if *isStartingVolumeServer {
-		if *serverOptions.v.portGrpc == 0 {
-			*serverOptions.v.portGrpc = 10000 + *serverOptions.v.port
-		}
-		pb.RegisterLocalGrpcSocket(*serverOptions.v.portGrpc, fmt.Sprintf("/tmp/seaweedfs-volume-grpc-%d.sock", *serverOptions.v.portGrpc))
-	}
-	if *isStartingFiler {
-		if *filerOptions.portGrpc == 0 {
-			*filerOptions.portGrpc = 10000 + *filerOptions.port
-		}
-		pb.RegisterLocalGrpcSocket(*filerOptions.portGrpc, fmt.Sprintf("/tmp/seaweedfs-filer-grpc-%d.sock", *filerOptions.portGrpc))
-	}
-	if *isStartingS3 {
-		if *s3Options.portGrpc == 0 {
-			*s3Options.portGrpc = 10000 + *s3Options.port
-		}
-		pb.RegisterLocalGrpcSocket(*s3Options.portGrpc, fmt.Sprintf("/tmp/seaweedfs-s3-grpc-%d.sock", *s3Options.portGrpc))
 	}
 
 	serverWhiteList := util.StringSplit(*serverWhiteListOption, ",")
