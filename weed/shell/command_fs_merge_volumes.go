@@ -20,6 +20,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
@@ -70,7 +71,13 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
 	toVolumeId := needle.VolumeId(*toVolumeArg)
 
-	c.reloadVolumesInfo(commandEnv.MasterClient)
+	if err := c.ensureNoAmbiguousDuplicateVolumeIds(commandEnv, *collectionArg, fromVolumeId, toVolumeId); err != nil {
+		return err
+	}
+
+	if err = c.reloadVolumesInfo(commandEnv.MasterClient, *collectionArg); err != nil {
+		return err
+	}
 
 	if fromVolumeId != 0 && toVolumeId != 0 {
 		if fromVolumeId == toVolumeId {
@@ -146,6 +153,98 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	})
 }
 
+func (c *commandFsMergeVolumes) ensureNoAmbiguousDuplicateVolumeIds(commandEnv *CommandEnv, collection string, fromVolumeId, toVolumeId needle.VolumeId) error {
+	duplicateInfos, err := c.findDuplicateVolumeIds(commandEnv)
+	if err != nil {
+		return err
+	}
+
+	ambiguous := filterAmbiguousDuplicateVolumeIds(duplicateInfos, collection, fromVolumeId, toVolumeId)
+
+	if len(ambiguous) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"cannot run fs.mergeVolumes with duplicate volume IDs across collections (%s). Resolve the duplicates first",
+		topology.FormatDuplicateVolumeIds(ambiguous),
+	)
+}
+
+func filterAmbiguousDuplicateVolumeIds(duplicateInfos map[needle.VolumeId][]string, collection string, fromVolumeId, toVolumeId needle.VolumeId) map[needle.VolumeId][]string {
+	ambiguous := make(map[needle.VolumeId][]string)
+	for vid, collections := range duplicateInfos {
+		if fromVolumeId != 0 && toVolumeId != 0 && vid != fromVolumeId && vid != toVolumeId {
+			continue
+		}
+		if fromVolumeId != 0 && toVolumeId == 0 && vid != fromVolumeId {
+			continue
+		}
+		if toVolumeId != 0 && fromVolumeId == 0 && vid != toVolumeId {
+			continue
+		}
+		if collection != "*" {
+			matchesCollection := false
+			for _, name := range collections {
+				if name == collection {
+					matchesCollection = true
+					break
+				}
+			}
+			if !matchesCollection {
+				continue
+			}
+		}
+		ambiguous[vid] = collections
+	}
+	return ambiguous
+}
+
+func (c *commandFsMergeVolumes) findDuplicateVolumeIds(commandEnv *CommandEnv) (map[needle.VolumeId][]string, error) {
+	volumeCollections := make(map[needle.VolumeId]map[string]struct{})
+
+	err := commandEnv.MasterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
+		volumes, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		for _, dc := range volumes.TopologyInfo.DataCenterInfos {
+			for _, rack := range dc.RackInfos {
+				for _, node := range rack.DataNodeInfos {
+					for _, disk := range node.DiskInfos {
+						for _, volume := range disk.VolumeInfos {
+							vid := needle.VolumeId(volume.Id)
+							if volumeCollections[vid] == nil {
+								volumeCollections[vid] = make(map[string]struct{})
+							}
+							volumeCollections[vid][volume.Collection] = struct{}{}
+						}
+					}
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	duplicates := make(map[needle.VolumeId][]string)
+	for vid, collectionSet := range volumeCollections {
+		if len(collectionSet) < 2 {
+			continue
+		}
+		collections := make([]string, 0, len(collectionSet))
+		for name := range collectionSet {
+			collections = append(collections, name)
+		}
+		sort.Strings(collections)
+		duplicates[vid] = collections
+	}
+	return duplicates, nil
+}
+
 func (c *commandFsMergeVolumes) getVolumeInfoById(vid needle.VolumeId) (*master_pb.VolumeInformationMessage, error) {
 	info := c.volumes[vid]
 	var err error
@@ -169,7 +268,7 @@ func (c *commandFsMergeVolumes) volumesAreCompatible(src needle.VolumeId, dest n
 		srcInfo.ReplicaPlacement == destInfo.ReplicaPlacement), nil
 }
 
-func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterClient) error {
+func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterClient, collection string) error {
 	c.volumes = make(map[needle.VolumeId]*master_pb.VolumeInformationMessage)
 
 	return masterClient.WithClient(false, func(client master_pb.SeaweedClient) error {
@@ -186,8 +285,24 @@ func (c *commandFsMergeVolumes) reloadVolumesInfo(masterClient *wdclient.MasterC
 					for _, disk := range node.DiskInfos {
 						for _, volume := range disk.VolumeInfos {
 							vid := needle.VolumeId(volume.Id)
-							if found := c.volumes[vid]; found == nil {
+							existing := c.volumes[vid]
+							if existing == nil {
 								c.volumes[vid] = volume
+							} else if existing.Collection != volume.Collection {
+								// Duplicate volume ID across collections detected.
+								// Prefer the volume matching the requested collection filter.
+								if collection != "*" && volume.Collection == collection {
+									fmt.Printf("WARNING: duplicate volume id %d across collections %q and %q, using %q\n",
+										vid, existing.Collection, volume.Collection, collection)
+									c.volumes[vid] = volume
+								} else if collection != "*" && existing.Collection == collection {
+									// Already have the right one
+									fmt.Printf("WARNING: duplicate volume id %d across collections %q and %q, using %q\n",
+										vid, existing.Collection, volume.Collection, collection)
+								} else {
+									fmt.Printf("WARNING: duplicate volume id %d across collections %q and %q\n",
+										vid, existing.Collection, volume.Collection)
+								}
 							}
 						}
 					}
