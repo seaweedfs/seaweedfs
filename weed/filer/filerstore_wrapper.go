@@ -30,6 +30,7 @@ type VirtualFilerStore interface {
 	OnBucketCreation(bucket string)
 	OnBucketDeletion(bucket string)
 	CanDropWholeBucket() bool
+	SameActualStore(a, b util.FullPath) bool
 }
 
 type FilerStoreWrapper struct {
@@ -105,6 +106,13 @@ func (fsw *FilerStoreWrapper) getActualStore(path util.FullPath) (store FilerSto
 		store = fsw.storeIdToStore[storeId]
 	}
 	return
+}
+
+// SameActualStore reports whether two paths resolve to the same underlying
+// store. When path-specific stores are configured, different subtrees may
+// be served by different backends.
+func (fsw *FilerStoreWrapper) SameActualStore(a, b util.FullPath) bool {
+	return fsw.getActualStore(a) == fsw.getActualStore(b)
 }
 
 func (fsw *FilerStoreWrapper) getDefaultStore() (store FilerStore) {

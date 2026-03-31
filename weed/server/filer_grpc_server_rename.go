@@ -156,7 +156,9 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 		for _, item := range entries {
 			lastFileName = item.Name()
 			// println("processing", lastFileName)
-			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, true, metadataEvents)
+			newChildPath := newDirPath.Child(item.Name())
+			skipTarget := fs.filer.Store.SameActualStore(newDirPath, newChildPath)
+			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents)
 			if err != nil {
 				return err
 			}
