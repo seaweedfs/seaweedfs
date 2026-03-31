@@ -34,7 +34,8 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 		return nil, fmt.Errorf("%s/%s not found: %v", req.OldDirectory, req.OldName, err)
 	}
 
-	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
+	var metadataEvents []metadataEvent
+	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -43,6 +44,9 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 			fs.filer.RollbackTransaction(ctx)
 			return nil, fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
+	}
+	for _, event := range metadataEvents {
+		event.notify(fs.filer, ctx, req.Signatures)
 	}
 
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
@@ -87,7 +91,8 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 		}
 	}
 
-	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures)
+	var metadataEvents []metadataEvent
+	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -97,27 +102,40 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 			return fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
 	}
+	for _, event := range metadataEvents {
+		event.notify(fs.filer, ctx, req.Signatures)
+	}
 
 	return nil
 }
 
-func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32) error {
+type metadataEvent struct {
+	oldEntry     *filer.Entry
+	newEntry     *filer.Entry
+	deleteChunks bool
+}
+
+func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signatures []int32) {
+	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
+}
+
+func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent) error {
 
 	if err := fs.moveSelfEntry(ctx, stream, oldParent, entry, newParent, newName, func() error {
 		if entry.IsDirectory() {
-			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures); err != nil {
+			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures, metadataEvents); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, signatures); err != nil {
+	}, signatures, skipTargetLookup, metadataEvents); err != nil {
 		return fmt.Errorf("fail to move %s => %s: %v", oldParent.Child(entry.Name()), newParent.Child(newName), err)
 	}
 
 	return nil
 }
 
-func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32) error {
+func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, metadataEvents *[]metadataEvent) error {
 
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
@@ -138,7 +156,9 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 		for _, item := range entries {
 			lastFileName = item.Name()
 			// println("processing", lastFileName)
-			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures)
+			newChildPath := newDirPath.Child(item.Name())
+			skipTarget := fs.filer.Store.SameActualStore(newDirPath, newChildPath)
+			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents)
 			if err != nil {
 				return err
 			}
@@ -150,7 +170,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -159,6 +179,18 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	if oldPath == newPath {
 		glog.V(1).Infof("skip moving entry %s => %s", oldPath, newPath)
 		return nil
+	}
+
+	sourceEntry := entry.ShallowClone()
+	sourceEntry.FullPath = oldPath
+
+	var existingTarget *filer.Entry
+	if !skipTargetLookup {
+		if targetEntry, findErr := fs.filer.FindEntry(ctx, newPath); findErr == nil {
+			existingTarget = targetEntry.ShallowClone()
+		} else if findErr != filer_pb.ErrNotFound {
+			return findErr
+		}
 	}
 
 	// add to new directory
@@ -173,8 +205,17 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		Remote:          entry.Remote,
 		Quota:           entry.Quota,
 	}
-	if createErr := fs.filer.CreateEntry(ctx, newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
-		return createErr
+	if skipTargetLookup {
+		if newEntry.FullPath.IsLongerFileName(fs.filer.MaxFilenameLength) {
+			return filer_pb.ErrEntryNameTooLong
+		}
+		if createErr := fs.filer.Store.InsertEntryKnownAbsent(filer.WithSuppressedMetadataEvents(ctx), newEntry); createErr != nil {
+			return fmt.Errorf("insert entry %s: %v", newEntry.FullPath, createErr)
+		}
+	} else {
+		if createErr := fs.filer.CreateEntry(filer.WithSuppressedMetadataEvents(ctx), newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
+			return createErr
+		}
 	}
 	if stream != nil {
 		if err := stream.Send(&filer_pb.StreamRenameEntryResponse{
@@ -195,6 +236,17 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		}
 	}
 
+	if existingTarget != nil {
+		*metadataEvents = append(*metadataEvents, metadataEvent{
+			oldEntry:     existingTarget,
+			deleteChunks: true,
+		})
+	}
+	*metadataEvents = append(*metadataEvents, metadataEvent{
+		oldEntry: sourceEntry,
+		newEntry: newEntry,
+	})
+
 	if moveFolderSubEntries != nil {
 		if moveChildrenErr := moveFolderSubEntries(); moveChildrenErr != nil {
 			return moveChildrenErr
@@ -203,7 +255,7 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 
 	// delete old entry
 	ctx = context.WithValue(ctx, "OP", "MV")
-	deleteErr := fs.filer.DeleteEntryMetaAndData(ctx, oldPath, false, false, false, false, signatures, 0)
+	deleteErr := fs.filer.DeleteEntryMetaAndData(filer.WithSuppressedMetadataEvents(ctx), oldPath, false, false, false, false, signatures, 0)
 	if deleteErr != nil {
 		return deleteErr
 	}

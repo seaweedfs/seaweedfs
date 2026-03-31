@@ -26,6 +26,10 @@ func (f *Filer) NotifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry
 }
 
 func (f *Filer) notifyUpdateEvent(ctx context.Context, oldEntry, newEntry *Entry, deleteChunks, isFromOtherCluster bool, signatures []int32) *filer_pb.SubscribeMetadataResponse {
+	if metadataEventsSuppressed(ctx) {
+		return nil
+	}
+
 	var fullpath string
 	if oldEntry != nil {
 		fullpath = string(oldEntry.FullPath)

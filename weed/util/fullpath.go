@@ -80,6 +80,31 @@ func (fp FullPath) IsUnder(other FullPath) bool {
 	return strings.HasPrefix(string(fp), string(other)+"/")
 }
 
+// IsEqualOrUnder reports whether candidate is equal to or a descendant of
+// other using proper directory boundaries (not a plain string prefix check).
+// Empty strings always return false.
+func IsEqualOrUnder(candidate, other string) bool {
+	candidatePath := NormalizePath(candidate)
+	otherPath := NormalizePath(other)
+	if candidatePath == "" || otherPath == "" {
+		return false
+	}
+	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
+}
+
+// NormalizePath trims a trailing slash and returns a FullPath.
+// Empty input returns "" (callers should treat this as "no path").
+func NormalizePath(p string) FullPath {
+	if p == "" {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return FullPath(trimmed)
+}
+
 func StringSplit(separatedValues string, sep string) []string {
 	if separatedValues == "" {
 		return nil
