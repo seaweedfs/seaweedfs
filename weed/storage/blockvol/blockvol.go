@@ -877,30 +877,32 @@ type V2StatusSnapshot struct {
 // Each field reads from the authoritative source:
 //
 //   WALHeadLSN        ← nextLSN - 1 (last written LSN)
-//   WALTailLSN        ← wal.Tail() (oldest retained WAL entry)
-//   CommittedLSN      ← flusher.CheckpointLSN() (barrier-confirmed + flushed)
+//   WALTailLSN        ← super.WALCheckpointLSN (LSN boundary, not byte offset)
+//   CommittedLSN      ← flusher.CheckpointLSN() (V1 interim: barrier-confirmed + flushed)
 //   CheckpointLSN     ← super.WALCheckpointLSN (durable base image)
-//   CheckpointTrusted ← super.Valid (superblock integrity check)
+//   CheckpointTrusted ← super.Validate() == nil (superblock integrity)
 func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
 	headLSN := v.nextLSN.Load()
 	if headLSN > 0 {
 		headLSN--
 	}
 
-	var walTail uint64
-	if v.wal != nil {
-		walTail = v.wal.Tail()
-	}
+	// WALTailLSN: the oldest retained LSN boundary for recovery classification.
+	// Entries with LSN > WALTailLSN are guaranteed in the WAL.
+	// Entries with LSN <= WALTailLSN have been checkpointed and WAL space
+	// may be reused. This is an LSN (not a physical byte offset).
+	walTailLSN := v.super.WALCheckpointLSN
 
-	var checkpointLSN uint64
+	// CommittedLSN: V1 interim mapping. committed = checkpointed after flush.
+	var committedLSN uint64
 	if v.flusher != nil {
-		checkpointLSN = v.flusher.CheckpointLSN()
+		committedLSN = v.flusher.CheckpointLSN()
 	}
 
 	return V2StatusSnapshot{
 		WALHeadLSN:        headLSN,
-		WALTailLSN:        walTail,
-		CommittedLSN:      checkpointLSN, // V1: committed = checkpointed after flush
+		WALTailLSN:        walTailLSN,
+		CommittedLSN:      committedLSN,
 		CheckpointLSN:     v.super.WALCheckpointLSN,
 		CheckpointTrusted: v.super.Validate() == nil,
 	}
@@ -935,11 +937,18 @@ func (v *BlockVol) SetV2RetentionFloor(fn func() (uint64, bool)) {
 
 // ScanWALEntries reads WAL entries from fromLSN using the real ScanFrom mechanism.
 // This is the entry point for the V2 bridge executor's catch-up path.
+//
+// Uses super.WALCheckpointLSN as the recycled boundary (not flusher.CheckpointLSN).
+// The superblock checkpoint is the durable boundary persisted to disk.
+// The flusher's live checkpointLSN may have advanced further in memory
+// but entries between super.WALCheckpointLSN and headLSN are still in the WAL.
 func (v *BlockVol) ScanWALEntries(fromLSN uint64, fn func(*WALEntry) error) error {
 	if v.wal == nil {
 		return fmt.Errorf("WAL not initialized")
 	}
-	return v.wal.ScanFrom(v.fd, v.super.WALOffset, v.flusher.CheckpointLSN(), fromLSN, fn)
+	// Use the durable superblock checkpoint as the recycled boundary.
+	// Entries with LSN > super.WALCheckpointLSN are guaranteed in the WAL.
+	return v.wal.ScanFrom(v.fd, v.super.WALOffset, v.super.WALCheckpointLSN, fromLSN, fn)
 }
 
 // ReplicaReceiverAddrInfo holds canonical addresses from the replica receiver.

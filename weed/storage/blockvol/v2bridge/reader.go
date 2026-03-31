@@ -39,10 +39,10 @@ func NewReader(vol *blockvol.BlockVol) *Reader {
 // Each field maps to a specific blockvol source:
 //
 //   WALHeadLSN        ← vol.nextLSN - 1 (last written LSN)
-//   WALTailLSN        ← vol.wal.Tail() (oldest retained WAL entry)
-//   CommittedLSN      ← vol.flusher.CheckpointLSN() (last flushed = committed)
+//   WALTailLSN        ← vol.super.WALCheckpointLSN (LSN boundary, not byte offset)
+//   CommittedLSN      ← vol.flusher.CheckpointLSN() (V1 interim: committed = checkpointed)
 //   CheckpointLSN     ← vol.super.WALCheckpointLSN
-//   CheckpointTrusted ← vol.super.Valid (superblock integrity)
+//   CheckpointTrusted ← vol.super.Validate() == nil (superblock integrity)
 //
 // Note: CommittedLSN maps to CheckpointLSN in the current V1 model where
 // barrier-confirmed = flusher-checkpointed. In V2, these may diverge when
