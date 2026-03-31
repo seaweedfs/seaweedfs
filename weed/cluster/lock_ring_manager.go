@@ -20,6 +20,7 @@ type LockRingManager struct {
 	mu              sync.Mutex
 	members         map[FilerGroupName]map[pb.ServerAddress]struct{}
 	version         map[FilerGroupName]int64
+	lastBroadcast   map[FilerGroupName]*master_pb.LockRingUpdate
 	pendingTimer    map[FilerGroupName]*time.Timer
 	broadcastFn     func(resp *master_pb.KeepConnectedResponse)
 	stabilizeDelay  time.Duration
@@ -29,6 +30,7 @@ func NewLockRingManager(broadcastFn func(resp *master_pb.KeepConnectedResponse))
 	return &LockRingManager{
 		members:        make(map[FilerGroupName]map[pb.ServerAddress]struct{}),
 		version:        make(map[FilerGroupName]int64),
+		lastBroadcast:  make(map[FilerGroupName]*master_pb.LockRingUpdate),
 		pendingTimer:   make(map[FilerGroupName]*time.Timer),
 		broadcastFn:    broadcastFn,
 		stabilizeDelay: LockRingStabilizationInterval,
@@ -81,6 +83,21 @@ func (lrm *LockRingManager) GetVersion(filerGroup FilerGroupName) int64 {
 	return lrm.version[filerGroup]
 }
 
+// GetLastUpdate returns a copy of the most recently broadcast lock-ring snapshot
+// for the filer group. It intentionally does not expose pending, unstabilized changes.
+func (lrm *LockRingManager) GetLastUpdate(filerGroup FilerGroupName) *master_pb.LockRingUpdate {
+	lrm.mu.Lock()
+	defer lrm.mu.Unlock()
+
+	update, ok := lrm.lastBroadcast[filerGroup]
+	if !ok || update == nil {
+		return nil
+	}
+	cp := *update
+	cp.Servers = append([]string(nil), update.Servers...)
+	return &cp
+}
+
 // scheduleBroadcast resets the stabilization timer. If another change arrives
 // before the timer fires, the timer resets, batching the changes.
 // Caller must hold lrm.mu.
@@ -110,6 +127,12 @@ func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 			servers = append(servers, string(addr))
 		}
 	}
+	update := &master_pb.LockRingUpdate{
+		FilerGroup: string(filerGroup),
+		Servers:    append([]string(nil), servers...),
+		Version:    version,
+	}
+	lrm.lastBroadcast[filerGroup] = update
 	delete(lrm.pendingTimer, filerGroup)
 	lrm.mu.Unlock()
 
@@ -117,11 +140,7 @@ func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 
 	if lrm.broadcastFn != nil {
 		lrm.broadcastFn(&master_pb.KeepConnectedResponse{
-			LockRingUpdate: &master_pb.LockRingUpdate{
-				FilerGroup: string(filerGroup),
-				Servers:    servers,
-				Version:    version,
-			},
+			LockRingUpdate: update,
 		})
 	}
 }

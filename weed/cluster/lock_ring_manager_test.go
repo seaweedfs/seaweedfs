@@ -212,3 +212,18 @@ func TestLockRingManager_NoBroadcastWithoutFn(t *testing.T) {
 	lrm.AddServer("default", pb.ServerAddress("filer1:8888"))
 	time.Sleep(50 * time.Millisecond) // should not panic
 }
+
+func TestLockRingManager_GetLastUpdateReturnsBroadcastState(t *testing.T) {
+	lrm := NewLockRingManager(nil)
+
+	group := FilerGroupName("default")
+	lrm.AddServer(group, "filer1:8888")
+	lrm.AddServer(group, "filer2:8888")
+	lrm.FlushPending(group)
+
+	update := lrm.GetLastUpdate(group)
+	require.NotNil(t, update)
+	assert.Equal(t, "default", update.FilerGroup)
+	assert.ElementsMatch(t, []string{"filer1:8888", "filer2:8888"}, update.Servers)
+	assert.Greater(t, update.Version, int64(0))
+}
