@@ -17,13 +17,13 @@ package blockvol
 //   sw-block/bridge/blockvol/ does NOT import weed/
 
 // BlockVolState represents the real storage state from a blockvol instance.
-// Each field maps to a specific blockvol source:
+// Each field maps to a specific blockvol source (current P1 implementation):
 //
-//   WALHeadLSN        ← vol.nextLSN - 1 or vol.Status().WALHeadLSN
-//   WALTailLSN        ← vol.flusher.RetentionFloor()
-//   CommittedLSN      ← vol.distCommit.CommittedLSN()
-//   CheckpointLSN     ← vol.flusher.CheckpointLSN()
-//   CheckpointTrusted ← vol.superblock.Valid + checkpoint file exists
+//   WALHeadLSN        ← vol.nextLSN - 1 (last written LSN)
+//   WALTailLSN        ← vol.super.WALCheckpointLSN (LSN boundary, not byte offset)
+//   CommittedLSN      ← vol.flusher.CheckpointLSN() (V1 interim: committed = checkpointed)
+//   CheckpointLSN     ← vol.super.WALCheckpointLSN (durable base image)
+//   CheckpointTrusted ← vol.super.Validate() == nil (superblock integrity)
 type BlockVolState struct {
 	WALHeadLSN        uint64
 	WALTailLSN        uint64
