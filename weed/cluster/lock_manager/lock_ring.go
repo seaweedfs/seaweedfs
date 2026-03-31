@@ -7,7 +7,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type LockRingSnapshot struct {
@@ -24,12 +23,14 @@ type LockRing struct {
 	snapshotInterval time.Duration
 	onTakeSnapshot   func(snapshot []pb.ServerAddress)
 	cleanupWg        sync.WaitGroup
+	Ring             *HashRing // consistent hash ring
 }
 
 func NewLockRing(snapshotInterval time.Duration) *LockRing {
 	return &LockRing{
 		snapshotInterval: snapshotInterval,
 		candidateServers: make(map[pb.ServerAddress]struct{}),
+		Ring:             NewHashRing(DefaultVnodeCount),
 	}
 }
 
@@ -54,6 +55,7 @@ func (r *LockRing) AddServer(server pb.ServerAddress) {
 	r.candidateServers[server] = struct{}{}
 	r.Unlock()
 
+	r.Ring.AddServer(server)
 	r.takeSnapshotWithDelayedCompaction()
 }
 
@@ -70,6 +72,7 @@ func (r *LockRing) RemoveServer(server pb.ServerAddress) {
 	delete(r.candidateServers, server)
 	r.Unlock()
 
+	r.Ring.RemoveServer(server)
 	r.takeSnapshotWithDelayedCompaction()
 }
 
@@ -87,6 +90,7 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress) {
 	}
 	r.Unlock()
 
+	r.Ring.SetServers(servers)
 	r.addOneSnapshot(servers)
 
 	r.cleanupWg.Add(1)
@@ -190,14 +194,26 @@ func (r *LockRing) GetSnapshotCount() int {
 	return len(r.snapshots)
 }
 
+// GetPrimaryAndBackup returns the primary and backup servers for a key
+// using the consistent hash ring.
+func (r *LockRing) GetPrimaryAndBackup(key string) (primary, backup pb.ServerAddress) {
+	return r.Ring.GetPrimaryAndBackup(key)
+}
+
+// GetPrimary returns the primary server for a key using the consistent hash ring.
+func (r *LockRing) GetPrimary(key string) pb.ServerAddress {
+	return r.Ring.GetPrimary(key)
+}
+
+// hashKeyToServer is kept for backward compatibility but now uses consistent hashing.
 func hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
 	if len(servers) == 0 {
 		return ""
 	}
-	x := util.HashStringToLong(key)
-	if x < 0 {
-		x = -x
-	}
-	x = x % int64(len(servers))
-	return servers[x]
+	// Build a temporary ring for the given servers
+	// This is used by SelectNotOwnedLocks and CalculateTargetServer
+	// which pass an explicit server list
+	ring := NewHashRing(DefaultVnodeCount)
+	ring.SetServers(servers)
+	return ring.GetPrimary(key)
 }
