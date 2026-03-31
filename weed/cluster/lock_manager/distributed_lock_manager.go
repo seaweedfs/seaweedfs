@@ -13,10 +13,15 @@ const LiveLockTTL = time.Second * 7
 
 var NoLockServerError = fmt.Errorf("no lock server found")
 
+// ReplicateFunc is called to replicate a lock operation to a backup server.
+// The caller (filer server) provides this to avoid a circular dependency.
+type ReplicateFunc func(server pb.ServerAddress, key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool)
+
 type DistributedLockManager struct {
-	lockManager *LockManager
-	LockRing    *LockRing
-	Host        pb.ServerAddress
+	lockManager   *LockManager
+	LockRing      *LockRing
+	Host          pb.ServerAddress
+	ReplicateFn   ReplicateFunc // set by filer server after creation
 }
 
 func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
@@ -28,34 +33,30 @@ func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
 }
 
 func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (lockOwner string, renewToken string, generation int64, movedTo pb.ServerAddress, err error) {
-	movedTo, err = dlm.findLockOwningFiler(key)
-	if err != nil {
-		return
-	}
-	if movedTo != dlm.Host {
-		return
-	}
-	lockOwner, renewToken, generation, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
-	return
-}
-
-func (dlm *DistributedLockManager) findLockOwningFiler(key string) (movedTo pb.ServerAddress, err error) {
-	servers := dlm.LockRing.GetSnapshot()
-	if servers == nil {
+	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
+	if primary == "" {
 		err = NoLockServerError
 		return
 	}
-
-	movedTo = hashKeyToServer(key, servers)
+	if primary != dlm.Host {
+		movedTo = primary
+		return
+	}
+	lockOwner, renewToken, generation, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	if err == nil && renewToken != "" {
+		dlm.replicateToBackup(key, expiredAtNs, renewToken, owner, generation, false)
+	}
 	return
 }
 
 func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, movedTo pb.ServerAddress, err error) {
-	movedTo, err = dlm.findLockOwningFiler(key)
-	if err != nil {
+	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
+	if primary == "" {
+		err = NoLockServerError
 		return
 	}
-	if movedTo != dlm.Host {
+	if primary != dlm.Host {
+		movedTo = primary
 		servers := dlm.LockRing.GetSnapshot()
 		glog.V(0).Infof("lock %s not on current %s but on %s from %v", key, dlm.Host, movedTo, servers)
 		return
@@ -65,18 +66,20 @@ func (dlm *DistributedLockManager) FindLockOwner(key string) (owner string, move
 }
 
 func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.ServerAddress, err error) {
-	servers := dlm.LockRing.GetSnapshot()
-	if servers == nil {
+	primary, _ := dlm.LockRing.GetPrimaryAndBackup(key)
+	if primary == "" {
 		err = NoLockServerError
 		return
 	}
-
-	server := hashKeyToServer(key, servers)
-	if server != dlm.Host {
-		movedTo = server
+	if primary != dlm.Host {
+		movedTo = primary
 		return
 	}
-	_, err = dlm.lockManager.Unlock(key, token)
+	var isUnlocked bool
+	isUnlocked, err = dlm.lockManager.Unlock(key, token)
+	if isUnlocked {
+		dlm.replicateToBackup(key, 0, "", "", 0, true)
+	}
 	return
 }
 
@@ -85,6 +88,17 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string) {
 	dlm.lockManager.InsertLock(key, expiredAtNs, token, owner)
 }
+
+// InsertBackupLock inserts a lock as a backup copy
+func (dlm *DistributedLockManager) InsertBackupLock(key string, expiredAtNs int64, token string, owner string, generation int64) {
+	dlm.lockManager.InsertBackupLock(key, expiredAtNs, token, owner, generation)
+}
+
+// RemoveBackupLock removes a backup lock
+func (dlm *DistributedLockManager) RemoveBackupLock(key string) {
+	dlm.lockManager.RemoveLock(key)
+}
+
 func (dlm *DistributedLockManager) SelectNotOwnedLocks(servers []pb.ServerAddress) (locks []*Lock) {
 	return dlm.lockManager.SelectLocks(func(key string) bool {
 		server := hashKeyToServer(key, servers)
@@ -96,9 +110,40 @@ func (dlm *DistributedLockManager) CalculateTargetServer(key string, servers []p
 }
 
 func (dlm *DistributedLockManager) IsLocal(key string) bool {
-	servers := dlm.LockRing.GetSnapshot()
-	if len(servers) <= 1 {
+	primary := dlm.LockRing.GetPrimary(key)
+	if primary == "" {
 		return true
 	}
-	return hashKeyToServer(key, servers) == dlm.Host
+	return primary == dlm.Host
+}
+
+// AllLocks returns all non-expired locks on this node
+func (dlm *DistributedLockManager) AllLocks() []*Lock {
+	return dlm.lockManager.AllLocks()
+}
+
+// PromoteLock promotes a backup lock to primary
+func (dlm *DistributedLockManager) PromoteLock(key string) bool {
+	return dlm.lockManager.PromoteLock(key)
+}
+
+// DemoteLock demotes a primary lock to backup
+func (dlm *DistributedLockManager) DemoteLock(key string) bool {
+	return dlm.lockManager.DemoteLock(key)
+}
+
+// GetLock returns a copy of a lock if it exists
+func (dlm *DistributedLockManager) GetLock(key string) (*Lock, bool) {
+	return dlm.lockManager.GetLock(key)
+}
+
+// replicateToBackup asynchronously replicates a lock operation to the backup server
+func (dlm *DistributedLockManager) replicateToBackup(key string, expiredAtNs int64, token string, owner string, generation int64, isUnlock bool) {
+	_, backup := dlm.LockRing.GetPrimaryAndBackup(key)
+	if backup == "" {
+		return // single-server deployment, no backup
+	}
+	if dlm.ReplicateFn != nil {
+		go dlm.ReplicateFn(backup, key, expiredAtNs, token, owner, generation, isUnlock)
+	}
 }
