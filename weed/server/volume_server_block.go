@@ -11,6 +11,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/nvme"
@@ -48,7 +49,17 @@ type BlockService struct {
 	replStates map[string]*volReplState // keyed by volume path
 
 	// V2 engine bridge (Phase 08 P1).
-	v2Bridge *v2bridge.ControlBridge
+	v2Bridge       *v2bridge.ControlBridge
+	v2Orchestrator *engine.RecoveryOrchestrator
+	// localServerID: stable identity for this volume server.
+	// INTERIM: uses listenAddr (transport-shaped). Should be replaced
+	// with a registry-assigned stable server ID in a later hardening pass.
+	localServerID string
+}
+
+// V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
+func (bs *BlockService) V2Orchestrator() *engine.RecoveryOrchestrator {
+	return bs.v2Orchestrator
 }
 
 // WireStateChangeNotify sets up shipper state change callbacks on all
@@ -89,6 +100,8 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		listenAddr:     listenAddr,
 		nvmeListenAddr: nvmeCfg.ListenAddr,
 		v2Bridge:       v2bridge.NewControlBridge(),
+		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		localServerID:  listenAddr, // INTERIM: transport-shaped, see field doc
 	}
 
 	// iSCSI target setup.
@@ -333,16 +346,21 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 // ProcessAssignments applies assignments from master, including replication setup.
 // V2 bridge: also delivers each assignment to the V2 engine for recovery ownership.
 func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAssignment) {
-	// V2 bridge: convert and deliver to engine (Phase 08 P1).
-	if bs.v2Bridge != nil {
+	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
+	if bs.v2Bridge != nil && bs.v2Orchestrator != nil {
 		for _, a := range assignments {
-			intent := bs.v2Bridge.ConvertAssignment(a, bs.listenAddr)
-			_ = intent // TODO(P2): deliver to engine orchestrator
-			glog.V(1).Infof("v2bridge: converted assignment %s epoch=%d → %d replicas",
-				a.Path, a.Epoch, len(intent.Replicas))
+			intent := bs.v2Bridge.ConvertAssignment(a, bs.localServerID)
+			result := bs.v2Orchestrator.ProcessAssignment(intent)
+			glog.V(1).Infof("v2bridge: assignment %s epoch=%d → added=%d removed=%d sessions=%d",
+				a.Path, a.Epoch, len(result.Added), len(result.Removed),
+				len(result.SessionsCreated)+len(result.SessionsSuperseded))
 		}
 	}
 
+	// V1 processing (requires blockStore).
+	if bs.blockStore == nil {
+		return
+	}
 	for _, a := range assignments {
 		role := blockvol.RoleFromWire(a.Role)
 		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
