@@ -43,7 +43,8 @@ type LiveLock struct {
 	lc                  *LockClient
 	owner               string
 	lockTTL             time.Duration
-	consecutiveFailures int // Track connection failures to trigger fallback
+	consecutiveFailures int   // Track connection failures to trigger fallback
+	generation          int64 // fencing token from the lock server
 }
 
 // NewShortLivedLock creates a lock with a 5-second duration
@@ -214,6 +215,9 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		glog.V(4).Infof("LOCK: DistributedLock response - key=%s err=%v", lock.key, err)
 		if err == nil && resp != nil {
 			lock.renewToken = resp.RenewToken
+			if resp.Generation > 0 {
+				atomic.StoreInt64(&lock.generation, resp.Generation)
+			}
 			lock.consecutiveFailures = 0 // Reset failure counter on success
 			glog.V(4).Infof("LOCK: Got renewToken for key=%s", lock.key)
 		} else {
@@ -262,6 +266,12 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 
 func (lock *LiveLock) LockOwner() string {
 	return lock.owner
+}
+
+// Generation returns the fencing token for this lock.
+// It increments on each fresh acquisition and stays the same on renewal.
+func (lock *LiveLock) Generation() int64 {
+	return atomic.LoadInt64(&lock.generation)
 }
 
 // IsLocked returns true if this instance currently holds the lock
