@@ -442,6 +442,20 @@ func resetToCommitWithRecovery(t *testing.T, bareRepo, localClone, mountClone, c
 			}
 			continue
 		}
+		// The kernel dcache can drop the FUSE entry moments after a
+		// successful check.  Wait briefly and re-verify to confirm the
+		// directory has stabilised before returning to the caller.
+		time.Sleep(1 * time.Second)
+		refreshDirEntry(t, mountClone)
+		if _, err := tryGitCommand(mountClone, "rev-parse", "HEAD"); err != nil {
+			lastErr = fmt.Errorf("post-reset stabilisation check failed: %w", err)
+			if attempt < maxAttempts {
+				t.Logf("reset recovery attempt %d: %v — removing clone for re-create", attempt, lastErr)
+				os.RemoveAll(mountClone)
+				time.Sleep(2 * time.Second)
+			}
+			continue
+		}
 		return
 	}
 	require.NoError(t, lastErr, "git reset --hard %s failed after %d recovery attempts", commit, maxAttempts)
@@ -467,6 +481,10 @@ func tryPullFromCommit(t *testing.T, bareRepo, localClone, cloneDir, fromCommit 
 	if !waitForDirEventually(t, cloneDir, 5*time.Second) {
 		return fmt.Errorf("clone dir %s did not recover after reset", cloneDir)
 	}
+	refreshDirEntry(t, cloneDir)
+
+	// Let the dcache stabilise before proceeding.
+	time.Sleep(1 * time.Second)
 	refreshDirEntry(t, cloneDir)
 
 	head, err := tryGitCommand(cloneDir, "rev-parse", "HEAD")
