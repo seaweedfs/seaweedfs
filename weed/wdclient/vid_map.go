@@ -37,7 +37,6 @@ type vidMap struct {
 	vid2Locations   map[uint32][]Location
 	ecVid2Locations map[uint32][]Location
 	DataCenter      string
-	cursor          int32
 	cache           atomic.Pointer[vidMap]
 }
 
@@ -46,7 +45,6 @@ func newVidMap(dataCenter string) *vidMap {
 		vid2Locations:   make(map[uint32][]Location),
 		ecVid2Locations: make(map[uint32][]Location),
 		DataCenter:      dataCenter,
-		cursor:          -1,
 	}
 }
 
