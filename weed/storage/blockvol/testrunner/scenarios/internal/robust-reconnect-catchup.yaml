@@ -1,0 +1,250 @@
+name: robust-reconnect-catchup
+timeout: 10m
+
+# Robust dimension: Does the system self-heal after brief replica outage?
+#
+# V1 (pre-Phase 13): shipper goes degraded permanently, no background
+# reconnect. Recovery requires master-driven full rebuild.
+#
+# V1.5 (post-Phase 13): background reconnect goroutine detects replica
+# is back within 5s, WAL catch-up replays the gap.
+#
+# This scenario writes data DURING the outage to create a WAL gap,
+# then measures whether the system self-heals and how.
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-reconn
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-reconn-master /tmp/sw-reconn-vs1 && mkdir -p /tmp/sw-reconn-master /tmp/sw-reconn-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-reconn-vs2 && mkdir -p /tmp/sw-reconn-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-reconn-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-reconn-vs1
+        extra_args: "-block.dir=/tmp/sw-reconn-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-reconn-vs2
+        extra_args: "-block.dir=/tmp/sw-reconn-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "sync_all"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: connect-and-write
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Write initial data to establish replication.
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: initial-write
+        save_as: fio_initial
+
+      - action: fio_parse
+        json_var: fio_initial
+        metric: iops
+        save_as: iops_initial
+
+      - action: print
+        msg: "Initial write (healthy): {{ iops_initial }} IOPS"
+
+  - name: fault-and-write
+    actions:
+      # Kill replica (SIGKILL — simulates crash).
+      - action: exec
+        node: m01
+        cmd: "kill -9 {{ vs2_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: print
+        msg: "=== Replica killed. Writing during outage to create WAL gap ==="
+
+      # Write during outage — creates WAL gap on primary.
+      # sync_all: these writes may be slower or fail depending on degraded behavior.
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: write-during-outage
+        save_as: fio_degraded
+        ignore_error: true
+
+      - action: fio_parse
+        json_var: fio_degraded
+        metric: iops
+        save_as: iops_degraded
+        ignore_error: true
+
+      - action: print
+        msg: "Write during outage (degraded): {{ iops_degraded }} IOPS"
+
+      # Restart replica — now the question is: does the system self-heal?
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-reconn-vs2
+        extra_args: "-block.dir=/tmp/sw-reconn-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid_new
+
+      - action: print
+        msg: "=== Replica restarted. Measuring self-heal ==="
+
+      # Measure recovery — does the system catch up or stay degraded?
+      - action: measure_recovery
+        name: "{{ volume_name }}"
+        timeout: 90s
+        poll_interval: 2s
+        fault_type: reconnect
+        save_as: rp
+
+  - name: post-recovery-write
+    actions:
+      # Write after recovery to verify system is fully functional.
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: post-recovery-write
+        save_as: fio_post
+
+      - action: fio_parse
+        json_var: fio_post
+        metric: iops
+        save_as: iops_post
+
+      - action: print
+        msg: "Post-recovery write: {{ iops_post }} IOPS"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Robust: Reconnect/Catch-up Test ==="
+      - action: print
+        msg: "Initial (healthy):     {{ iops_initial }} IOPS"
+      - action: print
+        msg: "During outage:         {{ iops_degraded }} IOPS"
+      - action: print
+        msg: "Post-recovery:         {{ iops_post }} IOPS"
+      - action: print
+        msg: "Recovery duration:     {{ rp_duration_ms }} ms"
+      - action: print
+        msg: "Recovery path:         {{ rp_path }}"
+      - action: print
+        msg: "Transitions:           {{ rp_transitions }}"
+      - action: print
+        msg: "Degraded window:       {{ rp_degraded_ms }} ms"
+
+      - action: collect_results
+        title: "Robust: Reconnect/Catch-up"
+        volume_name: "{{ volume_name }}"
+        recovery_profile: rp
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid_new }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

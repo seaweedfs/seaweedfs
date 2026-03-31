@@ -1,0 +1,197 @@
+name: robust-shipper-reconnect
+timeout: 5m
+
+# Robust dimension: Does the shipper reconnect after replica crash+restart?
+#
+# V1.5: background reconnect → replica_degraded clears within ~10s
+# V1: shipper stays degraded permanently after crash
+#
+# No writes during outage needed. Just checks the degraded flag.
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-ship
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ship-master /tmp/sw-ship-vs1 && mkdir -p /tmp/sw-ship-master /tmp/sw-ship-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ship-vs2 && mkdir -p /tmp/sw-ship-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-ship-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-ship-vs1
+        extra_args: "-block.dir=/tmp/sw-ship-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-ship-vs2
+        extra_args: "-block.dir=/tmp/sw-ship-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-and-verify
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: print
+        msg: "=== Volume healthy, replica connected ==="
+
+  - name: crash-replica
+    actions:
+      - action: print
+        msg: "=== SIGKILL replica (m01 VS) ==="
+
+      - action: exec
+        node: m01
+        cmd: "kill -9 {{ vs2_pid }}"
+        root: "true"
+        ignore_error: true
+
+      # Wait for primary to detect broken connection.
+      - action: sleep
+        duration: 5s
+
+      # Check: primary should report degraded now.
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol_degraded
+        ignore_error: true
+
+      - action: print
+        msg: "After crash (before restart): degraded={{ vol_degraded_degraded }}"
+
+  - name: restart-and-check
+    actions:
+      - action: print
+        msg: "=== Restarting replica ==="
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-ship-vs2
+        extra_args: "-block.dir=/tmp/sw-ship-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid_new
+
+      # Check at 5s — heartbeat re-registers but shipper may still be degraded.
+      - action: sleep
+        duration: 5s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_5s
+        ignore_error: true
+
+      - action: print
+        msg: "5s after restart: degraded check = {{ check_5s }}"
+
+      # Check at 15s — V1.5 background reconnect (5s interval) should have caught up.
+      - action: sleep
+        duration: 10s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_15s
+        ignore_error: true
+
+      - action: print
+        msg: "15s after restart: degraded check = {{ check_15s }}"
+
+      # Check at 30s — give V1 every chance.
+      - action: sleep
+        duration: 15s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_30s
+        ignore_error: true
+
+      - action: print
+        msg: "30s after restart: degraded check = {{ check_30s }}"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Shipper Reconnect Test ==="
+      - action: print
+        msg: "5s:  {{ check_5s }}"
+      - action: print
+        msg: "15s: {{ check_15s }}"
+      - action: print
+        msg: "30s: {{ check_30s }}"
+      - action: print
+        msg: "(empty = not degraded, error = still degraded)"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid_new }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

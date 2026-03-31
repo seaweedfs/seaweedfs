@@ -951,6 +951,15 @@ func (v *BlockVol) ScanWALEntries(fromLSN uint64, fn func(*WALEntry) error) erro
 	return v.wal.ScanFrom(v.fd, v.super.WALOffset, v.super.WALCheckpointLSN, fromLSN, fn)
 }
 
+// ForceFlush triggers a synchronous flush cycle. This advances the checkpoint
+// and WAL tail. For test use — in production, the flusher runs automatically.
+func (v *BlockVol) ForceFlush() error {
+	if v.flusher == nil {
+		return fmt.Errorf("flusher not initialized")
+	}
+	return v.flusher.FlushOnce()
+}
+
 // ReplicaReceiverAddrInfo holds canonical addresses from the replica receiver.
 type ReplicaReceiverAddrInfo struct {
 	DataAddr string

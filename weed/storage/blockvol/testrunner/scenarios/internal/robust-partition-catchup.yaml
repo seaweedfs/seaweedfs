@@ -1,0 +1,271 @@
+name: robust-partition-catchup
+timeout: 5m
+
+# Robust dimension: Does data written during network partition
+# reach the replica after partition heals?
+#
+# V1.5 (post-Phase 13): background reconnect catches up WAL gap.
+# V1 (pre-Phase 13): shipper stays degraded, gap data never shipped.
+#
+# Uses best_effort so writes succeed during partition.
+# After partition heals, waits for catch-up, then verifies via
+# failover that the replica has the gap data.
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-part
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-part-master /tmp/sw-part-vs1 && mkdir -p /tmp/sw-part-master /tmp/sw-part-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-part-vs2 && mkdir -p /tmp/sw-part-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-part-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-part-vs1
+        extra_args: "-block.dir=/tmp/sw-part-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-part-vs2
+        extra_args: "-block.dir=/tmp/sw-part-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+  - name: write-and-connect
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Write data A (replicated to both).
+      - action: exec
+        node: m01
+        cmd: "dd if=/dev/urandom of={{ device }} bs=1M count=5 oflag=direct 2>/dev/null && sync"
+        root: "true"
+
+      - action: sleep
+        duration: 3s
+
+      # Snapshot: md5 of first 5MB.
+      - action: exec
+        node: m01
+        cmd: "dd if={{ device }} bs=1M count=5 iflag=direct 2>/dev/null | md5sum | head -c 32"
+        root: "true"
+        save_as: md5_data_a
+
+      - action: print
+        msg: "Data A (5MB): {{ md5_data_a }}"
+
+  - name: partition-and-write
+    actions:
+      - action: print
+        msg: "=== Injecting network partition (m02 → m01 repl ports) ==="
+
+      # Block replication traffic from primary (m02) to replica (m01).
+      # Block both data port and volume port to prevent WAL shipping.
+      - action: inject_partition
+        node: m02
+        target_ip: "192.168.1.181"
+        ports: "3295,18480"
+
+      - action: sleep
+        duration: 3s
+
+      - action: print
+        msg: "=== Writing data B during partition (gap data) ==="
+
+      # Write data B at offset 5MB. Primary accepts (best_effort),
+      # replica doesn't receive (partitioned).
+      - action: exec
+        node: m01
+        cmd: "timeout 15 dd if=/dev/urandom of={{ device }} bs=1M count=3 seek=5 oflag=direct 2>/dev/null && timeout 5 sync; echo done"
+        root: "true"
+        timeout: 25s
+
+      # Snapshot: md5 of all 8MB (A + B).
+      - action: exec
+        node: m01
+        cmd: "dd if={{ device }} bs=1M count=8 iflag=direct 2>/dev/null | md5sum | head -c 32"
+        root: "true"
+        save_as: md5_data_ab
+
+      - action: print
+        msg: "Data A+B (8MB) on primary: {{ md5_data_ab }}"
+
+  - name: heal-and-wait
+    actions:
+      - action: print
+        msg: "=== Healing partition, waiting for catch-up ==="
+
+      - action: clear_fault
+        node: m02
+        type: partition
+
+      # Wait for V1.5 background reconnect (5s interval) + catch-up.
+      # V1 shipper stays degraded — this wait won't help it.
+      - action: sleep
+        duration: 20s
+
+      - action: print
+        msg: "=== 20s wait complete. Checking replication state ==="
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        require_not_degraded: "false"
+        ignore_error: true
+
+  - name: failover-and-verify
+    actions:
+      - action: print
+        msg: "=== Disconnecting iSCSI, killing primary, promoting replica ==="
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: exec
+        node: m02
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+      # The replica (m01) should auto-promote or we force it.
+      - action: block_promote
+        name: "{{ volume_name }}"
+        reason: "partition-catchup-test"
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+      # Re-lookup and connect to new primary.
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol2
+        ignore_error: true
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol2_iscsi_host }}"
+        port: "{{ vol2_iscsi_port }}"
+        iqn: "{{ vol2_iqn }}"
+        save_as: device2
+        ignore_error: true
+
+      # Read 8MB from new primary (former replica).
+      - action: exec
+        node: m01
+        cmd: "dd if={{ device2 }} bs=1M count=8 iflag=direct 2>/dev/null | md5sum | head -c 32"
+        root: "true"
+        save_as: md5_after_failover
+        ignore_error: true
+
+      - action: print
+        msg: "Data on former replica (8MB): {{ md5_after_failover }}"
+      - action: print
+        msg: "Expected (primary had):       {{ md5_data_ab }}"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Partition Catch-up Test ==="
+      - action: print
+        msg: "Data A (pre-partition):    {{ md5_data_a }}"
+      - action: print
+        msg: "Data A+B (post-partition): {{ md5_data_ab }}"
+      - action: print
+        msg: "After failover:            {{ md5_after_failover }}"
+
+      # If md5_after_failover == md5_data_ab: gap data survived (V1.5 caught up)
+      # If md5_after_failover == md5_data_a:  gap data lost (V1 never shipped it)
+      # If md5_after_failover != either:      something else went wrong
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        node: m02
+        type: partition
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

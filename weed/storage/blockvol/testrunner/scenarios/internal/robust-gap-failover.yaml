@@ -1,0 +1,291 @@
+name: robust-gap-failover
+timeout: 10m
+
+# Robust dimension: Does data written during replica outage survive failover?
+#
+# V1 (pre-Phase 13): shipper stays degraded after replica restart.
+# Gap data lives only on primary. Failover loses it.
+#
+# V1.5 (post-Phase 13): background reconnect catches up the gap.
+# Gap data is replicated. Failover preserves it.
+#
+# Flow:
+#   1. Write data A (replicated)
+#   2. Kill replica
+#   3. Write data B (gap — only on primary)
+#   4. Restart replica, wait for master "healthy"
+#   5. Wait extra time for catch-up to complete (if it will)
+#   6. Kill primary (force failover)
+#   7. Promote replica to new primary
+#   8. Read data A (should always be there)
+#   9. Read data B (V1.5: present, V1: possibly missing)
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-gap
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-gap-master /tmp/sw-gap-vs1 && mkdir -p /tmp/sw-gap-master /tmp/sw-gap-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-gap-vs2 && mkdir -p /tmp/sw-gap-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-gap-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      # Primary on m02, replica on m01.
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-gap-vs1
+        extra_args: "-block.dir=/tmp/sw-gap-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-gap-vs2
+        extra_args: "-block.dir=/tmp/sw-gap-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "best_effort"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: write-data-A
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      # Connect to primary on m02 via iSCSI from m01.
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Write data A at offset 0 (5MB). Both primary and replica get this.
+      - action: exec
+        node: m01
+        cmd: "dd if=/dev/urandom of={{ device }} bs=1M count=5 oflag=direct 2>/dev/null && sync && md5sum {{ device }} | head -c 32"
+        root: "true"
+        save_as: md5_full
+
+      - action: print
+        msg: "Data A written (full device md5): {{ md5_full }}"
+
+      # Brief pause for replication to complete.
+      - action: sleep
+        duration: 3s
+
+  - name: kill-replica
+    actions:
+      - action: print
+        msg: "=== Killing replica (m01 VS) ==="
+
+      - action: exec
+        node: m01
+        cmd: "kill -9 {{ vs2_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 2s
+
+  - name: write-data-B-during-outage
+    actions:
+      - action: print
+        msg: "=== Writing data B during replica outage (gap data) ==="
+
+      # Write data B at offset 5MB (3MB). Only primary gets this.
+      # Use timeout to avoid hanging if barrier blocks.
+      - action: exec
+        node: m01
+        cmd: "timeout 15 dd if=/dev/urandom of={{ device }} bs=1M count=3 seek=5 oflag=direct 2>/dev/null; timeout 5 sync; dd if={{ device }} bs=1M count=8 iflag=direct 2>/dev/null | md5sum | head -c 32"
+        root: "true"
+        save_as: md5_after_gap
+        timeout: 30s
+        ignore_error: true
+
+      - action: print
+        msg: "Data A+B md5 (including gap): {{ md5_after_gap }}"
+
+  - name: restart-replica-and-wait
+    actions:
+      - action: print
+        msg: "=== Restarting replica, waiting for catch-up ==="
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-gap-vs2
+        extra_args: "-block.dir=/tmp/sw-gap-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid_new
+
+      # Wait for master to report healthy.
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      # Extra wait: give V1.5 background reconnect time to catch up.
+      # V1's shipper won't reconnect regardless of wait time.
+      - action: print
+        msg: "=== Waiting 15s for shipper catch-up ==="
+
+      - action: sleep
+        duration: 15s
+
+  - name: failover-to-replica
+    actions:
+      - action: print
+        msg: "=== Killing primary (m02 VS) to force failover ==="
+
+      # Disconnect iSCSI before killing primary.
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: exec
+        node: m02
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+      # Promote replica (m01) to primary.
+      - action: block_promote
+        name: "{{ volume_name }}"
+        reason: "gap-failover-test"
+        ignore_error: true
+
+      # Wait for new primary.
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "192.168.1.184:18480"
+        timeout: 30s
+        ignore_error: true
+
+      - action: sleep
+        duration: 3s
+
+  - name: verify-on-new-primary
+    actions:
+      - action: print
+        msg: "=== Verifying data on new primary (former replica) ==="
+
+      # Re-lookup volume to get new primary's iSCSI addr.
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol2
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol2_iscsi_host }}"
+        port: "{{ vol2_iscsi_port }}"
+        iqn: "{{ vol2_iqn }}"
+        save_as: device2
+
+      # Read 8MB (data A + data B) and compute md5.
+      - action: exec
+        node: m01
+        cmd: "dd if={{ device2 }} bs=1M count=8 iflag=direct 2>/dev/null | md5sum | head -c 32"
+        root: "true"
+        save_as: md5_after_failover
+
+      - action: print
+        msg: "After failover (8MB md5): {{ md5_after_failover }}"
+      - action: print
+        msg: "Expected (before failover): {{ md5_after_gap }}"
+
+      # THE KEY CHECK: does gap data survive failover?
+      - action: assert_equal
+        actual: "{{ md5_after_failover }}"
+        expected: "{{ md5_after_gap }}"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Gap Failover Test Results ==="
+      - action: print
+        msg: "Data A+B md5 (primary):        {{ md5_after_gap }}"
+      - action: print
+        msg: "Data A+B md5 (after failover): {{ md5_after_failover }}"
+      - action: print
+        msg: "Gap data survived failover: YES"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid_new }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

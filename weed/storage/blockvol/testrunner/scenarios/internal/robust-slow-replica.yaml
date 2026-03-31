@@ -1,0 +1,239 @@
+name: robust-slow-replica
+timeout: 5m
+
+# Robust dimension: What happens when replica fsync is too slow?
+#
+# Inject 10s delay on replication link → barrier timeout (5s) →
+# shipper goes degraded. Clear delay → check if shipper recovers.
+#
+# V1:  shipper stays degraded after barrier timeout (no background reconnect)
+# V1.5: background reconnect catches up after delay clears
+#
+# This is the scenario that directly demonstrates the Phase 13 improvement.
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-slow
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-slow-master /tmp/sw-slow-vs1 && mkdir -p /tmp/sw-slow-master /tmp/sw-slow-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-slow-vs2 && mkdir -p /tmp/sw-slow-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-slow-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-slow-vs1
+        extra_args: "-block.dir=/tmp/sw-slow-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-slow-vs2
+        extra_args: "-block.dir=/tmp/sw-slow-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: print
+        msg: "=== Volume healthy, replication established ==="
+
+  - name: connect-and-write
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+  - name: inject-partition
+    actions:
+      - action: print
+        msg: "=== Blocking replication ports (3295) from primary to replica ==="
+
+      # Block only replication port — SSH and master heartbeat still work.
+      - action: inject_partition
+        node: m02
+        target_ip: "192.168.1.181"
+        ports: "3295"
+
+      # Trigger a write so barrier fires and times out.
+      - action: exec
+        node: m01
+        cmd: "timeout 10 dd if=/dev/urandom of={{ device }} bs=4k count=1 oflag=direct 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+
+      # Wait for barrier timeout (5s) + degradation detection.
+      - action: sleep
+        duration: 10s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "true"
+        save_as: degraded_during
+        ignore_error: true
+
+      - action: print
+        msg: "During partition: degraded={{ degraded_during }}"
+
+  - name: clear-and-measure
+    actions:
+      - action: print
+        msg: "=== Clearing partition, measuring shipper recovery ==="
+
+      - action: clear_fault
+        node: m02
+        type: partition
+
+      # Check at 5s — V1.5 background reconnect interval is 5s.
+      - action: sleep
+        duration: 5s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_5s
+        ignore_error: true
+
+      - action: print
+        msg: "5s after clear: {{ check_5s }}"
+
+      # Check at 15s.
+      - action: sleep
+        duration: 10s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_15s
+        ignore_error: true
+
+      - action: print
+        msg: "15s after clear: {{ check_15s }}"
+
+      # Check at 30s.
+      - action: sleep
+        duration: 15s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_30s
+        ignore_error: true
+
+      - action: print
+        msg: "30s after clear: {{ check_30s }}"
+
+      # Check at 60s — give V1 every chance.
+      - action: sleep
+        duration: 30s
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+        save_as: check_60s
+        ignore_error: true
+
+      - action: print
+        msg: "60s after clear: {{ check_60s }}"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Slow Replica Recovery Test ==="
+      - action: print
+        msg: "During delay:    degraded={{ degraded_during }}"
+      - action: print
+        msg: "5s after clear:  {{ check_5s }}"
+      - action: print
+        msg: "15s after clear: {{ check_15s }}"
+      - action: print
+        msg: "30s after clear: {{ check_30s }}"
+      - action: print
+        msg: "60s after clear: {{ check_60s }}"
+      - action: print
+        msg: "(false = recovered, error msg = still degraded)"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        node: m02
+        type: netem
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true
