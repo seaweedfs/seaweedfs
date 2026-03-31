@@ -24,6 +24,20 @@ func loadVolumeWithoutIndex(dirname string, collection string, id needle.VolumeI
 	return
 }
 
+func loadVolumeWithoutWorker(dirname string, dirIdx string, collection string, id needle.VolumeId, needleMapKind NeedleMapKind, ldbTimeout int64) (v *Volume, err error) {
+	v = &Volume{
+		dir:           dirname,
+		dirIdx:        dirIdx,
+		Collection:    collection,
+		Id:            id,
+		needleMapKind: needleMapKind,
+		ldbTimeout:    ldbTimeout,
+	}
+	v.SuperBlock = super_block.SuperBlock{}
+	err = v.load(true, false, needleMapKind, 0, needle.GetCurrentVersion())
+	return
+}
+
 func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind NeedleMapKind, preallocate int64, ver needle.Version) (err error) {
 	alreadyHasSuperBlock := false
 
