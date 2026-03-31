@@ -26,7 +26,7 @@ func newTestCluster(hosts ...pb.ServerAddress) *testCluster {
 
 	for _, host := range hosts {
 		dlm := NewDistributedLockManager(host)
-		dlm.LockRing.SetSnapshot(servers)
+		dlm.LockRing.SetSnapshot(servers, 0)
 		c.nodes[host] = dlm
 	}
 
@@ -59,7 +59,7 @@ func (c *testCluster) removeNode(host pb.ServerAddress) {
 	// Update all remaining nodes' rings
 	remaining := c.getServers()
 	for _, dlm := range c.getNodes() {
-		dlm.LockRing.SetSnapshot(remaining)
+		dlm.LockRing.SetSnapshot(remaining, 0)
 	}
 }
 
@@ -86,7 +86,7 @@ func (c *testCluster) addNode(host pb.ServerAddress) {
 
 	servers := c.getServers()
 	for _, n := range c.getNodes() {
-		n.LockRing.SetSnapshot(servers)
+		n.LockRing.SetSnapshot(servers, 0)
 	}
 }
 

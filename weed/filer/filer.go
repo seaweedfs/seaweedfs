@@ -119,7 +119,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		address := pb.ServerAddress(node.Address)
 		snapshot = append(snapshot, address)
 	}
-	f.Dlm.LockRing.SetSnapshot(snapshot)
+	f.Dlm.LockRing.SetSnapshot(snapshot, 0)
 	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
 
 	// Initialize the empty folder cleaner using the same LockRing as Dlm for consistent hashing
@@ -140,7 +140,7 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 			servers = append(servers, pb.ServerAddress(s))
 		}
 		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
-		f.Dlm.LockRing.SetSnapshot(servers)
+		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
 
 	for _, peerUpdate := range existingNodes {
