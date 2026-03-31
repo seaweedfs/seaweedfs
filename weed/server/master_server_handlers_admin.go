@@ -30,6 +30,10 @@ func (ms *MasterServer) collectionDeleteHandler(w http.ResponseWriter, r *http.R
 		writeJsonError(w, r, http.StatusBadRequest, fmt.Errorf("collection %s does not exist", collectionName))
 		return
 	}
+	if err := ms.ensureCollectionDeleteSafe(collectionName); err != nil {
+		writeJsonError(w, r, http.StatusConflict, err)
+		return
+	}
 	for _, server := range collection.ListVolumeServers() {
 		err := operation.WithVolumeServerClient(false, server.ServerAddress(), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 			_, deleteErr := client.DeleteCollection(context.Background(), &volume_server_pb.DeleteCollectionRequest{

@@ -2,12 +2,14 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/seaweedfs/raft"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 )
 
 func (ms *MasterServer) CollectionList(ctx context.Context, req *master_pb.CollectionListRequest) (*master_pb.CollectionListResponse, error) {
@@ -35,6 +37,10 @@ func (ms *MasterServer) CollectionDelete(ctx context.Context, req *master_pb.Col
 
 	resp := &master_pb.CollectionDeleteResponse{}
 
+	if err := ms.ensureCollectionDeleteSafe(req.Name); err != nil {
+		return nil, err
+	}
+
 	err := ms.doDeleteNormalCollection(req.Name)
 
 	if err != nil {
@@ -48,6 +54,19 @@ func (ms *MasterServer) CollectionDelete(ctx context.Context, req *master_pb.Col
 	}
 
 	return resp, nil
+}
+
+func (ms *MasterServer) ensureCollectionDeleteSafe(collectionName string) error {
+	duplicates := ms.Topo.FindDuplicateVolumeIds(collectionName)
+	if len(duplicates) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf(
+		"refusing to delete collection %q: duplicate volume IDs exist across collections (%s). Run `volume.check.duplicates` to inspect and resolve them first",
+		collectionName,
+		topology.FormatDuplicateVolumeIds(duplicates),
+	)
 }
 
 func (ms *MasterServer) doDeleteNormalCollection(collectionName string) error {

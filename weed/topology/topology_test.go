@@ -14,6 +14,75 @@ import (
 	"testing"
 )
 
+func TestFindDuplicateVolumeIds(t *testing.T) {
+	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), 32*1024, 5, false)
+
+	dc := topo.GetOrCreateDataCenter("dc1")
+	rack := dc.GetOrCreateRack("rack1")
+	maxVolumeCounts := map[string]uint32{"": 25}
+
+	dn1 := rack.GetOrCreateDataNode("127.0.0.1", 34534, 0, "127.0.0.1", "", maxVolumeCounts)
+	dn2 := rack.GetOrCreateDataNode("127.0.0.2", 34535, 0, "127.0.0.2", "", maxVolumeCounts)
+
+	replicaPlacement := &super_block.ReplicaPlacement{}
+
+	collectionA := storage.VolumeInfo{
+		Id:               needle.VolumeId(100),
+		Collection:       "collection-a",
+		DiskType:         "",
+		ReadOnly:         false,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: replicaPlacement,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	collectionB := storage.VolumeInfo{
+		Id:               needle.VolumeId(100),
+		Collection:       "collection-b",
+		DiskType:         "",
+		ReadOnly:         false,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: replicaPlacement,
+		Ttl:              needle.EMPTY_TTL,
+	}
+	unique := storage.VolumeInfo{
+		Id:               needle.VolumeId(200),
+		Collection:       "collection-a",
+		DiskType:         "",
+		ReadOnly:         false,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: replicaPlacement,
+		Ttl:              needle.EMPTY_TTL,
+	}
+
+	dn1.UpdateVolumes([]storage.VolumeInfo{collectionA, unique})
+	dn2.UpdateVolumes([]storage.VolumeInfo{collectionB})
+	topo.RegisterVolumeLayout(collectionA, dn1)
+	topo.RegisterVolumeLayout(unique, dn1)
+	topo.RegisterVolumeLayout(collectionB, dn2)
+
+	duplicates := topo.FindDuplicateVolumeIds("")
+	got, ok := duplicates[needle.VolumeId(100)]
+	if !ok {
+		t.Fatalf("expected duplicate volume 100, got %+v", duplicates)
+	}
+	expected := []string{"collection-a", "collection-b"}
+	if !reflect.DeepEqual(got, expected) {
+		t.Fatalf("unexpected duplicate collections: got=%v want=%v", got, expected)
+	}
+	if _, exists := duplicates[needle.VolumeId(200)]; exists {
+		t.Fatalf("did not expect unique volume 200 in duplicates: %+v", duplicates)
+	}
+
+	scoped := topo.FindDuplicateVolumeIds("collection-a")
+	if _, ok := scoped[needle.VolumeId(100)]; !ok {
+		t.Fatalf("expected scoped duplicate for collection-a, got %+v", scoped)
+	}
+	scopedMissing := topo.FindDuplicateVolumeIds("collection-c")
+	if len(scopedMissing) != 0 {
+		t.Fatalf("expected no duplicates for unrelated collection, got %+v", scopedMissing)
+	}
+}
+
 func TestRemoveDataCenter(t *testing.T) {
 	topo := setup(topologyLayout)
 	topo.UnlinkChildNode(NodeId("dc2"))

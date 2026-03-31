@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -364,6 +365,74 @@ func (t *Topology) ListCollections(includeNormalVolumes, includeEcVolumes bool) 
 	slices.Sort(ret)
 
 	return ret
+}
+
+func (t *Topology) FindDuplicateVolumeIds(collectionName string) map[needle.VolumeId][]string {
+	duplicates := make(map[needle.VolumeId][]string)
+	collectionsByVid := make(map[needle.VolumeId]map[string]struct{})
+
+	t.collectionMap.RLock()
+	defer t.collectionMap.RUnlock()
+
+	for _, item := range t.collectionMap.Items() {
+		collection := item.(*Collection)
+		for _, layout := range collection.GetAllVolumeLayouts() {
+			layout.accessLock.RLock()
+			for vid := range layout.vid2location {
+				if collectionsByVid[vid] == nil {
+					collectionsByVid[vid] = make(map[string]struct{})
+				}
+				collectionsByVid[vid][collection.Name] = struct{}{}
+			}
+			layout.accessLock.RUnlock()
+		}
+	}
+
+	for vid, collectionSet := range collectionsByVid {
+		if len(collectionSet) < 2 {
+			continue
+		}
+		if collectionName != "" {
+			if _, found := collectionSet[collectionName]; !found {
+				continue
+			}
+		}
+		duplicateCollections := make([]string, 0, len(collectionSet))
+		for name := range collectionSet {
+			duplicateCollections = append(duplicateCollections, name)
+		}
+		slices.Sort(duplicateCollections)
+		duplicates[vid] = duplicateCollections
+	}
+
+	return duplicates
+}
+
+func FormatDuplicateVolumeIds(duplicates map[needle.VolumeId][]string) string {
+	if len(duplicates) == 0 {
+		return ""
+	}
+
+	vids := make([]needle.VolumeId, 0, len(duplicates))
+	for vid := range duplicates {
+		vids = append(vids, vid)
+	}
+	slices.Sort(vids)
+
+	lines := make([]string, 0, len(vids))
+	for _, vid := range vids {
+		displayCollections := make([]string, 0, len(duplicates[vid]))
+		for _, name := range duplicates[vid] {
+			if name == "" {
+				displayCollections = append(displayCollections, "(default)")
+			} else {
+				displayCollections = append(displayCollections, name)
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%d:[%s]", vid, strings.Join(displayCollections, ", ")))
+	}
+
+	return strings.Join(lines, "; ")
 }
 
 func (t *Topology) FindCollection(collectionName string) (*Collection, bool) {
