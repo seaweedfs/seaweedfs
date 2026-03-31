@@ -94,14 +94,26 @@ func TestP2_FC1_ChangedAddress(t *testing.T) {
 		t.Fatalf("FC1: endpoint not updated: %s", senderAfter.Endpoint().DataAddr)
 	}
 
+	// Verify new session was created after address change.
+	if !senderAfter.HasActiveSession() {
+		t.Fatal("FC1: new session must be created after address change")
+	}
+
 	hasCancelled := false
+	hasNewSession := false
 	for _, e := range driver.Orchestrator.Log.EventsFor("vol1/vs2") {
 		if e.Event == "plan_cancelled" {
 			hasCancelled = true
 		}
+		if e.Event == "session_created" {
+			hasNewSession = true
+		}
 	}
 	if !hasCancelled {
 		t.Fatal("FC1: log must show plan_cancelled")
+	}
+	if !hasNewSession {
+		t.Fatal("FC1: log must show session_created after address change")
 	}
 }
 
@@ -231,13 +243,21 @@ func TestP2_FC4_UnrecoverableGap_Forced(t *testing.T) {
 	}
 
 	hasEscalation := false
+	hasProofDetail := false
 	for _, e := range driver.Orchestrator.Log.EventsFor("vol1/vs2") {
 		if e.Event == "escalated" {
 			hasEscalation = true
+			// Detail must contain the proof reason with LSN values.
+			if len(e.Detail) > 15 {
+				hasProofDetail = true
+			}
 		}
 	}
 	if !hasEscalation {
-		t.Fatal("FC4: log must show escalation with gap details")
+		t.Fatal("FC4: log must show escalation event")
+	}
+	if !hasProofDetail {
+		t.Fatal("FC4: escalation event must contain proof reason with LSN details")
 	}
 	t.Logf("FC4: NeedsRebuild proven — replica=0, tail=%d, proof=%s",
 		state.WALTailLSN, plan.Proof.Reason)
