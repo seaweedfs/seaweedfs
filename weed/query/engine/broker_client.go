@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"strings"
@@ -507,24 +506,4 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	}
 
 	return logEntries, nil
-}
-
-// getBufferStartFromEntry extracts LogBufferStart from file entry metadata
-// Only supports binary format (used by both log files and Parquet files)
-func (c *BrokerClient) getBufferStartFromEntry(entry *filer_pb.Entry) *LogBufferStart {
-	if entry.Extended == nil {
-		return nil
-	}
-
-	if startData, exists := entry.Extended["buffer_start"]; exists {
-		// Only support binary format
-		if len(startData) == 8 {
-			startIndex := int64(binary.BigEndian.Uint64(startData))
-			if startIndex > 0 {
-				return &LogBufferStart{StartIndex: startIndex}
-			}
-		}
-	}
-
-	return nil
 }
