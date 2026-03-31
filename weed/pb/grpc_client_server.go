@@ -108,7 +108,12 @@ func ServeGrpcOnLocalSocket(grpcServer *grpc.Server, grpcPort int) {
 		return
 	}
 	glog.V(0).Infof("gRPC also listening on Unix socket %s", socketPath)
-	go grpcServer.Serve(listener)
+	go func() {
+		if err := grpcServer.Serve(listener); err != nil && err != grpc.ErrServerStopped {
+			glog.Errorf("gRPC Unix socket server error on %s: %v", socketPath, err)
+		}
+		os.Remove(socketPath)
+	}()
 }
 
 func NewGrpcServer(opts ...grpc.ServerOption) *grpc.Server {
