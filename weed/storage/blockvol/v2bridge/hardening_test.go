@@ -66,12 +66,18 @@ func TestP3_Matrix_ChangedAddress(t *testing.T) {
 	)
 	driver.Orchestrator.ProcessAssignment(intent2)
 
-	// New plan + execute on new endpoint.
-	plan2, _ := driver.PlanRecovery("v1/vs2", 6)
-	if plan2.Outcome == engine.OutcomeCatchUp {
-		exec := engine.NewCatchUpExecutor(driver, plan2)
-		exec.IO = executor
-		exec.Execute(nil, 0)
+	// New plan + execute — must be CatchUp (replica=6, within window).
+	plan2, err := driver.PlanRecovery("v1/vs2", 6)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan2.Outcome != engine.OutcomeCatchUp {
+		t.Fatalf("changed-address: outcome=%s, want CatchUp", plan2.Outcome)
+	}
+	exec := engine.NewCatchUpExecutor(driver, plan2)
+	exec.IO = executor
+	if err := exec.Execute(nil, 0); err != nil {
+		t.Fatalf("catch-up execution: %v", err)
 	}
 
 	// Assertions.
@@ -198,6 +204,17 @@ func TestP3_Matrix_NeedsRebuild(t *testing.T) {
 	if pinner.ActiveHoldCount() != 0 {
 		t.Fatalf("leaked pins: %d", pinner.ActiveHoldCount())
 	}
+
+	// Observability: escalation event must exist.
+	hasEscalation := false
+	for _, e := range driver.Orchestrator.Log.EventsFor("v1/vs2") {
+		if e.Event == "escalated" {
+			hasEscalation = true
+		}
+	}
+	if !hasEscalation {
+		t.Fatal("logs must show escalated event for NeedsRebuild")
+	}
 }
 
 // --- Matrix 4: Post-checkpoint boundary ---
@@ -240,10 +257,30 @@ func TestP3_Matrix_PostCheckpointBoundary(t *testing.T) {
 	}
 	exec := engine.NewCatchUpExecutor(driver, planCatchUp)
 	exec.IO = executor
-	exec.Execute(nil, 0)
+	if err := exec.Execute(nil, 0); err != nil {
+		t.Fatalf("catch-up: %v", err)
+	}
 
 	if pinner.ActiveHoldCount() != 0 {
 		t.Fatalf("leaked pins: %d", pinner.ActiveHoldCount())
+	}
+
+	// Observability: handshake + completion events.
+	hasHandshake := false
+	hasComplete := false
+	for _, e := range driver.Orchestrator.Log.EventsFor("v1/vs2") {
+		if e.Event == "handshake" {
+			hasHandshake = true
+		}
+		if e.Event == "exec_catchup_started" || e.Event == "exec_completed" {
+			hasComplete = true
+		}
+	}
+	if !hasHandshake {
+		t.Fatal("logs must show handshake event")
+	}
+	if !hasComplete {
+		t.Fatal("logs must show catch-up execution event")
 	}
 }
 
@@ -322,7 +359,7 @@ func TestP3_Extra_FailoverCycle(t *testing.T) {
 // --- Extra 2: Overlapping retention / pinner safety ---
 
 func TestP3_Extra_OverlappingRetention(t *testing.T) {
-	driver, ca, reader, _, pinner := setupHardening(t)
+	_, _, reader, _, pinner := setupHardening(t)
 	vol := reader.vol
 
 	for i := 0; i < 5; i++ {
@@ -333,40 +370,56 @@ func TestP3_Extra_OverlappingRetention(t *testing.T) {
 		vol.WriteLBA(uint64(i), makeBlock(byte('A'+i)))
 	}
 
-	intent := ca.ToAssignmentIntent(
-		bridge.MasterAssignment{VolumeName: "v1", Epoch: 1, Role: "primary"},
-		[]bridge.MasterAssignment{{VolumeName: "v1", ReplicaServerID: "vs2", Role: "replica",
-			DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334"}},
-	)
+	state := reader.ReadState()
 
-	// Plan 1: acquires pins.
-	driver.Orchestrator.ProcessAssignment(intent)
-	plan1, _ := driver.PlanRecovery("v1/vs2", 6)
-
-	holds1 := pinner.ActiveHoldCount()
-	t.Logf("after plan1: holds=%d", holds1)
-
-	// Cancel plan1 → release pins.
-	driver.CancelPlan(plan1, "replaced")
-
-	// Plan 2: acquires new pins.
-	driver.Orchestrator.ProcessAssignment(intent)
-	plan2, _ := driver.PlanRecovery("v1/vs2", 7)
-
-	holds2 := pinner.ActiveHoldCount()
-	t.Logf("after plan2 (plan1 cancelled): holds=%d", holds2)
-
-	// Plan1 pins should be gone, plan2 pins should be active.
-	// Cancel plan2.
-	driver.CancelPlan(plan2, "done")
-
-	if pinner.ActiveHoldCount() != 0 {
-		t.Fatalf("all pins should be released: %d remaining", pinner.ActiveHoldCount())
+	// Hold 1: WAL retention at LSN 6.
+	release1, err := pinner.HoldWALRetention(state.WALTailLSN + 1)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	// Minimum retention floor should have no holds.
-	_, hasFloor := pinner.MinWALRetentionFloor()
+	// Hold 2: WAL retention at LSN 7 (both live simultaneously).
+	release2, err := pinner.HoldWALRetention(state.WALTailLSN + 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Both holds coexist.
+	if pinner.ActiveHoldCount() != 2 {
+		t.Fatalf("two holds should coexist: got %d", pinner.ActiveHoldCount())
+	}
+
+	// Minimum floor should be the LOWER of the two holds.
+	floor, hasFloor := pinner.MinWALRetentionFloor()
+	if !hasFloor {
+		t.Fatal("should have retention floor with 2 active holds")
+	}
+	expectedFloor := state.WALTailLSN + 1
+	if floor != expectedFloor {
+		t.Fatalf("floor=%d, want %d (minimum of two holds)", floor, expectedFloor)
+	}
+
+	// Release hold 1 — hold 2 still protects.
+	release1()
+	if pinner.ActiveHoldCount() != 1 {
+		t.Fatalf("after release1: holds=%d, want 1", pinner.ActiveHoldCount())
+	}
+	floor, hasFloor = pinner.MinWALRetentionFloor()
+	if !hasFloor {
+		t.Fatal("hold 2 should still provide floor")
+	}
+	expectedFloor = state.WALTailLSN + 2
+	if floor != expectedFloor {
+		t.Fatalf("after release1: floor=%d, want %d", floor, expectedFloor)
+	}
+
+	// Release hold 2 — no more holds.
+	release2()
+	if pinner.ActiveHoldCount() != 0 {
+		t.Fatalf("all released: holds=%d", pinner.ActiveHoldCount())
+	}
+	_, hasFloor = pinner.MinWALRetentionFloor()
 	if hasFloor {
-		t.Fatal("no retention floor expected after all plans cancelled")
+		t.Fatal("no floor expected after all holds released")
 	}
 }
