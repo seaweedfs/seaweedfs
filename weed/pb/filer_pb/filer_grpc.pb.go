@@ -45,6 +45,7 @@ const (
 	SeaweedFiler_DistributedUnlock_FullMethodName               = "/filer_pb.SeaweedFiler/DistributedUnlock"
 	SeaweedFiler_FindLockOwner_FullMethodName                   = "/filer_pb.SeaweedFiler/FindLockOwner"
 	SeaweedFiler_TransferLocks_FullMethodName                   = "/filer_pb.SeaweedFiler/TransferLocks"
+	SeaweedFiler_ReplicateLock_FullMethodName                   = "/filer_pb.SeaweedFiler/ReplicateLock"
 )
 
 // SeaweedFilerClient is the client API for SeaweedFiler service.
@@ -78,6 +79,7 @@ type SeaweedFilerClient interface {
 	FindLockOwner(ctx context.Context, in *FindLockOwnerRequest, opts ...grpc.CallOption) (*FindLockOwnerResponse, error)
 	// distributed lock management internal use only
 	TransferLocks(ctx context.Context, in *TransferLocksRequest, opts ...grpc.CallOption) (*TransferLocksResponse, error)
+	ReplicateLock(ctx context.Context, in *ReplicateLockRequest, opts ...grpc.CallOption) (*ReplicateLockResponse, error)
 }
 
 type seaweedFilerClient struct {
@@ -396,6 +398,16 @@ func (c *seaweedFilerClient) TransferLocks(ctx context.Context, in *TransferLock
 	return out, nil
 }
 
+func (c *seaweedFilerClient) ReplicateLock(ctx context.Context, in *ReplicateLockRequest, opts ...grpc.CallOption) (*ReplicateLockResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplicateLockResponse)
+	err := c.cc.Invoke(ctx, SeaweedFiler_ReplicateLock_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedFilerServer is the server API for SeaweedFiler service.
 // All implementations must embed UnimplementedSeaweedFilerServer
 // for forward compatibility.
@@ -427,6 +439,7 @@ type SeaweedFilerServer interface {
 	FindLockOwner(context.Context, *FindLockOwnerRequest) (*FindLockOwnerResponse, error)
 	// distributed lock management internal use only
 	TransferLocks(context.Context, *TransferLocksRequest) (*TransferLocksResponse, error)
+	ReplicateLock(context.Context, *ReplicateLockRequest) (*ReplicateLockResponse, error)
 	mustEmbedUnimplementedSeaweedFilerServer()
 }
 
@@ -514,6 +527,9 @@ func (UnimplementedSeaweedFilerServer) FindLockOwner(context.Context, *FindLockO
 }
 func (UnimplementedSeaweedFilerServer) TransferLocks(context.Context, *TransferLocksRequest) (*TransferLocksResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransferLocks not implemented")
+}
+func (UnimplementedSeaweedFilerServer) ReplicateLock(context.Context, *ReplicateLockRequest) (*ReplicateLockResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReplicateLock not implemented")
 }
 func (UnimplementedSeaweedFilerServer) mustEmbedUnimplementedSeaweedFilerServer() {}
 func (UnimplementedSeaweedFilerServer) testEmbeddedByValue()                      {}
@@ -958,6 +974,24 @@ func _SeaweedFiler_TransferLocks_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedFiler_ReplicateLock_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplicateLockRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).ReplicateLock(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedFiler_ReplicateLock_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).ReplicateLock(ctx, req.(*ReplicateLockRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedFiler_ServiceDesc is the grpc.ServiceDesc for SeaweedFiler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1044,6 +1078,10 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "TransferLocks",
 			Handler:    _SeaweedFiler_TransferLocks_Handler,
+		},
+		{
+			MethodName: "ReplicateLock",
+			Handler:    _SeaweedFiler_ReplicateLock_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

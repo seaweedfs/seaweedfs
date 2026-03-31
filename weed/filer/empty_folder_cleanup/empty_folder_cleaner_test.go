@@ -163,7 +163,7 @@ func TestEmptyFolderCleaner_ownsFolder(t *testing.T) {
 		"filer2:8888",
 		"filer3:8888",
 	}
-	lockRing.SetSnapshot(servers)
+	lockRing.SetSnapshot(servers, 0)
 
 	// Create cleaner for filer1
 	cleaner1 := &EmptyFolderCleaner{
@@ -213,7 +213,7 @@ func TestEmptyFolderCleaner_ownsFolder(t *testing.T) {
 func TestEmptyFolderCleaner_ownsFolder_singleServer(t *testing.T) {
 	// Create a LockRing with a single server
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing: lockRing,
@@ -251,7 +251,7 @@ func TestEmptyFolderCleaner_ownsFolder_emptyRing(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -287,7 +287,7 @@ func TestEmptyFolderCleaner_OnCreateEvent_cancelsCleanup(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnDeleteEvent_deduplication(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -317,7 +317,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_deduplication(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnDeleteEvent_multipleFolders(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -346,7 +346,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_multipleFolders(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnDeleteEvent_notOwner(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888", "filer2:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888", "filer2:8888"}, 0)
 
 	// Create cleaner for filer that doesn't own the folder
 	cleaner := &EmptyFolderCleaner{
@@ -385,7 +385,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_notOwner(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnDeleteEvent_disabled(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -413,7 +413,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_disabled(t *testing.T) {
 
 func TestEmptyFolderCleaner_OnDeleteEvent_directoryDeletion(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -442,7 +442,7 @@ func TestEmptyFolderCleaner_OnDeleteEvent_directoryDeletion(t *testing.T) {
 
 func TestEmptyFolderCleaner_cachedCounts(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -491,7 +491,7 @@ func TestEmptyFolderCleaner_cachedCounts(t *testing.T) {
 
 func TestEmptyFolderCleaner_Stop(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -526,7 +526,7 @@ func TestEmptyFolderCleaner_Stop(t *testing.T) {
 
 func TestEmptyFolderCleaner_cacheEviction(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -581,7 +581,7 @@ func TestEmptyFolderCleaner_cacheEviction(t *testing.T) {
 
 func TestEmptyFolderCleaner_cacheEviction_skipsEntriesInQueue(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -615,7 +615,7 @@ func TestEmptyFolderCleaner_cacheEviction_skipsEntriesInQueue(t *testing.T) {
 
 func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	cleaner := &EmptyFolderCleaner{
 		lockRing:     lockRing,
@@ -657,7 +657,7 @@ func TestEmptyFolderCleaner_queueFIFOOrder(t *testing.T) {
 
 func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	var deleted []string
 	mock := &mockFilerOps{
@@ -701,7 +701,7 @@ func TestEmptyFolderCleaner_processCleanupQueue_drainsAllOnceTriggered(t *testin
 
 func TestEmptyFolderCleaner_executeCleanup_bucketPolicyDisabledSkips(t *testing.T) {
 	lockRing := lock_manager.NewLockRing(5 * time.Second)
-	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+	lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 	var deleted []string
 	mock := &mockFilerOps{
@@ -763,7 +763,7 @@ func TestEmptyFolderCleaner_executeCleanup_directoryMarker(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			lockRing := lock_manager.NewLockRing(5 * time.Second)
-			lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"})
+			lockRing.SetSnapshot([]pb.ServerAddress{"filer1:8888"}, 0)
 
 			var deleted []string
 			mock := &mockFilerOps{

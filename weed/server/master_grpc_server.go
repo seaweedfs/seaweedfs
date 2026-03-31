@@ -296,10 +296,16 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
+	if req.ClientType == cluster.FilerType {
+		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+	}
 
 	defer func() {
 		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
 			ms.broadcastToClients(update)
+		}
+		if req.ClientType == cluster.FilerType {
+			ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 		}
 		ms.deleteClient(clientName)
 	}()
@@ -326,6 +332,12 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 			if sendErr := stream.Send(&master_pb.KeepConnectedResponse{VolumeLocation: message}); sendErr != nil {
 				return sendErr
 			}
+		}
+	}
+
+	if initialLockRingUpdate := ms.initialLockRingUpdate(req.ClientType, req.FilerGroup); initialLockRingUpdate != nil {
+		if sendErr := stream.Send(initialLockRingUpdate); sendErr != nil {
+			return sendErr
 		}
 	}
 
@@ -369,6 +381,21 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		}
 	}
 
+}
+
+func (ms *MasterServer) initialLockRingUpdate(clientType string, filerGroup string) *master_pb.KeepConnectedResponse {
+	if clientType != cluster.FilerType || ms.LockRingManager == nil {
+		return nil
+	}
+
+	update := ms.LockRingManager.GetLastUpdate(cluster.FilerGroupName(filerGroup))
+	if update == nil {
+		return nil
+	}
+
+	return &master_pb.KeepConnectedResponse{
+		LockRingUpdate: update,
+	}
 }
 
 func (ms *MasterServer) broadcastToClients(message *master_pb.KeepConnectedResponse) {

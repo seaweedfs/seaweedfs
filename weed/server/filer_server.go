@@ -258,6 +258,7 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.filer.Shutdown()
 	})
 
+	fs.SetupDlmReplication()
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
 
 	if fs.CredentialManager != nil {
