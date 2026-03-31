@@ -864,6 +864,48 @@ func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
 	return v.shipperGroup.ShipperStates()
 }
 
+// V2StatusSnapshot holds the storage state fields needed by the V2 engine bridge.
+type V2StatusSnapshot struct {
+	WALHeadLSN        uint64
+	WALTailLSN        uint64
+	CommittedLSN      uint64
+	CheckpointLSN     uint64
+	CheckpointTrusted bool
+}
+
+// StatusSnapshot returns a snapshot of blockvol state for V2 engine consumption.
+// Each field reads from the authoritative source:
+//
+//   WALHeadLSN        ← nextLSN - 1 (last written LSN)
+//   WALTailLSN        ← wal.Tail() (oldest retained WAL entry)
+//   CommittedLSN      ← flusher.CheckpointLSN() (barrier-confirmed + flushed)
+//   CheckpointLSN     ← super.WALCheckpointLSN (durable base image)
+//   CheckpointTrusted ← super.Valid (superblock integrity check)
+func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
+	headLSN := v.nextLSN.Load()
+	if headLSN > 0 {
+		headLSN--
+	}
+
+	var walTail uint64
+	if v.wal != nil {
+		walTail = v.wal.Tail()
+	}
+
+	var checkpointLSN uint64
+	if v.flusher != nil {
+		checkpointLSN = v.flusher.CheckpointLSN()
+	}
+
+	return V2StatusSnapshot{
+		WALHeadLSN:        headLSN,
+		WALTailLSN:        walTail,
+		CommittedLSN:      checkpointLSN, // V1: committed = checkpointed after flush
+		CheckpointLSN:     v.super.WALCheckpointLSN,
+		CheckpointTrusted: v.super.Validate() == nil,
+	}
+}
+
 // ReplicaReceiverAddrInfo holds canonical addresses from the replica receiver.
 type ReplicaReceiverAddrInfo struct {
 	DataAddr string
