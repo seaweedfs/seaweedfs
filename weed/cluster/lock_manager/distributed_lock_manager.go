@@ -120,8 +120,9 @@ func (dlm *DistributedLockManager) Unlock(key string, token string) (movedTo pb.
 // It is used when a server is down and the lock is moved to another server.
 // After inserting, it replicates to the backup for this key.
 func (dlm *DistributedLockManager) InsertLock(key string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
-	dlm.lockManager.InsertLock(key, expiredAtNs, token, owner, generation, seq)
-	dlm.replicateToBackup(key, expiredAtNs, token, owner, generation, seq, false)
+	if dlm.lockManager.InsertLock(key, expiredAtNs, token, owner, generation, seq) {
+		dlm.replicateToBackup(key, expiredAtNs, token, owner, generation, seq, false)
+	}
 }
 
 // InsertBackupLock inserts a lock as a backup copy, rejecting stale seq

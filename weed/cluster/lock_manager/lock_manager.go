@@ -180,12 +180,20 @@ func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Loc
 	return
 }
 
-// InsertLock inserts a lock unconditionally (used for lock transfers)
-func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) {
+// InsertLock inserts a lock from a transfer if it is newer than the current state.
+func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, owner string, generation int64, seq int64) bool {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
+	if existing, found := lm.locks[path]; found && seq <= existing.Seq {
+		glog.V(4).Infof("lock %s: rejecting stale transfer seq %d (current %d)", path, seq, existing.Seq)
+		return false
+	}
 	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation, Seq: seq}
+	if cur := lm.nextGeneration.Load(); generation >= cur {
+		lm.nextGeneration.Store(generation)
+	}
+	return true
 }
 
 // InsertBackupLock inserts or updates a lock as a backup copy.
