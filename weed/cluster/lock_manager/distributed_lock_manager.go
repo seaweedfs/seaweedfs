@@ -27,7 +27,7 @@ func NewDistributedLockManager(host pb.ServerAddress) *DistributedLockManager {
 	}
 }
 
-func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (lockOwner string, renewToken string, movedTo pb.ServerAddress, err error) {
+func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64, token string, owner string) (lockOwner string, renewToken string, generation int64, movedTo pb.ServerAddress, err error) {
 	movedTo, err = dlm.findLockOwningFiler(key)
 	if err != nil {
 		return
@@ -35,7 +35,7 @@ func (dlm *DistributedLockManager) LockWithTimeout(key string, expiredAtNs int64
 	if movedTo != dlm.Host {
 		return
 	}
-	lockOwner, renewToken, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
+	lockOwner, renewToken, generation, err = dlm.lockManager.Lock(key, expiredAtNs, token, owner)
 	return
 }
 

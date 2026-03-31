@@ -3,6 +3,7 @@ package lock_manager
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,14 +18,17 @@ var LockNotFound = fmt.Errorf("lock not found")
 
 // LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
-	locks      map[string]*Lock
-	accessLock sync.RWMutex
+	locks            map[string]*Lock
+	accessLock       sync.RWMutex
+	nextGeneration   atomic.Int64
 }
 type Lock struct {
 	Token       string
 	ExpiredAtNs int64
 	Key         string // only used for moving locks
 	Owner       string
+	IsBackup    bool   // true if this node holds the lock as a backup
+	Generation  int64  // monotonic fencing token, increments on fresh acquisition
 }
 
 func NewLockManager() *LockManager {
@@ -35,7 +39,11 @@ func NewLockManager() *LockManager {
 	return t
 }
 
-func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, err error) {
+func (lm *LockManager) NextGeneration() int64 {
+	return lm.nextGeneration.Add(1)
+}
+
+func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner string) (lockOwner, renewToken string, generation int64, err error) {
 	lm.accessLock.Lock()
 	defer lm.accessLock.Unlock()
 
@@ -51,8 +59,9 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 			} else {
 				// new lock
 				renewToken = uuid.New().String()
-				glog.V(4).Infof("key %s new token %v owner %v", path, renewToken, owner)
-				lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
+				generation = lm.NextGeneration()
+				glog.V(4).Infof("key %s new token %v owner %v generation %d", path, renewToken, owner, generation)
+				lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation}
 				return
 			}
 		}
@@ -61,8 +70,9 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 		if oldValue.Token == token {
 			// token matches, renew the lock
 			renewToken = uuid.New().String()
+			generation = oldValue.Generation // keep same generation on renewal
 			glog.V(4).Infof("key %s old token %v owner %v => %v owner %v", path, oldValue.Token, oldValue.Owner, renewToken, owner)
-			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
+			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation}
 			return
 		} else {
 			if token == "" {
@@ -79,9 +89,10 @@ func (lm *LockManager) Lock(path string, expiredAtNs int64, token string, owner 
 		glog.V(4).Infof("key %s no lock owner %v", path, owner)
 		if token == "" {
 			// new lock
-			glog.V(4).Infof("key %s new token %v owner %v", path, token, owner)
 			renewToken = uuid.New().String()
-			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner}
+			generation = lm.NextGeneration()
+			glog.V(4).Infof("key %s new token %v owner %v generation %d", path, renewToken, owner, generation)
+			lm.locks[path] = &Lock{Token: renewToken, ExpiredAtNs: expiredAtNs, Owner: owner, Generation: generation}
 			return
 		} else {
 			glog.V(4).Infof("key %s non-empty token %v owner %v", path, token, owner)
@@ -171,6 +182,38 @@ func (lm *LockManager) InsertLock(path string, expiredAtNs int64, token string, 
 	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner}
 }
 
+// InsertBackupLock inserts a lock as a backup copy
+func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token string, owner string, generation int64) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+
+	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation}
+}
+
+// RemoveLock removes a lock by key
+func (lm *LockManager) RemoveLock(path string) {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+	delete(lm.locks, path)
+}
+
+// GetLock returns a copy of the lock for a key, if it exists and is not expired
+func (lm *LockManager) GetLock(key string) (*Lock, bool) {
+	lm.accessLock.RLock()
+	defer lm.accessLock.RUnlock()
+
+	lock, found := lm.locks[key]
+	if !found {
+		return nil, false
+	}
+	if time.Now().UnixNano() > lock.ExpiredAtNs {
+		return nil, false
+	}
+	// Return a copy
+	cp := *lock
+	return &cp, true
+}
+
 func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
 	lm.accessLock.RLock()
 	defer lm.accessLock.RUnlock()
@@ -180,4 +223,46 @@ func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
 	}
 	err = LockNotFound
 	return
+}
+
+// AllLocks returns a copy of all non-expired locks
+func (lm *LockManager) AllLocks() []*Lock {
+	lm.accessLock.RLock()
+	defer lm.accessLock.RUnlock()
+
+	now := time.Now().UnixNano()
+	var result []*Lock
+	for key, lock := range lm.locks {
+		if now > lock.ExpiredAtNs {
+			continue
+		}
+		cp := *lock
+		cp.Key = key
+		result = append(result, &cp)
+	}
+	return result
+}
+
+// PromoteLock changes a backup lock to a primary lock
+func (lm *LockManager) PromoteLock(key string) bool {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+
+	if lock, found := lm.locks[key]; found && lock.IsBackup {
+		lock.IsBackup = false
+		return true
+	}
+	return false
+}
+
+// DemoteLock changes a primary lock to a backup lock
+func (lm *LockManager) DemoteLock(key string) bool {
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
+
+	if lock, found := lm.locks[key]; found && !lock.IsBackup {
+		lock.IsBackup = true
+		return true
+	}
+	return false
 }
