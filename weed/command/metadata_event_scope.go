@@ -1,15 +1,18 @@
 package command
 
-import "github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+import (
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+)
 
 func metadataEventDirectoryMembership(resp *filer_pb.SubscribeMetadataResponse, dir string) (sourceInDir, targetInDir bool) {
 	if resp == nil || resp.EventNotification == nil {
 		return false, false
 	}
 
-	sourceInDir = pathIsEqualOrUnder(resp.Directory, dir)
+	sourceInDir = util.IsEqualOrUnder(resp.Directory, dir)
 	targetInDir = resp.EventNotification.NewEntry != nil &&
-		pathIsEqualOrUnder(filer_pb.MetadataEventTargetDirectory(resp), dir)
+		util.IsEqualOrUnder(filer_pb.MetadataEventTargetDirectory(resp), dir)
 
 	return sourceInDir, targetInDir
 }

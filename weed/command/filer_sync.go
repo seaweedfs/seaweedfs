@@ -467,9 +467,9 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		// (lines below) already converts these to create or delete.
 		oldDirExcluded := matchesExcludePath(resp.Directory, excludePaths)
 		newDirExcluded := matchesExcludePath(message.NewParentPath, excludePaths)
-		oldDirInScope := pathIsEqualOrUnder(resp.Directory, sourcePath) && !oldDirExcluded
+		oldDirInScope := util.IsEqualOrUnder(resp.Directory, sourcePath) && !oldDirExcluded
 		newDirInScope := message.NewParentPath != "" &&
-			pathIsEqualOrUnder(message.NewParentPath, sourcePath) &&
+			util.IsEqualOrUnder(message.NewParentPath, sourcePath) &&
 			!newDirExcluded
 		if !oldDirInScope && !newDirInScope {
 			return nil
@@ -500,7 +500,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			if !doDeleteFiles {
 				return nil
 			}
-			if !pathIsEqualOrUnder(string(sourceOldKey), sourcePath) {
+			if !util.IsEqualOrUnder(string(sourceOldKey), sourcePath) {
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceOldKey, sourcePath)
@@ -509,7 +509,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 
 		// handle new entries
 		if filer_pb.IsCreate(resp) {
-			if !pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
+			if !util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				return nil
 			}
 			key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
@@ -526,9 +526,9 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		}
 
 		// handle updates
-		if pathIsEqualOrUnder(string(sourceOldKey), sourcePath) {
+		if util.IsEqualOrUnder(string(sourceOldKey), sourcePath) {
 			// old key is in the watched directory
-			if pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
+			if util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is also in the watched directory
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
@@ -564,7 +564,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 			}
 		} else {
 			// old key is outside the watched directory
-			if pathIsEqualOrUnder(string(sourceNewKey), sourcePath) {
+			if util.IsEqualOrUnder(string(sourceNewKey), sourcePath) {
 				// new key is in the watched directory
 				key := buildKey(dataSink, message, targetPath, sourceNewKey, sourcePath)
 				if err := dataSink.CreateEntry(key, message.NewEntry, message.Signatures); err != nil {
@@ -630,31 +630,11 @@ func isEntryExcluded(dir string, entry *filer_pb.Entry, reExcludeFileName *regex
 
 func matchesExcludePath(dir string, excludePaths []string) bool {
 	for _, excludePath := range excludePaths {
-		if pathIsEqualOrUnder(dir, excludePath) {
+		if util.IsEqualOrUnder(dir, excludePath) {
 			return true
 		}
 	}
 	return false
-}
-
-func pathIsEqualOrUnder(candidate, other string) bool {
-	candidatePath := normalizeScopedPath(candidate)
-	otherPath := normalizeScopedPath(other)
-	if candidatePath == "" || otherPath == "" {
-		return false
-	}
-	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
-}
-
-func normalizeScopedPath(p string) util.FullPath {
-	if p == "" {
-		return ""
-	}
-	trimmed := strings.TrimSuffix(p, "/")
-	if trimmed == "" {
-		return "/"
-	}
-	return util.FullPath(trimmed)
 }
 
 // compileExcludePattern compiles a regexp pattern string, returning nil if empty.

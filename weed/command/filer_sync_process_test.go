@@ -53,8 +53,8 @@ func TestPathIsEqualOrUnderUsesDirectoryBoundaries(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := pathIsEqualOrUnder(tt.candidate, tt.other); got != tt.expected {
-				t.Fatalf("pathIsEqualOrUnder(%q, %q) = %v, want %v", tt.candidate, tt.other, got, tt.expected)
+			if got := util.IsEqualOrUnder(tt.candidate, tt.other); got != tt.expected {
+				t.Fatalf("IsEqualOrUnder(%q, %q) = %v, want %v", tt.candidate, tt.other, got, tt.expected)
 			}
 		})
 	}
