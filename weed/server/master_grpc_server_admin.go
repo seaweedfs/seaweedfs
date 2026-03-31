@@ -106,6 +106,9 @@ func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64
 func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts time.Time, token int64) {
 	locks.Lock()
 	defer locks.Unlock()
+	if existing, found := locks.locks[lockName]; found && existing.lastClient != clientName {
+		stats.MasterAdminLock.WithLabelValues(existing.lastClient).Set(0)
+	}
 	lock := &AdminLock{
 		accessSecret:   rand.Int64(),
 		accessLockTime: time.Now(),
