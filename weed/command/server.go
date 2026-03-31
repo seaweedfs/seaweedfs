@@ -330,6 +330,28 @@ func runServer(cmd *Command, args []string) bool {
 	}
 	filerOptions.defaultLevelDbDirectory = masterOptions.metaFolder
 
+	// Register Unix socket paths for gRPC services running in this process
+	// so local inter-service communication uses Unix sockets instead of TCP.
+	// Resolve gRPC ports early (same calculation each service does internally).
+	for _, svc := range []struct {
+		starting *bool
+		portGrpc *int
+		port     *int
+		name     string
+	}{
+		{isStartingMasterServer, masterOptions.portGrpc, masterOptions.port, "master"},
+		{isStartingVolumeServer, serverOptions.v.portGrpc, serverOptions.v.port, "volume"},
+		{isStartingFiler, filerOptions.portGrpc, filerOptions.port, "filer"},
+		{isStartingS3, s3Options.portGrpc, s3Options.port, "s3"},
+	} {
+		if *svc.starting {
+			if *svc.portGrpc == 0 {
+				*svc.portGrpc = 10000 + *svc.port
+			}
+			pb.RegisterLocalGrpcSocket(*svc.portGrpc, fmt.Sprintf("/tmp/seaweedfs-%s-grpc-%d.sock", svc.name, *svc.portGrpc))
+		}
+	}
+
 	serverWhiteList := util.StringSplit(*serverWhiteListOption, ",")
 
 	if *isStartingFiler {
