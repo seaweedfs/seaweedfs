@@ -162,7 +162,7 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 		glog.V(4).InfofCtx(ctx, "InsertEntryKnownAbsent %s has HardLinkId %x counter=%d",
 			entry.FullPath, entry.HardLinkId, entry.HardLinkCounter)
 		if err := fsw.setHardLink(ctx, entry); err != nil {
-			return fmt.Errorf("setHardLink %d: %v", entry.HardLinkId, err)
+			return fmt.Errorf("setHardLink %x: %v", entry.HardLinkId, err)
 		}
 	}
 
