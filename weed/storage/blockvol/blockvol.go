@@ -899,7 +899,7 @@ type V2StatusSnapshot struct {
 //
 //   WALHeadLSN        ← nextLSN - 1 (last written LSN)
 //   WALTailLSN        ← super.WALCheckpointLSN (LSN boundary, not byte offset)
-//   CommittedLSN      ← flusher.CheckpointLSN() (V1 interim: barrier-confirmed + flushed)
+//   CommittedLSN      ← nextLSN - 1 (for sync_all: every write is barrier-confirmed)
 //   CheckpointLSN     ← super.WALCheckpointLSN (durable base image)
 //   CheckpointTrusted ← super.Validate() == nil (superblock integrity)
 func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
@@ -910,15 +910,13 @@ func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
 
 	// WALTailLSN: the oldest retained LSN boundary for recovery classification.
 	// Entries with LSN > WALTailLSN are guaranteed in the WAL.
-	// Entries with LSN <= WALTailLSN have been checkpointed and WAL space
-	// may be reused. This is an LSN (not a physical byte offset).
 	walTailLSN := v.super.WALCheckpointLSN
 
-	// CommittedLSN: V1 interim mapping. committed = checkpointed after flush.
-	var committedLSN uint64
-	if v.flusher != nil {
-		committedLSN = v.flusher.CheckpointLSN()
-	}
+	// CommittedLSN: for sync_all mode, every write is barrier-confirmed
+	// before returning. So WALHeadLSN (nextLSN-1) IS the committed boundary.
+	// This separates CommittedLSN from CheckpointLSN — entries between
+	// checkpoint and head are committed but not yet flushed to extent.
+	committedLSN := headLSN
 
 	return V2StatusSnapshot{
 		WALHeadLSN:        headLSN,

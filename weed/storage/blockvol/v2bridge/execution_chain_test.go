@@ -68,20 +68,16 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 	t.Logf("catch-up: head=%d tail=%d committed=%d checkpoint=%d",
 		state.WALHeadLSN, state.WALTailLSN, state.CommittedLSN, state.CheckpointLSN)
 
-	// Precondition: head > committed (entries above checkpoint exist).
-	if state.WALHeadLSN <= state.CommittedLSN {
-		t.Fatalf("need entries above checkpoint: head=%d committed=%d", state.WALHeadLSN, state.CommittedLSN)
+	// Precondition: CommittedLSN > TailLSN (catch-up window exists).
+	if state.CommittedLSN <= state.WALTailLSN {
+		t.Fatalf("no catch-up window: committed=%d tail=%d", state.CommittedLSN, state.WALTailLSN)
 	}
 
 	// Step 1: assignment.
 	driver.Orchestrator.ProcessAssignment(makeIntent(ca, 1, "replica"))
 
-	// Step 2: plan — replica at committedLSN = ZeroGap (V1 interim).
-	// Replica at LESS than committedLSN → CatchUp.
-	replicaLSN := state.CommittedLSN - 1
-	if replicaLSN == 0 && state.CommittedLSN > 1 {
-		replicaLSN = state.CommittedLSN - 1
-	}
+	// Step 2: plan — replica WITHIN the catch-up window (between tail and committed).
+	replicaLSN := state.WALTailLSN + 1 // just above tail, within window
 
 	plan, err := driver.PlanRecovery("vol1/vs2", replicaLSN)
 	if err != nil {
@@ -111,11 +107,7 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 
 		t.Log("catch-up: ONE CHAIN proven: plan → CatchUpExecutor → complete → InSync → pins released")
 	} else {
-		// V1 interim: CommittedLSN = TailLSN after flush.
-		// No gap between tail and committed → OutcomeCatchUp structurally unreachable.
-		// This is a known V1 limitation, NOT a test failure.
-		t.Skipf("catch-up: V1 interim → %s (replica=%d committed=%d tail=%d). "+
-			"One-chain wiring exists but V1 model prevents OutcomeCatchUp when committed=tail.",
+		t.Fatalf("catch-up: unexpected outcome=%s (replica=%d committed=%d tail=%d)",
 			plan.Outcome, replicaLSN, state.CommittedLSN, state.WALTailLSN)
 	}
 }
