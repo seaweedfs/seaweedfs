@@ -296,10 +296,16 @@ func (ms *MasterServer) KeepConnected(stream master_pb.Seaweed_KeepConnectedServ
 		glog.V(1).Infof("Cluster: %s node %s added to group '%s'", req.ClientType, peerAddress, req.FilerGroup)
 		ms.broadcastToClients(update)
 	}
+	if req.ClientType == cluster.FilerType {
+		ms.LockRingManager.AddServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
+	}
 
 	defer func() {
 		for _, update := range ms.Cluster.RemoveClusterNode(req.FilerGroup, req.ClientType, peerAddress) {
 			ms.broadcastToClients(update)
+		}
+		if req.ClientType == cluster.FilerType {
+			ms.LockRingManager.RemoveServer(cluster.FilerGroupName(req.FilerGroup), peerAddress)
 		}
 		ms.deleteClient(clientName)
 	}()

@@ -151,8 +151,10 @@ type MasterClient struct {
 	masters           pb.ServerDiscovery
 	grpcDialOption    grpc.DialOption
 	grpcTimeout       time.Duration // Timeout for gRPC calls to master
-	OnPeerUpdate      func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
-	OnPeerUpdateLock  sync.RWMutex
+	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
+	OnPeerUpdateLock     sync.RWMutex
+	OnLockRingUpdate     func(update *master_pb.LockRingUpdate)
+	OnLockRingUpdateLock sync.RWMutex
 }
 
 func NewMasterClient(grpcDialOption grpc.DialOption, filerGroup string, clientType string, clientHost pb.ServerAddress, clientDataCenter string, rack string, masters pb.ServerDiscovery) *MasterClient {
@@ -179,6 +181,12 @@ func (mc *MasterClient) SetOnPeerUpdateFn(onPeerUpdate func(update *master_pb.Cl
 	mc.OnPeerUpdateLock.Lock()
 	mc.OnPeerUpdate = onPeerUpdate
 	mc.OnPeerUpdateLock.Unlock()
+}
+
+func (mc *MasterClient) SetOnLockRingUpdateFn(fn func(update *master_pb.LockRingUpdate)) {
+	mc.OnLockRingUpdateLock.Lock()
+	mc.OnLockRingUpdate = fn
+	mc.OnLockRingUpdateLock.Unlock()
 }
 
 func (mc *MasterClient) tryAllMasters(ctx context.Context) {
@@ -310,6 +318,17 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 					}
 				}
 				mc.OnPeerUpdateLock.RUnlock()
+			}
+			if resp.LockRingUpdate != nil {
+				update := resp.LockRingUpdate
+				mc.OnLockRingUpdateLock.RLock()
+				if mc.OnLockRingUpdate != nil {
+					if update.FilerGroup == mc.FilerGroup {
+						glog.V(0).Infof("LockRing: %s@%s received ring update v%d: %v", mc.clientType, mc.clientHost, update.Version, update.Servers)
+						mc.OnLockRingUpdate(update)
+					}
+				}
+				mc.OnLockRingUpdateLock.RUnlock()
 			}
 			if err := ctx.Err(); err != nil {
 				if isCanceledErr(err) {

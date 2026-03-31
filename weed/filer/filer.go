@@ -130,14 +130,17 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		if update.NodeType != cluster.FilerType {
 			return
 		}
-		address := pb.ServerAddress(update.Address)
-
-		if update.IsAdd {
-			f.Dlm.LockRing.AddServer(address)
-		} else {
-			f.Dlm.LockRing.RemoveServer(address)
-		}
+		// Lock ring is now managed by the master via LockRingUpdate,
+		// so we no longer call AddServer/RemoveServer here.
 		f.MetaAggregator.OnPeerUpdate(update, startFrom)
+	})
+	f.MasterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
+		var servers []pb.ServerAddress
+		for _, s := range update.Servers {
+			servers = append(servers, pb.ServerAddress(s))
+		}
+		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
+		f.Dlm.LockRing.SetSnapshot(servers)
 	})
 
 	for _, peerUpdate := range existingNodes {

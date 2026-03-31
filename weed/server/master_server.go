@@ -88,6 +88,8 @@ type MasterServer struct {
 
 	Cluster *cluster.Cluster
 
+	LockRingManager *cluster.LockRingManager
+
 	// telemetry
 	telemetryCollector *telemetry.Collector
 }
@@ -137,6 +139,8 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		adminLocks:              NewAdminLocks(),
 		Cluster:                 cluster.NewCluster(),
 	}
+
+	ms.LockRingManager = cluster.NewLockRingManager(ms.broadcastToClients)
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 
