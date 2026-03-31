@@ -10,8 +10,9 @@ import (
 // It executes what the engine tells it to do — it does NOT decide
 // recovery policy.
 //
-// Phase 07 P1: one narrow path (WAL catch-up streaming).
-// Full-base rebuild and snapshot transfer are deferred.
+// Implements engine.CatchUpIO and engine.RebuildIO interfaces.
+// Phase 08 P2: StreamWALEntries, TransferFullBase, TransferSnapshot real.
+// TruncateWAL: stub.
 type Executor struct {
 	vol *blockvol.BlockVol
 }
