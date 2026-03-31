@@ -34,6 +34,24 @@ func TestMetadataEventUpdatesAndRemovesDirectory(t *testing.T) {
 		wantRemoval bool
 	}{
 		{
+			name:        "nil response",
+			resp:        nil,
+			wantUpdate:  false,
+			wantRemoval: false,
+		},
+		{
+			name: "create event",
+			resp: &filer_pb.SubscribeMetadataResponse{
+				Directory: filer.DirectoryEtcRemote,
+				EventNotification: &filer_pb.EventNotification{
+					NewEntry:      &filer_pb.Entry{Name: "new.conf"},
+					NewParentPath: filer.DirectoryEtcRemote,
+				},
+			},
+			wantUpdate:  true,
+			wantRemoval: false,
+		},
+		{
 			name: "rename out",
 			resp: &filer_pb.SubscribeMetadataResponse{
 				Directory: filer.DirectoryEtcRemote,
