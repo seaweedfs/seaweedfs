@@ -108,6 +108,8 @@ func (s *WorkerGrpcServer) StartWithTLS(port int) error {
 	go s.cleanupRoutine()
 	go s.activeLogFetchLoop()
 
+	pb.ServeGrpcOnLocalSocket(grpcServer, port)
+
 	// Start serving in a goroutine
 	go func() {
 		if err := s.grpcServer.Serve(listener); err != nil {

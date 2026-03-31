@@ -421,6 +421,7 @@ func (fo *FilerOptions) startFiler() {
 		go grpcS.Serve(grpcLocalL)
 	}
 	go grpcS.Serve(grpcL)
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket

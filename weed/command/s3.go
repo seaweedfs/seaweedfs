@@ -376,6 +376,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		go grpcS.Serve(grpcLocalL)
 	}
 	go grpcS.Serve(grpcL)
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
 	if *s3opt.tlsPrivateKey != "" {
 		// Check for port conflict when both HTTP and HTTPS are enabled on the same port

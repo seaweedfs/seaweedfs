@@ -254,6 +254,7 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		go grpcS.Serve(grpcLocalL)
 	}
 	go grpcS.Serve(grpcL)
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
 	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
 	if !*masterOption.raftHashicorp && !isSingleMaster {
