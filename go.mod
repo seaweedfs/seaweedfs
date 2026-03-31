@@ -523,3 +523,14 @@ require (
 )
 
 // replace github.com/seaweedfs/raft => /Users/chrislu/go/src/github.com/seaweedfs/raft
+
+// V2 engine bridge modules (Phase 07)
+require (
+	github.com/seaweedfs/seaweedfs/sw-block/engine/replication v0.0.0
+	github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol v0.0.0
+)
+
+replace (
+	github.com/seaweedfs/seaweedfs/sw-block/engine/replication => ./sw-block/engine/replication
+	github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol => ./sw-block/bridge/blockvol
+)
