@@ -8,118 +8,157 @@ import (
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 )
 
-// BlockVolState represents the real storage state from a blockvol instance.
-// This is populated from actual blockvol fields, not reconstructed from
-// metadata. Each field maps to a specific blockvol source:
+// StorageAdapter implements engine.StorageAdapter by consuming
+// BlockVolReader and BlockVolPinner interfaces. When backed by
+// real implementations from weed/storage/blockvol/v2bridge/,
+// all fields come from actual blockvol state.
 //
-//   WALHeadLSN        ← vol.wal.HeadLSN()
-//   WALTailLSN        ← vol.flusher.RetentionFloor()
-//   CommittedLSN      ← vol.coordinator.CommittedLSN (from group commit)
-//   CheckpointLSN     ← vol.superblock.CheckpointLSN
-//   CheckpointTrusted ← vol.superblock.Valid && checkpoint file exists
-type BlockVolState struct {
-	WALHeadLSN        uint64
-	WALTailLSN        uint64
-	CommittedLSN      uint64
-	CheckpointLSN     uint64
-	CheckpointTrusted bool
-}
-
-// StorageAdapter implements engine.StorageAdapter using real blockvol state.
-// It does NOT decide recovery policy — it only exposes storage truth.
+// For testing, use PushStorageAdapter (push-based, no blockvol dependency).
 type StorageAdapter struct {
+	reader BlockVolReader
+	pinner BlockVolPinner
+
 	mu        sync.Mutex
-	state     BlockVolState
 	nextPinID atomic.Uint64
 
-	// Pin tracking (real implementation would hold actual file/WAL references).
-	snapshotPins map[uint64]bool
-	walPins      map[uint64]bool
-	fullBasePins map[uint64]bool
+	// Release functions keyed by pin ID.
+	releaseFuncs map[uint64]func()
 }
 
-// NewStorageAdapter creates a storage adapter. The caller must update
-// state via UpdateState when blockvol state changes.
-func NewStorageAdapter() *StorageAdapter {
+// NewStorageAdapter creates a storage adapter backed by real blockvol
+// reader and pinner interfaces.
+func NewStorageAdapter(reader BlockVolReader, pinner BlockVolPinner) *StorageAdapter {
 	return &StorageAdapter{
-		snapshotPins: map[uint64]bool{},
-		walPins:      map[uint64]bool{},
-		fullBasePins: map[uint64]bool{},
+		reader:       reader,
+		pinner:       pinner,
+		releaseFuncs: map[uint64]func(){},
 	}
 }
 
-// UpdateState refreshes the adapter's view of blockvol state.
-// Called when blockvol completes a checkpoint, advances WAL tail, etc.
-func (sa *StorageAdapter) UpdateState(state BlockVolState) {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	sa.state = state
-}
-
-// GetRetainedHistory returns the current WAL retention state from real
-// blockvol fields. This is NOT reconstructed from test inputs.
+// GetRetainedHistory reads real blockvol state via BlockVolReader.
 func (sa *StorageAdapter) GetRetainedHistory() engine.RetainedHistory {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
+	state := sa.reader.ReadState()
 	return engine.RetainedHistory{
-		HeadLSN:           sa.state.WALHeadLSN,
-		TailLSN:           sa.state.WALTailLSN,
-		CommittedLSN:      sa.state.CommittedLSN,
-		CheckpointLSN:     sa.state.CheckpointLSN,
-		CheckpointTrusted: sa.state.CheckpointTrusted,
+		HeadLSN:           state.WALHeadLSN,
+		TailLSN:           state.WALTailLSN,
+		CommittedLSN:      state.CommittedLSN,
+		CheckpointLSN:     state.CheckpointLSN,
+		CheckpointTrusted: state.CheckpointTrusted,
 	}
 }
 
-// PinSnapshot pins a checkpoint for rebuild use.
+// PinSnapshot delegates to BlockVolPinner.HoldSnapshot.
 func (sa *StorageAdapter) PinSnapshot(checkpointLSN uint64) (engine.SnapshotPin, error) {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	if !sa.state.CheckpointTrusted || sa.state.CheckpointLSN != checkpointLSN {
-		return engine.SnapshotPin{}, fmt.Errorf("no valid checkpoint at LSN %d", checkpointLSN)
+	release, err := sa.pinner.HoldSnapshot(checkpointLSN)
+	if err != nil {
+		return engine.SnapshotPin{}, fmt.Errorf("snapshot pin at LSN %d: %w", checkpointLSN, err)
 	}
 	id := sa.nextPinID.Add(1)
-	sa.snapshotPins[id] = true
+	sa.mu.Lock()
+	sa.releaseFuncs[id] = release
+	sa.mu.Unlock()
 	return engine.SnapshotPin{LSN: checkpointLSN, PinID: id, Valid: true}, nil
 }
 
-// ReleaseSnapshot releases a pinned snapshot.
+// ReleaseSnapshot calls the held release function.
 func (sa *StorageAdapter) ReleaseSnapshot(pin engine.SnapshotPin) {
 	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	delete(sa.snapshotPins, pin.PinID)
+	release := sa.releaseFuncs[pin.PinID]
+	delete(sa.releaseFuncs, pin.PinID)
+	sa.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
-// PinWALRetention holds WAL entries from startLSN.
+// PinWALRetention delegates to BlockVolPinner.HoldWALRetention.
 func (sa *StorageAdapter) PinWALRetention(startLSN uint64) (engine.RetentionPin, error) {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	if startLSN < sa.state.WALTailLSN {
-		return engine.RetentionPin{}, fmt.Errorf("WAL already recycled past LSN %d (tail=%d)", startLSN, sa.state.WALTailLSN)
+	release, err := sa.pinner.HoldWALRetention(startLSN)
+	if err != nil {
+		return engine.RetentionPin{}, fmt.Errorf("WAL retention pin at LSN %d: %w", startLSN, err)
 	}
 	id := sa.nextPinID.Add(1)
-	sa.walPins[id] = true
+	sa.mu.Lock()
+	sa.releaseFuncs[id] = release
+	sa.mu.Unlock()
 	return engine.RetentionPin{StartLSN: startLSN, PinID: id, Valid: true}, nil
 }
 
-// ReleaseWALRetention releases a WAL retention hold.
+// ReleaseWALRetention calls the held release function.
 func (sa *StorageAdapter) ReleaseWALRetention(pin engine.RetentionPin) {
 	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	delete(sa.walPins, pin.PinID)
+	release := sa.releaseFuncs[pin.PinID]
+	delete(sa.releaseFuncs, pin.PinID)
+	sa.mu.Unlock()
+	if release != nil {
+		release()
+	}
 }
 
-// PinFullBase pins a full-extent base image for full-base rebuild.
+// PinFullBase delegates to BlockVolPinner.HoldFullBase.
 func (sa *StorageAdapter) PinFullBase(committedLSN uint64) (engine.FullBasePin, error) {
-	sa.mu.Lock()
-	defer sa.mu.Unlock()
+	release, err := sa.pinner.HoldFullBase(committedLSN)
+	if err != nil {
+		return engine.FullBasePin{}, fmt.Errorf("full base pin at LSN %d: %w", committedLSN, err)
+	}
 	id := sa.nextPinID.Add(1)
-	sa.fullBasePins[id] = true
+	sa.mu.Lock()
+	sa.releaseFuncs[id] = release
+	sa.mu.Unlock()
 	return engine.FullBasePin{CommittedLSN: committedLSN, PinID: id, Valid: true}, nil
 }
 
-// ReleaseFullBase releases a pinned full base image.
+// ReleaseFullBase calls the held release function.
 func (sa *StorageAdapter) ReleaseFullBase(pin engine.FullBasePin) {
 	sa.mu.Lock()
-	defer sa.mu.Unlock()
-	delete(sa.fullBasePins, pin.PinID)
+	release := sa.releaseFuncs[pin.PinID]
+	delete(sa.releaseFuncs, pin.PinID)
+	sa.mu.Unlock()
+	if release != nil {
+		release()
+	}
+}
+
+// PushStorageAdapter is a test-only adapter that uses push-based state
+// updates instead of pulling from a BlockVolReader. For use in tests
+// that don't have real blockvol instances.
+type PushStorageAdapter struct {
+	*StorageAdapter
+	state BlockVolState
+}
+
+// NewPushStorageAdapter creates a push-based adapter for tests.
+func NewPushStorageAdapter() *PushStorageAdapter {
+	psa := &PushStorageAdapter{}
+	psa.StorageAdapter = NewStorageAdapter(&pushReader{psa: psa}, &pushPinner{psa: psa})
+	return psa
+}
+
+// UpdateState sets the adapter's state (push model for tests).
+func (psa *PushStorageAdapter) UpdateState(state BlockVolState) {
+	psa.state = state
+}
+
+type pushReader struct{ psa *PushStorageAdapter }
+
+func (pr *pushReader) ReadState() BlockVolState { return pr.psa.state }
+
+type pushPinner struct{ psa *PushStorageAdapter }
+
+func (pp *pushPinner) HoldWALRetention(startLSN uint64) (func(), error) {
+	if startLSN < pp.psa.state.WALTailLSN {
+		return nil, fmt.Errorf("WAL recycled past %d (tail=%d)", startLSN, pp.psa.state.WALTailLSN)
+	}
+	return func() {}, nil
+}
+
+func (pp *pushPinner) HoldSnapshot(checkpointLSN uint64) (func(), error) {
+	if !pp.psa.state.CheckpointTrusted || pp.psa.state.CheckpointLSN != checkpointLSN {
+		return nil, fmt.Errorf("no trusted checkpoint at %d", checkpointLSN)
+	}
+	return func() {}, nil
+}
+
+func (pp *pushPinner) HoldFullBase(_ uint64) (func(), error) {
+	return func() {}, nil
 }
