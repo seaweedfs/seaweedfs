@@ -495,6 +495,170 @@ func TestDLM_ConsistentHashing_MinimalDisruption(t *testing.T) {
 		"only locks from removed server should change primary")
 }
 
+func TestDLM_NodeDropAndJoin_OwnershipDisruption(t *testing.T) {
+	// Scenario: 3 nodes, acquire locks, one drops and a NEW node joins quickly.
+	// The new node steals hash ranges from surviving nodes, not just from the
+	// departed node. This test measures the disruption.
+	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
+	cluster := newTestCluster(hosts...)
+
+	// Acquire many locks
+	numLocks := 100
+	type lockInfo struct {
+		key, token string
+		primary    pb.ServerAddress
+	}
+	locks := make([]lockInfo, numLocks)
+	for i := range locks {
+		key := fmt.Sprintf("churn-lock-%d", i)
+		token, _, primary, err := cluster.acquireLock(key, "owner", 30*time.Second)
+		require.NoError(t, err)
+		locks[i] = lockInfo{key: key, token: token, primary: primary}
+	}
+
+	// Record primary for each lock before the change
+	beforePrimary := make(map[string]pb.ServerAddress)
+	for _, l := range locks {
+		beforePrimary[l.key] = l.primary
+	}
+
+	// Drop filer3 and immediately add filer4
+	cluster.removeNode("filer3:8888")
+
+	// Promote backups on remaining nodes (simulates OnDlmChangeSnapshot)
+	for _, dlm := range cluster.getNodes() {
+		for _, lock := range dlm.AllLocks() {
+			p, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+			if p == dlm.Host && lock.IsBackup {
+				dlm.PromoteLock(lock.Key)
+			}
+		}
+		// Re-replicate primary locks to new backups
+		for _, lock := range dlm.AllLocks() {
+			p, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+			if p == dlm.Host && !lock.IsBackup {
+				dlm.replicateToBackup(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq, false)
+			}
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Now add filer4 (new node, empty)
+	cluster.addNode("filer4:8888")
+	time.Sleep(10 * time.Millisecond)
+
+	// Simulate OnDlmChangeSnapshot on all nodes after filer4 joins:
+	// transfer locks that now belong to filer4
+	for host, dlm := range cluster.getNodes() {
+		for _, lock := range dlm.AllLocks() {
+			p, _ := dlm.LockRing.GetPrimaryAndBackup(lock.Key)
+			if p != host && !lock.IsBackup {
+				// This lock should move to the new primary
+				target := cluster.get(p)
+				if target != nil {
+					target.InsertLock(lock.Key, lock.ExpiredAtNs, lock.Token, lock.Owner, lock.Generation, lock.Seq)
+					dlm.DemoteLock(lock.Key)
+				}
+			}
+		}
+	}
+	time.Sleep(10 * time.Millisecond)
+
+	// Count disruptions: locks whose primary changed to a node other than filer3's successor
+	disruptedFromSurvivors := 0
+	disruptedFromDeparted := 0
+	movedToFiler4 := 0
+	for _, l := range locks {
+		// What's the new primary?
+		var newPrimary pb.ServerAddress
+		for _, dlm := range cluster.getNodes() {
+			newPrimary = dlm.LockRing.GetPrimary(l.key)
+			break
+		}
+		oldPrimary := beforePrimary[l.key]
+		if newPrimary != oldPrimary {
+			if oldPrimary == "filer3:8888" {
+				disruptedFromDeparted++
+			} else {
+				disruptedFromSurvivors++
+			}
+		}
+		if newPrimary == "filer4:8888" {
+			movedToFiler4++
+		}
+	}
+
+	t.Logf("Locks disrupted from departed filer3: %d / %d", disruptedFromDeparted, numLocks)
+	t.Logf("Locks disrupted from surviving filer1/filer2: %d / %d", disruptedFromSurvivors, numLocks)
+	t.Logf("Locks now on new filer4: %d / %d", movedToFiler4, numLocks)
+
+	// The key concern: filer4 joining disrupts locks on surviving nodes
+	// With consistent hashing, new node steals ~1/N of each surviving node's keys
+	// Verify that the transfer logic above moved those locks to filer4
+	for _, l := range locks {
+		var newPrimary pb.ServerAddress
+		for _, dlm := range cluster.getNodes() {
+			newPrimary = dlm.LockRing.GetPrimary(l.key)
+			break
+		}
+		target := cluster.get(newPrimary)
+		require.NotNil(t, target, "primary %s should exist", newPrimary)
+
+		lock, found := target.GetLock(l.key)
+		if !found {
+			// Lock may have only a backup copy if transfer happened but
+			// the lock was on the departed node and wasn't re-replicated.
+			// Check all nodes for any copy.
+			anyFound := false
+			for _, dlm := range cluster.getNodes() {
+				if _, f := dlm.GetLock(l.key); f {
+					anyFound = true
+					break
+				}
+			}
+			if !anyFound {
+				t.Errorf("lock %s completely lost (primary should be %s)", l.key, newPrimary)
+			}
+			continue
+		}
+		assert.False(t, lock.IsBackup, "lock %s on primary %s should not be a backup", l.key, newPrimary)
+	}
+}
+
+func TestDLM_RenewalDuringTransferWindow(t *testing.T) {
+	// When a new node joins and steals a key range from a surviving node,
+	// there's a window between ring update and lock transfer. During this
+	// window, a client renewal should still succeed on the old primary
+	// (because it still holds the lock locally).
+	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
+	cluster := newTestCluster(hosts...)
+
+	key := "transfer-window-lock"
+	renewToken, _, primaryHost, err := cluster.acquireLock(key, "owner1", 30*time.Second)
+	require.NoError(t, err)
+
+	// Add a new node — this may change the primary for this key
+	cluster.addNode("filer4:8888")
+	time.Sleep(10 * time.Millisecond)
+
+	newPrimary := cluster.get(primaryHost).LockRing.GetPrimary(key)
+
+	if newPrimary != primaryHost {
+		// The key moved to filer4 according to the ring, but no transfer has happened.
+		// Renewal on the OLD primary should still work because we still hold the lock.
+		newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
+		require.NoError(t, err, "renewal on old primary should succeed during transfer window")
+		assert.NotEmpty(t, newToken, "should get a new token from old primary")
+		t.Logf("Key %s: primary changed from %s to %s, but renewal on old primary succeeded", key, primaryHost, newPrimary)
+	} else {
+		// Key didn't move — renewal works normally
+		newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
+		require.NoError(t, err)
+		assert.NotEmpty(t, newToken)
+		t.Logf("Key %s: primary unchanged at %s", key, primaryHost)
+	}
+}
+
 func TestDLM_StaleReplicationRejected(t *testing.T) {
 	// Verify that a stale replication (lower seq) does not overwrite a newer one
 	lm := NewLockManager()
