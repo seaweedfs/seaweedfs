@@ -445,12 +445,17 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 	processEventFn := func(resp *filer_pb.SubscribeMetadataResponse) error {
 		message := resp.EventNotification
 
+		// Derive the target (new-side) directory once. MetadataEventTargetDirectory
+		// returns NewParentPath when set, falling back to resp.Directory for
+		// delete events or legacy events with an empty NewParentPath.
+		targetDir := filer_pb.MetadataEventTargetDirectory(resp)
+
 		var sourceOldKey, sourceNewKey util.FullPath
 		if message.OldEntry != nil {
 			sourceOldKey = util.FullPath(resp.Directory).Child(message.OldEntry.Name)
 		}
 		if message.NewEntry != nil {
-			sourceNewKey = util.FullPath(message.NewParentPath).Child(message.NewEntry.Name)
+			sourceNewKey = util.FullPath(targetDir).Child(message.NewEntry.Name)
 		}
 
 		if debug {
@@ -466,10 +471,10 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		// are not silently dropped. The downstream old/new key handling
 		// (lines below) already converts these to create or delete.
 		oldDirExcluded := matchesExcludePath(resp.Directory, excludePaths)
-		newDirExcluded := matchesExcludePath(message.NewParentPath, excludePaths)
+		newDirExcluded := matchesExcludePath(targetDir, excludePaths)
 		oldDirInScope := util.IsEqualOrUnder(resp.Directory, sourcePath) && !oldDirExcluded
-		newDirInScope := message.NewParentPath != "" &&
-			util.IsEqualOrUnder(message.NewParentPath, sourcePath) &&
+		newDirInScope := message.NewEntry != nil &&
+			util.IsEqualOrUnder(targetDir, sourcePath) &&
 			!newDirExcluded
 		if !oldDirInScope && !newDirInScope {
 			return nil
@@ -478,7 +483,7 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 		// exclude boundary are handled as delete + create rather than
 		// being entirely skipped.
 		oldExcluded := oldDirExcluded || isEntryExcluded(resp.Directory, message.OldEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
-		newExcluded := newDirExcluded || isEntryExcluded(message.NewParentPath, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
+		newExcluded := newDirExcluded || isEntryExcluded(targetDir, message.NewEntry, reExcludeFileName, excludeFileNames, excludePathPatterns)
 
 		if oldExcluded && newExcluded {
 			return nil
@@ -532,12 +537,13 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 				// new key is also in the watched directory
 				if doDeleteFiles {
 					oldKey := util.Join(targetPath, string(sourceOldKey)[len(sourcePath):])
+					var sinkNewParentPath string
 					if strings.HasSuffix(sourcePath, "/") {
-						message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath)-1:])
+						sinkNewParentPath = util.Join(targetPath, targetDir[len(sourcePath)-1:])
 					} else {
-						message.NewParentPath = util.Join(targetPath, message.NewParentPath[len(sourcePath):])
+						sinkNewParentPath = util.Join(targetPath, targetDir[len(sourcePath):])
 					}
-					foundExisting, err := dataSink.UpdateEntry(string(oldKey), message.OldEntry, message.NewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
+					foundExisting, err := dataSink.UpdateEntry(string(oldKey), message.OldEntry, sinkNewParentPath, message.NewEntry, message.DeleteChunks, message.Signatures)
 					if foundExisting {
 						return err
 					}
