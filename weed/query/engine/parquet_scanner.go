@@ -6,8 +6,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/parquet-go/parquet-go"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/mq/schema"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -167,90 +165,6 @@ func (ps *ParquetScanner) scanPartition(ctx context.Context, partition topic.Par
 		// Generate sample data for demonstration
 		sampleData := ps.generateSampleData(options)
 		results = append(results, sampleData...)
-	}
-
-	return results, nil
-}
-
-// scanParquetFile scans a single Parquet file (real implementation)
-func (ps *ParquetScanner) scanParquetFile(ctx context.Context, entry *filer_pb.Entry, options ScanOptions) ([]ScanResult, error) {
-	var results []ScanResult
-
-	// Create reader for the Parquet file (same pattern as logstore)
-	lookupFileIdFn := filer.LookupFn(ps.filerClient)
-	fileSize := filer.FileSize(entry)
-	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
-	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
-	readerCache := filer.NewReaderCache(32, ps.chunkCache, lookupFileIdFn)
-	readerAt := filer.NewChunkReaderAtFromClient(ctx, readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)
-
-	// Create Parquet reader
-	parquetReader := parquet.NewReader(readerAt)
-	defer parquetReader.Close()
-
-	rows := make([]parquet.Row, 128) // Read in batches like logstore
-
-	for {
-		rowCount, readErr := parquetReader.ReadRows(rows)
-
-		// Process rows even if EOF
-		for i := 0; i < rowCount; i++ {
-			// Convert Parquet row to schema value
-			recordValue, err := schema.ToRecordValue(ps.recordSchema, ps.parquetLevels, rows[i])
-			if err != nil {
-				return nil, fmt.Errorf("failed to convert row: %v", err)
-			}
-
-			// Extract system columns
-			timestamp := recordValue.Fields[SW_COLUMN_NAME_TIMESTAMP].GetInt64Value()
-			key := recordValue.Fields[SW_COLUMN_NAME_KEY].GetBytesValue()
-
-			// Apply time filtering
-			if options.StartTimeNs > 0 && timestamp < options.StartTimeNs {
-				continue
-			}
-			if options.StopTimeNs > 0 && timestamp >= options.StopTimeNs {
-				break // Assume data is time-ordered
-			}
-
-			// Apply predicate filtering (WHERE clause)
-			if options.Predicate != nil && !options.Predicate(recordValue) {
-				continue
-			}
-
-			// Apply column projection
-			values := make(map[string]*schema_pb.Value)
-			if len(options.Columns) == 0 {
-				// Select all columns (excluding system columns from user view)
-				for name, value := range recordValue.Fields {
-					if name != SW_COLUMN_NAME_TIMESTAMP && name != SW_COLUMN_NAME_KEY {
-						values[name] = value
-					}
-				}
-			} else {
-				// Select specified columns only
-				for _, columnName := range options.Columns {
-					if value, exists := recordValue.Fields[columnName]; exists {
-						values[columnName] = value
-					}
-				}
-			}
-
-			results = append(results, ScanResult{
-				Values:    values,
-				Timestamp: timestamp,
-				Key:       key,
-			})
-
-			// Apply row limit
-			if options.Limit > 0 && len(results) >= options.Limit {
-				return results, nil
-			}
-		}
-
-		if readErr != nil {
-			break // EOF or error
-		}
 	}
 
 	return results, nil

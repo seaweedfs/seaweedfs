@@ -18,7 +18,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
@@ -508,60 +507,6 @@ func (c *BrokerClient) GetUnflushedMessages(ctx context.Context, namespace, topi
 	}
 
 	return logEntries, nil
-}
-
-// getEarliestBufferStart finds the earliest buffer_start index from disk files in the partition
-//
-// This method handles three scenarios for seamless broker querying:
-// 1. Live log files exist: Uses their buffer_start metadata (most recent boundaries)
-// 2. Only Parquet files exist: Uses Parquet buffer_start metadata (preserved from archived sources)
-// 3. Mixed files: Uses earliest buffer_start from all sources for comprehensive coverage
-//
-// This ensures continuous real-time querying capability even after log file compaction/archival
-func (c *BrokerClient) getEarliestBufferStart(ctx context.Context, partitionPath string) (int64, error) {
-	filerClient, err := c.GetFilerClient()
-	if err != nil {
-		return 0, fmt.Errorf("failed to get filer client: %v", err)
-	}
-
-	var earliestBufferIndex int64 = -1 // -1 means no buffer_start found
-	var logFileCount, parquetFileCount int
-	var bufferStartSources []string // Track which files provide buffer_start
-
-	err = filer_pb.ReadDirAllEntries(ctx, filerClient, util.FullPath(partitionPath), "", func(entry *filer_pb.Entry, isLast bool) error {
-		// Skip directories
-		if entry.IsDirectory {
-			return nil
-		}
-
-		// Count file types for scenario detection
-		if strings.HasSuffix(entry.Name, ".parquet") {
-			parquetFileCount++
-		} else {
-			logFileCount++
-		}
-
-		// Extract buffer_start from file extended attributes (both log files and parquet files)
-		bufferStart := c.getBufferStartFromEntry(entry)
-		if bufferStart != nil && bufferStart.StartIndex > 0 {
-			if earliestBufferIndex == -1 || bufferStart.StartIndex < earliestBufferIndex {
-				earliestBufferIndex = bufferStart.StartIndex
-			}
-			bufferStartSources = append(bufferStartSources, entry.Name)
-		}
-
-		return nil
-	})
-
-	if err != nil {
-		return 0, fmt.Errorf("failed to scan partition directory: %v", err)
-	}
-
-	if earliestBufferIndex == -1 {
-		return 0, fmt.Errorf("no buffer_start metadata found in partition")
-	}
-
-	return earliestBufferIndex, nil
 }
 
 // getBufferStartFromEntry extracts LogBufferStart from file entry metadata
