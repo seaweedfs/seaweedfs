@@ -80,7 +80,7 @@ func TestLockRing_VersionRejectsStale(t *testing.T) {
 	assert.Equal(t, int64(3), r.Version())
 	assert.Equal(t, 3, len(r.GetSnapshot()), "stale update should not change the ring")
 
-	// Same version 3 — should be accepted (idempotent)
+	// Same version 3 — accepted (SetSnapshot accepts version >= current, state-changing)
 	ok = r.SetSnapshot([]pb.ServerAddress{"a:1", "b:2"}, 3)
 	assert.True(t, ok)
 	assert.Equal(t, 2, len(r.GetSnapshot()))

@@ -54,9 +54,12 @@ func (r *LockRing) SetSnapshot(servers []pb.ServerAddress, version int64) bool {
 		return false
 	}
 	r.version = version
+	// Update the ring while holding the lock so version and ring state
+	// are always consistent — prevents a concurrent SetSnapshot from
+	// seeing the new version but applying its servers to the old ring.
+	r.Ring.SetServers(servers)
 	r.Unlock()
 
-	r.Ring.SetServers(servers)
 	r.addOneSnapshot(servers)
 
 	r.cleanupWg.Add(1)

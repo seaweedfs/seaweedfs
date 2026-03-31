@@ -86,7 +86,11 @@ func (lrm *LockRingManager) GetVersion(filerGroup FilerGroupName) int64 {
 // Caller must hold lrm.mu.
 func (lrm *LockRingManager) scheduleBroadcast(filerGroup FilerGroupName) {
 	if timer, ok := lrm.pendingTimer[filerGroup]; ok {
-		timer.Stop()
+		if !timer.Stop() {
+			// Timer already fired, callback is running or queued.
+			// It will pick up the latest state from lrm.members, so
+			// just schedule a new one for any further changes.
+		}
 	}
 	lrm.pendingTimer[filerGroup] = time.AfterFunc(lrm.stabilizeDelay, func() {
 		lrm.doBroadcast(filerGroup)
@@ -123,10 +127,15 @@ func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 func (lrm *LockRingManager) FlushPending(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
 	if timer, ok := lrm.pendingTimer[filerGroup]; ok {
-		timer.Stop()
-		delete(lrm.pendingTimer, filerGroup)
-		lrm.mu.Unlock()
-		lrm.doBroadcast(filerGroup)
+		if timer.Stop() {
+			// Timer was pending — we stopped it, so we broadcast now
+			delete(lrm.pendingTimer, filerGroup)
+			lrm.mu.Unlock()
+			lrm.doBroadcast(filerGroup)
+		} else {
+			// Timer already fired, callback is running — let it finish
+			lrm.mu.Unlock()
+		}
 	} else {
 		lrm.mu.Unlock()
 	}

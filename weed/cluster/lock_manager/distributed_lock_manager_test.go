@@ -171,7 +171,9 @@ func (c *testCluster) renewLock(key, owner, token string, ttl time.Duration, pri
 			err = fmt.Errorf("new primary %s is down", movedTo)
 			return
 		}
-		_, newToken, generation, _, lockErr = target.LockWithTimeout(key, expiry, "", owner)
+		// Pass the existing token so the redirected renewal can match
+		// if the lock was already transferred to the new primary.
+		_, newToken, generation, _, lockErr = target.LockWithTimeout(key, expiry, token, owner)
 	}
 	err = lockErr
 	time.Sleep(10 * time.Millisecond)
@@ -633,30 +635,40 @@ func TestDLM_RenewalDuringTransferWindow(t *testing.T) {
 	hosts := []pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888"}
 	cluster := newTestCluster(hosts...)
 
-	key := "transfer-window-lock"
-	renewToken, _, primaryHost, err := cluster.acquireLock(key, "owner1", 30*time.Second)
-	require.NoError(t, err)
+	// Find a key that will move primary when filer4 is added.
+	// Try candidate keys until we find one whose primary changes.
+	var key, renewToken string
+	var primaryHost pb.ServerAddress
+	for i := 0; i < 1000; i++ {
+		candidate := fmt.Sprintf("transfer-window-lock-%d", i)
+		token, _, primary, err := cluster.acquireLock(candidate, "owner1", 30*time.Second)
+		require.NoError(t, err)
 
-	// Add a new node — this may change the primary for this key
+		// Check if adding filer4 would move this key's primary
+		tmpRing := NewHashRing(DefaultVnodeCount)
+		tmpRing.SetServers([]pb.ServerAddress{"filer1:8888", "filer2:8888", "filer3:8888", "filer4:8888"})
+		newPrimary := tmpRing.GetPrimary(candidate)
+		if newPrimary != primary {
+			key = candidate
+			renewToken = token
+			primaryHost = primary
+			break
+		}
+	}
+	require.NotEmpty(t, key, "should find a key that moves primary when filer4 joins")
+
+	// Add filer4 — this changes the primary for our key per the ring
 	cluster.addNode("filer4:8888")
 	time.Sleep(10 * time.Millisecond)
 
 	newPrimary := cluster.get(primaryHost).LockRing.GetPrimary(key)
+	require.NotEqual(t, primaryHost, newPrimary, "key should have moved to a different primary")
 
-	if newPrimary != primaryHost {
-		// The key moved to filer4 according to the ring, but no transfer has happened.
-		// Renewal on the OLD primary should still work because we still hold the lock.
-		newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
-		require.NoError(t, err, "renewal on old primary should succeed during transfer window")
-		assert.NotEmpty(t, newToken, "should get a new token from old primary")
-		t.Logf("Key %s: primary changed from %s to %s, but renewal on old primary succeeded", key, primaryHost, newPrimary)
-	} else {
-		// Key didn't move — renewal works normally
-		newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
-		require.NoError(t, err)
-		assert.NotEmpty(t, newToken)
-		t.Logf("Key %s: primary unchanged at %s", key, primaryHost)
-	}
+	// Renewal on the OLD primary should still succeed because it holds the lock locally
+	newToken, _, err := cluster.renewLock(key, "owner1", renewToken, 30*time.Second, primaryHost)
+	require.NoError(t, err, "renewal on old primary should succeed during transfer window")
+	assert.NotEmpty(t, newToken, "should get a new token from old primary")
+	t.Logf("Key %s: primary changed from %s to %s, but renewal on old primary succeeded", key, primaryHost, newPrimary)
 }
 
 func TestDLM_StaleReplicationRejected(t *testing.T) {
