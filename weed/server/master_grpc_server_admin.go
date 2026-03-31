@@ -107,7 +107,7 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 	locks.Lock()
 	defer locks.Unlock()
 	if existing, found := locks.locks[lockName]; found && existing.lastClient != clientName {
-		stats.MasterAdminLock.WithLabelValues(existing.lastClient).Set(0)
+		stats.MasterAdminLock.DeleteLabelValues(existing.lastClient)
 	}
 	lock := &AdminLock{
 		accessSecret:   rand.Int64(),
@@ -121,7 +121,7 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 
 func (locks *AdminLocks) deleteLock(lockName string) {
 	locks.Lock()
-	stats.MasterAdminLock.WithLabelValues(locks.locks[lockName].lastClient).Set(0)
+	stats.MasterAdminLock.DeleteLabelValues(locks.locks[lockName].lastClient)
 	defer locks.Unlock()
 	delete(locks.locks, lockName)
 }
