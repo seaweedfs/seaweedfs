@@ -99,8 +99,11 @@ func (lrm *LockRingManager) scheduleBroadcast(filerGroup FilerGroupName) {
 
 func (lrm *LockRingManager) doBroadcast(filerGroup FilerGroupName) {
 	lrm.mu.Lock()
-	lrm.version[filerGroup]++
-	version := lrm.version[filerGroup]
+	// Use wall-clock nanoseconds so the version survives master restarts
+	// without persistence — a restarted master produces a version greater
+	// than any pre-restart value (assuming clocks don't jump backward).
+	version := time.Now().UnixNano()
+	lrm.version[filerGroup] = version
 	servers := make([]string, 0)
 	if members, ok := lrm.members[filerGroup]; ok {
 		for addr := range members {

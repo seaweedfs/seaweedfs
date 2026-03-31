@@ -42,7 +42,7 @@ func TestLockRingManager_BatchesRapidChanges(t *testing.T) {
 	mu.Lock()
 	require.Equal(t, 1, len(broadcasts), "should batch into a single broadcast")
 	assert.Equal(t, 3, len(broadcasts[0].Servers), "should include all 3 servers")
-	assert.Equal(t, int64(1), broadcasts[0].Version)
+	assert.Greater(t, broadcasts[0].Version, int64(0))
 	mu.Unlock()
 }
 
@@ -120,8 +120,8 @@ func TestLockRingManager_VersionIncrements(t *testing.T) {
 
 	mu.Lock()
 	require.Equal(t, 2, len(broadcasts))
-	assert.Equal(t, int64(1), broadcasts[0].Version)
-	assert.Equal(t, int64(2), broadcasts[1].Version)
+	assert.Greater(t, broadcasts[0].Version, int64(0), "version should be positive")
+	assert.Greater(t, broadcasts[1].Version, broadcasts[0].Version, "versions should be monotonically increasing")
 	mu.Unlock()
 }
 
