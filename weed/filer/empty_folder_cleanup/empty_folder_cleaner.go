@@ -107,24 +107,11 @@ func (efc *EmptyFolderCleaner) IsEnabled() bool {
 
 // ownsFolder checks if this filer owns the folder via consistent hashing
 func (efc *EmptyFolderCleaner) ownsFolder(folder string) bool {
-	servers := efc.lockRing.GetSnapshot()
-	if len(servers) <= 1 {
-		return true // Single filer case
+	primary := efc.lockRing.GetPrimary(folder)
+	if primary == "" {
+		return true // Single filer case or no servers
 	}
-	return efc.hashKeyToServer(folder, servers) == efc.host
-}
-
-// hashKeyToServer uses consistent hashing to map a folder to a server
-func (efc *EmptyFolderCleaner) hashKeyToServer(key string, servers []pb.ServerAddress) pb.ServerAddress {
-	if len(servers) == 0 {
-		return ""
-	}
-	x := util.HashStringToLong(key)
-	if x < 0 {
-		x = -x
-	}
-	x = x % int64(len(servers))
-	return servers[x]
+	return primary == efc.host
 }
 
 // OnDeleteEvent is called when a file or directory is deleted
