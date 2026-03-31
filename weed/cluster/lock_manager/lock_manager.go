@@ -255,6 +255,10 @@ func (lm *LockManager) GetLockOwner(key string) (owner string, err error) {
 	defer lm.accessLock.RUnlock()
 
 	if lock, found := lm.locks[key]; found {
+		if time.Now().UnixNano() > lock.ExpiredAtNs {
+			err = LockNotFound
+			return
+		}
 		return lock.Owner, nil
 	}
 	err = LockNotFound
