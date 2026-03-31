@@ -84,6 +84,8 @@ service SeaweedFiler {
     // distributed lock management internal use only
     rpc TransferLocks(TransferLocksRequest) returns (TransferLocksResponse) {
     }
+    rpc ReplicateLock(ReplicateLockRequest) returns (ReplicateLockResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -522,6 +524,7 @@ message LockResponse {
     string lock_owner = 2;
     string lock_host_moved_to = 3;
     string error = 4;
+    int64 generation = 5;
 }
 message UnlockRequest {
     string name = 1;
@@ -544,11 +547,23 @@ message Lock {
     string renew_token = 2;
     int64 expired_at_ns = 3;
     string owner = 4;
+    int64 generation = 5;
+    bool is_backup = 6;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;
 }
 message TransferLocksResponse {
+}
+message ReplicateLockRequest {
+    string name = 1;
+    string renew_token = 2;
+    int64 expired_at_ns = 3;
+    string owner = 4;
+    int64 generation = 5;
+    bool is_unlock = 6;
+}
+message ReplicateLockResponse {
 }
 
 //////////////////////////////////////////////////
