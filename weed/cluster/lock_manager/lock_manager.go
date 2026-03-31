@@ -157,10 +157,10 @@ func (lm *LockManager) CleanUp() {
 }
 
 // SelectLocks takes out locks by key
-// if keyFn return true, the lock will be taken out
+// if selectFn returns true, the lock will be removed and returned
 func (lm *LockManager) SelectLocks(selectFn func(key string) bool) (locks []*Lock) {
-	lm.accessLock.RLock()
-	defer lm.accessLock.RUnlock()
+	lm.accessLock.Lock()
+	defer lm.accessLock.Unlock()
 
 	now := time.Now().UnixNano()
 
@@ -200,6 +200,11 @@ func (lm *LockManager) InsertBackupLock(path string, expiredAtNs int64, token st
 		return
 	}
 	lm.locks[path] = &Lock{Token: token, ExpiredAtNs: expiredAtNs, Owner: owner, IsBackup: true, Generation: generation, Seq: seq}
+	// Advance nextGeneration so that after failover promotion, new locks
+	// get a generation strictly greater than any replicated lock.
+	if cur := lm.nextGeneration.Load(); generation >= cur {
+		lm.nextGeneration.Store(generation)
+	}
 }
 
 // RemoveLock removes a lock by key

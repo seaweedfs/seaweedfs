@@ -258,7 +258,7 @@ func (fs *FilerServer) SetupDlmReplication() {
 			return err
 		})
 		if err != nil {
-			glog.V(1).Infof("DLM: failed to replicate lock %s to %s: %v", key, server, err)
+			glog.Warningf("DLM: failed to replicate lock %s to %s: %v", key, server, err)
 		}
 	}
 }
