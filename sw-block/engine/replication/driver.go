@@ -36,8 +36,9 @@ type RecoveryPlan struct {
 	FullBasePin  *FullBasePin  // for full-base rebuild
 
 	// Catch-up targets (bound at plan time).
-	CatchUpTarget uint64 // for catch-up: committed LSN at plan time
-	TruncateLSN   uint64 // non-zero if truncation required
+	CatchUpStartLSN uint64 // for catch-up: replica flushed LSN (exclusive start)
+	CatchUpTarget   uint64 // for catch-up: committed LSN at plan time
+	TruncateLSN     uint64 // non-zero if truncation required
 
 	// Rebuild targets (bound at plan time).
 	RebuildSource     RebuildSource
@@ -87,6 +88,7 @@ func (d *RecoveryDriver) PlanRecovery(replicaID string, replicaFlushedLSN uint64
 		return plan, nil
 
 	case OutcomeCatchUp:
+		plan.CatchUpStartLSN = replicaFlushedLSN
 		plan.CatchUpTarget = history.CommittedLSN
 
 		// Check if truncation is needed (replica ahead).

@@ -50,7 +50,7 @@ func makeIntent(ca *bridge.ControlAdapter, epoch uint64, role string) engine.Ass
 // --- ONE CHAIN: Catch-up closure ---
 
 func TestP2_CatchUpClosure_OneChain(t *testing.T) {
-	driver, ca, reader, _, pinner := setupChainTest(t)
+	driver, ca, reader, executor, pinner := setupChainTest(t)
 	vol := reader.vol
 
 	// Phase 1: Write initial entries + flush → advances checkpoint.
@@ -91,16 +91,11 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 	t.Logf("catch-up: replica=%d outcome=%s", replicaLSN, plan.Outcome)
 
 	if plan.Outcome == engine.OutcomeCatchUp {
-		// Step 3: engine executor drives catch-up through ONE CHAIN.
+		// Step 3: engine executor drives catch-up — wired to real v2bridge I/O.
 		exec := engine.NewCatchUpExecutor(driver, plan)
+		exec.IO = executor // v2bridge.Executor implements CatchUpIO
 
-		// Build progress LSNs from replica to committed.
-		var progressLSNs []uint64
-		for lsn := replicaLSN + 1; lsn <= state.CommittedLSN; lsn++ {
-			progressLSNs = append(progressLSNs, lsn)
-		}
-
-		if err := exec.Execute(progressLSNs, 0); err != nil {
+		if err := exec.Execute(nil, 0); err != nil {
 			t.Fatalf("catch-up executor: %v", err)
 		}
 
@@ -129,7 +124,7 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 // --- ONE CHAIN: Full-base rebuild closure ---
 
 func TestP2_RebuildClosure_FullBase_OneChain(t *testing.T) {
-	driver, ca, reader, _, pinner := setupChainTest(t)
+	driver, ca, reader, executor, pinner := setupChainTest(t)
 	vol := reader.vol
 
 	// Write + flush → force rebuild condition.
@@ -162,8 +157,9 @@ func TestP2_RebuildClosure_FullBase_OneChain(t *testing.T) {
 		t.Fatalf("rebuild plan: %v", err)
 	}
 
-	// Step 4: engine RebuildExecutor drives the chain.
+	// Step 4: engine RebuildExecutor — wired to real v2bridge I/O.
 	exec := engine.NewRebuildExecutor(driver, rebuildPlan)
+	exec.IO = executor // v2bridge.Executor implements RebuildIO
 	if err := exec.Execute(); err != nil {
 		t.Fatalf("rebuild executor: %v", err)
 	}

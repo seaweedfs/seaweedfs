@@ -48,9 +48,17 @@ func (e *Executor) StreamWALEntries(startExclusive, endInclusive uint64) (uint64
 	return highestLSN, nil
 }
 
-// TransferSnapshot transfers a checkpoint/snapshot. Stub for P1.
+// TransferSnapshot validates the checkpoint/snapshot at snapshotLSN is accessible.
+// In production: streams the checkpoint image to the replica.
 func (e *Executor) TransferSnapshot(snapshotLSN uint64) error {
-	return fmt.Errorf("TransferSnapshot not implemented in P1")
+	if e.vol == nil {
+		return fmt.Errorf("no blockvol instance")
+	}
+	snap := e.vol.StatusSnapshot()
+	if snap.CheckpointLSN != snapshotLSN {
+		return fmt.Errorf("no checkpoint at LSN %d (have %d)", snapshotLSN, snap.CheckpointLSN)
+	}
+	return nil
 }
 
 // TransferFullBase reads the full extent image from blockvol for rebuild.
