@@ -170,27 +170,6 @@ func (e *SQLEngine) convertRawValueToSchemaValue(rawValue interface{}) *schema_p
 	}
 }
 
-// convertJSONValueToSchemaValue converts JSON values to schema_pb.Value
-func (e *SQLEngine) convertJSONValueToSchemaValue(jsonValue interface{}) *schema_pb.Value {
-	switch v := jsonValue.(type) {
-	case string:
-		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: v}}
-	case float64:
-		// JSON numbers are always float64, try to detect if it's actually an integer
-		if v == float64(int64(v)) {
-			return &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: int64(v)}}
-		}
-		return &schema_pb.Value{Kind: &schema_pb.Value_DoubleValue{DoubleValue: v}}
-	case bool:
-		return &schema_pb.Value{Kind: &schema_pb.Value_BoolValue{BoolValue: v}}
-	case nil:
-		return nil
-	default:
-		// Convert other types to string
-		return &schema_pb.Value{Kind: &schema_pb.Value_StringValue{StringValue: fmt.Sprintf("%v", v)}}
-	}
-}
-
 // Helper functions for aggregation processing
 
 // isNullValue checks if a schema_pb.Value is null or empty

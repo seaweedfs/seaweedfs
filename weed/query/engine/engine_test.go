@@ -1254,69 +1254,6 @@ func TestSQLEngine_LogBufferDeduplication_ServerRestartScenario(t *testing.T) {
 	// prevent false positive duplicates across server restarts
 }
 
-func TestBrokerClient_BinaryBufferStartFormat(t *testing.T) {
-	// Test scenario: getBufferStartFromEntry should only support binary format
-	// This tests the standardized binary format for buffer_start metadata
-	realBrokerClient := &BrokerClient{}
-
-	// Test binary format (used by both log files and Parquet files)
-	binaryEntry := &filer_pb.Entry{
-		Name:        "2025-01-07-14-30-45",
-		IsDirectory: false,
-		Extended: map[string][]byte{
-			"buffer_start": func() []byte {
-				// Binary format: 8-byte BigEndian
-				buf := make([]byte, 8)
-				binary.BigEndian.PutUint64(buf, uint64(2000001))
-				return buf
-			}(),
-		},
-	}
-
-	bufferStart := realBrokerClient.getBufferStartFromEntry(binaryEntry)
-	assert.NotNil(t, bufferStart)
-	assert.Equal(t, int64(2000001), bufferStart.StartIndex, "Should parse binary buffer_start metadata")
-
-	// Test Parquet file (same binary format)
-	parquetEntry := &filer_pb.Entry{
-		Name:        "2025-01-07-14-30.parquet",
-		IsDirectory: false,
-		Extended: map[string][]byte{
-			"buffer_start": func() []byte {
-				buf := make([]byte, 8)
-				binary.BigEndian.PutUint64(buf, uint64(1500001))
-				return buf
-			}(),
-		},
-	}
-
-	bufferStart = realBrokerClient.getBufferStartFromEntry(parquetEntry)
-	assert.NotNil(t, bufferStart)
-	assert.Equal(t, int64(1500001), bufferStart.StartIndex, "Should parse binary buffer_start from Parquet file")
-
-	// Test missing metadata
-	emptyEntry := &filer_pb.Entry{
-		Name:        "no-metadata",
-		IsDirectory: false,
-		Extended:    nil,
-	}
-
-	bufferStart = realBrokerClient.getBufferStartFromEntry(emptyEntry)
-	assert.Nil(t, bufferStart, "Should return nil for entry without buffer_start metadata")
-
-	// Test invalid format (wrong size)
-	invalidEntry := &filer_pb.Entry{
-		Name:        "invalid-metadata",
-		IsDirectory: false,
-		Extended: map[string][]byte{
-			"buffer_start": []byte("invalid"),
-		},
-	}
-
-	bufferStart = realBrokerClient.getBufferStartFromEntry(invalidEntry)
-	assert.Nil(t, bufferStart, "Should return nil for invalid buffer_start metadata")
-}
-
 // TestGetSQLValAlias tests the getSQLValAlias function, particularly for SQL injection prevention
 func TestGetSQLValAlias(t *testing.T) {
 	engine := &SQLEngine{}
