@@ -107,9 +107,12 @@ func TestEcDecodePreservesDeletedNeedles(t *testing.T) {
 
 	// Needle A should be gone (deleted via .ecj before decode).
 	respA := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(), fidA)
-	_ = framework.ReadAllAndClose(t, respA)
-	if respA.StatusCode == http.StatusOK {
-		t.Fatalf("needle A should be deleted after decode, but got 200")
+	bodyA := framework.ReadAllAndClose(t, respA)
+	if respA.StatusCode >= 500 {
+		t.Fatalf("needle A read: server error %d: %s", respA.StatusCode, bodyA)
+	}
+	if respA.StatusCode != http.StatusNotFound {
+		t.Fatalf("needle A should be 404 after decode, got %d", respA.StatusCode)
 	}
 
 	// Needle B should still be readable.
@@ -249,7 +252,10 @@ func TestEcDecodeCollectsEcjFromPeer(t *testing.T) {
 	}
 
 	// Unmount the normal volume before decode.
-	_, _ = client0.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{VolumeId: volumeID})
+	_, err = client0.VolumeUnmount(ctx, &volume_server_pb.VolumeUnmountRequest{VolumeId: volumeID})
+	if err != nil {
+		t.Fatalf("VolumeUnmount on server 0: %v", err)
+	}
 
 	// Decode on server 0. RebuildEcxFile should see needle A's deletion from
 	// the .ecj that was collected from server 1.
@@ -268,9 +274,12 @@ func TestEcDecodeCollectsEcjFromPeer(t *testing.T) {
 
 	// Needle A should be gone — its deletion was in server 1's .ecj.
 	respA := framework.ReadBytes(t, httpClient, cluster.VolumeAdminURL(0), fidA)
-	_ = framework.ReadAllAndClose(t, respA)
-	if respA.StatusCode == http.StatusOK {
-		t.Fatalf("needle A should be deleted (ecj from peer), but got 200")
+	bodyA := framework.ReadAllAndClose(t, respA)
+	if respA.StatusCode >= 500 {
+		t.Fatalf("needle A read: server error %d: %s", respA.StatusCode, bodyA)
+	}
+	if respA.StatusCode != http.StatusNotFound {
+		t.Fatalf("needle A should be 404 (ecj from peer), got %d", respA.StatusCode)
 	}
 
 	// Needle B should still be readable.
