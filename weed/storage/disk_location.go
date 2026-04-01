@@ -5,9 +5,11 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,14 +21,21 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	UUIDFileName = "vol_dir.uuid"
+	UUIDFileMod  = 0644
+)
+
 type DiskLocation struct {
 	Directory              string
 	DirectoryUuid          string
 	IdxDirectory           string
 	DiskType               types.DiskType
+	Tags                   []string
 	MaxVolumeCount         int32
 	OriginalMaxVolumeCount int32
 	MinFreeSpace           util.MinFreeSpace
+	AvailableSpace         atomic.Uint64
 	volumes                map[needle.VolumeId]*Volume
 	volumesLock            sync.RWMutex
 
@@ -34,13 +43,15 @@ type DiskLocation struct {
 	ecVolumes     map[needle.VolumeId]*erasure_coding.EcVolume
 	ecVolumesLock sync.RWMutex
 
+	ecShardNotifyHandler func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume)
+
 	isDiskSpaceLow bool
 	closeCh        chan struct{}
 }
 
 func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 	glog.V(1).Infof("Getting uuid of volume directory:%s", dir)
-	fileName := dir + "/vol_dir.uuid"
+	fileName := filepath.Join(dir, UUIDFileName)
 	if !util.FileExists(fileName) {
 		dirUuidString, err = writeNewUuid(fileName)
 	} else {
@@ -60,13 +71,13 @@ func GenerateDirUuid(dir string) (dirUuidString string, err error) {
 func writeNewUuid(fileName string) (string, error) {
 	dirUuid, _ := uuid.NewRandom()
 	dirUuidString := dirUuid.String()
-	if err := util.WriteFile(fileName, []byte(dirUuidString), 0644); err != nil {
+	if err := util.WriteFile(fileName, []byte(dirUuidString), UUIDFileMod); err != nil {
 		return "", fmt.Errorf("failed to write uuid to %s : %v", fileName, err)
 	}
 	return dirUuidString, nil
 }
 
-func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType) *DiskLocation {
+func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFreeSpace, idxDir string, diskType types.DiskType, tags []string) *DiskLocation {
 	glog.V(4).Infof("Added new Disk %s: maxVolumes=%d", dir, maxVolumeCount)
 	dir = util.ResolvePath(dir)
 	if idxDir == "" {
@@ -78,11 +89,18 @@ func NewDiskLocation(dir string, maxVolumeCount int32, minFreeSpace util.MinFree
 	if err != nil {
 		glog.Fatalf("cannot generate uuid of dir %s: %v", dir, err)
 	}
+	// Defensive copy of tags to prevent external mutation
+	var copiedTags []string
+	if len(tags) > 0 {
+		copiedTags = make([]string, len(tags))
+		copy(copiedTags, tags)
+	}
 	location := &DiskLocation{
 		Directory:              dir,
 		DirectoryUuid:          dirUuid,
 		IdxDirectory:           idxDir,
 		DiskType:               diskType,
+		Tags:                   copiedTags,
 		MaxVolumeCount:         maxVolumeCount,
 		OriginalMaxVolumeCount: maxVolumeCount,
 		MinFreeSpace:           minFreeSpace,
@@ -154,6 +172,10 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	// skip if ec volumes exists, but validate EC files first
 	if skipIfEcVolumesExists {
 		ecxFilePath := filepath.Join(l.IdxDirectory, volumeName+".ecx")
+		if !util.FileExists(ecxFilePath) && l.IdxDirectory != l.Directory {
+			// .ecx may have been created before -dir.idx was configured
+			ecxFilePath = filepath.Join(l.Directory, volumeName+".ecx")
+		}
 		if util.FileExists(ecxFilePath) {
 			// Validate EC volume: shard count, size consistency, and expected size vs .dat file
 			if !l.validateEcVolume(collection, vid) {
@@ -197,7 +219,7 @@ func (l *DiskLocation) loadExistingVolume(dirEntry os.DirEntry, needleMapKind Ne
 	l.SetVolume(vid, v)
 
 	size, _, _ := v.FileStat()
-	glog.V(0).Infof("data file %s, replication=%s v=%d size=%d ttl=%s disk_id=%d",
+	glog.V(2).Infof("data file %s, replication=%s v=%d size=%d ttl=%s disk_id=%d",
 		l.Directory+"/"+volumeName+".dat", v.ReplicaPlacement, v.Version(), size, v.Ttl.String(), diskId)
 	return true
 }
@@ -257,10 +279,10 @@ func (l *DiskLocation) loadExistingVolumesWithId(needleMapKind NeedleMapKind, ld
 		}
 	}
 	l.concurrentLoadingVolumes(needleMapKind, workerNum, ldbTimeout, diskId)
-	glog.V(0).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
+	glog.V(2).Infof("Store started on dir: %s with %d volumes max %d (disk ID: %d)", l.Directory, len(l.volumes), l.MaxVolumeCount, diskId)
 
-	l.loadAllEcShards()
-	glog.V(0).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
+	l.loadAllEcShards(l.ecShardNotifyHandler)
+	glog.V(2).Infof("Store started on dir: %s with %d ec shards (disk ID: %d)", l.Directory, len(l.ecVolumes), diskId)
 
 }
 
@@ -278,9 +300,13 @@ func (l *DiskLocation) DeleteCollectionFromDiskLocation(collection string) (e er
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
-		for _, v := range delVolsMap {
+		for k, v := range delVolsMap {
 			if err := v.Destroy(false); err != nil {
 				errChain <- err
+			} else {
+				l.volumesLock.Lock()
+				delete(l.volumes, k)
+				l.volumesLock.Unlock()
 			}
 		}
 		wg.Done()
@@ -361,13 +387,9 @@ func (l *DiskLocation) UnloadVolume(vid needle.VolumeId) error {
 func (l *DiskLocation) unmountVolumeByCollection(collectionName string) map[needle.VolumeId]*Volume {
 	deltaVols := make(map[needle.VolumeId]*Volume, 0)
 	for k, v := range l.volumes {
-		if v.Collection == collectionName && !v.isCompacting && !v.isCommitCompacting {
+		if v.Collection == collectionName && !v.isCompactionInProgress.Load() {
 			deltaVols[k] = v
 		}
-	}
-
-	for k := range deltaVols {
-		delete(l.volumes, k)
 	}
 	return deltaVols
 }
@@ -386,6 +408,38 @@ func (l *DiskLocation) FindVolume(vid needle.VolumeId) (*Volume, bool) {
 
 	v, ok := l.volumes[vid]
 	return v, ok
+}
+
+// Returns all regular volume IDs stored at this location.
+func (l *DiskLocation) VolumeIds() []needle.VolumeId {
+	l.volumesLock.RLock()
+	defer l.volumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.volumes))
+	i := 0
+	for vid := range l.volumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
+}
+
+// Returns all EC volume IDs stored at this location.
+func (l *DiskLocation) EcVolumeIds() []needle.VolumeId {
+	l.ecVolumesLock.RLock()
+	defer l.ecVolumesLock.RUnlock()
+
+	vids := make([]needle.VolumeId, len(l.ecVolumes))
+	i := 0
+	for vid := range l.ecVolumes {
+		vids[i] = vid
+		i++
+	}
+
+	slices.Sort(vids)
+	return vids
 }
 
 func (l *DiskLocation) VolumesLen() int {
@@ -473,10 +527,12 @@ func (l *DiskLocation) UnUsedSpace(volumeSizeLimit uint64) (unUsedSpace uint64) 
 func (l *DiskLocation) CheckDiskSpace() {
 	if dir, e := filepath.Abs(l.Directory); e == nil {
 		s := stats.NewDiskStatus(dir)
+		available := l.MinFreeSpace.AvailableSpace(s.Free, s.All)
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "all").Set(float64(s.All))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "used").Set(float64(s.Used))
 		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "free").Set(float64(s.Free))
-
+		stats.VolumeServerResourceGauge.WithLabelValues(l.Directory, "avail").Set(float64(available))
+		l.AvailableSpace.Store(available)
 		isLow, desc := l.MinFreeSpace.IsLow(s.Free, s.PercentFree)
 		if isLow != l.isDiskSpaceLow {
 			l.isDiskSpaceLow = !l.isDiskSpaceLow

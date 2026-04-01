@@ -2,13 +2,12 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"strings"
 	"syscall"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -23,7 +22,7 @@ import (
  * */
 func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -50,36 +49,46 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 
 	entryFullPath := dirFullPath.Child(name)
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(newEntry)
+	// Defer restoring to local uid/gid AFTER the entry is sent to the filer
+	// but BEFORE outputPbEntry writes attributes to the kernel.  We restore
+	// explicitly below instead of using defer so the kernel gets local values.
 
-		wfs.mapPbIdFromLocalToFiler(newEntry)
-		defer wfs.mapPbIdFromFilerToLocal(newEntry)
 
-		request := &filer_pb.CreateEntryRequest{
-			Directory:                string(dirFullPath),
-			Entry:                    newEntry,
-			Signatures:               []int32{wfs.signature},
-			SkipCheckParentDirectory: true,
+	request := &filer_pb.CreateEntryRequest{
+		Directory:                string(dirFullPath),
+		Entry:                    newEntry,
+		Signatures:               []int32{wfs.signature},
+		SkipCheckParentDirectory: true,
+	}
+
+	glog.V(1).Infof("mkdir: %v", request)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err != nil {
+		glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
+	} else {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirFullPath), newEntry)
 		}
-
-		glog.V(1).Infof("mkdir: %v", request)
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			glog.V(0).Infof("mkdir %s: %v", entryFullPath, err)
-			return err
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("mkdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
-
-		if err := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("local mkdir dir %s: %v", entryFullPath, err)
-		}
-
-		return nil
-	})
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
+	}
 
 	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
 
 	if err != nil {
+		wfs.mapPbIdFromFilerToLocal(newEntry)
 		return fuse.EIO
 	}
+
+	// Map uid/gid back to local-space before writing attributes to the
+	// kernel.  The kernel (especially macFUSE) caches these and uses them
+	// for subsequent permission checks on children.
+	wfs.mapPbIdFromFilerToLocal(newEntry)
 
 	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
 
@@ -106,18 +115,32 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	entryFullPath := dirFullPath.Child(name)
 
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
-	ignoreRecursiveErr := true // ignore recursion error since the OS should manage it
-	err := filer_pb.Remove(context.Background(), wfs, string(dirFullPath), name, true, false, ignoreRecursiveErr, false, []int32{wfs.signature})
+	deleteReq := &filer_pb.DeleteEntryRequest{
+		Directory:            string(dirFullPath),
+		Name:                 name,
+		IsDeleteData:         true,
+		IgnoreRecursiveError: true, // ignore recursion error since the OS should manage it
+		Signatures:           []int32{wfs.signature},
+	}
+	resp, err := wfs.streamDeleteEntry(context.Background(), deleteReq)
 	if err != nil {
-		glog.V(0).Infof("remove %s: %v", entryFullPath, err)
+		glog.V(1).Infof("remove %s: %v", entryFullPath, err)
 		if strings.Contains(err.Error(), filer.MsgFailDelNonEmptyFolder) {
 			return fuse.Status(syscall.ENOTEMPTY)
 		}
 		return fuse.ENOENT
 	}
 
-	wfs.metaCache.DeleteEntry(context.Background(), entryFullPath)
+	event := metadataDeleteEvent(string(dirFullPath), name, true)
+	if resp != nil && resp.MetadataEvent != nil {
+		event = resp.MetadataEvent
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("rmdir %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
+	wfs.inodeToPath.TouchDirectory(dirFullPath)
 
 	return fuse.OK
 

@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -297,6 +298,8 @@ func (d *Disk) GetVolumeIds() string {
 	for k := range d.volumes {
 		ids = append(ids, int(k))
 	}
+
+	slices.Sort(ids)
 
 	return util.HumanReadableIntsMax(100, ids...)
 }

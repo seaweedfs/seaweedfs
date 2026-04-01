@@ -109,9 +109,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
-		return filer_pb.TraverseBfs(commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) {
+		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
-				return
+				return nil
 			}
 			for _, chunk := range entry.Chunks {
 				chunkVolumeId := needle.VolumeId(chunk.Fid.VolumeId)
@@ -141,6 +141,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 					fmt.Printf("failed to update %s: %v\n", path, err)
 				}
 			}
+			return nil
 		})
 	})
 }
@@ -243,10 +244,11 @@ func (c *commandFsMergeVolumes) createMergePlan(collection string, toVolumeId ne
 				fmt.Printf("volume %d is not compatible with volume %d\n", src, candidate)
 				continue
 			}
-			if c.getVolumeSizeBasedOnPlan(plan, candidate)+c.getVolumeSizeById(src) > c.volumeSizeLimit {
-				fmt.Printf("volume %d (%d MB) merge into volume %d (%d MB) exceeds volume size limit (%d MB)\n",
+			candidatePlannedSize := c.getVolumeSizeBasedOnPlan(plan, candidate)
+			if candidatePlannedSize+c.getVolumeSizeById(src) > c.volumeSizeLimit {
+				fmt.Printf("volume %d (%d MB) merge into volume %d (%d MB, %d MB with plan) exceeds volume size limit (%d MB)\n",
 					src, c.getVolumeSizeById(src)/1024/1024,
-					candidate, c.getVolumeSizeById(candidate)/1024/1024,
+					candidate, c.getVolumeSizeById(candidate)/1024/1024, candidatePlannedSize/1024/1024,
 					c.volumeSizeLimit/1024/1024)
 				continue
 			}

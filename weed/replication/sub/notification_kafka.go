@@ -9,6 +9,7 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	kafkanotif "github.com/seaweedfs/seaweedfs/weed/notification/kafka"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
@@ -36,25 +37,38 @@ func (k *KafkaInput) Initialize(configuration util.Configuration, prefix string)
 		configuration.GetString(prefix+"topic"),
 		configuration.GetString(prefix+"offsetFile"),
 		configuration.GetInt(prefix+"offsetSaveIntervalSeconds"),
+		kafkanotif.SASLTLSConfig{
+			SASLEnabled:           configuration.GetBool(prefix + "sasl_enabled"),
+			SASLMechanism:         configuration.GetString(prefix + "sasl_mechanism"),
+			SASLUsername:          configuration.GetString(prefix + "sasl_username"),
+			SASLPassword:          configuration.GetString(prefix + "sasl_password"),
+			TLSEnabled:            configuration.GetBool(prefix + "tls_enabled"),
+			TLSCACert:             configuration.GetString(prefix + "tls_ca_cert"),
+			TLSClientCert:         configuration.GetString(prefix + "tls_client_cert"),
+			TLSClientKey:          configuration.GetString(prefix + "tls_client_key"),
+			TLSInsecureSkipVerify: configuration.GetBool(prefix + "tls_insecure_skip_verify"),
+		},
 	)
 }
 
-func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string, offsetSaveIntervalSeconds int) (err error) {
+func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string, offsetSaveIntervalSeconds int, saslTLS kafkanotif.SASLTLSConfig) (err error) {
 	config := sarama.NewConfig()
 	config.Consumer.Return.Errors = true
+	if err = kafkanotif.ConfigureSASLTLS(config, saslTLS); err != nil {
+		return fmt.Errorf("kafka consumer security configuration: %w", err)
+	}
 	k.consumer, err = sarama.NewConsumer(hosts, config)
 	if err != nil {
-		panic(err)
-	} else {
-		glog.V(0).Infof("connected to %v", hosts)
+		return fmt.Errorf("create kafka consumer: %w", err)
 	}
+	glog.V(0).Infof("connected to %v", hosts)
 
 	k.topic = topic
 	k.messageChan = make(chan *sarama.ConsumerMessage, 1)
 
 	partitions, err := k.consumer.Partitions(topic)
 	if err != nil {
-		panic(err)
+		return fmt.Errorf("get kafka partitions for topic %q: %w", topic, err)
 	}
 
 	progress := loadProgress(offsetFile)
@@ -77,7 +91,7 @@ func (k *KafkaInput) initialize(hosts []string, topic string, offsetFile string,
 		}
 		partitionConsumer, err := k.consumer.ConsumePartition(topic, partition, offset)
 		if err != nil {
-			panic(err)
+			return fmt.Errorf("consume kafka topic %q partition %d: %w", topic, partition, err)
 		}
 		go func() {
 			for {

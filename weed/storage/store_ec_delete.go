@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -21,7 +22,8 @@ func (s *Store) DeleteEcShardNeedle(ecVolume *erasure_coding.EcVolume, n *needle
 		return 0, err
 	}
 
-	if cookie != n.Cookie {
+	// cookie == 0 indicates SkipCookieCheck was requested (e.g., orphan cleanup)
+	if cookie != 0 && cookie != n.Cookie {
 		return 0, fmt.Errorf("unexpected cookie %x", cookie)
 	}
 
@@ -45,20 +47,15 @@ func (s *Store) doDeleteNeedleFromAtLeastOneRemoteEcShards(ecVolume *erasure_cod
 
 	shardId, _ := intervals[0].ToShardIdAndOffset(erasure_coding.ErasureCodingLargeBlockSize, erasure_coding.ErasureCodingSmallBlockSize)
 
-	hasDeletionSuccess := false
 	err = s.doDeleteNeedleFromRemoteEcShardServers(shardId, ecVolume, needleId)
 	if err == nil {
-		hasDeletionSuccess = true
+		return nil
 	}
 
 	for shardId = erasure_coding.DataShardsCount; shardId < erasure_coding.TotalShardsCount; shardId++ {
 		if parityDeletionError := s.doDeleteNeedleFromRemoteEcShardServers(shardId, ecVolume, needleId); parityDeletionError == nil {
-			hasDeletionSuccess = true
+			return nil
 		}
-	}
-
-	if hasDeletionSuccess {
-		return nil
 	}
 
 	return err
@@ -77,11 +74,9 @@ func (s *Store) doDeleteNeedleFromRemoteEcShardServers(shardId erasure_coding.Sh
 
 	for _, sourceDataNode := range sourceDataNodes {
 		glog.V(4).Infof("delete from remote ec shard %d.%d from %s", ecVolume.VolumeId, shardId, sourceDataNode)
-		err := s.doDeleteNeedleFromRemoteEcShard(sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId)
-		if err != nil {
+		if err := s.doDeleteNeedleFromRemoteEcShard(sourceDataNode, ecVolume.VolumeId, ecVolume.Collection, ecVolume.Version, needleId); err != nil {
 			return err
 		}
-		glog.V(1).Infof("delete from remote ec shard %d.%d from %s: %v", ecVolume.VolumeId, shardId, sourceDataNode, err)
 	}
 
 	return nil

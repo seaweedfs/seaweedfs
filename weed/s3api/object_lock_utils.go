@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"context"
 	"encoding/xml"
 	"fmt"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_objectlock"
 )
 
 // ObjectLockUtils provides shared utilities for Object Lock configuration
@@ -26,7 +28,8 @@ func StoreVersioningInExtended(entry *filer_pb.Entry, enabled bool) error {
 	if enabled {
 		entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningEnabled)
 	} else {
-		entry.Extended[s3_constants.ExtVersioningKey] = []byte(s3_constants.VersioningSuspended)
+		// Don't set the header when versioning is not enabled
+		delete(entry.Extended, s3_constants.ExtVersioningKey)
 	}
 
 	return nil
@@ -45,6 +48,20 @@ func LoadVersioningFromExtended(entry *filer_pb.Entry) (bool, bool) {
 	}
 
 	return false, false // not found
+}
+
+// GetVersioningStatus returns the versioning status as a string: "", "Enabled", or "Suspended"
+// Empty string means versioning was never enabled
+func GetVersioningStatus(entry *filer_pb.Entry) string {
+	if entry == nil || entry.Extended == nil {
+		return "" // Never enabled
+	}
+
+	if versioningBytes, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
+		return string(versioningBytes) // "Enabled" or "Suspended"
+	}
+
+	return "" // Never enabled
 }
 
 // CreateObjectLockConfiguration creates a new ObjectLockConfiguration with the specified parameters
@@ -360,4 +377,29 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	}
 
 	return nil
+}
+
+// ====================================================================
+// SHARED OBJECT LOCK CHECKING FUNCTIONS
+// ====================================================================
+// These functions delegate to s3_objectlock package to avoid code duplication.
+// They are kept here for backward compatibility with existing callers.
+
+// EntryHasActiveLock checks if an entry has an active retention or legal hold
+// Delegates to s3_objectlock.EntryHasActiveLock
+func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
+	return s3_objectlock.EntryHasActiveLock(entry, currentTime)
+}
+
+// HasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold
+// Delegates to s3_objectlock.HasObjectsWithActiveLocks
+func HasObjectsWithActiveLocks(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketPath string) (bool, error) {
+	return s3_objectlock.HasObjectsWithActiveLocks(ctx, client, bucketPath)
+}
+
+// CheckBucketForLockedObjects is a unified function that checks if a bucket has Object Lock enabled
+// and if so, scans for objects with active locks.
+// Delegates to s3_objectlock.CheckBucketForLockedObjects
+func CheckBucketForLockedObjects(ctx context.Context, client filer_pb.SeaweedFilerClient, bucketsPath, bucketName string) error {
+	return s3_objectlock.CheckBucketForLockedObjects(ctx, client, bucketsPath, bucketName)
 }

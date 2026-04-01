@@ -101,7 +101,7 @@ func GenParquetReadFunc(filerClient filer_pb.FilerClient, t topic.Topic, p topic
 		visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
 		chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 		readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
-		readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize))
+		readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)
 
 		// create parquet reader
 		parquetReader := parquet.NewReader(readerAt)

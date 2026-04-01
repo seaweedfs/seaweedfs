@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -11,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3bucket"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
+	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -23,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/log_buffer"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -52,10 +55,13 @@ type Filer struct {
 	Signature           int32
 	FilerConf           *FilerConf
 	RemoteStorage       *FilerRemoteStorage
+	lazyFetchGroup      singleflight.Group
+	lazyListGroup       singleflight.Group
 	Dlm                 *lock_manager.DistributedLockManager
 	MaxFilenameLength   uint32
 	deletionQuit        chan struct{}
 	DeletionRetryQueue  *DeletionRetryQueue
+	EmptyFolderCleaner  *empty_folder_cleanup.EmptyFolderCleaner
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -75,7 +81,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
 
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, f.readPersistedLogBufferPosition, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
@@ -113,22 +119,28 @@ func (f *Filer) AggregateFromPeers(self pb.ServerAddress, existingNodes []*maste
 		address := pb.ServerAddress(node.Address)
 		snapshot = append(snapshot, address)
 	}
-	f.Dlm.LockRing.SetSnapshot(snapshot)
+	f.Dlm.LockRing.SetSnapshot(snapshot, 0)
 	glog.V(0).Infof("%s aggregate from peers %+v", self, snapshot)
+
+	// Initialize the empty folder cleaner using the same LockRing as Dlm for consistent hashing
+	f.EmptyFolderCleaner = empty_folder_cleanup.NewEmptyFolderCleaner(f, f.Dlm.LockRing, self, f.DirBucketsPath)
 
 	f.MetaAggregator = NewMetaAggregator(f, self, f.GrpcDialOption)
 	f.MasterClient.SetOnPeerUpdateFn(func(update *master_pb.ClusterNodeUpdate, startFrom time.Time) {
 		if update.NodeType != cluster.FilerType {
 			return
 		}
-		address := pb.ServerAddress(update.Address)
-
-		if update.IsAdd {
-			f.Dlm.LockRing.AddServer(address)
-		} else {
-			f.Dlm.LockRing.RemoveServer(address)
-		}
+		// Lock ring is now managed by the master via LockRingUpdate,
+		// so we no longer call AddServer/RemoveServer here.
 		f.MetaAggregator.OnPeerUpdate(update, startFrom)
+	})
+	f.MasterClient.SetOnLockRingUpdateFn(func(update *master_pb.LockRingUpdate) {
+		var servers []pb.ServerAddress
+		for _, s := range update.Servers {
+			servers = append(servers, pb.ServerAddress(s))
+		}
+		glog.V(0).Infof("LockRing: applying master ring update v%d: %v", update.Version, servers)
+		f.Dlm.LockRing.SetSnapshot(servers, update.Version)
 	})
 
 	for _, peerUpdate := range existingNodes {
@@ -175,10 +187,6 @@ func (fs *Filer) GetMaster(ctx context.Context) pb.ServerAddress {
 	return fs.MasterClient.GetMaster(ctx)
 }
 
-func (fs *Filer) KeepMasterClientConnected(ctx context.Context) {
-	fs.MasterClient.KeepConnectedToMaster(ctx)
-}
-
 func (f *Filer) BeginTransaction(ctx context.Context) (context.Context, error) {
 	return f.Store.BeginTransaction(ctx)
 }
@@ -198,7 +206,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	}
 
 	if entry.FullPath.IsLongerFileName(maxFilenameLength) {
-		return fmt.Errorf("entry name too long")
+		return filer_pb.ErrEntryNameTooLong
 	}
 
 	if entry.IsDirectory() {
@@ -232,7 +240,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	} else {
 		if o_excl {
 			glog.V(3).InfofCtx(ctx, "EEXIST: entry %s already exists", entry.FullPath)
-			return fmt.Errorf("EEXIST: entry %s already exists", entry.FullPath)
+			return fmt.Errorf("%s: %w", entry.FullPath, filer_pb.ErrEntryAlreadyExists)
 		}
 		glog.V(4).InfofCtx(ctx, "UpdateEntry %s: old entry: %v", entry.FullPath, oldEntry.Name())
 		if err := f.UpdateEntry(ctx, oldEntry, entry); err != nil {
@@ -261,16 +269,22 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 
 	// check the store directly
 	glog.V(4).InfofCtx(ctx, "find uncached directory: %s", dirPath)
-	dirEntry, _ := f.FindEntry(ctx, util.FullPath(dirPath))
+	dirEntry, findErr := f.FindEntry(ctx, util.FullPath(dirPath))
+	if findErr != nil && !errors.Is(findErr, filer_pb.ErrNotFound) {
+		return findErr
+	}
 
 	// no such existing directory
 	if dirEntry == nil {
 
 		// fmt.Printf("dirParts: %v %v %v\n", dirParts[0], dirParts[1], dirParts[2])
 		// dirParts[0] == "" and dirParts[1] == "buckets"
-		if len(dirParts) >= 3 && dirParts[1] == "buckets" {
-			if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
-				return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+		isUnderBuckets := len(dirParts) >= 3 && dirParts[1] == "buckets"
+		if isUnderBuckets {
+			if !strings.HasPrefix(dirParts[2], ".") {
+				if err := s3bucket.VerifyS3BucketName(dirParts[2]); err != nil {
+					return fmt.Errorf("invalid bucket name %s: %v", dirParts[2], err)
+				}
 			}
 		}
 
@@ -294,6 +308,9 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
+		if isUnderBuckets && level > 3 {
+			// Parent directories under buckets are created automatically; no additional logging.
+		}
 
 		glog.V(2).InfofCtx(ctx, "create directory: %s %v", dirPath, dirEntry.Mode)
 		mkdirErr := f.Store.InsertEntry(ctx, dirEntry)
@@ -309,8 +326,16 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 		}
 
 	} else if !dirEntry.IsDirectory() {
-		glog.ErrorfCtx(ctx, "CreateEntry %s: %s should be a directory", entry.FullPath, dirPath)
-		return fmt.Errorf("%s is a file", dirPath)
+		// S3 allows both "foo/bar" (object) and "foo/bar/xyzzy" (another
+		// object) to coexist because S3 has a flat key space. Promote the
+		// existing file to a directory, preserving its content/chunks so
+		// the original object data remains accessible.
+		glog.V(2).InfofCtx(ctx, "promoting %s from file to directory for %s", dirPath, entry.FullPath)
+		dirEntry.Attr.Mode |= os.ModeDir | 0111
+		if updateErr := f.Store.UpdateEntry(ctx, dirEntry); updateErr != nil {
+			return fmt.Errorf("promote %s to directory: %v", dirPath, updateErr)
+		}
+		f.NotifyUpdateEvent(ctx, nil, dirEntry, false, isFromOtherCluster, nil)
 	}
 
 	return nil
@@ -321,11 +346,11 @@ func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err er
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a directory", oldEntry.FullPath)
+			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsDirectory)
 		}
 		if !oldEntry.IsDirectory() && entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a file", oldEntry.FullPath)
-			return fmt.Errorf("existing %s is a file", oldEntry.FullPath)
+			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsFile)
 		}
 	}
 	return f.Store.UpdateEntry(ctx, entry)
@@ -364,19 +389,30 @@ func (f *Filer) FindEntry(ctx context.Context, p util.FullPath) (entry *Entry, e
 		}
 	}
 
+	if entry == nil && (err == nil || errors.Is(err, filer_pb.ErrNotFound)) {
+		if lazy, lazyErr := f.maybeLazyFetchFromRemote(ctx, p); lazyErr != nil {
+			glog.V(1).InfofCtx(ctx, "FindEntry lazy fetch %s: %v", p, lazyErr)
+		} else if lazy != nil {
+			return lazy, nil
+		}
+	}
+
 	return entry, err
 }
 
 func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, startFileName string, inclusive bool, limit int64, prefix string, eachEntryFunc ListEachEntryFunc) (expiredCount int64, lastFileName string, err error) {
+	f.maybeLazyListFromRemote(ctx, p)
+
 	// Collect expired entries during iteration to avoid deadlock with DB connection pool
 	var expiredEntries []*Entry
 	var s3ExpiredEntries []*Entry
 	var hasValidEntries bool
 
-	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) bool {
+	lastFileName, err = f.Store.ListDirectoryPrefixedEntries(ctx, p, startFileName, inclusive, limit, prefix, func(entry *Entry) (bool, error) {
 		select {
 		case <-ctx.Done():
-			return false
+			glog.Errorf("Context is done.")
+			return false, fmt.Errorf("context canceled: %w", ctx.Err())
 		default:
 			if entry.TtlSec > 0 {
 				if entry.IsExpireS3Enabled() {
@@ -384,13 +420,13 @@ func (f *Filer) doListDirectoryEntries(ctx context.Context, p util.FullPath, sta
 						// Collect for deletion after iteration completes to avoid DB deadlock
 						s3ExpiredEntries = append(s3ExpiredEntries, entry)
 						expiredCount++
-						return true
+						return true, nil
 					}
 				} else if entry.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
 					// Collect for deletion after iteration completes to avoid DB deadlock
 					expiredEntries = append(expiredEntries, entry)
 					expiredCount++
-					return true
+					return true, nil
 				}
 			}
 			// Track that we found at least one valid (non-expired) entry
@@ -500,15 +536,43 @@ func (f *Filer) DeleteEmptyParentDirectories(ctx context.Context, dirPath util.F
 // IsDirectoryEmpty checks if a directory contains any entries
 func (f *Filer) IsDirectoryEmpty(ctx context.Context, dirPath util.FullPath) (bool, error) {
 	isEmpty := true
-	_, err := f.Store.ListDirectoryPrefixedEntries(ctx, dirPath, "", true, 1, "", func(entry *Entry) bool {
+	_, err := f.Store.ListDirectoryPrefixedEntries(ctx, dirPath, "", true, 1, "", func(entry *Entry) (bool, error) {
 		isEmpty = false
-		return false // Stop after first entry
+		return false, nil // Stop after first entry
 	})
 	return isEmpty, err
 }
 
 func (f *Filer) Shutdown() {
 	close(f.deletionQuit)
+	if f.EmptyFolderCleaner != nil {
+		f.EmptyFolderCleaner.Stop()
+	}
 	f.LocalMetaLogBuffer.ShutdownLogBuffer()
 	f.Store.Shutdown()
+}
+
+func (f *Filer) GetEntryAttributes(ctx context.Context, p util.FullPath) (map[string][]byte, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	if entry == nil {
+		return nil, nil
+	}
+	return entry.Extended, nil
+}
+
+func (f *Filer) IsDirectoryKeyObject(ctx context.Context, p util.FullPath) (bool, error) {
+	entry, err := f.FindEntry(ctx, p)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if entry == nil {
+		return false, nil
+	}
+	return entry.IsDirectory() && entry.Mime != "", nil
 }

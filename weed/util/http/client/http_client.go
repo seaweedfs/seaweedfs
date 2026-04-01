@@ -4,14 +4,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
-	util "github.com/seaweedfs/seaweedfs/weed/util"
-	"github.com/spf13/viper"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
 	"sync"
+
+	util "github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -124,6 +125,13 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 			if clientCertPair != nil {
 				tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
 			}
+		}
+
+		if getBoolOptionFromSecurityConfiguration(clientName, "insecure_skip_verify") {
+			if tlsConfig == nil {
+				tlsConfig = &tls.Config{}
+			}
+			tlsConfig.InsecureSkipVerify = true
 		}
 	}
 

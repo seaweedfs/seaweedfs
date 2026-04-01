@@ -17,24 +17,30 @@ type MountOptions struct {
 	ttlSec             *int
 	chunkSizeLimitMB   *int
 	concurrentWriters  *int
+	concurrentReaders  *int
 	cacheMetaTtlSec    *int
 	cacheDirForRead    *string
 	cacheDirForWrite   *string
 	cacheSizeMBForRead *int64
 	dataCenter         *string
 	allowOthers        *bool
+	defaultPermissions *bool
 	umaskString        *string
 	nonempty           *bool
 	volumeServerAccess *string
 	uidMap             *string
 	gidMap             *string
 	readOnly           *bool
+	includeSystemEntries *bool
 	debug              *bool
 	debugPort          *int
 	localSocket        *string
 	disableXAttr       *bool
 	extraOptions       []string
 	fuseCommandPid     int
+
+	// Periodic metadata flush to protect against orphan chunk cleanup
+	metadataFlushSeconds *int
 
 	// RDMA acceleration options
 	rdmaEnabled       *bool
@@ -43,6 +49,21 @@ type MountOptions struct {
 	rdmaReadOnly      *bool
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
+
+	dirIdleEvictSec *int
+
+	// FUSE performance options
+	writebackCache *bool
+	asyncDio       *bool
+	cacheSymlink   *bool
+
+	// macOS-specific FUSE options
+	novncache *bool
+
+	// if true, we assume autofs exists over current mount point. Autofs (the kernel one, used by systemd automount)
+	// is expected to be mounted as a shim between auto-mounted fs and original mount point to provide auto mount.
+	// with this option, we ignore autofs mounted on the same point.
+	hasAutofs *bool
 }
 
 var (
@@ -64,24 +85,31 @@ func init() {
 	mountOptions.diskType = cmdMount.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	mountOptions.ttlSec = cmdMount.Flag.Int("ttl", 0, "file ttl in seconds")
 	mountOptions.chunkSizeLimitMB = cmdMount.Flag.Int("chunkSizeLimitMB", 2, "local write buffer size, also chunk large files")
-	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 32, "limit concurrent goroutine writers")
+	mountOptions.concurrentWriters = cmdMount.Flag.Int("concurrentWriters", 128, "limit concurrent goroutine writers")
+	mountOptions.concurrentReaders = cmdMount.Flag.Int("concurrentReaders", 128, "limit concurrent chunk fetches for read operations")
 	mountOptions.cacheDirForRead = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
 	mountOptions.cacheSizeMBForRead = cmdMount.Flag.Int64("cacheCapacityMB", 128, "file chunk read cache capacity in MB")
 	mountOptions.cacheDirForWrite = cmdMount.Flag.String("cacheDirWrite", "", "buffer writes mostly for large files")
 	mountOptions.cacheMetaTtlSec = cmdMount.Flag.Int("cacheMetaTtlSec", 60, "metadata cache validity seconds")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")
+	mountOptions.defaultPermissions = cmdMount.Flag.Bool("defaultPermissions", true, "enforce permissions by the operating system")
 	mountOptions.umaskString = cmdMount.Flag.String("umask", "022", "octal umask, e.g., 022, 0111")
 	mountOptions.nonempty = cmdMount.Flag.Bool("nonempty", false, "allows the mounting over a non-empty directory")
 	mountOptions.volumeServerAccess = cmdMount.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 	mountOptions.uidMap = cmdMount.Flag.String("map.uid", "", "map local uid to uid on filer, comma-separated <local_uid>:<filer_uid>")
 	mountOptions.gidMap = cmdMount.Flag.String("map.gid", "", "map local gid to gid on filer, comma-separated <local_gid>:<filer_gid>")
 	mountOptions.readOnly = cmdMount.Flag.Bool("readOnly", false, "read only")
+	mountOptions.includeSystemEntries = cmdMount.Flag.Bool("includeSystemEntries", false, "show filer system entries (e.g. /topics, /etc) in directory listings")
 	mountOptions.debug = cmdMount.Flag.Bool("debug", false, "serves runtime profiling data, e.g., http://localhost:<debug.port>/debug/pprof/goroutine?debug=2")
 	mountOptions.debugPort = cmdMount.Flag.Int("debug.port", 6061, "http port for debugging")
 	mountOptions.localSocket = cmdMount.Flag.String("localSocket", "", "default to /tmp/seaweedfs-mount-<mount_dir_hash>.sock")
 	mountOptions.disableXAttr = cmdMount.Flag.Bool("disableXAttr", false, "disable xattr")
+	mountOptions.hasAutofs = cmdMount.Flag.Bool("autofs", false, "ignore autofs mounted on the same mountpoint (useful when systemd.automount and autofs is used)")
 	mountOptions.fuseCommandPid = 0
+
+	// Periodic metadata flush to protect against orphan chunk cleanup
+	mountOptions.metadataFlushSeconds = cmdMount.Flag.Int("metadataFlushSeconds", 120, "periodically flush file metadata to filer in seconds (0 to disable). This protects chunks from being purged by volume.fsck for long-running writes")
 
 	// RDMA acceleration flags
 	mountOptions.rdmaEnabled = cmdMount.Flag.Bool("rdma.enabled", false, "enable RDMA acceleration for reads")
@@ -91,9 +119,19 @@ func init() {
 	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
 	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
 
+	mountOptions.dirIdleEvictSec = cmdMount.Flag.Int("dirIdleEvictSec", 600, "seconds to evict idle cached directories (0 to disable)")
+
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
+
+	// FUSE performance options
+	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")
+	mountOptions.asyncDio = cmdMount.Flag.Bool("asyncDio", false, "enable async direct I/O for better concurrency")
+	mountOptions.cacheSymlink = cmdMount.Flag.Bool("cacheSymlink", false, "enable symlink caching to reduce metadata lookups")
+
+	// macOS-specific FUSE options
+	mountOptions.novncache = cmdMount.Flag.Bool("sys.novncache", false, "(macOS only) disable vnode name caching to avoid stale data")
 }
 
 var cmdMount = &Command{

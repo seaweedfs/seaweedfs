@@ -2,12 +2,15 @@ package s3api
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"net/http"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type H map[string]string
@@ -395,6 +398,58 @@ func TestProcessMetadataBytes(t *testing.T) {
 	}
 }
 
+func TestMergeCopyMetadataPreservesInternalFields(t *testing.T) {
+	existing := map[string][]byte{
+		s3_constants.SeaweedFSSSEKMSKey: []byte("kms-secret"),
+		s3_constants.SeaweedFSSSEIV:     []byte("iv"),
+		"X-Amz-Meta-Old":                []byte("old"),
+		"X-Amz-Tagging-Old":             []byte("old-tag"),
+		s3_constants.AmzStorageClass:    []byte("STANDARD"),
+	}
+	updated := map[string][]byte{
+		"X-Amz-Meta-New":             []byte("new"),
+		"X-Amz-Tagging-New":          []byte("new-tag"),
+		s3_constants.AmzStorageClass: []byte("GLACIER"),
+	}
+
+	merged := mergeCopyMetadata(existing, updated)
+
+	if got := string(merged[s3_constants.SeaweedFSSSEKMSKey]); got != "kms-secret" {
+		t.Fatalf("expected internal KMS key to be preserved, got %q", got)
+	}
+	if got := string(merged[s3_constants.SeaweedFSSSEIV]); got != "iv" {
+		t.Fatalf("expected internal IV to be preserved, got %q", got)
+	}
+	if _, ok := merged["X-Amz-Meta-Old"]; ok {
+		t.Fatalf("expected stale user metadata to be removed, got %#v", merged)
+	}
+	if _, ok := merged["X-Amz-Tagging-Old"]; ok {
+		t.Fatalf("expected stale tagging metadata to be removed, got %#v", merged)
+	}
+	if got := string(merged["X-Amz-Meta-New"]); got != "new" {
+		t.Fatalf("expected replacement user metadata to be applied, got %q", got)
+	}
+	if got := string(merged["X-Amz-Tagging-New"]); got != "new-tag" {
+		t.Fatalf("expected replacement tagging metadata to be applied, got %q", got)
+	}
+	if got := string(merged[s3_constants.AmzStorageClass]); got != "GLACIER" {
+		t.Fatalf("expected storage class to be updated, got %q", got)
+	}
+}
+
+func TestCopyEntryETagPrefersStoredETag(t *testing.T) {
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.ExtETagKey: []byte("\"stored-etag\""),
+		},
+		Attributes: &filer_pb.FuseAttributes{},
+	}
+
+	if got := copyEntryETag(util.FullPath("/buckets/test-bucket/object.txt"), entry); got != "\"stored-etag\"" {
+		t.Fatalf("copyEntryETag() = %q, want %q", got, "\"stored-etag\"")
+	}
+}
+
 func fmtTagging(maps ...map[string]string) {
 	for _, m := range maps {
 		if tagging := m[s3_constants.AmzObjectTagging]; len(tagging) > 0 {
@@ -435,4 +490,271 @@ func transferHeaderToH(data map[string][]string) H {
 		m[k] = v[len(v)-1]
 	}
 	return m
+}
+
+// TestShouldCreateVersionForCopy tests the production function that determines
+// whether a version should be created during a copy operation.
+// This addresses issue #7505 where copies were incorrectly creating versions for non-versioned buckets.
+func TestShouldCreateVersionForCopy(t *testing.T) {
+	testCases := []struct {
+		name            string
+		versioningState string
+		expectedResult  bool
+		description     string
+	}{
+		{
+			name:            "VersioningEnabled",
+			versioningState: s3_constants.VersioningEnabled,
+			expectedResult:  true,
+			description:     "Should create versions in .versions/ directory when versioning is Enabled",
+		},
+		{
+			name:            "VersioningSuspended",
+			versioningState: s3_constants.VersioningSuspended,
+			expectedResult:  false,
+			description:     "Should NOT create versions when versioning is Suspended",
+		},
+		{
+			name:            "VersioningNotConfigured",
+			versioningState: "",
+			expectedResult:  false,
+			description:     "Should NOT create versions when versioning is not configured",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Call the actual production function
+			result := shouldCreateVersionForCopy(tc.versioningState)
+
+			if result != tc.expectedResult {
+				t.Errorf("Test case %s failed: %s\nExpected shouldCreateVersionForCopy(%q)=%v, got %v",
+					tc.name, tc.description, tc.versioningState, tc.expectedResult, result)
+			}
+		})
+	}
+}
+
+// TestCleanupVersioningMetadata tests the production function that removes versioning metadata.
+// This ensures objects copied to non-versioned buckets don't carry invalid versioning metadata
+// or stale ETag values from the source.
+func TestCleanupVersioningMetadata(t *testing.T) {
+	testCases := []struct {
+		name           string
+		sourceMetadata map[string][]byte
+		expectedKeys   []string // Keys that should be present after cleanup
+		removedKeys    []string // Keys that should be removed
+	}{
+		{
+			name: "RemovesAllVersioningMetadata",
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey:    []byte("version-123"),
+				s3_constants.ExtDeleteMarkerKey: []byte("false"),
+				s3_constants.ExtIsLatestKey:     []byte("true"),
+				s3_constants.ExtETagKey:         []byte("\"abc123\""),
+				"X-Amz-Meta-Custom":             []byte("value"),
+			},
+			expectedKeys: []string{"X-Amz-Meta-Custom"},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
+		},
+		{
+			name:           "HandlesEmptyMetadata",
+			sourceMetadata: map[string][]byte{},
+			expectedKeys:   []string{},
+			removedKeys:    []string{s3_constants.ExtVersionIdKey, s3_constants.ExtDeleteMarkerKey, s3_constants.ExtIsLatestKey, s3_constants.ExtETagKey},
+		},
+		{
+			name: "PreservesNonVersioningMetadata",
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("version-456"),
+				s3_constants.ExtETagKey:      []byte("\"def456\""),
+				"X-Amz-Meta-Custom":          []byte("value1"),
+				"X-Amz-Meta-Another":         []byte("value2"),
+				s3_constants.ExtIsLatestKey:  []byte("true"),
+			},
+			expectedKeys: []string{"X-Amz-Meta-Custom", "X-Amz-Meta-Another"},
+			removedKeys:  []string{s3_constants.ExtVersionIdKey, s3_constants.ExtETagKey, s3_constants.ExtIsLatestKey},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Create a copy of the source metadata
+			dstMetadata := make(map[string][]byte)
+			for k, v := range tc.sourceMetadata {
+				dstMetadata[k] = v
+			}
+
+			// Call the actual production function
+			cleanupVersioningMetadata(dstMetadata)
+
+			// Verify expected keys are present
+			for _, key := range tc.expectedKeys {
+				if _, exists := dstMetadata[key]; !exists {
+					t.Errorf("Expected key %s to be present in destination metadata", key)
+				}
+			}
+
+			// Verify removed keys are absent
+			for _, key := range tc.removedKeys {
+				if _, exists := dstMetadata[key]; exists {
+					t.Errorf("Expected key %s to be removed from destination metadata, but it's still present", key)
+				}
+			}
+
+			// Verify the count matches to ensure no extra keys are present
+			if len(dstMetadata) != len(tc.expectedKeys) {
+				t.Errorf("Expected %d metadata keys, but got %d. Extra keys might be present.", len(tc.expectedKeys), len(dstMetadata))
+			}
+		})
+	}
+}
+
+// TestCopyVersioningIntegration validates the metadata shaping that happens
+// before copy finalization for each destination versioning mode.
+func TestCopyVersioningIntegration(t *testing.T) {
+	testCases := []struct {
+		name               string
+		versioningState    string
+		sourceMetadata     map[string][]byte
+		expectVersionPath  bool
+		expectMetadataKeys []string
+	}{
+		{
+			name:            "EnabledPreservesMetadata",
+			versioningState: s3_constants.VersioningEnabled,
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("v123"),
+				"X-Amz-Meta-Custom":          []byte("value"),
+			},
+			expectVersionPath: true,
+			expectMetadataKeys: []string{
+				s3_constants.ExtVersionIdKey,
+				"X-Amz-Meta-Custom",
+			},
+		},
+		{
+			name:            "SuspendedCleansVersionMetadataBeforeFinalize",
+			versioningState: s3_constants.VersioningSuspended,
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey: []byte("v123"),
+				"X-Amz-Meta-Custom":          []byte("value"),
+			},
+			expectVersionPath: false,
+			expectMetadataKeys: []string{
+				"X-Amz-Meta-Custom",
+			},
+		},
+		{
+			name:            "NotConfiguredCleansMetadata",
+			versioningState: "",
+			sourceMetadata: map[string][]byte{
+				s3_constants.ExtVersionIdKey:    []byte("v123"),
+				s3_constants.ExtDeleteMarkerKey: []byte("false"),
+				"X-Amz-Meta-Custom":             []byte("value"),
+			},
+			expectVersionPath: false,
+			expectMetadataKeys: []string{
+				"X-Amz-Meta-Custom",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Test version creation decision using production function
+			shouldCreateVersion := shouldCreateVersionForCopy(tc.versioningState)
+			if shouldCreateVersion != tc.expectVersionPath {
+				t.Errorf("shouldCreateVersionForCopy(%q) = %v, expected %v",
+					tc.versioningState, shouldCreateVersion, tc.expectVersionPath)
+			}
+
+			// Test metadata cleanup using production function
+			metadata := make(map[string][]byte)
+			for k, v := range tc.sourceMetadata {
+				metadata[k] = v
+			}
+
+			if !shouldCreateVersion {
+				cleanupVersioningMetadata(metadata)
+			}
+
+			// Verify only expected keys remain
+			for _, expectedKey := range tc.expectMetadataKeys {
+				if _, exists := metadata[expectedKey]; !exists {
+					t.Errorf("Expected key %q to be present in metadata", expectedKey)
+				}
+			}
+
+			// Verify the count matches (no extra keys)
+			if len(metadata) != len(tc.expectMetadataKeys) {
+				t.Errorf("Expected %d metadata keys, got %d", len(tc.expectMetadataKeys), len(metadata))
+			}
+		})
+	}
+}
+
+// TestIsOrphanedSSES3Header tests detection of orphaned SSE-S3 headers.
+// This is a regression test for GitHub issue #7562 where copying from an
+// encrypted bucket to an unencrypted bucket left behind the encryption header
+// without the actual key, causing subsequent copy operations to fail.
+func TestIsOrphanedSSES3Header(t *testing.T) {
+	testCases := []struct {
+		name      string
+		headerKey string
+		metadata  map[string][]byte
+		expected  bool
+	}{
+		{
+			name:      "Not an encryption header",
+			headerKey: "X-Amz-Meta-Custom",
+			metadata: map[string][]byte{
+				"X-Amz-Meta-Custom": []byte("value"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header with key present (valid)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+				s3_constants.SeaweedFSSSES3Key:       []byte("key-data"),
+			},
+			expected: false,
+		},
+		{
+			name:      "SSE-S3 header without key (orphaned - GitHub #7562)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: true,
+		},
+		{
+			name:      "SSE-KMS header (not SSE-S3)",
+			headerKey: s3_constants.AmzServerSideEncryption,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("aws:kms"),
+			},
+			expected: false,
+		},
+		{
+			name:      "Different header key entirely",
+			headerKey: s3_constants.SeaweedFSSSES3Key,
+			metadata: map[string][]byte{
+				s3_constants.AmzServerSideEncryption: []byte("AES256"),
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := isOrphanedSSES3Header(tc.headerKey, tc.metadata)
+			if result != tc.expected {
+				t.Errorf("isOrphanedSSES3Header(%q, metadata) = %v, expected %v",
+					tc.headerKey, result, tc.expected)
+			}
+		})
+	}
 }

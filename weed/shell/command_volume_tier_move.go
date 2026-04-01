@@ -50,6 +50,10 @@ func (c *commandVolumeTierMove) Help() string {
 	Even if the volume is replicated, only one replica will be changed and the rest replicas will be dropped.
 	So "volume.fix.replication" and "volume.balance" should be followed.
 
+	Note:
+		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
+		Empty collectionPattern matches all collections.
+
 `
 }
 
@@ -102,6 +106,9 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 	fmt.Printf("tier move volumes: %v\n", volumeIds)
 
+	// Collect volume ID to collection name mapping for the sync operation
+	volumeIdToCollection := collectVolumeIdToCollection(topologyInfo, volumeIds)
+
 	_, allLocations := collectVolumeReplicaLocations(topologyInfo)
 	allLocations = filterLocationsByDiskType(allLocations, toDiskType)
 	keepDataNodesSorted(allLocations, toDiskType)
@@ -143,7 +150,8 @@ func (c *commandVolumeTierMove) Do(args []string, commandEnv *CommandEnv, writer
 	}
 
 	for _, vid := range volumeIds {
-		if err = c.doVolumeTierMove(commandEnv, writer, vid, toDiskType, allLocations); err != nil {
+		collection := volumeIdToCollection[vid]
+		if err = c.doVolumeTierMove(commandEnv, writer, vid, collection, toDiskType, allLocations); err != nil {
 			fmt.Printf("tier move volume %d: %v\n", vid, err)
 		}
 		allLocations = rotateDataNodes(allLocations)
@@ -192,7 +200,7 @@ func isOneOf(server string, locations []wdclient.Location) bool {
 	return false
 }
 
-func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, allLocations []location) (err error) {
+func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, collection string, toDiskType types.DiskType, allLocations []location) (err error) {
 	// find volume location
 	locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(vid))
 	if !found {
@@ -208,12 +216,18 @@ func (c *commandVolumeTierMove) doVolumeTierMove(commandEnv *CommandEnv, writer 
 			if isOneOf(dst.dataNode.Id, locations) {
 				continue
 			}
-			var sourceVolumeServer pb.ServerAddress
-			for _, loc := range locations {
-				if loc.Url != dst.dataNode.Id {
-					sourceVolumeServer = loc.ServerAddress()
-				}
+
+			// Sync replicas and select the best one (with highest file count) for multi-replica volumes
+			// This addresses data inconsistency risk in multi-replica volumes (issue #7797)
+			// by syncing missing entries between replicas before moving
+			sourceLoc, selectErr := syncAndSelectBestReplica(
+				commandEnv.option.GrpcDialOption, vid, collection, locations, dst.dataNode.Id, writer)
+			if selectErr != nil {
+				fmt.Fprintf(writer, "failed to sync and select source replica for volume %d: %v\n", vid, selectErr)
+				continue
 			}
+			sourceVolumeServer := sourceLoc.ServerAddress()
+
 			if sourceVolumeServer == "" {
 				continue
 			}
@@ -300,9 +314,16 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 			for _, v := range diskInfo.VolumeInfos {
 				// check collection name pattern
 				if collectionPattern != "" {
-					matched, err := filepath.Match(collectionPattern, v.Collection)
-					if err != nil {
-						return
+					var matched bool
+					if collectionPattern == CollectionDefault {
+						matched = v.Collection == ""
+					} else {
+						var matchErr error
+						matched, matchErr = filepath.Match(collectionPattern, v.Collection)
+						if matchErr != nil {
+							err = fmt.Errorf("collection pattern %q failed to match: %w", collectionPattern, matchErr)
+							return
+						}
 					}
 					if !matched {
 						continue
@@ -317,6 +338,11 @@ func collectVolumeIdsForTierChange(topologyInfo *master_pb.TopologyInfo, volumeS
 			}
 		}
 	})
+
+	// Check if an error occurred during iteration and return early
+	if err != nil {
+		return
+	}
 
 	for vid := range vidMap {
 		vids = append(vids, needle.VolumeId(vid))

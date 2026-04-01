@@ -180,6 +180,9 @@ type TaskPersistence interface {
 	LoadAllTaskStates() ([]*MaintenanceTask, error)
 	DeleteTaskState(taskID string) error
 	CleanupCompletedTasks() error
+
+	// Policy persistence
+	SaveTaskPolicy(taskType string, policy *TaskPolicy) error
 }
 
 // Default configuration values
@@ -348,6 +351,7 @@ type MaintenanceScanner struct {
 
 // TaskDetectionResult represents the result of scanning for maintenance needs
 type TaskDetectionResult struct {
+	TaskID      string                  `json:"task_id"`
 	TaskType    MaintenanceTaskType     `json:"task_type"`
 	VolumeID    uint32                  `json:"volume_id,omitempty"`
 	Server      string                  `json:"server,omitempty"`
@@ -362,6 +366,7 @@ type TaskDetectionResult struct {
 type VolumeHealthMetrics struct {
 	VolumeID         uint32        `json:"volume_id"`
 	Server           string        `json:"server"`
+	ServerAddress    string        `json:"server_address"`
 	DiskType         string        `json:"disk_type"`   // Disk type (e.g., "hdd", "ssd") or disk path (e.g., "/data1")
 	DiskId           uint32        `json:"disk_id"`     // ID of the disk in Store.Locations array
 	DataCenter       string        `json:"data_center"` // Data center of the server

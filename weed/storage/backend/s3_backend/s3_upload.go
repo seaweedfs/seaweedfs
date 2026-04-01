@@ -2,11 +2,12 @@ package s3_backend
 
 import (
 	"fmt"
+	"os"
+	"sync"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
-	"os"
-	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )

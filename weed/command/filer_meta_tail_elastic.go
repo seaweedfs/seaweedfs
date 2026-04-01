@@ -1,15 +1,15 @@
 //go:build elastic
-// +build elastic
 
 package command
 
 import (
 	"context"
+	"strings"
+
 	jsoniter "github.com/json-iterator/go"
 	elastic "github.com/olivere/elastic/v7"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"strings"
 )
 
 type EsDocument struct {

@@ -1,9 +1,10 @@
 package sub_coordinator
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"reflect"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 )
 
 func Test_doBalanceSticky(t *testing.T) {

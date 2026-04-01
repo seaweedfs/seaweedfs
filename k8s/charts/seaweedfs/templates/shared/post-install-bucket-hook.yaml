@@ -1,6 +1,46 @@
-{{- if .Values.master.enabled }}
-{{- if .Values.filer.s3.enabled }}
-{{- if .Values.filer.s3.createBuckets }}
+{{- include "seaweedfs.compat" . -}}
+{{- /* Support bucket creation for both standalone filer.s3 and allInOne modes */}}
+{{- $createBuckets := list }}
+{{- $s3Enabled := false }}
+{{- $enableAuth := false }}
+{{- $existingConfigSecret := "" }}
+{{- $bucketsFolder := "/buckets" }}
+{{- $bucketEnvVars := merge (dict) (.Values.global.seaweedfs.extraEnvironmentVars | default dict) }}
+{{- if .Values.allInOne.enabled }}
+  {{- $bucketEnvVars = merge (.Values.allInOne.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- else }}
+  {{- $bucketEnvVars = merge (.Values.filer.extraEnvironmentVars | default dict) $bucketEnvVars }}
+{{- end }}
+{{- $bucketsFolder = default $bucketsFolder (get $bucketEnvVars "WEED_FILER_BUCKETS_FOLDER") }}
+{{- $bucketsFolder = trimSuffix "/" $bucketsFolder }}
+
+{{- /* Check allInOne mode first */}}
+{{- if .Values.allInOne.enabled }}
+  {{- if .Values.allInOne.s3.enabled }}
+    {{- $s3Enabled = true }}
+    {{- if .Values.allInOne.s3.createBuckets }}
+      {{- $createBuckets = .Values.allInOne.s3.createBuckets }}
+    {{- end }}
+    {{- $enableAuth = or .Values.allInOne.s3.enableAuth .Values.s3.enableAuth .Values.filer.s3.enableAuth }}
+    {{- $existingConfigSecret = or .Values.allInOne.s3.existingConfigSecret .Values.s3.existingConfigSecret .Values.filer.s3.existingConfigSecret }}
+  {{- end }}
+{{- else if .Values.master.enabled }}
+  {{- /* Check if embedded (in filer) or standalone S3 gateway is enabled */}}
+  {{- if or .Values.filer.s3.enabled .Values.s3.enabled }}
+    {{- $s3Enabled = true }}
+    {{- if .Values.s3.createBuckets }}
+      {{- $createBuckets = .Values.s3.createBuckets }}
+      {{- $enableAuth = .Values.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.s3.existingConfigSecret }}
+    {{- else if .Values.filer.s3.createBuckets }}
+      {{- $createBuckets = .Values.filer.s3.createBuckets }}
+      {{- $enableAuth = .Values.filer.s3.enableAuth }}
+      {{- $existingConfigSecret = .Values.filer.s3.existingConfigSecret }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+
+{{- if and $s3Enabled $createBuckets }}
 ---
 apiVersion: batch/v1
 kind: Job
@@ -10,9 +50,9 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service | quote }}
     app.kubernetes.io/instance: {{ .Release.Name | quote }}
   annotations:
-    "helm.sh/hook": post-install
+    "helm.sh/hook": post-install,post-upgrade
     "helm.sh/hook-weight": "-5"
-    "helm.sh/hook-delete-policy": hook-succeeded
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   template:
     metadata:
@@ -25,16 +65,18 @@ spec:
       {{- if .Values.filer.podSecurityContext.enabled }}
       securityContext: {{- omit .Values.filer.podSecurityContext "enabled" | toYaml | nindent 8 }}
       {{- end }}
+      {{- include "seaweedfs.imagePullSecrets" $ | nindent 6 }}
       containers:
       - name: post-install-job
         image: {{ template "master.image" . }}
+        imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
         env:
           - name: WEED_CLUSTER_DEFAULT
             value: "sw"
           - name: WEED_CLUSTER_SW_MASTER
-            value: "{{ template "seaweedfs.name" . }}-master.{{ .Release.Namespace }}:{{ .Values.master.port }}"
+            value: {{ include "seaweedfs.cluster.masterAddress" . | quote }}
           - name: WEED_CLUSTER_SW_FILER
-            value: "{{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}"
+            value: {{ include "seaweedfs.cluster.filerAddress" . | quote }}
           - name: POD_IP
             valueFrom:
               fieldRef:
@@ -48,11 +90,12 @@ spec:
               fieldRef:
                 fieldPath: metadata.namespace
           - name: SEAWEEDFS_FULLNAME
-            value: "{{ template "seaweedfs.name" . }}"
+            value: "{{ include "seaweedfs.fullname" . }}"
         command:
           - "/bin/sh"
           - "-ec"
           - |
+            set -o pipefail
             wait_for_service() {
               local url=$1
               local max_attempts=60  # 5 minutes total (5s * 60)
@@ -71,24 +114,68 @@ spec:
               echo "Service at $url failed to become ready within 5 minutes"
               exit 1
             }
+            {{- if .Values.allInOne.enabled }}
+            wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.allInOne.readinessProbe.httpGet.path }}"
+            wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
+            {{- else }}
             wait_for_service "http://$WEED_CLUSTER_SW_MASTER{{ .Values.master.readinessProbe.httpGet.path }}"
             wait_for_service "http://$WEED_CLUSTER_SW_FILER{{ .Values.filer.readinessProbe.httpGet.path }}"
-          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
-            exec /bin/echo \
-            "s3.bucket.create --name {{ $props.name }}" |\
-            /usr/bin/weed shell
+            {{- end }}
+            {{- range $createBuckets }}
+            {{- $bucketName := .name }}
+            {{- $bucketLock := or .lock .objectLock .withLock }}
+            bucket_list=$(/bin/echo 's3.bucket.list' | /usr/bin/weed shell) || { echo "Error listing s3 buckets"; exit 1; }
+            if echo "$bucket_list" | awk '{print $1}' | grep -Fxq "{{ $bucketName }}"; then
+              echo "Bucket '{{ $bucketName }}' already exists, skipping creation."
+            else
+              echo "Creating bucket '{{ $bucketName }}'..."
+              /bin/echo 's3.bucket.create --name {{ $bucketName }}{{- if $bucketLock }} --withLock{{- end }}' | /usr/bin/weed shell
+            fi
           {{- end }}
-          {{- range $reg, $props := $.Values.filer.s3.createBuckets }}
-          {{- if $props.anonymousRead }}
-            exec /bin/echo \
+          {{- range $createBuckets }}
+          {{- $bucketLock := or .lock .objectLock .withLock }}
+          {{- if $bucketLock }}
+            /bin/echo 's3.bucket.lock -name {{ .name }} -enable' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- $bucketVersioning := "" }}
+          {{- if kindIs "bool" .versioning }}
+            {{- if .versioning }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- end }}
+          {{- else if kindIs "string" .versioning }}
+            {{- $versioningLower := lower .versioning }}
+            {{- if eq $versioningLower "enabled" "enable" "true" }}
+              {{- $bucketVersioning = "Enabled" }}
+            {{- else if eq $versioningLower "suspended" "disable" "false" }}
+              {{- $bucketVersioning = "Suspended" }}
+            {{- else if or (eq .versioning "Enabled") (eq .versioning "Suspended") }}
+              {{- $bucketVersioning = .versioning }}
+            {{- else }}
+              {{- fail (printf "Invalid versioning value for bucket %s: %s. Must be 'Enabled' or 'Suspended'" .name .versioning) }}
+            {{- end }}
+          {{- end }}
+          {{- if $bucketVersioning }}
+            /bin/echo 's3.bucket.versioning -name {{ .name }} -status {{ $bucketVersioning }}' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- if .ttl }}
+            /bin/echo 'fs.configure -locationPrefix={{ $bucketsFolder }}/{{ .name }}/ -ttl={{ .ttl }} -apply' | /usr/bin/weed shell
+          {{- end }}
+          {{- end }}
+          {{- range $createBuckets }}
+          {{- if .anonymousRead }}
+            /bin/echo \
             "s3.configure --user anonymous \
-                --buckets {{ $props.name }} \
+                --buckets {{ .name }} \
                 --actions Read \
                 --apply true" |\
                 /usr/bin/weed shell
           {{- end }}  
           {{- end }}
-        {{- if .Values.filer.s3.enableAuth }}
+        {{- if $enableAuth }}
         volumeMounts:
           - name: config-users
             mountPath: /etc/sw
@@ -97,26 +184,28 @@ spec:
         ports:
           - containerPort: {{ .Values.master.port }}
             name: swfs-master
-          {{- if and .Values.global.monitoring.enabled .Values.master.metricsPort }}
+          {{- if and .Values.global.seaweedfs.monitoring.enabled .Values.master.metricsPort }}
           - containerPort: {{ .Values.master.metricsPort }}
             name: metrics
           {{- end }}
           - containerPort: {{ .Values.master.grpcPort }}
             #name: swfs-master-grpc
+        {{- with coalesce .Values.allInOne.s3.createBucketsHook.resources .Values.s3.createBucketsHook.resources .Values.filer.s3.createBucketsHook.resources }}
+        resources:
+          {{- toYaml . | nindent 10 }}
+        {{- end }}
         {{- if .Values.filer.containerSecurityContext.enabled }}
         securityContext: {{- omit .Values.filer.containerSecurityContext "enabled" | toYaml | nindent 12 }}
         {{- end }}
-    {{- if .Values.filer.s3.enableAuth }}
+    {{- if $enableAuth }}
       volumes:
         - name: config-users
           secret:
             defaultMode: 420
-            {{- if not (empty .Values.filer.s3.existingConfigSecret) }}
-            secretName: {{ .Values.filer.s3.existingConfigSecret }}
+            {{- if $existingConfigSecret }}
+            secretName: {{ $existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
-    {{- end }}{{/** if .Values.filer.s3.enableAuth **/}}
-{{- end }}{{/** if .Values.master.enabled **/}}
-{{- end }}{{/** if .Values.filer.s3.enabled **/}}
-{{- end }}{{/** if .Values.filer.s3.createBuckets **/}}
+    {{- end }}
+{{- end }}

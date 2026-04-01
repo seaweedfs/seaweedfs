@@ -1,8 +1,9 @@
 package chunk_cache
 
 import (
-	"github.com/karlseguin/ccache/v2"
 	"time"
+
+	"github.com/karlseguin/ccache/v2"
 )
 
 var (

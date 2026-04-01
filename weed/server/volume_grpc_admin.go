@@ -39,8 +39,11 @@ func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server
 }
 
 func (vs *VolumeServer) AllocateVolume(ctx context.Context, req *volume_server_pb.AllocateVolumeRequest) (*volume_server_pb.AllocateVolumeResponse, error) {
-
 	resp := &volume_server_pb.AllocateVolumeResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.AddVolume(
 		needle.VolumeId(req.VolumeId),
@@ -98,8 +101,11 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 }
 
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
-
 	resp := &volume_server_pb.VolumeDeleteResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.DeleteVolume(needle.VolumeId(req.VolumeId), req.OnlyEmpty)
 
@@ -114,8 +120,11 @@ func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.
 }
 
 func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_pb.VolumeConfigureRequest) (*volume_server_pb.VolumeConfigureResponse, error) {
-
 	resp := &volume_server_pb.VolumeConfigureResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	// check replication format
 	if _, err := super_block.NewReplicaPlacementFromString(req.Replication); err != nil {
@@ -134,6 +143,11 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 	if err := vs.store.ConfigureVolume(needle.VolumeId(req.VolumeId), req.Replication); err != nil {
 		glog.Errorf("volume configure %v: %v", req, err)
 		resp.Error = fmt.Sprintf("volume configure %v: %v", req, err)
+		// Try to re-mount to restore the volume state
+		if mountErr := vs.store.MountVolume(needle.VolumeId(req.VolumeId)); mountErr != nil {
+			glog.Errorf("volume configure failed to restore mount %v: %v", req, mountErr)
+			resp.Error += fmt.Sprintf(". Also failed to restore mount: %v", mountErr)
+		}
 		return resp, nil
 	}
 
@@ -148,41 +162,56 @@ func (vs *VolumeServer) VolumeConfigure(ctx context.Context, req *volume_server_
 
 }
 
-func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
-
-	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
-
-	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
-	if v == nil {
-		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+func (vs *VolumeServer) makeVolumeReadonly(ctx context.Context, v *storage.Volume, persist bool) error {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return err
 	}
 
 	// step 1: stop master from redirecting traffic here
-	if err := vs.notifyMasterVolumeReadonly(v, true); err != nil {
-		return resp, err
+	if err := vs.notifyMasterVolumeReadonly(ctx, v, true); err != nil {
+		return err
 	}
 
 	// rare case 1.5: it will be unlucky if heartbeat happened between step 1 and 2.
 
 	// step 2: mark local volume as readonly
-	err := vs.store.MarkVolumeReadonly(needle.VolumeId(req.VolumeId), req.GetPersist())
-
-	if err != nil {
-		glog.Errorf("volume mark readonly %v: %v", req, err)
+	if err := vs.store.MarkVolumeReadonly(v.Id, persist); err != nil {
+		glog.Errorf("mark volume %d readonly: %v", v.Id, err)
+		return err
 	} else {
-		glog.V(2).Infof("volume mark readonly %v", req)
+		glog.V(2).Infof("volume %d marked readonly", v.Id)
 	}
 
 	// step 3: tell master from redirecting traffic here again, to prevent rare case 1.5
-	if err := vs.notifyMasterVolumeReadonly(v, true); err != nil {
-		return resp, err
+	if err := vs.notifyMasterVolumeReadonly(ctx, v, true); err != nil {
+		return err
 	}
 
-	return resp, err
+	return nil
 }
 
-func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly bool) error {
-	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(context.Background()), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
+func (vs *VolumeServer) makeVolumeWritable(ctx context.Context, v *storage.Volume) error {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return err
+	}
+
+	if err := vs.store.MarkVolumeWritable(v.Id); err != nil {
+		glog.Errorf("mark volume %d writable: %v", v.Id, err)
+		return err
+	} else {
+		glog.V(2).Infof("volume %d marked writable", v.Id)
+	}
+
+	// enable master to redirect traffic here
+	if err := vs.notifyMasterVolumeReadonly(ctx, v, false); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (vs *VolumeServer) notifyMasterVolumeReadonly(ctx context.Context, v *storage.Volume, isReadOnly bool) error {
+	if grpcErr := pb.WithMasterClient(false, vs.GetMaster(ctx), vs.grpcDialOption, false, func(client master_pb.SeaweedClient) error {
 		_, err := client.VolumeMarkReadonly(context.Background(), &master_pb.VolumeMarkReadonlyRequest{
 			Ip:               vs.store.Ip,
 			Port:             uint32(vs.store.Port),
@@ -204,29 +233,34 @@ func (vs *VolumeServer) notifyMasterVolumeReadonly(v *storage.Volume, isReadOnly
 	return nil
 }
 
-func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
+func (vs *VolumeServer) VolumeMarkReadonly(ctx context.Context, req *volume_server_pb.VolumeMarkReadonlyRequest) (*volume_server_pb.VolumeMarkReadonlyResponse, error) {
+	resp := &volume_server_pb.VolumeMarkReadonlyResponse{}
 
+	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
+	if v == nil {
+		return resp, fmt.Errorf("volume %d not found", req.VolumeId)
+	}
+
+	if err := vs.makeVolumeReadonly(ctx, v, req.GetPersist()); err != nil {
+		return resp, err
+	}
+
+	return resp, nil
+}
+
+func (vs *VolumeServer) VolumeMarkWritable(ctx context.Context, req *volume_server_pb.VolumeMarkWritableRequest) (*volume_server_pb.VolumeMarkWritableResponse, error) {
 	resp := &volume_server_pb.VolumeMarkWritableResponse{}
 
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
-		return nil, fmt.Errorf("volume %d not found", req.VolumeId)
+		return resp, fmt.Errorf("volume %d not found", req.VolumeId)
 	}
 
-	err := vs.store.MarkVolumeWritable(needle.VolumeId(req.VolumeId))
-
-	if err != nil {
-		glog.Errorf("volume mark writable %v: %v", req, err)
-	} else {
-		glog.V(2).Infof("volume mark writable %v", req)
-	}
-
-	// enable master to redirect traffic here
-	if err := vs.notifyMasterVolumeReadonly(v, false); err != nil {
+	if err := vs.makeVolumeWritable(ctx, v); err != nil {
 		return resp, err
 	}
 
-	return resp, err
+	return resp, nil
 }
 
 func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.VolumeStatusRequest) (*volume_server_pb.VolumeStatusResponse, error) {
@@ -253,6 +287,7 @@ func (vs *VolumeServer) VolumeStatus(ctx context.Context, req *volume_server_pb.
 func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_server_pb.VolumeServerStatusRequest) (*volume_server_pb.VolumeServerStatusResponse, error) {
 
 	resp := &volume_server_pb.VolumeServerStatusResponse{
+		State:        vs.store.State.Proto(),
 		MemoryStatus: stats.MemStat(),
 		Version:      version.Version(),
 		DataCenter:   vs.dataCenter,

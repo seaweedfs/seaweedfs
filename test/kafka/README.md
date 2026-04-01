@@ -37,7 +37,7 @@ Requires running SeaweedFS instance:
 1. **Start SeaweedFS with MQ support:**
 ```bash
 # Terminal 1: Start SeaweedFS server
-weed server -ip="127.0.0.1" -ip.bind="0.0.0.0" -dir=/tmp/seaweedfs-data -master.port=9333 -volume.port=8081 -filer.port=8888 -filer=true
+weed server -ip="127.0.0.1" -ip.bind="0.0.0.0" -dir=/tmp/seaweedfs-data -master.port=9333 -volume.port=8081 -filer.port=8888 -filer=true -master.peers=none
 
 # Terminal 2: Start MQ broker  
 weed mq.broker -master="127.0.0.1:9333" -ip="127.0.0.1" -port=17777

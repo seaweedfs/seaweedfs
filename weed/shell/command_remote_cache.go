@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -37,7 +38,9 @@ func (c *commandRemoteCache) Help() string {
 	remote.cache -dir=/xxx                                # sync metadata, cache content, and remove deleted files (default)
 	remote.cache -dir=/xxx -cacheContent=false            # sync metadata and cleanup only, no caching
 	remote.cache -dir=/xxx -deleteLocalExtra=false        # skip removal of local files missing from remote
-	remote.cache -dir=/xxx -concurrent=32                 # with custom concurrency
+	remote.cache -dir=/xxx -concurrent=32                 # with custom file-level concurrency
+	remote.cache -dir=/xxx -chunkConcurrency=16           # parallel chunk downloads per file (0 = server default 8)
+	remote.cache -dir=/xxx -downloadConcurrency=10        # S3 multipart download concurrency per chunk (0 = server default 5)
 	remote.cache -dir=/xxx -include=*.pdf                 # only sync PDF files
 	remote.cache -dir=/xxx -exclude=*.tmp                 # exclude temporary files
 	remote.cache -dir=/xxx -dryRun=true                   # show what would be done without making changes
@@ -64,6 +67,8 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	cache := remoteCacheCommand.Bool("cacheContent", true, "cache file content from remote")
 	deleteLocalExtra := remoteCacheCommand.Bool("deleteLocalExtra", true, "delete local files that no longer exist on remote")
 	concurrency := remoteCacheCommand.Int("concurrent", 16, "concurrent file operations")
+	chunkConcurrency := remoteCacheCommand.Int("chunkConcurrency", 0, "parallel chunk downloads per file (0 = server default 8)")
+	downloadConcurrency := remoteCacheCommand.Int("downloadConcurrency", 0, "S3 multipart download concurrency per chunk (0 = server default 5)")
 	dryRun := remoteCacheCommand.Bool("dryRun", false, "show what would be done without making changes")
 	fileFiler := newFileFilter(remoteCacheCommand)
 
@@ -74,6 +79,12 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	if *dir == "" {
 		return fmt.Errorf("need to specify -dir option")
 	}
+	if *chunkConcurrency < 0 || *chunkConcurrency > math.MaxInt32 {
+		return fmt.Errorf("chunkConcurrency must be between 0 and %d", math.MaxInt32)
+	}
+	if *downloadConcurrency < 0 || *downloadConcurrency > math.MaxInt32 {
+		return fmt.Errorf("downloadConcurrency must be between 0 and %d", math.MaxInt32)
+	}
 
 	mappings, localMountedDir, remoteStorageMountedLocation, remoteStorageConf, detectErr := detectMountInfo(commandEnv, writer, *dir)
 	if detectErr != nil {
@@ -82,10 +93,10 @@ func (c *commandRemoteCache) Do(args []string, commandEnv *CommandEnv, writer io
 	}
 
 	// perform comprehensive sync
-	return c.doComprehensiveSync(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *cache, *deleteLocalExtra, *concurrency, *dryRun, fileFiler)
+	return c.doComprehensiveSync(commandEnv, writer, util.FullPath(localMountedDir), remoteStorageMountedLocation, util.FullPath(*dir), remoteStorageConf, *cache, *deleteLocalExtra, *concurrency, int32(*chunkConcurrency), int32(*downloadConcurrency), *dryRun, fileFiler)
 }
 
-func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToSync util.FullPath, remoteConf *remote_pb.RemoteConf, shouldCache bool, deleteLocalExtra bool, concurrency int, dryRun bool, fileFilter *FileFilter) error {
+func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer io.Writer, localMountedDir util.FullPath, remoteMountedLocation *remote_pb.RemoteStorageLocation, dirToSync util.FullPath, remoteConf *remote_pb.RemoteConf, shouldCache bool, deleteLocalExtra bool, concurrency int, chunkConcurrency int32, downloadConcurrency int32, dryRun bool, fileFilter *FileFilter) error {
 
 	// visit remote storage
 	remoteStorage, err := remote_storage.GetRemoteStorage(remoteConf)
@@ -306,6 +317,7 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 			var wg sync.WaitGroup
 			limitedConcurrentExecutor := util.NewLimitedConcurrentExecutor(concurrency)
 			var executionErr error
+			var execErrMu sync.Mutex
 
 			for _, pathToCache := range filesToCache {
 				wg.Add(1)
@@ -341,15 +353,16 @@ func (c *commandRemoteCache) doComprehensiveSync(commandEnv *CommandEnv, writer 
 					}
 
 					dir, _ := util.FullPath(pathToCacheCopy).DirAndName()
-					remoteLocation := filer.MapFullPathToRemoteStorageLocation(localMountedDir, remoteMountedLocation, util.FullPath(pathToCacheCopy))
 
 					fmt.Fprintf(writer, "Caching %s... ", pathToCacheCopy)
 
-					if err := filer.CacheRemoteObjectToLocalCluster(commandEnv, remoteConf, remoteLocation, util.FullPath(dir), localEntry); err != nil {
+					if _, err := filer.CacheRemoteObjectToLocalCluster(commandEnv, util.FullPath(dir), localEntry, chunkConcurrency, downloadConcurrency); err != nil {
 						fmt.Fprintf(writer, "failed: %v\n", err)
+						execErrMu.Lock()
 						if executionErr == nil {
 							executionErr = err
 						}
+						execErrMu.Unlock()
 						return
 					}
 					fmt.Fprintf(writer, "done\n")

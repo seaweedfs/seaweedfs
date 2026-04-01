@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/tsuna/gohbase"
 	"github.com/tsuna/gohbase/hrpc"
-	"io"
 )
 
 func init() {
@@ -163,12 +164,12 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 	scanner := store.Client.Scan(scan)
 	defer scanner.Close()
 	for {
-		res, err := scanner.Next()
-		if err == io.EOF {
+		res, scanErr := scanner.Next()
+		if scanErr == io.EOF {
 			break
 		}
-		if err != nil {
-			return lastFileName, err
+		if scanErr != nil {
+			return lastFileName, scanErr
 		}
 		if len(res.Cells) == 0 {
 			continue
@@ -206,12 +207,18 @@ func (store *HbaseStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPa
 			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			break
 		}
-		if !eachEntryFunc(entry) {
+
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			return lastFileName, fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
+		}
+
+		if !resEachEntryFunc {
 			break
 		}
 	}
 
-	return lastFileName, nil
+	return lastFileName, err
 }
 
 func (store *HbaseStore) BeginTransaction(ctx context.Context) (context.Context, error) {

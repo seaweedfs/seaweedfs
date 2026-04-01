@@ -39,7 +39,9 @@ func TestBufferQueryability(t *testing.T) {
 	}
 
 	// Add the entry to the buffer
-	logBuffer.AddLogEntryToBuffer(logEntry)
+	if err := logBuffer.AddLogEntryToBuffer(logEntry); err != nil {
+		t.Fatalf("Failed to add log entry: %v", err)
+	}
 
 	// Verify the buffer has data
 	if logBuffer.pos == 0 {
@@ -122,7 +124,9 @@ func TestMultipleEntriesQueryability(t *testing.T) {
 			Key:              []byte("test-key-" + string(rune('0'+i))),
 			Offset:           int64(i),
 		}
-		logBuffer.AddLogEntryToBuffer(logEntry)
+		if err := logBuffer.AddLogEntryToBuffer(logEntry); err != nil {
+			t.Fatalf("Failed to add log entry: %v", err)
+		}
 	}
 
 	// Read all entries
@@ -197,7 +201,9 @@ func TestSchemaRegistryScenario(t *testing.T) {
 	}
 
 	// Add to buffer
-	logBuffer.AddLogEntryToBuffer(logEntry)
+	if err := logBuffer.AddLogEntryToBuffer(logEntry); err != nil {
+		t.Fatalf("Failed to add log entry: %v", err)
+	}
 
 	// Simulate the SQL query scenario - read from offset 0
 	startPosition := NewMessagePosition(0, 0)
@@ -255,7 +261,9 @@ func TestTimeBasedFirstReadBeforeEarliest(t *testing.T) {
 	// Seed one entry so earliestTime is set
 	baseTs := time.Now().Add(-time.Second)
 	entry := &filer_pb.LogEntry{TsNs: baseTs.UnixNano(), Data: []byte("x"), Key: []byte("k"), Offset: 0}
-	logBuffer.AddLogEntryToBuffer(entry)
+	if err := logBuffer.AddLogEntryToBuffer(entry); err != nil {
+		t.Fatalf("Failed to add log entry: %v", err)
+	}
 	_ = flushed
 
 	// Start read 1ns before earliest memory, with offset sentinel (-2)
@@ -280,7 +288,9 @@ func TestEarliestTimeExactRead(t *testing.T) {
 
 	ts := time.Now()
 	entry := &filer_pb.LogEntry{TsNs: ts.UnixNano(), Data: []byte("a"), Key: []byte("k"), Offset: 0}
-	logBuffer.AddLogEntryToBuffer(entry)
+	if err := logBuffer.AddLogEntryToBuffer(entry); err != nil {
+		t.Fatalf("Failed to add log entry: %v", err)
+	}
 
 	startPos := NewMessagePosition(ts.UnixNano(), -2)
 	buf, _, err := logBuffer.ReadFromBuffer(startPos)

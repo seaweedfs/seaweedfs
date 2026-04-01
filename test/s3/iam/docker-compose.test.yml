@@ -21,7 +21,7 @@ services:
   seaweedfs-volume:
     image: chrislusf/seaweedfs:latest
     container_name: seaweedfs-volume-test
-    command: volume -dir=/data -port=8083 -mserver=seaweedfs-master:9333
+    command: volume -dir=/data -port=8083 -master=seaweedfs-master:9333
     ports:
       - "8083:8083"
     volumes:

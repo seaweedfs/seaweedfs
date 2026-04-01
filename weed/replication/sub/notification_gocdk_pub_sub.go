@@ -1,10 +1,15 @@
 //go:build gocdk
-// +build gocdk
 
 package sub
 
 import (
 	"context"
+	"net/url"
+	"os"
+	"path"
+	"strings"
+	"time"
+
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -13,11 +18,6 @@ import (
 	_ "gocloud.dev/pubsub/awssnssqs"
 	"gocloud.dev/pubsub/rabbitpubsub"
 	"google.golang.org/protobuf/proto"
-	"net/url"
-	"os"
-	"path"
-	"strings"
-	"time"
 
 	// _ "gocloud.dev/pubsub/azuresb"
 	_ "gocloud.dev/pubsub/gcppubsub"

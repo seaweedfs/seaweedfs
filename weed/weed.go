@@ -85,8 +85,9 @@ func main() {
 		}
 		return
 	}
-
-	util_http.InitGlobalHttpClient()
+	if args[0] != command.GetFuseCommandName() {
+		util_http.InitGlobalHttpClient()
+	}
 	for _, cmd := range commands {
 		if cmd.Name() == args[0] && cmd.Run != nil {
 			cmd.Flag.Usage = func() { cmd.Usage() }

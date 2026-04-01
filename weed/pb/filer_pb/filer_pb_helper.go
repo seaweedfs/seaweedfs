@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/viant/ptrie"
 	"google.golang.org/protobuf/proto"
 )
@@ -39,7 +40,7 @@ func (entry *Entry) GetExpiryTime() (expiryTime int64) {
 			return expiryTime
 		}
 	}
-	
+
 	// Regular TTL expiration: base on creation time only
 	expiryTime = entry.Attributes.Crtime + int64(entry.Attributes.TtlSec)
 	return expiryTime
@@ -135,25 +136,42 @@ func AfterEntryDeserialization(chunks []*FileChunk) {
 }
 
 func CreateEntry(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) error {
+	_, err := CreateEntryWithResponse(ctx, client, request)
+	return err
+}
+
+func CreateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, request *CreateEntryRequest) (*CreateEntryResponse, error) {
 	resp, err := client.CreateEntry(ctx, request)
 	if err != nil {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, err)
-		return fmt.Errorf("CreateEntry: %w", err)
+		return nil, fmt.Errorf("CreateEntry: %w", err)
+	}
+	if resp.ErrorCode != FilerError_OK {
+		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v (code %v)", request.Directory, request.Entry.Name, request.OExcl, resp.Error, resp.ErrorCode)
+		if sentinel := FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+			return nil, fmt.Errorf("CreateEntry %s/%s: %w", request.Directory, request.Entry.Name, sentinel)
+		}
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
 	}
 	if resp.Error != "" {
 		glog.V(1).InfofCtx(ctx, "create entry %s/%s %v: %v", request.Directory, request.Entry.Name, request.OExcl, resp.Error)
-		return fmt.Errorf("CreateEntry : %v", resp.Error)
+		return nil, fmt.Errorf("CreateEntry: %w", errors.New(resp.Error))
 	}
-	return nil
+	return resp, nil
 }
 
 func UpdateEntry(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) error {
-	_, err := client.UpdateEntry(ctx, request)
+	_, err := UpdateEntryWithResponse(ctx, client, request)
+	return err
+}
+
+func UpdateEntryWithResponse(ctx context.Context, client SeaweedFilerClient, request *UpdateEntryRequest) (*UpdateEntryResponse, error) {
+	resp, err := client.UpdateEntry(ctx, request)
 	if err != nil {
 		glog.V(1).InfofCtx(ctx, "update entry %s/%s :%v", request.Directory, request.Entry.Name, err)
-		return fmt.Errorf("UpdateEntry: %w", err)
+		return nil, fmt.Errorf("UpdateEntry: %w", err)
 	}
-	return nil
+	return resp, nil
 }
 
 func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *LookupDirectoryEntryRequest) (*LookupDirectoryEntryResponse, error) {
@@ -172,6 +190,37 @@ func LookupEntry(ctx context.Context, client SeaweedFilerClient, request *Lookup
 }
 
 var ErrNotFound = errors.New("filer: no entry is found in filer store")
+
+// Sentinel errors for filer entry operations.
+// These are set by the filer and reconstructed from FilerError codes after
+// crossing the gRPC boundary, so consumers can use errors.Is() instead of
+// parsing error strings.
+var (
+	ErrEntryNameTooLong    = errors.New("entry name too long")
+	ErrParentIsFile        = errors.New("parent path is a file")
+	ErrExistingIsDirectory = errors.New("existing entry is a directory")
+	ErrExistingIsFile      = errors.New("existing entry is a file")
+	ErrEntryAlreadyExists  = errors.New("entry already exists")
+)
+
+// FilerErrorToSentinel maps a proto FilerError code to its sentinel error.
+// Returns nil for OK or unknown codes.
+func FilerErrorToSentinel(code FilerError) error {
+	switch code {
+	case FilerError_ENTRY_NAME_TOO_LONG:
+		return ErrEntryNameTooLong
+	case FilerError_PARENT_IS_FILE:
+		return ErrParentIsFile
+	case FilerError_EXISTING_IS_DIRECTORY:
+		return ErrExistingIsDirectory
+	case FilerError_EXISTING_IS_FILE:
+		return ErrExistingIsFile
+	case FilerError_ENTRY_ALREADY_EXISTS:
+		return ErrEntryAlreadyExists
+	default:
+		return nil
+	}
+}
 
 func IsEmpty(event *SubscribeMetadataResponse) bool {
 	return event.EventNotification.NewEntry == nil && event.EventNotification.OldEntry == nil
@@ -197,6 +246,119 @@ func IsRename(event *SubscribeMetadataResponse) bool {
 		event.EventNotification.OldEntry != nil &&
 		(event.Directory != event.EventNotification.NewParentPath ||
 			event.EventNotification.NewEntry.Name != event.EventNotification.OldEntry.Name)
+}
+
+func MetadataEventSourceDirectory(event *SubscribeMetadataResponse) string {
+	if event == nil {
+		return ""
+	}
+	return event.Directory
+}
+
+func MetadataEventTargetDirectory(event *SubscribeMetadataResponse) string {
+	if event == nil {
+		return ""
+	}
+	if event.EventNotification != nil && event.EventNotification.NewParentPath != "" {
+		return event.EventNotification.NewParentPath
+	}
+	return event.Directory
+}
+
+func metadataEventSourceEntryName(event *SubscribeMetadataResponse) string {
+	if event == nil || event.EventNotification == nil {
+		return ""
+	}
+	if event.EventNotification.OldEntry != nil {
+		return event.EventNotification.OldEntry.Name
+	}
+	if event.EventNotification.NewEntry != nil {
+		return event.EventNotification.NewEntry.Name
+	}
+	return ""
+}
+
+func metadataEventTargetEntryName(event *SubscribeMetadataResponse) string {
+	if event == nil || event.EventNotification == nil {
+		return ""
+	}
+	if event.EventNotification.NewEntry != nil {
+		return event.EventNotification.NewEntry.Name
+	}
+	if event.EventNotification.OldEntry != nil {
+		return event.EventNotification.OldEntry.Name
+	}
+	return ""
+}
+
+func MetadataEventSourceFullPath(event *SubscribeMetadataResponse) string {
+	return util.Join(MetadataEventSourceDirectory(event), metadataEventSourceEntryName(event))
+}
+
+func MetadataEventTargetFullPath(event *SubscribeMetadataResponse) string {
+	return util.Join(MetadataEventTargetDirectory(event), metadataEventTargetEntryName(event))
+}
+
+func MetadataEventTouchesDirectory(event *SubscribeMetadataResponse, dir string) bool {
+	if MetadataEventSourceDirectory(event) == dir {
+		return true
+	}
+	return event != nil &&
+		event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		MetadataEventTargetDirectory(event) == dir
+}
+
+func MetadataEventTouchesDirectoryPrefix(event *SubscribeMetadataResponse, prefix string) bool {
+	if strings.HasPrefix(MetadataEventSourceDirectory(event), prefix) {
+		return true
+	}
+	return event != nil &&
+		event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		strings.HasPrefix(MetadataEventTargetDirectory(event), prefix)
+}
+
+func MetadataEventMatchesSubscription(event *SubscribeMetadataResponse, pathPrefix string, pathPrefixes []string, directories []string) bool {
+	if event == nil {
+		return false
+	}
+
+	if metadataEventMatchesPath(MetadataEventSourceFullPath(event), MetadataEventSourceDirectory(event), pathPrefix, pathPrefixes, directories) {
+		return true
+	}
+
+	return event.EventNotification != nil &&
+		event.EventNotification.NewEntry != nil &&
+		metadataEventMatchesPath(MetadataEventTargetFullPath(event), MetadataEventTargetDirectory(event), pathPrefix, pathPrefixes, directories)
+}
+
+func metadataEventMatchesPath(fullPath, dirPath, pathPrefix string, pathPrefixes []string, directories []string) bool {
+	if hasPrefixIn(fullPath, pathPrefixes) {
+		return true
+	}
+	if matchByDirectory(dirPath, directories) {
+		return true
+	}
+	return strings.HasPrefix(fullPath, pathPrefix)
+}
+
+func hasPrefixIn(text string, prefixes []string) bool {
+	for _, p := range prefixes {
+		if strings.HasPrefix(text, p) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchByDirectory(dirPath string, directories []string) bool {
+	for _, dir := range directories {
+		if dirPath == dir {
+			return true
+		}
+	}
+	return false
 }
 
 var _ = ptrie.KeyProvider(&FilerConf_PathConf{})

@@ -156,7 +156,7 @@ func TestActionResourceConsistencyWithStringConditions(t *testing.T) {
 				Action:   []string{"S3:GET*"},                    // Uppercase action pattern
 				Resource: []string{"arn:aws:s3:::TEST-BUCKET/*"}, // Uppercase resource pattern
 				Condition: map[string]map[string]interface{}{
-					"StringLike": {
+					"StringLikeIgnoreCase": {
 						"s3:RequestedRegion": "US-*", // Uppercase condition pattern
 					},
 				},
@@ -184,7 +184,7 @@ func TestActionResourceConsistencyWithStringConditions(t *testing.T) {
 		"Actions, Resources, and Conditions should all use case-insensitive AWS IAM matching")
 
 	// Verify that matching statements were found
-	assert.Len(t, result.MatchingStatements, 1,
+	require.Len(t, result.MatchingStatements, 1,
 		"Should have exactly one matching statement")
 	assert.Equal(t, "Allow", string(result.MatchingStatements[0].Effect),
 		"Matching statement should have Allow effect")

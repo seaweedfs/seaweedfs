@@ -206,6 +206,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 
 		if location.Length() == 0 {
 			delete(vl.vid2location, v.Id)
+			vl.removeFromCrowded(v.Id)
 		}
 
 	}
@@ -400,7 +401,6 @@ func (vl *VolumeLayout) removeFromWritable(vid needle.VolumeId) bool {
 			break
 		}
 	}
-	vl.removeFromCrowded(vid)
 	if toDeleteIndex >= 0 {
 		glog.V(0).Infoln("Volume", vid, "becomes unwritable")
 		vl.writables = append(vl.writables[0:toDeleteIndex], vl.writables[toDeleteIndex+1:]...)
@@ -414,7 +414,7 @@ func (vl *VolumeLayout) setVolumeWritable(vid needle.VolumeId) bool {
 			return false
 		}
 	}
-	glog.V(0).Infoln("Volume", vid, "becomes writable")
+	glog.V(1).Infoln("Volume", vid, "becomes writable")
 	vl.writables = append(vl.writables, vid)
 	return true
 }

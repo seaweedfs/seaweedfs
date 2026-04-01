@@ -97,6 +97,7 @@ type ActiveTopology struct {
 // DestinationPlan represents a planned destination for a volume/shard operation
 type DestinationPlan struct {
 	TargetNode     string  `json:"target_node"`
+	TargetAddress  string  `json:"target_address"`
 	TargetDisk     uint32  `json:"target_disk"`
 	TargetRack     string  `json:"target_rack"`
 	TargetDC       string  `json:"target_dc"`

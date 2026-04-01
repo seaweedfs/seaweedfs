@@ -2,10 +2,11 @@ package sub_coordinator
 
 import (
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 )
 
 /*

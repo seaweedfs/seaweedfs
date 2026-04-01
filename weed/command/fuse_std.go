@@ -1,5 +1,4 @@
-//go:build linux || darwin
-// +build linux darwin
+//go:build darwin || freebsd || linux
 
 package command
 
@@ -12,6 +11,10 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 type parameter struct {
@@ -147,6 +150,20 @@ func runFuse(cmd *Command, args []string) bool {
 			} else {
 				panic(fmt.Errorf("chunkSizeLimitMB: %s", err))
 			}
+		case "cacheMetaTtlSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.cacheMetaTtlSec = &intValue
+			} else {
+				panic(fmt.Errorf("cacheMetaTtlSec: %s", err))
+			}
+		case "dirIdleEvictSec":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.dirIdleEvictSec = &intValue
+			} else {
+				panic(fmt.Errorf("dirIdleEvictSec: %s", err))
+			}
 		case "concurrentWriters":
 			i++
 			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
@@ -154,6 +171,13 @@ func runFuse(cmd *Command, args []string) bool {
 				mountOptions.concurrentWriters = &intValue
 			} else {
 				panic(fmt.Errorf("concurrentWriters: %s", err))
+			}
+		case "concurrentReaders":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 32); err == nil {
+				intValue := int(parsed)
+				mountOptions.concurrentReaders = &intValue
+			} else {
+				panic(fmt.Errorf("concurrentReaders: %s", err))
 			}
 		case "cacheDir":
 			mountOptions.cacheDirForRead = &parameter.value
@@ -212,6 +236,51 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "fusermount.path":
 			fusermountPath = parameter.value
+		case "config_dir":
+			util.ConfigurationFileDirectory.Set(parameter.value)
+		// FUSE performance options
+		case "writebackCache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.writebackCache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'writebackCache' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "asyncDio":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.asyncDio = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'asyncDio' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "cacheSymlink":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.cacheSymlink = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'cacheSymlink' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		// macOS-specific FUSE options
+		case "sys.novncache":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.novncache = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'sys.novncache' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "autofs":
+			if parsed, err := strconv.ParseBool(parameter.value); err == nil {
+				mountOptions.hasAutofs = &parsed
+			} else {
+				fmt.Fprintf(os.Stderr, "failed to parse 'autofs' value %q: %v\n", parameter.value, err)
+				return false
+			}
+		case "_netdev":
+			// _netdev is used for systemd/fstab parser to signify that this is a network mount but systemd
+			// mount sometimes can't strip them off. Meanwhile, fuse3 would refuse to run with _netdev, we
+			// strip them here if it fails to be stripped by the caller.
+			//(See https://github.com/seaweedfs/seaweedfs/wiki/fstab/948a70df5c0d9d2d27561b96de53bde07a29d2db)
+			glog.V(0).Infof("ignoring _netdev mount option")
 		default:
 			t := parameter.name
 			if parameter.value != "true" {
@@ -220,6 +289,8 @@ func runFuse(cmd *Command, args []string) bool {
 			mountOptions.extraOptions = append(mountOptions.extraOptions, t)
 		}
 	}
+
+	util_http.InitGlobalHttpClient()
 
 	// the master start the child, release it then finish himself
 	if masterProcess {

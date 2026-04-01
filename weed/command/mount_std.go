@@ -1,5 +1,4 @@
 //go:build linux || darwin || freebsd
-// +build linux darwin freebsd
 
 package command
 
@@ -10,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/user"
+	"path"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,7 +18,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -26,6 +26,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"google.golang.org/grpc/reflection"
@@ -59,6 +60,63 @@ func runMount(cmd *Command, args []string) bool {
 	return RunMount(&mountOptions, os.FileMode(umask))
 }
 
+func ensureBucketAllowEmptyFolders(ctx context.Context, filerClient filer_pb.FilerClient, mountRoot, bucketRootPath string) error {
+	bucketPath, isBucketRootMount := bucketPathForMountRoot(mountRoot, bucketRootPath)
+	if !isBucketRootMount {
+		return nil
+	}
+
+	entry, err := filer_pb.GetEntry(ctx, filerClient, util.FullPath(bucketPath))
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		return fmt.Errorf("bucket %s not found", bucketPath)
+	}
+
+	if entry.Extended == nil {
+		entry.Extended = make(map[string][]byte)
+	}
+	if strings.EqualFold(strings.TrimSpace(string(entry.Extended[s3_constants.ExtAllowEmptyFolders])), "true") {
+		return nil
+	}
+
+	entry.Extended[s3_constants.ExtAllowEmptyFolders] = []byte("true")
+
+	bucketFullPath := util.FullPath(bucketPath)
+	parent, _ := bucketFullPath.DirAndName()
+	if err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.UpdateEntry(ctx, client, &filer_pb.UpdateEntryRequest{
+			Directory: parent,
+			Entry:     entry,
+		})
+	}); err != nil {
+		return err
+	}
+
+	glog.V(3).Infof("RunMount: set bucket %s %s=true", bucketPath, s3_constants.ExtAllowEmptyFolders)
+	return nil
+}
+
+func bucketPathForMountRoot(mountRoot, bucketRootPath string) (string, bool) {
+	cleanPath := path.Clean("/" + strings.TrimPrefix(mountRoot, "/"))
+	cleanBucketRoot := path.Clean("/" + strings.TrimPrefix(bucketRootPath, "/"))
+	if cleanBucketRoot == "/" {
+		return "", false
+	}
+	prefix := cleanBucketRoot + "/"
+	if !strings.HasPrefix(cleanPath, prefix) {
+		return "", false
+	}
+	rest := strings.TrimPrefix(cleanPath, prefix)
+
+	bucketParts := strings.Split(rest, "/")
+	if len(bucketParts) != 1 || bucketParts[0] == "" {
+		return "", false
+	}
+	return cleanBucketRoot + "/" + bucketParts[0], true
+}
+
 func RunMount(option *MountOptions, umask os.FileMode) bool {
 
 	// basic checks
@@ -73,6 +131,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	util.LoadSecurityConfiguration()
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
 	var cipher bool
+	var bucketRootPath string
 	var err error
 	for i := 0; i < 10; i++ {
 		err = pb.WithOneOfGrpcFilerClients(false, filerAddresses, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
@@ -81,6 +140,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 				return fmt.Errorf("get filer grpc address %v configuration: %w", filerAddresses, err)
 			}
 			cipher = resp.Cipher
+			bucketRootPath = resp.DirBuckets
 			return nil
 		})
 		if err != nil {
@@ -92,6 +152,9 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	if err != nil {
 		glog.Errorf("failed to talk to filer %v: %v", filerAddresses, err)
 		return true
+	}
+	if bucketRootPath == "" {
+		bucketRootPath = "/buckets"
 	}
 
 	filerMountRootPath := *option.filerMountRootPath
@@ -160,12 +223,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	// Ensure target mount point availability
-	if isValid := checkMountPointAvailable(dir); !isValid {
+	skipAutofs := option.hasAutofs != nil && *option.hasAutofs
+	if isValid := checkMountPointAvailable(dir, skipAutofs); !isValid {
 		glog.Fatalf("Target mount point is not available: %s, please check!", dir)
 		return true
 	}
 
 	serverFriendlyName := strings.ReplaceAll(*option.filer, ",", "+")
+
+	// When autofs/systemd-mount is used, FsName must be "fuse" so util-linux/mount can recognize
+	// it as a pseudo filesystem. Otherwise, preserve the descriptive name for mount/df output.
+	fsName := serverFriendlyName + ":" + filerMountRootPath
+	if skipAutofs {
+		fsName = "fuse"
+	}
 
 	// mount fuse
 	fuseMountOptions := &fuse.MountOptions{
@@ -176,17 +247,20 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		MaxReadAhead:             1024 * 1024 * 2,
 		IgnoreSecurityLabels:     false,
 		RememberInodes:           false,
-		FsName:                   serverFriendlyName + ":" + filerMountRootPath,
+		FsName:                   fsName,
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
 		Debug:                    *option.debug,
-		EnableLocks:              false,
+		EnableLocks:              true,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,
 		DirectMountFlags:         0,
 		//SyncRead:                 false, // set to false to enable the FUSE_CAP_ASYNC_READ capability
 		EnableAcl: true,
+	}
+	if *option.defaultPermissions {
+		fuseMountOptions.Options = append(fuseMountOptions.Options, "default_permissions")
 	}
 	if *option.nonempty {
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "nonempty")
@@ -208,10 +282,22 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		if runtime.GOARCH == "amd64" {
 			fuseMountOptions.Options = append(fuseMountOptions.Options, "noapplexattr")
 		}
-		// fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache") // need to test effectiveness
+		if option.novncache != nil && *option.novncache {
+			fuseMountOptions.Options = append(fuseMountOptions.Options, "novncache")
+		}
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "slow_statfs")
 		fuseMountOptions.Options = append(fuseMountOptions.Options, "volname="+serverFriendlyName)
 		fuseMountOptions.Options = append(fuseMountOptions.Options, fmt.Sprintf("iosize=%d", ioSizeMB*1024*1024))
+	}
+
+	if option.writebackCache != nil {
+		fuseMountOptions.EnableWriteback = *option.writebackCache
+	}
+	if option.asyncDio != nil {
+		fuseMountOptions.EnableAsyncDio = *option.asyncDio
+	}
+	if option.cacheSymlink != nil && *option.cacheSymlink {
+		fuseMountOptions.EnableSymlinkCaching = true
 	}
 
 	// find mount point
@@ -226,33 +312,38 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	}
 
 	seaweedFileSystem := mount.NewSeaweedFileSystem(&mount.Option{
-		MountDirectory:     dir,
-		FilerAddresses:     filerAddresses,
-		GrpcDialOption:     grpcDialOption,
-		FilerMountRootPath: mountRoot,
-		Collection:         *option.collection,
-		Replication:        *option.replication,
-		TtlSec:             int32(*option.ttlSec),
-		DiskType:           types.ToDiskType(*option.diskType),
-		ChunkSizeLimit:     int64(chunkSizeLimitMB) * 1024 * 1024,
-		ConcurrentWriters:  *option.concurrentWriters,
-		CacheDirForRead:    *option.cacheDirForRead,
-		CacheSizeMBForRead: *option.cacheSizeMBForRead,
-		CacheDirForWrite:   cacheDirForWrite,
-		CacheMetaTTlSec:    *option.cacheMetaTtlSec,
-		DataCenter:         *option.dataCenter,
-		Quota:              int64(*option.collectionQuota) * 1024 * 1024,
-		MountUid:           uid,
-		MountGid:           gid,
-		MountMode:          mountMode,
-		MountCtime:         fileInfo.ModTime(),
-		MountMtime:         time.Now(),
-		Umask:              umask,
-		VolumeServerAccess: *mountOptions.volumeServerAccess,
-		Cipher:             cipher,
-		UidGidMapper:       uidGidMapper,
-		DisableXAttr:       *option.disableXAttr,
-		IsMacOs:            runtime.GOOS == "darwin",
+		MountDirectory:              dir,
+		FilerAddresses:              filerAddresses,
+		GrpcDialOption:              grpcDialOption,
+		FilerSigningKey:             security.SigningKey(util.GetViper().GetString("jwt.filer_signing.key")),
+		FilerSigningExpiresAfterSec: util.GetViper().GetInt("jwt.filer_signing.expires_after_seconds"),
+		FilerMountRootPath:          mountRoot,
+		Collection:                  *option.collection,
+		Replication:                 *option.replication,
+		TtlSec:                      int32(*option.ttlSec),
+		DiskType:                    types.ToDiskType(*option.diskType),
+		ChunkSizeLimit:              int64(chunkSizeLimitMB) * 1024 * 1024,
+		ConcurrentWriters:           *option.concurrentWriters,
+		ConcurrentReaders:           *option.concurrentReaders,
+		CacheDirForRead:             *option.cacheDirForRead,
+		CacheSizeMBForRead:          *option.cacheSizeMBForRead,
+		CacheDirForWrite:            cacheDirForWrite,
+		CacheMetaTTlSec:             *option.cacheMetaTtlSec,
+		DataCenter:                  *option.dataCenter,
+		Quota:                       int64(*option.collectionQuota) * 1024 * 1024,
+		MountUid:                    uid,
+		MountGid:                    gid,
+		MountMode:                   mountMode,
+		MountCtime:                  fileInfo.ModTime(),
+		MountMtime:                  time.Now(),
+		Umask:                       umask,
+		VolumeServerAccess:          *mountOptions.volumeServerAccess,
+		Cipher:                      cipher,
+		UidGidMapper:                uidGidMapper,
+		IncludeSystemEntries:        *option.includeSystemEntries,
+		DisableXAttr:                *option.disableXAttr,
+		IsMacOs:                     runtime.GOOS == "darwin",
+		MetadataFlushSeconds:        *option.metadataFlushSeconds,
 		// RDMA acceleration options
 		RdmaEnabled:       *option.rdmaEnabled,
 		RdmaSidecarAddr:   *option.rdmaSidecarAddr,
@@ -260,6 +351,8 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		RdmaReadOnly:      *option.rdmaReadOnly,
 		RdmaMaxConcurrent: *option.rdmaMaxConcurrent,
 		RdmaTimeoutMs:     *option.rdmaTimeoutMs,
+		DirIdleEvictSec:   *option.dirIdleEvictSec,
+		WritebackCache:    option.writebackCache != nil && *option.writebackCache,
 	})
 
 	// create mount root
@@ -267,6 +360,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	mountRootParent, mountDir := mountRootPath.DirAndName()
 	if err = filer_pb.Mkdir(context.Background(), seaweedFileSystem, mountRootParent, mountDir, nil); err != nil {
 		fmt.Printf("failed to create dir %s on filer %s: %v\n", mountRoot, filerAddresses, err)
+		return false
+	}
+	if err := ensureBucketAllowEmptyFolders(context.Background(), seaweedFileSystem, mountRoot, bucketRootPath); err != nil {
+		fmt.Printf("failed to set bucket auto-remove-empty-folders policy for %s: %v\n", mountRoot, err)
 		return false
 	}
 
@@ -302,6 +399,10 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	glog.V(0).Infof("This is SeaweedFS version %s %s %s", version.Version(), runtime.GOOS, runtime.GOARCH)
 
 	server.Serve()
+
+	// Wait for any pending background flushes (writebackCache async mode)
+	// before clearing caches, to prevent data loss during clean unmount.
+	seaweedFileSystem.WaitForAsyncFlush()
 
 	seaweedFileSystem.ClearCacheDir()
 

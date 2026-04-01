@@ -1,0 +1,140 @@
+name: "KMS Tests"
+
+on:
+  pull_request:
+    paths:
+      - 'weed/kms/**'
+      - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers.go'
+      - 'weed/s3api/s3api_object_handlers_put.go'
+      - 'test/kms/**'
+      - '.github/workflows/kms-tests.yml'
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/kms/**'
+      - 'weed/s3api/s3_sse_*.go'
+      - 'weed/s3api/s3api_object_handlers.go'
+      - 'weed/s3api/s3api_object_handlers_put.go'
+      - 'test/kms/**'
+
+concurrency:
+  group: ${{ github.head_ref || github.ref }}-kms-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: weed
+
+jobs:
+  kms-provider-tests:
+    name: KMS Provider Integration Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run KMS provider integration tests
+        timeout-minutes: 15
+        working-directory: test/kms
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          docker --version
+
+          make test-provider-ci
+
+      - name: Show OpenBao logs on failure
+        if: failure()
+        run: |
+          echo "=== OpenBao Container Logs ==="
+          docker logs openbao-ci 2>&1 | tail -50 || echo "No OpenBao container found"
+          echo "=== Setup Logs ==="
+          cat /tmp/openbao-ci-setup.log 2>/dev/null || echo "No setup log found"
+
+      - name: Cleanup
+        if: always()
+        working-directory: test/kms
+        run: |
+          make stop-openbao-ci || true
+
+  s3-kms-e2e-tests:
+    name: S3 KMS End-to-End Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 KMS end-to-end tests
+        timeout-minutes: 20
+        working-directory: test/kms
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          docker --version
+          aws --version
+
+          make test-s3-kms-ci
+
+      - name: Show logs on failure
+        if: failure()
+        working-directory: test/kms
+        run: |
+          echo "=== OpenBao Container Logs ==="
+          cat /tmp/openbao-ci-container.log 2>/dev/null || docker logs openbao-ci 2>&1 | tail -50 || echo "No OpenBao logs found"
+          echo "=== SeaweedFS Server Logs ==="
+          tail -100 /tmp/seaweedfs-kms-mini.log 2>/dev/null || echo "No server log found"
+          echo "=== Setup Logs ==="
+          cat /tmp/weed-kms-ci-setup.log 2>/dev/null || echo "No weed setup log"
+          echo "=== Process Information ==="
+          ps aux | grep -E "(weed|test)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-kms-e2e-logs
+          path: |
+            /tmp/seaweedfs-kms-mini.log
+            /tmp/openbao-ci-container.log
+            /tmp/weed-kms-ci-setup.log
+          retention-days: 3
+
+      - name: Cleanup
+        if: always()
+        working-directory: test/kms
+        run: |
+          make stop-seaweedfs-ci || true
+          make stop-openbao-ci || true
+          make clean-ci || true

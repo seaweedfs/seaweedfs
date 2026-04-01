@@ -5,6 +5,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -14,13 +15,17 @@ import (
 	mathrand "math/rand"
 	"net/http"
 	"os"
-	"strings"
 	"sync"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
+	"golang.org/x/crypto/hkdf"
+	"google.golang.org/grpc"
 )
 
 // SSE-S3 uses AES-256 encryption with server-managed keys
@@ -51,11 +56,21 @@ func IsSSES3RequestInternal(r *http.Request) bool {
 }
 
 // IsSSES3EncryptedInternal checks if the object metadata indicates SSE-S3 encryption
+// An object is considered SSE-S3 encrypted only if it has BOTH the encryption header
+// AND the actual encryption key metadata. This prevents false positives when an object
+// has leftover headers from a previous encryption state (e.g., after being decrypted
+// during a copy operation). Fixes GitHub issue #7562.
 func IsSSES3EncryptedInternal(metadata map[string][]byte) bool {
-	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == SSES3Algorithm
+	// Check for SSE-S3 algorithm header
+	sseAlgorithm, hasHeader := metadata[s3_constants.AmzServerSideEncryption]
+	if !hasHeader || string(sseAlgorithm) != SSES3Algorithm {
+		return false
 	}
-	return false
+
+	// Must also have the actual encryption key to be considered encrypted
+	// Without the key, the object cannot be decrypted and should be treated as unencrypted
+	_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
+	return hasKey
 }
 
 // GenerateSSES3Key generates a new SSE-S3 encryption key
@@ -109,8 +124,17 @@ func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.
 
 	// Create CTR mode cipher with the provided IV
 	stream := cipher.NewCTR(block, iv)
+	decryptReader := &cipher.StreamReader{S: stream, R: reader}
 
-	return &cipher.StreamReader{S: stream, R: reader}, nil
+	// Wrap with closer if the underlying reader implements io.Closer
+	if closer, ok := reader.(io.Closer); ok {
+		return &decryptReaderCloser{
+			Reader:           decryptReader,
+			underlyingCloser: closer,
+		}, nil
+	}
+
+	return decryptReader, nil
 }
 
 // GetSSES3Headers returns the headers for SSE-S3 encrypted objects
@@ -259,26 +283,27 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	km.filerClient = filerClient
 
-	// Try to load existing KEK from filer
-	if err := km.loadSuperKeyFromFiler(); err != nil {
-		// Only generate a new key if it does not exist.
-		// For other errors (e.g. connectivity), we should fail fast to prevent creating a new key
-		// and making existing data undecryptable.
+	// Try to load existing KEK from filer with retries to handle transient connectivity issues during startup
+	var err error
+	for i := 0; i < 10; i++ {
+		err = km.loadSuperKeyFromFiler()
+		if err == nil {
+			glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+			return nil
+		}
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK (load from filer %s: %v)", km.kekPath, err)
 			if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
 				return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
 			}
-		} else {
-			// A different error occurred (e.g., network issue, permission denied).
-			// Return the error to prevent starting with a broken state.
-			return fmt.Errorf("failed to load SSE-S3 super key from %s: %w", km.kekPath, err)
+			return nil
 		}
-	} else {
-		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+		glog.Warningf("SSE-S3 KeyManager: failed to load KEK (attempt %d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
 	}
 
-	return nil
+	// If we're here, all retries failed
+	return fmt.Errorf("failed to load SSE-S3 super key from %s after 10 attempts: %w", km.kekPath, err)
 }
 
 // loadSuperKeyFromFiler loads the KEK from the filer
@@ -333,8 +358,8 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 		// Set appropriate permissions for the directory
 		entry.Attributes.FileMode = uint32(0700 | os.ModeDir)
 	}); err != nil {
-		// Only ignore "file exists" errors.
-		if !strings.Contains(err.Error(), "file exists") {
+		// Only ignore "already exists" errors.
+		if !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
 			return fmt.Errorf("failed to create KEK directory %s: %w", SSES3KEKDirectory, err)
 		}
 		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)
@@ -431,6 +456,27 @@ func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
 	return nil, false
 }
 
+// GetMasterKey returns a derived key from the master KEK for STS signing
+// This uses HKDF to isolate the STS security domain from the SSE-S3 domain
+func (km *SSES3KeyManager) GetMasterKey() []byte {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	if len(km.superKey) == 0 {
+		return nil
+	}
+
+	// Derive a separate key for STS to isolate security domains
+	// We use the KEK as the secret, and "seaweedfs-sts-signing-key" as the info
+	hkdfReader := hkdf.New(sha256.New, km.superKey, nil, []byte("seaweedfs-sts-signing-key"))
+	derived := make([]byte, 32) // 256-bit derived key
+	if _, err := io.ReadFull(hkdfReader, derived); err != nil {
+		glog.Errorf("Failed to derive STS key: %v", err)
+		return nil
+	}
+	return derived
+}
+
 // Global SSE-S3 key manager instance
 var globalSSES3KeyManager = NewSSES3KeyManager()
 
@@ -439,9 +485,31 @@ func GetSSES3KeyManager() *SSES3KeyManager {
 	return globalSSES3KeyManager
 }
 
+// KeyManagerFilerClient wraps wdclient.FilerClient to satisfy filer_pb.FilerClient interface
+type KeyManagerFilerClient struct {
+	*wdclient.FilerClient
+	grpcDialOption grpc.DialOption
+}
+
+func (k *KeyManagerFilerClient) AdjustedUrl(location *filer_pb.Location) string {
+	return location.Url
+}
+
+func (k *KeyManagerFilerClient) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	filerAddress := k.GetCurrentFiler()
+	if filerAddress == "" {
+		return fmt.Errorf("no filer available")
+	}
+	return pb.WithGrpcFilerClient(streamingMode, 0, filerAddress, k.grpcDialOption, fn)
+}
+
 // InitializeGlobalSSES3KeyManager initializes the global key manager with filer access
-func InitializeGlobalSSES3KeyManager(s3ApiServer *S3ApiServer) error {
-	return globalSSES3KeyManager.InitializeWithFiler(s3ApiServer)
+func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDialOption grpc.DialOption) error {
+	wrapper := &KeyManagerFilerClient{
+		FilerClient:    filerClient,
+		grpcDialOption: grpcDialOption,
+	}
+	return globalSSES3KeyManager.InitializeWithFiler(wrapper)
 }
 
 // ProcessSSES3Request processes an SSE-S3 request and returns encryption metadata
@@ -531,7 +599,8 @@ func CreateSSES3EncryptedReaderWithBaseIV(reader io.Reader, key *SSES3Key, baseI
 
 	// Calculate the proper IV with offset to ensure unique IV per chunk/part
 	// This prevents the severe security vulnerability of IV reuse in CTR mode
-	iv := calculateIVWithOffset(baseIV, offset)
+	// Skip is not used here because we're encrypting from the start (not reading a range)
+	iv, _ := calculateIVWithOffset(baseIV, offset)
 
 	stream := cipher.NewCTR(block, iv)
 	encryptedReader := &cipher.StreamReader{S: stream, R: reader}

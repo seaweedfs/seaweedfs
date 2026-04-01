@@ -45,7 +45,10 @@ func (fs *FilerServer) assignNewFileInfo(ctx context.Context, so *operation.Stor
 
 	ar, altRequest := so.ToAssignRequests(1)
 
-	assignResult, ae := operation.Assign(ctx, fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
+	// Use a context that ignores cancellation from the request context
+	assignCtx := context.WithoutCancel(ctx)
+
+	assignResult, ae := operation.Assign(assignCtx, fs.filer.GetMaster, fs.grpcDialOption, ar, altRequest)
 	if ae != nil {
 		glog.ErrorfCtx(ctx, "failing to assign a file id: %v", ae)
 		err = ae
@@ -251,8 +254,10 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		return nil, ErrReadOnly
 	}
 
-	if rule.MaxFileNameLength == 0 {
-		rule.MaxFileNameLength = fs.filer.MaxFilenameLength
+	// Use local variable instead of mutating shared rule
+	maxFileNameLength := rule.MaxFileNameLength
+	if maxFileNameLength == 0 {
+		maxFileNameLength = fs.filer.MaxFilenameLength
 	}
 
 	// required by buckets folder
@@ -279,7 +284,7 @@ func (fs *FilerServer) detectStorageOption(ctx context.Context, requestURI, qCol
 		DiskType:          util.Nvl(diskType, rule.DiskType),
 		Fsync:             rule.Fsync,
 		VolumeGrowthCount: rule.VolumeGrowthCount,
-		MaxFileNameLength: rule.MaxFileNameLength,
+		MaxFileNameLength: maxFileNameLength,
 	}, nil
 }
 

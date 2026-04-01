@@ -1,5 +1,4 @@
 //go:build ydb
-// +build ydb
 
 package ydb
 
@@ -313,7 +312,12 @@ func (store *YdbStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath
 						return fmt.Errorf("decode entry %s: %w", entry.FullPath, decodeErr)
 					}
 
-					if !eachEntryFunc(entry) {
+					resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+					if resEachEntryFuncErr != nil {
+						return fmt.Errorf("failed to process eachEntryFunc for entry %q: %w", entry.FullPath, resEachEntryFuncErr)
+					}
+
+					if !resEachEntryFunc {
 						return nil
 					}
 

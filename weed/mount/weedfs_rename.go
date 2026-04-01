@@ -2,18 +2,50 @@ package mount
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fs"
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/go-fuse/v2/fs"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// doRename tries the streaming mux first, falling back to unary on transport errors.
+func (wfs *WFS) doRename(ctx context.Context, request *filer_pb.StreamRenameEntryRequest, oldPath, newPath util.FullPath) error {
+	if wfs.streamMutate != nil && wfs.streamMutate.IsAvailable() {
+		err := wfs.streamMutate.Rename(ctx, request, func(resp *filer_pb.StreamRenameEntryResponse) error {
+			return wfs.handleRenameResponse(ctx, resp)
+		})
+		if err == nil || !errors.Is(err, ErrStreamTransport) {
+			return err // success or application error
+		}
+		glog.V(1).Infof("Rename %s => %s: stream failed, falling back to unary: %v", oldPath, newPath, err)
+	}
+	return wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
+		stream, streamErr := client.StreamRenameEntry(ctx, request)
+		if streamErr != nil {
+			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, streamErr)
+		}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
+			}
+			if err := wfs.handleRenameResponse(ctx, resp); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
 
 /** Rename a file
  *
@@ -132,7 +164,7 @@ const (
 )
 
 func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string, newName string) (code fuse.Status) {
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -172,54 +204,63 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 
 	glog.V(4).Infof("dir Rename %s => %s", oldPath, newPath)
 
-	// update remote filer
-	err := wfs.WithFilerClient(true, func(client filer_pb.SeaweedFilerClient) error {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-
-		request := &filer_pb.StreamRenameEntryRequest{
-			OldDirectory: string(oldDir),
-			OldName:      oldName,
-			NewDirectory: string(newDir),
-			NewName:      newName,
-			Signatures:   []int32{wfs.signature},
-		}
-
-		stream, err := client.StreamRenameEntry(ctx, request)
-		if err != nil {
-			code = fuse.EIO
-			return fmt.Errorf("dir AtomicRenameEntry %s => %s : %v", oldPath, newPath, err)
-		}
-
-		for {
-			resp, recvErr := stream.Recv()
-			if recvErr != nil {
-				if recvErr == io.EOF {
-					break
-				} else {
-					if strings.Contains(recvErr.Error(), "not empty") {
-						code = fuse.Status(syscall.ENOTEMPTY)
-					} else if strings.Contains(recvErr.Error(), "not directory") {
-						code = fuse.ENOTDIR
-					}
-					return fmt.Errorf("dir Rename %s => %s receive: %v", oldPath, newPath, recvErr)
-				}
+	// Ensure the source file's metadata exists on the filer before renaming.
+	// Two cases can leave the entry only in the local cache:
+	//   1. deferFilerCreate=true — file handle still open, dirtyMetadata set.
+	//   2. writebackCache — close() triggered async flush, handle released.
+	// The filer rename will fail with ENOENT unless we flush/wait first.
+	if inode, found := wfs.inodeToPath.GetInode(oldPath); found {
+		// Case 1: handle still open with deferred metadata — flush synchronously
+		// BEFORE any async flush interference.
+		if fh, ok := wfs.fhMap.FindFileHandle(inode); ok && fh.dirtyMetadata {
+			glog.V(4).Infof("dir Rename %s: flushing deferred metadata before rename", oldPath)
+			if flushStatus := wfs.doFlush(fh, oldEntry.Attributes.Uid, oldEntry.Attributes.Gid, false); flushStatus != fuse.OK {
+				glog.Warningf("dir Rename %s: flush before rename failed: %v", oldPath, flushStatus)
+				return flushStatus
 			}
-
-			if err = wfs.handleRenameResponse(ctx, resp); err != nil {
-				glog.V(0).Infof("dir Rename %s => %s : %v", oldPath, newPath, err)
-				return err
-			}
-
 		}
-
-		return nil
-
-	})
-	if err != nil {
-		glog.V(0).Infof("Link: %v", err)
-		return
+		// Case 2: handle already released, async flush may be in flight.
+		// Mark ALL handles for this inode as renamed so the async flush
+		// skips old-path metadata creation (which would re-insert the
+		// renamed entry into the meta cache after rename events clean it up).
+		wfs.fhMap.MarkInodeRenamed(inode)
+		wfs.waitForPendingAsyncFlush(inode)
+	} else if oldEntry != nil && oldEntry.Attributes != nil && oldEntry.Attributes.Inode != 0 {
+		// GetInode failed (Forget already removed the mapping), but the
+		// entry's stored inode can still identify pending async flushes.
+		inode = oldEntry.Attributes.Inode
+		wfs.fhMap.MarkInodeRenamed(inode)
+		wfs.waitForPendingAsyncFlush(inode)
 	}
+
+	// update remote filer
+	request := &filer_pb.StreamRenameEntryRequest{
+		OldDirectory: string(oldDir),
+		OldName:      oldName,
+		NewDirectory: string(newDir),
+		NewName:      newName,
+		Signatures:   []int32{wfs.signature},
+	}
+
+	ctx := context.Background()
+	err := wfs.doRename(ctx, request, oldPath, newPath)
+	if err != nil {
+		glog.V(0).Infof("Rename %s => %s: %v", oldPath, newPath, err)
+		// Map error strings to FUSE status codes. String matching is used
+		// instead of raw errno to stay portable across platforms (errno
+		// numeric values differ between Linux and macOS).
+		msg := err.Error()
+		if strings.Contains(msg, "not found") {
+			return fuse.Status(syscall.ENOENT)
+		} else if strings.Contains(msg, "not empty") {
+			return fuse.Status(syscall.ENOTEMPTY)
+		} else if strings.Contains(msg, "not directory") {
+			return fuse.ENOTDIR
+		}
+		return fuse.EIO
+	}
+	wfs.inodeToPath.TouchDirectory(oldDir)
+	wfs.inodeToPath.TouchDirectory(newDir)
 
 	return fuse.OK
 
@@ -231,10 +272,12 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 	glog.V(4).Infof("dir Rename %+v", resp.EventNotification)
 
 	if resp.EventNotification.NewEntry != nil {
-		// with new entry, the old entry name also exists. This is the first step to create new entry
-		newEntry := filer.FromPbEntry(resp.EventNotification.NewParentPath, resp.EventNotification.NewEntry)
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, "", newEntry); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply metadata event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
+			if resp.EventNotification.NewParentPath != "" {
+				wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.EventNotification.NewParentPath))
+			}
 		}
 
 		oldParent, newParent := util.FullPath(resp.Directory), util.FullPath(resp.EventNotification.NewParentPath)
@@ -250,6 +293,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				if entry := fh.GetEntry(); entry != nil {
 					entry.Name = newName
 				}
+				// Keep the saved handle path current so any flush fallback
+				// after Forget uses the post-rename location, not the old one.
+				fh.RememberPath(newPath)
 			}
 			// invalidate attr and data
 			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
@@ -261,8 +307,9 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 
 	} else if resp.EventNotification.OldEntry != nil {
 		// without new entry, only old entry name exists. This is the second step to delete old entry
-		if err := wfs.metaCache.AtomicUpdateEntryFromFiler(ctx, util.NewFullPath(resp.Directory, resp.EventNotification.OldEntry.Name), nil); err != nil {
-			return err
+		if err := wfs.applyLocalMetadataEvent(ctx, metadataEventFromRenameResponse(resp)); err != nil {
+			glog.Warningf("rename apply delete event: %v", err)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(resp.Directory))
 		}
 	}
 

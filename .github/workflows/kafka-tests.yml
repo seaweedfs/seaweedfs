@@ -37,11 +37,11 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Setup Container Environment
       run: |
@@ -52,6 +52,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Kafka Gateway Unit Tests
       run: |
@@ -81,11 +82,11 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Setup Integration Container Environment
       run: |
@@ -96,6 +97,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Integration Tests
       run: |
@@ -125,12 +127,12 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -154,6 +156,7 @@ jobs:
         cd test/kafka
         # Use go mod download with timeout to prevent hanging
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -176,6 +179,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -302,12 +306,12 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -331,6 +335,7 @@ jobs:
         cd test/kafka
         # Use go mod download with timeout to prevent hanging
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -353,6 +358,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -462,12 +468,12 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -490,6 +496,7 @@ jobs:
       run: |
         cd test/kafka
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -512,6 +519,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -618,12 +626,12 @@ jobs:
       CONTAINER_ID: ${{ matrix.container-id }}
     steps:
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
         cache: true
         cache-dependency-path: |
           **/go.sum
@@ -646,6 +654,7 @@ jobs:
       run: |
         cd test/kafka
         timeout 90s go mod download || echo "Warning: Dependency download timed out, continuing with cached modules"
+        go mod tidy
 
     - name: Build and start SeaweedFS MQ
       run: |
@@ -668,6 +677,7 @@ jobs:
           -filer.port=8888 \
           -filer=true \
           -metricsPort=9325 \
+          -master.peers=none \
           > /tmp/weed-server.log 2>&1 &
           
         # Wait for master to be ready
@@ -779,11 +789,11 @@ jobs:
     - name: Set up Go 1.x
       uses: actions/setup-go@v6
       with:
-        go-version: ^1.24
+        go-version: ^1.25
       id: go
 
     - name: Check out code
-      uses: actions/checkout@v5
+      uses: actions/checkout@v6
 
     - name: Setup Protocol Container Environment
       run: |
@@ -799,6 +809,7 @@ jobs:
       run: |
         cd test/kafka
         go mod download
+        go mod tidy
 
     - name: Run Protocol Tests
       run: |

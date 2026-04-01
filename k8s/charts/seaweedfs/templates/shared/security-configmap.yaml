@@ -1,8 +1,9 @@
-{{- if .Values.global.enableSecurity }}
+{{- include "seaweedfs.compat" . -}}
+{{- if .Values.global.seaweedfs.enableSecurity }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ template "seaweedfs.name" . }}-security-config
+  name: {{ include "seaweedfs.fullname" . }}-security-config
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -10,19 +11,25 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
 data:
-  {{- $existing := (lookup "v1" "ConfigMap" .Release.Namespace (printf "%s-security-config" (include "seaweedfs.name" .))) }}
+  {{- $fullname := include "seaweedfs.fullname" . }}
+  {{- $securityConfigName := printf "%s-security-config" $fullname }}
+  {{- $existing := lookup "v1" "ConfigMap" .Release.Namespace $securityConfigName }}
+  {{- if not $existing }}
+  {{- $legacyName := printf "%s-%s" (include "seaweedfs.name" .) "security-config" }}
+  {{- $existing = lookup "v1" "ConfigMap" .Release.Namespace $legacyName }}
+  {{- end }}
   {{- $securityConfig := fromToml (dig "data" "security.toml" "" $existing) }}
   security.toml: |-
     # this file is read by master, volume server, and filer
 
-    {{- if .Values.global.securityConfig.jwtSigning.volumeWrite }}
+    {{- if .Values.global.seaweedfs.securityConfig.jwtSigning.volumeWrite }}
     # the jwt signing key is read by master and volume server
     # a jwt expires in 10 seconds
     [jwt.signing]
     key = "{{ dig "jwt" "signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.volumeRead }}
+    {{- if .Values.global.seaweedfs.securityConfig.jwtSigning.volumeRead }}
     # this jwt signing key is read by master and volume server, and it is used for read operations:
     # - the Master server generates the JWT, which can be used to read a certain file on a volume server
     # - the Volume server validates the JWT on reading
@@ -30,7 +37,7 @@ data:
     key = "{{ dig "jwt" "signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.filerWrite }}
+    {{- if .Values.global.seaweedfs.securityConfig.jwtSigning.filerWrite }}
     # If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
     # - the Filer server validates the JWT on writing
@@ -39,10 +46,10 @@ data:
     key = "{{ dig "jwt" "filer_signing" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
     {{- end }}
 
-    {{- if .Values.global.securityConfig.jwtSigning.filerRead }}
+    {{- if .Values.global.seaweedfs.securityConfig.jwtSigning.filerRead }}
     # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
     # - f.e. the S3 API Shim generates the JWT
-    # - the Filer server validates the JWT on writing
+    # - the Filer server validates the JWT on reading
     # the jwt defaults to expire after 10 seconds.
     [jwt.filer_signing.read]
     key = "{{ dig "jwt" "filer_signing" "read" "key" (randAlphaNum 10 | b64enc) $securityConfig }}"
@@ -64,6 +71,14 @@ data:
     [grpc.filer]
     cert = "/usr/local/share/ca-certificates/filer/tls.crt"
     key  = "/usr/local/share/ca-certificates/filer/tls.key"
+
+    [grpc.admin]
+    cert = "/usr/local/share/ca-certificates/admin/tls.crt"
+    key  = "/usr/local/share/ca-certificates/admin/tls.key"
+
+    [grpc.worker]
+    cert = "/usr/local/share/ca-certificates/worker/tls.crt"
+    key  = "/usr/local/share/ca-certificates/worker/tls.key"
 
     # use this for any place needs a grpc client
     # i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"

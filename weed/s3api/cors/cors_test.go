@@ -263,6 +263,49 @@ func TestMatchesOrigin(t *testing.T) {
 			origin:         "http://other.com",
 			want:           true,
 		},
+		// HTTPS test cases
+		{
+			name:           "https exact match",
+			allowedOrigins: []string{"https://example.com"},
+			origin:         "https://example.com",
+			want:           true,
+		},
+		{
+			name:           "https no match",
+			allowedOrigins: []string{"https://example.com"},
+			origin:         "https://other.com",
+			want:           false,
+		},
+		{
+			name:           "https wildcard subdomain match",
+			allowedOrigins: []string{"https://*.example.com"},
+			origin:         "https://api.example.com",
+			want:           true,
+		},
+		{
+			name:           "https wildcard subdomain no match - base domain",
+			allowedOrigins: []string{"https://*.example.com"},
+			origin:         "https://example.com",
+			want:           false,
+		},
+		{
+			name:           "https wildcard subdomain no match - different domain",
+			allowedOrigins: []string{"https://*.example.com"},
+			origin:         "https://api.other.com",
+			want:           false,
+		},
+		{
+			name:           "protocol mismatch - http pattern https origin",
+			allowedOrigins: []string{"http://*.example.com"},
+			origin:         "https://api.example.com",
+			want:           false,
+		},
+		{
+			name:           "protocol mismatch - https pattern http origin",
+			allowedOrigins: []string{"https://*.example.com"},
+			origin:         "http://api.example.com",
+			want:           false,
+		},
 	}
 
 	for _, tt := range tests {

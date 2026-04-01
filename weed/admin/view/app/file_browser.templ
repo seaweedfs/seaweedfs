@@ -7,22 +7,36 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 )
 
+script changePageSize(path string, lastFileName string, pageSizeSelectId string) {
+	const pageSizeSelect = document.getElementById(pageSizeSelectId)
+	if (pageSizeSelect == null) {
+		return
+	}
+	window.location.href = (window.__BASE_PATH__ || '') + '/files?path=' + encodeURIComponent(path) + '&lastFileName=' + encodeURIComponent(lastFileName) + '&limit=' + pageSizeSelect.value
+}
+
 templ FileBrowser(data dash.FileBrowserData) {
 	<div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
 		<h1 class="h2">
-			if data.IsBucketPath && data.BucketName != "" {
-				<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
-			} else {
-				<i class="fas fa-folder-open me-2"></i>File Browser
-			}
+		if data.IsTableBucketPath && data.TableBucketName != "" {
+			<i class="fas fa-table me-2"></i>Table Bucket: {data.TableBucketName}
+		} else if data.IsBucketPath && data.BucketName != "" {
+			<i class="fas fa-cube me-2"></i>S3 Bucket: {data.BucketName}
+		} else {
+			<i class="fas fa-folder-open me-2"></i>File Browser
+		}
 		</h1>
 		<div class="btn-toolbar mb-2 mb-md-0">
 			<div class="btn-group me-2">
-				if data.IsBucketPath && data.BucketName != "" {
-					<a href="/object-store/buckets" class="btn btn-sm btn-outline-secondary">
-						<i class="fas fa-arrow-left me-1"></i>Back to Buckets
-					</a>
-				}
+			if data.IsTableBucketPath && data.TableBucketName != "" {
+				<a href={ dash.PUrl(ctx, "/object-store/s3tables/buckets") } class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back to Table Buckets
+				</a>
+			} else if data.IsBucketPath && data.BucketName != "" {
+				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-secondary">
+					<i class="fas fa-arrow-left me-1"></i>Back to Buckets
+				</a>
+			}
 				<button type="button" class="btn btn-sm btn-outline-primary" onclick="createFolder()">
 					<i class="fas fa-folder-plus me-1"></i>New Folder
 				</button>
@@ -45,15 +59,15 @@ templ FileBrowser(data dash.FileBrowserData) {
 			for i, crumb := range data.Breadcrumbs {
 				if i == len(data.Breadcrumbs)-1 {
 					<li class="breadcrumb-item active" aria-current="page">
-						<i class="fas fa-folder me-1"></i>{ crumb.Name }
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
+							{ crumb.Name }
+						</a>
 					</li>
 				} else {
 					<li class="breadcrumb-item">
-						<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", crumb.Path)) } class="text-decoration-none">
 							if crumb.Name == "Root" {
 								<i class="fas fa-home me-1"></i>
-							} else {
-								<i class="fas fa-folder me-1"></i>
 							}
 							{ crumb.Name }
 						</a>
@@ -63,110 +77,51 @@ templ FileBrowser(data dash.FileBrowserData) {
 		</ol>
 	</nav>
 
-	<!-- Summary Cards -->
-	<div class="row mb-4">
-		<div class="col-xl-3 col-md-6 mb-4">
-			<div class="card border-left-primary shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
-								Total Entries
-							</div>
-							<div class="h5 mb-0 font-weight-bold text-gray-800">
-								{ fmt.Sprintf("%d", data.TotalEntries) }
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-list fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="col-xl-3 col-md-6 mb-4">
-			<div class="card border-left-success shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-success text-uppercase mb-1">
-								Directories
-							</div>
-							<div class="h5 mb-0 font-weight-bold text-gray-800">
-								{ fmt.Sprintf("%d", countDirectories(data.Entries)) }
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-folder fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="col-xl-3 col-md-6 mb-4">
-			<div class="card border-left-info shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-info text-uppercase mb-1">
-								Files
-							</div>
-							<div class="h5 mb-0 font-weight-bold text-gray-800">
-								{ fmt.Sprintf("%d", countFiles(data.Entries)) }
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-file fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-
-		<div class="col-xl-3 col-md-6 mb-4">
-			<div class="card border-left-warning shadow h-100 py-2">
-				<div class="card-body">
-					<div class="row no-gutters align-items-center">
-						<div class="col mr-2">
-							<div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
-								Total Size
-							</div>
-							<div class="h5 mb-0 font-weight-bold text-gray-800">
-								{ formatBytes(data.TotalSize) }
-							</div>
-						</div>
-						<div class="col-auto">
-							<i class="fas fa-hdd fa-2x text-gray-300"></i>
-						</div>
-					</div>
-				</div>
-			</div>
-		</div>
-	</div>
-
 	<!-- File Listing -->
 	<div class="card shadow mb-4">
-		<div class="card-header py-3 d-flex justify-content-between align-items-center">
+		<div class="card-header py-3 d-flex justify-content-between align-items-center flex-wrap">
 			<h6 class="m-0 font-weight-bold text-primary">
 				<i class="fas fa-folder-open me-2"></i>
-							if data.CurrentPath == "/" {
-				Root Directory
+			if data.CurrentPath == "/" {
+				<a href={ dash.PUrl(ctx, "/files?path=/") } class="text-decoration-none text-primary">Root Directory</a>
 			} else if data.CurrentPath == "/buckets" {
-										Object Store Buckets Directory
-				<a href="/object-store/buckets" class="btn btn-sm btn-outline-primary ms-2">
+										<a href={ dash.PUrl(ctx, "/files?path=/buckets") } class="text-decoration-none text-primary">Object Store Buckets Directory</a>
+				<a href={ dash.PUrl(ctx, "/object-store/buckets") } class="btn btn-sm btn-outline-primary ms-2">
 					<i class="fas fa-cube me-1"></i>Manage Buckets
 				</a>
-			} else {
-				{ filepath.Base(data.CurrentPath) }
+		} else {
+				<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.CurrentPath)) } class="text-decoration-none text-primary">{ filepath.Base(data.CurrentPath) }</a>
 			}
 			</h6>
-			if data.ParentPath != data.CurrentPath {
-				<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-sm btn-outline-secondary">
-					<i class="fas fa-arrow-up me-1"></i>Up
-				</a>
-			}
+			
+			<!-- Compact pagination controls -->
+			<div class="d-flex align-items-center gap-2 ms-auto">
+				<div class="d-flex align-items-center">
+					<label class="me-1 mb-0 small text-muted">Show:</label>
+					<select id="file-browser-page-size-top" class="form-select form-select-sm" style="width: 70px; font-size: 0.875rem;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName, "file-browser-page-size-top") }>
+						<option value="20" selected?={ data.PageSize == 20 }>20</option>
+						<option value="50" selected?={ data.PageSize == 50 }>50</option>
+						<option value="100" selected?={ data.PageSize == 100 }>100</option>
+						<option value="200" selected?={ data.PageSize == 200 }>200</option>
+					</select>
+				</div>
+				<div class="btn-group btn-group-sm" role="group">
+					if data.HasNextPage {
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary" title="Next page">
+							Next <i class="fas fa-angle-right"></i>
+						</a>
+					} else {
+						<button class="btn btn-outline-secondary" disabled title="Next page">
+							Next <i class="fas fa-angle-right"></i>
+						</button>
+					}
+					if data.ParentPath != data.CurrentPath {
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", data.ParentPath)) } class="btn btn-outline-secondary" title="Go up one directory">
+							<i class="fas fa-arrow-up"></i> Up
+						</a>
+					}
+				</div>
+			</div>
 		</div>
 		<div class="card-body">
 			if len(data.Entries) > 0 {
@@ -195,7 +150,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 										<div class="d-flex align-items-center">
 											if entry.IsDirectory {
 												<i class="fas fa-folder text-warning me-2"></i>
-												<a href={ templ.SafeURL(fmt.Sprintf("/files?path=%s", entry.FullPath)) } class="text-decoration-none">
+												<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s", entry.FullPath)) } class="text-decoration-none">
 													{ entry.Name }
 												</a>
 											} else {
@@ -264,6 +219,36 @@ templ FileBrowser(data dash.FileBrowserData) {
 	</div>
 
 	<!-- Last Updated -->
+
+		<!-- Pagination Controls (Bottom) -->
+		<div class="row mb-3">
+			<div class="col-md-6">
+				<div class="d-flex align-items-center">
+					<label class="me-2 mb-0">Show:</label>
+					<select id="file-browser-page-size-bottom" class="form-select form-select-sm" style="width: auto;" onchange={ changePageSize(data.CurrentPath, data.CurrentLastFileName, "file-browser-page-size-bottom") }>
+						<option value="20" selected?={ data.PageSize == 20 }>20</option>
+						<option value="50" selected?={ data.PageSize == 50 }>50</option>
+						<option value="100" selected?={ data.PageSize == 100 }>100</option>
+						<option value="200" selected?={ data.PageSize == 200 }>200</option>
+					</select>
+					<span class="ms-2 text-muted">entries per page</span>
+				</div>
+			</div>
+			<div class="col-md-6 text-end">
+				<div class="btn-group btn-group-sm" role="group">
+
+					if data.HasNextPage {
+						<a href={ dash.PUrl(ctx, fmt.Sprintf("/files?path=%s&lastFileName=%s&limit=%d", data.CurrentPath, data.LastFileName, data.PageSize)) } class="btn btn-outline-primary">
+							Next <i class="fas fa-angle-right ms-1"></i>
+						</a>
+					} else {
+						<button class="btn btn-outline-secondary" disabled>
+							Next <i class="fas fa-angle-right ms-1"></i>
+						</button>
+					}
+				</div>
+			</div>
+		</div>
 	<div class="row">
 		<div class="col-12">
 			<small class="text-muted">
@@ -390,9 +375,10 @@ templ FileBrowser(data dash.FileBrowserData) {
 					showFileProperties(path);
 					break;
 				case 'delete':
-					if (confirm('Are you sure you want to delete "' + path + '"?')) {
+					const fileName = path.split('/').pop();
+					showDeleteConfirm(fileName, function() {
 						deleteFile(path);
-					}
+					}, `Are you sure you want to delete "${fileName}"? This action cannot be undone.`);
 					break;
 			}
 		});
@@ -406,28 +392,28 @@ templ FileBrowser(data dash.FileBrowserData) {
 	// File browser specific functions
 	function downloadFile(path) {
 		// Open download URL in new tab
-		window.open('/api/files/download?path=' + encodeURIComponent(path), '_blank');
+		window.open((window.__BASE_PATH__ || '') + '/api/files/download?path=' + encodeURIComponent(path), '_blank');
 	}
-	
+
 	function viewFile(path) {
 		// Open file viewer in new tab
-		window.open('/api/files/view?path=' + encodeURIComponent(path), '_blank');
+		window.open((window.__BASE_PATH__ || '') + '/api/files/view?path=' + encodeURIComponent(path), '_blank');
 	}
-	
+
 	function showFileProperties(path) {
 		// Fetch file properties and show in modal
-		fetch('/api/files/properties?path=' + encodeURIComponent(path))
+		fetch((window.__BASE_PATH__ || '') + '/api/files/properties?path=' + encodeURIComponent(path))
 			.then(response => response.json())
 			.then(data => {
 				if (data.error) {
-					alert('Error loading file properties: ' + data.error);
+					showAlert('Error loading file properties: ' + data.error, 'error');
 				} else {
 					displayFileProperties(data);
 				}
 			})
 			.catch(error => {
 				console.error('Error fetching file properties:', error);
-				alert('Error loading file properties: ' + error.message);
+				showAlert('Error loading file properties: ' + error.message, 'error');
 			});
 	}
 	
@@ -732,25 +718,7 @@ templ FileBrowser(data dash.FileBrowserData) {
 	</script>
 }
 
-func countDirectories(entries []dash.FileEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if entry.IsDirectory {
-			count++
-		}
-	}
-	return count
-}
 
-func countFiles(entries []dash.FileEntry) int {
-	count := 0
-	for _, entry := range entries {
-		if !entry.IsDirectory {
-			count++
-		}
-	}
-	return count
-}
 
 func getFileIcon(mime string) string {
 	switch {

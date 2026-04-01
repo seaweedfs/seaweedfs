@@ -18,6 +18,7 @@ func TestFirstInvalidIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
+	defer v.Close()
 	type WriteInfo struct {
 		offset int64
 		size   int32

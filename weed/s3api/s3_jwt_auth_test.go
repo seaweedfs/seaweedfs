@@ -171,6 +171,8 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100")
 				req.Header.Set("User-Agent", "aws-sdk-go/1.0")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.100",
@@ -182,6 +184,8 @@ func TestRequestContextExtraction(t *testing.T) {
 				req := httptest.NewRequest("GET", "/test-bucket/test-file.txt", http.NoBody)
 				req.Header.Set("X-Real-IP", "10.0.0.1")
 				req.Header.Set("User-Agent", "boto3/1.0")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "10.0.0.1",
@@ -197,7 +201,7 @@ func TestRequestContextExtraction(t *testing.T) {
 			context := extractRequestContext(req)
 
 			if tt.expectedIP != "" {
-				assert.Equal(t, tt.expectedIP, context["sourceIP"])
+				assert.Equal(t, tt.expectedIP, context["aws:SourceIp"])
 			}
 
 			if tt.expectedUA != "" {
@@ -255,6 +259,8 @@ func TestIPBasedPolicyEnforcement(t *testing.T) {
 			req := httptest.NewRequest("GET", "/restricted-bucket/file.txt", http.NoBody)
 			req.Header.Set("Authorization", "Bearer "+response.Credentials.SessionToken)
 			req.Header.Set("X-Forwarded-For", tt.sourceIP)
+			// Set RemoteAddr to private IP to simulate trusted proxy
+			req.RemoteAddr = "127.0.0.1:12345"
 
 			// Create IAM identity for testing
 			identity := &IAMIdentity{
@@ -292,8 +298,8 @@ func setupTestIAMManager(t *testing.T) *integration.IAMManager {
 	// Initialize with test configuration
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    sts.FlexibleDuration{time.Hour},
-			MaxSessionLength: sts.FlexibleDuration{time.Hour * 12},
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
@@ -492,7 +498,7 @@ func setupTestIPRestrictedRole(ctx context.Context, manager *integration.IAMMana
 				},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24", "10.0.0.0/8"},
+						"aws:SourceIp": []string{"192.168.1.0/24", "10.0.0.0/8"},
 					},
 				},
 			},
@@ -531,10 +537,6 @@ func testJWTAuthentication(t *testing.T, iam *IdentityAccessManagement, token st
 	}
 
 	return iam.authenticateJWTWithIAM(req)
-}
-
-func testJWTAuthorization(t *testing.T, iam *IdentityAccessManagement, identity *Identity, action Action, bucket, object, token string) bool {
-	return testJWTAuthorizationWithRole(t, iam, identity, action, bucket, object, token, "TestRole")
 }
 
 func testJWTAuthorizationWithRole(t *testing.T, iam *IdentityAccessManagement, identity *Identity, action Action, bucket, object, token, roleName string) bool {

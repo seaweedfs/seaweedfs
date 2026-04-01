@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
@@ -76,11 +77,26 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV2Match(formValues http.
 
 	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId (V2 POST)
+		iam.m.RLock()
+		availableKeyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId (V2 POST): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			accessKey, availableKeyCount, iam.isAuthEnabled)
+
 		return s3err.ErrInvalidAccessKeyID
 	}
 
+	// Check service account expiration
+	if cred.isCredentialExpired() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return s3err.ErrAccessDenied
+	}
+
 	bucket := formValues.Get("bucket")
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
 	}
 
@@ -113,7 +129,22 @@ func (iam *IdentityAccessManagement) doesSignV2Match(r *http.Request) (*Identity
 
 	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId (V2 signed)
+		iam.m.RLock()
+		availableKeyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId (V2 signed): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			accessKey, availableKeyCount, iam.isAuthEnabled)
+
 		return nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check service account expiration
+	if cred.isCredentialExpired() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedAuth := signatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header)
@@ -164,6 +195,7 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 
 	accessKey := query.Get("AWSAccessKeyId")
 	if accessKey == "" {
+		glog.Warningf("InvalidAccessKeyId (V2 presigned): empty access key in request")
 		return nil, s3err.ErrInvalidAccessKeyID
 	}
 
@@ -174,7 +206,22 @@ func (iam *IdentityAccessManagement) doesPresignV2SignatureMatch(r *http.Request
 
 	identity, cred, found := iam.lookupByAccessKey(accessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId (V2 presigned)
+		iam.m.RLock()
+		availableKeyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId (V2 presigned): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			accessKey, availableKeyCount, iam.isAuthEnabled)
+
 		return nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check service account expiration
+	if cred.isCredentialExpired() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			accessKey, cred.Expiration, time.Now().Unix())
+		return nil, s3err.ErrAccessDenied
 	}
 
 	expectedSignature := preSignatureV2(cred, r.Method, r.URL.Path, r.URL.Query().Encode(), r.Header, expires)

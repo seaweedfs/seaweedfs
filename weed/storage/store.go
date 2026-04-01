@@ -16,6 +16,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
@@ -25,6 +26,7 @@ import (
 
 const (
 	MAX_TTL_VOLUME_REMOVAL_DELAY = 10 // 10 minutes
+	HEARTBEAT_CHAN_SIZE          = 1024
 )
 
 type ReadOption struct {
@@ -63,11 +65,14 @@ type Store struct {
 	Port                int
 	GrpcPort            int
 	PublicUrl           string
+	Id                  string // volume server id, independent of ip:port for stable identification
 	Locations           []*DiskLocation
 	dataCenter          string // optional information, overwriting master setting if exists
 	rack                string // optional information, overwriting master setting if exists
 	connected           bool
 	NeedleMapKind       NeedleMapKind
+	State               *State
+	StateUpdateChan     chan *volume_server_pb.VolumeServerState
 	NewVolumesChan      chan master_pb.VolumeShortInformationMessage
 	DeletedVolumesChan  chan master_pb.VolumeShortInformationMessage
 	NewEcShardsChan     chan master_pb.VolumeEcShardInformationMessage
@@ -76,22 +81,71 @@ type Store struct {
 }
 
 func (s *Store) String() (str string) {
-	str = fmt.Sprintf("Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
+	str = fmt.Sprintf("Id:%s, Ip:%s, Port:%d, GrpcPort:%d PublicUrl:%s, dataCenter:%s, rack:%s, connected:%v, volumeSizeLimit:%d", s.Id, s.Ip, s.Port, s.GrpcPort, s.PublicUrl, s.dataCenter, s.rack, s.connected, s.GetVolumeSizeLimit())
 	return
 }
 
-func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int, publicUrl string, dirnames []string, maxVolumeCounts []int32,
-	minFreeSpaces []util.MinFreeSpace, idxFolder string, needleMapKind NeedleMapKind, diskTypes []DiskType, ldbTimeout int64) (s *Store) {
-	s = &Store{grpcDialOption: grpcDialOption, Port: port, Ip: ip, GrpcPort: grpcPort, PublicUrl: publicUrl, NeedleMapKind: needleMapKind}
-	s.Locations = make([]*DiskLocation, 0)
+func NewStore(
+	grpcDialOption grpc.DialOption,
+	ip string, port int, grpcPort int, publicUrl string, id string,
+	dirnames []string, maxVolumeCounts []int32, minFreeSpaces []util.MinFreeSpace,
+	idxFolder string,
+	needleMapKind NeedleMapKind,
+	diskTypes []DiskType,
+	diskTags [][]string,
+	ldbTimeout int64,
+) (s *Store) {
+	s = &Store{
+		grpcDialOption: grpcDialOption,
+		Port:           port,
+		Ip:             ip,
+		GrpcPort:       grpcPort,
+		PublicUrl:      publicUrl,
+		Id:             id,
+		NeedleMapKind:  needleMapKind,
+		Locations:      make([]*DiskLocation, 0),
+
+		StateUpdateChan:     make(chan *volume_server_pb.VolumeServerState, HEARTBEAT_CHAN_SIZE),
+		NewVolumesChan:      make(chan master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
+		DeletedVolumesChan:  make(chan master_pb.VolumeShortInformationMessage, HEARTBEAT_CHAN_SIZE),
+		NewEcShardsChan:     make(chan master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
+		DeletedEcShardsChan: make(chan master_pb.VolumeEcShardInformationMessage, HEARTBEAT_CHAN_SIZE),
+	}
 
 	var wg sync.WaitGroup
 	for i := 0; i < len(dirnames); i++ {
-		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i])
+		var tags []string
+		if i < len(diskTags) {
+			tags = diskTags[i]
+		}
+		location := NewDiskLocation(dirnames[i], int32(maxVolumeCounts[i]), minFreeSpaces[i], idxFolder, diskTypes[i], tags)
 		s.Locations = append(s.Locations, location)
 		stats.VolumeServerMaxVolumeCounter.Add(float64(maxVolumeCounts[i]))
 
 		diskId := uint32(i) // Track disk ID
+
+		location.ecShardNotifyHandler = func(collection string, vid needle.VolumeId, shardId erasure_coding.ShardId, ecVolume *erasure_coding.EcVolume) {
+			si := erasure_coding.NewShardsInfo()
+			si.Set(erasure_coding.NewShardInfo(shardId, erasure_coding.ShardSize(ecVolume.ShardSize())))
+
+			// Use non-blocking send during startup to avoid deadlock
+			// The channel reader only starts after connecting to master, but we're loading during startup
+			select {
+			case s.NewEcShardsChan <- master_pb.VolumeEcShardInformationMessage{
+				Id:          uint32(vid),
+				Collection:  collection,
+				EcIndexBits: si.Bitmap(),
+				ShardSizes:  si.SizesInt64(),
+				DiskType:    string(location.DiskType),
+				ExpireAtSec: ecVolume.ExpireAtSec,
+				DiskId:      diskId,
+			}:
+			default:
+				// Channel full during startup - this is OK, heartbeat will report EC shards later
+				glog.V(2).Infof("NewEcShardsChan full during startup for shard %d.%d, will be reported in heartbeat", vid, shardId)
+			}
+		}
+
 		wg.Add(1)
 		go func(id uint32, diskLoc *DiskLocation) {
 			defer wg.Done()
@@ -100,14 +154,44 @@ func NewStore(grpcDialOption grpc.DialOption, ip string, port int, grpcPort int,
 	}
 	wg.Wait()
 
-	s.NewVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
-	s.DeletedVolumesChan = make(chan master_pb.VolumeShortInformationMessage, 3)
-
-	s.NewEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
-	s.DeletedEcShardsChan = make(chan master_pb.VolumeEcShardInformationMessage, 3)
+	var err error
+	s.State, err = NewState(idxFolder)
+	if err != nil {
+		glog.Fatalf("failed to resolve state for volume %s: %v", id, err)
+	}
 
 	return
 }
+
+func (s *Store) LoadState() error {
+	err := s.State.Load()
+	if s.State.Proto() != nil && err == nil {
+		select {
+		case s.StateUpdateChan <- s.State.Proto():
+		default:
+			glog.V(2).Infof("StateUpdateChan full during LoadState, state will be reported in heartbeat")
+		}
+	}
+	return err
+}
+
+func (s *Store) SaveState() error {
+	if s.State.Proto() == nil {
+		glog.Warningf("tried to save empty state for store %s", s.Id)
+		return nil
+	}
+
+	err := s.State.Save()
+	if s.State.Proto() != nil && err == nil {
+		select {
+		case s.StateUpdateChan <- s.State.Proto():
+		default:
+			glog.V(2).Infof("StateUpdateChan full during SaveState, state will be reported in heartbeat")
+		}
+	}
+	return err
+}
+
 func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMapKind NeedleMapKind, replicaPlacement string, ttlString string, preallocate int64, ver needle.Version, MemoryMapMaxSizeMb uint32, diskType DiskType, ldbTimeout int64) error {
 	rt, e := super_block.NewReplicaPlacementFromString(replicaPlacement)
 	if e != nil {
@@ -120,6 +204,7 @@ func (s *Store) AddVolume(volumeId needle.VolumeId, collection string, needleMap
 	e = s.addVolume(volumeId, collection, needleMapKind, rt, ttl, preallocate, ver, MemoryMapMaxSizeMb, diskType, ldbTimeout)
 	return e
 }
+
 func (s *Store) DeleteCollection(collection string) (e error) {
 	for _, location := range s.Locations {
 		e = location.DeleteCollectionFromDiskLocation(collection)
@@ -292,7 +377,17 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	collectionVolumeReadOnlyCount := make(map[string]map[string]uint8)
 	for _, location := range s.Locations {
 		var deleteVids []needle.VolumeId
-		maxVolumeCounts[string(location.DiskType)] += uint32(location.MaxVolumeCount)
+		effectiveMaxCount := location.MaxVolumeCount
+		if location.isDiskSpaceLow {
+			usedSlots := int32(location.LocalVolumesLen())
+			ecShardCount := location.EcShardCount()
+			usedSlots += int32((ecShardCount + erasure_coding.DataShardsCount - 1) / erasure_coding.DataShardsCount)
+			effectiveMaxCount = usedSlots
+		}
+		if effectiveMaxCount < 0 {
+			effectiveMaxCount = 0
+		}
+		maxVolumeCounts[string(location.DiskType)] += uint32(effectiveMaxCount)
 		location.volumesLock.RLock()
 		for _, v := range location.volumes {
 			curMaxFileKey, volumeMessage := v.ToVolumeInformationMessage()
@@ -384,6 +479,13 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 	for _, loc := range s.Locations {
 		uuidList = append(uuidList, loc.DirectoryUuid)
 	}
+	var diskTags []*master_pb.DiskTag
+	for diskID, loc := range s.Locations {
+		diskTags = append(diskTags, &master_pb.DiskTag{
+			DiskId: uint32(diskID),
+			Tags:   append([]string(nil), loc.Tags...),
+		})
+	}
 
 	for col, size := range collectionVolumeSize {
 		stats.VolumeServerDiskSizeGauge.WithLabelValues(col, "normal").Set(float64(size))
@@ -404,6 +506,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		Port:            uint32(s.Port),
 		GrpcPort:        uint32(s.GrpcPort),
 		PublicUrl:       s.PublicUrl,
+		Id:              s.Id,
 		MaxVolumeCounts: maxVolumeCounts,
 		MaxFileKey:      NeedleIdToUint64(maxFileKey),
 		DataCenter:      s.dataCenter,
@@ -413,6 +516,7 @@ func (s *Store) CollectHeartbeat() *master_pb.Heartbeat {
 		HasNoVolumes:    len(volumeMessages) == 0,
 		HasNoEcShards:   len(ecVolumeMessages) == 0,
 		LocationUuids:   uuidList,
+		DiskTags:        diskTags,
 	}
 
 }
@@ -455,6 +559,10 @@ func (s *Store) SetStopping() {
 	for _, location := range s.Locations {
 		location.SetStopping()
 	}
+}
+
+func (s *Store) IsStopping() bool {
+	return s.isStopping
 }
 
 func (s *Store) LoadNewVolumes() {

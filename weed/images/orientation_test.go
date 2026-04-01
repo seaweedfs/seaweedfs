@@ -1,9 +1,10 @@
 package images
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"os"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestXYZ(t *testing.T) {

@@ -1,9 +1,11 @@
 package security
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"net"
 	"os"
 	"slices"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/security/advancedtls"
@@ -22,6 +25,37 @@ const CredRefreshingInterval = time.Duration(5) * time.Hour
 type Authenticator struct {
 	AllowedWildcardDomain string
 	AllowedCommonNames    map[string]bool
+}
+
+// SNIStrippingTransportCredentials wraps another TransportCredentials
+// and strips the port from the authority in ClientHandshake to prevent
+// advancedtls from using the full "host:port" as ServerName in SNI.
+type SNIStrippingTransportCredentials struct {
+	creds credentials.TransportCredentials
+}
+
+func (s *SNIStrippingTransportCredentials) ClientHandshake(ctx context.Context, authority string, rawConn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	host, _, err := net.SplitHostPort(authority)
+	if err == nil {
+		authority = host
+	}
+	return s.creds.ClientHandshake(ctx, authority, rawConn)
+}
+
+func (s *SNIStrippingTransportCredentials) ServerHandshake(rawConn net.Conn) (net.Conn, credentials.AuthInfo, error) {
+	return s.creds.ServerHandshake(rawConn)
+}
+
+func (s *SNIStrippingTransportCredentials) Info() credentials.ProtocolInfo {
+	return s.creds.Info()
+}
+
+func (s *SNIStrippingTransportCredentials) Clone() credentials.TransportCredentials {
+	return &SNIStrippingTransportCredentials{creds: s.creds.Clone()}
+}
+
+func (s *SNIStrippingTransportCredentials) OverrideServerName(serverNameOverride string) error {
+	return s.creds.OverrideServerName(serverNameOverride)
 }
 
 func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption, grpc.ServerOption) {
@@ -151,7 +185,8 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 		glog.Warningf("advancedtls.NewClientCreds(%v) failed: %v", options, err)
 		return grpc.WithTransportCredentials(insecure.NewCredentials())
 	}
-	return grpc.WithTransportCredentials(ta)
+	wrapped := &SNIStrippingTransportCredentials{creds: ta}
+	return grpc.WithTransportCredentials(wrapped)
 }
 
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {

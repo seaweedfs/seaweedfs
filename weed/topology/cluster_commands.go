@@ -3,6 +3,7 @@ package topology
 import (
 	"encoding/json"
 	"fmt"
+
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -11,11 +12,13 @@ import (
 
 type MaxVolumeIdCommand struct {
 	MaxVolumeId needle.VolumeId `json:"maxVolumeId"`
+	TopologyId  string          `json:"topologyId"`
 }
 
-func NewMaxVolumeIdCommand(value needle.VolumeId) *MaxVolumeIdCommand {
+func NewMaxVolumeIdCommand(value needle.VolumeId, topologyId string) *MaxVolumeIdCommand {
 	return &MaxVolumeIdCommand{
 		MaxVolumeId: value,
+		TopologyId:  topologyId,
 	}
 }
 
@@ -28,7 +31,18 @@ func (c *MaxVolumeIdCommand) Apply(server raft.Server) (interface{}, error) {
 	topo := server.Context().(*Topology)
 	before := topo.GetMaxVolumeId()
 	topo.UpAdjustMaxVolumeId(c.MaxVolumeId)
-
+	if c.TopologyId != "" {
+		prevTopologyId := topo.GetTopologyId()
+		topo.SetTopologyId(c.TopologyId)
+		// Log when TopologyId is set for the first time, with different messages for leader and follower.
+		if prevTopologyId == "" {
+			if server.State() == raft.Leader {
+				glog.V(0).Infof("TopologyId generated and applied on leader: %s", c.TopologyId)
+			} else {
+				glog.V(0).Infof("TopologyId applied on follower: %s", c.TopologyId)
+			}
+		}
+	}
 	glog.V(1).Infoln("max volume id", before, "==>", topo.GetMaxVolumeId())
 
 	return nil, nil

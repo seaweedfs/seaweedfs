@@ -2,6 +2,10 @@ package localsink
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -10,9 +14,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"os"
-	"path/filepath"
-	"strings"
 )
 
 type LocalSink struct {

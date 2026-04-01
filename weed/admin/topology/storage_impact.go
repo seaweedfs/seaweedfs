@@ -28,6 +28,11 @@ func CalculateTaskStorageImpact(taskType TaskType, volumeSize int64) (sourceChan
 		// Replication task: creates new replica on target
 		return StorageSlotChange{VolumeSlots: 0, ShardSlots: 0}, StorageSlotChange{VolumeSlots: 1, ShardSlots: 0}
 
+	case TaskTypeECBalance:
+		// EC balance task: moves individual shard from source to target
+		// Source frees 1 shard slot, target gains 1 shard slot
+		return StorageSlotChange{VolumeSlots: 0, ShardSlots: -1}, StorageSlotChange{VolumeSlots: 0, ShardSlots: 1}
+
 	default:
 		// Unknown task type, assume minimal impact
 		glog.Warningf("unhandled task type %s in CalculateTaskStorageImpact, assuming default impact", taskType)

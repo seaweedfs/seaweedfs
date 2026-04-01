@@ -4,11 +4,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"math"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
 func TotalSize(chunks []*filer_pb.FileChunk) (size uint64) {
@@ -59,7 +59,8 @@ func ETagChunks(chunks []*filer_pb.FileChunk) (etag string) {
 	for _, c := range chunks {
 		md5Digests = append(md5Digests, util.Base64Md5ToBytes(c.ETag))
 	}
-	return fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5Digests, nil)), len(chunks))
+	finalETag := fmt.Sprintf("%x-%d", util.Md5(bytes.Join(md5Digests, nil)), len(chunks))
+	return finalETag
 }
 
 func CompactFileChunks(ctx context.Context, lookupFileIdFn wdclient.LookupFileIdFunctionType, chunks []*filer_pb.FileChunk) (compacted, garbage []*filer_pb.FileChunk) {

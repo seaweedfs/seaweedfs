@@ -363,7 +363,12 @@ func (vs *VolumeServer) maybeCheckJwtAuthorization(r *http.Request, vid, fid str
 		if sepIndex := strings.LastIndex(fid, "_"); sepIndex > 0 {
 			fid = fid[:sepIndex]
 		}
-		return sc.Fid == vid+","+fid
+		expectedFid := vid + "," + fid
+		if sc.Fid != expectedFid {
+			glog.V(1).Infof("jwt fid mismatch from %s: token has %q, request has %q", r.RemoteAddr, sc.Fid, expectedFid)
+			return false
+		}
+		return true
 	}
 	glog.V(1).Infof("unexpected jwt from %s: %v", r.RemoteAddr, tokenStr)
 	return false

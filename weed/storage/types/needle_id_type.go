@@ -2,8 +2,9 @@ package types
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"strconv"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type NeedleId uint64

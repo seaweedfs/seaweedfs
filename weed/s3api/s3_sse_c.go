@@ -16,6 +16,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
+// decryptReaderCloser wraps a cipher.StreamReader with proper Close() support
+// This ensures the underlying io.ReadCloser (like http.Response.Body) is properly closed
+type decryptReaderCloser struct {
+	io.Reader
+	underlyingCloser io.Closer
+}
+
+func (d *decryptReaderCloser) Close() error {
+	if d.underlyingCloser != nil {
+		return d.underlyingCloser.Close()
+	}
+	return nil
+}
+
 // SSECCopyStrategy represents different strategies for copying SSE-C objects
 type SSECCopyStrategy int
 
@@ -197,8 +211,17 @@ func CreateSSECDecryptedReader(r io.Reader, customerKey *SSECustomerKey, iv []by
 
 	// Create CTR mode cipher using the IV from metadata
 	stream := cipher.NewCTR(block, iv)
+	decryptReader := &cipher.StreamReader{S: stream, R: r}
 
-	return &cipher.StreamReader{S: stream, R: r}, nil
+	// Wrap with closer if the underlying reader implements io.Closer
+	if closer, ok := r.(io.Closer); ok {
+		return &decryptReaderCloser{
+			Reader:           decryptReader,
+			underlyingCloser: closer,
+		}, nil
+	}
+
+	return decryptReader, nil
 }
 
 // CreateSSECEncryptedReaderWithOffset creates an encrypted reader with a specific counter offset
@@ -240,31 +263,13 @@ func CreateSSECDecryptedReaderWithOffset(r io.Reader, customerKey *SSECustomerKe
 
 // createCTRStreamWithOffset creates a CTR stream positioned at a specific counter offset
 func createCTRStreamWithOffset(block cipher.Block, iv []byte, counterOffset uint64) cipher.Stream {
-	// Create a copy of the IV to avoid modifying the original
-	offsetIV := make([]byte, len(iv))
-	copy(offsetIV, iv)
-
-	// Calculate the counter offset in blocks (AES block size is 16 bytes)
-	blockOffset := counterOffset / 16
-
-	// Add the block offset to the counter portion of the IV
-	// In AES-CTR, the last 8 bytes of the IV are typically used as the counter
-	addCounterToIV(offsetIV, blockOffset)
-
-	return cipher.NewCTR(block, offsetIV)
-}
-
-// addCounterToIV adds a counter value to the IV (treating last 8 bytes as big-endian counter)
-func addCounterToIV(iv []byte, counter uint64) {
-	// Use the last 8 bytes as a big-endian counter
-	for i := 7; i >= 0; i-- {
-		carry := counter & 0xff
-		iv[len(iv)-8+i] += byte(carry)
-		if iv[len(iv)-8+i] >= byte(carry) {
-			break // No overflow
-		}
-		counter >>= 8
+	adjustedIV, skip := calculateIVWithOffset(iv, int64(counterOffset))
+	stream := cipher.NewCTR(block, adjustedIV)
+	if skip > 0 {
+		dummy := make([]byte, skip)
+		stream.XORKeyStream(dummy, dummy)
 	}
+	return stream
 }
 
 // GetSourceSSECInfo extracts SSE-C information from source object metadata

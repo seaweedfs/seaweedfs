@@ -29,7 +29,7 @@ sleep 2
 
 # Start SeaweedFS server
 echo "🗄️  Starting SeaweedFS server..."
-/tmp/weed server -dir=/tmp/seaweedfs-test -master.port=9333 -volume.port=8080 -filer.port=8888 -ip=localhost > /tmp/seaweed-server.log 2>&1 &
+/tmp/weed server -dir=/tmp/seaweedfs-test -master.port=9333 -volume.port=8080 -filer.port=8888 -ip=localhost -master.peers=none > /tmp/seaweed-server.log 2>&1 &
 SERVER_PID=$!
 
 # Wait for server to be ready

@@ -43,6 +43,7 @@ expires_after_seconds = 10           # seconds
 # If this JWT key is configured, Filer only accepts writes over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT
 # - the Filer server validates the JWT on writing
+# NOTE: This key is ALSO used as a fallback signing key for S3 STS if s3.iam.config does not specify a signingKey.
 # the jwt defaults to expire after 10 seconds.
 [jwt.filer_signing]
 key = ""
@@ -50,35 +51,44 @@ expires_after_seconds = 10           # seconds
 
 # If this JWT key is configured, Filer only accepts reads over HTTP if they are signed with this JWT:
 # - f.e. the S3 API Shim generates the JWT
-# - the Filer server validates the JWT on writing
+# - the Filer server validates the JWT on reading
 # the jwt defaults to expire after 10 seconds.
 [jwt.filer_signing.read]
 key = ""
 expires_after_seconds = 10           # seconds
 
-# all grpc tls authentications are mutual
-# the values for the following ca, cert, and key are paths to the PERM files.
-# the host name is not checked, so the PERM files can be shared.
+# gRPC mTLS configuration
+# All gRPC TLS authentications are mutual (mTLS)
+# The values for ca, cert, and key are paths to the certificate/key files
+# The host name is not checked, so the certificate files can be shared
 [grpc]
 ca = ""
 # Set wildcard domain for enable TLS authentication by common names
 allowed_wildcard_domain = "" # .mycompany.com
 
+# Volume server gRPC options (server-side)
+# Enables mTLS for incoming gRPC connections to volume server
 [grpc.volume]
 cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+# Master server gRPC options (server-side)
+# Enables mTLS for incoming gRPC connections to master server
 [grpc.master]
 cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+# Filer server gRPC options (server-side)
+# Enables mTLS for incoming gRPC connections to filer server
 [grpc.filer]
 cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
+# S3 server gRPC options (server-side)
+# Enables mTLS for incoming gRPC connections to S3 server
 [grpc.s3]
 cert = ""
 key = ""
@@ -109,44 +119,65 @@ cert = ""
 key = ""
 allowed_commonNames = ""    # comma-separated SSL certificate common names
 
-# use this for any place needs a grpc client
-# i.e., "weed backup|benchmark|filer.copy|filer.replicate|mount|s3|upload"
+# gRPC client configuration for outgoing gRPC connections
+# Used by clients (S3, mount, backup, benchmark, filer.copy, filer.replicate, upload, etc.)
+# when connecting to any gRPC server (master, volume, filer)
 [grpc.client]
 cert = ""
 key = ""
 
-# https client for master|volume|filer|etc connection
-# It is necessary that the parameters  [https.volume]|[https.master]|[https.filer]|[https.admin] are set
+# HTTPS client configuration for outgoing HTTP connections
+# Used by S3, mount, filer.copy, backup, and other clients when communicating with master/volume/filer
+# Set enabled=true to use HTTPS instead of HTTP for data operations (separate from gRPC)
+# If [https.filer] or [https.volume] are enabled on servers, clients must have [https.client] enabled=true
 [https.client]
-enabled = false
-cert = ""
-key = ""
-ca = ""
+enabled = false  # Set to true to enable HTTPS for all outgoing HTTP client connections
+cert = ""        # Client certificate for mTLS (optional if server doesn't require client cert)
+key = ""         # Client key for mTLS (optional if server doesn't require client cert)
+ca = ""          # CA certificate to verify server certificates (required when enabled=true)
+insecure_skip_verify = false  # Skip TLS certificate verification (NOT recommended for production)
 
-# volume server https options
+# Volume server HTTPS options (server-side)
+# Enables HTTPS for incoming HTTP connections to volume server
 [https.volume]
 cert = ""
 key = ""
 ca = ""
 
-# master server https options
+# Master server HTTPS options (server-side)
+# Enables HTTPS for incoming HTTP connections to master server (web UI, HTTP API)
 [https.master]
 cert = ""
 key = ""
 ca = ""
 
-# filer server https options
+# Filer server HTTPS options (server-side)
+# Enables HTTPS for incoming HTTP connections to filer server (web UI, HTTP API)
 [https.filer]
 cert = ""
 key = ""
 ca = ""
 # disable_tls_verify_client_cert = true|false (default: false)
 
-# admin server https options
+# Admin server HTTPS options (server-side)
+# Enables HTTPS for incoming HTTP connections to admin server
 [https.admin]
 cert = ""
 key = ""
 ca = ""
+
+# Admin server authentication
+# If password is set, users must login to access the admin interface
+# These can be overridden by environment variables with WEED_ prefix:
+#   WEED_ADMIN_USER, WEED_ADMIN_PASSWORD
+#   WEED_ADMIN_READONLY_USER, WEED_ADMIN_READONLY_PASSWORD
+[admin]
+user = ""
+password = ""
+
+[admin.readonly]
+user = ""
+password = ""
 
 # white list. It's checking request ip address.
 [guard]

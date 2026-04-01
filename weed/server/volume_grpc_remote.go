@@ -3,17 +3,22 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"sync"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"sync"
-	"time"
 )
 
 func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_server_pb.FetchAndWriteNeedleRequest) (resp *volume_server_pb.FetchAndWriteNeedleResponse, err error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
+
 	resp = &volume_server_pb.FetchAndWriteNeedleResponse{}
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
@@ -29,9 +34,21 @@ func (vs *VolumeServer) FetchAndWriteNeedle(ctx context.Context, req *volume_ser
 
 	remoteStorageLocation := req.RemoteLocation
 
-	data, ReadRemoteErr := client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
-	if ReadRemoteErr != nil {
-		return nil, fmt.Errorf("read from remote %+v: %v", remoteStorageLocation, ReadRemoteErr)
+	var data []byte
+	var readRemoteErr error
+	if cr, ok := client.(remote_storage.RemoteStorageConcurrentReader); ok {
+		concurrency := int(req.DownloadConcurrency)
+		if concurrency <= 0 {
+			concurrency = 0 // let the implementation choose its default
+		} else if concurrency > 64 {
+			concurrency = 64
+		}
+		data, readRemoteErr = cr.ReadFileWithConcurrency(remoteStorageLocation, req.Offset, req.Size, concurrency)
+	} else {
+		data, readRemoteErr = client.ReadFile(remoteStorageLocation, req.Offset, req.Size)
+	}
+	if readRemoteErr != nil {
+		return nil, fmt.Errorf("read from remote %+v: %w", remoteStorageLocation, readRemoteErr)
 	}
 
 	var wg sync.WaitGroup

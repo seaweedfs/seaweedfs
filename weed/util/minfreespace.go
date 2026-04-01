@@ -3,9 +3,10 @@ package util
 import (
 	"errors"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 // MinFreeSpaceType is the type of MinFreeSpace.
@@ -41,6 +42,20 @@ func (s MinFreeSpace) IsLow(freeBytes uint64, freePercent float32) (yes bool, de
 	}
 
 	return false, ""
+}
+
+func (s MinFreeSpace) AvailableSpace(freeBytes uint64, totalBytes uint64) uint64 {
+	var minFreeSpaceBytes uint64
+	switch s.Type {
+	case AsPercent:
+		minFreeSpaceBytes = uint64((float32(totalBytes) * s.Percent) / 100)
+	case AsBytes:
+		minFreeSpaceBytes = s.Bytes
+	}
+	if minFreeSpaceBytes > freeBytes {
+		return 0
+	}
+	return freeBytes - minFreeSpaceBytes
 }
 
 // String returns a string representation of MinFreeSpace.

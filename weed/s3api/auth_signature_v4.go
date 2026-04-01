@@ -22,10 +22,12 @@ import (
 	"crypto/hmac"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -34,6 +36,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	weed_iam "github.com/seaweedfs/seaweedfs/weed/iam"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
@@ -53,10 +56,11 @@ func (iam *IdentityAccessManagement) reqSignatureV4Verify(r *http.Request) (*Ide
 
 // Constants specific to this file
 const (
-	emptySHA256              = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-	streamingContentSHA256   = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
-	streamingUnsignedPayload = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
-	unsignedPayload          = "UNSIGNED-PAYLOAD"
+	emptySHA256                   = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+	streamingContentSHA256        = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD"
+	streamingContentSHA256Trailer = "STREAMING-AWS4-HMAC-SHA256-PAYLOAD-TRAILER"
+	streamingUnsignedPayload      = "STREAMING-UNSIGNED-PAYLOAD-TRAILER"
+	unsignedPayload               = "UNSIGNED-PAYLOAD"
 	// Limit for IAM/STS request body size to prevent DoS attacks
 	iamRequestBodyLimit = 10 * (1 << 20) // 10 MiB
 )
@@ -76,7 +80,7 @@ func streamHashRequestBody(r *http.Request, sizeLimit int64) (string, error) {
 		return "", err
 	}
 
-	r.Body = io.NopCloser(&bodyBuffer)
+	r.Body = io.NopCloser(bytes.NewReader(bodyBuffer.Bytes()))
 
 	if bodyBuffer.Len() == 0 {
 		return emptySHA256, nil
@@ -100,6 +104,24 @@ func getContentSha256Cksum(r *http.Request) string {
 
 	// X-Amz-Content-Sha256 header value is required for all non-presigned requests.
 	return emptySHA256
+}
+
+// normalizePayloadHash converts base64-encoded payload hash to hex format.
+// AWS SigV4 canonical requests always use hex-encoded SHA256.
+func normalizePayloadHash(payloadHashValue string) string {
+	// Special values and hex-encoded hashes don't need conversion
+	if payloadHashValue == emptySHA256 || payloadHashValue == unsignedPayload ||
+		payloadHashValue == streamingContentSHA256 || payloadHashValue == streamingContentSHA256Trailer ||
+		payloadHashValue == streamingUnsignedPayload || len(payloadHashValue) == 64 {
+		return payloadHashValue
+	}
+
+	// Try to decode as base64 and convert to hex
+	if decodedBytes, err := base64.StdEncoding.DecodeString(payloadHashValue); err == nil && len(decodedBytes) == 32 {
+		return hex.EncodeToString(decodedBytes)
+	}
+
+	return payloadHashValue
 }
 
 // signValues data type represents structured form of AWS Signature V4 header.
@@ -204,10 +226,40 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, errCode
 	}
 
-	// 2. Lookup user and credentials
-	identity, cred, found := iam.lookupByAccessKey(authInfo.AccessKey)
-	if !found {
-		return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
+	var cred *Credential
+
+	// 2. Check for STS session token
+	sessionToken := r.Header.Get("X-Amz-Security-Token")
+	if sessionToken == "" {
+		sessionToken = r.URL.Query().Get("X-Amz-Security-Token")
+	}
+	if sessionToken != "" {
+		// Validate STS session token
+		identity, cred, errCode = iam.validateSTSSessionToken(r, sessionToken, authInfo.AccessKey)
+		if errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
+		}
+	} else {
+		// 3. Lookup user and credentials
+		var found bool
+		identity, cred, found = iam.lookupByAccessKey(authInfo.AccessKey)
+		if !found {
+			// Log detailed error information for InvalidAccessKeyId (avoid slice allocation for performance)
+			iam.m.RLock()
+			keyCount := len(iam.accessKeyIdent)
+			iam.m.RUnlock()
+
+			glog.Warningf("InvalidAccessKeyId: attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+				authInfo.AccessKey, keyCount, iam.isAuthEnabled)
+			return nil, nil, "", nil, s3err.ErrInvalidAccessKeyID
+		}
+
+		// Check service account expiration
+		if cred.isCredentialExpired() {
+			glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+				authInfo.AccessKey, cred.Expiration, time.Now().Unix())
+			return nil, nil, "", nil, s3err.ErrAccessDenied
+		}
 	}
 
 	// 3. Perform permission check
@@ -217,8 +269,10 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			action = s3_constants.ACTION_WRITE
 		}
-		if !identity.canDo(Action(action), bucket, object) {
-			return nil, nil, "", nil, s3err.ErrAccessDenied
+
+		// Use centralized permission check
+		if errCode = iam.VerifyActionPermission(r, identity, Action(action), bucket, object); errCode != s3err.ErrNone {
+			return nil, nil, "", nil, errCode
 		}
 	}
 
@@ -230,7 +284,7 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 5. Extract headers that were part of the signature
-	extractedSignedHeaders, errCode := extractSignedHeaders(authInfo.SignedHeaders, r)
+	extractedSignedHeaders, errCode := extractSignedHeaders(authInfo.SignedHeaders, r, iam.externalHost)
 	if errCode != s3err.ErrNone {
 		return nil, nil, "", nil, errCode
 	}
@@ -251,8 +305,12 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 8. Verify the signature, trying with X-Forwarded-Prefix first
+	pathForSignature := r.URL.EscapedPath()
+	if pathForSignature == "" {
+		pathForSignature = r.URL.Path
+	}
 	if forwardedPrefix := r.Header.Get("X-Forwarded-Prefix"); forwardedPrefix != "" {
-		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, r.URL.Path)
+		cleanedPath := buildPathWithForwardedPrefix(forwardedPrefix, pathForSignature)
 		calculatedSignature, errCode = verify(cleanedPath)
 		if errCode == s3err.ErrNone {
 			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
@@ -260,12 +318,130 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 	}
 
 	// 9. Verify with the original path
-	calculatedSignature, errCode = verify(r.URL.Path)
-	if errCode != s3err.ErrNone {
-		return nil, nil, "", nil, errCode
+	calculatedSignature, errCode = verify(pathForSignature)
+	if errCode == s3err.ErrNone {
+		return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
 	}
 
-	return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+	// 10. Retry with decoded path if signature used raw path encoding
+	if decodedPath, decodeErr := url.PathUnescape(pathForSignature); decodeErr == nil && decodedPath != pathForSignature {
+		calculatedSignature, errCode = verify(decodedPath)
+		if errCode == s3err.ErrNone {
+			return identity, cred, calculatedSignature, authInfo, s3err.ErrNone
+		}
+	}
+
+	return nil, nil, "", nil, errCode
+}
+
+// validateSTSSessionToken validates an STS session token and extracts temporary credentials
+func (iam *IdentityAccessManagement) validateSTSSessionToken(r *http.Request, sessionToken string, accessKey string) (*Identity, *Credential, s3err.ErrorCode) {
+	// Check if IAM integration is available
+	if iam.iamIntegration == nil {
+		glog.V(2).Infof("IAM integration not available, cannot validate session token")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate the session token with the STS service
+	ctx := r.Context()
+	sessionInfo, err := iam.iamIntegration.ValidateSessionToken(ctx, sessionToken)
+	if err != nil {
+		glog.V(2).Infof("Failed to validate STS session token: %v", err)
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check if sessionInfo is nil
+	if sessionInfo == nil {
+		glog.Warningf("STS service returned nil session info for token validation")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check if Credentials are nil
+	if sessionInfo.Credentials == nil {
+		glog.Warningf("STS service returned nil credentials in session info")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate that credentials have the required access key
+	if sessionInfo.Credentials.AccessKeyId == "" {
+		glog.Warningf("STS service returned empty AccessKeyId in credentials")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Verify that the access key in the request matches the one in the session token
+	if sessionInfo.Credentials.AccessKeyId != accessKey {
+		// Mask access keys to avoid exposing credentials in logs
+		truncateKey := func(k string) string {
+			const mask = "***"
+			if len(k) > 4 {
+				return k[:4] + mask
+			}
+			return mask
+		}
+		glog.V(2).Infof("Access key mismatch: request has %s, session token has %s",
+			truncateKey(accessKey), truncateKey(sessionInfo.Credentials.AccessKeyId))
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Check if the session has expired
+	if sessionInfo.ExpiresAt.IsZero() {
+		glog.Warningf("STS service returned zero/empty expiration time")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	if time.Now().After(sessionInfo.ExpiresAt) {
+		glog.V(2).Infof("STS session has expired at %v", sessionInfo.ExpiresAt)
+		return nil, nil, s3err.ErrExpiredToken
+	}
+
+	// Validate required credential fields
+	if sessionInfo.Credentials.SecretAccessKey == "" {
+		glog.Warningf("STS service returned empty SecretAccessKey in credentials")
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Validate principal information
+	if sessionInfo.AssumedRoleUser == "" || sessionInfo.Principal == "" {
+		glog.Warningf("STS service returned empty AssumedRoleUser or Principal (user=%q, principal=%q)",
+			sessionInfo.AssumedRoleUser, sessionInfo.Principal)
+		return nil, nil, s3err.ErrInvalidAccessKeyID
+	}
+
+	// Create a credential from the session info
+	cred := &Credential{
+		AccessKey:  sessionInfo.Credentials.AccessKeyId,
+		SecretKey:  sessionInfo.Credentials.SecretAccessKey,
+		Status:     weed_iam.AccessKeyStatusActive,
+		Expiration: sessionInfo.ExpiresAt.Unix(),
+	}
+
+	// Create claims map from request context
+	// The request context contains user information from the original OIDC token
+	// that was used in AssumeRoleWithWebIdentity (e.g., preferred_username, email, etc.)
+	claims := make(map[string]interface{}, len(sessionInfo.RequestContext))
+	for k, v := range sessionInfo.RequestContext {
+		claims[k] = v
+	}
+
+	// Create an identity for the STS session
+	// The identity represents the assumed role user
+	identity := &Identity{
+		Name:         sessionInfo.AssumedRoleUser, // Use the assumed role user as the identity name
+		Account:      &AccountAdmin,               // STS sessions use admin account
+		Credentials:  []*Credential{cred},
+		PrincipalArn: sessionInfo.Principal,
+		PolicyNames:  sessionInfo.Policies, // Populate PolicyNames for IAM authorization
+		Claims:       claims,               // Populate Claims for policy variable substitution
+	}
+
+	// Restore admin privileges if the session was created by an admin
+	// if isAdmin, ok := claims["is_admin"].(bool); ok && isAdmin {
+	// 	identity.Actions = append(identity.Actions, s3_constants.ACTION_ADMIN)
+	// }
+
+	glog.V(2).Infof("Successfully validated STS session token for principal: %s, assumed role user: %s",
+		sessionInfo.Principal, sessionInfo.AssumedRoleUser)
+	return identity, cred, s3err.ErrNone
 }
 
 // calculateAndVerifySignature contains the core logic for creating the canonical request,
@@ -334,6 +510,10 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		}
 	}
 
+	// Normalize payload hash to hex format for canonical request
+	// AWS SigV4 canonical requests always use hex-encoded SHA256
+	normalizedPayload := normalizePayloadHash(hashedPayload)
+
 	return &v4AuthInfo{
 		Signature:     signV4Values.Signature,
 		AccessKey:     signV4Values.Credential.accessKey,
@@ -342,7 +522,7 @@ func extractV4AuthInfoFromHeader(r *http.Request) (*v4AuthInfo, s3err.ErrorCode)
 		Region:        signV4Values.Credential.scope.region,
 		Service:       signV4Values.Credential.scope.service,
 		Scope:         signV4Values.Credential.getScope(),
-		HashedPayload: hashedPayload,
+		HashedPayload: normalizedPayload,
 		IsPresigned:   false,
 	}, s3err.ErrNone
 }
@@ -543,11 +723,26 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 
 	identity, cred, found := iam.lookupByAccessKey(credHeader.accessKey)
 	if !found {
+		// Log detailed error information for InvalidAccessKeyId (POST policy)
+		iam.m.RLock()
+		availableKeyCount := len(iam.accessKeyIdent)
+		iam.m.RUnlock()
+
+		glog.Warningf("InvalidAccessKeyId (POST policy): attempted key '%s' not found. Available keys: %d, Auth enabled: %v",
+			credHeader.accessKey, availableKeyCount, iam.isAuthEnabled)
+
 		return s3err.ErrInvalidAccessKeyID
 	}
 
+	// Check service account expiration
+	if cred.isCredentialExpired() {
+		glog.V(2).Infof("Service account credential %s has expired (expiration: %d, now: %d)",
+			credHeader.accessKey, cred.Expiration, time.Now().Unix())
+		return s3err.ErrAccessDenied
+	}
+
 	bucket := formValues.Get("bucket")
-	if !identity.canDo(s3_constants.ACTION_WRITE, bucket, "") {
+	if !identity.CanDo(s3_constants.ACTION_WRITE, bucket, "") {
 		return s3err.ErrAccessDenied
 	}
 
@@ -565,7 +760,7 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 }
 
 // Verify if extracted signed headers are not properly signed.
-func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header, s3err.ErrorCode) {
+func extractSignedHeaders(signedHeaders []string, r *http.Request, externalHost string) (http.Header, s3err.ErrorCode) {
 	reqHeaders := r.Header
 	// If no signed headers are provided, then return an error.
 	if len(signedHeaders) == 0 {
@@ -574,9 +769,9 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 	extractedSignedHeaders := make(http.Header)
 	for _, header := range signedHeaders {
 		// `host` is not a case-sensitive header, unlike other headers such as `x-amz-date`.
-		if header == "host" {
+		if strings.ToLower(header) == "host" {
 			// Get host value.
-			hostHeaderValue := extractHostHeader(r)
+			hostHeaderValue := extractHostHeader(r, externalHost)
 			extractedSignedHeaders[header] = []string{hostHeaderValue}
 			continue
 		}
@@ -589,17 +784,30 @@ func extractSignedHeaders(signedHeaders []string, r *http.Request) (http.Header,
 	return extractedSignedHeaders, s3err.ErrNone
 }
 
-// extractHostHeader returns the value of host header if available.
-func extractHostHeader(r *http.Request) string {
+// extractHostHeader returns the value of host header to use for signature verification.
+// When externalHost is set (from s3.externalUrl), it is returned directly.
+// Otherwise, the host is reconstructed from X-Forwarded-* headers or the request Host,
+// with default port stripping to match AWS SDK SanitizeHostForHeader behavior.
+func extractHostHeader(r *http.Request, externalHost string) string {
+	if externalHost != "" {
+		return externalHost
+	}
+
 	forwardedHost := r.Header.Get("X-Forwarded-Host")
 	forwardedPort := r.Header.Get("X-Forwarded-Port")
 	forwardedProto := r.Header.Get("X-Forwarded-Proto")
 
-	// Determine the effective scheme with correct order of precedence:
-	// 1. X-Forwarded-Proto (most authoritative, reflects client's original protocol)
-	// 2. r.TLS (authoritative for direct connection to server)
-	// 3. r.URL.Scheme (fallback, may not always be set correctly)
-	// 4. Default to "http"
+	// X-Forwarded-Proto and X-Forwarded-Port can be comma-separated lists when there are multiple proxies.
+	// Use only the first value (first-hop).
+	if comma := strings.Index(forwardedPort, ","); comma != -1 {
+		forwardedPort = strings.TrimSpace(forwardedPort[:comma])
+	}
+	if comma := strings.Index(forwardedProto, ","); comma != -1 {
+		forwardedProto = strings.TrimSpace(forwardedProto[:comma])
+	}
+
+	// Determine effective scheme for default port stripping.
+	// Precedence: X-Forwarded-Proto > r.TLS > r.URL.Scheme > "http"
 	scheme := "http"
 	if r.URL.Scheme != "" {
 		scheme = r.URL.Scheme
@@ -620,11 +828,17 @@ func extractHostHeader(r *http.Request) string {
 		} else {
 			host = strings.TrimSpace(forwardedHost)
 		}
-		port = forwardedPort
+
+		// If the host itself contains a port, it should take precedence
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
-			if port == "" {
-				port = p
+			port = p
+		} else {
+			// If X-Forwarded-Host has no port, try to get port from r.Host if hostnames match
+			if rh, rp, err := net.SplitHostPort(r.Host); err == nil && rh == host {
+				port = rp
+			} else if forwardedPort != "" {
+				port = forwardedPort
 			}
 		}
 	} else {
@@ -632,39 +846,37 @@ func extractHostHeader(r *http.Request) string {
 		if host == "" {
 			host = r.URL.Host
 		}
+
+		// If the host already contains a port, use it.
+		// Otherwise, if X-Forwarded-Port is set, use it.
 		if h, p, err := net.SplitHostPort(host); err == nil {
 			host = h
 			port = p
+		} else if forwardedPort != "" {
+			port = forwardedPort
 		}
 	}
 
-	// If we have a non-default port, join it with the host.
-	// net.JoinHostPort will handle bracketing for IPv6.
+	// Strip default ports based on scheme to match AWS SDK SanitizeHostForHeader behavior.
+	// The AWS SDK strips port 80 for HTTP and port 443 for HTTPS before signing.
 	if port != "" && !isDefaultPort(scheme, port) {
 		// Strip existing brackets before calling JoinHostPort, which automatically adds
 		// brackets for IPv6 addresses. This prevents double-bracketing like [[::1]]:8080.
-		// Using Trim handles both well-formed and malformed bracketed hosts.
 		host = strings.Trim(host, "[]")
 		return net.JoinHostPort(host, port)
 	}
 
-	// No port or default port was stripped. According to AWS SDK behavior (aws-sdk-go-v2),
-	// when a default port is removed from an IPv6 address, the brackets should also be removed.
-	// This matches AWS S3 signature calculation requirements.
+	// Default port was stripped, or no port present.
+	// For IPv6 addresses, strip brackets to match AWS SDK behavior.
 	// Reference: https://github.com/aws/aws-sdk-go-v2/blob/main/aws/signer/internal/v4/host.go
-	// The stripPort function returns IPv6 without brackets when port is stripped.
 	if strings.Contains(host, ":") {
-		// This is an IPv6 address. Strip brackets to match AWS SDK behavior.
 		return strings.Trim(host, "[]")
 	}
 	return host
 }
 
+// isDefaultPort returns true if the given port is the default for the scheme.
 func isDefaultPort(scheme, port string) bool {
-	if port == "" {
-		return true
-	}
-
 	switch port {
 	case "80":
 		return strings.EqualFold(scheme, "http")

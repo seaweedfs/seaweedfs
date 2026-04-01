@@ -4,11 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
-	"io"
 )
 
 func init() {

@@ -1,7 +1,7 @@
 # S3 API Test Makefile
 # This Makefile provides comprehensive targets for running S3 versioning tests
 
-.PHONY: help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-comprehensive test-all clean logs check-deps
+.PHONY: all test help build-weed setup-server start-server stop-server test-versioning test-versioning-quick test-versioning-regressions test-versioning-comprehensive test-all clean logs check-deps
 
 # Configuration
 WEED_BINARY := ../../../weed/weed_binary
@@ -11,6 +11,12 @@ VOLUME_PORT := 8080
 FILER_PORT := 8888
 TEST_TIMEOUT := 10m
 TEST_PATTERN := TestVersioning
+
+.DEFAULT_GOAL := help
+
+all: test
+
+test: test-with-server
 
 # Default target
 help:
@@ -25,6 +31,7 @@ help:
 	@echo "  stop-server            - Stop SeaweedFS server"
 	@echo "  test-versioning        - Run all versioning tests"
 	@echo "  test-versioning-quick  - Run core versioning tests only"
+	@echo "  test-versioning-regressions - Run targeted versioning regression tests"
 	@echo "  test-versioning-simple - Run tests without server management"
 	@echo "  test-versioning-comprehensive - Run comprehensive versioning tests"
 	@echo "  test-all               - Run all S3 API tests"
@@ -43,13 +50,13 @@ build-weed:
 	@echo "Building SeaweedFS binary..."
 	@cd ../../../weed && go build -o weed_binary .
 	@chmod +x $(WEED_BINARY)
-	@echo "✅ SeaweedFS binary built at $(WEED_BINARY)"
+	@echo "OK SeaweedFS binary built at $(WEED_BINARY)"
 
 check-deps: build-weed
 	@echo "Checking dependencies..."
-	@echo "🔍 DEBUG: Checking Go installation..."
+	@echo "DEBUG: Checking Go installation..."
 	@command -v go >/dev/null 2>&1 || (echo "Go is required but not installed" && exit 1)
-	@echo "🔍 DEBUG: Go version: $$(go version)"
+	@echo "DEBUG: Go version: $$(go version)"
 	@echo "🔍 DEBUG: Checking binary at $(WEED_BINARY)..."
 	@test -f $(WEED_BINARY) || (echo "SeaweedFS binary not found at $(WEED_BINARY)" && exit 1)
 	@echo "🔍 DEBUG: Binary size: $$(ls -lh $(WEED_BINARY) | awk '{print $$5}')"
@@ -57,7 +64,7 @@ check-deps: build-weed
 	@echo "🔍 DEBUG: Checking Go module dependencies..."
 	@go list -m github.com/aws/aws-sdk-go-v2 >/dev/null 2>&1 || (echo "AWS SDK Go v2 not found. Run 'go mod tidy'." && exit 1)
 	@go list -m github.com/stretchr/testify >/dev/null 2>&1 || (echo "Testify not found. Run 'go mod tidy'." && exit 1)
-	@echo "✅ All dependencies are available"
+	@echo "OK All dependencies are available"
 
 # Start SeaweedFS server for testing
 start-server: check-deps
@@ -81,21 +88,11 @@ start-server: check-deps
 	@echo "🔍 DEBUG: Creating volume directory..."
 	@mkdir -p ./test-volume-data
 	@echo "🔍 DEBUG: Launching SeaweedFS server in background..."
-	@echo "🔍 DEBUG: Command: $(WEED_BINARY) server -debug -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=false -s3.allowDeleteBucketNotEmpty=true -s3.config=../../../docker/compose/s3.json -filer -filer.maxMB=64 -master.volumeSizeLimitMB=50 -volume.max=100 -dir=./test-volume-data -volume.preStopSeconds=1 -metricsPort=9324"
-	@$(WEED_BINARY) server \
-		-debug \
-		-s3 \
-		-s3.port=$(S3_PORT) \
-		-s3.allowEmptyFolder=false \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
+	@echo "🔍 DEBUG: Command: $(WEED_BINARY) mini -dir=./test-volume-data -s3.port=$(S3_PORT) -s3.config=../../../docker/compose/s3.json"
+	@$(WEED_BINARY) mini \
 		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
+		-s3.port=$(S3_PORT) \
+		-s3.config=../../../docker/compose/s3.json \
 		> weed-test.log 2>&1 & echo $$! > weed-server.pid
 	@echo "🔍 DEBUG: Server PID: $$(cat weed-server.pid 2>/dev/null || echo 'PID file not found')"
 	@echo "🔍 DEBUG: Checking if PID is still running..."
@@ -189,6 +186,12 @@ test-versioning-quick: check-deps
 	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestBucketListReturnDataVersioning|TestVersioningBasicWorkflow|TestVersioningDeleteMarkers" .
 	@echo "✅ Core versioning tests completed"
 
+# Targeted regressions for conditional mutation, multipart, copy, and suspended delete flows.
+test-versioning-regressions: check-deps
+	@echo "Running targeted S3 versioning regression tests..."
+	@go test -v -timeout=$(TEST_TIMEOUT) -run "TestVersioningCompleteMultipartUploadIsIdempotent|TestVersioningSelfCopyMetadataReplaceCreatesNewVersion|TestVersioningSelfCopyMetadataReplaceSuspendedKeepsNullVersion|TestSuspendedDeleteCreatesDeleteMarker" .
+	@echo "✅ Targeted versioning regression tests completed"
+
 # All versioning tests
 test-versioning: check-deps
 	@echo "Running all S3 versioning tests..."
@@ -222,13 +225,13 @@ test-with-server: start-server
 test-versioning-with-configs: check-deps
 	@echo "Testing with different S3 configurations..."
 	@echo "Testing with empty folder allowed..."
-	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowEmptyFolder=true -filer -master.volumeSizeLimitMB=100 -volume.max=100 > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
+	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) > weed-test-config1.log 2>&1 & echo $$! > weed-config1.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config1.pid ]; then kill -TERM $$(cat weed-config1.pid) 2>/dev/null || true; rm -f weed-config1.pid; fi
 	@sleep 2
 	@echo "Testing with delete bucket not empty disabled..."
-	@$(WEED_BINARY) server -s3 -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false -filer -master.volumeSizeLimitMB=100 -volume.max=100 > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
+	@$(WEED_BINARY) mini -s3.port=$(S3_PORT) -s3.allowDeleteBucketNotEmpty=false > weed-test-config2.log 2>&1 & echo $$! > weed-config2.pid
 	@sleep 5
 	@go test -v -timeout=5m -run "TestVersioningBasicWorkflow" . || true
 	@if [ -f weed-config2.pid ]; then kill -TERM $$(cat weed-config2.pid) 2>/dev/null || true; rm -f weed-config2.pid; fi
@@ -239,6 +242,13 @@ test-versioning-stress: check-deps
 	@echo "Running stress tests for versioning..."
 	@go test -v -timeout=20m -run "TestVersioningConcurrentOperations" . -count=5
 	@echo "✅ Stress tests completed"
+
+# Pagination stress testing (tests >1000 versions)
+test-versioning-pagination-stress: check-deps
+	@echo "Running pagination stress tests (>1000 versions)..."
+	@echo "This test creates 1500+ versions and may take several minutes..."
+	@ENABLE_STRESS_TESTS=true go test -v -timeout=30m -run "TestVersioningPagination" .
+	@echo "✅ Pagination stress tests completed"
 
 # Generate test reports
 test-report: check-deps
@@ -264,19 +274,14 @@ debug-server:
 	@echo "Starting SeaweedFS server in debug mode..."
 	@$(MAKE) stop-server
 	@mkdir -p ./test-volume-data
-	@$(WEED_BINARY) server \
+	@$(WEED_BINARY) mini \
 		-debug \
-		-s3 \
 		-s3.port=$(S3_PORT) \
-		-s3.allowEmptyFolder=false \
 		-s3.allowDeleteBucketNotEmpty=true \
 		-s3.config=../../../docker/compose/s3.json \
-		-filer \
 		-filer.maxMB=16 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
+		-master.peers=none \
 		-dir=./test-volume-data \
-		-volume.preStopSeconds=1 \
 		-metricsPort=9324
 
 # Run a single test for debugging
@@ -313,24 +318,24 @@ health-check:
 # Simple server start without process cleanup (for CI troubleshooting)
 start-server-simple: check-deps
 	@echo "Starting SeaweedFS server (simple mode)..."
-	@$(WEED_BINARY) server \
-		-debug \
+	@$(WEED_BINARY) mini \
+		-dir=$(SERVER_DIR) \
 		-s3 \
 		-s3.port=$(S3_PORT) \
-		-s3.allowEmptyFolder=false \
-		-s3.allowDeleteBucketNotEmpty=true \
-		-s3.config=../../../docker/compose/s3.json \
-		-filer \
-		-filer.maxMB=64 \
-		-master.volumeSizeLimitMB=50 \
-		-volume.max=100 \
-		-volume.preStopSeconds=1 \
-		-metricsPort=9324 \
-		> weed-test.log 2>&1 & echo $$! > weed-server.pid
-	@echo "Server PID: $$(cat weed-server.pid)"
-	@echo "Waiting for server to start..."
-	@sleep 10
-	@curl -s http://localhost:$(S3_PORT) >/dev/null 2>&1 && echo "✅ Server started successfully" || echo "❌ Server failed to start"
+		-s3.config=$(S3_CONFIG) \
+		> weed-server.log 2>&1 & \
+		echo $$! > weed-server.pid
+	
+	@echo "Waiting for S3 server to be ready..."
+	@for i in $$(seq 1 30); do \
+		if echo | nc -z localhost $(S3_PORT); then \
+			echo "S3 server is ready!"; \
+			exit 0; \
+		fi; \
+		sleep 1; \
+	done; \
+	echo "S3 server failed to start"; \
+	exit 1
 
 # Simple test run without server management
 test-versioning-simple: check-deps

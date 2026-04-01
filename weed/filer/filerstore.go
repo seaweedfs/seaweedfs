@@ -3,8 +3,9 @@ package filer
 import (
 	"context"
 	"errors"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"io"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 const CountEntryChunksForGzip = 50
@@ -16,7 +17,7 @@ var (
 	ErrKvNotFound                            = errors.New("kv: not found")
 )
 
-type ListEachEntryFunc func(entry *Entry) bool
+type ListEachEntryFunc func(entry *Entry) (bool, error)
 
 type FilerStore interface {
 	// GetName gets the name to locate the configuration in filer.toml file

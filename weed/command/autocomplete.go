@@ -2,12 +2,13 @@ package command
 
 import (
 	"fmt"
-	"github.com/posener/complete"
-	completeinstall "github.com/posener/complete/cmd/install"
-	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"os"
 	"path/filepath"
 	"runtime"
+
+	"github.com/posener/complete"
+	completeinstall "github.com/posener/complete/cmd/install"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 )
 
 func AutocompleteMain(commands []*Command) bool {

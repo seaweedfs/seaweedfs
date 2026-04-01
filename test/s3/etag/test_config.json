@@ -1,0 +1,20 @@
+{
+  "endpoint": "http://127.0.0.1:8333",
+  "access_key": "some_access_key1",
+  "secret_key": "some_secret_key1",
+  "region": "us-east-1",
+  "bucket_prefix": "test-etag-",
+  "notes": {
+    "description": "S3 ETag format integration tests",
+    "issue": "https://github.com/seaweedfs/seaweedfs/issues/7768",
+    "auto_chunk_size": "8MB - files larger than this trigger auto-chunking",
+    "test_sizes": {
+      "small": "1KB - single chunk",
+      "medium": "256KB - at inline threshold", 
+      "large": "10MB - 2 internal chunks",
+      "xl": "25MB - 4 internal chunks"
+    }
+  }
+}
+
+

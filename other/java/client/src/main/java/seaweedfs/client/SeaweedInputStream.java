@@ -23,7 +23,7 @@ public class SeaweedInputStream extends InputStream {
     private final long contentLength;
     private FilerProto.Entry entry;
 
-    private long position = 0;  // cursor of the file
+    private long position = 0; // cursor of the file
 
     private boolean closed = false;
 
@@ -44,7 +44,6 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
-
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
@@ -64,7 +63,6 @@ public class SeaweedInputStream extends InputStream {
         }
 
         this.contentLength = SeaweedRead.fileSize(entry);
-
         this.visibleIntervalList = SeaweedRead.nonOverlappingVisibleIntervals(filerClient, entry.getChunksList());
 
         LOG.debug("new path:{} entry:{} visibleIntervalList:{}", path, entry, visibleIntervalList);
@@ -99,7 +97,8 @@ public class SeaweedInputStream extends InputStream {
             throw new IllegalArgumentException("requested read length is less than zero");
         }
         if (len > (b.length - off)) {
-            throw new IllegalArgumentException("requested read length is more than will fit after requested offset in buffer");
+            throw new IllegalArgumentException(
+                    "requested read length is more than will fit after requested offset in buffer");
         }
 
         ByteBuffer buf = ByteBuffer.wrap(b, off, len);
@@ -114,19 +113,28 @@ public class SeaweedInputStream extends InputStream {
             throw new IllegalArgumentException("attempting to read from negative offset");
         }
         if (position >= contentLength) {
-            return -1;  // Hadoop prefers -1 to EOFException
+            return -1; // Hadoop prefers -1 to EOFException
         }
 
         long bytesRead = 0;
         int len = buf.remaining();
-        if (this.position< Integer.MAX_VALUE && (this.position + len )<= entry.getContent().size()) {
-            entry.getContent().substring((int)this.position, (int)(this.position + len)).copyTo(buf);
+        if (this.position < Integer.MAX_VALUE && (this.position + len) <= entry.getContent().size()) {
+            entry.getContent().substring((int) this.position, (int) (this.position + len)).copyTo(buf);
+            bytesRead = len; // FIX: Update bytesRead after inline copy
         } else {
-            bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf, SeaweedRead.fileSize(entry));
+            // Use the known contentLength instead of recomputing from the entry to avoid
+            // races
+            bytesRead = SeaweedRead.read(this.filerClient, this.visibleIntervalList, this.position, buf,
+                    this.contentLength);
         }
 
         if (bytesRead > Integer.MAX_VALUE) {
             throw new IOException("Unexpected Content-Length");
+        }
+
+        // Clamp premature EOFs: do not return -1 unless position >= contentLength
+        if (bytesRead < 0 && position < contentLength) {
+            bytesRead = 0;
         }
 
         if (bytesRead > 0) {
@@ -188,12 +196,15 @@ public class SeaweedInputStream extends InputStream {
         }
         final long remaining = this.contentLength - this.position;
         return remaining <= Integer.MAX_VALUE
-                ? (int) remaining : Integer.MAX_VALUE;
+                ? (int) remaining
+                : Integer.MAX_VALUE;
     }
 
     /**
-     * Returns the length of the file that this stream refers to. Note that the length returned is the length
-     * as of the time the Stream was opened. Specifically, if there have been subsequent appends to the file,
+     * Returns the length of the file that this stream refers to. Note that the
+     * length returned is the length
+     * as of the time the Stream was opened. Specifically, if there have been
+     * subsequent appends to the file,
      * they wont be reflected in the returned length.
      *
      * @return length of the file.

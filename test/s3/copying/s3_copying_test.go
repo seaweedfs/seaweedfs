@@ -8,6 +8,7 @@ import (
 	"io"
 	mathrand "math/rand"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -43,9 +44,11 @@ var defaultConfig = &S3TestConfig{
 	SkipVerifySSL: true,
 }
 
-// Initialize math/rand with current time to ensure randomness
 func init() {
 	mathrand.Seed(time.Now().UnixNano())
+	if endpoint := os.Getenv("S3_ENDPOINT"); endpoint != "" {
+		defaultConfig.Endpoint = endpoint
+	}
 }
 
 // getS3Client creates an AWS S3 client for testing

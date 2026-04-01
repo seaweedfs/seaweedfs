@@ -2,7 +2,6 @@ package operation
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"io"
 	"math/rand/v2"
 	"mime"
@@ -11,6 +10,8 @@ import (
 	"path"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 
 	"google.golang.org/grpc"
 

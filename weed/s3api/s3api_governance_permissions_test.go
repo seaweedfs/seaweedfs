@@ -181,9 +181,9 @@ func TestCheckGovernanceBypassPermissionIntegrationBehavior(t *testing.T) {
 	//
 	// 1. Function calls s3a.iam.authRequest() with the bypass action
 	// 2. If authRequest returns errCode != s3err.ErrNone, function returns false
-	// 3. If authRequest succeeds, function checks identity.canDo() with the bypass action
-	// 4. If canDo() returns true, function returns true
-	// 5. If bypass permission fails, function checks admin action with identity.canDo()
+	// 3. If authRequest succeeds, function checks identity.CanDo() with the bypass action
+	// 4. If CanDo() returns true, function returns true
+	// 5. If bypass permission fails, function checks admin action with identity.CanDo()
 	// 6. If admin action succeeds, function returns true and logs admin access
 	// 7. If all checks fail, function returns false
 	//

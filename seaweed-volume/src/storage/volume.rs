@@ -1,0 +1,4246 @@
+//! Volume: the core storage unit — a .dat file + .idx index.
+//!
+//! Each volume contains many needles (files). It manages:
+//!   - Reading/writing/deleting needles from the .dat file
+//!   - Maintaining the in-memory NeedleMap (NeedleId → Offset+Size)
+//!   - SuperBlock at offset 0 of the .dat file
+//!   - Metrics (file count, content size, deleted count)
+//!
+//! Matches Go's storage/volume.go, volume_loading.go, volume_read.go,
+//! volume_write.go, volume_super_block.go.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::sync::{Condvar, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use tracing::warn;
+
+use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
+use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
+use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
+use crate::storage::types::*;
+
+// ============================================================================
+// Errors
+// ============================================================================
+
+#[derive(Debug, thiserror::Error)]
+pub enum VolumeError {
+    #[error("not found")]
+    NotFound,
+
+    #[error("already deleted")]
+    Deleted,
+
+    #[error("needle size mismatch")]
+    SizeMismatch,
+
+    #[error("unsupported version: {0}")]
+    UnsupportedVersion(u8),
+
+    #[error("cookie mismatch: {0:#x}")]
+    CookieMismatch(u32),
+
+    #[error("volume not empty")]
+    NotEmpty,
+
+    #[error("volume already exists")]
+    AlreadyExists,
+
+    #[error("volume is read-only")]
+    ReadOnly,
+
+    #[error("volume size limit exceeded: current {current}, limit {limit}")]
+    SizeLimitExceeded { current: u64, limit: u64 },
+
+    #[error("volume not initialized")]
+    NotInitialized,
+
+    #[error("needle error: {0}")]
+    Needle(#[from] NeedleError),
+
+    #[error("super block error: {0}")]
+    SuperBlock(#[from] crate::storage::super_block::SuperBlockError),
+
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+
+    #[error("streaming from remote-backed volume requires buffered fallback")]
+    StreamingUnsupported,
+}
+
+// ============================================================================
+// VolumeInfo (.vif persistence)
+// ============================================================================
+
+/// Legacy simple VolumeInfo for backward compat with old .vif files.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct VolumeInfo {
+    read_only: bool,
+}
+
+pub use crate::pb::volume_server_pb::RemoteFile as PbRemoteFile;
+/// Protobuf VolumeInfo type alias.
+pub use crate::pb::volume_server_pb::VolumeInfo as PbVolumeInfo;
+
+/// Helper module for deserializing protojson uint64 fields that may be strings or numbers.
+mod string_or_u64 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        // Emit as string to match Go's protojson format for uint64
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<u64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(u64),
+        }
+        match StringOrNum::deserialize(deserializer)? {
+            StringOrNum::Str(s) => s.parse::<u64>().map_err(serde::de::Error::custom),
+            StringOrNum::Num(n) => Ok(n),
+        }
+    }
+}
+
+mod string_or_i64 {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &i64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&value.to_string())
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<i64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum StringOrNum {
+            Str(String),
+            Num(i64),
+        }
+        match StringOrNum::deserialize(deserializer)? {
+            StringOrNum::Str(s) => s.parse::<i64>().map_err(serde::de::Error::custom),
+            StringOrNum::Num(n) => Ok(n),
+        }
+    }
+}
+
+/// Serde-compatible representation of RemoteFile for .vif JSON serialization.
+/// Field names use snake_case to match Go's protobuf JSON output (jsonpb).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct VifRemoteFile {
+    #[serde(default, rename = "backendType")]
+    pub backend_type: String,
+    #[serde(default, rename = "backendId")]
+    pub backend_id: String,
+    #[serde(default)]
+    pub key: String,
+    #[serde(default, with = "string_or_u64")]
+    pub offset: u64,
+    #[serde(default, rename = "fileSize", with = "string_or_u64")]
+    pub file_size: u64,
+    #[serde(default, rename = "modifiedTime", with = "string_or_u64")]
+    pub modified_time: u64,
+    #[serde(default)]
+    pub extension: String,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct VifEcShardConfig {
+    #[serde(default, rename = "dataShards")]
+    pub data_shards: u32,
+    #[serde(default, rename = "parityShards")]
+    pub parity_shards: u32,
+}
+
+/// Serde-compatible representation of OldVersionVolumeInfo for legacy .vif JSON deserialization.
+/// Matches Go's protobuf OldVersionVolumeInfo where `DestroyTime` maps to `expire_at_sec`.
+#[derive(serde::Deserialize, Default)]
+struct OldVersionVifVolumeInfo {
+    #[serde(default)]
+    pub files: Vec<VifRemoteFile>,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub replication: String,
+    #[serde(default, alias = "bytesOffset", alias = "BytesOffset")]
+    pub bytes_offset: u32,
+    #[serde(default, alias = "datFileSize", alias = "dat_file_size", with = "string_or_i64")]
+    pub dat_file_size: i64,
+    #[serde(default, alias = "destroyTime", alias = "DestroyTime", with = "string_or_u64")]
+    pub destroy_time: u64,
+    #[serde(default, alias = "readOnly", alias = "read_only")]
+    pub read_only: bool,
+}
+
+impl OldVersionVifVolumeInfo {
+    /// Convert to the standard VifVolumeInfo, mapping destroy_time -> expire_at_sec.
+    fn to_vif(self) -> VifVolumeInfo {
+        VifVolumeInfo {
+            files: self.files,
+            version: self.version,
+            replication: self.replication,
+            bytes_offset: self.bytes_offset,
+            dat_file_size: self.dat_file_size,
+            expire_at_sec: self.destroy_time,
+            read_only: self.read_only,
+            ec_shard_config: None,
+        }
+    }
+}
+
+/// Serde-compatible representation of VolumeInfo for .vif JSON serialization.
+/// Matches Go's protobuf JSON format (jsonpb with EmitUnpopulated=true).
+#[derive(serde::Serialize, serde::Deserialize, Default, Clone)]
+pub struct VifVolumeInfo {
+    #[serde(default)]
+    pub files: Vec<VifRemoteFile>,
+    #[serde(default)]
+    pub version: u32,
+    #[serde(default)]
+    pub replication: String,
+    #[serde(default, rename = "bytesOffset")]
+    pub bytes_offset: u32,
+    #[serde(default, rename = "datFileSize", with = "string_or_i64")]
+    pub dat_file_size: i64,
+    #[serde(default, rename = "expireAtSec", with = "string_or_u64")]
+    pub expire_at_sec: u64,
+    #[serde(default, rename = "readOnly")]
+    pub read_only: bool,
+    #[serde(
+        default,
+        rename = "ecShardConfig",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ec_shard_config: Option<VifEcShardConfig>,
+}
+
+impl VifVolumeInfo {
+    /// Convert from protobuf VolumeInfo to the serde-compatible struct.
+    pub fn from_pb(pb: &PbVolumeInfo) -> Self {
+        Self {
+            files: pb
+                .files
+                .iter()
+                .map(|f| VifRemoteFile {
+                    backend_type: f.backend_type.clone(),
+                    backend_id: f.backend_id.clone(),
+                    key: f.key.clone(),
+                    offset: f.offset,
+                    file_size: f.file_size,
+                    modified_time: f.modified_time,
+                    extension: f.extension.clone(),
+                })
+                .collect(),
+            version: pb.version,
+            replication: pb.replication.clone(),
+            bytes_offset: pb.bytes_offset,
+            dat_file_size: pb.dat_file_size,
+            expire_at_sec: pb.expire_at_sec,
+            read_only: pb.read_only,
+            ec_shard_config: pb.ec_shard_config.as_ref().map(|c| VifEcShardConfig {
+                data_shards: c.data_shards,
+                parity_shards: c.parity_shards,
+            }),
+        }
+    }
+
+    /// Convert to protobuf VolumeInfo.
+    pub fn to_pb(&self) -> PbVolumeInfo {
+        PbVolumeInfo {
+            files: self
+                .files
+                .iter()
+                .map(|f| PbRemoteFile {
+                    backend_type: f.backend_type.clone(),
+                    backend_id: f.backend_id.clone(),
+                    key: f.key.clone(),
+                    offset: f.offset,
+                    file_size: f.file_size,
+                    modified_time: f.modified_time,
+                    extension: f.extension.clone(),
+                })
+                .collect(),
+            version: self.version,
+            replication: self.replication.clone(),
+            bytes_offset: self.bytes_offset,
+            dat_file_size: self.dat_file_size,
+            expire_at_sec: self.expire_at_sec,
+            read_only: self.read_only,
+            ec_shard_config: self.ec_shard_config.as_ref().map(|c| {
+                crate::pb::volume_server_pb::EcShardConfig {
+                    data_shards: c.data_shards,
+                    parity_shards: c.parity_shards,
+                }
+            }),
+        }
+    }
+}
+
+// ============================================================================
+// Streaming read support
+// ============================================================================
+
+#[derive(Default)]
+struct DataFileAccessState {
+    readers: usize,
+    writer_active: bool,
+}
+
+#[derive(Default)]
+pub struct DataFileAccessControl {
+    state: Mutex<DataFileAccessState>,
+    condvar: Condvar,
+}
+
+pub struct DataFileReadLease {
+    control: Arc<DataFileAccessControl>,
+}
+
+pub struct DataFileWriteLease {
+    control: Arc<DataFileAccessControl>,
+}
+
+impl DataFileAccessControl {
+    pub fn read_lock(self: &Arc<Self>) -> DataFileReadLease {
+        let mut state = self.state.lock().unwrap();
+        while state.writer_active {
+            state = self.condvar.wait(state).unwrap();
+        }
+        state.readers += 1;
+        drop(state);
+        DataFileReadLease {
+            control: self.clone(),
+        }
+    }
+
+    pub fn write_lock(self: &Arc<Self>) -> DataFileWriteLease {
+        let mut state = self.state.lock().unwrap();
+        while state.writer_active || state.readers > 0 {
+            state = self.condvar.wait(state).unwrap();
+        }
+        state.writer_active = true;
+        drop(state);
+        DataFileWriteLease {
+            control: self.clone(),
+        }
+    }
+}
+
+impl Drop for DataFileReadLease {
+    fn drop(&mut self) {
+        let mut state = self.control.state.lock().unwrap();
+        state.readers -= 1;
+        if state.readers == 0 {
+            self.control.condvar.notify_all();
+        }
+    }
+}
+
+impl Drop for DataFileWriteLease {
+    fn drop(&mut self) {
+        let mut state = self.control.state.lock().unwrap();
+        state.writer_active = false;
+        self.control.condvar.notify_all();
+    }
+}
+
+/// Information needed to stream needle data directly from the dat file
+/// without loading the entire payload into memory.
+pub(crate) enum NeedleStreamSource {
+    Local(File),
+    Remote(RemoteDatFile),
+}
+
+impl NeedleStreamSource {
+    pub(crate) fn clone_for_read(&self) -> io::Result<Self> {
+        match self {
+            NeedleStreamSource::Local(file) => Ok(NeedleStreamSource::Local(file.try_clone()?)),
+            NeedleStreamSource::Remote(remote) => Ok(NeedleStreamSource::Remote(remote.clone())),
+        }
+    }
+
+    pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        match self {
+            NeedleStreamSource::Local(file) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::FileExt;
+                    file.read_exact_at(buf, offset)?;
+                }
+                #[cfg(windows)]
+                {
+                    read_exact_at(file, buf, offset)?;
+                }
+                #[cfg(not(any(unix, windows)))]
+                {
+                    compile_error!("Platform not supported: only unix and windows are supported");
+                }
+                Ok(())
+            }
+            NeedleStreamSource::Remote(remote) => remote.read_exact_at(buf, offset),
+        }
+    }
+}
+
+pub struct NeedleStreamInfo {
+    /// Stream source for the dat file, local or remote.
+    pub(crate) source: NeedleStreamSource,
+    /// Absolute byte offset within the dat file where needle data starts.
+    pub data_file_offset: u64,
+    /// Size of the data payload in bytes.
+    pub data_size: u32,
+    /// Per-volume file access lock used to match Go's slow-read behavior.
+    pub data_file_access_control: Arc<DataFileAccessControl>,
+    /// Volume ID — used to re-lookup needle offset if compaction occurs during streaming.
+    pub volume_id: VolumeId,
+    /// Needle ID — used to re-lookup needle offset if compaction occurs during streaming.
+    pub needle_id: NeedleId,
+    /// Compaction revision at the time of the initial read. If this changes during
+    /// streaming, the needle's disk offset must be re-read from the needle map because
+    /// compaction may have moved the needle to a different location.
+    pub compaction_revision: u16,
+}
+
+#[derive(Clone)]
+pub(crate) struct RemoteDatFile {
+    backend: Arc<crate::remote_storage::s3_tier::S3TierBackend>,
+    key: String,
+    file_size: u64,
+    modified_time: u64,
+}
+
+impl RemoteDatFile {
+    pub(crate) fn read_exact_at(&self, buf: &mut [u8], offset: u64) -> io::Result<()> {
+        let data = self
+            .backend
+            .read_range_blocking(&self.key, offset, buf.len())
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        if data.len() != buf.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                format!(
+                    "remote read short read at offset {}: got {}, expected {}",
+                    offset,
+                    data.len(),
+                    buf.len()
+                ),
+            ));
+        }
+        buf.copy_from_slice(&data);
+        Ok(())
+    }
+}
+
+// ============================================================================
+// Volume
+// ============================================================================
+
+pub struct Volume {
+    pub id: VolumeId,
+    dir: String,
+    dir_idx: String,
+    pub collection: String,
+
+    dat_file: Option<File>,
+    remote_dat_file: Option<RemoteDatFile>,
+    nm: Option<NeedleMap>,
+    needle_map_kind: NeedleMapKind,
+    data_file_access_control: Arc<DataFileAccessControl>,
+
+    pub super_block: SuperBlock,
+
+    no_write_or_delete: bool,
+    no_write_can_delete: bool,
+
+    /// Shared flag from the parent DiskLocation indicating low disk space.
+    /// Matches Go's `v.location.isDiskSpaceLow` checked in `IsReadOnly()`.
+    pub location_disk_space_low: Arc<AtomicBool>,
+
+    last_modified_ts_seconds: u64,
+    last_append_at_ns: u64,
+
+    last_compact_index_offset: u64,
+    last_compact_revision: u16,
+
+    is_compacting: bool,
+
+    /// Compaction speed limit in bytes per second (0 = unlimited).
+    pub compaction_byte_per_second: i64,
+
+    /// Tracks the last I/O error (EIO) for volume health monitoring.
+    /// Uses Mutex for interior mutability so reads (&self) can clear/set it.
+    last_io_error: Mutex<Option<String>>,
+
+    /// Protobuf VolumeInfo for tiered storage (.vif file).
+    pub volume_info: PbVolumeInfo,
+
+    /// Whether this volume has a remote file reference.
+    pub has_remote_file: bool,
+}
+
+/// Windows helper: loop seek_read until buffer is fully filled.
+#[cfg(windows)]
+fn read_exact_at(file: &File, buf: &mut [u8], mut offset: u64) -> io::Result<()> {
+    use std::os::windows::fs::FileExt;
+    let mut filled = 0;
+    while filled < buf.len() {
+        let n = file.seek_read(&mut buf[filled..], offset)?;
+        if n == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "unexpected EOF in seek_read",
+            ));
+        }
+        filled += n;
+        offset += n as u64;
+    }
+    Ok(())
+}
+
+impl Volume {
+    /// Create and load a volume from disk.
+    pub fn new(
+        dirname: &str,
+        dir_idx: &str,
+        collection: &str,
+        id: VolumeId,
+        needle_map_kind: NeedleMapKind,
+        replica_placement: Option<ReplicaPlacement>,
+        ttl: Option<crate::storage::needle::ttl::TTL>,
+        preallocate: u64,
+        version: Version,
+    ) -> Result<Self, VolumeError> {
+        let mut v = Volume {
+            id,
+            dir: dirname.to_string(),
+            dir_idx: dir_idx.to_string(),
+            collection: collection.to_string(),
+            dat_file: None,
+            remote_dat_file: None,
+            nm: None,
+            needle_map_kind,
+            data_file_access_control: Arc::new(DataFileAccessControl::default()),
+            super_block: SuperBlock {
+                replica_placement: replica_placement.unwrap_or_default(),
+                ttl: ttl.unwrap_or(crate::storage::needle::ttl::TTL::EMPTY),
+                ..SuperBlock::default()
+            },
+            no_write_or_delete: false,
+            no_write_can_delete: false,
+            location_disk_space_low: Arc::new(AtomicBool::new(false)),
+            last_modified_ts_seconds: 0,
+            last_append_at_ns: 0,
+            last_compact_index_offset: 0,
+            last_compact_revision: 0,
+            is_compacting: false,
+            compaction_byte_per_second: 0,
+            last_io_error: Mutex::new(None),
+            volume_info: PbVolumeInfo::default(),
+            has_remote_file: false,
+        };
+
+        v.load(true, true, preallocate, version)?;
+        Ok(v)
+    }
+
+    /// Returns true if the volume is currently being compacted.
+    pub fn is_compacting(&self) -> bool {
+        self.is_compacting
+    }
+
+    // ---- File naming (matching Go) ----
+
+    /// Base filename: dir/collection_id or dir/id
+    pub fn data_file_name(&self) -> String {
+        volume_file_name(&self.dir, &self.collection, self.id)
+    }
+
+    pub fn index_file_name(&self) -> String {
+        volume_file_name(&self.dir_idx, &self.collection, self.id)
+    }
+
+    pub fn file_name(&self, ext: &str) -> String {
+        match ext {
+            ".idx" | ".cpx" | ".ldb" | ".cpldb" | ".rdb" => {
+                format!("{}{}", self.index_file_name(), ext)
+            }
+            _ => {
+                format!("{}{}", self.data_file_name(), ext)
+            }
+        }
+    }
+
+    pub fn version(&self) -> Version {
+        if self.volume_info.version != 0 {
+            Version(self.volume_info.version as u8)
+        } else {
+            self.super_block.version
+        }
+    }
+
+    // ---- Loading ----
+
+    fn load(
+        &mut self,
+        also_load_index: bool,
+        create_dat_if_missing: bool,
+        preallocate: u64,
+        version: Version,
+    ) -> Result<(), VolumeError> {
+        let dat_path = self.file_name(".dat");
+        let mut already_has_super_block = false;
+
+        let has_volume_info_file = self.load_vif()?;
+
+        if self.volume_info.read_only && !self.has_remote_file {
+            self.no_write_or_delete = true;
+        }
+
+        if self.has_remote_file {
+            self.load_remote_dat_file()?;
+            if let Some(remote_file) = self.volume_info.files.first() {
+                if remote_file.modified_time > 0 {
+                    self.last_modified_ts_seconds = remote_file.modified_time;
+                } else if let Ok(metadata) = fs::metadata(self.vif_path()) {
+                    self.last_modified_ts_seconds = metadata
+                        .modified()
+                        .unwrap_or(SystemTime::UNIX_EPOCH)
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                }
+            }
+            already_has_super_block = true;
+        } else if Path::new(&dat_path).exists() {
+            let metadata = fs::metadata(&dat_path)?;
+
+            // Try to open read-write; fall back to read-only
+            match OpenOptions::new().read(true).write(true).open(&dat_path) {
+                Ok(file) => {
+                    self.dat_file = Some(file);
+                }
+                Err(e) if e.kind() == io::ErrorKind::PermissionDenied => {
+                    self.dat_file = Some(File::open(&dat_path)?);
+                    self.no_write_or_delete = true;
+                }
+                Err(e) => return Err(e.into()),
+            }
+
+            self.last_modified_ts_seconds = metadata
+                .modified()
+                .unwrap_or(SystemTime::UNIX_EPOCH)
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+
+            if metadata.len() >= SUPER_BLOCK_SIZE as u64 {
+                already_has_super_block = true;
+            }
+        } else if create_dat_if_missing {
+            // Create directory if needed
+            if let Some(parent) = Path::new(&dat_path).parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&dat_path)?;
+            if preallocate > 0 {
+                preallocate_file(&file, preallocate);
+            }
+            self.dat_file = Some(file);
+        } else {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("volume data file {} does not exist", dat_path),
+            )));
+        }
+
+        if already_has_super_block {
+            match self.read_super_block() {
+                Ok(()) => {
+                    if !self.super_block.version.is_supported() {
+                        return Err(VolumeError::UnsupportedVersion(self.super_block.version.0));
+                    }
+                    // Match Go: v.volumeInfo.Version = uint32(v.SuperBlock.Version)
+                    self.volume_info.version = self.super_block.version.0 as u32;
+                }
+                Err(e) if self.has_remote_file => {
+                    warn!(
+                        volume_id = self.id.0,
+                        error = %e,
+                        "failed to read remote super block during load"
+                    );
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            self.maybe_write_super_block(version)?;
+        }
+
+        if also_load_index {
+            self.load_index()?;
+
+            // Match Go: CheckVolumeDataIntegrity after loading index (volume_loading.go L154-159)
+            // Only for non-remote volumes (remote storage may not have local .dat)
+            if !self.has_remote_file {
+                if let Err(e) = self.check_volume_data_integrity() {
+                    self.no_write_or_delete = true;
+                    warn!(
+                        volume_id = self.id.0,
+                        error = %e,
+                        "volumeDataIntegrityChecking failed"
+                    );
+                }
+            }
+        }
+
+        // Match Go: if no .vif file existed, create one with version and bytes_offset
+        if !has_volume_info_file {
+            self.volume_info.version = self.super_block.version.0 as u32;
+            self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+            if let Err(e) = self.save_volume_info() {
+                warn!(
+                    volume_id = self.id.0,
+                    error = %e,
+                    "failed to save volume info"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn load_index(&mut self) -> Result<(), VolumeError> {
+        let use_redb = matches!(
+            self.needle_map_kind,
+            NeedleMapKind::LevelDb | NeedleMapKind::LevelDbMedium | NeedleMapKind::LevelDbLarge
+        );
+
+        let idx_path = self.file_name(".idx");
+
+        // Ensure idx directory exists
+        if let Some(parent) = Path::new(&idx_path).parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        if use_redb {
+            self.load_index_redb(&idx_path)?;
+        } else {
+            self.load_index_inmemory(&idx_path)?;
+        }
+
+        Ok(())
+    }
+
+    /// Load index using in-memory CompactNeedleMap.
+    fn load_index_inmemory(&mut self, idx_path: &str) -> Result<(), VolumeError> {
+        if self.no_write_or_delete {
+            // Open read-only
+            if Path::new(&idx_path).exists() {
+                let mut idx_file = File::open(&idx_path)?;
+                let nm = CompactNeedleMap::load_from_idx(&mut idx_file)?;
+                self.nm = Some(NeedleMap::InMemory(nm));
+            } else {
+                // Missing .idx with existing .dat could orphan needles
+                let dat_path = self.file_name(".dat");
+                if Path::new(&dat_path).exists() {
+                    let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                    if dat_size > SUPER_BLOCK_SIZE as u64 {
+                        warn!(
+                            volume_id = self.id.0,
+                            ".idx file missing but .dat exists with data; needles may be orphaned"
+                        );
+                    }
+                }
+                self.nm = Some(NeedleMap::InMemory(CompactNeedleMap::new()));
+            }
+        } else {
+            // Open read-write (create if missing)
+            let idx_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&idx_path)?;
+
+            let idx_size = idx_file.metadata()?.len();
+            let mut idx_reader = io::BufReader::new(&idx_file);
+            let mut nm = CompactNeedleMap::load_from_idx(&mut idx_reader)?;
+
+            // Re-open for append-only writes
+            let write_file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(&idx_path)?;
+            nm.set_idx_file(Box::new(write_file), idx_size);
+            self.nm = Some(NeedleMap::InMemory(nm));
+        }
+
+        Ok(())
+    }
+
+    /// Load index using disk-backed RedbNeedleMap.
+    fn load_index_redb(&mut self, idx_path: &str) -> Result<(), VolumeError> {
+        // The redb database file is stored alongside the volume files
+        let rdb_path = self.file_name(".rdb");
+
+        if self.no_write_or_delete {
+            // Open read-only
+            if Path::new(&idx_path).exists() {
+                let mut idx_file = File::open(&idx_path)?;
+                let nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_file)?;
+                self.nm = Some(NeedleMap::Redb(nm));
+            } else {
+                // Missing .idx with existing .dat could orphan needles
+                let dat_path = self.file_name(".dat");
+                if Path::new(&dat_path).exists() {
+                    let dat_size = fs::metadata(&dat_path).map(|m| m.len()).unwrap_or(0);
+                    if dat_size > SUPER_BLOCK_SIZE as u64 {
+                        warn!(
+                            volume_id = self.id.0,
+                            ".idx file missing but .dat exists with data; needles may be orphaned"
+                        );
+                    }
+                }
+                self.nm = Some(NeedleMap::Redb(RedbNeedleMap::new(&rdb_path)?));
+            }
+        } else {
+            // Open read-write (create if missing)
+            let idx_file = OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .open(&idx_path)?;
+
+            let idx_size = idx_file.metadata()?.len();
+            let mut idx_reader = io::BufReader::new(&idx_file);
+            let mut nm = RedbNeedleMap::load_from_idx(&rdb_path, &mut idx_reader)?;
+
+            // Re-open for append-only writes
+            let write_file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(&idx_path)?;
+            nm.set_idx_file(Box::new(write_file), idx_size);
+            self.nm = Some(NeedleMap::Redb(nm));
+        }
+
+        Ok(())
+    }
+
+    fn load_remote_dat_file(&mut self) -> Result<(), VolumeError> {
+        let (storage_name, storage_key) = self.remote_storage_name_key();
+        let backend = crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .read()
+            .unwrap()
+            .get(&storage_name)
+            .ok_or_else(|| {
+                VolumeError::Io(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("remote tier backend {} not found", storage_name),
+                ))
+            })?;
+
+        let remote_file = self.volume_info.files.first().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "remote volume has no remote file entries",
+            ))
+        })?;
+
+        let file_size = if remote_file.file_size > 0 {
+            remote_file.file_size
+        } else if self.volume_info.dat_file_size > 0 {
+            self.volume_info.dat_file_size as u64
+        } else {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("remote volume {} is missing file size metadata", self.id.0),
+            )));
+        };
+
+        self.dat_file = None;
+        self.remote_dat_file = Some(RemoteDatFile {
+            backend,
+            key: storage_key,
+            file_size,
+            modified_time: remote_file.modified_time,
+        });
+        Ok(())
+    }
+
+    fn read_exact_at_backend(&self, buf: &mut [u8], offset: u64) -> Result<(), VolumeError> {
+        if let Some(dat_file) = self.dat_file.as_ref() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::FileExt;
+                dat_file.read_exact_at(buf, offset)?;
+            }
+            #[cfg(windows)]
+            {
+                read_exact_at(dat_file, buf, offset)?;
+            }
+            #[cfg(not(any(unix, windows)))]
+            {
+                compile_error!("Platform not supported: only unix and windows are supported");
+            }
+            Ok(())
+        } else if let Some(remote_dat_file) = self.remote_dat_file.as_ref() {
+            remote_dat_file.read_exact_at(buf, offset)?;
+            Ok(())
+        } else {
+            Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                "dat file not open",
+            )))
+        }
+    }
+
+    /// Returns true when the volume has a data backend (local .dat file or
+    /// remote tiered storage).  Mirrors Go's `v.DataBackend != nil` check.
+    pub fn has_data_backend(&self) -> bool {
+        self.dat_file.is_some() || self.remote_dat_file.is_some()
+    }
+
+    fn current_dat_file_size(&self) -> io::Result<u64> {
+        if let Some(ref f) = self.dat_file {
+            Ok(f.metadata()?.len())
+        } else if let Some(ref remote_dat_file) = self.remote_dat_file {
+            Ok(remote_dat_file.file_size)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Read a raw byte range from the current .dat backend.
+    ///
+    /// This matches Go paths that stream directly from `DataBackend`, including
+    /// remote-only tiered volumes whose `.dat` is no longer present locally.
+    pub fn read_dat_slice(&self, offset: u64, size: usize) -> Result<Vec<u8>, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let dat_size = self.current_dat_file_size()?;
+        if size == 0 || offset >= dat_size {
+            return Ok(Vec::new());
+        }
+
+        let read_len = std::cmp::min(size as u64, dat_size - offset) as usize;
+        let mut buf = vec![0u8; read_len];
+        self.read_exact_at_backend(&mut buf, offset)?;
+        Ok(buf)
+    }
+
+    // ---- SuperBlock I/O ----
+
+    fn read_super_block(&mut self) -> Result<(), VolumeError> {
+        let mut header = [0u8; SUPER_BLOCK_SIZE];
+        self.read_exact_at_backend(&mut header, 0)?;
+
+        let extra_size = u16::from_be_bytes([header[6], header[7]]);
+        let total_size = SUPER_BLOCK_SIZE + extra_size as usize;
+
+        let mut full_buf = vec![0u8; total_size];
+        full_buf[..SUPER_BLOCK_SIZE].copy_from_slice(&header);
+        if extra_size > 0 {
+            self.read_exact_at_backend(&mut full_buf[SUPER_BLOCK_SIZE..], SUPER_BLOCK_SIZE as u64)?;
+        }
+
+        self.super_block = SuperBlock::from_bytes(&full_buf)?;
+
+        // Match Go: if volumeInfo.Replication is set, override super block's ReplicaPlacement
+        if !self.volume_info.replication.is_empty() {
+            let rp = ReplicaPlacement::from_string(&self.volume_info.replication)?;
+            self.super_block.replica_placement = rp;
+        }
+
+        Ok(())
+    }
+
+    fn maybe_write_super_block(&mut self, version: Version) -> Result<(), VolumeError> {
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+
+        let dat_size = dat_file.metadata()?.len();
+        if dat_size == 0 {
+            if !version.is_supported() {
+                return Err(VolumeError::UnsupportedVersion(version.0));
+            }
+            self.super_block.version = version;
+            let bytes = self.super_block.to_bytes();
+            dat_file.seek(SeekFrom::Start(0))?;
+            dat_file.write_all(&bytes)?;
+            dat_file.sync_all()?;
+        }
+        Ok(())
+    }
+
+    // ---- Read ----
+
+    /// Read a needle by its ID from the volume.
+    pub fn read_needle(&self, n: &mut Needle) -> Result<i32, VolumeError> {
+        let mut read_option = ReadOption::default();
+        self.read_needle_with_option(n, &mut read_option)
+    }
+
+    pub fn read_needle_opt(&self, n: &mut Needle, read_deleted: bool) -> Result<i32, VolumeError> {
+        let mut read_option = ReadOption {
+            read_deleted,
+            ..ReadOption::default()
+        };
+        self.read_needle_with_option(n, &mut read_option)
+    }
+
+    pub fn read_needle_with_option(
+        &self,
+        n: &mut Needle,
+        read_option: &mut ReadOption,
+    ) -> Result<i32, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
+
+        if nv.offset.is_zero() {
+            return Err(VolumeError::NotFound);
+        }
+
+        let mut read_size = nv.size;
+        if read_size.is_deleted() {
+            if read_option.read_deleted && !read_size.is_tombstone() {
+                // Negate to get original size
+                read_size = Size(-read_size.0);
+            } else {
+                return Err(VolumeError::Deleted);
+            }
+        }
+        if read_size.0 == 0 {
+            return Ok(0);
+        }
+
+        match self.read_needle_data_at_unlocked(n, nv.offset.to_actual_offset(), read_size, read_option) {
+            Ok(()) => self.check_read_write_error(None),
+            Err(VolumeError::Io(ref e)) => {
+                self.check_read_write_error(Some(e));
+                return Err(VolumeError::Io(io::Error::new(e.kind(), e.to_string())));
+            }
+            Err(e) => return Err(e),
+        }
+
+        // TTL expiry check
+        if n.has_ttl() {
+            if let Some(ref ttl) = n.ttl {
+                let ttl_minutes = ttl.minutes();
+                if ttl_minutes > 0 && n.has_last_modified_date() {
+                    let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as u64;
+                    if now_ns >= expire_at_ns {
+                        return Err(VolumeError::NotFound);
+                    }
+                }
+            }
+        }
+
+        Ok(n.data_size as i32)
+    }
+
+    /// Read needle data from .dat file at given offset.
+    pub fn read_needle_data_at(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let mut read_option = ReadOption::default();
+        self.read_needle_data_at_unlocked(n, offset, size, &mut read_option)
+    }
+
+    fn read_needle_data_at_unlocked(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+        _read_option: &mut ReadOption,
+    ) -> Result<(), VolumeError> {
+        match self.read_needle_blob_and_parse(n, offset, size) {
+            Ok(()) => Ok(()),
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                // Double-read: in 4-byte offset mode, the actual data may be
+                // beyond 32GB due to offset wrapping. Retry at offset + 32GB.
+                self.read_needle_blob_and_parse(n, offset + MAX_POSSIBLE_VOLUME_SIZE as i64, size)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_needle_blob_and_parse(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let version = self.version();
+        let actual_size = get_actual_size(size, version);
+
+        let mut buf = vec![0u8; actual_size as usize];
+        self.read_exact_at_backend(&mut buf, offset as u64)?;
+
+        n.read_bytes(&mut buf, offset, size, version)?;
+        Ok(())
+    }
+
+    /// Read raw needle blob at a specific offset.
+    pub fn read_needle_blob(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        self.read_needle_blob_unlocked(offset, size)
+    }
+
+    fn read_needle_blob_unlocked(&self, offset: i64, size: Size) -> Result<Vec<u8>, VolumeError> {
+        let version = self.version();
+        let actual_size = get_actual_size(size, version);
+        let mut buf = vec![0u8; actual_size as usize];
+        self.read_exact_at_backend(&mut buf, offset as u64)?;
+
+        Ok(buf)
+    }
+
+    /// Read needle metadata at a specific offset without loading the data payload.
+    ///
+    /// Matches Go's `readNeedleMetaAt`, including the tombstone path where a
+    /// deleted idx entry passes a negative size and the tombstone record itself
+    /// is read as size 0 metadata.
+    pub fn read_needle_meta_at(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        self.read_needle_meta_at_unlocked(n, offset, size)
+    }
+
+    fn read_needle_meta_at_unlocked(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let normalized_size = if size.is_deleted() { Size(0) } else { size };
+        match self.read_needle_meta_blob_and_parse(n, offset, normalized_size) {
+            Ok(()) => Ok(()),
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                self.read_needle_meta_blob_and_parse(
+                    n,
+                    offset + MAX_POSSIBLE_VOLUME_SIZE as i64,
+                    normalized_size,
+                )
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn read_needle_meta_blob_and_parse(
+        &self,
+        n: &mut Needle,
+        offset: i64,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        let version = self.version();
+
+        // Step 1: Read only the first 20 bytes (header + DataSize).
+        // Matches Go's ReadNeedleMeta which reads NeedleHeaderSize+DataSizeSize first.
+        const HEADER_PREFIX: usize = NEEDLE_HEADER_SIZE + DATA_SIZE_SIZE; // 20
+        let mut header_buf = [0u8; HEADER_PREFIX];
+        self.read_exact_at_backend(&mut header_buf, offset as u64)?;
+
+        // Parse header to get the needle's Size field for validation
+        let (_, _, found_size) = Needle::parse_header(&header_buf);
+        if found_size != size {
+            return Err(VolumeError::Needle(NeedleError::SizeMismatch {
+                offset,
+                id: n.id,
+                found: found_size,
+                expected: size,
+            }));
+        }
+
+        // Step 2: Calculate how much meta tail to read (skip the data payload)
+        let actual_size = get_actual_size(size, version);
+
+        if size.0 == 0 || version == VERSION_1 {
+            // Tombstone or V1: no body data section, tail starts right after header
+            let meta_size = actual_size - NEEDLE_HEADER_SIZE as i64;
+            if meta_size < 0 || meta_size > 128 * 1024 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid needle meta size {}: DataSize=0, size={}, offset={}",
+                        meta_size, size.0, offset
+                    ),
+                )));
+            }
+            let mut meta_buf = vec![0u8; meta_size as usize];
+            self.read_exact_at_backend(
+                &mut meta_buf,
+                (offset + NEEDLE_HEADER_SIZE as i64) as u64,
+            )?;
+            n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
+        } else {
+            // V2/V3: extract DataSize from bytes 16..20
+            let data_size = u32::from_be_bytes([
+                header_buf[NEEDLE_HEADER_SIZE],
+                header_buf[NEEDLE_HEADER_SIZE + 1],
+                header_buf[NEEDLE_HEADER_SIZE + 2],
+                header_buf[NEEDLE_HEADER_SIZE + 3],
+            ]);
+
+            // Skip past: header(16) + DataSize(4) + data(data_size)
+            let start_offset =
+                offset + NEEDLE_HEADER_SIZE as i64 + DATA_SIZE_SIZE as i64 + data_size as i64;
+            let stop_offset = offset + actual_size;
+            let meta_size = stop_offset - start_offset;
+
+            // Sanity check: reject metadata sizes > 128KB (matching Go's ReadNeedleMeta guard)
+            if meta_size < 0 || meta_size > 128 * 1024 {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "invalid needle meta size {}: DataSize={}, size={}, offset={}",
+                        meta_size, data_size, size.0, offset
+                    ),
+                )));
+            }
+
+            // Step 3: Read only the meta tail (skip the data payload entirely)
+            let mut meta_buf = vec![0u8; meta_size as usize];
+            self.read_exact_at_backend(&mut meta_buf, start_offset as u64)?;
+            n.read_paged_meta(&header_buf, &meta_buf, offset, size, version)?;
+        }
+
+        Ok(())
+    }
+
+    /// Read needle metadata (header + flags/name/mime/etc) without loading the data payload,
+    /// and return a `NeedleStreamInfo` that can be used to stream data directly from the dat file.
+    ///
+    /// This is used for large needles to avoid loading the entire payload into memory.
+    pub fn read_needle_stream_info(
+        &self,
+        n: &mut Needle,
+        read_deleted: bool,
+    ) -> Result<NeedleStreamInfo, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(n.id).ok_or(VolumeError::NotFound)?;
+
+        if nv.offset.is_zero() {
+            return Err(VolumeError::NotFound);
+        }
+
+        let mut read_size = nv.size;
+        if read_size.is_deleted() {
+            if read_deleted && !read_size.is_tombstone() {
+                read_size = Size(-read_size.0);
+            } else {
+                return Err(VolumeError::Deleted);
+            }
+        }
+        if read_size.0 == 0 {
+            return Err(VolumeError::NotFound);
+        }
+
+        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
+        let mut offset = nv.offset.to_actual_offset();
+        let version = self.version();
+        let actual_size = get_actual_size(read_size, version);
+
+        // Read the full needle bytes (including data) for metadata parsing.
+        // We use read_bytes_meta_only which skips copying the data payload.
+        #[cfg_attr(feature = "5bytes", allow(unused_mut))]
+        let mut read_and_parse = |off: i64| -> Result<(), VolumeError> {
+            let mut buf = vec![0u8; actual_size as usize];
+            self.read_exact_at_backend(&mut buf, off as u64)?;
+            n.read_bytes_meta_only(&mut buf, off, read_size, version)?;
+            Ok(())
+        };
+
+        match read_and_parse(offset) {
+            Ok(()) => {}
+            #[cfg(not(feature = "5bytes"))]
+            Err(VolumeError::Needle(NeedleError::SizeMismatch { offset: o, .. }))
+                if o < MAX_POSSIBLE_VOLUME_SIZE as i64 =>
+            {
+                offset += MAX_POSSIBLE_VOLUME_SIZE as i64;
+                read_and_parse(offset)?;
+            }
+            Err(e) => return Err(e),
+        }
+
+        // TTL expiry check
+        if n.has_ttl() {
+            if let Some(ref ttl) = n.ttl {
+                let ttl_minutes = ttl.minutes();
+                if ttl_minutes > 0 && n.has_last_modified_date() {
+                    let expire_at_ns = n.append_at_ns + (ttl_minutes as u64) * 60 * 1_000_000_000;
+                    let now_ns = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos() as u64;
+                    if now_ns >= expire_at_ns {
+                        return Err(VolumeError::NotFound);
+                    }
+                }
+            }
+        }
+
+        // For V1, data starts right after the header
+        // For V2/V3, data starts at header + 4 (DataSize field)
+        let data_file_offset = if version == VERSION_1 {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64
+        } else {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
+        };
+
+        let source = match (self.dat_file.as_ref(), self.remote_dat_file.as_ref()) {
+            (Some(dat_file), _) => NeedleStreamSource::Local(
+                dat_file.try_clone().map_err(VolumeError::Io)?,
+            ),
+            (None, Some(remote_dat_file)) => NeedleStreamSource::Remote(remote_dat_file.clone()),
+            (None, None) => return Err(VolumeError::StreamingUnsupported),
+        };
+
+        Ok(NeedleStreamInfo {
+            source,
+            data_file_offset,
+            data_size: n.data_size,
+            data_file_access_control: self.data_file_access_control.clone(),
+            volume_id: self.id,
+            needle_id: n.id,
+            compaction_revision: self.super_block.compaction_revision,
+        })
+    }
+
+    /// Re-lookup a needle's data-file offset after compaction may have moved it.
+    ///
+    /// Returns `(new_data_file_offset, current_compaction_revision)` or an error
+    /// if the needle is no longer present / has been deleted.
+    ///
+    /// This matches Go's `readNeedleDataInto` behaviour: when the volume's
+    /// `CompactionRevision` changes between streaming chunks, the needle offset
+    /// is re-read from the needle map because compaction may have relocated it.
+    pub fn re_lookup_needle_data_offset(
+        &self,
+        needle_id: NeedleId,
+    ) -> Result<(u64, u16), VolumeError> {
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let nv = nm.get(needle_id).ok_or(VolumeError::NotFound)?;
+        if nv.offset.is_zero() {
+            return Err(VolumeError::NotFound);
+        }
+        if nv.size.is_deleted() {
+            return Err(VolumeError::Deleted);
+        }
+
+        let offset = nv.offset.to_actual_offset();
+        let version = self.version();
+
+        let data_file_offset = if version == VERSION_1 {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64
+        } else {
+            offset as u64 + NEEDLE_HEADER_SIZE as u64 + 4 // skip DataSize (4 bytes)
+        };
+
+        Ok((data_file_offset, self.super_block.compaction_revision))
+    }
+
+    // ---- Write ----
+
+    /// Write a needle to the volume (synchronous path).
+    pub fn write_needle(
+        &mut self,
+        n: &mut Needle,
+        check_cookie: bool,
+    ) -> Result<(u64, Size, bool), VolumeError> {
+        let _guard = self.data_file_access_control.write_lock();
+        if self.is_read_only() {
+            return Err(VolumeError::ReadOnly);
+        }
+
+        self.do_write_request(n, check_cookie)
+    }
+
+    fn do_write_request(
+        &mut self,
+        n: &mut Needle,
+        check_cookie: bool,
+    ) -> Result<(u64, Size, bool), VolumeError> {
+        // TTL inheritance from volume (matching Go's writeNeedle2)
+        {
+            use crate::storage::needle::ttl::TTL;
+            let needle_ttl = n.ttl.unwrap_or(TTL::EMPTY);
+            if needle_ttl == TTL::EMPTY && self.super_block.ttl != TTL::EMPTY {
+                n.set_has_ttl();
+                n.ttl = Some(self.super_block.ttl);
+            }
+        }
+
+        // Ensure checksum is computed before dedup check
+        if n.checksum == crate::storage::needle::crc::CRC(0) && !n.data.is_empty() {
+            n.checksum = crate::storage::needle::crc::CRC::new(&n.data);
+        }
+
+        // Dedup check (matches Go: n.DataSize = oldNeedle.DataSize on dedup)
+        if let Some(old_data_size) = self.is_file_unchanged(n) {
+            n.data_size = old_data_size;
+            return Ok((0, Size(n.data_size as i32), true));
+        }
+
+        // Cookie validation for existing needle (matches Go: check whenever nm.Get returns ok)
+        if let Some(nm) = &self.nm {
+            if let Some(nv) = nm.get(n.id) {
+                let mut existing = Needle::default();
+                // Read only the header to check cookie
+                self.read_needle_header_unlocked(&mut existing, nv.offset.to_actual_offset())?;
+
+                if n.cookie.0 == 0 && !check_cookie {
+                    n.cookie = existing.cookie;
+                }
+                if existing.cookie != n.cookie {
+                    return Err(VolumeError::CookieMismatch(n.cookie.0));
+                }
+            }
+        }
+
+        // Update append timestamp
+        n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
+
+        // Append to .dat file
+        let (offset, _body_size, _actual_size) = self.append_needle(n)?;
+        self.last_append_at_ns = n.append_at_ns;
+
+        // Update needle map (uses n.size = full body size, matching Go's nm.Put)
+        let should_update = if let Some(nm) = &self.nm {
+            match nm.get(n.id) {
+                Some(nv) => (nv.offset.to_actual_offset() as u64) < offset,
+                None => true,
+            }
+        } else {
+            true
+        };
+
+        if should_update {
+            if let Some(nm) = &mut self.nm {
+                nm.put(n.id, Offset::from_actual_offset(offset as i64), n.size)?;
+            }
+        }
+
+        if self.last_modified_ts_seconds < n.last_modified {
+            self.last_modified_ts_seconds = n.last_modified;
+        }
+
+        // Return Size(n.DataSize) as the logical size, matching Go's doWriteRequest
+        Ok((offset, Size(n.data_size as i32), false))
+    }
+
+    fn read_needle_header_unlocked(&self, n: &mut Needle, offset: i64) -> Result<(), VolumeError> {
+        let mut header = [0u8; NEEDLE_HEADER_SIZE];
+        self.read_exact_at_backend(&mut header, offset as u64)?;
+
+        n.read_header(&header);
+        Ok(())
+    }
+
+    /// Check if the needle is unchanged from the existing one on disk.
+    /// Returns `Some(old_data_size)` if unchanged, `None` otherwise.
+    /// Matches Go's isFileUnchanged which also sets n.DataSize = oldNeedle.DataSize.
+    fn is_file_unchanged(&self, n: &Needle) -> Option<u32> {
+        // Don't dedup for volumes with TTL
+        if self.super_block.ttl != crate::storage::needle::ttl::TTL::EMPTY {
+            return None;
+        }
+
+        if let Some(nm) = &self.nm {
+            if let Some(nv) = nm.get(n.id) {
+                if !nv.offset.is_zero() && nv.size.is_valid() {
+                    let mut old = Needle::default();
+                    let mut ro = ReadOption::default();
+                    if self
+                        .read_needle_data_at_unlocked(
+                            &mut old,
+                            nv.offset.to_actual_offset(),
+                            nv.size,
+                            &mut ro,
+                        )
+                        .is_ok()
+                    {
+                        if old.cookie == n.cookie
+                            && old.checksum == n.checksum
+                            && old.data == n.data
+                        {
+                            return Some(old.data_size);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Append a needle to the .dat file. Returns (offset, size, actual_size).
+    fn append_needle(&mut self, n: &mut Needle) -> Result<(u64, Size, i64), VolumeError> {
+        let version = self.version();
+        let bytes = n.write_bytes(version);
+        let actual_size = bytes.len() as i64;
+
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+
+        let offset = dat_file.seek(SeekFrom::End(0))?;
+
+        // Check volume size limit before writing (matching Go's Append)
+        if offset >= MAX_POSSIBLE_VOLUME_SIZE && !n.data.is_empty() {
+            return Err(VolumeError::SizeLimitExceeded {
+                current: offset,
+                limit: MAX_POSSIBLE_VOLUME_SIZE,
+            });
+        }
+
+        if let Err(e) = dat_file.write_all(&bytes) {
+            // Truncate back to pre-write position on error (matching Go)
+            let _ = dat_file.set_len(offset);
+            self.check_read_write_error(Some(&e));
+            return Err(VolumeError::Io(e));
+        }
+        self.check_read_write_error(None);
+
+        Ok((offset, n.size, actual_size))
+    }
+
+    // ---- Delete ----
+
+    /// Delete a needle from the volume.
+    pub fn delete_needle(&mut self, n: &mut Needle) -> Result<Size, VolumeError> {
+        let _guard = self.data_file_access_control.write_lock();
+        if self.no_write_or_delete {
+            return Err(VolumeError::ReadOnly);
+        }
+        self.do_delete_request(n)
+    }
+
+    fn do_delete_request(&mut self, n: &mut Needle) -> Result<Size, VolumeError> {
+        let (found, size, _stored_offset) = if let Some(nm) = &self.nm {
+            if let Some(nv) = nm.get(n.id) {
+                if !nv.size.is_deleted() {
+                    (true, nv.size, nv.offset)
+                } else {
+                    (false, Size(0), Offset::default())
+                }
+            } else {
+                (false, Size(0), Offset::default())
+            }
+        } else {
+            return Ok(Size(0));
+        };
+
+        if !found {
+            return Ok(Size(0));
+        }
+
+        // Write tombstone: append needle with empty data
+        n.data = vec![];
+        n.append_at_ns = get_append_at_ns(self.last_append_at_ns);
+
+        let offset = if !self.has_remote_file {
+            // Normal volume: append tombstone to .dat file
+            let (offset, _, _) = self.append_needle(n)?;
+            offset
+        } else {
+            // Remote-tiered volume: skip .dat append, use offset 0
+            0
+        };
+        self.last_append_at_ns = n.append_at_ns;
+
+        // Update index
+        if let Some(nm) = &mut self.nm {
+            nm.delete(n.id, Offset::from_actual_offset(offset as i64))?;
+        }
+
+        Ok(size)
+    }
+
+    // ---- Metrics ----
+
+    pub fn content_size(&self) -> u64 {
+        self.nm.as_ref().map_or(0, |nm| nm.content_size())
+    }
+
+    pub fn deleted_size(&self) -> u64 {
+        self.nm.as_ref().map_or(0, |nm| nm.deleted_size())
+    }
+
+    pub fn file_count(&self) -> i64 {
+        self.nm.as_ref().map_or(0, |nm| nm.file_count())
+    }
+
+    pub fn deleted_count(&self) -> i64 {
+        self.nm.as_ref().map_or(0, |nm| nm.deleted_count())
+    }
+
+    pub fn max_file_key(&self) -> NeedleId {
+        self.nm.as_ref().map_or(NeedleId(0), |nm| nm.max_file_key())
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.no_write_or_delete
+            || self.no_write_can_delete
+            || self.location_disk_space_low.load(Ordering::Relaxed)
+    }
+
+    pub fn is_no_write_or_delete(&self) -> bool {
+        self.no_write_or_delete
+    }
+
+    pub fn is_no_write_can_delete(&self) -> bool {
+        self.no_write_can_delete
+    }
+
+    pub fn last_compact_revision(&self) -> u16 {
+        self.last_compact_revision
+    }
+
+    pub fn last_modified_ts(&self) -> u64 {
+        self.last_modified_ts_seconds
+    }
+
+    pub fn is_expired(&self, volume_size: u64, volume_size_limit: u64) -> bool {
+        if volume_size_limit == 0 {
+            return false;
+        }
+        if volume_size <= SUPER_BLOCK_SIZE as u64 {
+            return false;
+        }
+        let ttl_minutes = self.super_block.ttl.minutes();
+        if ttl_minutes == 0 {
+            return false;
+        }
+        let lived_minutes = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(self.last_modified_ts_seconds)
+            / 60;
+        (ttl_minutes as u64) < lived_minutes
+    }
+
+    pub fn is_expired_long_enough(&self, max_delay_minutes: u32) -> bool {
+        let ttl_minutes = self.super_block.ttl.minutes();
+        if ttl_minutes == 0 {
+            return false;
+        }
+        let removal_delay = std::cmp::min(ttl_minutes / 10, max_delay_minutes);
+        ((ttl_minutes + removal_delay) as u64) * 60 + self.last_modified_ts_seconds
+            < SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+    }
+
+    /// Read all live needles from the volume (for ReadAllNeedles streaming RPC).
+    pub fn read_all_needles(&self) -> Result<Vec<Needle>, VolumeError> {
+        let _guard = self.data_file_access_control.read_lock();
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let version = self.version();
+        let dat_size = self.current_dat_file_size()? as i64;
+        let mut needles = Vec::new();
+        let mut offset = self.super_block.block_size() as i64;
+
+        while offset < dat_size {
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            match self.read_exact_at_backend(&mut header, offset as u64) {
+                Ok(()) => {}
+                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
+
+            let (_cookie, key, size) = Needle::parse_header(&header);
+            if size.0 == 0 && key.is_empty() {
+                break;
+            }
+
+            let body_length = needle::needle_body_length(size, version);
+            let total_size = NEEDLE_HEADER_SIZE as i64 + body_length as i64;
+
+            if size.is_deleted() || size.0 <= 0 {
+                offset += total_size;
+                continue;
+            }
+
+            let Some(nv) = nm.get(key) else {
+                offset += total_size;
+                continue;
+            };
+            if nv.offset.to_actual_offset() != offset {
+                offset += total_size;
+                continue;
+            }
+
+            let mut n = Needle {
+                id: key,
+                ..Needle::default()
+            };
+            let mut read_option = ReadOption::default();
+            self.read_needle_data_at_unlocked(&mut n, offset, size, &mut read_option)?;
+            needles.push(n);
+
+            offset += total_size;
+        }
+        Ok(needles)
+    }
+
+    /// Check volume data integrity by verifying the last index entries against the .dat file.
+    /// Matches Go's CheckVolumeDataIntegrity (volume_checking.go L117-141).
+    /// Reads the last few index entries, verifies each needle header is readable and
+    /// consistent. On failure, marks the volume read-only.
+    fn check_volume_data_integrity(&mut self) -> Result<(), VolumeError> {
+        let idx_path = self.file_name(".idx");
+        if !Path::new(&idx_path).exists() {
+            return Ok(());
+        }
+
+        let idx_size = fs::metadata(&idx_path).map(|m| m.len()).unwrap_or(0) as i64;
+        if idx_size == 0 {
+            return Ok(());
+        }
+        if idx_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "index file's size is {} bytes, maybe corrupted",
+                    idx_size
+                ),
+            )));
+        }
+
+        let version = self.version();
+
+        // Check last 10 index entries (matching Go's CheckVolumeDataIntegrity).
+        // Go starts healthyIndexSize = indexSize and reduces on EOF.
+        // On success: break (err != ErrorSizeMismatch when err == nil).
+        // On EOF: set healthyIndexSize = position of corrupt entry, continue.
+        // On ErrorSizeMismatch: continue (try next entry).
+        // After loop: if healthyIndexSize < indexSize → error.
+        let mut idx_file = File::open(&idx_path)?;
+        let max_entries = std::cmp::min(10, idx_size / NEEDLE_MAP_ENTRY_SIZE as i64);
+        let mut healthy_index_size: i64 = idx_size;
+
+        for i in 1..=max_entries {
+            let entry_offset = idx_size - i * NEEDLE_MAP_ENTRY_SIZE as i64;
+            let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+            idx_file.seek(SeekFrom::Start(entry_offset as u64))?;
+            idx_file.read_exact(&mut buf)?;
+
+            let (key, offset, size) = idx_entry_from_bytes(&buf);
+            if offset.is_zero() {
+                continue;
+            }
+
+            let actual_offset = offset.to_actual_offset() as u64;
+
+            // Read needle header at the offset
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            match self.read_exact_at_backend(&mut header, actual_offset) {
+                Ok(()) => {}
+                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                    // Match Go: on EOF, mark this entry as corrupt and continue
+                    // checking earlier entries (healthyIndexSize tracks the boundary).
+                    healthy_index_size = entry_offset;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            }
+
+            let (_cookie, needle_id, needle_size) = Needle::parse_header(&header);
+
+            // Verify the needle ID matches the index entry
+            if !key.is_empty() && needle_id != key {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "index key {:?} does not match needle Id {:?} at offset {}",
+                        key, needle_id, actual_offset
+                    ),
+                )));
+            }
+
+            // For non-deleted entries, verify the size matches
+            if !size.is_deleted() && size.0 > 0 && needle_size.0 != size.0 {
+                // Try with MaxPossibleVolumeSize offset adjustment (Go parity)
+                let alt_offset = actual_offset + MAX_POSSIBLE_VOLUME_SIZE as u64;
+                let mut alt_header = [0u8; NEEDLE_HEADER_SIZE];
+                if self
+                    .read_exact_at_backend(&mut alt_header, alt_offset)
+                    .is_ok()
+                {
+                    let (_, _, alt_size) = Needle::parse_header(&alt_header);
+                    if alt_size.0 == size.0 {
+                        continue;
+                    }
+                }
+                // Match Go: ErrorSizeMismatch breaks out of the loop
+                break;
+            }
+
+            // If V3, try to read the append timestamp from the last verified entry.
+            // Go reads AppendAtNs from both live and deleted (tombstone) entries
+            // via verifyNeedleIntegrity and verifyDeletedNeedleIntegrity.
+            if version == VERSION_3 {
+                // For tombstones (deleted), body size on disk is 0.
+                // For live entries, body size is size.0.
+                let body_size = if size.is_deleted() { 0u64 } else { size.0 as u64 };
+                let ts_offset =
+                    actual_offset + NEEDLE_HEADER_SIZE as u64 + body_size + 4; // skip checksum
+                let mut ts_buf = [0u8; 8];
+                if self.read_exact_at_backend(&mut ts_buf, ts_offset).is_ok() {
+                    let ts = u64::from_be_bytes(ts_buf);
+                    if ts > 0 {
+                        self.last_append_at_ns = ts;
+                    }
+                }
+            }
+        }
+
+        // Match Go: if healthyIndexSize < indexSize, trailing entries are corrupt
+        if healthy_index_size < idx_size {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "healthy index size {} is less than expected {}",
+                    healthy_index_size, idx_size
+                ),
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Scrub the volume index by verifying each needle map entry against the dat file.
+    /// For each entry, reads only the 16-byte needle header at the given offset to verify:
+    /// correct needle ID, correct cookie (non-zero), and valid size.
+    /// Does NOT read/verify the full needle data or CRC.
+    /// Returns (files_checked, broken_needles) tuple.
+    pub fn scrub_index(&self) -> Result<(u64, Vec<String>), VolumeError> {
+        if self.dat_file.is_none() && self.remote_dat_file.is_none() {
+            return Err(VolumeError::NotFound);
+        }
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+        let dat_size = self.dat_file_size().map_err(VolumeError::Io)?;
+
+        let mut files_checked: u64 = 0;
+        let mut broken = Vec::new();
+
+        for (needle_id, nv) in nm.iter_entries() {
+            if nv.offset.is_zero() || nv.size.is_deleted() {
+                continue;
+            }
+
+            let offset = nv.offset.to_actual_offset();
+            if offset < 0 || offset as u64 >= dat_size {
+                broken.push(format!(
+                    "needle {} offset {} out of range (dat_size={})",
+                    needle_id.0, offset, dat_size
+                ));
+                continue;
+            }
+
+            // Read only the 16-byte needle header to verify ID, cookie, and size
+            let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+            match self.read_exact_at_backend(&mut header_buf, offset as u64) {
+                Ok(()) => {
+                    let (cookie, id, size) = Needle::parse_header(&header_buf);
+                    if id != needle_id {
+                        broken.push(format!(
+                            "needle {} header id mismatch: expected {}, got {}",
+                            needle_id.0, needle_id.0, id.0
+                        ));
+                    } else if cookie.0 == 0 {
+                        broken.push(format!(
+                            "needle {} has zero cookie at offset {}",
+                            needle_id.0, offset
+                        ));
+                    } else if size.0 <= 0 && !nv.size.is_deleted() {
+                        broken.push(format!(
+                            "needle {} has invalid size {} at offset {}",
+                            needle_id.0, size.0, offset
+                        ));
+                    }
+                }
+                Err(e) => {
+                    broken.push(format!("needle {} read header error: {}", needle_id.0, e));
+                }
+            }
+
+            files_checked += 1;
+        }
+
+        Ok((files_checked, broken))
+    }
+
+    /// Scrub the volume by reading and verifying all needles.
+    /// Returns (files_checked, broken_needles) tuple.
+    /// Each needle is read from disk and its CRC checksum is verified.
+    pub fn scrub(&self) -> Result<(u64, Vec<String>), VolumeError> {
+        if self.dat_file.is_none() && self.remote_dat_file.is_none() {
+            return Err(VolumeError::NotFound);
+        }
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotFound)?;
+
+        let dat_size = self.dat_file_size().map_err(|e| VolumeError::Io(e))?;
+        let version = self.version();
+
+        let mut files_checked: u64 = 0;
+        let mut broken = Vec::new();
+        let mut total_read: i64 = 0;
+
+        for (needle_id, nv) in nm.iter_entries() {
+            if nv.offset.is_zero() {
+                continue;
+            }
+
+            // Accumulate actual needle size for ALL entries including deleted ones
+            // (matches Go: deleted needles still occupy space in the .dat file).
+            total_read += get_actual_size(nv.size, version);
+
+            if nv.size.is_deleted() {
+                continue;
+            }
+
+            let offset = nv.offset.to_actual_offset();
+            if offset < 0 || offset as u64 >= dat_size {
+                broken.push(format!(
+                    "needle {} offset {} out of range (dat_size={})",
+                    needle_id.0, offset, dat_size
+                ));
+                continue;
+            }
+
+            // Read and verify the needle (read_needle_data_at checks CRC via read_bytes/read_tail)
+            let mut n = Needle {
+                id: needle_id,
+                ..Needle::default()
+            };
+            match self.read_needle_data_at(&mut n, offset, nv.size) {
+                Ok(_) => {}
+                Err(e) => {
+                    broken.push(format!("needle {} error: {}", needle_id.0, e));
+                }
+            }
+
+            files_checked += 1;
+        }
+
+        // Validate total data size against .dat file size (matches Go's scrubVolumeData)
+        let expected_size = total_read + SUPER_BLOCK_SIZE as i64;
+        if (dat_size as i64) < expected_size {
+            broken.push(format!(
+                "dat file size {} is smaller than expected {} (total_read {} + super_block {})",
+                dat_size, expected_size, total_read, SUPER_BLOCK_SIZE
+            ));
+        } else if dat_size as i64 != expected_size {
+            broken.push(format!(
+                "warning: dat file size {} does not match expected {} (total_read {} + super_block {})",
+                dat_size, expected_size, total_read, SUPER_BLOCK_SIZE
+            ));
+        }
+
+        Ok((files_checked, broken))
+    }
+
+    /// Scan raw needle entries from the .dat file starting at `from_offset`.
+    /// Returns (needle_header_bytes, needle_body_bytes, append_at_ns) for each needle.
+    /// Used by VolumeTailSender to stream raw bytes.
+    pub fn scan_raw_needles_from(
+        &self,
+        from_offset: u64,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>, u64)>, VolumeError> {
+        let version = self.version();
+        let dat_size = self.current_dat_file_size()?;
+        let mut entries = Vec::new();
+        let mut offset = from_offset;
+
+        while offset < dat_size {
+            // Read needle header (16 bytes)
+            let mut header = [0u8; NEEDLE_HEADER_SIZE];
+            match self.read_exact_at_backend(&mut header, offset) {
+                Ok(()) => {}
+                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            let (_cookie, _id, size) = Needle::parse_header(&header);
+            if size.0 == 0 && _id.is_empty() {
+                break;
+            }
+
+            let body_length = needle::needle_body_length(size, version);
+            let total_size = NEEDLE_HEADER_SIZE as u64 + body_length as u64;
+
+            // Match Go's ScanVolumeFileFrom: visit ALL needles including deleted ones.
+            // This is critical for incremental copy where tombstones must be propagated.
+
+            // Read body bytes
+            let mut body = vec![0u8; body_length as usize];
+            match self.read_exact_at_backend(&mut body, offset + NEEDLE_HEADER_SIZE as u64) {
+                Ok(()) => {}
+                Err(VolumeError::Io(e)) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e.into()),
+            }
+
+            // Parse the needle to get append_at_ns
+            let mut full = vec![0u8; total_size as usize];
+            full[..NEEDLE_HEADER_SIZE].copy_from_slice(&header);
+            full[NEEDLE_HEADER_SIZE..].copy_from_slice(&body);
+            let mut n = Needle::default();
+            let _ = n.read_bytes(&full, offset as i64, size, version);
+
+            entries.push((header.to_vec(), body, n.append_at_ns));
+            offset += total_size;
+        }
+
+        Ok(entries)
+    }
+
+    /// Insert or update a needle index entry (for low-level blob writes).
+    pub fn put_needle_index(
+        &mut self,
+        key: NeedleId,
+        offset: Offset,
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        if let Some(ref mut nm) = self.nm {
+            nm.put(key, offset, size).map_err(VolumeError::Io)?;
+        }
+        Ok(())
+    }
+
+    /// Mark this volume as read-only (no writes or deletes).
+    /// If `persist` is true, the readonly state is saved to the .vif file.
+    pub fn set_read_only(&mut self) -> Result<(), VolumeError> {
+        self.no_write_or_delete = true;
+        self.save_vif()
+    }
+
+    /// Mark this volume as read-only, optionally persisting to .vif.
+    pub fn set_read_only_persist(&mut self, persist: bool) -> Result<(), VolumeError> {
+        self.no_write_or_delete = true;
+        if persist {
+            self.save_vif()?;
+        }
+        Ok(())
+    }
+
+    /// Mark this volume as writable (allow writes and deletes).
+    pub fn set_writable(&mut self) -> Result<(), VolumeError> {
+        self.no_write_or_delete = false;
+        self.save_vif()
+    }
+
+    /// Recompute the Go-style write/delete mode from the current remote tier state.
+    pub fn refresh_remote_write_mode(&mut self) {
+        self.has_remote_file = !self.volume_info.files.is_empty();
+        if self.has_remote_file {
+            self.no_write_can_delete = true;
+            self.no_write_or_delete = false;
+        } else {
+            self.no_write_can_delete = false;
+        }
+    }
+
+    /// Close the local .dat file handle (matches Go's v.DataBackend.Close() in LoadRemoteFile).
+    /// Called after tier-upload when the local file is being replaced by remote storage.
+    pub fn close_local_dat_backend(&mut self) {
+        self.dat_file = None;
+    }
+
+    /// Close the remote dat file backend (matches Go's v.DataBackend.Close(); v.DataBackend = nil).
+    /// Called after tier-download when the remote backend is being replaced by local storage.
+    pub fn close_remote_dat_backend(&mut self) {
+        self.remote_dat_file = None;
+    }
+
+    /// Path to .vif file.
+    fn vif_path(&self) -> String {
+        format!("{}.vif", self.data_file_name())
+    }
+
+    /// Load volume info from .vif file.
+    /// Supports both the protobuf-JSON format (Go-compatible) and legacy JSON.
+    /// Returns true if a .vif file was found and successfully loaded.
+    fn load_vif(&mut self) -> Result<bool, VolumeError> {
+        let path = self.vif_path();
+        if let Ok(content) = fs::read_to_string(&path) {
+            if content.trim().is_empty() {
+                return Ok(false);
+            }
+            // Try protobuf-JSON (Go-compatible VolumeInfo via VifVolumeInfo)
+            if let Ok(vif_info) = serde_json::from_str::<VifVolumeInfo>(&content) {
+                let pb_info = vif_info.to_pb();
+                if pb_info.read_only {
+                    self.no_write_or_delete = true;
+                }
+                self.volume_info = pb_info;
+                self.refresh_remote_write_mode();
+                if self.volume_info.version == 0 {
+                    self.volume_info.version = Version::current().0 as u32;
+                }
+                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                    self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+                }
+                if self.volume_info.bytes_offset != 0
+                    && self.volume_info.bytes_offset != OFFSET_SIZE as u32
+                {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "bytes_offset mismatch in {}: found {}, expected {}",
+                            path, self.volume_info.bytes_offset, OFFSET_SIZE
+                        ),
+                    )));
+                }
+                return Ok(true);
+            }
+            // Fall back to OldVersionVolumeInfo (Go's tryOldVersionVolumeInfo):
+            // maps DestroyTime -> expire_at_sec
+            if let Ok(old_info) = serde_json::from_str::<OldVersionVifVolumeInfo>(&content) {
+                let vif_info = old_info.to_vif();
+                let pb_info = vif_info.to_pb();
+                if pb_info.read_only {
+                    self.no_write_or_delete = true;
+                }
+                self.volume_info = pb_info;
+                self.refresh_remote_write_mode();
+                if self.volume_info.version == 0 {
+                    self.volume_info.version = Version::current().0 as u32;
+                }
+                if !self.has_remote_file && self.volume_info.bytes_offset == 0 {
+                    self.volume_info.bytes_offset = OFFSET_SIZE as u32;
+                }
+                if self.volume_info.bytes_offset != 0
+                    && self.volume_info.bytes_offset != OFFSET_SIZE as u32
+                {
+                    return Err(VolumeError::Io(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!(
+                            "bytes_offset mismatch in {}: found {}, expected {}",
+                            path, self.volume_info.bytes_offset, OFFSET_SIZE
+                        ),
+                    )));
+                }
+                return Ok(true);
+            }
+            // Fall back to legacy format
+            if let Ok(info) = serde_json::from_str::<VolumeInfo>(&content) {
+                if info.read_only {
+                    self.no_write_or_delete = true;
+                }
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Save volume info to .vif file in protobuf-JSON format (Go-compatible).
+    /// Matches Go's SaveVolumeInfo: checks writability before writing and propagates errors.
+    fn save_vif(&self) -> Result<(), VolumeError> {
+        let vif_path = self.vif_path();
+
+        // Match Go: if file exists but is not writable, return an error
+        let path = std::path::Path::new(&vif_path);
+        if path.exists() {
+            let metadata = fs::metadata(path)?;
+            if metadata.permissions().readonly() {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    format!("failed to check {} not writable", vif_path),
+                )));
+            }
+        }
+
+        let mut vif = VifVolumeInfo::from_pb(&self.volume_info);
+        vif.read_only = self.no_write_or_delete;
+
+        // Match Go's SaveVolumeInfo: compute ExpireAtSec from TTL
+        let ttl_seconds = self.super_block.ttl.to_seconds();
+        if ttl_seconds > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            vif.expire_at_sec = now + ttl_seconds;
+        }
+
+        let content = serde_json::to_string_pretty(&vif)
+            .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        fs::write(&vif_path, content)?;
+        Ok(())
+    }
+
+    /// Save full VolumeInfo to .vif file (for tiered storage).
+    /// Matches Go's SaveVolumeInfo which computes ExpireAtSec from TTL.
+    pub fn save_volume_info(&mut self) -> Result<(), VolumeError> {
+        self.volume_info.read_only = self.no_write_or_delete;
+
+        // Compute ExpireAtSec from TTL (matches Go's SaveVolumeInfo)
+        let ttl_seconds = self.super_block.ttl.to_seconds();
+        if ttl_seconds > 0 {
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            self.volume_info.expire_at_sec = now + ttl_seconds;
+        }
+
+        let vif = VifVolumeInfo::from_pb(&self.volume_info);
+        let content = serde_json::to_string_pretty(&vif)
+            .map_err(|e| VolumeError::Io(io::Error::new(io::ErrorKind::Other, e.to_string())))?;
+        fs::write(&self.vif_path(), content)?;
+        Ok(())
+    }
+
+    /// Get the remote storage backend name and key from this volume .vif.
+    pub fn remote_storage_name_key(&self) -> (String, String) {
+        if self.volume_info.files.is_empty() {
+            return (String::new(), String::new());
+        }
+        let rf = &self.volume_info.files[0];
+        let backend_name = if rf.backend_id.is_empty() {
+            rf.backend_type.clone()
+        } else {
+            format!("{}.{}", rf.backend_type, rf.backend_id)
+        };
+        (backend_name, rf.key.clone())
+    }
+
+    /// Get the dat file path for this volume.
+    pub fn dat_path(&self) -> String {
+        self.file_name(".dat")
+    }
+
+    /// Get the directory this volume is stored in.
+    pub fn dir(&self) -> &str {
+        &self.dir
+    }
+
+    /// Throttle IO during compaction to avoid saturating disk.
+    pub fn maybe_throttle_compaction(&self, bytes_written: u64) {
+        if self.compaction_byte_per_second <= 0 || !self.is_compacting {
+            return;
+        }
+        // Simple throttle: sleep based on bytes written vs allowed rate
+        let sleep_us =
+            (bytes_written as f64 / self.compaction_byte_per_second as f64 * 1_000_000.0) as u64;
+        if sleep_us > 0 {
+            std::thread::sleep(std::time::Duration::from_micros(sleep_us));
+        }
+    }
+
+    /// Change the replication placement and rewrite the super block.
+    pub fn set_replica_placement(&mut self, rp: ReplicaPlacement) -> Result<(), VolumeError> {
+        self.super_block.replica_placement = rp;
+        let bytes = self.super_block.to_bytes();
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+        dat_file.seek(SeekFrom::Start(0))?;
+        dat_file.write_all(&bytes)?;
+        dat_file.sync_all()?;
+        Ok(())
+    }
+
+    // ---- Binary search for incremental copy ----
+
+    /// Read a single index entry's offset from the .idx file by entry index.
+    fn read_offset_from_index(&self, m: i64) -> Result<Offset, VolumeError> {
+        let idx_path = self.file_name(".idx");
+        let idx_file = File::open(&idx_path)?;
+        let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+        let file_offset = m as u64 * NEEDLE_MAP_ENTRY_SIZE as u64;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            idx_file.read_exact_at(&mut buf, file_offset)?;
+        }
+        #[cfg(not(unix))]
+        {
+            let mut f = idx_file;
+            f.seek(SeekFrom::Start(file_offset))?;
+            std::io::Read::read_exact(&mut f, &mut buf)?;
+        }
+        let (_key, offset, _size) = idx_entry_from_bytes(&buf);
+        Ok(offset)
+    }
+
+    /// Read the append_at_ns timestamp from a needle at the given offset in the .dat file.
+    /// Go reads the full needle body for ALL entries including tombstones to get the
+    /// actual AppendAtNs timestamp, which is needed for correct binary search during
+    /// incremental copy.
+    fn read_append_at_ns(&self, offset: Offset) -> Result<u64, VolumeError> {
+        let actual_offset = offset.to_actual_offset() as u64;
+        let version = self.version();
+
+        let mut header_buf = [0u8; NEEDLE_HEADER_SIZE];
+        self.read_exact_at_backend(&mut header_buf, actual_offset)?;
+
+        let (_cookie, _id, size) = Needle::parse_header(&header_buf);
+
+        let actual_size = get_actual_size(size, version);
+        if actual_size <= 0 {
+            return Ok(0);
+        }
+        let mut buf = vec![0u8; actual_size as usize];
+        self.read_exact_at_backend(&mut buf, actual_offset)?;
+
+        let mut n = Needle::default();
+        n.read_bytes_meta_only(&mut buf, offset.to_actual_offset(), size, version)?;
+        Ok(n.append_at_ns)
+    }
+
+    /// Search right from position m to find the first non-deleted entry.
+    fn read_right_ns(&self, m: i64, max: i64) -> Result<(i64, Offset, u64), VolumeError> {
+        let mut index = m;
+        loop {
+            index += 1;
+            if index >= max {
+                return Ok((index, Offset::default(), 0));
+            }
+            let offset = self.read_offset_from_index(index)?;
+            if !offset.is_zero() {
+                let ts = self.read_append_at_ns(offset)?;
+                return Ok((index, offset, ts));
+            }
+        }
+    }
+
+    /// Search left from position m to find the first non-deleted entry.
+    fn read_left_ns(&self, m: i64) -> Result<(i64, Offset, u64), VolumeError> {
+        let mut index = m;
+        loop {
+            index -= 1;
+            if index < 0 {
+                return Ok((index, Offset::default(), 0));
+            }
+            let offset = self.read_offset_from_index(index)?;
+            if !offset.is_zero() {
+                let ts = self.read_append_at_ns(offset)?;
+                return Ok((index, offset, ts));
+            }
+        }
+    }
+
+    /// Binary search through the .idx file to find the first needle
+    /// with append_at_ns > since_ns. Returns (offset, is_last).
+    /// Matches Go's BinarySearchByAppendAtNs in volume_backup.go.
+    pub fn binary_search_by_append_at_ns(
+        &self,
+        since_ns: u64,
+    ) -> Result<(Offset, bool), VolumeError> {
+        let file_size = self.idx_file_size() as i64;
+        if file_size % NEEDLE_MAP_ENTRY_SIZE as i64 != 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unexpected idx file size: {}", file_size),
+            )));
+        }
+
+        let entry_count = file_size / NEEDLE_MAP_ENTRY_SIZE as i64;
+        let mut l: i64 = 0;
+        let mut h: i64 = entry_count;
+
+        while l < h {
+            let m = (l + h) / 2;
+
+            if m == entry_count {
+                return Ok((Offset::default(), true));
+            }
+
+            let offset = self.read_offset_from_index(m)?;
+
+            if offset.is_zero() {
+                let (left_index, _left_offset, left_ns) = self.read_left_ns(m)?;
+                let (right_index, right_offset, right_ns) = self.read_right_ns(m, entry_count)?;
+
+                if right_ns <= since_ns {
+                    l = right_index;
+                    if l == entry_count {
+                        return Ok((Offset::default(), true));
+                    } else {
+                        continue;
+                    }
+                }
+                if since_ns < left_ns {
+                    h = left_index + 1;
+                    continue;
+                }
+                return Ok((right_offset, false));
+            }
+
+            let m_ns = self.read_append_at_ns(offset)?;
+
+            if m_ns <= since_ns {
+                l = m + 1;
+            } else {
+                h = m;
+            }
+        }
+
+        if l == entry_count {
+            return Ok((Offset::default(), true));
+        }
+
+        let offset = self.read_offset_from_index(l)?;
+        Ok((offset, false))
+    }
+
+    /// Write a raw needle blob at a specific offset in the .dat file.
+    pub fn write_needle_blob(
+        &mut self,
+        offset: i64,
+        needle_blob: &[u8],
+    ) -> Result<(), VolumeError> {
+        if self.is_read_only() {
+            return Err(VolumeError::ReadOnly);
+        }
+        let dat_file = self.dat_file.as_mut().ok_or_else(|| {
+            VolumeError::Io(io::Error::new(io::ErrorKind::Other, "dat file not open"))
+        })?;
+        dat_file.seek(SeekFrom::Start(offset as u64))?;
+        dat_file.write_all(needle_blob)?;
+        Ok(())
+    }
+
+    /// Write a needle blob and update the needle map index.
+    /// Matches Go's Volume.WriteNeedleBlob which appends to dat and calls nm.Put.
+    pub fn write_needle_blob_and_index(
+        &mut self,
+        needle_id: NeedleId,
+        needle_blob: &[u8],
+        size: Size,
+    ) -> Result<(), VolumeError> {
+        // Dedup check: if the same needle already exists with matching content, skip the write.
+        // Matches Go's WriteNeedleBlob which reads existing needle and compares cookie+checksum+data.
+        if let Some(nm) = &self.nm {
+            if let Some(nv) = nm.get(needle_id) {
+                if nv.size == size {
+                    let version = self.version();
+                    // Read existing needle from disk
+                    let mut old_needle = Needle::default();
+                    let mut ro = ReadOption::default();
+                    if self
+                        .read_needle_data_at_unlocked(
+                            &mut old_needle,
+                            nv.offset.to_actual_offset(),
+                            nv.size,
+                            &mut ro,
+                        )
+                        .is_ok()
+                    {
+                        // Parse the incoming blob into a needle
+                        let mut new_needle = Needle::default();
+                        if new_needle
+                            .read_bytes(needle_blob, nv.offset.to_actual_offset(), size, version)
+                            .is_ok()
+                        {
+                            if old_needle.cookie == new_needle.cookie
+                                && old_needle.checksum == new_needle.checksum
+                                && old_needle.data == new_needle.data
+                            {
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check volume size limit
+        let content_size = self.content_size();
+        if MAX_POSSIBLE_VOLUME_SIZE < content_size + needle_blob.len() as u64 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "volume size limit {} exceeded! current size is {}",
+                    MAX_POSSIBLE_VOLUME_SIZE, content_size
+                ),
+            )));
+        }
+
+        // Compute monotonic appendAtNs (matches Go: needle.GetAppendAtNs(v.lastAppendAtNs))
+        let append_at_ns = get_append_at_ns(self.last_append_at_ns);
+
+        // Patch appendAtNs timestamp into V3 blobs (matches Go WriteNeedleBlob L64-77)
+        let mut blob_buf;
+        let blob_to_write = if self.version() == VERSION_3 {
+            let ts_offset =
+                NEEDLE_HEADER_SIZE + size.0 as usize + NEEDLE_CHECKSUM_SIZE;
+            if ts_offset + TIMESTAMP_SIZE > needle_blob.len() {
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "needle blob buffer too small: need {} bytes, have {}",
+                        ts_offset + TIMESTAMP_SIZE,
+                        needle_blob.len()
+                    ),
+                )));
+            }
+            blob_buf = needle_blob.to_vec();
+            blob_buf[ts_offset..ts_offset + TIMESTAMP_SIZE]
+                .copy_from_slice(&append_at_ns.to_be_bytes());
+            &blob_buf[..]
+        } else {
+            needle_blob
+        };
+
+        // Append blob at end of dat file
+        let dat_size = self.dat_file_size()? as i64;
+        self.write_needle_blob(dat_size, blob_to_write)?;
+
+        // Update lastAppendAtNs (matches Go L352: v.lastAppendAtNs = appendAtNs)
+        self.last_append_at_ns = append_at_ns;
+
+        // Update needle map index
+        let offset = Offset::from_actual_offset(dat_size);
+        if let Some(ref mut nm) = self.nm {
+            nm.put(needle_id, offset, size)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn needs_replication(&self) -> bool {
+        self.super_block.replica_placement.get_copy_count() > 1
+    }
+
+    /// Garbage ratio: deleted_size / content_size (matching Go's garbageLevel).
+    /// content_size is the additive-only FileByteCounter.
+    ///
+    /// When DeletedCount > 0 but DeletedSize == 0 (e.g. .sdx converted back to
+    /// normal .idx where deleted entry sizes are missing), falls back to
+    /// computing deleted bytes as (datFileSize - contentSize - SuperBlockSize)
+    /// and uses datFileSize as the denominator.
+    pub fn garbage_level(&self) -> f64 {
+        let content = self.content_size();
+        if content == 0 {
+            return 0.0;
+        }
+        let mut deleted = self.deleted_size();
+        let mut file_size = content;
+
+        if self.deleted_count() > 0 && deleted == 0 {
+            // This happens for .sdx converted back to normal .idx
+            // where deleted entry size is missing
+            let dat_file_size = self.dat_file_size().unwrap_or(0);
+            deleted = dat_file_size.saturating_sub(content).saturating_sub(SUPER_BLOCK_SIZE as u64);
+            file_size = dat_file_size;
+        }
+
+        if file_size == 0 {
+            return 0.0;
+        }
+        deleted as f64 / file_size as f64
+    }
+
+    pub fn dat_file_size(&self) -> io::Result<u64> {
+        self.current_dat_file_size()
+    }
+
+    /// Get the modification time of the .dat file as Unix seconds.
+    pub fn dat_file_mod_time(&self) -> u64 {
+        if let Some(dat_file) = self.dat_file.as_ref() {
+            dat_file
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0)
+        } else {
+            self.remote_dat_file
+                .as_ref()
+                .map(|remote_dat_file| remote_dat_file.modified_time)
+                .unwrap_or(0)
+        }
+    }
+
+    pub fn idx_file_size(&self) -> u64 {
+        self.nm.as_ref().map_or(0, |nm| nm.index_file_size())
+    }
+
+    // ---- Compaction / Vacuum ----
+
+    /// Compact the volume by copying only live needles to new .cpd/.cpx files.
+    /// This reads from the current .dat/.idx and writes to .cpd/.cpx.
+    /// Call `commit_compact()` after to swap the files.
+    pub fn compact_by_index<F>(
+        &mut self,
+        _preallocate: u64,
+        _max_bytes_per_second: i64,
+        progress_fn: F,
+    ) -> Result<(), VolumeError>
+    where
+        F: Fn(i64) -> bool,
+    {
+        if self.is_compacting {
+            return Ok(()); // already compacting
+        }
+        self.is_compacting = true;
+
+        let result = self.do_compact_by_index(progress_fn);
+
+        self.is_compacting = false;
+        result
+    }
+
+    fn do_compact_by_index<F>(&mut self, progress_fn: F) -> Result<(), VolumeError>
+    where
+        F: Fn(i64) -> bool,
+    {
+        // Guard against nil needle map (matches Go's nil check before compaction sync)
+        if self.nm.is_none() {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!("volume {} needle map is nil", self.id),
+            )));
+        }
+
+        // Record state before compaction for makeupDiff
+        self.last_compact_index_offset = self.nm.as_ref().map_or(0, |nm| nm.index_file_size());
+        self.last_compact_revision = self.super_block.compaction_revision;
+
+        // Sync current data
+        self.sync_to_disk()?;
+
+        let cpd_path = self.file_name(".cpd");
+        let cpx_path = self.file_name(".cpx");
+        let version = self.version();
+
+        // Write new super block with incremented compaction revision
+        let mut new_sb = self.super_block.clone();
+        new_sb.compaction_revision += 1;
+        let sb_bytes = new_sb.to_bytes();
+
+        let mut dst = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&cpd_path)?;
+        dst.write_all(&sb_bytes)?;
+        let mut new_offset = sb_bytes.len() as i64;
+
+        // Build new index in memory
+        let mut new_nm = CompactNeedleMap::new();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+
+        // Collect live entries from needle map (sorted ascending)
+        let nm = self.nm.as_ref().ok_or(VolumeError::NotInitialized)?;
+        let mut entries: Vec<(NeedleId, Offset, Size)> = Vec::new();
+        for (id, nv) in nm.iter_entries() {
+            if nv.offset.is_zero() || nv.size.is_deleted() {
+                continue;
+            }
+            entries.push((id, nv.offset, nv.size));
+        }
+        entries.sort_by_key(|(_, offset, _)| *offset);
+
+        for (id, offset, size) in entries {
+            // Progress callback
+            if !progress_fn(offset.to_actual_offset()) {
+                // Interrupted
+                let _ = fs::remove_file(&cpd_path);
+                return Err(VolumeError::Io(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "compaction interrupted",
+                )));
+            }
+
+            // Read needle from source
+            let mut n = Needle {
+                id,
+                ..Needle::default()
+            };
+            self.read_needle_data_at(&mut n, offset.to_actual_offset(), size)?;
+
+            // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
+            if n.has_ttl() {
+                let ttl_minutes = self.super_block.ttl.minutes();
+                if ttl_minutes > 0 && n.last_modified > 0 {
+                    let expire_at = n.last_modified + (ttl_minutes as u64) * 60;
+                    if now >= expire_at {
+                        continue;
+                    }
+                }
+            }
+
+            // Write needle to destination
+            let bytes = n.write_bytes(version);
+            dst.write_all(&bytes)?;
+
+            // Update new index
+            new_nm.put(id, Offset::from_actual_offset(new_offset), n.size)?;
+            new_offset += bytes.len() as i64;
+        }
+
+        dst.sync_all()?;
+
+        // Save new index
+        new_nm.save_to_idx(&cpx_path)?;
+
+        Ok(())
+    }
+
+    /// Commit a previously completed compaction: swap .cpd/.cpx to .dat/.idx and reload.
+    /// Matches Go's isCompactionInProgress CompareAndSwap guard.
+    pub fn commit_compact(&mut self) -> Result<(), VolumeError> {
+        if self.is_compacting {
+            return Ok(()); // already compacting, silently skip (matches Go)
+        }
+        self.is_compacting = true;
+
+        let result = self.do_commit_compact();
+
+        self.is_compacting = false;
+        result
+    }
+
+    fn do_commit_compact(&mut self) -> Result<(), VolumeError> {
+        if let Err(e) = self.makeup_diff() {
+            warn!("makeup_diff failed: {}", e);
+            // Match Go: clean up .cpd/.cpx on makeup_diff failure
+            let cpd = self.file_name(".cpd");
+            let cpx = self.file_name(".cpx");
+            let _ = fs::remove_file(&cpd);
+            let _ = fs::remove_file(&cpx);
+            return Err(e);
+        }
+
+        // Close current files
+        if let Some(ref mut nm) = self.nm {
+            nm.close();
+        }
+        self.nm = None;
+        if let Some(ref dat_file) = self.dat_file {
+            let _ = dat_file.sync_all();
+        }
+        self.dat_file = None;
+        self.remote_dat_file = None;
+
+        let cpd_path = self.file_name(".cpd");
+        let cpx_path = self.file_name(".cpx");
+        let dat_path = self.file_name(".dat");
+        let idx_path = self.file_name(".idx");
+
+        // Check that compact files exist
+        if !Path::new(&cpd_path).exists() || !Path::new(&cpx_path).exists() {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::NotFound,
+                "compact files (.cpd/.cpx) not found",
+            )));
+        }
+
+        // Swap files: .cpd → .dat, .cpx → .idx
+        fs::rename(&cpd_path, &dat_path)?;
+        fs::rename(&cpx_path, &idx_path)?;
+
+        // Remove any leveldb/redb index files (rebuilt from .idx on reload)
+        let ldb_path = self.file_name(".ldb");
+        let _ = fs::remove_dir_all(&ldb_path);
+        let rdb_path = self.file_name(".rdb");
+        let _ = fs::remove_file(&rdb_path);
+
+        // Reload
+        self.load(true, false, 0, self.version())?;
+
+        Ok(())
+    }
+
+    /// Clean up leftover compaction files (.cpd, .cpx).
+    pub fn cleanup_compact(&self) -> Result<(), VolumeError> {
+        let cpd_path = self.file_name(".cpd");
+        let cpx_path = self.file_name(".cpx");
+        let cpldb_path = self.file_name(".cpldb");
+
+        let e1 = fs::remove_file(&cpd_path);
+        let e2 = fs::remove_file(&cpx_path);
+        let e3 = fs::remove_dir_all(&cpldb_path);
+
+        // Ignore NotFound errors
+        if let Err(e) = e1 {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e.into());
+            }
+        }
+        if let Err(e) = e2 {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e.into());
+            }
+        }
+        if let Err(e) = e3 {
+            if e.kind() != io::ErrorKind::NotFound {
+                return Err(e.into());
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read any new needles appended during compaction and append them to .cpd/.cpx
+    fn makeup_diff(&mut self) -> Result<(), VolumeError> {
+        let old_idx_size = self.nm.as_ref().map_or(0, |nm| nm.index_file_size());
+        if old_idx_size == 0 || old_idx_size <= self.last_compact_index_offset {
+            return Ok(());
+        }
+
+        let old_super_block = &self.super_block;
+        if old_super_block.compaction_revision != self.last_compact_revision {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "current old dat file's compact revision {} is not the expected one {}",
+                    old_super_block.compaction_revision, self.last_compact_revision
+                ),
+            )));
+        }
+
+        // Read the new .cpd file's super block and verify its compaction revision is old + 1
+        let cpd_path_check = self.file_name(".cpd");
+        let mut cpd_file_check = File::open(&cpd_path_check)?;
+        let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
+        cpd_file_check.read_exact(&mut sb_buf)?;
+        let new_super_block = SuperBlock::from_bytes(&sb_buf)?;
+        let old_compact_revision = old_super_block.compaction_revision;
+        let new_compact_revision = new_super_block.compaction_revision;
+        if old_compact_revision + 1 != new_compact_revision {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "old dat file's compact revision {} + 1 does not equal new dat file's compact revision {}",
+                    old_compact_revision, new_compact_revision
+                ),
+            )));
+        }
+
+        let old_idx_path = self.file_name(".idx");
+        let mut old_idx_file = File::open(&old_idx_path)?;
+
+        // Read new entries from .idx
+        let mut incremented_entries = std::collections::HashMap::new();
+        let offset = self.last_compact_index_offset;
+
+        old_idx_file.seek(SeekFrom::Start(offset))?;
+        let entry_count = (old_idx_size - offset) / NEEDLE_MAP_ENTRY_SIZE as u64;
+        for _ in 0..entry_count {
+            let mut buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+            old_idx_file.read_exact(&mut buf)?;
+            let (key, needle_offset, size) = crate::storage::types::idx_entry_from_bytes(&buf);
+            incremented_entries.insert(key, (needle_offset, size));
+        }
+
+        if incremented_entries.is_empty() {
+            return Ok(());
+        }
+
+        let cpd_path = self.file_name(".cpd");
+        let cpx_path = self.file_name(".cpx");
+
+        let mut dst_dat = OpenOptions::new().read(true).write(true).open(&cpd_path)?;
+        let mut dst_idx = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&cpx_path)?;
+
+        let mut dat_offset = dst_dat.seek(SeekFrom::End(0))?;
+        let padding_rem = dat_offset % NEEDLE_PADDING_SIZE as u64;
+        if padding_rem != 0 {
+            dat_offset += NEEDLE_PADDING_SIZE as u64 - padding_rem;
+            dst_dat.seek(SeekFrom::Start(dat_offset))?;
+        }
+
+        let version = self.version();
+        let old_dat_path = self.file_name(".dat");
+        let old_dat_file = File::open(&old_dat_path)?;
+
+        for (key, (needle_offset, size)) in incremented_entries {
+            if !needle_offset.is_zero() && !size.is_deleted() && size.0 > 0 {
+                let actual_size = crate::storage::needle::needle::get_actual_size(size, version);
+                let mut blob = vec![0u8; actual_size as usize];
+
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::FileExt;
+                    old_dat_file
+                        .read_exact_at(&mut blob, needle_offset.to_actual_offset() as u64)?;
+                }
+                #[cfg(windows)]
+                {
+                    crate::storage::volume::read_exact_at(
+                        &old_dat_file,
+                        &mut blob,
+                        needle_offset.to_actual_offset() as u64,
+                    )?;
+                }
+
+                dst_dat.write_all(&blob)?;
+
+                let mut idx_entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+                crate::storage::types::idx_entry_to_bytes(
+                    &mut idx_entry_buf,
+                    key,
+                    Offset::from_actual_offset(dat_offset as i64),
+                    size,
+                );
+                dst_idx.write_all(&idx_entry_buf)?;
+
+                dat_offset += actual_size as u64;
+            } else {
+                let mut fake_del_needle = Needle {
+                    id: key,
+                    cookie: Cookie(0x12345678),
+                    append_at_ns: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_nanos() as u64,
+                    ..Needle::default()
+                };
+                let bytes = fake_del_needle.write_bytes(version);
+                dst_dat.write_all(&bytes)?;
+
+                let mut idx_entry_buf = [0u8; NEEDLE_MAP_ENTRY_SIZE];
+                crate::storage::types::idx_entry_to_bytes(
+                    &mut idx_entry_buf,
+                    key,
+                    Offset::from_actual_offset(0),
+                    Size(crate::storage::types::TOMBSTONE_FILE_SIZE.into()),
+                );
+                dst_idx.write_all(&idx_entry_buf)?;
+
+                dat_offset += bytes.len() as u64;
+            }
+        }
+
+        dst_dat.sync_all()?;
+        dst_idx.sync_all()?;
+
+        Ok(())
+    }
+
+    // ---- Sync / Close ----
+
+    pub fn sync_to_disk(&mut self) -> io::Result<()> {
+        if let Some(ref dat_file) = self.dat_file {
+            dat_file.sync_all()?;
+        }
+        if let Some(ref nm) = self.nm {
+            nm.sync()?;
+        }
+        Ok(())
+    }
+
+    pub fn close(&mut self) {
+        if let Some(ref dat_file) = self.dat_file {
+            let _ = dat_file.sync_all();
+        }
+        self.dat_file = None;
+        self.remote_dat_file = None;
+        if let Some(ref nm) = self.nm {
+            let _ = nm.sync();
+        }
+        self.nm = None;
+    }
+
+    /// Remove all volume files from disk.
+    pub fn destroy(&mut self, only_empty: bool) -> Result<(), VolumeError> {
+        if only_empty && self.file_count() > 0 {
+            return Err(VolumeError::NotEmpty);
+        }
+        if self.is_compacting {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::Other,
+                format!("volume {} is compacting", self.id),
+            )));
+        }
+
+        let (storage_name, storage_key) = self.remote_storage_name_key();
+        if self.has_remote_file && !storage_name.is_empty() && !storage_key.is_empty() {
+            let backend = crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .read()
+                .unwrap()
+                .get(&storage_name);
+            if let Some(backend) = backend {
+                if let Err(e) = backend.delete_file_blocking(&storage_key) {
+                    warn!(
+                        volume_id = self.id.0,
+                        storage_name,
+                        storage_key,
+                        error = %e,
+                        "failed to delete remote tier file during destroy"
+                    );
+                }
+            } else {
+                warn!(
+                    volume_id = self.id.0,
+                    storage_name, storage_key, "remote tier backend not found during destroy"
+                );
+            }
+        }
+
+        self.close();
+        remove_volume_files(&self.data_file_name());
+        remove_volume_files(&self.index_file_name());
+        Ok(())
+    }
+
+    /// Check if an I/O error is EIO (errno 5) and record it for health monitoring.
+    /// On success (None), clears any previously recorded EIO error.
+    /// Matches Go's `checkReadWriteError` in volume_write.go.
+    fn check_read_write_error(&self, err: Option<&io::Error>) {
+        if let Some(e) = err {
+            if e.raw_os_error() == Some(5) {
+                // EIO — record it
+                if let Ok(mut guard) = self.last_io_error.lock() {
+                    *guard = Some(e.to_string());
+                }
+            }
+        } else {
+            // Success — clear any previous EIO
+            if let Ok(mut guard) = self.last_io_error.lock() {
+                if guard.is_some() {
+                    *guard = None;
+                }
+            }
+        }
+    }
+
+    /// Returns the last recorded I/O error string, if any.
+    #[allow(dead_code)]
+    pub fn last_io_error(&self) -> Option<String> {
+        self.last_io_error.lock().ok()?.clone()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_io_error_for_test(&self, err: Option<&str>) {
+        if let Ok(mut guard) = self.last_io_error.lock() {
+            *guard = err.map(|value| value.to_string());
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_last_modified_ts_for_test(&mut self, ts_seconds: u64) {
+        self.last_modified_ts_seconds = ts_seconds;
+    }
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+/// Generate volume file base name: dir/collection_id or dir/id
+pub fn volume_file_name(dir: &str, collection: &str, id: VolumeId) -> String {
+    if collection.is_empty() {
+        format!("{}/{}", dir, id.0)
+    } else {
+        format!("{}/{}_{}", dir, collection, id.0)
+    }
+}
+
+/// Generate a monotonically increasing append timestamp.
+fn get_append_at_ns(last: u64) -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    if now <= last {
+        last + 1
+    } else {
+        now
+    }
+}
+
+/// Remove all files associated with a volume.
+pub(crate) fn remove_volume_files(base: &str) {
+    for ext in &[
+        ".dat", ".idx", ".vif", ".sdx", ".cpd", ".cpx", ".note", ".rdb",
+    ] {
+        let _ = fs::remove_file(format!("{}{}", base, ext));
+    }
+    // leveldb uses a directory
+    let _ = fs::remove_dir_all(format!("{}.ldb", base));
+}
+
+// ============================================================================
+// ScanVolumeFile — iterate all needles in a .dat file
+// ============================================================================
+
+/// Callback for scanning needles in a volume file.
+pub trait VolumeFileVisitor {
+    fn visit_super_block(&mut self, sb: &SuperBlock) -> Result<(), VolumeError>;
+    fn read_needle_body(&self) -> bool;
+    fn visit_needle(&mut self, n: &Needle, offset: i64) -> Result<(), VolumeError>;
+}
+
+/// Scan all needles in a volume's .dat file.
+pub fn scan_volume_file(
+    dat_path: &str,
+    visitor: &mut dyn VolumeFileVisitor,
+) -> Result<(), VolumeError> {
+    let mut file = File::open(dat_path)?;
+
+    // Read super block
+    let mut sb_buf = [0u8; SUPER_BLOCK_SIZE];
+    file.read_exact(&mut sb_buf)?;
+    let sb = SuperBlock::from_bytes(&sb_buf)?;
+    visitor.visit_super_block(&sb)?;
+
+    let version = sb.version;
+    let mut offset = sb.block_size() as i64;
+
+    loop {
+        // Read needle header
+        let mut header = [0u8; NEEDLE_HEADER_SIZE];
+        file.seek(SeekFrom::Start(offset as u64))?;
+        match file.read_exact(&mut header) {
+            Ok(()) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+            Err(e) => return Err(e.into()),
+        }
+
+        let (_cookie, _id, size) = Needle::parse_header(&header);
+
+        if size.0 == 0 && _id.is_empty() {
+            break; // end of valid data
+        }
+
+        let body_length = needle::needle_body_length(size, version);
+        let total_size = NEEDLE_HEADER_SIZE as i64 + body_length;
+
+        // Skip full body parsing for deleted needles (tombstone or negative size)
+        if size.is_deleted() || size.0 <= 0 {
+            let mut n = Needle::default();
+            n.read_header(&header);
+            visitor.visit_needle(&n, offset)?;
+        } else if visitor.read_needle_body() {
+            let mut buf = vec![0u8; total_size as usize];
+            file.seek(SeekFrom::Start(offset as u64))?;
+            file.read_exact(&mut buf)?;
+
+            let mut n = Needle::default();
+            n.read_bytes(&buf, offset, size, version)?;
+            visitor.visit_needle(&n, offset)?;
+        } else {
+            let mut n = Needle::default();
+            n.read_header(&header);
+            visitor.visit_needle(&n, offset)?;
+        }
+
+        offset += total_size;
+    }
+
+    Ok(())
+}
+
+/// Reserve disk blocks for a file without changing its visible size.
+/// On Linux, uses `fallocate(FALLOC_FL_KEEP_SIZE)` to actually reserve blocks.
+/// On other platforms, this is a no-op.
+fn preallocate_file(file: &File, size: u64) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = file.as_raw_fd();
+        // FALLOC_FL_KEEP_SIZE = 1: allocate blocks without changing file size
+        let ret = unsafe { libc::fallocate(fd, 1, 0, size as libc::off_t) };
+        if ret == 0 {
+            tracing::info!(bytes = size, "preallocated disk space");
+        } else {
+            tracing::warn!(
+                bytes = size,
+                error = %io::Error::last_os_error(),
+                "fallocate failed"
+            );
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (file, size);
+        tracing::debug!(bytes = size, "preallocation not supported on this platform");
+    }
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::needle::crc::CRC;
+    use tempfile::TempDir;
+
+    fn spawn_fake_s3_server(body: Vec<u8>) -> (String, tokio::sync::oneshot::Sender<()>) {
+        use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+        use axum::routing::any;
+        use axum::Router;
+
+        let body = Arc::new(body);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+
+        std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let app = Router::new().fallback(any(move |headers: HeaderMap| {
+                    let body = body.clone();
+                    async move {
+                        let bytes = body.as_ref();
+                        if let Some(range) = headers
+                            .get(header::RANGE)
+                            .and_then(|value| value.to_str().ok())
+                        {
+                            if let Some(spec) = range.strip_prefix("bytes=") {
+                                let (start, end) = spec.split_once('-').unwrap();
+                                let start = start.parse::<usize>().unwrap();
+                                let end = if end.is_empty() {
+                                    bytes.len().saturating_sub(1)
+                                } else {
+                                    end.parse::<usize>().unwrap()
+                                }
+                                .min(bytes.len().saturating_sub(1));
+                                let chunk = bytes[start..=end].to_vec();
+                                let mut response_headers = HeaderMap::new();
+                                response_headers.insert(
+                                    header::CONTENT_LENGTH,
+                                    HeaderValue::from_str(&chunk.len().to_string()).unwrap(),
+                                );
+                                response_headers.insert(
+                                    header::CONTENT_RANGE,
+                                    HeaderValue::from_str(&format!(
+                                        "bytes {}-{}/{}",
+                                        start,
+                                        end,
+                                        bytes.len()
+                                    ))
+                                    .unwrap(),
+                                );
+                                return (StatusCode::PARTIAL_CONTENT, response_headers, chunk);
+                            }
+                        }
+
+                        let mut response_headers = HeaderMap::new();
+                        response_headers.insert(
+                            header::CONTENT_LENGTH,
+                            HeaderValue::from_str(&bytes.len().to_string()).unwrap(),
+                        );
+                        (StatusCode::OK, response_headers, bytes.to_vec())
+                    }
+                }));
+
+                let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                axum::serve(listener, app)
+                    .with_graceful_shutdown(async move {
+                        let _ = shutdown_rx.await;
+                    })
+                    .await
+                    .unwrap();
+            });
+        });
+
+        (format!("http://{}", addr), shutdown_tx)
+    }
+
+    fn make_test_volume(dir: &str) -> Volume {
+        Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_data_file_access_control_blocks_writer_until_reader_releases() {
+        let control = Arc::new(DataFileAccessControl::default());
+        let read_lease = control.read_lock();
+        let writer_control = control.clone();
+        let acquired = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let acquired_clone = acquired.clone();
+
+        let writer = std::thread::spawn(move || {
+            let _write_lease = writer_control.write_lock();
+            acquired_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        assert!(!acquired.load(std::sync::atomic::Ordering::Relaxed));
+
+        drop(read_lease);
+        writer.join().unwrap();
+
+        assert!(acquired.load(std::sync::atomic::Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_volume_file_name() {
+        assert_eq!(volume_file_name("/data", "", VolumeId(1)), "/data/1");
+        assert_eq!(
+            volume_file_name("/data", "pics", VolumeId(42)),
+            "/data/pics_42"
+        );
+    }
+
+    #[test]
+    fn test_volume_create_and_load() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let v = make_test_volume(dir);
+        assert_eq!(v.version(), VERSION_3);
+        assert_eq!(v.file_count(), 0);
+        assert_eq!(v.content_size(), 0);
+
+        // .dat and .idx files should exist
+        assert!(Path::new(&v.file_name(".dat")).exists());
+        assert!(Path::new(&v.file_name(".idx")).exists());
+    }
+
+    #[test]
+    fn test_volume_write_read() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write a needle
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0x12345678),
+            data: b"hello world".to_vec(),
+            data_size: 11,
+            flags: 0,
+            ..Needle::default()
+        };
+        let (offset, size, unchanged) = v.write_needle(&mut n, true).unwrap();
+        assert!(!unchanged);
+        assert!(offset > 0); // after superblock
+        assert!(size.0 > 0);
+        assert_eq!(v.file_count(), 1);
+
+        // Read it back
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let count = v.read_needle(&mut read_n).unwrap();
+        assert_eq!(count, 11);
+        assert_eq!(read_n.data, b"hello world");
+        assert_eq!(read_n.cookie, Cookie(0x12345678));
+    }
+
+    #[test]
+    fn test_volume_write_dedup() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"same data".to_vec(),
+            data_size: 9,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write same needle again — should be unchanged
+        let mut n2 = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"same data".to_vec(),
+            data_size: 9,
+            ..Needle::default()
+        };
+        n2.checksum = CRC::new(&n2.data);
+        let (_, _, unchanged) = v.write_needle(&mut n2, true).unwrap();
+        assert!(unchanged);
+    }
+
+    #[test]
+    fn test_volume_delete() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xbb),
+            data: b"delete me".to_vec(),
+            data_size: 9,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+        assert_eq!(v.file_count(), 1);
+
+        let deleted_size = v
+            .delete_needle(&mut Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0xbb),
+                ..Needle::default()
+            })
+            .unwrap();
+        assert!(deleted_size.0 > 0);
+        // Additive-only: file_count stays at 1 after delete
+        assert_eq!(v.file_count(), 1);
+        assert_eq!(v.deleted_count(), 1);
+
+        // Read should fail with Deleted
+        let mut read_n = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        let err = v.read_needle(&mut read_n).unwrap_err();
+        assert!(matches!(err, VolumeError::Deleted));
+    }
+
+    #[test]
+    fn test_volume_multiple_needles() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=10 {
+            let data = format!("needle data {}", i);
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: data.as_bytes().to_vec(),
+                data_size: data.len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+
+        assert_eq!(v.file_count(), 10);
+        assert_eq!(v.max_file_key(), NeedleId(10));
+
+        // Read back needle 5
+        let mut n = Needle {
+            id: NeedleId(5),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n).unwrap();
+        assert_eq!(n.data, b"needle data 5");
+    }
+
+    #[test]
+    fn test_volume_reload_from_disk() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        // Write some needles
+        {
+            let mut v = make_test_volume(dir);
+            for i in 1..=3 {
+                let data = format!("data {}", i);
+                let mut n = Needle {
+                    id: NeedleId(i),
+                    cookie: Cookie(i as u32),
+                    data: data.as_bytes().to_vec(),
+                    data_size: data.len() as u32,
+                    ..Needle::default()
+                };
+                v.write_needle(&mut n, true).unwrap();
+            }
+            v.sync_to_disk().unwrap();
+        }
+
+        // Reload and verify
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+        assert_eq!(v.file_count(), 3);
+
+        let mut n = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n).unwrap();
+        assert_eq!(std::str::from_utf8(&n.data).unwrap(), "data 2");
+    }
+
+    #[test]
+    fn test_volume_cookie_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xaa),
+            data: b"original".to_vec(),
+            data_size: 8,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write with wrong cookie
+        let mut n2 = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xbb),
+            data: b"overwrite".to_vec(),
+            data_size: 9,
+            ..Needle::default()
+        };
+        let err = v.write_needle(&mut n2, true).unwrap_err();
+        assert!(matches!(err, VolumeError::CookieMismatch(_)));
+    }
+
+    #[test]
+    fn test_volume_destroy() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let dat_path;
+        let idx_path;
+
+        {
+            let mut v = make_test_volume(dir);
+            dat_path = v.file_name(".dat");
+            idx_path = v.file_name(".idx");
+            assert!(Path::new(&dat_path).exists());
+            v.destroy(false).unwrap();
+        }
+
+        assert!(!Path::new(&dat_path).exists());
+        assert!(!Path::new(&idx_path).exists());
+    }
+
+    #[test]
+    fn test_read_all_needles_uses_dat_order_for_live_offsets() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        let mut first = Needle {
+            id: NeedleId(10),
+            cookie: Cookie(0x11223344),
+            data: b"first".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut first, true).unwrap();
+
+        let mut second = Needle {
+            id: NeedleId(20),
+            cookie: Cookie(0x55667788),
+            data: b"second".to_vec(),
+            data_size: 6,
+            ..Needle::default()
+        };
+        v.write_needle(&mut second, true).unwrap();
+
+        let mut first_overwrite = Needle {
+            id: NeedleId(10),
+            cookie: Cookie(0x11223344),
+            data: b"first-overwrite".to_vec(),
+            data_size: 15,
+            ..Needle::default()
+        };
+        v.write_needle(&mut first_overwrite, true).unwrap();
+
+        let needles = v.read_all_needles().unwrap();
+        let ids: Vec<u64> = needles.iter().map(|n| u64::from(n.id)).collect();
+        let bodies: Vec<&[u8]> = needles.iter().map(|n| n.data.as_slice()).collect();
+
+        assert_eq!(ids, vec![20, 10]);
+        assert_eq!(bodies, vec![b"second".as_slice(), b"first-overwrite".as_slice()]);
+    }
+
+    #[test]
+    fn test_get_append_at_ns() {
+        let t1 = get_append_at_ns(0);
+        assert!(t1 > 0);
+        let t2 = get_append_at_ns(t1);
+        assert!(t2 > t1);
+        // If we pass a future timestamp, should return last+1
+        let future = u64::MAX - 1;
+        let t3 = get_append_at_ns(future);
+        assert_eq!(t3, future + 1);
+    }
+
+    #[test]
+    fn test_volume_compact() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write 3 needles
+        for i in 1..=3u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        assert_eq!(v.file_count(), 3);
+
+        // Delete needle 2
+        let mut del = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(2),
+            ..Needle::default()
+        };
+        v.delete_needle(&mut del).unwrap();
+        // Additive-only: file_count stays at 3 after delete
+        assert_eq!(v.file_count(), 3);
+        assert_eq!(v.deleted_count(), 1);
+
+        let dat_size_before = v.dat_file_size().unwrap();
+
+        // Compact
+        v.compact_by_index(0, 0, |_| true).unwrap();
+
+        // Verify compact files exist
+        assert!(Path::new(&v.file_name(".cpd")).exists());
+        assert!(Path::new(&v.file_name(".cpx")).exists());
+
+        // Commit: swap files and reload
+        v.commit_compact().unwrap();
+
+        // After compaction: 2 live needles, 0 deleted
+        assert_eq!(v.file_count(), 2);
+        assert_eq!(v.deleted_count(), 0);
+
+        // Dat should be smaller (deleted needle removed)
+        let dat_size_after = v.dat_file_size().unwrap();
+        assert!(
+            dat_size_after < dat_size_before,
+            "dat should shrink after compact"
+        );
+
+        // Read back live needles
+        let mut n1 = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n1).unwrap();
+        assert_eq!(n1.data, b"data-1");
+
+        let mut n3 = Needle {
+            id: NeedleId(3),
+            ..Needle::default()
+        };
+        v.read_needle(&mut n3).unwrap();
+        assert_eq!(n3.data, b"data-3");
+
+        // Needle 2 should not exist
+        let mut n2 = Needle {
+            id: NeedleId(2),
+            ..Needle::default()
+        };
+        assert!(v.read_needle(&mut n2).is_err());
+
+        // Compact files should not exist after commit
+        assert!(!Path::new(&v.file_name(".cpd")).exists());
+        assert!(!Path::new(&v.file_name(".cpx")).exists());
+
+        // Cleanup should be a no-op
+        v.cleanup_compact().unwrap();
+    }
+
+    #[test]
+    fn test_compaction_revision_relookup() {
+        // Verifies that re_lookup_needle_data_offset returns the correct data offset
+        // and compaction revision, and that after compaction the offset changes.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write two needles
+        let mut n1 = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(0xAABBCCDD),
+            data: b"first-needle-data".to_vec(),
+            data_size: 17,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n1, true).unwrap();
+
+        let mut n2 = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x11223344),
+            data: b"second-needle-data".to_vec(),
+            data_size: 18,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n2, true).unwrap();
+
+        // Get initial revision and offset for needle 1
+        let initial_rev = v.super_block.compaction_revision;
+        let (initial_offset, rev) = v.re_lookup_needle_data_offset(NeedleId(1)).unwrap();
+        assert_eq!(rev, initial_rev);
+        assert!(initial_offset > 0, "data offset should be positive");
+
+        // Delete needle 2 so compaction removes it
+        let mut del_n2 = Needle {
+            id: NeedleId(2),
+            cookie: Cookie(0x11223344),
+            ..Needle::default()
+        };
+        v.delete_needle(&mut del_n2).unwrap();
+
+        // Compact the volume — this increments compaction_revision and may move needles
+        v.compact_by_index(0, 0, |_| true).unwrap();
+        v.commit_compact().unwrap();
+
+        // After compaction, the revision should have changed
+        let new_rev = v.super_block.compaction_revision;
+        assert_eq!(
+            new_rev,
+            initial_rev + 1,
+            "compaction should increment revision"
+        );
+
+        // Re-lookup needle 1 — should still be found with the new revision
+        let (new_offset, relookup_rev) = v.re_lookup_needle_data_offset(NeedleId(1)).unwrap();
+        assert_eq!(relookup_rev, new_rev);
+        assert!(new_offset > 0, "data offset should still be positive");
+
+        // The data should still be readable correctly after compaction
+        let mut read_n1 = Needle {
+            id: NeedleId(1),
+            ..Needle::default()
+        };
+        v.read_needle(&mut read_n1).unwrap();
+        assert_eq!(read_n1.data, b"first-needle-data");
+
+        // Deleted needle should not be found
+        let result = v.re_lookup_needle_data_offset(NeedleId(2));
+        assert!(
+            result.is_err(),
+            "deleted needle should not be found after compaction"
+        );
+    }
+
+    #[test]
+    fn test_stream_info_includes_compaction_revision() {
+        // Verifies that NeedleStreamInfo carries the volume's compaction revision
+        // so that StreamingBody can detect when compaction has occurred.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write a needle large enough to have meaningful data
+        let data = vec![0xABu8; 2048];
+        let mut n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0xDEADBEEF),
+            data: data.clone(),
+            data_size: data.len() as u32,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Read stream info
+        let mut read_n = Needle {
+            id: NeedleId(42),
+            cookie: Cookie(0xDEADBEEF),
+            ..Needle::default()
+        };
+        let info = v.read_needle_stream_info(&mut read_n, false).unwrap();
+
+        assert_eq!(info.volume_id, VolumeId(1));
+        assert_eq!(info.needle_id, NeedleId(42));
+        assert_eq!(info.compaction_revision, v.super_block.compaction_revision);
+        assert_eq!(info.data_size, data.len() as u32);
+        assert!(info.data_file_offset > 0);
+    }
+
+    #[test]
+    fn test_remote_vif_load_blocks_writes_but_allows_delete() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let dat_size_before_reload = {
+            let mut v = make_test_volume(dir);
+            let mut n = Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                data: b"remote".to_vec(),
+                data_size: 6,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+
+            let vif = VifVolumeInfo {
+                files: vec![VifRemoteFile {
+                    backend_type: "s3".to_string(),
+                    backend_id: "default".to_string(),
+                    key: "remote-key".to_string(),
+                    offset: 0,
+                    file_size: v.dat_file_size().unwrap(),
+                    modified_time: 123,
+                    extension: ".dat".to_string(),
+                }],
+                version: v.version().0 as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+
+            v.dat_file_size().unwrap()
+        };
+
+        let mut v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert!(v.is_read_only());
+        assert!(!v.no_write_or_delete);
+        assert!(v.no_write_can_delete);
+
+        let err = v
+            .write_needle(
+                &mut Needle {
+                    id: NeedleId(2),
+                    cookie: Cookie(0x5678),
+                    data: b"blocked".to_vec(),
+                    data_size: 7,
+                    ..Needle::default()
+                },
+                true,
+            )
+            .unwrap_err();
+        assert!(matches!(err, VolumeError::ReadOnly));
+
+        let deleted_size = v
+            .delete_needle(&mut Needle {
+                id: NeedleId(1),
+                cookie: Cookie(0x1234),
+                ..Needle::default()
+            })
+            .unwrap();
+        assert!(deleted_size.0 > 0);
+        assert_eq!(v.dat_file_size().unwrap(), dat_size_before_reload);
+    }
+
+    #[test]
+    fn test_set_writable_keeps_remote_delete_only_mode() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        v.volume_info.files.push(PbRemoteFile {
+            backend_type: "s3".to_string(),
+            backend_id: "default".to_string(),
+            key: "remote-key".to_string(),
+            offset: 0,
+            file_size: v.dat_file_size().unwrap(),
+            modified_time: 123,
+            extension: ".dat".to_string(),
+        });
+        v.refresh_remote_write_mode();
+        v.set_writable().unwrap();
+
+        assert!(v.is_read_only());
+        assert!(!v.no_write_or_delete);
+        assert!(v.no_write_can_delete);
+    }
+
+    #[test]
+    fn test_load_vif_defaults_local_version_and_bytes_offset() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            let vif = VifVolumeInfo::default();
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert_eq!(v.volume_info.version, Version::current().0 as u32);
+        assert_eq!(v.volume_info.bytes_offset, OFFSET_SIZE as u32);
+        assert_eq!(v.version(), Version::current());
+    }
+
+    #[test]
+    fn test_version_superblock_overrides_vif_version() {
+        // Go behavior: after reading the superblock, volumeInfo.Version is set
+        // to SuperBlock.Version, overriding whatever was in the .vif file.
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            // Write a .vif with version=2, but the .dat superblock is version=3
+            let vif = VifVolumeInfo {
+                version: VERSION_2.0 as u32,
+                bytes_offset: OFFSET_SIZE as u32,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        // Superblock version (3) overrides the .vif version (2)
+        assert_eq!(v.volume_info.version, VERSION_3.0 as u32);
+        assert_eq!(v.version(), VERSION_3);
+    }
+
+    #[test]
+    fn test_load_vif_rejects_bytes_offset_mismatch() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        {
+            let _v = make_test_volume(dir);
+            let vif = VifVolumeInfo {
+                version: Version::current().0 as u32,
+                bytes_offset: (OFFSET_SIZE as u32) + 1,
+                ..VifVolumeInfo::default()
+            };
+            std::fs::write(
+                format!("{}/1.vif", dir),
+                serde_json::to_string_pretty(&vif).unwrap(),
+            )
+            .unwrap();
+        }
+
+        let result = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        );
+
+        match result {
+            Ok(_) => panic!("expected bytes_offset mismatch to fail"),
+            Err(VolumeError::Io(io_err)) => {
+                assert_eq!(io_err.kind(), io::ErrorKind::InvalidData);
+                assert!(io_err.to_string().contains("bytes_offset mismatch"));
+            }
+            Err(other) => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_remote_only_volume_load_reads_from_tier_backend() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let dat_bytes = {
+            let mut v = make_test_volume(dir);
+            let mut n = Needle {
+                id: NeedleId(7),
+                cookie: Cookie(0x7788),
+                data: b"remote-only".to_vec(),
+                data_size: 11,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+            v.sync_to_disk().unwrap();
+            std::fs::read(v.file_name(".dat")).unwrap()
+        };
+
+        let dat_path = format!("{}/1.dat", dir);
+        std::fs::remove_file(&dat_path).unwrap();
+
+        let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .clear();
+        let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+            access_key: "access".to_string(),
+            secret_key: "secret".to_string(),
+            region: "us-east-1".to_string(),
+            bucket: "bucket-a".to_string(),
+            endpoint,
+            storage_class: "STANDARD".to_string(),
+            force_path_style: true,
+        };
+        {
+            let mut registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap();
+            registry.register(
+                "s3.default".to_string(),
+                crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+            );
+            registry.register(
+                "s3".to_string(),
+                crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+            );
+        }
+
+        let vif = VifVolumeInfo {
+            files: vec![VifRemoteFile {
+                backend_type: "s3".to_string(),
+                backend_id: "default".to_string(),
+                key: "remote-key".to_string(),
+                offset: 0,
+                file_size: dat_bytes.len() as u64,
+                modified_time: 123,
+                extension: ".dat".to_string(),
+            }],
+            version: Version::current().0 as u32,
+            bytes_offset: OFFSET_SIZE as u32,
+            dat_file_size: dat_bytes.len() as i64,
+            ..VifVolumeInfo::default()
+        };
+        std::fs::write(
+            format!("{}/1.vif", dir),
+            serde_json::to_string_pretty(&vif).unwrap(),
+        )
+        .unwrap();
+
+        let v = Volume::new(
+            dir,
+            dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        assert!(v.has_remote_file);
+        assert!(v.dat_file.is_none());
+        assert!(v.remote_dat_file.is_some());
+
+        let mut n = Needle {
+            id: NeedleId(7),
+            ..Needle::default()
+        };
+        let size = v.read_needle(&mut n).unwrap();
+        assert_eq!(size, 11);
+        assert_eq!(n.data, b"remote-only");
+
+        let mut meta = Needle {
+            id: NeedleId(7),
+            ..Needle::default()
+        };
+        let info = v.read_needle_stream_info(&mut meta, false).unwrap();
+        assert!(matches!(info.source, NeedleStreamSource::Remote(_)));
+        let mut streamed = vec![0u8; info.data_size as usize];
+        info.source
+            .read_exact_at(&mut streamed, info.data_file_offset)
+            .unwrap();
+        assert_eq!(streamed, b"remote-only");
+        assert_eq!(meta.data_size, 11);
+
+        let _ = shutdown_tx.send(());
+    }
+
+    /// Volume destroy removes .vif alongside the primary data files.
+    #[test]
+    fn test_destroy_removes_vif() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+
+        let mut v = make_test_volume(dir);
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"test".to_vec(),
+            data_size: 4,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write a .vif file (as EC encode would)
+        let vif_path = format!("{}/1.vif", dir);
+        std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
+        assert!(std::path::Path::new(&vif_path).exists());
+
+        // .dat and .idx should exist
+        let dat_path = format!("{}/1.dat", dir);
+        let idx_path = format!("{}/1.idx", dir);
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert!(std::path::Path::new(&idx_path).exists());
+
+        // Destroy the volume
+        v.destroy(false).unwrap();
+
+        // .dat and .idx should be gone
+        assert!(
+            !std::path::Path::new(&dat_path).exists(),
+            ".dat should be removed"
+        );
+        assert!(
+            !std::path::Path::new(&idx_path).exists(),
+            ".idx should be removed"
+        );
+
+        assert!(
+            !std::path::Path::new(&vif_path).exists(),
+            ".vif should be removed"
+        );
+    }
+
+    /// Volume destroy with separate idx directory must clean up both dirs and .vif.
+    #[test]
+    fn test_destroy_with_separate_idx_dir() {
+        let dat_tmp = TempDir::new().unwrap();
+        let idx_tmp = TempDir::new().unwrap();
+        let dat_dir = dat_tmp.path().to_str().unwrap();
+        let idx_dir = idx_tmp.path().to_str().unwrap();
+
+        let mut v = Volume::new(
+            dat_dir,
+            idx_dir,
+            "",
+            VolumeId(1),
+            NeedleMapKind::InMemory,
+            None,
+            None,
+            0,
+            Version::current(),
+        )
+        .unwrap();
+
+        let mut n = Needle {
+            id: NeedleId(1),
+            cookie: Cookie(1),
+            data: b"hello".to_vec(),
+            data_size: 5,
+            ..Needle::default()
+        };
+        v.write_needle(&mut n, true).unwrap();
+
+        // Write .vif in data dir (as EC encode would)
+        let vif_path = format!("{}/1.vif", dat_dir);
+        std::fs::write(&vif_path, r#"{"version":3}"#).unwrap();
+
+        let dat_path = format!("{}/1.dat", dat_dir);
+        let idx_path = format!("{}/1.idx", idx_dir);
+        assert!(std::path::Path::new(&dat_path).exists());
+        assert!(std::path::Path::new(&idx_path).exists());
+
+        v.destroy(false).unwrap();
+
+        assert!(
+            !std::path::Path::new(&dat_path).exists(),
+            ".dat removed from data dir"
+        );
+        assert!(
+            !std::path::Path::new(&idx_path).exists(),
+            ".idx removed from idx dir"
+        );
+        assert!(
+            !std::path::Path::new(&vif_path).exists(),
+            ".vif removed from data dir"
+        );
+    }
+}

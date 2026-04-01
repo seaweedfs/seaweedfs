@@ -2,6 +2,7 @@ package shell
 
 import (
 	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,9 +16,9 @@ func TestEcShardMapRegister(t *testing.T) {
 
 	// Create test nodes with EC shards
 	node1 := newEcNode("dc1", "rack1", "node1", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6})
 	node2 := newEcNode("dc1", "rack1", "node2", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{7, 8, 9, 10, 11, 12, 13})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{7, 8, 9, 10, 11, 12, 13})
 
 	ecShardMap.registerEcNode(node1, "c1")
 	ecShardMap.registerEcNode(node2, "c1")
@@ -51,15 +52,15 @@ func TestEcShardMapRegister(t *testing.T) {
 func TestEcShardMapShardCount(t *testing.T) {
 	testCases := []struct {
 		name          string
-		shardIds      []uint32
+		shardIds      []erasure_coding.ShardId
 		expectedCount int
 	}{
-		{"all shards", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, 14},
-		{"data shards only", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 10},
-		{"parity shards only", []uint32{10, 11, 12, 13}, 4},
-		{"missing some shards", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8}, 9},
-		{"single shard", []uint32{0}, 1},
-		{"no shards", []uint32{}, 0},
+		{"all shards", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13}, 14},
+		{"data shards only", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, 10},
+		{"parity shards only", []erasure_coding.ShardId{10, 11, 12, 13}, 4},
+		{"missing some shards", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8}, 9},
+		{"single shard", []erasure_coding.ShardId{0}, 1},
+		{"no shards", []erasure_coding.ShardId{}, 0},
 	}
 
 	for _, tc := range testCases {
@@ -79,93 +80,34 @@ func TestEcShardMapShardCount(t *testing.T) {
 	}
 }
 
-// TestEcRebuilderEcNodeWithMoreFreeSlots tests the free slot selection
-func TestEcRebuilderEcNodeWithMoreFreeSlots(t *testing.T) {
-	testCases := []struct {
-		name         string
-		nodes        []*EcNode
-		expectedNode string
-	}{
-		{
-			name: "single node",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-			},
-			expectedNode: "node1",
-		},
-		{
-			name: "multiple nodes - select highest",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 50),
-				newEcNode("dc1", "rack1", "node2", 150),
-				newEcNode("dc1", "rack1", "node3", 100),
-			},
-			expectedNode: "node2",
-		},
-		{
-			name: "multiple nodes - same slots",
-			nodes: []*EcNode{
-				newEcNode("dc1", "rack1", "node1", 100),
-				newEcNode("dc1", "rack1", "node2", 100),
-			},
-			expectedNode: "node1", // Should return first one
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			erb := &ecRebuilder{
-				ecNodes: tc.nodes,
-			}
-
-			node := erb.ecNodeWithMoreFreeSlots()
-			if node == nil {
-				t.Fatal("Expected a node, got nil")
-			}
-
-			if node.info.Id != tc.expectedNode {
-				t.Errorf("Expected node %s, got %s", tc.expectedNode, node.info.Id)
-			}
-		})
-	}
-}
-
-// TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty tests empty node list
-func TestEcRebuilderEcNodeWithMoreFreeSlotsEmpty(t *testing.T) {
-	erb := &ecRebuilder{
-		ecNodes: []*EcNode{},
-	}
-
-	node := erb.ecNodeWithMoreFreeSlots()
-	if node != nil {
-		t.Errorf("Expected nil for empty node list, got %v", node)
-	}
-}
-
-// TestRebuildEcVolumesInsufficientShards tests error handling for unrepairable volumes
+// TestRebuildEcVolumesInsufficientShards tests that unrepairable volumes are skipped
 func TestRebuildEcVolumesInsufficientShards(t *testing.T) {
 	var logBuffer bytes.Buffer
 
 	// Create a volume with insufficient shards (less than DataShardsCount)
 	node1 := newEcNode("dc1", "rack1", "node1", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4}) // Only 5 shards
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4}) // Only 5 shards
 
 	erb := &ecRebuilder{
 		commandEnv: &CommandEnv{
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:     NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes: []*EcNode{node1},
 		writer:  &logBuffer,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
-	if err == nil {
-		t.Fatal("Expected error for insufficient shards, got nil")
-	}
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
 
-	if !strings.Contains(err.Error(), "unrepairable") {
-		t.Errorf("Expected 'unrepairable' in error message, got: %s", err.Error())
+	// Unrepairable volumes should be skipped (not cause an error)
+	if err != nil {
+		t.Fatalf("Expected no error for unrepairable volume (should be skipped), got: %v", err)
+	}
+	// Verify the skip message was logged
+	if !strings.Contains(logBuffer.String(), "unrepairable") {
+		t.Errorf("Expected 'unrepairable' in log output, got: %s", logBuffer.String())
 	}
 }
 
@@ -175,19 +117,22 @@ func TestRebuildEcVolumesCompleteVolume(t *testing.T) {
 
 	// Create a volume with all shards
 	node1 := newEcNode("dc1", "rack1", "node1", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13})
 
 	erb := &ecRebuilder{
 		commandEnv: &CommandEnv{
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err != nil {
 		t.Fatalf("Expected no error for complete volume, got: %v", err)
 	}
@@ -201,26 +146,34 @@ func TestRebuildEcVolumesInsufficientSpace(t *testing.T) {
 	var logBuffer bytes.Buffer
 
 	// Create a volume with missing shards but insufficient free slots
-	node1 := newEcNode("dc1", "rack1", "node1", 5). // Only 5 free slots, need 14
-							addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+	// Node has 10 local shards, missing 4 shards (10,11,12,13), so needs 4 free slots
+	// Set free slots to 3 (insufficient)
+	node1 := newEcNode("dc1", "rack1", "node1", 3). // Only 3 free slots, need 4
+							addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 
 	erb := &ecRebuilder{
 		commandEnv: &CommandEnv{
 			env:    make(map[string]string),
 			noLock: true, // Bypass lock check for unit test
 		},
+		ewg:          NewErrorWaitGroup(DefaultMaxParallelization),
 		ecNodes:      []*EcNode{node1},
 		writer:       &logBuffer,
 		applyChanges: false,
 	}
 
-	err := erb.rebuildEcVolumes("c1")
+	erb.rebuildEcVolumes("c1")
+	err := erb.ewg.Wait()
+
 	if err == nil {
 		t.Fatal("Expected error for insufficient disk space, got nil")
 	}
-
-	if !strings.Contains(err.Error(), "disk space is not enough") {
-		t.Errorf("Expected 'disk space' in error message, got: %s", err.Error())
+	if !strings.Contains(err.Error(), "no node has sufficient free slots") {
+		t.Errorf("Expected 'no node has sufficient free slots' in error message, got: %s", err.Error())
+	}
+	// Verify the enhanced error message includes diagnostic information
+	if !strings.Contains(err.Error(), "need") || !strings.Contains(err.Error(), "max available") {
+		t.Errorf("Expected diagnostic information in error message, got: %s", err.Error())
 	}
 }
 
@@ -230,11 +183,11 @@ func TestMultipleNodesWithShards(t *testing.T) {
 
 	// Create 3 nodes with different shards
 	node1 := newEcNode("dc1", "rack1", "node1", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3})
 	node2 := newEcNode("dc1", "rack1", "node2", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{4, 5, 6, 7})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{4, 5, 6, 7})
 	node3 := newEcNode("dc1", "rack1", "node3", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{8, 9})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{8, 9})
 
 	ecShardMap.registerEcNode(node1, "c1")
 	ecShardMap.registerEcNode(node2, "c1")
@@ -272,9 +225,9 @@ func TestDuplicateShards(t *testing.T) {
 
 	// Create 2 nodes with overlapping shards (both have shard 0)
 	node1 := newEcNode("dc1", "rack1", "node1", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 1, 2, 3})
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3})
 	node2 := newEcNode("dc1", "rack1", "node2", 100).
-		addEcVolumeAndShardsForTest(1, "c1", []uint32{0, 4, 5, 6}) // Duplicate shard 0
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 4, 5, 6}) // Duplicate shard 0
 
 	ecShardMap.registerEcNode(node1, "c1")
 	ecShardMap.registerEcNode(node2, "c1")
@@ -305,5 +258,52 @@ func TestDuplicateShards(t *testing.T) {
 	count := locations.shardCount()
 	if count != 7 {
 		t.Errorf("Expected 7 unique shards, got %d", count)
+	}
+}
+
+// TestPrepareDataToRecoverTargetShardCount tests that prepareDataToRecover caps the shard reporting
+func TestPrepareDataToRecoverTargetShardCount(t *testing.T) {
+	var logBuffer bytes.Buffer
+
+	// Create a node with 10 shards (0-9)
+	node1 := newEcNode("dc1", "rack1", "node1", 100).
+		addEcVolumeAndShardsForTest(1, "c1", []erasure_coding.ShardId{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
+
+	erb := &ecRebuilder{
+		commandEnv: &CommandEnv{
+			env:    make(map[string]string),
+			noLock: true,
+		},
+		ecNodes: []*EcNode{node1},
+		writer:  &logBuffer,
+	}
+
+	locations := make(EcShardLocations, erasure_coding.MaxShardCount)
+	for i := 0; i < 10; i++ {
+		locations[i] = []*EcNode{node1}
+	}
+
+	// Shards 10-13 are missing, but 14-31 should NOT be reported
+	_, _, err := erb.prepareDataToRecover(node1, "c1", needle.VolumeId(1), locations)
+	if err != nil {
+		t.Fatalf("prepareDataToRecover failed: %v", err)
+	}
+
+	output := logBuffer.String()
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+
+	// We expect "use existing shard 1.0" through "use existing shard 1.9" (10 lines)
+	// and "missing shard 1.10" through "missing shard 1.13" (4 lines)
+	// Total 14 lines expected. Shards 14-31 should be absent.
+	expectedLineCount := 14
+	if len(lines) != expectedLineCount {
+		t.Errorf("Expected %d lines of output, got %d. Output:\n%s", expectedLineCount, len(lines), output)
+	}
+
+	for i := 14; i < erasure_coding.MaxShardCount; i++ {
+		if strings.Contains(output, "shard 1."+strings.TrimSpace(string(rune('0'+i)))) ||
+			strings.Contains(output, "shard 1."+fmt.Sprintf("%d", i)) {
+			t.Errorf("Shard 1.%d should not be reported in output", i)
+		}
 	}
 }

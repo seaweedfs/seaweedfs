@@ -3,13 +3,14 @@ package main
 import (
 	"flag"
 	"fmt"
+	"log"
+	"time"
+
 	"github.com/seaweedfs/seaweedfs/other/mq_client_example/example"
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/agent_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"log"
-	"time"
 )
 
 var (

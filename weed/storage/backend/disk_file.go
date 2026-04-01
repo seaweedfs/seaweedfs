@@ -1,12 +1,13 @@
 package backend
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"io"
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 var (

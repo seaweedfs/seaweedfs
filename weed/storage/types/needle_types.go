@@ -14,11 +14,35 @@ type Offset struct {
 
 type Size int32
 
+func (s Size) IsTombstone() bool {
+	return s == TombstoneFileSize
+}
+
+// IsDeleted checks if the needle entry has been marked as deleted (tombstoned).
+// Use this when checking if an entry should exist in the needle map.
+// Returns true for negative sizes or TombstoneFileSize.
+// Note: size=0 is NOT considered deleted - it's an anomalous but active entry.
 func (s Size) IsDeleted() bool {
 	return s < 0 || s == TombstoneFileSize
 }
+
+// IsValid checks if the needle has actual readable data.
+// Use this when checking if needle data can be read or when counting data bytes.
+// Returns true only for positive sizes (size > 0).
+// Note: size=0 returns false - such needles exist in the map but have no readable data.
 func (s Size) IsValid() bool {
 	return s > 0 && s != TombstoneFileSize
+}
+
+// Raw returns the raw storage size for a needle, regardless of its deleted status.
+func (s Size) Raw() uint32 {
+	if s == TombstoneFileSize {
+		return 0
+	}
+	if s < 0 {
+		return uint32((-1) * s)
+	}
+	return uint32(s)
 }
 
 type OffsetLower struct {

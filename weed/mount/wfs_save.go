@@ -3,44 +3,50 @@ package mount
 import (
 	"context"
 	"fmt"
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"syscall"
+
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"syscall"
 )
 
 func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.Status) {
 
 	parentDir, _ := path.DirAndName()
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(entry)
+	defer wfs.mapPbIdFromFilerToLocal(entry)
 
-		wfs.mapPbIdFromLocalToFiler(entry)
-		defer wfs.mapPbIdFromFilerToLocal(entry)
+	request := &filer_pb.UpdateEntryRequest{
+		Directory:  parentDir,
+		Entry:      entry,
+		Signatures: []int32{wfs.signature},
+	}
 
-		request := &filer_pb.UpdateEntryRequest{
-			Directory:  parentDir,
-			Entry:      entry,
-			Signatures: []int32{wfs.signature},
-		}
-
-		glog.V(1).Infof("save entry: %v", request)
-		_, err := client.UpdateEntry(context.Background(), request)
-		if err != nil {
-			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
-		}
-
-		if err := wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry)); err != nil {
-			return fmt.Errorf("UpdateEntry dir %s: %v", path, err)
-		}
-
-		return nil
-	})
+	glog.V(1).Infof("save entry: %v", request)
+	resp, err := wfs.streamUpdateEntry(context.Background(), request)
 	if err != nil {
-		glog.Errorf("saveEntry %s: %v", path, err)
-		return fuse.EIO
+		err = fmt.Errorf("UpdateEntry dir %s: %v", path, err)
+	} else {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataUpdateEvent(parentDir, entry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
+		}
+	}
+	if err != nil {
+		// glog.V(0).Infof("saveEntry %s: %v", path, err)
+		fuseStatus := grpcErrorToFuseStatus(err)
+		if fuseStatus == fuse.EIO {
+			glog.Errorf("saveEntry failed for %s: %v (returning EIO)", path, err)
+		} else {
+			glog.V(1).Infof("saveEntry failed for %s: %v (returning %v)", path, err, fuseStatus)
+		}
+		return fuseStatus
 	}
 
 	return fuse.OK

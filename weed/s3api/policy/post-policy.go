@@ -20,10 +20,11 @@ package policy
 import (
 	"encoding/base64"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 // expirationDateFormat date format for expiration key in json policy.

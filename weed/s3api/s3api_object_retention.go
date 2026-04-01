@@ -57,37 +57,40 @@ const (
 
 // ObjectRetention represents S3 Object Retention configuration
 type ObjectRetention struct {
-	XMLName         xml.Name   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Retention"`
-	Mode            string     `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
-	RetainUntilDate *time.Time `xml:"http://s3.amazonaws.com/doc/2006-03-01/ RetainUntilDate,omitempty"`
+	XMLNS           string     `xml:"xmlns,attr,omitempty"`
+	XMLName         xml.Name   `xml:"Retention"`
+	Mode            string     `xml:"Mode,omitempty"`
+	RetainUntilDate *time.Time `xml:"RetainUntilDate,omitempty"`
 }
 
 // ObjectLegalHold represents S3 Object Legal Hold configuration
 type ObjectLegalHold struct {
-	XMLName xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ LegalHold"`
-	Status  string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Status,omitempty"`
+	XMLNS   string   `xml:"xmlns,attr,omitempty"`
+	XMLName xml.Name `xml:"LegalHold"`
+	Status  string   `xml:"Status,omitempty"`
 }
 
 // ObjectLockConfiguration represents S3 Object Lock Configuration
 type ObjectLockConfiguration struct {
-	XMLName           xml.Name        `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockConfiguration"`
-	ObjectLockEnabled string          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ ObjectLockEnabled,omitempty"`
-	Rule              *ObjectLockRule `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule,omitempty"`
+	XMLNS             string          `xml:"xmlns,attr,omitempty"`
+	XMLName           xml.Name        `xml:"ObjectLockConfiguration"`
+	ObjectLockEnabled string          `xml:"ObjectLockEnabled,omitempty"`
+	Rule              *ObjectLockRule `xml:"Rule,omitempty"`
 }
 
 // ObjectLockRule represents an Object Lock Rule
 type ObjectLockRule struct {
-	XMLName          xml.Name          `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Rule"`
-	DefaultRetention *DefaultRetention `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention,omitempty"`
+	XMLName          xml.Name          `xml:"Rule"`
+	DefaultRetention *DefaultRetention `xml:"DefaultRetention,omitempty"`
 }
 
 // DefaultRetention represents default retention settings
 // Implements custom XML unmarshal to track if Days/Years were present in XML
 type DefaultRetention struct {
-	XMLName  xml.Name `xml:"http://s3.amazonaws.com/doc/2006-03-01/ DefaultRetention"`
-	Mode     string   `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Mode,omitempty"`
-	Days     int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
-	Years    int      `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+	XMLName  xml.Name `xml:"DefaultRetention"`
+	Mode     string   `xml:"Mode,omitempty"`
+	Days     int      `xml:"Days,omitempty"`
+	Years    int      `xml:"Years,omitempty"`
 	DaysSet  bool     `xml:"-"`
 	YearsSet bool     `xml:"-"`
 }
@@ -102,8 +105,8 @@ func (dr *DefaultRetention) UnmarshalXML(d *xml.Decoder, start xml.StartElement)
 	type Alias DefaultRetention
 	aux := &struct {
 		*Alias
-		Days  *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Days,omitempty"`
-		Years *int `xml:"http://s3.amazonaws.com/doc/2006-03-01/ Years,omitempty"`
+		Days  *int `xml:"Days,omitempty"`
+		Years *int `xml:"Years,omitempty"`
 	}{Alias: (*Alias)(dr)}
 	if err := d.DecodeElement(aux, &start); err != nil {
 		glog.V(2).Infof("DefaultRetention.UnmarshalXML: decode error: %v", err)
@@ -245,6 +248,8 @@ func (s3a *S3ApiServer) getObjectRetention(bucket, object, versionId string) (*O
 		return nil, ErrNoRetentionConfiguration
 	}
 
+	// Set namespace for S3 compatibility
+	retention.XMLNS = s3_constants.S3Namespace
 	return retention, nil
 }
 
@@ -356,7 +361,7 @@ func (s3a *S3ApiServer) setObjectRetention(bucket, object, versionId string, ret
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 		updatedEntry.WormEnforcedAtTsNs = entry.WormEnforcedAtTsNs
@@ -386,6 +391,8 @@ func (s3a *S3ApiServer) getObjectLegalHold(bucket, object, versionId string) (*O
 		return nil, ErrNoLegalHoldConfiguration
 	}
 
+	// Set namespace for S3 compatibility
+	legalHold.XMLNS = s3_constants.S3Namespace
 	return legalHold, nil
 }
 
@@ -446,7 +453,7 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 	// that mkFile operations are typically serialized at the filer level, but
 	// future implementations might consider using atomic update operations or
 	// entry-level locking for complete safety.
-	bucketDir := s3a.option.BucketsPath + "/" + bucket
+	bucketDir := s3a.bucketDir(bucket)
 	return s3a.mkFile(bucketDir, entryPath, entry.Chunks, func(updatedEntry *filer_pb.Entry) {
 		updatedEntry.Extended = entry.Extended
 	})
@@ -455,24 +462,6 @@ func (s3a *S3ApiServer) setObjectLegalHold(bucket, object, versionId string, leg
 // ====================================================================
 // PROTECTION ENFORCEMENT
 // ====================================================================
-
-// isObjectRetentionActive checks if object has active retention
-func (s3a *S3ApiServer) isObjectRetentionActive(bucket, object, versionId string) (bool, error) {
-	retention, err := s3a.getObjectRetention(bucket, object, versionId)
-	if err != nil {
-		// If no retention found, object is not under retention
-		if errors.Is(err, ErrNoRetentionConfiguration) {
-			return false, nil
-		}
-		return false, err
-	}
-
-	if retention.RetainUntilDate != nil && retention.RetainUntilDate.After(time.Now()) {
-		return true, nil
-	}
-
-	return false, nil
-}
 
 // getRetentionFromEntry extracts retention configuration from filer entry
 func (s3a *S3ApiServer) getRetentionFromEntry(entry *filer_pb.Entry) (*ObjectRetention, bool, error) {
@@ -542,14 +531,14 @@ func (s3a *S3ApiServer) checkGovernanceBypassPermission(request *http.Request, b
 	}
 
 	// Verify that the authenticated identity can perform this action
-	if identity != nil && identity.canDo(action, bucket, object) {
+	if identity != nil && identity.CanDo(action, bucket, object) {
 		return true
 	}
 
 	// Additional check: allow users with Admin action to bypass governance retention
 	// Use the proper S3 Admin action constant instead of generic isAdmin() method
 	adminAction := Action(fmt.Sprintf("%s:%s", s3_constants.ACTION_ADMIN, resource))
-	if identity != nil && identity.canDo(adminAction, bucket, object) {
+	if identity != nil && identity.CanDo(adminAction, bucket, object) {
 		glog.V(2).Infof("Admin user %s granted governance bypass permission for %s/%s", identity.Name, bucket, object)
 		return true
 	}
@@ -579,10 +568,26 @@ func (s3a *S3ApiServer) evaluateGovernanceBypassRequest(r *http.Request, bucket,
 
 // enforceObjectLockProtections enforces object lock protections for operations
 func (s3a *S3ApiServer) enforceObjectLockProtections(request *http.Request, bucket, object, versionId string, governanceBypassAllowed bool) error {
+	// Quick check: if bucket doesn't have Object Lock enabled, skip the expensive entry lookup
+	// This optimization avoids a filer gRPC call for every DELETE operation on buckets without Object Lock
+	objectLockEnabled, err := s3a.isObjectLockEnabled(bucket)
+	if err != nil {
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			// Bucket does not exist, so no protections to enforce
+			return nil
+		}
+		// For other errors, we can't determine lock status, so we should fail.
+		glog.Errorf("enforceObjectLockProtections: failed to check object lock for bucket %s: %v", bucket, err)
+		return err
+	}
+	if !objectLockEnabled {
+		// Object Lock is not enabled on this bucket, no protections to enforce
+		return nil
+	}
+
 	// Get the object entry to check both retention and legal hold
 	// For delete operations without versionId, we need to check the latest version
 	var entry *filer_pb.Entry
-	var err error
 
 	if versionId != "" {
 		// Check specific version

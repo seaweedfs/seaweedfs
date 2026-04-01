@@ -47,6 +47,10 @@ type SFTPServiceOptions struct {
 
 	// User Management
 	UserStoreFile string // Path to user store file
+
+	// JWT Configuration for Filer
+	FilerSigningKey          []byte // JWT signing key for filer uploads
+	FilerSigningExpiresAfter int    // JWT token expiration time in seconds
 }
 
 // NewSFTPService creates a new service instance.
@@ -201,6 +205,8 @@ func (s *SFTPService) handleSSHConnection(conn net.Conn, config *ssh.ServerConfi
 		s.options.DataCenter,
 		s.options.FilerGroup,
 		sftpUser,
+		s.options.FilerSigningKey,
+		s.options.FilerSigningExpiresAfter,
 	)
 
 	// Ensure home directory exists with proper permissions
@@ -284,8 +290,8 @@ func (s *SFTPService) handleChannel(newChannel ssh.NewChannel, fs *SftpServer) {
 
 // handleSFTP starts the SFTP server on the SSH channel.
 func (s *SFTPService) handleSFTP(channel ssh.Channel, fs *SftpServer) {
-	// Create server options with initial working directory set to user's home
-	serverOptions := sftp.WithStartDirectory(fs.user.HomeDir)
+	// Start at virtual root "/" - toAbsolutePath translates this to the user's HomeDir
+	serverOptions := sftp.WithStartDirectory("/")
 	server := sftp.NewRequestServer(channel, sftp.Handlers{
 		FileGet:  fs,
 		FilePut:  fs,
@@ -298,5 +304,17 @@ func (s *SFTPService) handleSFTP(channel ssh.Channel, fs *SftpServer) {
 		glog.V(0).Info("SFTP client exited session.")
 	} else if err != nil {
 		glog.Errorf("SFTP server finished with error: %v", err)
+	}
+}
+
+// Reload reloads the user store from disk, useful for HUP signal handling
+func (s *SFTPService) Reload() {
+	glog.V(0).Info("Reload SFTP server...")
+	if fileStore, ok := s.userStore.(*user.FileStore); ok {
+		if err := fileStore.Reload(); err != nil {
+			glog.Errorf("Failed to reload user store: %v", err)
+		} else {
+			glog.V(0).Info("Successfully reloaded SFTP user store")
+		}
 	}
 }

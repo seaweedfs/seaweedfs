@@ -13,25 +13,24 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
 	"github.com/seaweedfs/seaweedfs/weed/iam/utils"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestS3IAMMiddleware tests the basic S3 IAM middleware functionality
-func TestS3IAMMiddleware(t *testing.T) {
-	// Create IAM manager
-	iamManager := integration.NewIAMManager()
+func newTestS3IAMManagerWithDefaultEffect(t *testing.T, defaultEffect string) *integration.IAMManager {
+	t.Helper()
 
-	// Initialize with test configuration
+	iamManager := integration.NewIAMManager()
 	config := &integration.IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    sts.FlexibleDuration{time.Hour},
-			MaxSessionLength: sts.FlexibleDuration{time.Hour * 12},
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},
 		Policy: &policy.PolicyEngineConfig{
-			DefaultEffect: "Deny",
+			DefaultEffect: defaultEffect,
 			StoreType:     "memory",
 		},
 		Roles: &integration.RoleStoreConfig{
@@ -40,9 +39,21 @@ func TestS3IAMMiddleware(t *testing.T) {
 	}
 
 	err := iamManager.Initialize(config, func() string {
-		return "localhost:8888" // Mock filer address for testing
+		return "localhost:8888"
 	})
 	require.NoError(t, err)
+
+	return iamManager
+}
+
+func newTestS3IAMManager(t *testing.T) *integration.IAMManager {
+	t.Helper()
+	return newTestS3IAMManagerWithDefaultEffect(t, "Deny")
+}
+
+// TestS3IAMMiddleware tests the basic S3 IAM middleware functionality
+func TestS3IAMMiddleware(t *testing.T) {
+	iamManager := newTestS3IAMManager(t)
 
 	// Create S3 IAM integration
 	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
@@ -50,6 +61,74 @@ func TestS3IAMMiddleware(t *testing.T) {
 	// Test that integration is created successfully
 	assert.NotNil(t, s3IAMIntegration)
 	assert.True(t, s3IAMIntegration.enabled)
+}
+
+func TestS3IAMMiddlewareStaticV4ManagedPolicies(t *testing.T) {
+	ctx := context.Background()
+	iamManager := newTestS3IAMManager(t)
+
+	allowPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Effect:   "Allow",
+				Action:   policy.StringList{"s3:PutObject", "s3:ListBucket"},
+				Resource: policy.StringList{"arn:aws:s3:::cli-allowed-bucket", "arn:aws:s3:::cli-allowed-bucket/*"},
+			},
+		},
+	}
+	require.NoError(t, iamManager.CreatePolicy(ctx, "localhost:8888", "cli-bucket-access-policy", allowPolicy))
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	identity := &IAMIdentity{
+		Name:        "cli-test-user",
+		Principal:   "arn:aws:iam::000000000000:user/cli-test-user",
+		PolicyNames: []string{"cli-bucket-access-policy"},
+	}
+
+	putReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-allowed-bucket/test-file.txt", http.NoBody)
+	putErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-allowed-bucket", "test-file.txt", putReq)
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	listReq := httptest.NewRequest(http.MethodGet, "http://example.com/cli-allowed-bucket/", http.NoBody)
+	listErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_LIST, "cli-allowed-bucket", "", listReq)
+	assert.Equal(t, s3err.ErrNone, listErrCode)
+}
+
+func TestS3IAMMiddlewareAttachedPoliciesRestrictDefaultAllow(t *testing.T) {
+	ctx := context.Background()
+	iamManager := newTestS3IAMManagerWithDefaultEffect(t, "Allow")
+
+	allowPolicy := &policy.PolicyDocument{
+		Version: "2012-10-17",
+		Statement: []policy.Statement{
+			{
+				Effect:   "Allow",
+				Action:   policy.StringList{"s3:PutObject", "s3:ListBucket"},
+				Resource: policy.StringList{"arn:aws:s3:::cli-allowed-bucket", "arn:aws:s3:::cli-allowed-bucket/*"},
+			},
+		},
+	}
+	require.NoError(t, iamManager.CreatePolicy(ctx, "localhost:8888", "cli-bucket-access-policy", allowPolicy))
+
+	s3IAMIntegration := NewS3IAMIntegration(iamManager, "localhost:8888")
+	identity := &IAMIdentity{
+		Name:        "cli-test-user",
+		Principal:   "arn:aws:iam::000000000000:user/cli-test-user",
+		PolicyNames: []string{"cli-bucket-access-policy"},
+	}
+
+	allowedReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-allowed-bucket/test-file.txt", http.NoBody)
+	allowedErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-allowed-bucket", "test-file.txt", allowedReq)
+	assert.Equal(t, s3err.ErrNone, allowedErrCode)
+
+	forbiddenReq := httptest.NewRequest(http.MethodPut, "http://example.com/cli-forbidden-bucket/forbidden-file.txt", http.NoBody)
+	forbiddenErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_WRITE, "cli-forbidden-bucket", "forbidden-file.txt", forbiddenReq)
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenErrCode)
+
+	forbiddenListReq := httptest.NewRequest(http.MethodGet, "http://example.com/cli-forbidden-bucket/", http.NoBody)
+	forbiddenListErrCode := s3IAMIntegration.AuthorizeAction(ctx, identity, s3_constants.ACTION_LIST, "cli-forbidden-bucket", "", forbiddenListReq)
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenListErrCode)
 }
 
 // TestS3IAMMiddlewareJWTAuth tests JWT authentication
@@ -370,8 +449,8 @@ func TestMapLegacyActionToIAM(t *testing.T) {
 		},
 		{
 			name:         "granular_multipart_action",
-			legacyAction: s3_constants.ACTION_CREATE_MULTIPART_UPLOAD,
-			expected:     "s3:CreateMultipartUpload",
+			legacyAction: s3_constants.S3_ACTION_CREATE_MULTIPART,
+			expected:     s3_constants.S3_ACTION_CREATE_MULTIPART,
 		},
 		{
 			name:         "unknown_action_with_s3_prefix",
@@ -405,6 +484,8 @@ func TestExtractSourceIP(t *testing.T) {
 			setupReq: func() *http.Request {
 				req := httptest.NewRequest("GET", "/test", http.NoBody)
 				req.Header.Set("X-Forwarded-For", "192.168.1.100, 10.0.0.1")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.100",
@@ -414,6 +495,8 @@ func TestExtractSourceIP(t *testing.T) {
 			setupReq: func() *http.Request {
 				req := httptest.NewRequest("GET", "/test", http.NoBody)
 				req.Header.Set("X-Real-IP", "192.168.1.200")
+				// Set RemoteAddr to private IP to simulate trusted proxy
+				req.RemoteAddr = "127.0.0.1:12345"
 				return req
 			},
 			expectedIP: "192.168.1.200",
@@ -426,6 +509,17 @@ func TestExtractSourceIP(t *testing.T) {
 				return req
 			},
 			expectedIP: "192.168.1.300",
+		},
+		{
+			name: "Untrusted proxy - public RemoteAddr ignores X-Forwarded-For",
+			setupReq: func() *http.Request {
+				req := httptest.NewRequest("GET", "/test", http.NoBody)
+				req.Header.Set("X-Forwarded-For", "192.168.1.100")
+				// Public IP - headers should NOT be trusted
+				req.RemoteAddr = "8.8.8.8:12345"
+				return req
+			},
+			expectedIP: "8.8.8.8", // Should use RemoteAddr, not X-Forwarded-For
 		},
 	}
 

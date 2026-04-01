@@ -2,13 +2,13 @@ package filer
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
 	"log"
 	"slices"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/stretchr/testify/assert"
 )
 
 func TestDoMinusChunks(t *testing.T) {

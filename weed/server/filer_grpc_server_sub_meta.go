@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,7 +24,137 @@ const (
 	MaxUnsyncedEvents = 1e3
 )
 
+// metadataStreamSender is satisfied by both gRPC stream types and pipelinedSender.
+type metadataStreamSender interface {
+	Send(*filer_pb.SubscribeMetadataResponse) error
+}
+
+const (
+	// batchBehindThreshold: when an event's timestamp is older than this
+	// relative to wall clock, the sender switches to batch mode for throughput.
+	// When events are closer to current time, they are sent one-by-one for
+	// low latency.
+	batchBehindThreshold = 2 * time.Minute
+	maxBatchSize         = 256
+)
+
+// pipelinedSender decouples event reading from gRPC delivery by buffering
+// messages in a channel. A dedicated goroutine handles stream.Send(), allowing
+// the reader to continue reading ahead without waiting for the client to
+// acknowledge each event.
+//
+// When the client declares support for batching AND events are far behind
+// current time (backlog catch-up), multiple events are packed into a single
+// stream.Send() using the Events field. Otherwise events are sent one-by-one.
+type pipelinedSender struct {
+	sendCh   chan *filer_pb.SubscribeMetadataResponse
+	errCh    chan error
+	done     chan struct{}
+	canBatch bool // true only if client set ClientSupportsBatching
+}
+
+func newPipelinedSender(stream metadataStreamSender, bufSize int, clientSupportsBatching bool) *pipelinedSender {
+	s := &pipelinedSender{
+		sendCh:   make(chan *filer_pb.SubscribeMetadataResponse, bufSize),
+		errCh:    make(chan error, 1),
+		done:     make(chan struct{}),
+		canBatch: clientSupportsBatching,
+	}
+	go s.sendLoop(stream)
+	return s
+}
+
+func (s *pipelinedSender) sendLoop(stream metadataStreamSender) {
+	defer close(s.done)
+	for msg := range s.sendCh {
+		shouldBatch := s.canBatch && time.Now().UnixNano()-msg.TsNs > int64(batchBehindThreshold)
+
+		if !shouldBatch {
+			// Real-time: send immediately for low latency
+			if err := stream.Send(msg); err != nil {
+				s.reportErr(err)
+				return
+			}
+			continue
+		}
+
+		// Backlog: batch multiple events into one Send for throughput.
+		// The first event goes in the top-level fields; additional events
+		// go in the Events slice. Old clients ignore the Events field.
+		batch := make([]*filer_pb.SubscribeMetadataResponse, 0, maxBatchSize)
+		batch = append(batch, msg)
+	drain:
+		for len(batch) < maxBatchSize {
+			select {
+			case next, ok := <-s.sendCh:
+				if !ok {
+					break drain
+				}
+				batch = append(batch, next)
+			default:
+				break drain
+			}
+		}
+
+		var toSend *filer_pb.SubscribeMetadataResponse
+		if len(batch) == 1 {
+			toSend = batch[0]
+		} else {
+			// Pack batch: first event is the envelope, rest go in Events
+			toSend = batch[0]
+			toSend.Events = batch[1:]
+		}
+		if err := stream.Send(toSend); err != nil {
+			s.reportErr(err)
+			return
+		}
+		if toSend.Events != nil {
+			toSend.Events = nil
+		}
+	}
+}
+
+func (s *pipelinedSender) reportErr(err error) {
+	select {
+	case s.errCh <- err:
+	default:
+	}
+	// Don't drain sendCh here — Send() detects the exit via <-s.done
+	// and the deferred close(s.done) in sendLoop will fire after this returns.
+}
+
+func (s *pipelinedSender) Send(msg *filer_pb.SubscribeMetadataResponse) error {
+	select {
+	case s.sendCh <- msg:
+		return nil
+	case err := <-s.errCh:
+		return err
+	case <-s.done:
+		// Sender goroutine exited (stream error or shutdown).
+		select {
+		case err := <-s.errCh:
+			return err
+		default:
+			return fmt.Errorf("pipelined sender closed")
+		}
+	}
+}
+
+func (s *pipelinedSender) Close() error {
+	close(s.sendCh)
+	<-s.done
+	select {
+	case err := <-s.errCh:
+		return err
+	default:
+		return nil
+	}
+}
+
 func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer) error {
+	if fs.filer.MetaAggregator == nil || !fs.filer.MetaAggregator.HasRemotePeers() {
+		return fs.SubscribeLocalMetadata(req, stream)
+	}
 
 	ctx := stream.Context()
 	peerAddress := findClientAddress(ctx, 0)
@@ -44,7 +175,16 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" %v starts to subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
+	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	defer sender.Close()
+
+	// Register for instant notification when new data arrives in the aggregated log buffer.
+	// Used to replace the 1127ms sleep with event-driven wake-up.
+	aggNotifyName := "aggSubscribe:" + clientName
+	aggNotifyChan := fs.filer.MetaAggregator.MetaLogBuffer.RegisterSubscriber(aggNotifyName)
+	defer fs.filer.MetaAggregator.MetaLogBuffer.UnregisterSubscriber(aggNotifyName)
+
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -57,7 +197,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 
 		glog.V(4).Infof("read on disk %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
-		processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+		if req.ClientSupportsMetadataChunks {
+			processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+		} else {
+			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+		}
 		if readPersistedLogErr != nil {
 			return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
 		}
@@ -99,18 +243,11 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 		glog.V(4).Infof("read in memory %v aggregated subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.MetaAggregator.MetaLogBuffer.LoopProcessLogData("aggMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
-			// Check if the client has disconnected by monitoring the context
 			select {
 			case <-ctx.Done():
 				return false
 			default:
 			}
-
-			fs.filer.MetaAggregator.ListenersLock.Lock()
-			atomic.AddInt64(&fs.filer.MetaAggregator.ListenersWaits, 1)
-			fs.filer.MetaAggregator.ListenersCond.Wait()
-			atomic.AddInt64(&fs.filer.MetaAggregator.ListenersWaits, -1)
-			fs.filer.MetaAggregator.ListenersLock.Unlock()
 			return fs.hasClient(req.ClientId, req.ClientEpoch)
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
@@ -132,7 +269,17 @@ func (fs *FilerServer) SubscribeMetadata(req *filer_pb.SubscribeMetadataRequest,
 			return nil
 		}
 
-		time.Sleep(1127 * time.Millisecond)
+		// Wait for new data (event-driven instead of 1127ms polling).
+		// Drain any stale notification first to avoid a spurious wake-up.
+		select {
+		case <-aggNotifyChan:
+		default:
+		}
+		select {
+		case <-aggNotifyChan:
+		case <-ctx.Done():
+			return nil
+		}
 	}
 
 	return readInMemoryLogErr
@@ -162,7 +309,10 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 	lastReadTime := log_buffer.NewMessagePosition(req.SinceNs, -2)
 	glog.V(0).Infof(" + %v local subscribe %s from %+v clientId:%d", clientName, req.PathPrefix, lastReadTime, req.ClientId)
 
-	eachEventNotificationFn := fs.eachEventNotificationFn(req, stream, clientName)
+	sender := newPipelinedSender(stream, 1024, req.ClientSupportsBatching)
+	defer sender.Close()
+
+	eachEventNotificationFn := fs.eachEventNotificationFn(req, sender, clientName)
 
 	eachLogEntryFn := eachLogEntryFn(eachEventNotificationFn)
 
@@ -186,7 +336,11 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 			// Record the position we are about to read from
 			lastDiskReadTsNs = currentReadTsNs
 			glog.V(4).Infof("read on disk %v local subscribe %s from %+v (lastFlushed: %v)", clientName, req.PathPrefix, lastReadTime, time.Unix(0, currentFlushTsNs))
-			processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			if req.ClientSupportsMetadataChunks {
+				processedTsNs, isDone, readPersistedLogErr = fs.sendLogFileRefs(ctx, stream, lastReadTime, req.UntilNs)
+			} else {
+				processedTsNs, isDone, readPersistedLogErr = fs.filer.ReadPersistedLogBuffer(lastReadTime, req.UntilNs, eachLogEntryFn)
+			}
 			if readPersistedLogErr != nil {
 				glog.V(0).Infof("read on disk %v local subscribe %s from %+v: %v", clientName, req.PathPrefix, lastReadTime, readPersistedLogErr)
 				return fmt.Errorf("reading from persisted logs: %w", readPersistedLogErr)
@@ -214,8 +368,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 						lastReadTime = log_buffer.NewMessagePosition(earliestTime.UnixNano(), -2)
 						readInMemoryLogErr = nil // Clear the error since we're skipping forward
 					} else {
-						// No memory data yet, just wait
-						time.Sleep(1127 * time.Millisecond)
+						// No memory data yet, wait for new data (event-driven)
+						fs.listenersLock.Lock()
+						atomic.AddInt64(&fs.listenersWaits, 1)
+						fs.listenersCond.Wait()
+						atomic.AddInt64(&fs.listenersWaits, -1)
+						fs.listenersLock.Unlock()
 						continue
 					}
 				} else {
@@ -237,23 +395,12 @@ func (fs *FilerServer) SubscribeLocalMetadata(req *filer_pb.SubscribeMetadataReq
 		glog.V(3).Infof("read in memory %v local subscribe %s from %+v", clientName, req.PathPrefix, lastReadTime)
 
 		lastReadTime, isDone, readInMemoryLogErr = fs.filer.LocalMetaLogBuffer.LoopProcessLogData("localMeta:"+clientName, lastReadTime, req.UntilNs, func() bool {
-
-			// Check if the client has disconnected by monitoring the context
 			select {
 			case <-ctx.Done():
 				return false
 			default:
 			}
-
-			fs.listenersLock.Lock()
-			atomic.AddInt64(&fs.listenersWaits, 1)
-			fs.listenersCond.Wait()
-			atomic.AddInt64(&fs.listenersWaits, -1)
-			fs.listenersLock.Unlock()
-			if !fs.hasClient(req.ClientId, req.ClientEpoch) {
-				return false
-			}
-			return true
+			return fs.hasClient(req.ClientId, req.ClientEpoch)
 		}, eachLogEntryFn)
 		if readInMemoryLogErr != nil {
 			if readInMemoryLogErr == log_buffer.ResumeFromDiskError {
@@ -309,13 +456,42 @@ func eachLogEntryFn(eachEventNotificationFn func(dirPath string, eventNotificati
 	}
 }
 
-func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, stream filer_pb.SeaweedFiler_SubscribeMetadataServer, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
+// sendLogFileRefs collects persisted log file chunk references and sends them
+// to the client so it can read the data directly from volume servers.
+// This does zero volume server I/O — it only lists filer store directory entries.
+// Sends directly on the gRPC stream (bypasses pipelinedSender) because ref
+// messages have TsNs=0 and must not be batched into Events by the sender.
+func (fs *FilerServer) sendLogFileRefs(ctx context.Context, stream metadataStreamSender, startPosition log_buffer.MessagePosition, stopTsNs int64) (lastTsNs int64, isDone bool, err error) {
+	refs, lastTsNs, err := fs.filer.CollectLogFileRefs(ctx, startPosition, stopTsNs)
+	if err != nil {
+		return 0, false, err
+	}
+	if len(refs) == 0 {
+		return 0, false, nil
+	}
+
+	const maxRefsPerMessage = 64
+	for i := 0; i < len(refs); i += maxRefsPerMessage {
+		end := i + maxRefsPerMessage
+		if end > len(refs) {
+			end = len(refs)
+		}
+		if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
+			LogFileRefs: refs[i:end],
+		}); err != nil {
+			return lastTsNs, false, err
+		}
+	}
+	return lastTsNs, false, nil
+}
+
+func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRequest, sender metadataStreamSender, clientName string) func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 	filtered := 0
 
 	return func(dirPath string, eventNotification *filer_pb.EventNotification, tsNs int64) error {
 		defer func() {
 			if filtered > MaxUnsyncedEvents {
-				if err := stream.Send(&filer_pb.SubscribeMetadataResponse{
+				if err := sender.Send(&filer_pb.SubscribeMetadataResponse{
 					EventNotification: &filer_pb.EventNotification{},
 					TsNs:              tsNs,
 				}); err == nil {
@@ -353,57 +529,27 @@ func (fs *FilerServer) eachEventNotificationFn(req *filer_pb.SubscribeMetadataRe
 			return nil
 		}
 
-		if hasPrefixIn(fullpath, req.PathPrefixes) {
-			// good
-		} else if matchByDirectory(dirPath, req.Directories) {
-			// good
-		} else {
-			if !strings.HasPrefix(fullpath, req.PathPrefix) {
-				if eventNotification.NewParentPath != "" {
-					newFullPath := util.Join(eventNotification.NewParentPath, entryName)
-					if !strings.HasPrefix(newFullPath, req.PathPrefix) {
-						return nil
-					}
-				} else {
-					return nil
-				}
-			}
-		}
-
-		// collect timestamps for path
-		stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(tsNs))
-
 		message := &filer_pb.SubscribeMetadataResponse{
 			Directory:         dirPath,
 			EventNotification: eventNotification,
 			TsNs:              tsNs,
 		}
+
+		if !filer_pb.MetadataEventMatchesSubscription(message, req.PathPrefix, req.PathPrefixes, req.Directories) {
+			return nil
+		}
+
+		// collect timestamps for path
+		stats.FilerServerLastSendTsOfSubscribeGauge.WithLabelValues(fs.option.Host.String(), req.ClientName, req.PathPrefix).Set(float64(tsNs))
+
 		// println("sending", dirPath, entryName)
-		if err := stream.Send(message); err != nil {
+		if err := sender.Send(message); err != nil {
 			glog.V(0).Infof("=> client %v: %+v", clientName, err)
 			return err
 		}
 		filtered = 0
 		return nil
 	}
-}
-
-func hasPrefixIn(text string, prefixes []string) bool {
-	for _, p := range prefixes {
-		if strings.HasPrefix(text, p) {
-			return true
-		}
-	}
-	return false
-}
-
-func matchByDirectory(dirPath string, directories []string) bool {
-	for _, dir := range directories {
-		if dirPath == dir {
-			return true
-		}
-	}
-	return false
 }
 
 func (fs *FilerServer) addClient(prefix string, clientType string, clientAddress string, clientId int32, clientEpoch int32) (isReplacing, alreadyKnown bool, clientName string) {

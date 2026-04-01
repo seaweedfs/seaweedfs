@@ -3,7 +3,6 @@ package weed_server
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"math/rand/v2"
 	"sync"
 	"time"
@@ -13,9 +12,9 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 /*
@@ -107,6 +106,9 @@ func (locks *AdminLocks) isValidToken(lockName string, ts time.Time, token int64
 func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts time.Time, token int64) {
 	locks.Lock()
 	defer locks.Unlock()
+	if existing, found := locks.locks[lockName]; found && existing.lastClient != clientName {
+		stats.MasterAdminLock.DeleteLabelValues(existing.lastClient)
+	}
 	lock := &AdminLock{
 		accessSecret:   rand.Int64(),
 		accessLockTime: time.Now(),
@@ -119,7 +121,7 @@ func (locks *AdminLocks) generateToken(lockName string, clientName string) (ts t
 
 func (locks *AdminLocks) deleteLock(lockName string) {
 	locks.Lock()
-	stats.MasterAdminLock.WithLabelValues(locks.locks[lockName].lastClient).Set(0)
+	stats.MasterAdminLock.DeleteLabelValues(locks.locks[lockName].lastClient)
 	defer locks.Unlock()
 	delete(locks.locks, lockName)
 }

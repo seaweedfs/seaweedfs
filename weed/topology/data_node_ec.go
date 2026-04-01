@@ -35,18 +35,18 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 		if actualEcShards, ok := actualEcShardMap[vid]; !ok {
 			// dn registered ec shards not found in the new set of ec shards
 			deletedShards = append(deletedShards, ecShards)
-			deletedShardCount += ecShards.ShardIdCount()
+			deletedShardCount += ecShards.ShardsInfo.Count()
 		} else {
 			// found, but maybe the actual shard could be missing
 			a := actualEcShards.Minus(ecShards)
-			if a.ShardIdCount() > 0 {
+			if a.ShardsInfo.Count() > 0 {
 				newShards = append(newShards, a)
-				newShardCount += a.ShardIdCount()
+				newShardCount += a.ShardsInfo.Count()
 			}
 			d := ecShards.Minus(actualEcShards)
-			if d.ShardIdCount() > 0 {
+			if d.ShardsInfo.Count() > 0 {
 				deletedShards = append(deletedShards, d)
-				deletedShardCount += d.ShardIdCount()
+				deletedShardCount += d.ShardsInfo.Count()
 			}
 		}
 
@@ -67,7 +67,7 @@ func (dn *DataNode) UpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo) 
 
 		disk := dn.getOrCreateDisk(ecShards.DiskType)
 		disk.UpAdjustDiskUsageDelta(types.ToDiskType(ecShards.DiskType), &DiskUsageCounts{
-			ecShardCount: int64(ecShards.ShardIdCount()),
+			ecShardCount: int64(ecShards.ShardsInfo.Count()),
 		})
 	}
 
@@ -106,7 +106,6 @@ func (dn *DataNode) doUpdateEcShards(actualShards []*erasure_coding.EcVolumeInfo
 }
 
 func (dn *DataNode) DeltaUpdateEcShards(newShards, deletedShards []*erasure_coding.EcVolumeInfo) {
-
 	for _, newShard := range newShards {
 		dn.AddOrUpdateEcShard(newShard)
 	}

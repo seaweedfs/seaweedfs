@@ -40,7 +40,7 @@ func doLoading(file *os.File, nm *NeedleMap) (*NeedleMap, error) {
 			nm.FileCounter++
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			if !oldOffset.IsZero() && oldSize.IsValid() {
+			if !oldOffset.IsZero() && !oldSize.IsDeleted() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}
@@ -112,10 +112,10 @@ func (nm *NeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom ui
 	e := idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) error {
 		nm.MaybeSetMaxFileKey(key)
 		nm.FileCounter++
-		if !offset.IsZero() && size.IsValid() {
+		if !offset.IsZero() && !size.IsDeleted() {
 			nm.FileByteCounter = nm.FileByteCounter + uint64(size)
 			oldOffset, oldSize := nm.m.Set(NeedleId(key), offset, size)
-			if !oldOffset.IsZero() && oldSize.IsValid() {
+			if !oldOffset.IsZero() && !oldSize.IsDeleted() {
 				nm.DeletionCounter++
 				nm.DeletionByteCounter = nm.DeletionByteCounter + uint64(oldSize)
 			}

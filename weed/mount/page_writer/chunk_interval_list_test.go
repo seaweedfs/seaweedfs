@@ -1,8 +1,9 @@
 package page_writer
 
 import (
-	"github.com/stretchr/testify/assert"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func Test_PageChunkWrittenIntervalList(t *testing.T) {

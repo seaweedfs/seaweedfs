@@ -251,6 +251,132 @@ func TestPolicyEnforcement(t *testing.T) {
 	}
 }
 
+// TestSessionPolicyBoundary verifies that inline session policies restrict permissions.
+func TestSessionPolicyBoundary(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	stsService := iamManager.GetSTSService()
+	require.NotNil(t, stsService)
+
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::test-bucket/allowed/*"]}]}`
+
+	sessionId, err := sts.GenerateSessionId()
+	require.NoError(t, err)
+
+	expiresAt := time.Now().Add(time.Hour)
+	principal := "arn:aws:sts::000000000000:assumed-role/S3ReadOnlyRole/policy-session"
+
+	claims := sts.NewSTSSessionClaims(sessionId, stsService.Config.Issuer, expiresAt).
+		WithSessionName("policy-session").
+		WithRoleInfo("arn:aws:iam::role/S3ReadOnlyRole", principal, principal).
+		WithSessionPolicy(sessionPolicy)
+
+	sessionToken, err := stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/allowed/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow GetObject within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/other/file.txt",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny GetObject outside allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    principal,
+		Action:       "s3:ListBucket",
+		Resource:     "arn:aws:s3:::test-bucket",
+		SessionToken: sessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny ListBucket when not explicitly allowed")
+}
+
+// TestAssumeRoleWithWebIdentitySessionPolicy verifies Policy downscoping is applied to web identity sessions.
+func TestAssumeRoleWithWebIdentitySessionPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::test-bucket/allowed/*"]}]}`
+
+	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/S3ReadOnlyRole",
+		WebIdentityToken: validJWTToken,
+		RoleSessionName:  "policy-web-identity",
+		Policy:           &sessionPolicy,
+	}
+
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/allowed/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow GetObject within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "s3:GetObject",
+		Resource:     "arn:aws:s3:::test-bucket/other/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny GetObject outside allowed prefix")
+}
+
+// TestAssumeRoleWithCredentialsSessionPolicy verifies Policy downscoping is applied to credentials sessions.
+func TestAssumeRoleWithCredentialsSessionPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	sessionPolicy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["filer:CreateEntry"],"Resource":["arn:aws:filer::path/user-docs/allowed/*"]}]}`
+	assumeRequest := &sts.AssumeRoleWithCredentialsRequest{
+		RoleArn:         "arn:aws:iam::role/LDAPUserRole",
+		Username:        "testuser",
+		Password:        "testpass",
+		RoleSessionName: "policy-ldap",
+		ProviderName:    "test-ldap",
+		Policy:          &sessionPolicy,
+	}
+
+	response, err := iamManager.AssumeRoleWithCredentials(ctx, assumeRequest)
+	require.NoError(t, err)
+
+	allowed, err := iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "filer:CreateEntry",
+		Resource:     "arn:aws:filer::path/user-docs/allowed/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.True(t, allowed, "Session policy should allow CreateEntry within allowed prefix")
+
+	allowed, err = iamManager.IsActionAllowed(ctx, &ActionRequest{
+		Principal:    response.AssumedRoleUser.Arn,
+		Action:       "filer:CreateEntry",
+		Resource:     "arn:aws:filer::path/user-docs/other/file.txt",
+		SessionToken: response.Credentials.SessionToken,
+	})
+	require.NoError(t, err)
+	assert.False(t, allowed, "Session policy should deny CreateEntry outside allowed prefix")
+}
+
 // TestSessionExpiration tests session expiration and cleanup
 func TestSessionExpiration(t *testing.T) {
 	iamManager := setupIntegratedIAMSystem(t)
@@ -352,6 +478,242 @@ func TestTrustPolicyValidation(t *testing.T) {
 	}
 }
 
+// TestTrustPolicyWildcardPrincipal tests wildcard principal handling in trust policies
+func TestTrustPolicyWildcardPrincipal(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	// Create a role with wildcard federated principal
+	err := iamManager.CreateRole(ctx, "", "WildcardFederatedRole", &RoleDefinition{
+		RoleName: "WildcardFederatedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "*", // Wildcard should allow any federated provider
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create a role with wildcard in array
+	err = iamManager.CreateRole(ctx, "", "WildcardArrayRole", &RoleDefinition{
+		RoleName: "WildcardArrayRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": []string{"specific-provider", "*"}, // Array with wildcard
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create a role with plain wildcard principal (regression test)
+	err = iamManager.CreateRole(ctx, "", "PlainWildcardRole", &RoleDefinition{
+		RoleName: "PlainWildcardRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect:    "Allow",
+					Principal: "*", // Plain wildcard
+					Action:    []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// NEW: Create a role with specific federated principal (for negative testing)
+	err = iamManager.CreateRole(ctx, "", "SpecificFederatedRole", &RoleDefinition{
+		RoleName: "SpecificFederatedRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// NEW: Create a role with principal as []interface{} (simulating JSON unmarshaling)
+	err = iamManager.CreateRole(ctx, "", "InterfaceArrayRole", &RoleDefinition{
+		RoleName: "InterfaceArrayRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": []interface{}{"specific-provider", "test-oidc"},
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Create JWT token for testing
+	validJWTToken := createTestJWT(t, "https://test-issuer.com", "test-user-123", "test-signing-key")
+
+	tests := []struct {
+		name        string
+		roleArn     string
+		token       string
+		shouldAllow bool
+		reason      string
+	}{
+		{
+			name:        "Wildcard federated principal allows any provider",
+			roleArn:     "arn:aws:iam::role/WildcardFederatedRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Wildcard federated principal should allow any provider",
+		},
+		{
+			name:        "Wildcard in array allows any provider",
+			roleArn:     "arn:aws:iam::role/WildcardArrayRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Wildcard in principal array should allow any provider",
+		},
+		{
+			name:        "Plain wildcard allows any provider (regression)",
+			roleArn:     "arn:aws:iam::role/PlainWildcardRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Plain wildcard principal should still work",
+		},
+		{
+			name:        "Non-wildcard federated principal requires matching provider",
+			roleArn:     "arn:aws:iam::role/SpecificFederatedRole",
+			token:       createTestJWT(t, "https://different-issuer.com", "test-user", "test-signing-key"),
+			shouldAllow: false,
+			reason:      "Non-wildcard principal should still require matching provider",
+		},
+		{
+			name:        "Interface array principal works correctly",
+			roleArn:     "arn:aws:iam::role/InterfaceArrayRole",
+			token:       validJWTToken,
+			shouldAllow: true,
+			reason:      "Principal as []interface{} should be handled correctly",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+				RoleArn:          tt.roleArn,
+				WebIdentityToken: tt.token,
+				RoleSessionName:  "wildcard-test-session",
+			}
+
+			response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+
+			if tt.shouldAllow {
+				require.NoError(t, err, tt.reason)
+				require.NotNil(t, response)
+				require.NotNil(t, response.Credentials)
+			} else {
+				assert.Error(t, err, tt.reason)
+				assert.Nil(t, response)
+			}
+		})
+	}
+}
+
+// TestOIDCClaimsTrustPolicy tests that OIDC claims are correctly mapped to trust policy context
+func TestOIDCClaimsTrustPolicy(t *testing.T) {
+	iamManager := setupIntegratedIAMSystem(t)
+	ctx := context.Background()
+
+	// Create a role that requires a specific OIDC role claim
+	err := iamManager.CreateRole(ctx, "", "OIDCRoleClaimRole", &RoleDefinition{
+		RoleName: "OIDCRoleClaimRole",
+		TrustPolicy: &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{
+					Effect: "Allow",
+					Principal: map[string]interface{}{
+						"Federated": "test-oidc",
+					},
+					Action: []string{"sts:AssumeRoleWithWebIdentity"},
+					Condition: map[string]map[string]interface{}{
+						"StringLike": {
+							"oidc:roles": "Dev.SeaweedFS.*",
+						},
+					},
+				},
+			},
+		},
+		AttachedPolicies: []string{"S3ReadOnlyPolicy"},
+	})
+	require.NoError(t, err)
+
+	// Helper: Create a JWT with the specified roles claim
+	createTokenWithRoles := func(roles []string) string {
+		token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+			"iss":   "https://test-issuer.com",
+			"sub":   "test-user-123",
+			"aud":   "test-client-id",
+			"exp":   time.Now().Add(time.Hour).Unix(),
+			"iat":   time.Now().Unix(),
+			"roles": roles,
+		})
+		signedToken, err := token.SignedString([]byte("test-signing-key-32-characters-long"))
+		require.NoError(t, err)
+		return signedToken
+	}
+
+	// Create JWT tokens using the helper
+	validToken := createTokenWithRoles([]string{"Dev.SeaweedFS.Admin", "Dev.SeaweedFS.Audit"})
+	invalidToken := createTokenWithRoles([]string{"Other.Role"})
+
+	// Test case 1: Valid roles -> Should succeed
+	assumeRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/OIDCRoleClaimRole",
+		WebIdentityToken: validToken,
+		RoleSessionName:  "oidc-claims-test",
+	}
+	response, err := iamManager.AssumeRoleWithWebIdentity(ctx, assumeRequest)
+	require.NoError(t, err, "Should allow role assumption when oidc:roles claim matches")
+	require.NotNil(t, response)
+
+	// Test case 2: Invalid roles -> Should fail
+	badRequest := &sts.AssumeRoleWithWebIdentityRequest{
+		RoleArn:          "arn:aws:iam::role/OIDCRoleClaimRole",
+		WebIdentityToken: invalidToken,
+		RoleSessionName:  "oidc-claims-fail-test",
+	}
+	response, err = iamManager.AssumeRoleWithWebIdentity(ctx, badRequest)
+	assert.Error(t, err, "Should deny role assumption when oidc:roles claim does not match")
+	assert.Nil(t, response)
+}
+
 // Helper functions and test setup
 
 // createTestJWT creates a test JWT token with the specified issuer, subject and signing key
@@ -378,8 +740,8 @@ func setupIntegratedIAMSystem(t *testing.T) *IAMManager {
 	// Configure and initialize
 	config := &IAMConfig{
 		STS: &sts.STSConfig{
-			TokenDuration:    sts.FlexibleDuration{time.Hour},
-			MaxSessionLength: sts.FlexibleDuration{time.Hour * 12},
+			TokenDuration:    sts.FlexibleDuration{Duration: time.Hour},
+			MaxSessionLength: sts.FlexibleDuration{Duration: time.Hour * 12},
 			Issuer:           "test-sts",
 			SigningKey:       []byte("test-signing-key-32-characters-long"),
 		},

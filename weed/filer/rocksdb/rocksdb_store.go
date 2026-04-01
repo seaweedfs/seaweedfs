@@ -251,6 +251,7 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 	defer ro.Destroy()
 	ro.SetFillCache(false)
 
+	var callbackErr error
 	iter := store.db.NewIterator(ro)
 	defer iter.Close()
 	err = enumerate(iter, directoryPrefix, lastFileStart, includeStartFile, limit, startFileName, func(key, value []byte) bool {
@@ -269,11 +270,28 @@ func (store *RocksDBStore) ListDirectoryPrefixedEntries(ctx context.Context, dir
 			glog.V(0).InfofCtx(ctx, "list %s : %v", entry.FullPath, err)
 			return false
 		}
-		if !eachEntryFunc(entry) {
+
+		resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+		if resEachEntryFuncErr != nil {
+			glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+			callbackErr = resEachEntryFuncErr
 			return false
 		}
+
+		if !resEachEntryFunc {
+			return false
+		}
+
 		return true
 	})
+
+	if callbackErr != nil {
+		return lastFileName, fmt.Errorf(
+			"failed to process eachEntryFunc for dir %q, entry %q: %w",
+			dirPath, lastFileName, callbackErr,
+		)
+	}
+
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
 	}

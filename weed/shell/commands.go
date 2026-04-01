@@ -38,6 +38,8 @@ type CommandEnv struct {
 	option       *ShellOptions
 	locker       *exclusive_locks.ExclusiveLocker
 	noLock       bool
+	forceNoLock  bool
+	verbose      bool
 }
 
 func NewCommandEnv(options *ShellOptions) *CommandEnv {
@@ -70,6 +72,9 @@ func (ce *CommandEnv) isDirectory(path string) bool {
 
 func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
+	if ce.noLock || ce.forceNoLock {
+		return nil
+	}
 	if ce.locker.IsLocked() {
 		return nil
 	}
@@ -79,11 +84,25 @@ func (ce *CommandEnv) confirmIsLocked(args []string) error {
 
 }
 
+func (ce *CommandEnv) SetNoLock(noLock bool) {
+	if ce == nil {
+		return
+	}
+	ce.noLock = noLock
+}
+
+func (ce *CommandEnv) ForceNoLock() {
+	if ce == nil {
+		return
+	}
+	ce.forceNoLock = true
+}
+
 func (ce *CommandEnv) isLocked() bool {
 	if ce == nil {
 		return true
 	}
-	if ce.noLock {
+	if ce.noLock || ce.forceNoLock {
 		return true
 	}
 	return ce.locker.IsLocked()

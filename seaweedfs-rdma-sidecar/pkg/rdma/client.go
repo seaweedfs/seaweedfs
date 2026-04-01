@@ -419,7 +419,7 @@ func (c *Client) Read(ctx context.Context, req *ReadRequest) (*ReadResponse, err
 	}).Info("✅ RDMA read completed successfully")
 
 	// MOCK DATA IMPLEMENTATION - FOR DEVELOPMENT/TESTING ONLY
-	// 
+	//
 	// This section generates placeholder data for the mock RDMA implementation.
 	// In a production RDMA implementation, this should be replaced with:
 	//
@@ -472,7 +472,7 @@ func (c *Client) ReadFileRange(ctx context.Context, fileID string, offset, size 
 	if err != nil {
 		return nil, fmt.Errorf("invalid file ID %s: %w", fileID, err)
 	}
-	
+
 	req := &ReadRequest{
 		VolumeID: volumeID,
 		NeedleID: needleID,

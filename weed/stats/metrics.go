@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -16,6 +17,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
+// SetVersionInfo sets the version information for the BuildInfo metric
+// This is called by the version package during initialization.
+// It uses sync.Once to ensure the build information is set only once,
+// making it safe to call multiple times while ensuring immutability.
+var SetVersionInfo = func() func(string, string, string) {
+	var once sync.Once
+	return func(version, commitHash, sizeLimit string) {
+		once.Do(func() {
+			BuildInfo.WithLabelValues(version, commitHash, sizeLimit, runtime.GOOS, runtime.GOARCH).Set(1)
+		})
+	}
+}()
+
 // Readonly volume types
 const (
 	Namespace        = "SeaweedFS"
@@ -26,13 +40,19 @@ const (
 	bucketAtiveTTL   = 10 * time.Minute
 )
 
-var readOnlyVolumeTypes = [4]string{IsReadOnly, NoWriteOrDelete, NoWriteCanDelete, IsDiskSpaceLow}
-
 var bucketLastActiveTsNs map[string]int64 = map[string]int64{}
 var bucketLastActiveLock sync.Mutex
 
 var (
 	Gather = prometheus.NewRegistry()
+
+	BuildInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "build",
+			Name:      "info",
+			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
+		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -146,6 +166,22 @@ var (
 			Name:      "in_flight_requests",
 			Help:      "Current number of in-flight requests being handled by filer.",
 		}, []string{"type"})
+
+	FilerInFlightUploadBytesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_upload_bytes",
+			Help:      "Current number of bytes being uploaded to filer.",
+		})
+
+	FilerInFlightUploadCountGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "in_flight_upload_count",
+			Help:      "Current number of uploads in progress to filer.",
+		})
 
 	FilerServerLastSendTsOfSubscribeGauge = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -351,6 +387,22 @@ var (
 			Help:      "Current number of in-flight requests being handled by s3.",
 		}, []string{"type"})
 
+	S3InFlightUploadBytesGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "in_flight_upload_bytes",
+			Help:      "Current number of bytes being uploaded to S3.",
+		})
+
+	S3InFlightUploadCountGauge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "in_flight_upload_count",
+			Help:      "Current number of uploads in progress to S3.",
+		})
+
 	S3BucketTrafficReceivedBytesCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -382,9 +434,42 @@ var (
 			Name:      "uploaded_objects",
 			Help:      "Number of objects uploaded in each bucket.",
 		}, []string{"bucket"})
+
+	S3BucketSizeBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_size_bytes",
+			Help:      "Current size of each S3 bucket in bytes (logical size, deduplicated across replicas).",
+		}, []string{"bucket"})
+
+	S3BucketPhysicalSizeBytesGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_physical_size_bytes",
+			Help:      "Current physical size of each S3 bucket in bytes (including all replicas).",
+		}, []string{"bucket"})
+
+	S3BucketObjectCountGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "s3",
+			Name:      "bucket_object_count",
+			Help:      "Current number of objects in each S3 bucket (logical count, deduplicated across replicas).",
+		}, []string{"bucket"})
+
+	UploadErrorCounter = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Name:      "upload_error_total",
+			Help:      "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received).",
+		}, []string{"code"})
 )
 
 func init() {
+	Gather.MustRegister(BuildInfo)
+
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
@@ -400,6 +485,8 @@ func init() {
 	Gather.MustRegister(FilerHandlerCounter)
 	Gather.MustRegister(FilerRequestHistogram)
 	Gather.MustRegister(FilerInFlightRequestsGauge)
+	Gather.MustRegister(FilerInFlightUploadBytesGauge)
+	Gather.MustRegister(FilerInFlightUploadCountGauge)
 	Gather.MustRegister(FilerStoreCounter)
 	Gather.MustRegister(FilerStoreHistogram)
 	Gather.MustRegister(FilerSyncOffsetGauge)
@@ -428,11 +515,18 @@ func init() {
 	Gather.MustRegister(S3HandlerCounter)
 	Gather.MustRegister(S3RequestHistogram)
 	Gather.MustRegister(S3InFlightRequestsGauge)
+	Gather.MustRegister(S3InFlightUploadBytesGauge)
+	Gather.MustRegister(S3InFlightUploadCountGauge)
 	Gather.MustRegister(S3TimeToFirstByteHistogram)
 	Gather.MustRegister(S3BucketTrafficReceivedBytesCounter)
 	Gather.MustRegister(S3BucketTrafficSentBytesCounter)
 	Gather.MustRegister(S3DeletedObjectsCounter)
 	Gather.MustRegister(S3UploadedObjectsCounter)
+	Gather.MustRegister(S3BucketSizeBytesGauge)
+	Gather.MustRegister(S3BucketPhysicalSizeBytesGauge)
+	Gather.MustRegister(S3BucketObjectCountGauge)
+
+	Gather.MustRegister(UploadErrorCounter)
 
 	go bucketMetricTTLControl()
 }
@@ -488,6 +582,26 @@ func RecordBucketActiveTime(bucket string) {
 	bucketLastActiveLock.Unlock()
 }
 
+func DeleteBucketMetrics(bucket string) {
+	bucketLastActiveLock.Lock()
+	delete(bucketLastActiveTsNs, bucket)
+	bucketLastActiveLock.Unlock()
+
+	labels := prometheus.Labels{"bucket": bucket}
+	c := S3RequestCounter.DeletePartialMatch(labels)
+	c += S3RequestHistogram.DeletePartialMatch(labels)
+	c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
+	c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
+	c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
+	c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
+	c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
+	c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
+	c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+
+	glog.V(0).Infof("delete bucket metrics, %s: %d", bucket, c)
+}
+
 func DeleteCollectionMetrics(collection string) {
 	labels := prometheus.Labels{"collection": collection}
 	c := MasterReplicaPlacementMismatch.DeletePartialMatch(labels)
@@ -505,25 +619,44 @@ func bucketMetricTTLControl() {
 	for {
 		now := time.Now().UnixNano()
 
+		// Collect expired buckets under the lock, then release before
+		// doing the expensive Prometheus DeletePartialMatch calls.
+		// This prevents blocking RecordBucketActiveTime during cleanup.
 		bucketLastActiveLock.Lock()
+		var expiredBuckets []string
 		for bucket, ts := range bucketLastActiveTsNs {
 			if (now - ts) > ttlNs {
+				expiredBuckets = append(expiredBuckets, bucket)
 				delete(bucketLastActiveTsNs, bucket)
-
-				labels := prometheus.Labels{"bucket": bucket}
-				c := S3RequestCounter.DeletePartialMatch(labels)
-				c += S3RequestHistogram.DeletePartialMatch(labels)
-				c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
-				c += S3BucketTrafficReceivedBytesCounter.DeletePartialMatch(labels)
-				c += S3BucketTrafficSentBytesCounter.DeletePartialMatch(labels)
-				c += S3DeletedObjectsCounter.DeletePartialMatch(labels)
-				c += S3UploadedObjectsCounter.DeletePartialMatch(labels)
-				glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
 			}
 		}
-
 		bucketLastActiveLock.Unlock()
+
+		for _, bucket := range expiredBuckets {
+			labels := prometheus.Labels{"bucket": bucket}
+			// Only delete gauges and histograms, which represent current state.
+			// Counters (traffic, requests, objects) must persist for the process
+			// lifetime so that Prometheus rate()/increase() queries work correctly.
+			c := S3RequestHistogram.DeletePartialMatch(labels)
+			c += S3TimeToFirstByteHistogram.DeletePartialMatch(labels)
+			c += S3BucketSizeBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketPhysicalSizeBytesGauge.DeletePartialMatch(labels)
+			c += S3BucketObjectCountGauge.DeletePartialMatch(labels)
+			glog.V(0).Infof("delete inactive bucket metrics, %s: %d", bucket, c)
+		}
+
 		time.Sleep(bucketAtiveTTL)
 	}
 
+}
+
+// UpdateBucketSizeMetrics updates the bucket size gauges
+// logicalSize is the deduplicated size (accounting for replication)
+// physicalSize is the raw size including all replicas
+// objectCount is the number of objects in the bucket (deduplicated)
+func UpdateBucketSizeMetrics(bucket string, logicalSize, physicalSize float64, objectCount float64) {
+	S3BucketSizeBytesGauge.WithLabelValues(bucket).Set(logicalSize)
+	S3BucketPhysicalSizeBytesGauge.WithLabelValues(bucket).Set(physicalSize)
+	S3BucketObjectCountGauge.WithLabelValues(bucket).Set(objectCount)
+	RecordBucketActiveTime(bucket)
 }

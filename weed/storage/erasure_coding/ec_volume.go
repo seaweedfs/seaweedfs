@@ -3,7 +3,6 @@ package erasure_coding
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"slices"
 	"sync"
@@ -29,6 +28,7 @@ type EcVolume struct {
 	Collection                string
 	dir                       string
 	dirIdx                    string
+	ecxActualDir              string // directory where .ecx/.ecj were actually found (may differ from dirIdx after fallback)
 	ecxFile                   *os.File
 	ecxFileSize               int64
 	ecxCreatedAt              time.Time
@@ -52,8 +52,20 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	indexBaseFileName := EcShardFileName(collection, dirIdx, int(vid))
 
 	// open ecx file
+	ev.ecxActualDir = dirIdx
 	if ev.ecxFile, err = os.OpenFile(indexBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
-		return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		if dirIdx != dir && os.IsNotExist(err) {
+			// fall back to data directory if idx directory does not have the .ecx file
+			firstErr := err
+			glog.V(1).Infof("ecx file not found at %s.ecx, falling back to %s.ecx", indexBaseFileName, dataBaseFileName)
+			if ev.ecxFile, err = os.OpenFile(dataBaseFileName+".ecx", os.O_RDWR, 0644); err != nil {
+				return nil, fmt.Errorf("open ecx index %s.ecx: %v; fallback %s.ecx: %v", indexBaseFileName, firstErr, dataBaseFileName, err)
+			}
+			indexBaseFileName = dataBaseFileName
+			ev.ecxActualDir = dir
+		} else {
+			return nil, fmt.Errorf("cannot open ec volume index %s.ecx: %v", indexBaseFileName, err)
+		}
 	}
 	ecxFi, statErr := ev.ecxFile.Stat()
 	if statErr != nil {
@@ -166,8 +178,25 @@ func (ev *EcVolume) Close() {
 	}
 }
 
-func (ev *EcVolume) Destroy() {
+// Sync flushes the .ecx and .ecj files to disk without closing them.
+// This ensures that deletions made via DeleteNeedleFromEcx are visible
+// to other processes/file handles that may read these files.
+func (ev *EcVolume) Sync() {
+	if ev.ecjFile != nil {
+		ev.ecjFileAccessLock.Lock()
+		if err := ev.ecjFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecj file for volume %d: %v", ev.VolumeId, err)
+		}
+		ev.ecjFileAccessLock.Unlock()
+	}
+	if ev.ecxFile != nil {
+		if err := ev.ecxFile.Sync(); err != nil {
+			glog.Warningf("failed to sync ecx file for volume %d: %v", ev.VolumeId, err)
+		}
+	}
+}
 
+func (ev *EcVolume) Destroy() {
 	ev.Close()
 
 	for _, s := range ev.Shards {
@@ -181,7 +210,7 @@ func (ev *EcVolume) Destroy() {
 func (ev *EcVolume) FileName(ext string) string {
 	switch ext {
 	case ".ecx", ".ecj":
-		return ev.IndexBaseFileName() + ext
+		return EcShardFileName(ev.Collection, ev.ecxActualDir, int(ev.VolumeId)) + ext
 	}
 	// .vif
 	return ev.DataBaseFileName() + ext
@@ -222,29 +251,12 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 	return
 }
 
-type ShardInfo struct {
-	ShardId ShardId
-	Size    uint64
-}
-
-func (ev *EcVolume) ShardDetails() (shards []ShardInfo) {
-	for _, s := range ev.Shards {
-		shardSize := s.Size()
-		if shardSize >= 0 {
-			shards = append(shards, ShardInfo{
-				ShardId: s.ShardId,
-				Size:    uint64(shardSize),
-			})
-		}
-	}
-	return
-}
-
 func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages []*master_pb.VolumeEcShardInformationMessage) {
-	prevVolumeId := needle.VolumeId(math.MaxUint32)
-	var m *master_pb.VolumeEcShardInformationMessage
+	ecInfoPerVolume := map[needle.VolumeId]*master_pb.VolumeEcShardInformationMessage{}
+
 	for _, s := range ev.Shards {
-		if s.VolumeId != prevVolumeId {
+		m, ok := ecInfoPerVolume[s.VolumeId]
+		if !ok {
 			m = &master_pb.VolumeEcShardInformationMessage{
 				Id:          uint32(s.VolumeId),
 				Collection:  s.Collection,
@@ -252,13 +264,18 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				ExpireAtSec: ev.ExpireAtSec,
 				DiskId:      diskId,
 			}
-			messages = append(messages, m)
+			ecInfoPerVolume[s.VolumeId] = m
 		}
-		prevVolumeId = s.VolumeId
-		m.EcIndexBits = uint32(ShardBits(m.EcIndexBits).AddShardId(s.ShardId))
 
-		// Add shard size information using the optimized format
-		SetShardSize(m, s.ShardId, s.Size())
+		// Update EC shard bits and sizes.
+		si := ShardsInfoFromVolumeEcShardInformationMessage(m)
+		si.Set(NewShardInfo(s.ShardId, ShardSize(s.Size())))
+		m.EcIndexBits = uint32(si.Bitmap())
+		m.ShardSizes = si.SizesInt64()
+	}
+
+	for _, m := range ecInfoPerVolume {
+		messages = append(messages, m)
 	}
 	return
 }
@@ -327,4 +344,11 @@ func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId t
 
 func (ev *EcVolume) IsTimeToDestroy() bool {
 	return ev.ExpireAtSec > 0 && time.Now().Unix() > (int64(ev.ExpireAtSec)+destroyDelaySeconds)
+}
+
+func (ev *EcVolume) WalkIndex(processNeedleFn func(key types.NeedleId, offset types.Offset, size types.Size) error) error {
+	if ev.ecxFile == nil {
+		return fmt.Errorf("no ECX file associated with EC volume %v", ev.VolumeId)
+	}
+	return idx.WalkIndexFile(ev.ecxFile, 0, processNeedleFn)
 }

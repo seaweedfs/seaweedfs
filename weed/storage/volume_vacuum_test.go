@@ -17,7 +17,7 @@ makediff test steps
 "garbageThreshold" for master and option "max" for volume should be set with specific value which would let
 preparing test prerequisite easier )
    a) ./weed master -garbageThreshold=0.99 -mdir=./m
-   b) ./weed volume -dir=./data -max=1 -mserver=localhost:9333 -port=8080
+   b) ./weed volume -dir=./data -max=1 -master=localhost:9333 -port=8080
 2. upload 4 different files, you could call dir/assign to get 4 different fids
    a)  upload file A with fid a
    b)  upload file B with fid b
@@ -62,14 +62,14 @@ func TestMakeDiff(t *testing.T) {
 }
 
 func TestMemIndexCompaction(t *testing.T) {
-	testCompaction(t, NeedleMapInMemory)
+	testCompactionByIndex(t, NeedleMapInMemory)
 }
 
 func TestLDBIndexCompaction(t *testing.T) {
-	testCompaction(t, NeedleMapLevelDb)
+	testCompactionByIndex(t, NeedleMapLevelDb)
 }
 
-func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
+func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, needleMapKind, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -87,7 +87,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 
 	startTime := time.Now()
-	v.Compact2(0, 0, nil)
+	v.CompactByIndex(nil)
 	speed := float64(v.ContentSize()) / time.Now().Sub(startTime).Seconds()
 	t.Logf("compaction speed: %.2f bytes/s", speed)
 
@@ -119,6 +119,7 @@ func testCompaction(t *testing.T, needleMapKind NeedleMapKind) {
 	if err != nil {
 		t.Fatalf("volume reloading: %v", err)
 	}
+	defer v.Close()
 
 	for i := 1; i <= beforeCommitFileCount+afterCommitFileCount; i++ {
 

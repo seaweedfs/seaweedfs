@@ -1,5 +1,4 @@
 //go:build !freebsd
-// +build !freebsd
 
 package mount
 
@@ -8,7 +7,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	sys "golang.org/x/sys/unix"
 )
 
@@ -83,7 +82,7 @@ func (wfs *WFS) SetXAttr(cancel <-chan struct{}, input *fuse.SetXAttrIn, attr st
 		return fuse.Status(syscall.ENOTSUP)
 	}
 
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 

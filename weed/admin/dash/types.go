@@ -1,6 +1,7 @@
 package dash
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -73,15 +74,17 @@ type VolumeServerEcInfo struct {
 type S3Bucket struct {
 	Name               string    `json:"name"`
 	CreatedAt          time.Time `json:"created_at"`
-	Size               int64     `json:"size"`
+	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
+	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
 	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
 	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled
-	VersioningEnabled  bool      `json:"versioning_enabled"`   // Whether versioning is enabled
+	VersioningStatus   string    `json:"versioning_status"`    // Versioning status: "" (never enabled), "Enabled", or "Suspended"
 	ObjectLockEnabled  bool      `json:"object_lock_enabled"`  // Whether object lock is enabled
 	ObjectLockMode     string    `json:"object_lock_mode"`     // Object lock mode: "GOVERNANCE" or "COMPLIANCE"
 	ObjectLockDuration int32     `json:"object_lock_duration"` // Default retention duration in days
+	Owner              string    `json:"owner,omitempty"`      // Bucket owner identity; empty means admin-only access
 }
 
 type S3Object struct {
@@ -93,11 +96,8 @@ type S3Object struct {
 }
 
 type BucketDetails struct {
-	Bucket     S3Bucket   `json:"bucket"`
-	Objects    []S3Object `json:"objects"`
-	TotalSize  int64      `json:"total_size"`
-	TotalCount int64      `json:"total_count"`
-	UpdatedAt  time.Time  `json:"updated_at"`
+	Bucket    S3Bucket  `json:"bucket"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // ObjectStoreUser is defined in admin_data.go
@@ -550,4 +550,170 @@ type CollectionDetailsData struct {
 	// Sorting
 	SortBy    string `json:"sort_by"`
 	SortOrder string `json:"sort_order"`
+}
+
+// Service Account management structures
+type ServiceAccount struct {
+	ID              string    `json:"id"`
+	ParentUser      string    `json:"parent_user"`
+	Description     string    `json:"description,omitempty"`
+	AccessKeyId     string    `json:"access_key_id,omitempty"`
+	SecretAccessKey string    `json:"secret_access_key,omitempty"` // Only returned on creation
+	Status          string    `json:"status"`
+	CreateDate      time.Time `json:"create_date"`
+	Expiration      time.Time `json:"expiration,omitempty"`
+	// ServiceAccountId is used when returning a single ID in some API responses
+	ServiceAccountId string `json:"service_account_id,omitempty"`
+	// ServiceAccountIds is used when returning a list of IDs owned by a user
+	ServiceAccountIds []string `json:"service_account_ids,omitempty"`
+}
+
+type ServiceAccountsData struct {
+	Username        string           `json:"username"`
+	ServiceAccounts []ServiceAccount `json:"service_accounts"`
+	TotalAccounts   int              `json:"total_accounts"`
+	ActiveAccounts  int              `json:"active_accounts"`
+	AvailableUsers  []string         `json:"available_users"` // For parent user dropdown
+	LastUpdated     time.Time        `json:"last_updated"`
+}
+
+type CreateServiceAccountRequest struct {
+	ParentUser  string `json:"parent_user"`
+	Description string `json:"description,omitempty"`
+	Expiration  string `json:"expiration,omitempty"` // RFC3339 format
+}
+
+type UpdateServiceAccountRequest struct {
+	Status      string `json:"status,omitempty"` // Active, Inactive
+	Description string `json:"description,omitempty"`
+	Expiration  string `json:"expiration,omitempty"`
+}
+
+// Group management structures
+type GroupData struct {
+	Name        string   `json:"name"`
+	MemberCount int      `json:"member_count"`
+	PolicyCount int      `json:"policy_count"`
+	Status      string   `json:"status"` // "enabled" or "disabled"
+	Members     []string `json:"members"`
+	PolicyNames []string `json:"policy_names"`
+}
+
+type GroupsPageData struct {
+	Username          string      `json:"username"`
+	Groups            []GroupData `json:"groups"`
+	TotalGroups       int         `json:"total_groups"`
+	ActiveGroups      int         `json:"active_groups"`
+	AvailableUsers    []string    `json:"available_users"`
+	AvailablePolicies []string    `json:"available_policies"`
+	LastUpdated       time.Time   `json:"last_updated"`
+}
+
+type CreateGroupRequest struct {
+	Name string `json:"name"`
+}
+
+// STS Configuration display types
+type STSConfigData struct {
+	Enabled       bool      `json:"enabled"`
+	Issuer        string    `json:"issuer,omitempty"`
+	TokenDuration string    `json:"token_duration,omitempty"`
+	Providers     []string  `json:"providers,omitempty"`
+	LastUpdated   time.Time `json:"last_updated"`
+}
+
+// Iceberg Catalog types
+type IcebergCatalogInfo struct {
+	Name           string    `json:"name"`
+	ARN            string    `json:"arn"`
+	OwnerAccountID string    `json:"owner_account_id"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+type IcebergCatalogData struct {
+	Username      string               `json:"username"`
+	Catalogs      []IcebergCatalogInfo `json:"catalogs"`
+	TotalCatalogs int                  `json:"total_catalogs"`
+	IcebergPort   int                  `json:"iceberg_port"`
+	LastUpdated   time.Time            `json:"last_updated"`
+}
+
+type IcebergNamespaceInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergNamespacesData struct {
+	Username        string                 `json:"username"`
+	CatalogName     string                 `json:"catalog_name"`
+	BucketARN       string                 `json:"bucket_arn"`
+	Namespaces      []IcebergNamespaceInfo `json:"namespaces"`
+	TotalNamespaces int                    `json:"total_namespaces"`
+	LastUpdated     time.Time              `json:"last_updated"`
+}
+
+type IcebergTableInfo struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type IcebergTablesData struct {
+	Username      string             `json:"username"`
+	CatalogName   string             `json:"catalog_name"`
+	NamespaceName string             `json:"namespace_name"`
+	BucketARN     string             `json:"bucket_arn"`
+	Tables        []IcebergTableInfo `json:"tables"`
+	TotalTables   int                `json:"total_tables"`
+	LastUpdated   time.Time          `json:"last_updated"`
+}
+
+type IcebergSchemaFieldInfo struct {
+	ID       int             `json:"id"`
+	Name     string          `json:"name"`
+	Type     json.RawMessage `json:"type"`
+	Required bool            `json:"required"`
+}
+
+type IcebergPartitionFieldInfo struct {
+	Name      string `json:"name"`
+	Transform string `json:"transform"`
+	SourceID  int    `json:"source_id"`
+	FieldID   int    `json:"field_id"`
+}
+
+type IcebergPropertyInfo struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+type IcebergSnapshotInfo struct {
+	SnapshotID   int64     `json:"snapshot_id"`
+	Timestamp    time.Time `json:"timestamp"`
+	Operation    string    `json:"operation"`
+	ManifestList string    `json:"manifest_list"`
+}
+
+type IcebergTableDetailsData struct {
+	Username         string                      `json:"username"`
+	CatalogName      string                      `json:"catalog_name"`
+	NamespaceName    string                      `json:"namespace_name"`
+	TableName        string                      `json:"table_name"`
+	BucketARN        string                      `json:"bucket_arn"`
+	TableARN         string                      `json:"table_arn"`
+	Format           string                      `json:"format"`
+	CreatedAt        time.Time                   `json:"created_at"`
+	ModifiedAt       time.Time                   `json:"modified_at"`
+	MetadataLocation string                      `json:"metadata_location"`
+	TableLocation    string                      `json:"table_location"`
+	SchemaFields     []IcebergSchemaFieldInfo    `json:"schema_fields"`
+	PartitionFields  []IcebergPartitionFieldInfo `json:"partition_fields"`
+	Properties       []IcebergPropertyInfo       `json:"properties"`
+	Snapshots        []IcebergSnapshotInfo       `json:"snapshots"`
+	SnapshotCount    int                         `json:"snapshot_count"`
+	HasSnapshotCount bool                        `json:"has_snapshot_count"`
+	DataFileCount    int64                       `json:"data_file_count"`
+	HasDataFileCount bool                        `json:"has_data_file_count"`
+	TotalSizeBytes   int64                       `json:"total_size_bytes"`
+	HasTotalSize     bool                        `json:"has_total_size"`
+	MetadataError    string                      `json:"metadata_error,omitempty"`
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
@@ -39,7 +40,8 @@ func init() {
 }
 
 const (
-	readbufferSize = 16
+	readbufferSize                 = 16
+	jwtFilerTokenExpirationSeconds = 300
 )
 
 type commandVolumeFsck struct {
@@ -51,8 +53,10 @@ type commandVolumeFsck struct {
 	tempFolder               string
 	verbose                  *bool
 	forcePurging             *bool
+	skipEcVolumes            *bool
 	findMissingChunksInFiler *bool
 	verifyNeedle             *bool
+	filerSigningKey          string
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -76,6 +80,12 @@ func (c *commandVolumeFsck) Help() string {
 	2. collect all file ids from the filer, as set B
 	3. find out the set B subtract A
 
+	-cutoffTimeAgo is used to only check chunks older than the cutoff time.
+	This is important because:
+		Chunks are uploaded to volume servers before metadata is committed to filer.
+		A newly uploaded chunk may appear as orphan if metadata commit is still pending.
+		The default 5h cutoff provides sufficient buffer for metadata commits.
+
 `
 }
 
@@ -87,6 +97,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 
 	fsckCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	c.verbose = fsckCommand.Bool("v", false, "verbose mode")
+	c.skipEcVolumes = fsckCommand.Bool("skipEcVolumes", false, "skip erasure coded volumes")
 	c.findMissingChunksInFiler = fsckCommand.Bool("findMissingChunksInFiler", false, "see \"help volume.fsck\"")
 	c.collection = fsckCommand.String("collection", "", "the collection name")
 	volumeIds := fsckCommand.String("volumeId", "", "comma separated the volume id")
@@ -94,7 +105,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.forcePurging = fsckCommand.Bool("forcePurging", false, "delete missing data from volumes in one replica used together with applyPurging")
 	purgeAbsent := fsckCommand.Bool("reallyDeleteFilerEntries", false, "<expert only!> delete missing file entries from filer if the corresponding volume is missing for any reason, please ensure all still existing/expected volumes are connected! used together with findMissingChunksInFiler")
 	tempPath := fsckCommand.String("tempPath", path.Join(os.TempDir()), "path for temporary idx files")
-	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Minute, "only include entries  on volume servers before this cutoff time to check orphan chunks")
+	cutoffTimeAgo := fsckCommand.Duration("cutoffTimeAgo", 5*time.Hour, "only include entries on volume servers before this cutoff time to check orphan chunks")
 	modifyTimeAgo := fsckCommand.Duration("modifyTimeAgo", 0, "only include entries after this modify time to check orphan chunks")
 	c.verifyNeedle = fsckCommand.Bool("verifyNeedles", false, "check needles status from volume server")
 
@@ -108,6 +119,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	c.volumeIds = make(map[uint32]bool)
 	if *volumeIds != "" {
 		for _, volumeIdStr := range strings.Split(*volumeIds, ",") {
+			volumeIdStr = strings.TrimSpace(volumeIdStr)
 			if volumeIdInt, err := strconv.ParseUint(volumeIdStr, 10, 32); err == nil {
 				c.volumeIds[uint32(volumeIdInt)] = true
 			} else {
@@ -133,6 +145,8 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 	}
 	defer os.RemoveAll(c.tempFolder)
 
+	c.filerSigningKey = util.GetViper().GetString("jwt.filer_signing.key")
+
 	// collect all volume id locations
 	dataNodeVolumeIdToVInfo, err := c.collectVolumeIds()
 	if err != nil {
@@ -157,6 +171,10 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		dataNodeId, volumeIdToVInfo := _dataNodeId, _volumeIdToVInfo
 		eg.Go(func() error {
 			for volumeId, vinfo := range volumeIdToVInfo {
+				if *c.skipEcVolumes && vinfo.isEcVolume {
+					delete(volumeIdToVInfo, volumeId)
+					continue
+				}
 				if len(c.volumeIds) > 0 {
 					if _, ok := c.volumeIds[volumeId]; !ok {
 						delete(volumeIdToVInfo, volumeId)
@@ -192,7 +210,7 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		}
 		for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 			// for each volume, check filer file ids
-			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging); err != nil {
+			if err = c.findFilerChunksMissingInVolumeServers(volumeIdToVInfo, dataNodeId, *applyPurging || *purgeAbsent); err != nil {
 				return fmt.Errorf("findFilerChunksMissingInVolumeServers: %w", err)
 			}
 		}
@@ -235,7 +253,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 	}()
 
 	return doTraverseBfsAndSaving(c.env, c.writer, c.getCollectFilerFilePath(), false,
-		func(entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
+		func(ctx context.Context, entry *filer_pb.FullEntry, outputChan chan interface{}) (err error) {
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
@@ -251,16 +269,20 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				if collectModifyFromAtNs != 0 && chunk.ModifiedTsNs < collectModifyFromAtNs {
 					continue
 				}
-				outputChan <- &Item{
+				select {
+				case outputChan <- &Item{
 					vid:     chunk.Fid.VolumeId,
 					fileKey: chunk.Fid.FileKey,
 					cookie:  chunk.Fid.Cookie,
 					path:    util.NewFullPath(entry.Dir, entry.Entry.Name),
+				}:
+				case <-ctx.Done():
+					return ctx.Err()
 				}
 			}
 			return nil
 		},
-		func(outputChan chan interface{}) {
+		func(outputChan chan interface{}) error {
 			buffer := make([]byte, readbufferSize)
 			for item := range outputChan {
 				i := item.(*Item)
@@ -268,16 +290,27 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 					util.Uint64toBytes(buffer, i.fileKey)
 					util.Uint32toBytes(buffer[8:], i.cookie)
 					util.Uint32toBytes(buffer[12:], uint32(len(i.path)))
-					f.Write(buffer)
-					f.Write([]byte(i.path))
-				} else if *c.findMissingChunksInFiler && len(c.volumeIds) == 0 {
+					if _, err := f.Write(buffer); err != nil {
+						return err
+					}
+					if _, err := f.Write([]byte(i.path)); err != nil {
+						return err
+					}
+				} else if *c.findMissingChunksInFiler {
+					// check if the volume matches the filter
+					if len(c.volumeIds) > 0 {
+						if _, ok := c.volumeIds[i.vid]; !ok {
+							continue
+						}
+					}
 					fmt.Fprintf(c.writer, "%d,%x%08x %s volume not found\n", i.vid, i.fileKey, i.cookie, i.path)
 					if purgeAbsent {
-						fmt.Printf("deleting path %s after volume not found", i.path)
+						fmt.Fprintf(c.writer, "deleting path %s after volume not found\n", i.path)
 						c.httpDelete(i.path)
 					}
 				}
 			}
+			return nil
 		})
 }
 
@@ -476,10 +509,10 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 			break
 		}
 		if readErr != nil {
-			return readErr
+			return fmt.Errorf("read fid header for volume %d: %w", volumeId, readErr)
 		}
 		if readSize != readbufferSize {
-			return fmt.Errorf("readSize mismatch")
+			return fmt.Errorf("read fid header size mismatch for volume %d: got %d want %d", volumeId, readSize, readbufferSize)
 		}
 		item.fileKey = util.BytesToUint64(buffer[:8])
 		item.cookie = util.BytesToUint32(buffer[8:12])
@@ -487,10 +520,10 @@ func (c *commandVolumeFsck) readFilerFileIdFile(volumeId uint32, fn func(needleI
 		pathBytes := make([]byte, int(pathSize))
 		n, err := io.ReadFull(br, pathBytes)
 		if err != nil {
-			fmt.Fprintf(c.writer, "%d,%x%08x in unexpected error: %v\n", volumeId, item.fileKey, item.cookie, err)
+			return fmt.Errorf("read fid path for volume %d,%x%08x: %w", volumeId, item.fileKey, item.cookie, err)
 		}
 		if n != int(pathSize) {
-			fmt.Fprintf(c.writer, "%d,%x%08x %d unexpected file name size %d\n", volumeId, item.fileKey, item.cookie, pathSize, n)
+			return fmt.Errorf("read fid path size mismatch for volume %d,%x%08x: got %d want %d", volumeId, item.fileKey, item.cookie, n, pathSize)
 		}
 		item.path = util.FullPath(pathBytes)
 		needleId := types.NeedleId(item.fileKey)
@@ -525,22 +558,30 @@ func (c *commandVolumeFsck) oneVolumeFileIdsCheckOneVolume(dataNodeId string, vo
 
 func (c *commandVolumeFsck) httpDelete(path util.FullPath) {
 	req, err := http.NewRequest(http.MethodDelete, "", nil)
+	if err != nil {
+		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
+		return
+	}
 
 	req.URL = &url.URL{
 		Scheme: "http",
 		Host:   c.env.option.FilerAddress.ToHttpAddress(),
 		Path:   string(path),
 	}
+
+	if c.filerSigningKey != "" {
+		encodedJwt := security.GenJwtForFilerServer(security.SigningKey(c.filerSigningKey), jwtFilerTokenExpirationSeconds)
+		req.Header.Set("Authorization", "BEARER "+string(encodedJwt))
+	}
+
 	if *c.verbose {
 		fmt.Fprintf(c.writer, "full HTTP delete request to be sent: %v\n", req)
-	}
-	if err != nil {
-		fmt.Fprintf(c.writer, "HTTP delete request error: %v\n", err)
 	}
 
 	resp, err := util_http.GetGlobalHttpClient().Do(req)
 	if err != nil {
 		fmt.Fprintf(c.writer, "DELETE fetch error: %v\n", err)
+		return
 	}
 	defer resp.Body.Close()
 
@@ -567,7 +608,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 
 	if err = c.readFilerFileIdFile(volumeId, func(filerNeedleId types.NeedleId, itemPath util.FullPath) {
 		inUseCount++
-		if *c.verifyNeedle {
+		if *c.verifyNeedle && !vinfo.isEcVolume {
 			if needleValue, ok := volumeFileIdDb.Get(filerNeedleId); ok && !needleValue.Size.IsDeleted() {
 				if _, err := readNeedleStatus(c.env.option.GrpcDialOption, vinfo.server, volumeId, *needleValue); err != nil {
 					// files may be deleted during copying filesIds
@@ -595,7 +636,7 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 		if n.Size.IsDeleted() {
 			return nil
 		}
-		if cutoffFrom > 0 || modifyFrom > 0 {
+		if !vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
 			return operation.WithVolumeServerClient(false, vinfo.server, c.env.option.GrpcDialOption,
 				func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 					resp, err := volumeServerClient.ReadNeedleMeta(context.Background(), &volume_server_pb.ReadNeedleMetaRequest{
@@ -615,6 +656,11 @@ func (c *commandVolumeFsck) oneVolumeFileIdsSubtractFilerFileIds(dataNodeId stri
 					return nil
 				})
 		} else {
+			if vinfo.isEcVolume && (cutoffFrom > 0 || modifyFrom > 0) {
+				if *c.verbose {
+					fmt.Fprintf(c.writer, "skipping time-based filtering for EC volume %d (cutoffFrom=%d, modifyFrom=%d)\n", volumeId, cutoffFrom, modifyFrom)
+				}
+			}
 			orphanFileIds = append(orphanFileIds, n.Key.FileId(volumeId))
 			orphanFileCount++
 			orphanDataSize += uint64(n.Size)
@@ -742,10 +788,10 @@ func writeToFile(bytes []byte, fileName string) error {
 	flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
 	dst, err := os.OpenFile(fileName, flags, 0644)
 	if err != nil {
-		return nil
+		return err
 	}
 	defer dst.Close()
 
-	dst.Write(bytes)
-	return nil
+	_, err = dst.Write(bytes)
+	return err
 }

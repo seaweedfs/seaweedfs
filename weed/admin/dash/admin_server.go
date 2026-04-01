@@ -1,33 +1,82 @@
 package dash
 
 import (
-	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"strconv"
+	"sort"
+	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
+	adminplugin "github.com/seaweedfs/seaweedfs/weed/admin/plugin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	clustermaintenance "github.com/seaweedfs/seaweedfs/weed/cluster/maintenance"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
+
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/grpc" // Register gRPC credential store
 )
+
+const (
+	defaultCacheTimeout      = 10 * time.Second
+	defaultFilerCacheTimeout = 30 * time.Second
+	defaultStatsCacheTimeout = 30 * time.Second
+)
+
+// FilerConfig holds filer configuration needed for bucket operations
+type FilerConfig struct {
+	BucketsPath string
+	FilerGroup  string
+}
+
+// getFilerConfig retrieves the filer configuration (buckets path and filer group)
+func (s *AdminServer) getFilerConfig() (*FilerConfig, error) {
+	config := &FilerConfig{
+		BucketsPath: s3_constants.DefaultBucketsPath,
+		FilerGroup:  "",
+	}
+
+	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
+		if err != nil {
+			return fmt.Errorf("get filer configuration: %w", err)
+		}
+		if resp.DirBuckets != "" {
+			config.BucketsPath = resp.DirBuckets
+		}
+		config.FilerGroup = resp.FilerGroup
+		return nil
+	})
+
+	return config, err
+}
+
+// getCollectionName returns the collection name for a bucket, prefixed with filer group if configured
+func getCollectionName(filerGroup, bucketName string) string {
+	if filerGroup != "" {
+		return fmt.Sprintf("%s_%s", filerGroup, bucketName)
+	}
+	return bucketName
+}
 
 type AdminServer struct {
 	masterClient    *wdclient.MasterClient
@@ -51,17 +100,32 @@ type AdminServer struct {
 
 	// Maintenance system
 	maintenanceManager *maintenance.MaintenanceManager
+	plugin             *adminplugin.Plugin
+	pluginLock         *AdminLockManager
+	adminPresenceLock  *adminPresenceLock
+	expireJobHandler   func(jobID string, reason string) (*adminplugin.TrackedJob, bool, error)
 
 	// Topic retention purger
 	topicRetentionPurger *TopicRetentionPurger
 
 	// Worker gRPC server
 	workerGrpcServer *WorkerGrpcServer
+
+	// Background goroutine lifecycle
+	bgCancel context.CancelFunc
+
+	// Collection statistics caching
+	collectionStatsCache          map[string]collectionStats
+	lastCollectionStatsUpdate     time.Time
+	collectionStatsCacheThreshold time.Duration
+
+	s3TablesManager *s3tables.Manager
+	icebergPort     int
 }
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -76,55 +140,58 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 	)
 
 	// Start master client connection process (like shell and filer do)
-	ctx := context.Background()
-	go masterClient.KeepConnectedToMaster(ctx)
+	bgCtx, bgCancel := context.WithCancel(context.Background())
+	go masterClient.KeepConnectedToMaster(bgCtx)
+
+	lockManager := NewAdminLockManager(masterClient, adminLockClientName)
+	presenceLock := newAdminPresenceLock(masterClient)
+	if presenceLock != nil {
+		presenceLock.Start()
+	}
 
 	server := &AdminServer{
-		masterClient:         masterClient,
-		templateFS:           templateFS,
-		dataDir:              dataDir,
-		grpcDialOption:       grpcDialOption,
-		cacheExpiration:      10 * time.Second,
-		filerCacheExpiration: 30 * time.Second, // Cache filers for 30 seconds
-		configPersistence:    NewConfigPersistence(dataDir),
+		masterClient:                  masterClient,
+		templateFS:                    templateFS,
+		dataDir:                       dataDir,
+		grpcDialOption:                grpcDialOption,
+		cacheExpiration:               defaultCacheTimeout,
+		filerCacheExpiration:          defaultFilerCacheTimeout,
+		configPersistence:             NewConfigPersistence(dataDir),
+		collectionStatsCacheThreshold: defaultStatsCacheTimeout,
+		s3TablesManager:               newS3TablesManager(),
+		icebergPort:                   icebergPort,
+		pluginLock:                    lockManager,
+		adminPresenceLock:             presenceLock,
+		bgCancel:                      bgCancel,
 	}
 
 	// Initialize topic retention purger
 	server.topicRetentionPurger = NewTopicRetentionPurger(server)
 
 	// Initialize credential manager with defaults
-	credentialManager, err := credential.NewCredentialManagerWithDefaults("")
+	credentialManager, err := credential.NewCredentialManagerWithDefaults(credential.StoreTypeGrpc)
 	if err != nil {
 		glog.Warningf("Failed to initialize credential manager: %v", err)
 		// Continue without credential manager - will fall back to legacy approach
 	} else {
-		// For stores that need filer client details, set them
-		if store := credentialManager.GetStore(); store != nil {
-			if filerClientSetter, ok := store.(interface {
-				SetFilerClient(string, grpc.DialOption)
-			}); ok {
-				// We'll set the filer client later when we discover filers
-				// For now, just store the credential manager
-				server.credentialManager = credentialManager
+		server.credentialManager = credentialManager
+		glog.V(0).Infof("Credential manager initialized with store type: %s", credentialManager.GetStore().GetName())
 
-				// Set up a goroutine to set filer client once we discover filers
-				go func() {
-					for {
-						filerAddr := server.GetFilerAddress()
-						if filerAddr != "" {
-							filerClientSetter.SetFilerClient(filerAddr, server.grpcDialOption)
-							glog.V(1).Infof("Set filer client for credential manager: %s", filerAddr)
-							break
-						}
-						glog.V(1).Infof("Waiting for filer discovery for credential manager...")
-						time.Sleep(5 * time.Second) // Retry every 5 seconds
-					}
-				}()
+		// For stores that need filer address function, configure them
+		if store := credentialManager.GetStore(); store != nil {
+			if filerFuncSetter, ok := store.(interface {
+				SetFilerAddressFunc(func() pb.ServerAddress, grpc.DialOption)
+			}); ok {
+				// Configure the filer address function to dynamically return the current active filer
+				// This function will be called each time credentials need to be loaded/saved,
+				// so it will automatically use whatever filer is currently available (HA-aware)
+				filerFuncSetter.SetFilerAddressFunc(func() pb.ServerAddress {
+					return pb.ServerAddress(server.GetFilerAddress())
+				}, server.grpcDialOption)
+				glog.V(0).Infof("Credential store configured with dynamic filer address function")
 			} else {
-				server.credentialManager = credentialManager
+				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
-		} else {
-			server.credentialManager = credentialManager
 		}
 	}
 
@@ -174,7 +241,110 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string) 
 		}()
 	}
 
+	pluginOpts := adminplugin.Options{
+		DataDir: dataDir,
+		ClusterContextProvider: func(_ context.Context) (*plugin_pb.ClusterContext, error) {
+			return server.buildDefaultPluginClusterContext(), nil
+		},
+		LockManager:            lockManager,
+		ConfigDefaultsProvider: server.enrichConfigDefaults,
+	}
+	plugin, err := adminplugin.New(pluginOpts)
+	if err != nil && dataDir != "" {
+		glog.Warningf("Failed to initialize plugin with dataDir=%q: %v. Falling back to in-memory plugin state.", dataDir, err)
+		pluginOpts.DataDir = ""
+		plugin, err = adminplugin.New(pluginOpts)
+	}
+	if err != nil {
+		glog.Errorf("Failed to initialize plugin: %v", err)
+	} else {
+		server.plugin = plugin
+		glog.V(0).Infof("Plugin enabled")
+		go server.monitorVacuumWorker(bgCtx)
+	}
+
 	return server
+}
+
+// vacuumToggler abstracts the master's vacuum enable/disable for testing.
+type vacuumToggler interface {
+	disableVacuum() error
+	enableVacuum() error
+}
+
+// masterVacuumToggler implements vacuumToggler via gRPC calls to the master.
+type masterVacuumToggler struct {
+	server *AdminServer
+}
+
+func (m *masterVacuumToggler) disableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.DisableVacuum(ctx, &master_pb.DisableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+func (m *masterVacuumToggler) enableVacuum() error {
+	return m.server.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_, err := client.EnableVacuum(ctx, &master_pb.EnableVacuumRequest{ByPlugin: true})
+		return err
+	})
+}
+
+// syncVacuumState performs a single sync step: checks if a vacuum-capable worker
+// is present and calls disable/enable accordingly. Returns the updated state
+// and whether the call failed (for log dedup on retries).
+func syncVacuumState(hasWorker bool, previouslyActive bool, toggler vacuumToggler, retrying bool) (active bool, failed bool) {
+	if hasWorker == previouslyActive {
+		return previouslyActive, false
+	}
+	if hasWorker {
+		if !retrying {
+			glog.V(0).Infof("Vacuum plugin worker connected, disabling master automatic vacuum")
+		}
+		if err := toggler.disableVacuum(); err != nil {
+			glog.Warningf("Failed to disable vacuum on master: %v", err)
+			return false, true // retry next tick
+		}
+		return true, false
+	}
+	if !retrying {
+		glog.V(0).Infof("Vacuum plugin worker disconnected, re-enabling master automatic vacuum")
+	}
+	if err := toggler.enableVacuum(); err != nil {
+		glog.Warningf("Failed to enable vacuum on master: %v", err)
+		return true, true // retry next tick
+	}
+	return false, false
+}
+
+// monitorVacuumWorker polls the plugin registry for vacuum-capable workers and
+// disables/enables the master's automatic scheduled vacuum accordingly.
+func (s *AdminServer) monitorVacuumWorker(ctx context.Context) {
+	const pollInterval = 30 * time.Second
+	ticker := time.NewTicker(pollInterval)
+	defer ticker.Stop()
+
+	toggler := &masterVacuumToggler{server: s}
+	vacuumWorkerActive := false
+	retrying := false
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if s.plugin == nil {
+				continue
+			}
+			hasWorker := s.plugin.HasCapableWorker("vacuum")
+			vacuumWorkerActive, retrying = syncVacuumState(hasWorker, vacuumWorkerActive, toggler, retrying)
+		}
+	}
 }
 
 // loadTaskConfigurationsFromPersistence loads saved task configurations from protobuf files
@@ -187,6 +357,89 @@ func (s *AdminServer) loadTaskConfigurationsFromPersistence() {
 	// Load task configurations dynamically using the config update registry
 	configUpdateRegistry := tasks.GetGlobalConfigUpdateRegistry()
 	configUpdateRegistry.UpdateAllConfigs(s.configPersistence)
+}
+
+// enrichConfigDefaults is called by the plugin when bootstrapping a job type's
+// default config from its descriptor. For admin_script, it fetches maintenance
+// scripts from the master and uses them as the script default.
+//
+// MIGRATION: This exists to help users migrate from master.toml [master.maintenance]
+// to the admin script plugin worker. Remove after March 2027.
+func (s *AdminServer) enrichConfigDefaults(cfg *plugin_pb.PersistedJobTypeConfig) *plugin_pb.PersistedJobTypeConfig {
+	if cfg.JobType != "admin_script" {
+		return cfg
+	}
+
+	var maintenanceScripts string
+	var sleepMinutes uint32
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		resp, err := client.GetMasterConfiguration(ctx, &master_pb.GetMasterConfigurationRequest{})
+		if err != nil {
+			return err
+		}
+		maintenanceScripts = resp.MaintenanceScripts
+		sleepMinutes = resp.MaintenanceSleepMinutes
+		return nil
+	})
+	if err != nil {
+		glog.V(1).Infof("Could not fetch master configuration for admin_script defaults: %v", err)
+		return cfg
+	}
+
+	script := cleanMaintenanceScript(maintenanceScripts)
+	if script == "" {
+		return cfg
+	}
+
+	interval := int64(sleepMinutes)
+	if interval <= 0 {
+		interval = clustermaintenance.DefaultMaintenanceSleepMinutes
+	}
+
+	glog.V(0).Infof("Enriching admin_script defaults from master maintenance scripts (interval=%dm)", interval)
+
+	if cfg.AdminConfigValues == nil {
+		cfg.AdminConfigValues = make(map[string]*plugin_pb.ConfigValue)
+	}
+	cfg.AdminConfigValues["script"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_StringValue{StringValue: script},
+	}
+	cfg.AdminConfigValues["run_interval_minutes"] = &plugin_pb.ConfigValue{
+		Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: interval},
+	}
+	cfg.UpdatedBy = "master_migration"
+
+	return cfg
+}
+
+// cleanMaintenanceScript strips lock/unlock commands and normalizes a
+// maintenance script string for use with the admin script plugin worker.
+//
+// MIGRATION: Used by enrichConfigDefaults. Remove after March 2027.
+func cleanMaintenanceScript(script string) string {
+	script = strings.ReplaceAll(script, "\r\n", "\n")
+	var lines []string
+	for _, line := range strings.Split(script, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		// Strip inline comments (e.g., "lock # migration note")
+		if idx := strings.Index(trimmed, "#"); idx >= 0 {
+			trimmed = strings.TrimSpace(trimmed[:idx])
+			if trimmed == "" {
+				continue
+			}
+		}
+		firstToken := strings.ToLower(strings.Fields(trimmed)[0])
+		if firstToken == "lock" || firstToken == "unlock" {
+			continue
+		}
+		lines = append(lines, trimmed)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // GetCredentialManager returns the credential manager
@@ -206,114 +459,199 @@ func (s *AdminServer) GetCredentialManager() *credential.CredentialManager {
 
 // InvalidateCache method moved to cluster_topology.go
 
+// GetS3BucketsData retrieves Object Store buckets with pagination and sorting
+func (s *AdminServer) GetS3BucketsData(page, pageSize int, sortBy, sortOrder string) (S3BucketsData, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 || pageSize > 1000 {
+		pageSize = 100
+	}
+	if sortBy == "" {
+		sortBy = "name"
+	}
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+
+	buckets, err := s.GetS3Buckets()
+	if err != nil {
+		return S3BucketsData{}, err
+	}
+
+	var totalSize int64
+	for _, bucket := range buckets {
+		totalSize += bucket.PhysicalSize
+	}
+
+	totalBuckets := len(buckets)
+
+	// Sort buckets
+	s.sortBuckets(buckets, sortBy, sortOrder)
+
+	// Calculate pagination
+	totalPages := (totalBuckets + pageSize - 1) / pageSize
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+
+	startIndex := (page - 1) * pageSize
+	endIndex := startIndex + pageSize
+	if startIndex >= totalBuckets {
+		buckets = []S3Bucket{}
+	} else {
+		if endIndex > totalBuckets {
+			endIndex = totalBuckets
+		}
+		buckets = buckets[startIndex:endIndex]
+	}
+
+	return S3BucketsData{
+		Buckets:      buckets,
+		TotalBuckets: totalBuckets,
+		TotalSize:    totalSize,
+		LastUpdated:  time.Now(),
+		CurrentPage:  page,
+		TotalPages:   totalPages,
+		PageSize:     pageSize,
+		SortBy:       sortBy,
+		SortOrder:    sortOrder,
+	}, nil
+}
+
+// sortBuckets sorts the bucket slice in place by the given field and order
+func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) {
+	desc := sortOrder == "desc"
+	sort.Slice(buckets, func(i, j int) bool {
+		a, b := buckets[i], buckets[j]
+		switch sortBy {
+		case "owner":
+			if a.Owner != b.Owner {
+				if desc {
+					return a.Owner > b.Owner
+				}
+				return a.Owner < b.Owner
+			}
+		case "created":
+			if !a.CreatedAt.Equal(b.CreatedAt) {
+				if desc {
+					return a.CreatedAt.After(b.CreatedAt)
+				}
+				return a.CreatedAt.Before(b.CreatedAt)
+			}
+		case "objects":
+			if a.ObjectCount != b.ObjectCount {
+				if desc {
+					return a.ObjectCount > b.ObjectCount
+				}
+				return a.ObjectCount < b.ObjectCount
+			}
+		case "logical_size":
+			if a.LogicalSize != b.LogicalSize {
+				if desc {
+					return a.LogicalSize > b.LogicalSize
+				}
+				return a.LogicalSize < b.LogicalSize
+			}
+		case "physical_size":
+			if a.PhysicalSize != b.PhysicalSize {
+				if desc {
+					return a.PhysicalSize > b.PhysicalSize
+				}
+				return a.PhysicalSize < b.PhysicalSize
+			}
+		}
+		// Tie-breaker: sort by name (also the default/primary for sortBy=="name")
+		if a.Name != b.Name {
+			if desc {
+				return a.Name > b.Name
+			}
+			return a.Name < b.Name
+		}
+		return false
+	})
+}
+
 // GetS3Buckets retrieves all Object Store buckets from the filer and collects size/object data from collections
 func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 	var buckets []S3Bucket
 
-	// Build a map of collection name to collection data
-	collectionMap := make(map[string]struct {
-		Size      int64
-		FileCount int64
-	})
+	// Collect volume information by collection with caching
+	collectionMap, _ := s.getCollectionStats()
 
-	// Collect volume information by collection
-	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
-		if err != nil {
-			return err
-		}
-
-		if resp.TopologyInfo != nil {
-			for _, dc := range resp.TopologyInfo.DataCenterInfos {
-				for _, rack := range dc.RackInfos {
-					for _, node := range rack.DataNodeInfos {
-						for _, diskInfo := range node.DiskInfos {
-							for _, volInfo := range diskInfo.VolumeInfos {
-								collection := volInfo.Collection
-								if collection == "" {
-									collection = "default"
-								}
-
-								if _, exists := collectionMap[collection]; !exists {
-									collectionMap[collection] = struct {
-										Size      int64
-										FileCount int64
-									}{}
-								}
-
-								data := collectionMap[collection]
-								data.Size += int64(volInfo.Size)
-								data.FileCount += int64(volInfo.FileCount)
-								collectionMap[collection] = data
-							}
-						}
-					}
-				}
-			}
-		}
-		return nil
-	})
-
+	// Get filer configuration (buckets path and filer group)
+	filerConfig, err := s.getFilerConfig()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get volume information: %w", err)
-	}
-
-	// Get filer configuration to determine FilerGroup
-	var filerGroup string
-	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		configResp, err := client.GetFilerConfiguration(context.Background(), &filer_pb.GetFilerConfigurationRequest{})
-		if err != nil {
-			glog.Warningf("Failed to get filer configuration: %v", err)
-			// Continue without filer group
-			return nil
-		}
-		filerGroup = configResp.FilerGroup
-		return nil
-	})
-
-	if err != nil {
-		return nil, fmt.Errorf("failed to get filer configuration: %w", err)
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
 	}
 
 	// Now list buckets from the filer and match with collection data
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// List buckets by looking at the /buckets directory
-		stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-			Directory:          "/buckets",
-			Prefix:             "",
-			StartFromFileName:  "",
-			InclusiveStartFrom: false,
-			Limit:              1000,
-		})
-		if err != nil {
-			return err
-		}
-
+		// Paginate through all buckets in the buckets directory
+		const listPageSize = 1000
+		startFrom := ""
+		var snapshotTsNs int64
 		for {
-			resp, err := stream.Recv()
+			stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
+				Directory:          filerConfig.BucketsPath,
+				Prefix:             "",
+				StartFromFileName:  startFrom,
+				InclusiveStartFrom: false,
+				Limit:              listPageSize,
+				SnapshotTsNs:       snapshotTsNs,
+			})
 			if err != nil {
-				if err.Error() == "EOF" {
-					break
-				}
 				return err
 			}
 
-			if resp.Entry.IsDirectory {
-				bucketName := resp.Entry.Name
-
-				// Determine collection name for this bucket
-				var collectionName string
-				if filerGroup != "" {
-					collectionName = fmt.Sprintf("%s_%s", filerGroup, bucketName)
-				} else {
-					collectionName = bucketName
+			pageCount := 0
+			lastName := ""
+			for {
+				resp, err := stream.Recv()
+				if err != nil {
+					if errors.Is(err, io.EOF) {
+						break
+					}
+					return err
 				}
 
+				if snapshotTsNs == 0 && resp.SnapshotTsNs != 0 {
+					snapshotTsNs = resp.SnapshotTsNs
+				}
+
+				if resp.Entry == nil {
+					continue
+				}
+				lastName = resp.Entry.Name
+				pageCount++
+
+				if !resp.Entry.IsDirectory {
+					continue
+				}
+
+				bucketName := resp.Entry.Name
+				if strings.HasPrefix(bucketName, ".") {
+					// Skip internal/system directories from Object Store bucket listing.
+					continue
+				}
+				if s3tables.IsTableBucketEntry(resp.Entry) || strings.HasSuffix(bucketName, "--table-s3") {
+					// Keep table buckets in the S3 Tables pages, not regular Object Store buckets.
+					continue
+				}
+
+				// Determine collection name for this bucket
+				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
+
 				// Get size and object count from collection data
-				var size int64
+				var physicalSize int64
+				var logicalSize int64
 				var objectCount int64
 				if collectionData, exists := collectionMap[collectionName]; exists {
-					size = collectionData.Size
+					physicalSize = collectionData.PhysicalSize
+					logicalSize = collectionData.LogicalSize
 					objectCount = collectionData.FileCount
 				}
 
@@ -326,35 +664,54 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					quotaEnabled = false
 				}
 
-				// Get versioning and object lock information from extended attributes
-				versioningEnabled := false
+				// Get versioning, object lock, and owner information from extended attributes
+				versioningStatus := ""
 				objectLockEnabled := false
 				objectLockMode := ""
 				var objectLockDuration int32 = 0
+				var owner string
 
 				if resp.Entry.Extended != nil {
 					// Use shared utility to extract versioning information
-					versioningEnabled = extractVersioningFromEntry(resp.Entry)
+					versioningStatus = extractVersioningFromEntry(resp.Entry)
 
 					// Use shared utility to extract Object Lock information
 					objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(resp.Entry)
+
+					// Extract owner information
+					if ownerBytes, ok := resp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+						owner = string(ownerBytes)
+					}
 				}
 
+				var createdAt, lastModified time.Time
+				if resp.Entry.Attributes != nil {
+					createdAt = time.Unix(resp.Entry.Attributes.Crtime, 0)
+					lastModified = time.Unix(resp.Entry.Attributes.Mtime, 0)
+				}
 				bucket := S3Bucket{
 					Name:               bucketName,
-					CreatedAt:          time.Unix(resp.Entry.Attributes.Crtime, 0),
-					Size:               size,
+					CreatedAt:          createdAt,
+					LogicalSize:        logicalSize,
+					PhysicalSize:       physicalSize,
 					ObjectCount:        objectCount,
-					LastModified:       time.Unix(resp.Entry.Attributes.Mtime, 0),
+					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
-					VersioningEnabled:  versioningEnabled,
+					VersioningStatus:   versioningStatus,
 					ObjectLockEnabled:  objectLockEnabled,
 					ObjectLockMode:     objectLockMode,
 					ObjectLockDuration: objectLockDuration,
+					Owner:              owner,
 				}
 				buckets = append(buckets, bucket)
 			}
+
+			// If we received fewer entries than the page size, we've listed everything
+			if pageCount < listPageSize {
+				break
+			}
+			startFrom = lastName
 		}
 
 		return nil
@@ -368,21 +725,37 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 }
 
 // GetBucketDetails retrieves detailed information about a specific bucket
+// Note: This no longer lists objects for performance reasons. Use GetS3Buckets for size/count data.
 func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error) {
-	bucketPath := fmt.Sprintf("/buckets/%s", bucketName)
+	// Get filer configuration (buckets path)
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		glog.Warningf("Failed to get filer configuration, using defaults: %v", err)
+	}
 
 	details := &BucketDetails{
 		Bucket: S3Bucket{
 			Name: bucketName,
 		},
-		Objects:   []S3Object{},
 		UpdatedAt: time.Now(),
 	}
 
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+	// Get collection data for size and object count with caching
+	collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
+	stats, err := s.getCollectionStats()
+	if err != nil {
+		glog.Warningf("Failed to get collection data: %v", err)
+		// Continue without collection data - use zero values
+	} else if data, ok := stats[collectionName]; ok {
+		details.Bucket.LogicalSize = data.LogicalSize
+		details.Bucket.PhysicalSize = data.PhysicalSize
+		details.Bucket.ObjectCount = data.FileCount
+	}
+
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
 		// Get bucket info
 		bucketResp, err := client.LookupDirectoryEntry(context.Background(), &filer_pb.LookupDirectoryEntryRequest{
-			Directory: "/buckets",
+			Directory: filerConfig.BucketsPath,
 			Name:      bucketName,
 		})
 		if err != nil {
@@ -403,27 +776,33 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 		details.Bucket.Quota = quota
 		details.Bucket.QuotaEnabled = quotaEnabled
 
-		// Get versioning and object lock information from extended attributes
-		versioningEnabled := false
+		// Get versioning, object lock, and owner information from extended attributes
+		versioningStatus := ""
 		objectLockEnabled := false
 		objectLockMode := ""
 		var objectLockDuration int32 = 0
+		var owner string
 
 		if bucketResp.Entry.Extended != nil {
 			// Use shared utility to extract versioning information
-			versioningEnabled = extractVersioningFromEntry(bucketResp.Entry)
+			versioningStatus = extractVersioningFromEntry(bucketResp.Entry)
 
 			// Use shared utility to extract Object Lock information
 			objectLockEnabled, objectLockMode, objectLockDuration = extractObjectLockInfoFromEntry(bucketResp.Entry)
+
+			// Extract owner information
+			if ownerBytes, ok := bucketResp.Entry.Extended[s3_constants.AmzIdentityId]; ok {
+				owner = string(ownerBytes)
+			}
 		}
 
-		details.Bucket.VersioningEnabled = versioningEnabled
+		details.Bucket.VersioningStatus = versioningStatus
 		details.Bucket.ObjectLockEnabled = objectLockEnabled
 		details.Bucket.ObjectLockMode = objectLockMode
 		details.Bucket.ObjectLockDuration = objectLockDuration
+		details.Bucket.Owner = owner
 
-		// List objects in bucket (recursively)
-		return s.listBucketObjects(client, bucketPath, "", details)
+		return nil
 	})
 
 	if err != nil {
@@ -433,66 +812,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	return details, nil
 }
 
-// listBucketObjects recursively lists all objects in a bucket
-func (s *AdminServer) listBucketObjects(client filer_pb.SeaweedFilerClient, directory, prefix string, details *BucketDetails) error {
-	stream, err := client.ListEntries(context.Background(), &filer_pb.ListEntriesRequest{
-		Directory:          directory,
-		Prefix:             prefix,
-		StartFromFileName:  "",
-		InclusiveStartFrom: false,
-		Limit:              1000,
-	})
-	if err != nil {
-		return err
-	}
-
-	for {
-		resp, err := stream.Recv()
-		if err != nil {
-			if err.Error() == "EOF" {
-				break
-			}
-			return err
-		}
-
-		entry := resp.Entry
-		if entry.IsDirectory {
-			// Recursively list subdirectories
-			subDir := fmt.Sprintf("%s/%s", directory, entry.Name)
-			err := s.listBucketObjects(client, subDir, "", details)
-			if err != nil {
-				return err
-			}
-		} else {
-			// Add file object
-			objectKey := entry.Name
-			if directory != fmt.Sprintf("/buckets/%s", details.Bucket.Name) {
-				// Remove bucket prefix to get relative path
-				relativePath := directory[len(fmt.Sprintf("/buckets/%s", details.Bucket.Name))+1:]
-				objectKey = fmt.Sprintf("%s/%s", relativePath, entry.Name)
-			}
-
-			obj := S3Object{
-				Key:          objectKey,
-				Size:         int64(entry.Attributes.FileSize),
-				LastModified: time.Unix(entry.Attributes.Mtime, 0),
-				ETag:         "", // Could be calculated from chunks if needed
-				StorageClass: "STANDARD",
-			}
-
-			details.Objects = append(details.Objects, obj)
-			details.TotalSize += obj.Size
-			details.TotalCount++
-		}
-	}
-
-	// Update bucket totals
-	details.Bucket.Size = details.TotalSize
-	details.Bucket.ObjectCount = details.TotalCount
-
-	return nil
-}
-
 // CreateS3Bucket creates a new S3 bucket
 func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 	return s.CreateS3BucketWithQuota(bucketName, 0, false)
@@ -500,14 +819,45 @@ func (s *AdminServer) CreateS3Bucket(bucketName string) error {
 
 // DeleteS3Bucket deletes an S3 bucket and all its contents
 func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
+	ctx := context.Background()
+
+	// Get filer configuration (buckets path and filer group)
+	filerConfig, err := s.getFilerConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get filer configuration: %w", err)
+	}
+
+	// Check if bucket has Object Lock enabled and if there are locked objects
+	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
+		return s3api.CheckBucketForLockedObjects(ctx, client, filerConfig.BucketsPath, bucketName)
+	})
+	if err != nil {
+		return err
+	}
+
+	// Delete the collection first (same as s3.bucket.delete shell command)
+	// This ensures volume data is cleaned up properly
+	// Collection name must be prefixed with filer group if configured
+	collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
+	err = s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		_, err := client.CollectionDelete(ctx, &master_pb.CollectionDeleteRequest{
+			Name: collectionName,
+		})
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to delete collection %s: %w", collectionName, err)
+	}
+
+	// Then delete bucket directory recursively from filer
+	// Use same parameters as s3.bucket.delete shell command and S3 API
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		// Delete bucket directory recursively
-		_, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
-			Directory:            "/buckets",
+		_, err := client.DeleteEntry(ctx, &filer_pb.DeleteEntryRequest{
+			Directory:            filerConfig.BucketsPath,
 			Name:                 bucketName,
-			IsDeleteData:         true,
+			IsDeleteData:         false, // Collection already deleted, just remove metadata
 			IsRecursive:          true,
-			IgnoreRecursiveError: false,
+			IgnoreRecursiveError: true, // Same as S3 API and shell command
 		})
 		if err != nil {
 			return fmt.Errorf("failed to delete bucket: %w", err)
@@ -518,36 +868,22 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 }
 
 // GetObjectStoreUsers retrieves object store users from identity.json
-func (s *AdminServer) GetObjectStoreUsers() ([]ObjectStoreUser, error) {
-	s3cfg := &iam_pb.S3ApiConfiguration{}
+func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
+	if s.credentialManager == nil {
+		return []ObjectStoreUser{}, nil
+	}
 
-	// Load IAM configuration from filer
-	err := s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		var buf bytes.Buffer
-		if err := filer.ReadEntry(nil, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
-			if err == filer_pb.ErrNotFound {
-				// If file doesn't exist, return empty configuration
-				return nil
-			}
-			return err
-		}
-		if buf.Len() > 0 {
-			return filer.ParseS3ConfigurationFromBytes(buf.Bytes(), s3cfg)
-		}
-		return nil
-	})
-
+	s3cfg, err := s.credentialManager.LoadConfiguration(ctx)
 	if err != nil {
-		glog.Errorf("Failed to load IAM configuration: %v", err)
-		return []ObjectStoreUser{}, nil // Return empty list instead of error for UI
+		return nil, fmt.Errorf("failed to load IAM configuration: %w", err)
 	}
 
 	var users []ObjectStoreUser
 
 	// Convert IAM identities to ObjectStoreUser format
 	for _, identity := range s3cfg.Identities {
-		// Skip anonymous identity
-		if identity.Name == "anonymous" {
+		// Skip service accounts - they should not be parent users
+		if strings.HasPrefix(identity.Name, serviceAccountPrefix) {
 			continue
 		}
 
@@ -598,7 +934,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 	// Add masters from topology
 	for _, master := range topology.Masters {
 		masterInfo := &MasterInfo{
-			Address:  master.Address,
+			Address:  pb.ServerAddress(master.Address).ToHttpAddress(),
 			IsLeader: master.IsLeader,
 			Suffrage: "",
 		}
@@ -620,6 +956,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
 			address := server.Address
+			httpAddress := pb.ServerAddress(address).ToHttpAddress()
 
 			// Update existing master info or create new one
 			if masterInfo, exists := masterMap[address]; exists {
@@ -629,7 +966,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			} else {
 				// Create new master info from raft data
 				masterInfo := &MasterInfo{
-					Address:  address,
+					Address:  httpAddress,
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
@@ -656,12 +993,17 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 		masters = append(masters, *masterInfo)
 	}
 
+	// Sort masters by address for consistent ordering on page refresh
+	sort.Slice(masters, func(i, j int) bool {
+		return masters[i].Address < masters[j].Address
+	})
+
 	// If no masters found at all, add the current master as fallback
 	if len(masters) == 0 {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			masters = append(masters, MasterInfo{
-				Address:  string(currentMaster),
+				Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 				IsLeader: true,
 				Suffrage: "Voter",
 			})
@@ -695,7 +1037,7 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			filerInfo := FilerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -711,6 +1053,11 @@ func (s *AdminServer) GetClusterFilers() (*ClusterFilersData, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get filer nodes from master: %w", err)
 	}
+
+	// Sort filers by address for consistent ordering on page refresh
+	sort.Slice(filers, func(i, j int) bool {
+		return filers[i].Address < filers[j].Address
+	})
 
 	return &ClusterFilersData{
 		Filers:      filers,
@@ -737,7 +1084,7 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 			createdAt := time.Unix(0, node.CreatedAtNs)
 
 			brokerInfo := MessageBrokerInfo{
-				Address:    node.Address,
+				Address:    pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter: node.DataCenter,
 				Rack:       node.Rack,
 				Version:    node.Version,
@@ -754,6 +1101,11 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 		return nil, fmt.Errorf("failed to get broker nodes from master: %w", err)
 	}
 
+	// Sort brokers by address for consistent ordering on page refresh
+	sort.Slice(brokers, func(i, j int) bool {
+		return brokers[i].Address < brokers[j].Address
+	})
+
 	return &ClusterBrokersData{
 		Brokers:      brokers,
 		TotalBrokers: len(brokers),
@@ -767,743 +1119,19 @@ func (s *AdminServer) GetClusterBrokers() (*ClusterBrokersData, error) {
 
 // VacuumVolume method moved to volume_management.go
 
-// ShowMaintenanceQueue displays the maintenance queue page
-func (as *AdminServer) ShowMaintenanceQueue(c *gin.Context) {
-	data, err := as.getMaintenanceQueueData()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// This should not render HTML template, it should use the component approach
-	c.JSON(http.StatusOK, data)
-}
-
-// ShowMaintenanceWorkers displays the maintenance workers page
-func (as *AdminServer) ShowMaintenanceWorkers(c *gin.Context) {
-	workers, err := as.getMaintenanceWorkers()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Create worker details data
-	workersData := make([]*WorkerDetailsData, 0, len(workers))
-	for _, worker := range workers {
-		details, err := as.getMaintenanceWorkerDetails(worker.ID)
-		if err != nil {
-			// Create basic worker details if we can't get full details
-			details = &WorkerDetailsData{
-				Worker:       worker,
-				CurrentTasks: []*MaintenanceTask{},
-				RecentTasks:  []*MaintenanceTask{},
-				Performance: &WorkerPerformance{
-					TasksCompleted:  0,
-					TasksFailed:     0,
-					AverageTaskTime: 0,
-					Uptime:          0,
-					SuccessRate:     0,
-				},
-				LastUpdated: time.Now(),
-			}
-		}
-		workersData = append(workersData, details)
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"workers": workersData,
-		"title":   "Maintenance Workers",
-	})
-}
-
-// ShowMaintenanceConfig displays the maintenance configuration page
-func (as *AdminServer) ShowMaintenanceConfig(c *gin.Context) {
-	config, err := as.getMaintenanceConfig()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	// This should not render HTML template, it should use the component approach
-	c.JSON(http.StatusOK, config)
-}
-
-// UpdateMaintenanceConfig updates maintenance configuration from form
-func (as *AdminServer) UpdateMaintenanceConfig(c *gin.Context) {
-	var config MaintenanceConfig
-	if err := c.ShouldBind(&config); err != nil {
-		c.HTML(http.StatusBadRequest, "error.html", gin.H{"error": err.Error()})
-		return
-	}
-
-	err := as.updateMaintenanceConfig(&config)
-	if err != nil {
-		c.HTML(http.StatusInternalServerError, "error.html", gin.H{"error": err.Error()})
-		return
-	}
-
-	c.Redirect(http.StatusSeeOther, "/maintenance/config")
-}
-
-// TriggerMaintenanceScan triggers a maintenance scan
-func (as *AdminServer) TriggerMaintenanceScan(c *gin.Context) {
-	err := as.triggerMaintenanceScan()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Maintenance scan triggered"})
-}
-
-// GetMaintenanceTasks returns all maintenance tasks
-func (as *AdminServer) GetMaintenanceTasks(c *gin.Context) {
-	tasks, err := as.getMaintenanceTasks()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, tasks)
-}
-
-// GetMaintenanceTask returns a specific maintenance task
-func (as *AdminServer) GetMaintenanceTask(c *gin.Context) {
-	taskID := c.Param("id")
-	task, err := as.getMaintenanceTask(taskID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, task)
-}
-
-// GetMaintenanceTaskDetailAPI returns detailed task information via API
-func (as *AdminServer) GetMaintenanceTaskDetailAPI(c *gin.Context) {
-	taskID := c.Param("id")
-	taskDetail, err := as.GetMaintenanceTaskDetail(taskID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Task detail not found", "details": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, taskDetail)
-}
-
-// ShowMaintenanceTaskDetail renders the task detail page
-func (as *AdminServer) ShowMaintenanceTaskDetail(c *gin.Context) {
-	username := c.GetString("username")
-	if username == "" {
-		username = "admin" // Default fallback
-	}
-
-	taskID := c.Param("id")
-	taskDetail, err := as.GetMaintenanceTaskDetail(taskID)
-	if err != nil {
-		c.HTML(http.StatusNotFound, "error.html", gin.H{
-			"error":   "Task not found",
-			"details": err.Error(),
-		})
-		return
-	}
-
-	// Prepare data for template
-	data := gin.H{
-		"username":   username,
-		"task":       taskDetail.Task,
-		"taskDetail": taskDetail,
-		"title":      fmt.Sprintf("Task Detail - %s", taskID),
-	}
-
-	c.HTML(http.StatusOK, "task_detail.html", data)
-}
-
-// CancelMaintenanceTask cancels a pending maintenance task
-func (as *AdminServer) CancelMaintenanceTask(c *gin.Context) {
-	taskID := c.Param("id")
-	err := as.cancelMaintenanceTask(taskID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"success": false, "error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Task cancelled"})
-}
-
-// cancelMaintenanceTask cancels a pending maintenance task
-func (as *AdminServer) cancelMaintenanceTask(taskID string) error {
-	if as.maintenanceManager == nil {
-		return fmt.Errorf("maintenance manager not initialized")
-	}
-
-	return as.maintenanceManager.CancelTask(taskID)
-}
-
-// GetMaintenanceWorkersAPI returns all maintenance workers
-func (as *AdminServer) GetMaintenanceWorkersAPI(c *gin.Context) {
-	workers, err := as.getMaintenanceWorkers()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, workers)
-}
-
-// GetMaintenanceWorker returns a specific maintenance worker
-func (as *AdminServer) GetMaintenanceWorker(c *gin.Context) {
-	workerID := c.Param("id")
-	worker, err := as.getMaintenanceWorkerDetails(workerID)
-	if err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Worker not found"})
-		return
-	}
-
-	c.JSON(http.StatusOK, worker)
-}
-
-// GetMaintenanceStats returns maintenance statistics
-func (as *AdminServer) GetMaintenanceStats(c *gin.Context) {
-	stats, err := as.getMaintenanceStats()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, stats)
-}
-
-// GetMaintenanceConfigAPI returns maintenance configuration
-func (as *AdminServer) GetMaintenanceConfigAPI(c *gin.Context) {
-	config, err := as.getMaintenanceConfig()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, config)
-}
-
-// UpdateMaintenanceConfigAPI updates maintenance configuration via API
-func (as *AdminServer) UpdateMaintenanceConfigAPI(c *gin.Context) {
-	// Parse JSON into a generic map first to handle type conversions
-	var jsonConfig map[string]interface{}
-	if err := c.ShouldBindJSON(&jsonConfig); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-
-	// Convert JSON map to protobuf configuration
-	config, err := convertJSONToMaintenanceConfig(jsonConfig)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to parse configuration: " + err.Error()})
-		return
-	}
-
-	err = as.updateMaintenanceConfig(config)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "Configuration updated"})
-}
-
-// GetMaintenanceConfigData returns maintenance configuration data (public wrapper)
-func (as *AdminServer) GetMaintenanceConfigData() (*maintenance.MaintenanceConfigData, error) {
-	return as.getMaintenanceConfig()
-}
-
-// UpdateMaintenanceConfigData updates maintenance configuration (public wrapper)
-func (as *AdminServer) UpdateMaintenanceConfigData(config *maintenance.MaintenanceConfig) error {
-	return as.updateMaintenanceConfig(config)
-}
-
-// Helper methods for maintenance operations
-
-// getMaintenanceQueueData returns data for the maintenance queue UI
-func (as *AdminServer) getMaintenanceQueueData() (*maintenance.MaintenanceQueueData, error) {
-	tasks, err := as.getMaintenanceTasks()
-	if err != nil {
-		return nil, err
-	}
-
-	workers, err := as.getMaintenanceWorkers()
-	if err != nil {
-		return nil, err
-	}
-
-	stats, err := as.getMaintenanceQueueStats()
-	if err != nil {
-		return nil, err
-	}
-
-	return &maintenance.MaintenanceQueueData{
-		Tasks:       tasks,
-		Workers:     workers,
-		Stats:       stats,
-		LastUpdated: time.Now(),
-	}, nil
-}
-
-// GetMaintenanceQueueStats returns statistics for the maintenance queue (exported for handlers)
-func (as *AdminServer) GetMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	return as.getMaintenanceQueueStats()
-}
-
-// getMaintenanceQueueStats returns statistics for the maintenance queue
-func (as *AdminServer) getMaintenanceQueueStats() (*maintenance.QueueStats, error) {
-	if as.maintenanceManager == nil {
-		return &maintenance.QueueStats{
-			PendingTasks:   0,
-			RunningTasks:   0,
-			CompletedToday: 0,
-			FailedToday:    0,
-			TotalTasks:     0,
-		}, nil
-	}
-
-	// Get real statistics from maintenance manager
-	stats := as.maintenanceManager.GetStats()
-
-	// Convert MaintenanceStats to QueueStats
-	queueStats := &maintenance.QueueStats{
-		PendingTasks:   stats.TasksByStatus[maintenance.TaskStatusPending],
-		RunningTasks:   stats.TasksByStatus[maintenance.TaskStatusAssigned] + stats.TasksByStatus[maintenance.TaskStatusInProgress],
-		CompletedToday: stats.CompletedToday,
-		FailedToday:    stats.FailedToday,
-		TotalTasks:     stats.TotalTasks,
-	}
-
-	return queueStats, nil
-}
-
-// getMaintenanceTasks returns all maintenance tasks
-func (as *AdminServer) getMaintenanceTasks() ([]*maintenance.MaintenanceTask, error) {
-	if as.maintenanceManager == nil {
-		return []*maintenance.MaintenanceTask{}, nil
-	}
-
-	// Collect all tasks from memory across all statuses
-	allTasks := []*maintenance.MaintenanceTask{}
-	statuses := []maintenance.MaintenanceTaskStatus{
-		maintenance.TaskStatusPending,
-		maintenance.TaskStatusAssigned,
-		maintenance.TaskStatusInProgress,
-		maintenance.TaskStatusCompleted,
-		maintenance.TaskStatusFailed,
-		maintenance.TaskStatusCancelled,
-	}
-
-	for _, status := range statuses {
-		tasks := as.maintenanceManager.GetTasks(status, "", 0)
-		allTasks = append(allTasks, tasks...)
-	}
-
-	// Also load any persisted tasks that might not be in memory
-	if as.configPersistence != nil {
-		persistedTasks, err := as.configPersistence.LoadAllTaskStates()
-		if err == nil {
-			// Add any persisted tasks not already in memory
-			for _, persistedTask := range persistedTasks {
-				found := false
-				for _, memoryTask := range allTasks {
-					if memoryTask.ID == persistedTask.ID {
-						found = true
-						break
-					}
-				}
-				if !found {
-					allTasks = append(allTasks, persistedTask)
-				}
-			}
-		}
-	}
-
-	return allTasks, nil
-}
-
-// getMaintenanceTask returns a specific maintenance task
-func (as *AdminServer) getMaintenanceTask(taskID string) (*maintenance.MaintenanceTask, error) {
-	if as.maintenanceManager == nil {
-		return nil, fmt.Errorf("maintenance manager not initialized")
-	}
-
-	// Search for the task across all statuses since we don't know which status it has
-	statuses := []maintenance.MaintenanceTaskStatus{
-		maintenance.TaskStatusPending,
-		maintenance.TaskStatusAssigned,
-		maintenance.TaskStatusInProgress,
-		maintenance.TaskStatusCompleted,
-		maintenance.TaskStatusFailed,
-		maintenance.TaskStatusCancelled,
-	}
-
-	// First, search for the task in memory across all statuses
-	for _, status := range statuses {
-		tasks := as.maintenanceManager.GetTasks(status, "", 0) // Get all tasks with this status
-		for _, task := range tasks {
-			if task.ID == taskID {
-				return task, nil
-			}
-		}
-	}
-
-	// If not found in memory, try to load from persistent storage
-	if as.configPersistence != nil {
-		task, err := as.configPersistence.LoadTaskState(taskID)
-		if err == nil {
-			glog.V(2).Infof("Loaded task %s from persistent storage", taskID)
-			return task, nil
-		}
-		glog.V(2).Infof("Task %s not found in persistent storage: %v", taskID, err)
-	}
-
-	return nil, fmt.Errorf("task %s not found", taskID)
-}
-
-// GetMaintenanceTaskDetail returns comprehensive task details including logs and assignment history
-func (as *AdminServer) GetMaintenanceTaskDetail(taskID string) (*maintenance.TaskDetailData, error) {
-	// Get basic task information
-	task, err := as.getMaintenanceTask(taskID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create task detail structure from the loaded task
-	taskDetail := &maintenance.TaskDetailData{
-		Task:              task,
-		AssignmentHistory: task.AssignmentHistory, // Use assignment history from persisted task
-		ExecutionLogs:     []*maintenance.TaskExecutionLog{},
-		RelatedTasks:      []*maintenance.MaintenanceTask{},
-		LastUpdated:       time.Now(),
-	}
-
-	if taskDetail.AssignmentHistory == nil {
-		taskDetail.AssignmentHistory = []*maintenance.TaskAssignmentRecord{}
-	}
-
-	// Get worker information if task is assigned
-	if task.WorkerID != "" {
-		workers := as.maintenanceManager.GetWorkers()
-		for _, worker := range workers {
-			if worker.ID == task.WorkerID {
-				taskDetail.WorkerInfo = worker
-				break
-			}
-		}
-	}
-
-	// Get execution logs from worker if task is active/completed and worker is connected
-	if task.Status == maintenance.TaskStatusInProgress || task.Status == maintenance.TaskStatusCompleted {
-		if as.workerGrpcServer != nil && task.WorkerID != "" {
-			workerLogs, err := as.workerGrpcServer.RequestTaskLogs(task.WorkerID, taskID, 100, "")
-			if err == nil && len(workerLogs) > 0 {
-				// Convert worker logs to maintenance logs
-				for _, workerLog := range workerLogs {
-					maintenanceLog := &maintenance.TaskExecutionLog{
-						Timestamp: time.Unix(workerLog.Timestamp, 0),
-						Level:     workerLog.Level,
-						Message:   workerLog.Message,
-						Source:    "worker",
-						TaskID:    taskID,
-						WorkerID:  task.WorkerID,
-					}
-					// carry structured fields if present
-					if len(workerLog.Fields) > 0 {
-						maintenanceLog.Fields = make(map[string]string, len(workerLog.Fields))
-						for k, v := range workerLog.Fields {
-							maintenanceLog.Fields[k] = v
-						}
-					}
-					// carry optional progress/status
-					if workerLog.Progress != 0 {
-						p := float64(workerLog.Progress)
-						maintenanceLog.Progress = &p
-					}
-					if workerLog.Status != "" {
-						maintenanceLog.Status = workerLog.Status
-					}
-					taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, maintenanceLog)
-				}
-			} else if err != nil {
-				// Add a diagnostic log entry when worker logs cannot be retrieved
-				diagnosticLog := &maintenance.TaskExecutionLog{
-					Timestamp: time.Now(),
-					Level:     "WARNING",
-					Message:   fmt.Sprintf("Failed to retrieve worker logs: %v", err),
-					Source:    "admin",
-					TaskID:    taskID,
-					WorkerID:  task.WorkerID,
-				}
-				taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
-				glog.V(1).Infof("Failed to get worker logs for task %s from worker %s: %v", taskID, task.WorkerID, err)
-			}
-		} else {
-			// Add diagnostic information when worker is not available
-			reason := "worker gRPC server not available"
-			if task.WorkerID == "" {
-				reason = "no worker assigned to task"
-			}
-			diagnosticLog := &maintenance.TaskExecutionLog{
-				Timestamp: time.Now(),
-				Level:     "INFO",
-				Message:   fmt.Sprintf("Worker logs not available: %s", reason),
-				Source:    "admin",
-				TaskID:    taskID,
-				WorkerID:  task.WorkerID,
-			}
-			taskDetail.ExecutionLogs = append(taskDetail.ExecutionLogs, diagnosticLog)
-		}
-	}
-
-	// Get related tasks (other tasks on same volume/server)
-	if task.VolumeID != 0 || task.Server != "" {
-		allTasks := as.maintenanceManager.GetTasks("", "", 50) // Get recent tasks
-		for _, relatedTask := range allTasks {
-			if relatedTask.ID != taskID &&
-				(relatedTask.VolumeID == task.VolumeID || relatedTask.Server == task.Server) {
-				taskDetail.RelatedTasks = append(taskDetail.RelatedTasks, relatedTask)
-			}
-		}
-	}
-
-	// Save updated task detail to disk
-	if err := as.configPersistence.SaveTaskDetail(taskID, taskDetail); err != nil {
-		glog.V(1).Infof("Failed to save task detail for %s: %v", taskID, err)
-	}
-
-	return taskDetail, nil
-}
-
-// getMaintenanceWorkers returns all maintenance workers
-func (as *AdminServer) getMaintenanceWorkers() ([]*maintenance.MaintenanceWorker, error) {
-	if as.maintenanceManager == nil {
-		return []*MaintenanceWorker{}, nil
-	}
-	return as.maintenanceManager.GetWorkers(), nil
-}
-
-// getMaintenanceWorkerDetails returns detailed information about a worker
-func (as *AdminServer) getMaintenanceWorkerDetails(workerID string) (*WorkerDetailsData, error) {
-	if as.maintenanceManager == nil {
-		return nil, fmt.Errorf("maintenance manager not initialized")
-	}
-
-	workers := as.maintenanceManager.GetWorkers()
-	var targetWorker *MaintenanceWorker
-	for _, worker := range workers {
-		if worker.ID == workerID {
-			targetWorker = worker
-			break
-		}
-	}
-
-	if targetWorker == nil {
-		return nil, fmt.Errorf("worker %s not found", workerID)
-	}
-
-	// Get current tasks for this worker
-	currentTasks := as.maintenanceManager.GetTasks(TaskStatusInProgress, "", 0)
-	var workerCurrentTasks []*MaintenanceTask
-	for _, task := range currentTasks {
-		if task.WorkerID == workerID {
-			workerCurrentTasks = append(workerCurrentTasks, task)
-		}
-	}
-
-	// Get recent tasks for this worker
-	recentTasks := as.maintenanceManager.GetTasks(TaskStatusCompleted, "", 10)
-	var workerRecentTasks []*MaintenanceTask
-	for _, task := range recentTasks {
-		if task.WorkerID == workerID {
-			workerRecentTasks = append(workerRecentTasks, task)
-		}
-	}
-
-	// Calculate performance metrics
-	var totalDuration time.Duration
-	var completedTasks, failedTasks int
-	for _, task := range workerRecentTasks {
-		if task.Status == TaskStatusCompleted {
-			completedTasks++
-			if task.StartedAt != nil && task.CompletedAt != nil {
-				totalDuration += task.CompletedAt.Sub(*task.StartedAt)
-			}
-		} else if task.Status == TaskStatusFailed {
-			failedTasks++
-		}
-	}
-
-	var averageTaskTime time.Duration
-	var successRate float64
-	if completedTasks+failedTasks > 0 {
-		if completedTasks > 0 {
-			averageTaskTime = totalDuration / time.Duration(completedTasks)
-		}
-		successRate = float64(completedTasks) / float64(completedTasks+failedTasks) * 100
-	}
-
-	return &WorkerDetailsData{
-		Worker:       targetWorker,
-		CurrentTasks: workerCurrentTasks,
-		RecentTasks:  workerRecentTasks,
-		Performance: &WorkerPerformance{
-			TasksCompleted:  completedTasks,
-			TasksFailed:     failedTasks,
-			AverageTaskTime: averageTaskTime,
-			Uptime:          time.Since(targetWorker.LastHeartbeat), // This should be tracked properly
-			SuccessRate:     successRate,
-		},
-		LastUpdated: time.Now(),
-	}, nil
-}
-
-// GetWorkerLogs fetches logs from a specific worker for a task
-func (as *AdminServer) GetWorkerLogs(c *gin.Context) {
-	workerID := c.Param("id")
-	taskID := c.Query("taskId")
-	maxEntriesStr := c.DefaultQuery("maxEntries", "100")
-	logLevel := c.DefaultQuery("logLevel", "")
-
-	maxEntries := int32(100)
-	if maxEntriesStr != "" {
-		if parsed, err := strconv.ParseInt(maxEntriesStr, 10, 32); err == nil {
-			maxEntries = int32(parsed)
-		}
-	}
-
-	if as.workerGrpcServer == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Worker gRPC server not available"})
-		return
-	}
-
-	logs, err := as.workerGrpcServer.RequestTaskLogs(workerID, taskID, maxEntries, logLevel)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("Failed to get logs from worker: %v", err)})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{"worker_id": workerID, "task_id": taskID, "logs": logs, "count": len(logs)})
-}
-
-// getMaintenanceStats returns maintenance statistics
-func (as *AdminServer) getMaintenanceStats() (*MaintenanceStats, error) {
-	if as.maintenanceManager == nil {
-		return &MaintenanceStats{
-			TotalTasks:    0,
-			TasksByStatus: make(map[MaintenanceTaskStatus]int),
-			TasksByType:   make(map[MaintenanceTaskType]int),
-			ActiveWorkers: 0,
-		}, nil
-	}
-	return as.maintenanceManager.GetStats(), nil
-}
-
-// getMaintenanceConfig returns maintenance configuration
-func (as *AdminServer) getMaintenanceConfig() (*maintenance.MaintenanceConfigData, error) {
-	// Load configuration from persistent storage
-	config, err := as.configPersistence.LoadMaintenanceConfig()
-	if err != nil {
-		// Fallback to default configuration
-		config = maintenance.DefaultMaintenanceConfig()
-	}
-
-	// Note: Do NOT apply schema defaults to existing config as it overrides saved values
-	// Only apply defaults when creating new configs or handling fallback cases
-	// The schema defaults should only be used in the UI for new installations
-
-	// Get system stats from maintenance manager if available
-	var systemStats *MaintenanceStats
-	if as.maintenanceManager != nil {
-		systemStats = as.maintenanceManager.GetStats()
-	} else {
-		// Fallback stats
-		systemStats = &MaintenanceStats{
-			TotalTasks: 0,
-			TasksByStatus: map[MaintenanceTaskStatus]int{
-				TaskStatusPending:    0,
-				TaskStatusInProgress: 0,
-				TaskStatusCompleted:  0,
-				TaskStatusFailed:     0,
-			},
-			TasksByType:     make(map[MaintenanceTaskType]int),
-			ActiveWorkers:   0,
-			CompletedToday:  0,
-			FailedToday:     0,
-			AverageTaskTime: 0,
-			LastScanTime:    time.Now().Add(-time.Hour),
-			NextScanTime:    time.Now().Add(time.Duration(config.ScanIntervalSeconds) * time.Second),
-		}
-	}
-
-	configData := &MaintenanceConfigData{
-		Config:       config,
-		IsEnabled:    config.Enabled,
-		LastScanTime: systemStats.LastScanTime,
-		NextScanTime: systemStats.NextScanTime,
-		SystemStats:  systemStats,
-		MenuItems:    maintenance.BuildMaintenanceMenuItems(),
-	}
-
-	return configData, nil
-}
-
-// updateMaintenanceConfig updates maintenance configuration
-func (as *AdminServer) updateMaintenanceConfig(config *maintenance.MaintenanceConfig) error {
-	// Use ConfigField validation instead of standalone validation
-	if err := maintenance.ValidateMaintenanceConfigWithSchema(config); err != nil {
-		return fmt.Errorf("configuration validation failed: %v", err)
-	}
-
-	// Save configuration to persistent storage
-	if err := as.configPersistence.SaveMaintenanceConfig(config); err != nil {
-		return fmt.Errorf("failed to save maintenance configuration: %w", err)
-	}
-
-	// Update maintenance manager if available
-	if as.maintenanceManager != nil {
-		if err := as.maintenanceManager.UpdateConfig(config); err != nil {
-			glog.Errorf("Failed to update maintenance manager config: %v", err)
-			// Don't return error here, just log it
-		}
-	}
-
-	glog.V(1).Infof("Updated maintenance configuration (enabled: %v, scan interval: %ds)",
-		config.Enabled, config.ScanIntervalSeconds)
-	return nil
-}
-
-// triggerMaintenanceScan triggers a maintenance scan
-func (as *AdminServer) triggerMaintenanceScan() error {
-	if as.maintenanceManager == nil {
-		return fmt.Errorf("maintenance manager not initialized")
-	}
-
-	glog.V(1).Infof("Triggering maintenance scan")
-	err := as.maintenanceManager.TriggerScan()
-	if err != nil {
-		glog.Errorf("Failed to trigger maintenance scan: %v", err)
-		return err
-	}
-	glog.V(1).Infof("Maintenance scan triggered successfully")
-	return nil
-}
-
 // TriggerTopicRetentionPurgeAPI triggers topic retention purge via HTTP API
-func (as *AdminServer) TriggerTopicRetentionPurgeAPI(c *gin.Context) {
+func (as *AdminServer) TriggerTopicRetentionPurgeAPI(w http.ResponseWriter, r *http.Request) {
 	err := as.TriggerTopicRetentionPurge()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Topic retention purge triggered successfully"})
+	writeJSON(w, http.StatusOK, map[string]interface{}{"message": "Topic retention purge triggered successfully"})
 }
 
 // GetConfigInfo returns information about the admin configuration
-func (as *AdminServer) GetConfigInfo(c *gin.Context) {
+func (as *AdminServer) GetConfigInfo(w http.ResponseWriter, r *http.Request) {
 	configInfo := as.configPersistence.GetConfigInfo()
 
 	// Add additional admin server info
@@ -1521,60 +1149,10 @@ func (as *AdminServer) GetConfigInfo(c *gin.Context) {
 		configInfo["maintenance_running"] = false
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"config_info": configInfo,
 		"title":       "Configuration Information",
 	})
-}
-
-// GetMaintenanceWorkersData returns workers data for the maintenance workers page
-func (as *AdminServer) GetMaintenanceWorkersData() (*MaintenanceWorkersData, error) {
-	workers, err := as.getMaintenanceWorkers()
-	if err != nil {
-		return nil, err
-	}
-
-	// Create worker details data
-	workersData := make([]*WorkerDetailsData, 0, len(workers))
-	activeWorkers := 0
-	busyWorkers := 0
-	totalLoad := 0
-
-	for _, worker := range workers {
-		details, err := as.getMaintenanceWorkerDetails(worker.ID)
-		if err != nil {
-			// Create basic worker details if we can't get full details
-			details = &WorkerDetailsData{
-				Worker:       worker,
-				CurrentTasks: []*MaintenanceTask{},
-				RecentTasks:  []*MaintenanceTask{},
-				Performance: &WorkerPerformance{
-					TasksCompleted:  0,
-					TasksFailed:     0,
-					AverageTaskTime: 0,
-					Uptime:          0,
-					SuccessRate:     0,
-				},
-				LastUpdated: time.Now(),
-			}
-		}
-		workersData = append(workersData, details)
-
-		if worker.Status == "active" {
-			activeWorkers++
-		} else if worker.Status == "busy" {
-			busyWorkers++
-		}
-		totalLoad += worker.CurrentLoad
-	}
-
-	return &MaintenanceWorkersData{
-		Workers:       workersData,
-		ActiveWorkers: activeWorkers,
-		BusyWorkers:   busyWorkers,
-		TotalLoad:     totalLoad,
-		LastUpdated:   time.Now(),
-	}, nil
 }
 
 // StartWorkerGrpcServer starts the worker gRPC server
@@ -1600,6 +1178,226 @@ func (s *AdminServer) StopWorkerGrpcServer() error {
 // GetWorkerGrpcServer returns the worker gRPC server
 func (s *AdminServer) GetWorkerGrpcServer() *WorkerGrpcServer {
 	return s.workerGrpcServer
+}
+
+// GetWorkerGrpcPort returns the worker gRPC listen port, or 0 when unavailable.
+func (s *AdminServer) GetWorkerGrpcPort() int {
+	if s.workerGrpcServer == nil {
+		return 0
+	}
+	return s.workerGrpcServer.ListenPort()
+}
+
+// GetPlugin returns the plugin instance when enabled.
+func (s *AdminServer) GetPlugin() *adminplugin.Plugin {
+	return s.plugin
+}
+
+func (s *AdminServer) acquirePluginLock(reason string) (func(), error) {
+	if s == nil || s.pluginLock == nil {
+		return func() {}, nil
+	}
+	return s.pluginLock.Acquire(reason)
+}
+
+// RequestPluginJobTypeDescriptor asks one worker for job type schema and returns the descriptor.
+func (s *AdminServer) RequestPluginJobTypeDescriptor(ctx context.Context, jobType string, forceRefresh bool) (*plugin_pb.JobTypeDescriptor, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.RequestConfigSchema(ctx, jobType, forceRefresh)
+}
+
+// LoadPluginJobTypeDescriptor loads persisted descriptor for one job type.
+func (s *AdminServer) LoadPluginJobTypeDescriptor(jobType string) (*plugin_pb.JobTypeDescriptor, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.LoadDescriptor(jobType)
+}
+
+// SavePluginJobTypeConfig persists plugin job type config in admin data dir.
+func (s *AdminServer) SavePluginJobTypeConfig(config *plugin_pb.PersistedJobTypeConfig) error {
+	if s.plugin == nil {
+		return fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.SaveJobTypeConfig(config)
+}
+
+// LoadPluginJobTypeConfig loads plugin job type config from persistence.
+func (s *AdminServer) LoadPluginJobTypeConfig(jobType string) (*plugin_pb.PersistedJobTypeConfig, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.LoadJobTypeConfig(jobType)
+}
+
+// RunPluginDetection triggers one detection pass for a job type and returns proposed jobs.
+func (s *AdminServer) RunPluginDetection(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+) ([]*plugin_pb.JobProposal, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+	return s.plugin.RunDetection(ctx, jobType, clusterContext, maxResults)
+}
+
+// FilterPluginProposalsWithActiveJobs drops proposals already represented by assigned/running jobs.
+func (s *AdminServer) FilterPluginProposalsWithActiveJobs(
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+) ([]*plugin_pb.JobProposal, int, error) {
+	if s.plugin == nil {
+		return nil, 0, fmt.Errorf("plugin is not enabled")
+	}
+	filtered, skipped := s.plugin.FilterProposalsWithActiveJobs(jobType, proposals)
+	return filtered, skipped, nil
+}
+
+// RunPluginDetectionWithReport triggers one detection pass and returns request metadata and proposals.
+func (s *AdminServer) RunPluginDetectionWithReport(
+	ctx context.Context,
+	jobType string,
+	clusterContext *plugin_pb.ClusterContext,
+	maxResults int32,
+) (*adminplugin.DetectionReport, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin detection %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+	return s.plugin.RunDetectionWithReport(ctx, jobType, clusterContext, maxResults)
+}
+
+// DispatchPluginProposals dispatches a batch of proposals using the same
+// capacity-aware dispatch logic as the scheduler loop (executor reservation with
+// backoff, per-job retry on transient errors). The plugin lock must already be
+// held by the caller.
+func (s *AdminServer) DispatchPluginProposals(
+	ctx context.Context,
+	jobType string,
+	proposals []*plugin_pb.JobProposal,
+	clusterContext *plugin_pb.ClusterContext,
+) (successCount, errorCount, canceledCount int, err error) {
+	if s.plugin == nil {
+		return 0, 0, 0, fmt.Errorf("plugin is not enabled")
+	}
+	sc, ec, cc := s.plugin.DispatchProposals(ctx, jobType, proposals, clusterContext)
+	return sc, ec, cc, nil
+}
+
+// ExecutePluginJob dispatches one job to a capable worker and waits for completion.
+func (s *AdminServer) ExecutePluginJob(
+	ctx context.Context,
+	job *plugin_pb.JobSpec,
+	clusterContext *plugin_pb.ClusterContext,
+	attempt int32,
+) (*plugin_pb.JobCompleted, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	jobType := ""
+	if job != nil {
+		jobType = strings.TrimSpace(job.JobType)
+	}
+	releaseLock, err := s.acquirePluginLock(fmt.Sprintf("plugin execution %s", jobType))
+	if err != nil {
+		return nil, err
+	}
+	if releaseLock != nil {
+		defer releaseLock()
+	}
+	return s.plugin.ExecuteJob(ctx, job, clusterContext, attempt)
+}
+
+// GetPluginRunHistory returns the bounded run history (last 10 success + last 10 error).
+func (s *AdminServer) GetPluginRunHistory(jobType string) (*adminplugin.JobTypeRunHistory, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.LoadRunHistory(jobType)
+}
+
+// ListPluginJobTypes returns known plugin job types from connected worker registry and persisted data.
+func (s *AdminServer) ListPluginJobTypes() ([]adminplugin.JobTypeInfo, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ListKnownJobTypes()
+}
+
+// GetPluginWorkers returns currently connected plugin workers.
+func (s *AdminServer) GetPluginWorkers() []*adminplugin.WorkerSession {
+	if s.plugin == nil {
+		return nil
+	}
+	return s.plugin.ListWorkers()
+}
+
+// ListPluginJobs returns tracked plugin jobs for monitoring.
+func (s *AdminServer) ListPluginJobs(jobType, state string, limit int) []adminplugin.TrackedJob {
+	if s.plugin == nil {
+		return nil
+	}
+	return s.plugin.ListTrackedJobs(jobType, state, limit)
+}
+
+// GetPluginJob returns one tracked plugin job by ID.
+func (s *AdminServer) GetPluginJob(jobID string) (*adminplugin.TrackedJob, bool) {
+	if s.plugin == nil {
+		return nil, false
+	}
+	return s.plugin.GetTrackedJob(jobID)
+}
+
+// GetPluginJobDetail returns detailed plugin job information with activity timeline.
+func (s *AdminServer) GetPluginJobDetail(jobID string, activityLimit, relatedLimit int) (*adminplugin.JobDetail, bool, error) {
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.BuildJobDetail(jobID, activityLimit, relatedLimit)
+}
+
+// ExpirePluginJob marks an active plugin job as failed so it no longer blocks scheduling.
+func (s *AdminServer) ExpirePluginJob(jobID, reason string) (*adminplugin.TrackedJob, bool, error) {
+	if handler := s.expireJobHandler; handler != nil {
+		return handler(jobID, reason)
+	}
+	if s.plugin == nil {
+		return nil, false, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ExpireJob(jobID, reason)
+}
+
+// ListPluginActivities returns plugin job activities for monitoring.
+func (s *AdminServer) ListPluginActivities(jobType string, limit int) []adminplugin.JobActivity {
+	if s.plugin == nil {
+		return nil
+	}
+	return s.plugin.ListActivities(jobType, limit)
+}
+
+// ListPluginSchedulerStates returns per-job-type scheduler state.
+func (s *AdminServer) ListPluginSchedulerStates() ([]adminplugin.SchedulerJobTypeState, error) {
+	if s.plugin == nil {
+		return nil, fmt.Errorf("plugin is not enabled")
+	}
+	return s.plugin.ListSchedulerStates()
 }
 
 // Maintenance system integration methods
@@ -1800,12 +1598,29 @@ func (s *AdminServer) UpdateTopicRetention(namespace, name string, enabled bool,
 func (s *AdminServer) Shutdown() {
 	glog.V(1).Infof("Shutting down admin server...")
 
+	// Cancel background goroutines (vacuum monitor, etc.)
+	if s.bgCancel != nil {
+		s.bgCancel()
+	}
+
 	// Stop maintenance manager
 	s.StopMaintenanceManager()
+	if s.adminPresenceLock != nil {
+		s.adminPresenceLock.Stop()
+	}
+
+	if s.plugin != nil {
+		s.plugin.Shutdown()
+	}
 
 	// Stop worker gRPC server
 	if err := s.StopWorkerGrpcServer(); err != nil {
 		glog.Errorf("Failed to stop worker gRPC server: %v", err)
+	}
+
+	// Shutdown credential manager
+	if s.credentialManager != nil {
+		s.credentialManager.Shutdown()
 	}
 
 	glog.V(1).Infof("Admin server shutdown complete")
@@ -1822,9 +1637,8 @@ func extractObjectLockInfoFromEntry(entry *filer_pb.Entry) (bool, string, int32)
 }
 
 // Function to extract versioning information from bucket entry using shared utilities
-func extractVersioningFromEntry(entry *filer_pb.Entry) bool {
-	enabled, _ := s3api.LoadVersioningFromExtended(entry)
-	return enabled
+func extractVersioningFromEntry(entry *filer_pb.Entry) string {
+	return s3api.GetVersioningStatus(entry)
 }
 
 // GetConfigPersistence returns the config persistence manager
@@ -1983,4 +1797,67 @@ func getBoolFromMap(m map[string]interface{}, key string) bool {
 		}
 	}
 	return false
+}
+
+type collectionStats struct {
+	PhysicalSize int64
+	LogicalSize  int64
+	FileCount    int64
+}
+
+func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]collectionStats {
+	collectionMap := make(map[string]collectionStats)
+	for _, dc := range topologyInfo.DataCenterInfos {
+		for _, rack := range dc.RackInfos {
+			for _, node := range rack.DataNodeInfos {
+				for _, diskInfo := range node.DiskInfos {
+					for _, volInfo := range diskInfo.VolumeInfos {
+						collection := volInfo.Collection
+						if collection == "" {
+							collection = "default"
+						}
+
+						data := collectionMap[collection]
+						data.PhysicalSize += int64(volInfo.Size)
+						rp, _ := super_block.NewReplicaPlacementFromByte(byte(volInfo.ReplicaPlacement))
+						// NewReplicaPlacementFromByte never returns a nil rp. If there's an error,
+						// it returns a zero-valued ReplicaPlacement, for which GetCopyCount() is 1.
+						// This provides a safe fallback, so we can ignore the error.
+						replicaCount := int64(rp.GetCopyCount())
+						if volInfo.Size >= volInfo.DeletedByteCount {
+							data.LogicalSize += int64(volInfo.Size-volInfo.DeletedByteCount) / replicaCount
+						}
+						if volInfo.FileCount >= volInfo.DeleteCount {
+							data.FileCount += int64(volInfo.FileCount-volInfo.DeleteCount) / replicaCount
+						}
+						collectionMap[collection] = data
+					}
+				}
+			}
+		}
+	}
+	return collectionMap
+}
+
+// getCollectionStats returns current collection statistics with caching
+func (s *AdminServer) getCollectionStats() (map[string]collectionStats, error) {
+	now := time.Now()
+	if s.collectionStatsCache != nil && now.Sub(s.lastCollectionStatsUpdate) < s.collectionStatsCacheThreshold {
+		return s.collectionStatsCache, nil
+	}
+
+	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
+		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
+		if err != nil {
+			return err
+		}
+
+		if resp.TopologyInfo != nil {
+			s.collectionStatsCache = collectCollectionStats(resp.TopologyInfo)
+			s.lastCollectionStatsUpdate = now
+		}
+		return nil
+	})
+
+	return s.collectionStatsCache, err
 }

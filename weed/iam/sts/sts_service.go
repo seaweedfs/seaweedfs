@@ -3,6 +3,7 @@ package sts
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -16,7 +17,8 @@ import (
 // TrustPolicyValidator interface for validating trust policies during role assumption
 type TrustPolicyValidator interface {
 	// ValidateTrustPolicyForWebIdentity validates if a web identity token can assume a role
-	ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error
+	// durationSeconds is optional and can be nil
+	ValidateTrustPolicyForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error
 
 	// ValidateTrustPolicyForCredentials validates if credentials can assume a role
 	ValidateTrustPolicyForCredentials(ctx context.Context, roleArn string, identity *providers.ExternalIdentity) error
@@ -79,6 +81,12 @@ type STSService struct {
 	trustPolicyValidator TrustPolicyValidator // Interface for trust policy validation
 }
 
+// GetTokenGenerator returns the token generator used by the STS service.
+// This keeps the underlying field unexported while still allowing read-only access.
+func (s *STSService) GetTokenGenerator() *TokenGenerator {
+	return s.tokenGenerator
+}
+
 // STSConfig holds STS service configuration
 type STSConfig struct {
 	// TokenDuration is the default duration for issued tokens
@@ -92,6 +100,10 @@ type STSConfig struct {
 
 	// SigningKey is used to sign session tokens
 	SigningKey []byte `json:"signingKey"`
+
+	// AccountId is the AWS account ID used for federated user ARNs
+	// Defaults to "111122223333" if not specified
+	AccountId string `json:"accountId,omitempty"`
 
 	// Providers configuration - enables automatic provider loading
 	Providers []*ProviderConfig `json:"providers,omitempty"`
@@ -149,6 +161,9 @@ type AssumeRoleWithCredentialsRequest struct {
 
 	// DurationSeconds is the duration of the role session (optional)
 	DurationSeconds *int64 `json:"DurationSeconds,omitempty"`
+
+	// Policy is an optional session policy (optional)
+	Policy *string `json:"Policy,omitempty"`
 }
 
 // AssumeRoleResponse represents the response from assume role operations
@@ -225,6 +240,9 @@ type SessionInfo struct {
 	// Policies are the policies associated with this session
 	Policies []string `json:"policies"`
 
+	// SessionPolicy is the inline session policy JSON (optional)
+	SessionPolicy string `json:"sessionPolicy,omitempty"`
+
 	// RequestContext contains additional request context for policy evaluation
 	RequestContext map[string]interface{} `json:"requestContext,omitempty"`
 
@@ -252,6 +270,9 @@ func (s *STSService) Initialize(config *STSConfig) error {
 		return fmt.Errorf(ErrConfigCannotBeNil)
 	}
 
+	// Apply defaults before validation
+	config.ApplyDefaults()
+
 	if err := s.validateConfig(config); err != nil {
 		return fmt.Errorf("invalid STS configuration: %w", err)
 	}
@@ -268,6 +289,21 @@ func (s *STSService) Initialize(config *STSConfig) error {
 
 	s.initialized = true
 	return nil
+}
+
+// ApplyDefaults applies default values to the STS configuration
+func (c *STSConfig) ApplyDefaults() {
+	if c.TokenDuration.Duration <= 0 {
+		c.TokenDuration.Duration = time.Duration(DefaultTokenDuration) * time.Second
+	}
+
+	if c.MaxSessionLength.Duration <= 0 {
+		c.MaxSessionLength.Duration = time.Duration(DefaultMaxSessionLength) * time.Second
+	}
+
+	if c.Issuer == "" {
+		c.Issuer = DefaultIssuer
+	}
 }
 
 // validateConfig validates the STS configuration
@@ -406,9 +442,13 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
-	// Check for unsupported session policy
+	sessionPolicy := ""
 	if request.Policy != nil {
-		return nil, fmt.Errorf("session policies are not currently supported - Policy parameter must be omitted")
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
 	}
 
 	// 1. Validate the web identity token with appropriate provider
@@ -418,12 +458,13 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 	}
 
 	// 2. Check if the role exists and can be assumed (includes trust policy validation)
-	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken); err != nil {
+	if err := s.validateRoleAssumptionForWebIdentity(ctx, request.RoleArn, request.WebIdentityToken, request.DurationSeconds); err != nil {
 		return nil, fmt.Errorf("role assumption denied: %w", err)
 	}
 
-	// 3. Calculate session duration
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
+	// 3. Calculate session duration, capping at the source token's expiration
+	// This ensures sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
+	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, externalIdentity.TokenExpiration)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 4. Generate session ID and credentials
@@ -445,12 +486,36 @@ func (s *STSService) AssumeRoleWithWebIdentity(ctx context.Context, request *Ass
 		Subject:       externalIdentity.UserID,
 	}
 
+	// Create request context from identity attributes for policy evaluation
+	requestContext := make(map[string]interface{}, len(externalIdentity.Attributes)+3)
+
+	// Add generic attributes (including preferred_username, etc.)
+	if externalIdentity.Attributes != nil {
+		for k, v := range externalIdentity.Attributes {
+			requestContext[k] = v
+		}
+	}
+
+	// Add standard OIDC fields if not already present
+	if _, ok := requestContext["email"]; !ok && externalIdentity.Email != "" {
+		requestContext["email"] = externalIdentity.Email
+	}
+	if _, ok := requestContext["name"]; !ok && externalIdentity.DisplayName != "" {
+		requestContext["name"] = externalIdentity.DisplayName
+	}
+	// Add sub as well since it's commonly used
+	requestContext["sub"] = externalIdentity.UserID
+
 	// Create rich JWT claims with all session information
 	sessionClaims := NewSTSSessionClaims(sessionId, s.Config.Issuer, expiresAt).
 		WithSessionName(request.RoleSessionName).
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
-		WithMaxDuration(sessionDuration)
+		WithMaxDuration(sessionDuration).
+		WithRequestContext(requestContext)
+	if sessionPolicy != "" {
+		sessionClaims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
@@ -483,6 +548,15 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		return nil, fmt.Errorf("invalid request: %w", err)
 	}
 
+	sessionPolicy := ""
+	if request.Policy != nil {
+		normalized, err := NormalizeSessionPolicy(*request.Policy)
+		if err != nil {
+			return nil, fmt.Errorf("invalid session policy: %w", err)
+		}
+		sessionPolicy = normalized
+	}
+
 	// 1. Get the specified provider
 	provider, exists := s.providers[request.ProviderName]
 	if !exists {
@@ -502,7 +576,8 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 	}
 
 	// 4. Calculate session duration
-	sessionDuration := s.calculateSessionDuration(request.DurationSeconds)
+	// For credential-based auth, there's no source token with expiration to cap against
+	sessionDuration := s.calculateSessionDuration(request.DurationSeconds, nil)
 	expiresAt := time.Now().Add(sessionDuration)
 
 	// 5. Generate session ID and temporary credentials
@@ -530,6 +605,9 @@ func (s *STSService) AssumeRoleWithCredentials(ctx context.Context, request *Ass
 		WithRoleInfo(request.RoleArn, assumedRoleUser.Arn, assumedRoleUser.Arn).
 		WithIdentityProvider(provider.Name(), externalIdentity.UserID, "").
 		WithMaxDuration(sessionDuration)
+	if sessionPolicy != "" {
+		sessionClaims.WithSessionPolicy(sessionPolicy)
+	}
 
 	// Generate self-contained JWT token with all session information
 	jwtToken, err := s.tokenGenerator.GenerateJWTWithClaims(sessionClaims)
@@ -632,6 +710,20 @@ func (s *STSService) validateWebIdentityToken(ctx context.Context, token string)
 	// Authenticate with the correct provider for this issuer
 	identity, err := provider.Authenticate(ctx, token)
 	if err != nil {
+		// Map provider errors to STS errors using errors.Is() for robust error checking
+		// This eliminates fragile string matching and provides reliable error classification
+		if errors.Is(err, providers.ErrProviderTokenExpired) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedTokenExpired, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidToken) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidToken, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidIssuer) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidIssuer, err)
+		} else if errors.Is(err, providers.ErrProviderInvalidAudience) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedInvalidAudience, err)
+		} else if errors.Is(err, providers.ErrProviderMissingClaims) {
+			return nil, nil, fmt.Errorf("%w: %v", ErrTypedMissingClaims, err)
+		}
+		// For other errors, return with context
 		return nil, nil, fmt.Errorf("token validation failed with provider for issuer %s: %w", issuer, err)
 	}
 
@@ -673,7 +765,7 @@ func (s *STSService) extractIssuerFromJWT(token string) (string, error) {
 
 // validateRoleAssumptionForWebIdentity validates role assumption for web identity tokens
 // This method performs complete trust policy validation to prevent unauthorized role assumptions
-func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string) error {
+func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, roleArn string, webIdentityToken string, durationSeconds *int64) error {
 	if roleArn == "" {
 		return fmt.Errorf("role ARN cannot be empty")
 	}
@@ -682,21 +774,23 @@ func (s *STSService) validateRoleAssumptionForWebIdentity(ctx context.Context, r
 		return fmt.Errorf("web identity token cannot be empty")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
+	// Validate role ARN and extract role information
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
+	arnInfo := utils.ParseRoleARN(roleArn)
+	if arnInfo.RoleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Extract role name and validate ARN format
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
-	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
 	if s.trustPolicyValidator != nil {
-		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken); err != nil {
+		if err := s.trustPolicyValidator.ValidateTrustPolicyForWebIdentity(ctx, roleArn, webIdentityToken, durationSeconds); err != nil {
 			return fmt.Errorf("trust policy validation failed: %w", err)
 		}
 	} else {
@@ -719,16 +813,18 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 		return fmt.Errorf("identity cannot be nil")
 	}
 
-	// Basic role ARN format validation
-	expectedPrefix := "arn:aws:iam::role/"
-	if len(roleArn) < len(expectedPrefix) || roleArn[:len(expectedPrefix)] != expectedPrefix {
-		return fmt.Errorf("invalid role ARN format: got %s, expected format: %s*", roleArn, expectedPrefix)
+	// Validate role ARN and extract role information
+	// Accepts both arn:aws:iam::role/X and arn:aws:iam::ACCOUNT:role/X
+	arnInfo := utils.ParseRoleARN(roleArn)
+	if arnInfo.RoleName == "" {
+		return fmt.Errorf("invalid role ARN format: %s, expected format: arn:aws:iam::[ACCOUNT_ID:]role/ROLE_NAME", roleArn)
 	}
 
-	// Extract role name and validate ARN format
-	roleName := utils.ExtractRoleNameFromArn(roleArn)
-	if roleName == "" {
-		return fmt.Errorf("invalid role ARN format: %s", roleArn)
+	// Log ARN details for debugging
+	if arnInfo.AccountID != "" {
+		glog.V(4).Infof("Role ARN validation: role=%s, account=%s (standard format)", arnInfo.RoleName, arnInfo.AccountID)
+	} else {
+		glog.V(4).Infof("Role ARN validation: role=%s (legacy format)", arnInfo.RoleName)
 	}
 
 	// CRITICAL SECURITY: Perform trust policy validation
@@ -745,19 +841,47 @@ func (s *STSService) validateRoleAssumptionForCredentials(ctx context.Context, r
 	return nil
 }
 
-// calculateSessionDuration calculates the session duration
-func (s *STSService) calculateSessionDuration(durationSeconds *int64) time.Duration {
+// calculateSessionDuration calculates the session duration, respecting the source token's expiration
+// If the incoming web identity token has an exp claim, the session duration is capped to not exceed it
+// This ensures that sessions from short-lived tokens (e.g., GitLab CI job tokens) don't outlive their source
+func (s *STSService) calculateSessionDuration(durationSeconds *int64, tokenExpiration *time.Time) time.Duration {
+	var duration time.Duration
 	if durationSeconds != nil {
-		return time.Duration(*durationSeconds) * time.Second
+		duration = time.Duration(*durationSeconds) * time.Second
+	} else {
+		// Use default from config
+		duration = s.Config.TokenDuration.Duration
 	}
 
-	// Use default from config
-	return s.Config.TokenDuration.Duration
+	// If the source token has an expiration, cap the session duration to not exceed it
+	// This follows the principle: "if calculated exp > incoming exp claim, then limit outgoing exp to incoming exp"
+	if tokenExpiration != nil && !tokenExpiration.IsZero() {
+		timeUntilTokenExpiry := time.Until(*tokenExpiration)
+		if timeUntilTokenExpiry <= 0 {
+			// Token already expired - use minimal duration as defense-in-depth
+			// The token should have been rejected during validation, but we handle this defensively
+			glog.V(2).Infof("Source token already expired, using minimal session duration")
+			duration = time.Minute
+		} else if timeUntilTokenExpiry < duration {
+			glog.V(2).Infof("Limiting session duration from %v to %v based on source token expiration",
+				duration, timeUntilTokenExpiry)
+			duration = timeUntilTokenExpiry
+		}
+	}
+
+	// Cap at MaxSessionLength if configured
+	if s.Config.MaxSessionLength.Duration > 0 && duration > s.Config.MaxSessionLength.Duration {
+		glog.V(2).Infof("Limiting session duration from %v to %v based on MaxSessionLength config",
+			duration, s.Config.MaxSessionLength.Duration)
+		duration = s.Config.MaxSessionLength.Duration
+	}
+
+	return duration
 }
 
 // extractSessionIdFromToken extracts session ID from JWT session token
 func (s *STSService) extractSessionIdFromToken(sessionToken string) string {
-	// Parse JWT and extract session ID from claims
+	// Validate JWT and extract session claims
 	claims, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		// For test compatibility, also handle direct session IDs
@@ -812,7 +936,7 @@ func (s *STSService) ExpireSessionForTesting(ctx context.Context, sessionToken s
 		return fmt.Errorf("session token cannot be empty")
 	}
 
-	// Validate JWT token format
+	// Just validate the signature
 	_, err := s.tokenGenerator.ValidateJWTWithClaims(sessionToken)
 	if err != nil {
 		return fmt.Errorf("invalid session token format: %w", err)

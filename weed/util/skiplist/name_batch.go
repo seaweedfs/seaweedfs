@@ -1,10 +1,11 @@
 package skiplist
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"google.golang.org/protobuf/proto"
 	"slices"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"google.golang.org/protobuf/proto"
 )
 
 type NameBatch struct {

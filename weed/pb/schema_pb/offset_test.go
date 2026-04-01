@@ -1,8 +1,9 @@
 package schema_pb
 
 import (
-	"google.golang.org/protobuf/proto"
 	"testing"
+
+	"google.golang.org/protobuf/proto"
 )
 
 func TestOffsetTypeEnums(t *testing.T) {

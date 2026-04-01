@@ -2,12 +2,13 @@ package pub_client
 
 import (
 	"fmt"
+	"time"
+
 	"github.com/golang/protobuf/proto"
 	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"time"
 )
 
 func (p *TopicPublisher) Publish(key, value []byte) error {

@@ -236,7 +236,7 @@ func TestObjectLockHeadersNonVersionedBucket(t *testing.T) {
 	bucketName := getNewBucketName()
 
 	// Create regular bucket without object lock/versioning
-	createBucket(t, client, bucketName)
+	createBucketWithoutObjectLock(t, client, bucketName)
 	defer deleteBucket(t, client, bucketName)
 
 	key := "test-non-versioned"

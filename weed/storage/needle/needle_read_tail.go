@@ -1,7 +1,7 @@
 package needle
 
 import (
-	"errors"
+	"fmt"
 
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -9,7 +9,6 @@ import (
 )
 
 func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
-
 	// for all versions, we need to read the checksum
 	if len(n.Data) > 0 {
 		expectedChecksum := CRC(util.BytesToUint32(needleBody[0:NeedleChecksumSize]))
@@ -19,7 +18,7 @@ func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
 			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
 			// and switch appeared in version 3.09.
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
-			return errors.New("CRC error! Data On Disk Corrupted")
+			return fmt.Errorf("invalid CRC for needle %v (got %08x, want %08x), data on disk corrupted", n.Id, dataChecksum, expectedChecksum)
 		}
 		n.Checksum = dataChecksum
 	} else {

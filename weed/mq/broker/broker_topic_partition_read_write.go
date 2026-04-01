@@ -2,7 +2,6 @@ package broker
 
 import (
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -41,14 +40,14 @@ func (b *MessageQueueBroker) genLogFlushFunc(t topic.Topic, p topic.Partition) l
 			}
 		}
 
-		atomic.StoreInt64(&logBuffer.LastFlushTsNs, stopTime.UnixNano())
+		logBuffer.SetLastFlushTsNs(stopTime.UnixNano())
 
 		b.accessLock.Lock()
 		defer b.accessLock.Unlock()
 		if localPartition := b.localTopicManager.GetLocalPartition(t, p); localPartition != nil {
-			localPartition.NotifyLogFlushed(logBuffer.LastFlushTsNs)
+			localPartition.NotifyLogFlushed(logBuffer.GetLastFlushTsNs())
 		}
 
-		glog.V(0).Infof("flushing at %d to %s size %d from buffer %s (offset %d)", logBuffer.LastFlushTsNs, targetFile, len(buf), logBuffer.GetName(), bufferOffset)
+		glog.V(0).Infof("flushing at %d to %s size %d from buffer %s (offset %d)", logBuffer.GetLastFlushTsNs(), targetFile, len(buf), logBuffer.GetName(), bufferOffset)
 	}
 }

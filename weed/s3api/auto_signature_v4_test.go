@@ -190,7 +190,7 @@ func mustNewRequest(method string, urlStr string, contentLength int64, body io.R
 // is signed with AWS Signature V4, fails if not able to do so.
 func mustNewSignedRequest(method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
-	cred := &Credential{"access_key_1", "secret_key_1"}
+	cred := &Credential{AccessKey: "access_key_1", SecretKey: "secret_key_1"}
 	if err := signRequestV4(req, cred.AccessKey, cred.SecretKey); err != nil {
 		t.Fatalf("Unable to initialized new signed http request %s", err)
 	}
@@ -201,7 +201,7 @@ func mustNewSignedRequest(method string, urlStr string, contentLength int64, bod
 // is presigned with AWS Signature V4, fails if not able to do so.
 func mustNewPresignedRequest(iam *IdentityAccessManagement, method string, urlStr string, contentLength int64, body io.ReadSeeker, t *testing.T) *http.Request {
 	req := mustNewRequest(method, urlStr, contentLength, body, t)
-	cred := &Credential{"access_key_1", "secret_key_1"}
+	cred := &Credential{AccessKey: "access_key_1", SecretKey: "secret_key_1"}
 	if err := preSignV4(iam, req, cred.AccessKey, cred.SecretKey, int64(10*time.Minute.Seconds())); err != nil {
 		t.Fatalf("Unable to initialized new signed http request %s", err)
 	}
@@ -493,7 +493,7 @@ func TestSignatureV4WithoutProxy(t *testing.T) {
 			r.Header.Set("Host", tt.host)
 
 			// First, verify that extractHostHeader returns the expected value
-			extractedHost := extractHostHeader(r)
+			extractedHost := extractHostHeader(r, "")
 			if extractedHost != tt.expectedHost {
 				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
 			}
@@ -562,12 +562,12 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			expectedHost:   "example.com:8080",
 		},
 		{
-			name:           "empty proto with standard http port",
+			name:           "empty proto with port 80 (scheme defaults to https from URL, so 80 is NOT default)",
 			host:           "backend:8333",
 			forwardedHost:  "example.com",
 			forwardedPort:  "80",
 			forwardedProto: "",
-			expectedHost:   "example.com",
+			expectedHost:   "example.com:80",
 		},
 		// Test cases for issue #6649: X-Forwarded-Host already contains port
 		{
@@ -674,8 +674,16 @@ func TestSignatureV4WithForwardedPort(t *testing.T) {
 			r.Header.Set("X-Forwarded-Port", tt.forwardedPort)
 			r.Header.Set("X-Forwarded-Proto", tt.forwardedProto)
 
-			// Sign the request with the expected host header
-			// We need to temporarily modify the Host header for signing
+			// Validate that extractHostHeader returns the expected host value.
+			// This is critical: the expectedHost must match what the AWS SDK would
+			// use for signing. Without this check, the test is self-referential
+			// (signing and verifying with the same function always agrees).
+			extractedHost := extractHostHeader(r, "")
+			if extractedHost != tt.expectedHost {
+				t.Errorf("extractHostHeader() = %q, want %q", extractedHost, tt.expectedHost)
+			}
+
+			// Sign the request (note: signV4WithPath uses extractHostHeader internally)
 			signV4WithPath(r, "AKIAIOSFODNN7EXAMPLE", "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY", r.URL.Path)
 
 			// Test signature verification
@@ -922,7 +930,7 @@ func preSignV4WithPath(iam *IdentityAccessManagement, req *http.Request, accessK
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
-	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req, "")}
 
 	// Get canonical request with custom path
 	canonicalRequest := getCanonicalRequest(extractedSignedHeaders, hashedPayload, req.URL.RawQuery, urlPath, req.Method)
@@ -961,7 +969,7 @@ func signV4WithPath(req *http.Request, accessKey, secretKey, urlPath string) {
 
 	// Extract signed headers
 	extractedSignedHeaders := make(http.Header)
-	extractedSignedHeaders["host"] = []string{extractHostHeader(req)}
+	extractedSignedHeaders["host"] = []string{extractHostHeader(req, "")}
 	extractedSignedHeaders["x-amz-date"] = []string{dateStr}
 
 	// Get the payload hash
@@ -1031,23 +1039,11 @@ func getMD5HashBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(getMD5Sum(data))
 }
 
-// getSHA256Sum returns SHA-256 sum of given data.
-func getSHA256Sum(data []byte) []byte {
-	hash := sha256.New()
-	hash.Write(data)
-	return hash.Sum(nil)
-}
-
 // getMD5Sum returns MD5 sum of given data.
 func getMD5Sum(data []byte) []byte {
 	hash := md5.New()
 	hash.Write(data)
 	return hash.Sum(nil)
-}
-
-// getMD5Hash returns MD5 hash in hex encoding of given data.
-func getMD5Hash(data []byte) string {
-	return hex.EncodeToString(getMD5Sum(data))
 }
 
 var ignoredHeaders = map[string]bool{

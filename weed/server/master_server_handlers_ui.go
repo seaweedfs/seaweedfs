@@ -1,9 +1,10 @@
 package weed_server
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net/http"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
 	hashicorpRaft "github.com/hashicorp/raft"
 	"github.com/seaweedfs/raft"
@@ -14,7 +15,7 @@ import (
 
 func (ms *MasterServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
 	infos := make(map[string]interface{})
-	infos["Up Time"] = time.Now().Sub(startTime).String()
+	infos["Up Time"] = time.Since(startTime).Truncate(time.Second).String()
 	infos["Max Volume Id"] = ms.Topo.GetMaxVolumeId()
 
 	ms.Topo.RaftServerAccessLock.RLock()

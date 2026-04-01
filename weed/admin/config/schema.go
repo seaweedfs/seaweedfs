@@ -113,6 +113,11 @@ func SecondsToIntervalValueUnit(totalSeconds int) (int, string) {
 		return 0, "minutes"
 	}
 
+	// Preserve seconds when not divisible by minutes
+	if totalSeconds < 60 || totalSeconds%60 != 0 {
+		return totalSeconds, "seconds"
+	}
+
 	// Check if it's evenly divisible by days
 	if totalSeconds%(24*3600) == 0 {
 		return totalSeconds / (24 * 3600), "days"
@@ -136,6 +141,8 @@ func IntervalValueUnitToSeconds(value int, unit string) int {
 		return value * 3600
 	case "minutes":
 		return value * 60
+	case "seconds":
+		return value
 	default:
 		return value * 60 // Default to minutes
 	}

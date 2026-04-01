@@ -2,11 +2,12 @@ package pb
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"net"
 	"strconv"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 type ServerAddress string
@@ -14,7 +15,7 @@ type ServerAddresses string
 type ServerSrvAddress string
 
 func NewServerAddress(host string, port int, grpcPort int) ServerAddress {
-	if grpcPort == 0 || grpcPort == port+10000 {
+	if grpcPort == 0 {
 		return ServerAddress(util.JoinHostPort(host, port))
 	}
 	return ServerAddress(util.JoinHostPort(host, port) + "." + strconv.Itoa(grpcPort))
@@ -24,15 +25,16 @@ func NewServerAddressWithGrpcPort(address string, grpcPort int) ServerAddress {
 	if grpcPort == 0 {
 		return ServerAddress(address)
 	}
-	_, port, _ := hostAndPort(address)
-	if uint64(grpcPort) == port+10000 {
-		return ServerAddress(address)
-	}
 	return ServerAddress(address + "." + strconv.Itoa(grpcPort))
 }
 
 func NewServerAddressFromDataNode(dn *master_pb.DataNodeInfo) ServerAddress {
-	return NewServerAddressWithGrpcPort(dn.Id, int(dn.GrpcPort))
+	// Use Address field if available (new behavior), fall back to Id for backward compatibility
+	addr := dn.Address
+	if addr == "" {
+		addr = dn.Id // backward compatibility: old nodes use ip:port as id
+	}
+	return NewServerAddressWithGrpcPort(addr, int(dn.GrpcPort))
 }
 
 func NewServerAddressFromLocation(dn *master_pb.Location) ServerAddress {
@@ -55,9 +57,16 @@ func (sa ServerAddress) ToHttpAddress() string {
 	sepIndex := strings.LastIndex(string(ports), ".")
 	if sepIndex >= 0 {
 		host := string(sa[0:portsSepIndex])
-		return net.JoinHostPort(host, ports[0:sepIndex])
+		return util.JoinHostPortStr(host, ports[0:sepIndex])
 	}
 	return string(sa)
+}
+
+func (sa ServerAddress) Equals(other ServerAddress) bool {
+	if sa == other {
+		return true
+	}
+	return sa.ToHttpAddress() == other.ToHttpAddress()
 }
 
 func (sa ServerAddress) ToGrpcAddress() string {
@@ -72,9 +81,26 @@ func (sa ServerAddress) ToGrpcAddress() string {
 	sepIndex := strings.LastIndex(ports, ".")
 	if sepIndex >= 0 {
 		host := string(sa[0:portsSepIndex])
-		return net.JoinHostPort(host, ports[sepIndex+1:])
+		return util.JoinHostPortStr(host, ports[sepIndex+1:])
 	}
 	return ServerToGrpcAddress(string(sa))
+}
+
+// ToHost returns the host part only, without any port information.
+func (sa ServerAddress) ToHost() string {
+	httpAddr := sa.ToHttpAddress()
+
+	host, _, err := net.SplitHostPort(httpAddr)
+	if err == nil {
+		return host
+	}
+
+	// Fallback: if parsing fails, it's likely a host without a port.
+	// Handle bracketed IPv6 (e.g., "[::1]" without port) by trimming brackets.
+	if strings.HasPrefix(httpAddr, "[") && strings.HasSuffix(httpAddr, "]") {
+		return httpAddr[1 : len(httpAddr)-1]
+	}
+	return httpAddr
 }
 
 // LookUp may return an error for some records along with successful lookups - make sure you do not

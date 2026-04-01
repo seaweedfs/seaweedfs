@@ -5,8 +5,23 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
+
+// tagsToEntry converts a map of tag key-value pairs to the entry.Extended format
+// used for s3:ExistingObjectTag/<key> condition evaluation
+func tagsToEntry(tags map[string]string) map[string][]byte {
+	if tags == nil {
+		return nil
+	}
+	entry := make(map[string][]byte)
+	for k, v := range tags {
+		entry[s3_constants.AmzObjectTaggingPrefix+k] = []byte(v)
+	}
+	return entry
+}
 
 func TestPolicyEngine(t *testing.T) {
 	engine := NewPolicyEngine()
@@ -218,7 +233,7 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 		"Admin:bucket2",
 	}
 
-	policy, err := ConvertIdentityToPolicy(identityActions, "bucket1")
+	policy, err := ConvertIdentityToPolicy(identityActions)
 	if err != nil {
 		t.Fatalf("Failed to convert identity to policy: %v", err)
 	}
@@ -238,13 +253,17 @@ func TestConvertIdentityToPolicy(t *testing.T) {
 	}
 
 	actions := normalizeToStringSlice(stmt.Action)
-	if len(actions) != 3 {
-		t.Errorf("Expected 3 read actions, got %d", len(actions))
+	// Read action now includes: GetObject, GetObjectVersion, ListBucket, ListBucketVersions,
+	// GetObjectAcl, GetObjectVersionAcl, GetObjectTagging, GetObjectVersionTagging,
+	// GetBucketLocation, GetBucketVersioning, GetBucketAcl, GetBucketCors, GetBucketTagging, GetBucketNotification
+	if len(actions) != 14 {
+		t.Errorf("Expected 14 read actions, got %d: %v", len(actions), actions)
 	}
 
 	resources := normalizeToStringSlice(stmt.Resource)
+	// Read action now includes both bucket ARN (for ListBucket*) and object ARN (for GetObject*)
 	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources, got %d", len(resources))
+		t.Errorf("Expected 2 resources (bucket and bucket/*), got %d: %v", len(resources), resources)
 	}
 }
 
@@ -265,6 +284,18 @@ func TestPolicyValidation(t *testing.T) {
 						"Resource": "arn:aws:s3:::test-bucket/*"
 					}
 				]
+			}`,
+			expectError: false,
+		},
+		{
+			name: "Valid policy with single statement object",
+			policyJSON: `{
+				"Version": "2012-10-17",
+				"Statement": {
+					"Effect": "Allow",
+					"Action": "s3:GetObject",
+					"Resource": "arn:aws:s3:::test-bucket/*"
+				}
 			}`,
 			expectError: false,
 		},
@@ -413,8 +444,8 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 		t.Errorf("Expected RequestMethod to be GET, got %v", values["s3:RequestMethod"])
 	}
 
-	if len(values["x-amz-copy-source"]) != 1 || values["x-amz-copy-source"][0] != "source-bucket/source-object" {
-		t.Errorf("Expected X-Amz-Copy-Source header to be extracted, got %v", values["x-amz-copy-source"])
+	if len(values["s3:x-amz-copy-source"]) != 1 || values["s3:x-amz-copy-source"][0] != "source-bucket/source-object" {
+		t.Errorf("Expected X-Amz-Copy-Source header to be extracted with s3: prefix, got %v", values["s3:x-amz-copy-source"])
 	}
 
 	// Check that aws:CurrentTime is properly set
@@ -425,6 +456,89 @@ func TestExtractConditionValuesFromRequest(t *testing.T) {
 	// Check that aws:RequestTime is still available for backward compatibility
 	if len(values["aws:RequestTime"]) != 1 {
 		t.Errorf("Expected aws:RequestTime to be set for backward compatibility, got %v", values["aws:RequestTime"])
+	}
+}
+
+func TestExtractConditionValuesFromRequestSourceIPPrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		header     map[string][]string
+		remoteAddr string
+		expectedIP string
+	}{
+		{
+			name: "uses right-most public X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip, 203.0.113.10, 198.51.100.5"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.5",
+		},
+		{
+			name: "falls back to X-Real-Ip when X-Forwarded-For has no valid ip",
+			header: map[string][]string{
+				"X-Forwarded-For": {"bad-ip"},
+				"X-Real-Ip":       {"198.51.100.7"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name:       "uses RemoteAddr ip when no forwarding headers",
+			header:     map[string][]string{},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "192.168.1.100",
+		},
+		{
+			name:       "keeps unix socket marker when RemoteAddr is not an ip",
+			header:     map[string][]string{},
+			remoteAddr: "@",
+			expectedIP: "@",
+		},
+		{
+			name: "uses IPv6 X-Forwarded-For entry",
+			header: map[string][]string{
+				"X-Forwarded-For": {"2001:db8::8, 198.51.100.7"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "198.51.100.7",
+		},
+		{
+			name: "ignores spoofed IP when real client is public",
+			header: map[string][]string{
+				"X-Forwarded-For": {"8.8.8.8, 203.0.113.10, 10.0.0.1"},
+			},
+			remoteAddr: "192.168.1.100:12345",
+			expectedIP: "203.0.113.10",
+		},
+		{
+			name:       "handles bracketed IPv6 remote address",
+			header:     map[string][]string{},
+			remoteAddr: "[2001:db8::1]:12345",
+			expectedIP: "2001:db8::1",
+		},
+		{
+			name:       "avoids returning DNS host names",
+			header:     map[string][]string{},
+			remoteAddr: "example.com:9000",
+			expectedIP: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &http.Request{
+				Method:     "GET",
+				URL:        &url.URL{Path: "/"},
+				Header:     tt.header,
+				RemoteAddr: tt.remoteAddr,
+			}
+
+			values := ExtractConditionValuesFromRequest(req)
+			if len(values["aws:SourceIp"]) != 1 || values["aws:SourceIp"][0] != tt.expectedIP {
+				t.Errorf("Expected SourceIp %q, got %v", tt.expectedIP, values["aws:SourceIp"])
+			}
+		})
 	}
 }
 
@@ -636,7 +750,7 @@ func TestWildcardMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := MatchesWildcard(tt.pattern, tt.str)
+			result := wildcard.MatchesWildcard(tt.pattern, tt.str)
 			if result != tt.expected {
 				t.Errorf("Pattern %s against %s: expected %v, got %v", tt.pattern, tt.str, tt.expected, result)
 			}
@@ -713,4 +827,234 @@ type MockLegacyIAM struct{}
 
 func (m *MockLegacyIAM) authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode) {
 	return nil, s3err.ErrNone
+}
+
+// TestExistingObjectTagCondition tests s3:ExistingObjectTag/<tag-key> condition support
+func TestExistingObjectTagCondition(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that allows GetObject only for objects with specific tag
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["public"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "Matching tag value - should allow",
+			objectTags: map[string]string{"status": "public"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Non-matching tag value - should be indeterminate",
+			objectTags: map[string]string{"status": "private"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Missing tag - should be indeterminate",
+			objectTags: map[string]string{"other": "value"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "No tags - should be indeterminate",
+			objectTags: nil,
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Empty tags - should be indeterminate",
+			objectTags: map[string]string{},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Multiple tags with matching one - should allow",
+			objectTags: map[string]string{"status": "public", "owner": "admin"},
+			expected:   PolicyResultAllow,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestExistingObjectTagConditionMultipleTags tests policies with multiple tag conditions
+func TestExistingObjectTagConditionMultipleTags(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that requires multiple tag conditions
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/status": ["public"],
+						"s3:ExistingObjectTag/tier": ["free", "premium"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "Both tags match - should allow",
+			objectTags: map[string]string{"status": "public", "tier": "free"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Both tags match (premium tier) - should allow",
+			objectTags: map[string]string{"status": "public", "tier": "premium"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Only status matches - should be indeterminate",
+			objectTags: map[string]string{"status": "public"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Only tier matches - should be indeterminate",
+			objectTags: map[string]string{"tier": "free"},
+			expected:   PolicyResultIndeterminate,
+		},
+		{
+			name:       "Neither tag matches - should be indeterminate",
+			objectTags: map[string]string{"status": "private", "tier": "basic"},
+			expected:   PolicyResultIndeterminate,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestExistingObjectTagDenyPolicy tests deny policies with tag conditions
+func TestExistingObjectTagDenyPolicy(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	// Policy that denies access to objects with confidential tag
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			},
+			{
+				"Effect": "Deny",
+				"Principal": "*",
+				"Action": "s3:GetObject",
+				"Resource": "arn:aws:s3:::test-bucket/*",
+				"Condition": {
+					"StringEquals": {
+						"s3:ExistingObjectTag/classification": ["confidential"]
+					}
+				}
+			}
+		]
+	}`
+
+	err := engine.SetBucketPolicy("test-bucket", policyJSON)
+	if err != nil {
+		t.Fatalf("Failed to set bucket policy: %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		objectTags map[string]string
+		expected   PolicyEvaluationResult
+	}{
+		{
+			name:       "No tags - allow by default statement",
+			objectTags: nil,
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Non-confidential tag - allow",
+			objectTags: map[string]string{"classification": "public"},
+			expected:   PolicyResultAllow,
+		},
+		{
+			name:       "Confidential tag - deny",
+			objectTags: map[string]string{"classification": "confidential"},
+			expected:   PolicyResultDeny,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:      "s3:GetObject",
+				Resource:    "arn:aws:s3:::test-bucket/test-object",
+				Principal:   "*",
+				ObjectEntry: tagsToEntry(tt.objectTags),
+			}
+
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
 }

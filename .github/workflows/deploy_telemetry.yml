@@ -21,12 +21,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.24'
+          go-version-file: 'go.mod'
 
       - name: Build Telemetry Server
         if: github.event_name == 'workflow_dispatch' && inputs.deploy

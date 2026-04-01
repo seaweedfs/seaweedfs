@@ -30,10 +30,10 @@ func TestS3IAMDistributedTests(t *testing.T) {
 
 		// Create S3 clients that would connect to different gateway instances
 		// In a real distributed setup, these would point to different S3 gateway ports
-		client1, err := framework.CreateS3ClientWithJWT("test-user", "TestAdminRole")
+		client1, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
-		client2, err := framework.CreateS3ClientWithJWT("test-user", "TestAdminRole")
+		client2, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
 		// Both clients should be able to perform operations
@@ -43,15 +43,23 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		require.NoError(t, err)
 
 		// Client2 should see the bucket created by client1
-		listResult, err := client2.ListBuckets(&s3.ListBucketsInput{})
-		require.NoError(t, err)
+		// Retry logic for eventually consistent storage
+		var found bool
+		for i := 0; i < 20; i++ {
+			listResult, err := client2.ListBuckets(&s3.ListBucketsInput{})
+			require.NoError(t, err)
 
-		found := false
-		for _, bucket := range listResult.Buckets {
-			if *bucket.Name == bucketName {
-				found = true
+			found = false
+			for _, bucket := range listResult.Buckets {
+				if *bucket.Name == bucketName {
+					found = true
+					break
+				}
+			}
+			if found {
 				break
 			}
+			time.Sleep(250 * time.Millisecond)
 		}
 		assert.True(t, found, "Bucket should be visible across distributed instances")
 
@@ -70,7 +78,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 		adminClient, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 		require.NoError(t, err)
 
-		readOnlyClient, err := framework.CreateS3ClientWithJWT("readonly-user", "TestReadOnlyRole")
+		readOnlyClient, err := framework.CreateS3ClientWithJWT("read-user", "TestReadOnlyRole")
 		require.NoError(t, err)
 
 		bucketName := "test-distributed-roles"
@@ -121,6 +129,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			errorMsg := err.Error()
 			return strings.Contains(errorMsg, "timeout") ||
 				strings.Contains(errorMsg, "connection reset") ||
+				strings.Contains(errorMsg, "connection refused") ||
 				strings.Contains(errorMsg, "temporary failure") ||
 				strings.Contains(errorMsg, "TooManyRequests") ||
 				strings.Contains(errorMsg, "ServiceUnavailable") ||
@@ -160,7 +169,7 @@ func TestS3IAMDistributedTests(t *testing.T) {
 			go func(goroutineID int) {
 				defer wg.Done()
 
-				client, err := framework.CreateS3ClientWithJWT(fmt.Sprintf("user-%d", goroutineID), "TestAdminRole")
+				client, err := framework.CreateS3ClientWithJWT("admin-user", "TestAdminRole")
 				if err != nil {
 					errors <- fmt.Errorf("failed to create S3 client for goroutine %d: %w", goroutineID, err)
 					return

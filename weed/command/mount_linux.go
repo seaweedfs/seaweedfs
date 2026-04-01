@@ -3,10 +3,11 @@ package command
 import (
 	"bufio"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 )
 
 const (
@@ -68,7 +69,7 @@ type Info struct {
 
 // Mounted determines if a specified mountpoint has been mounted.
 // On Linux it looks at /proc/self/mountinfo and on Solaris at mnttab.
-func mounted(mountPoint string) (bool, error) {
+func mounted(mountPoint string, skipAutofs bool) (bool, error) {
 	entries, err := parseMountTable()
 	if err != nil {
 		return false, err
@@ -77,6 +78,10 @@ func mounted(mountPoint string) (bool, error) {
 	// Search the table for the mountPoint
 	for _, e := range entries {
 		if e.Mountpoint == mountPoint {
+			// Check if the mountpoint is autofs
+			if skipAutofs && e.Fstype == "autofs" {
+				continue
+			}
 			return true, nil
 		}
 	}
@@ -136,13 +141,13 @@ func parseInfoFile(r io.Reader) ([]*Info, error) {
 	return out, nil
 }
 
-func checkMountPointAvailable(dir string) bool {
+func checkMountPointAvailable(dir string, skipAutofs bool) bool {
 	mountPoint := dir
 	if mountPoint != "/" && strings.HasSuffix(mountPoint, "/") {
 		mountPoint = mountPoint[0 : len(mountPoint)-1]
 	}
 
-	if mounted, err := mounted(mountPoint); err != nil || mounted {
+	if mounted, err := mounted(mountPoint, skipAutofs); err != nil || mounted {
 		if err != nil {
 			glog.Errorf("check %s: %v", mountPoint, err)
 		}

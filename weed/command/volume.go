@@ -41,6 +41,7 @@ type VolumeServerOptions struct {
 	folderMaxLimits           []int32
 	idxFolder                 *string
 	ip                        *string
+	id                        *string
 	publicUrl                 *string
 	bindIp                    *string
 	mastersString             *string
@@ -52,11 +53,13 @@ type VolumeServerOptions struct {
 	whiteList                 []string
 	indexType                 *string
 	diskType                  *string
+	tags                      *string
 	fixJpgOrientation         *bool
 	readMode                  *string
 	cpuProfile                *string
 	memProfile                *string
 	compactionMBPerSecond     *int
+	maintenanceMBPerSecond    *int
 	fileSizeLimitMB           *int
 	concurrentUploadLimitMB   *int
 	concurrentDownloadLimitMB *int
@@ -70,6 +73,8 @@ type VolumeServerOptions struct {
 	hasSlowRead                 *bool
 	readBufferSizeMB            *int
 	ldbTimeout                  *int64
+	debug                       *bool
+	debugPort                   *int
 }
 
 func init() {
@@ -78,6 +83,7 @@ func init() {
 	v.portGrpc = cmdVolume.Flag.Int("port.grpc", 0, "grpc listen port")
 	v.publicPort = cmdVolume.Flag.Int("port.public", 0, "port opened to public")
 	v.ip = cmdVolume.Flag.String("ip", util.DetectedHostAddress(), "ip or server name, also used as identifier")
+	v.id = cmdVolume.Flag.String("id", "", "volume server id. If empty, default to ip:port")
 	v.publicUrl = cmdVolume.Flag.String("publicUrl", "", "Publicly accessible address")
 	v.bindIp = cmdVolume.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to same as -ip option.")
 	v.mastersString = cmdVolume.Flag.String("master", "localhost:9333", "comma-separated master servers")
@@ -89,15 +95,17 @@ func init() {
 	v.rack = cmdVolume.Flag.String("rack", "", "current volume server's rack name")
 	v.indexType = cmdVolume.Flag.String("index", "memory", "Choose [memory|leveldb|leveldbMedium|leveldbLarge] mode for memory~performance balance.")
 	v.diskType = cmdVolume.Flag.String("disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
+	v.tags = cmdVolume.Flag.String("tags", "", "comma-separated tag groups per data dir; each group uses ':' (e.g. fast:ssd,archive)")
 	v.fixJpgOrientation = cmdVolume.Flag.Bool("images.fix.orientation", false, "Adjust jpg orientation when uploading.")
 	v.readMode = cmdVolume.Flag.String("readMode", "proxy", "[local|proxy|redirect] how to deal with non-local volume: 'not found|proxy to remote node|redirect volume location'.")
 	v.cpuProfile = cmdVolume.Flag.String("cpuprofile", "", "cpu profile output file")
 	v.memProfile = cmdVolume.Flag.String("memprofile", "", "memory profile output file")
 	v.compactionMBPerSecond = cmdVolume.Flag.Int("compactionMBps", 0, "limit background compaction or copying speed in mega bytes per second")
+	v.maintenanceMBPerSecond = cmdVolume.Flag.Int("maintenanceMBps", 0, "limit maintenance (replication / balance) IO rate in MB/s. Unset is 0, no limitation.")
 	v.fileSizeLimitMB = cmdVolume.Flag.Int("fileSizeLimitMB", 256, "limit file size to avoid out of memory")
 	v.ldbTimeout = cmdVolume.Flag.Int64("index.leveldbTimeout", 0, "alive time for leveldb (default to 0). If leveldb of volume is not accessed in ldbTimeout hours, it will be off loaded to reduce opened files and memory consumption.")
-	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 256, "limit total concurrent upload size")
-	v.concurrentDownloadLimitMB = cmdVolume.Flag.Int("concurrentDownloadLimitMB", 256, "limit total concurrent download size")
+	v.concurrentUploadLimitMB = cmdVolume.Flag.Int("concurrentUploadLimitMB", 0, "limit total concurrent upload size, 0 means unlimited")
+	v.concurrentDownloadLimitMB = cmdVolume.Flag.Int("concurrentDownloadLimitMB", 0, "limit total concurrent download size, 0 means unlimited")
 	v.pprof = cmdVolume.Flag.Bool("pprof", false, "enable pprof http handlers. precludes -memprofile and -cpuprofile")
 	v.metricsHttpPort = cmdVolume.Flag.Int("metricsPort", 0, "Prometheus metrics listen port")
 	v.metricsHttpIp = cmdVolume.Flag.String("metricsIp", "", "metrics listen ip. If empty, default to same as -ip.bind option.")
@@ -106,6 +114,8 @@ func init() {
 	v.inflightDownloadDataTimeout = cmdVolume.Flag.Duration("inflightDownloadDataTimeout", 60*time.Second, "inflight download data wait timeout of volume servers")
 	v.hasSlowRead = cmdVolume.Flag.Bool("hasSlowRead", true, "<experimental> if true, this prevents slow reads from blocking other requests, but large file read P99 latency will increase.")
 	v.readBufferSizeMB = cmdVolume.Flag.Int("readBufferSizeMB", 4, "<experimental> larger values can optimize query performance but will increase some memory usage,Use with hasSlowRead normally.")
+	v.debug = cmdVolume.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	v.debugPort = cmdVolume.Flag.Int("debug.port", 6060, "http port for debugging")
 }
 
 var cmdVolume = &Command{
@@ -125,6 +135,9 @@ var (
 )
 
 func runVolume(cmd *Command, args []string) bool {
+	if *v.debug {
+		grace.StartDebugServer(*v.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 
@@ -208,6 +221,12 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		glog.Fatalf("%d directories by -dir, but only %d disk types is set by -disk", len(v.folders), len(diskTypes))
 	}
 
+	var tagsArg string
+	if v.tags != nil {
+		tagsArg = *v.tags
+	}
+	folderTags := parseVolumeTags(tagsArg, len(v.folders))
+
 	// security related white list configuration
 	v.whiteList = util.StringSplit(volumeWhiteListOption, ",")
 
@@ -253,15 +272,19 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		volumeNeedleMapKind = storage.NeedleMapLevelDbLarge
 	}
 
+	// Determine volume server ID: if not specified, use ip:port
+	volumeServerId := util.GetVolumeServerId(*v.id, *v.ip, *v.port)
+
 	volumeServer := weed_server.NewVolumeServer(volumeMux, publicVolumeMux,
-		*v.ip, *v.port, *v.portGrpc, *v.publicUrl,
-		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes,
+		*v.ip, *v.port, *v.portGrpc, *v.publicUrl, volumeServerId,
+		v.folders, v.folderMaxLimits, minFreeSpaces, diskTypes, folderTags,
 		*v.idxFolder,
 		volumeNeedleMapKind,
 		v.masters, constants.VolumePulsePeriod, *v.dataCenter, *v.rack,
 		v.whiteList,
 		*v.fixJpgOrientation, *v.readMode,
 		*v.compactionMBPerSecond,
+		*v.maintenanceMBPerSecond,
 		*v.fileSizeLimitMB,
 		int64(*v.concurrentUploadLimitMB)*1024*1024,
 		int64(*v.concurrentDownloadLimitMB)*1024*1024,
@@ -304,10 +327,49 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		stopChan <- true
 	})
 
-	select {
-	case <-stopChan:
+	ctx := MiniClusterCtx
+	if ctx != nil {
+		select {
+		case <-stopChan:
+		case <-ctx.Done():
+			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
+		}
+	} else {
+		select {
+		case <-stopChan:
+		}
 	}
 
+}
+
+func parseVolumeTags(tagsArg string, folderCount int) [][]string {
+	if folderCount <= 0 {
+		return nil
+	}
+	tagEntries := []string{}
+	if strings.TrimSpace(tagsArg) != "" {
+		tagEntries = strings.Split(tagsArg, ",")
+	}
+	folderTags := make([][]string, folderCount)
+
+	// If exactly one tag entry provided, replicate it to all folders
+	if len(tagEntries) == 1 {
+		normalized := util.NormalizeTagList(strings.Split(tagEntries[0], ":"))
+		for i := 0; i < folderCount; i++ {
+			folderTags[i] = append([]string(nil), normalized...)
+		}
+	} else {
+		// Otherwise, assign tags to folders that have explicit entries
+		for i := 0; i < folderCount; i++ {
+			if i < len(tagEntries) {
+				folderTags[i] = util.NormalizeTagList(strings.Split(tagEntries[i], ":"))
+			} else {
+				// Initialize remaining folders with empty tag slice
+				folderTags[i] = []string{}
+			}
+		}
+	}
+	return folderTags
 }
 
 func shutdown(publicHttpDown httpdown.Server, clusterHttpServer httpdown.Server, grpcS *grpc.Server, volumeServer *weed_server.VolumeServer) {
@@ -353,6 +415,7 @@ func (v VolumeServerOptions) startGrpcService(vs volume_server_pb.VolumeServerSe
 			glog.Fatalf("start gRPC service failed, %s", err)
 		}
 	}()
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 	return grpcS
 }
 

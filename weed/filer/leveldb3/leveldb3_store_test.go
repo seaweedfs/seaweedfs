@@ -2,10 +2,10 @@ package leveldb
 
 import (
 	"context"
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 

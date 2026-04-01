@@ -6,10 +6,17 @@ import (
 	"sort"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+)
+
+// Access key status constants
+const (
+	AccessKeyStatusActive   = iam.AccessKeyStatusActive
+	AccessKeyStatusInactive = iam.AccessKeyStatusInactive
 )
 
 type AdminData struct {
@@ -37,13 +44,15 @@ type ObjectStoreUser struct {
 	AccessKey   string   `json:"access_key"`
 	SecretKey   string   `json:"secret_key"`
 	Permissions []string `json:"permissions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type ObjectStoreUsersData struct {
-	Username    string            `json:"username"`
-	Users       []ObjectStoreUser `json:"users"`
-	TotalUsers  int               `json:"total_users"`
-	LastUpdated time.Time         `json:"last_updated"`
+	Username         string            `json:"username"`
+	Users            []ObjectStoreUser `json:"users"`
+	TotalUsers       int               `json:"total_users"`
+	HasAnonymousUser bool              `json:"has_anonymous_user"`
+	LastUpdated      time.Time         `json:"last_updated"`
 }
 
 // User management request structures
@@ -52,11 +61,13 @@ type CreateUserRequest struct {
 	Email       string   `json:"email"`
 	Actions     []string `json:"actions"`
 	GenerateKey bool     `json:"generate_key"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserRequest struct {
-	Email   string   `json:"email"`
-	Actions []string `json:"actions"`
+	Email       string   `json:"email"`
+	Actions     []string `json:"actions"`
+	PolicyNames []string `json:"policy_names"`
 }
 
 type UpdateUserPoliciesRequest struct {
@@ -66,14 +77,26 @@ type UpdateUserPoliciesRequest struct {
 type AccessKeyInfo struct {
 	AccessKey string    `json:"access_key"`
 	SecretKey string    `json:"secret_key"`
+	Status    string    `json:"status"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
+type CreateAccessKeyRequest struct {
+	AccessKey string `json:"access_key"`
+	SecretKey string `json:"secret_key"`
+}
+
+type UpdateAccessKeyStatusRequest struct {
+	Status string `json:"status" binding:"required"`
+}
+
 type UserDetails struct {
-	Username   string          `json:"username"`
-	Email      string          `json:"email"`
-	Actions    []string        `json:"actions"`
-	AccessKeys []AccessKeyInfo `json:"access_keys"`
+	Username    string          `json:"username"`
+	Email       string          `json:"email"`
+	Actions     []string        `json:"actions"`
+	PolicyNames []string        `json:"policy_names"`
+	AccessKeys  []AccessKeyInfo `json:"access_keys"`
+	Groups      []string        `json:"groups"`
 }
 
 type FilerNode struct {
@@ -109,13 +132,6 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 		glog.Errorf("Failed to get cluster volume servers: %v", err)
 		return AdminData{}, err
 	}
-	// Sort the servers so they show up in consistent order after each reload
-	sort.Slice(volumeServersData.VolumeServers, func(i, j int) bool {
-		s1Name := volumeServersData.VolumeServers[i].GetDisplayAddress()
-		s2Name := volumeServersData.VolumeServers[j].GetDisplayAddress()
-
-		return s1Name < s2Name
-	})
 
 	// Get master nodes status
 	masterNodes := s.getMasterNodesStatus()
@@ -175,28 +191,28 @@ func (s *AdminServer) GetAdminData(username string) (AdminData, error) {
 }
 
 // ShowAdmin displays the main admin page (now uses GetAdminData)
-func (s *AdminServer) ShowAdmin(c *gin.Context) {
-	username := c.GetString("username")
+func (s *AdminServer) ShowAdmin(w http.ResponseWriter, r *http.Request) {
+	username := UsernameFromContext(r.Context())
 
 	adminData, err := s.GetAdminData(username)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get admin data: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get admin data: "+err.Error())
 		return
 	}
 
 	// Return JSON for API calls
-	c.JSON(http.StatusOK, adminData)
+	writeJSON(w, http.StatusOK, adminData)
 }
 
 // ShowOverview displays cluster overview
-func (s *AdminServer) ShowOverview(c *gin.Context) {
+func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 	topology, err := s.GetClusterTopology()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	c.JSON(http.StatusOK, topology)
+	writeJSON(w, http.StatusOK, topology)
 }
 
 // getMasterNodesStatus checks status of all master nodes
@@ -224,7 +240,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	currentMaster := s.masterClient.GetMaster(context.Background())
 	if currentMaster != "" {
 		masterNodes = append(masterNodes, MasterNode{
-			Address:  string(currentMaster),
+			Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
 			IsLeader: isLeader,
 		})
 	}
@@ -248,7 +264,7 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		// Process each filer node
 		for _, node := range resp.ClusterNodes {
 			filerNodes = append(filerNodes, FilerNode{
-				Address:     node.Address,
+				Address:     pb.ServerAddress(node.Address).ToHttpAddress(),
 				DataCenter:  node.DataCenter,
 				Rack:        node.Rack,
 				LastUpdated: time.Now(),
@@ -264,6 +280,11 @@ func (s *AdminServer) getFilerNodesStatus() []FilerNode {
 		// Return empty list if we can't get filer info from master
 		return []FilerNode{}
 	}
+
+	// Sort filer nodes by address for consistent ordering on page refresh
+	sort.Slice(filerNodes, func(i, j int) bool {
+		return filerNodes[i].Address < filerNodes[j].Address
+	})
 
 	return filerNodes
 }
@@ -300,6 +321,11 @@ func (s *AdminServer) getMessageBrokerNodesStatus() []MessageBrokerNode {
 		// Return empty list if we can't get broker info from master
 		return []MessageBrokerNode{}
 	}
+
+	// Sort message broker nodes by address for consistent ordering on page refresh
+	sort.Slice(messageBrokers, func(i, j int) bool {
+		return messageBrokers[i].Address < messageBrokers[j].Address
+	})
 
 	return messageBrokers
 }

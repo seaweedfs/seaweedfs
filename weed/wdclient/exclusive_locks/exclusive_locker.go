@@ -70,7 +70,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 			}
 			return err
 		}); err != nil {
-			println("lock:", err.Error())
+			glog.V(2).Infof("Failed to acquire lock %s: %v", l.lockName, err)
 			time.Sleep(InitLockInterval)
 		} else {
 			break
@@ -79,6 +79,7 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 
 	l.isLocked.Store(true)
 	l.clientName = clientName
+	glog.V(1).Infof("Acquired lock %s", l.lockName)
 
 	// Each lock has and only has one goroutine
 	if l.renewGoroutineRunning.CompareAndSwap(false, true) {
@@ -100,11 +101,11 @@ func (l *ExclusiveLocker) RequestLock(clientName string) {
 						if err == nil {
 							atomic.StoreInt64(&l.token, resp.Token)
 							atomic.StoreInt64(&l.lockTsNs, resp.LockTsNs)
-							// println("ts", l.lockTsNs, "token", l.token)
+							glog.V(2).Infof("Renewed lock %s: ts %d token %d", l.lockName, l.lockTsNs, l.token)
 						}
 						return err
 					}); err != nil {
-						glog.Errorf("failed to renew lock: %v", err)
+						glog.Warningf("Failed to renew lock %s: %v", l.lockName, err)
 						l.isLocked.Store(false)
 						return
 					} else {

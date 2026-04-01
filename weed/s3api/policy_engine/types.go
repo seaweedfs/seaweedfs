@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	s3const "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Policy Engine Types
@@ -29,6 +32,22 @@ import (
 const (
 	// PolicyVersion2012_10_17 is the standard AWS policy version
 	PolicyVersion2012_10_17 = "2012-10-17"
+)
+
+var (
+	// PolicyVariableRegex detects AWS IAM policy variables like ${aws:username}
+	PolicyVariableRegex = regexp.MustCompile(`\$\{([^}]+)\}`)
+
+	// multipartActionSet contains all S3 multipart upload actions
+	// These are treated as equivalent to s3:PutObject for authorization purposes
+	multipartActionSet = map[string]bool{
+		s3const.S3_ACTION_CREATE_MULTIPART:       true,
+		s3const.S3_ACTION_UPLOAD_PART:            true,
+		s3const.S3_ACTION_COMPLETE_MULTIPART:     true,
+		s3const.S3_ACTION_ABORT_MULTIPART:        true,
+		s3const.S3_ACTION_LIST_PARTS:             true,
+		s3const.S3_ACTION_LIST_MULTIPART_UPLOADS: true,
+	}
 )
 
 // StringOrStringSlice represents a value that can be either a string or []string
@@ -63,14 +82,27 @@ func (s StringOrStringSlice) MarshalJSON() ([]byte, error) {
 	return json.Marshal(s.values)
 }
 
-// Strings returns the slice of strings
-func (s StringOrStringSlice) Strings() []string {
+// Strings returns the slice of strings. Nil-safe for pointer receivers.
+func (s *StringOrStringSlice) Strings() []string {
+	if s == nil {
+		return nil
+	}
 	return s.values
 }
 
 // NewStringOrStringSlice creates a new StringOrStringSlice from strings
 func NewStringOrStringSlice(values ...string) StringOrStringSlice {
 	return StringOrStringSlice{values: values}
+}
+
+// NewStringOrStringSlicePtr creates a new *StringOrStringSlice from strings
+func NewStringOrStringSlicePtr(values ...string) *StringOrStringSlice {
+	return &StringOrStringSlice{values: values}
+}
+
+// CloneStringOrStringSlice returns a copy with its own backing slice.
+func CloneStringOrStringSlice(value StringOrStringSlice) StringOrStringSlice {
+	return StringOrStringSlice{values: append([]string(nil), value.values...)}
 }
 
 // PolicyConditions represents policy conditions with proper typing
@@ -82,14 +114,46 @@ type PolicyDocument struct {
 	Statement []PolicyStatement `json:"Statement"`
 }
 
+// UnmarshalJSON implements json.Unmarshaler for PolicyDocument
+func (p *PolicyDocument) UnmarshalJSON(data []byte) error {
+	type Alias PolicyDocument
+	aux := &struct {
+		Statement json.RawMessage `json:"Statement"`
+		*Alias
+	}{
+		Alias: (*Alias)(p),
+	}
+
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+
+	// Try unmarshaling as []PolicyStatement first
+	var statements []PolicyStatement
+	if err := json.Unmarshal(aux.Statement, &statements); err == nil {
+		p.Statement = statements
+		return nil
+	}
+
+	// Try unmarshaling as single PolicyStatement
+	var statement PolicyStatement
+	if err := json.Unmarshal(aux.Statement, &statement); err == nil {
+		p.Statement = []PolicyStatement{statement}
+		return nil
+	}
+
+	return fmt.Errorf("Statement must be an array or a single object")
+}
+
 // PolicyStatement represents a single policy statement
 type PolicyStatement struct {
-	Sid       string               `json:"Sid,omitempty"`
-	Effect    PolicyEffect         `json:"Effect"`
-	Principal *StringOrStringSlice `json:"Principal,omitempty"`
-	Action    StringOrStringSlice  `json:"Action"`
-	Resource  StringOrStringSlice  `json:"Resource"`
-	Condition PolicyConditions     `json:"Condition,omitempty"`
+	Sid         string               `json:"Sid,omitempty"`
+	Effect      PolicyEffect         `json:"Effect"`
+	Principal   *StringOrStringSlice `json:"Principal,omitempty"`
+	Action      StringOrStringSlice  `json:"Action"`
+	Resource    *StringOrStringSlice `json:"Resource,omitempty"`
+	NotResource *StringOrStringSlice `json:"NotResource,omitempty"`
+	Condition   PolicyConditions     `json:"Condition,omitempty"`
 }
 
 // PolicyEffect represents Allow or Deny
@@ -106,6 +170,17 @@ type PolicyEvaluationArgs struct {
 	Resource   string
 	Principal  string
 	Conditions map[string][]string
+	// ObjectEntry is the object's metadata from entry.Extended.
+	// Used for evaluating conditions like s3:ExistingObjectTag/<tag-key>.
+	// Tags are stored with s3_constants.AmzObjectTaggingPrefix (X-Amz-Tagging-) prefix.
+	// Can be nil for bucket-level operations or when object doesn't exist.
+	ObjectEntry map[string][]byte
+	// Claims are JWT claims for jwt:* policy variables (can be nil)
+	Claims map[string]interface{}
+	// InheritedSSEAlgorithm is the canonical SSE algorithm ("AES256" or "aws:kms")
+	// inherited from the CreateMultipartUpload request for UploadPart and
+	// UploadPartCopy actions. The empty string means no SSE was used.
+	InheritedSSEAlgorithm string
 }
 
 // PolicyCache for caching compiled policies
@@ -117,19 +192,29 @@ type PolicyCache struct {
 // CompiledPolicy represents a policy that has been compiled for efficient evaluation
 type CompiledPolicy struct {
 	Document   *PolicyDocument
-	Statements []CompiledStatement
+	Statements []*CompiledStatement
 }
 
 // CompiledStatement represents a compiled policy statement
 type CompiledStatement struct {
 	Statement         *PolicyStatement
-	ActionMatchers    []*WildcardMatcher
-	ResourceMatchers  []*WildcardMatcher
-	PrincipalMatchers []*WildcardMatcher
+	ActionMatchers    []*wildcard.WildcardMatcher
+	ResourceMatchers  []*wildcard.WildcardMatcher
+	PrincipalMatchers []*wildcard.WildcardMatcher
 	// Keep regex patterns for backward compatibility
 	ActionPatterns    []*regexp.Regexp
 	ResourcePatterns  []*regexp.Regexp
 	PrincipalPatterns []*regexp.Regexp
+
+	// dynamic patterns that require variable substitution before matching
+	DynamicActionPatterns    []string
+	DynamicResourcePatterns  []string
+	DynamicPrincipalPatterns []string
+
+	// NotResource patterns (resource should NOT match these)
+	NotResourcePatterns        []*regexp.Regexp
+	NotResourceMatchers        []*wildcard.WildcardMatcher
+	DynamicNotResourcePatterns []string
 }
 
 // NewPolicyCache creates a new policy cache
@@ -149,8 +234,8 @@ func ValidatePolicy(policyDoc *PolicyDocument) error {
 		return fmt.Errorf("policy must contain at least one statement")
 	}
 
-	for i, stmt := range policyDoc.Statement {
-		if err := validateStatement(&stmt); err != nil {
+	for i := range policyDoc.Statement {
+		if err := validateStatement(&policyDoc.Statement[i]); err != nil {
 			return fmt.Errorf("invalid statement %d: %v", i, err)
 		}
 	}
@@ -168,8 +253,8 @@ func validateStatement(stmt *PolicyStatement) error {
 		return fmt.Errorf("action is required")
 	}
 
-	if len(stmt.Resource.Strings()) == 0 {
-		return fmt.Errorf("resource is required")
+	if len(stmt.Resource.Strings()) == 0 && len(stmt.NotResource.Strings()) == 0 {
+		return fmt.Errorf("statement must specify Resource or NotResource")
 	}
 
 	return nil
@@ -193,15 +278,16 @@ func ParsePolicy(policyJSON string) (*PolicyDocument, error) {
 func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 	compiled := &CompiledPolicy{
 		Document:   policy,
-		Statements: make([]CompiledStatement, len(policy.Statement)),
+		Statements: make([]*CompiledStatement, len(policy.Statement)),
 	}
 
-	for i, stmt := range policy.Statement {
-		compiledStmt, err := compileStatement(&stmt)
+	for i := range policy.Statement {
+		stmt := &policy.Statement[i]
+		compiledStmt, err := compileStatement(stmt)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile statement %d: %v", i, err)
 		}
-		compiled.Statements[i] = *compiledStmt
+		compiled.Statements[i] = compiledStmt
 	}
 
 	return compiled, nil
@@ -209,19 +295,66 @@ func CompilePolicy(policy *PolicyDocument) (*CompiledPolicy, error) {
 
 // compileStatement compiles a single policy statement
 func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
+	resStrings := slices.Clone(stmt.Resource.Strings())
+	notResStrings := slices.Clone(stmt.NotResource.Strings())
 	compiled := &CompiledStatement{
-		Statement: stmt,
+		Statement: &PolicyStatement{
+			Sid:    stmt.Sid,
+			Effect: stmt.Effect,
+			Action: stmt.Action,
+		},
+	}
+
+	// Deep clone Principal if present
+	if stmt.Principal != nil {
+		principalClone := *stmt.Principal
+		principalClone.values = slices.Clone(stmt.Principal.values)
+		compiled.Statement.Principal = &principalClone
+	}
+
+	// Deep clone Resource/NotResource into the internal statement as well for completeness
+	if stmt.Resource != nil {
+		resourceClone := *stmt.Resource
+		resourceClone.values = slices.Clone(stmt.Resource.values)
+		compiled.Statement.Resource = &resourceClone
+	}
+	if stmt.NotResource != nil {
+		notResourceClone := *stmt.NotResource
+		notResourceClone.values = slices.Clone(stmt.NotResource.values)
+		compiled.Statement.NotResource = &notResourceClone
+	}
+	compiled.Statement.Action.values = slices.Clone(stmt.Action.values)
+
+	// Deep clone Condition map
+	if stmt.Condition != nil {
+		compiled.Statement.Condition = make(PolicyConditions)
+		for k, v := range stmt.Condition {
+			innerMap := make(map[string]StringOrStringSlice)
+			for ik, iv := range v {
+				innerMap[ik] = StringOrStringSlice{values: slices.Clone(iv.values)}
+			}
+			compiled.Statement.Condition[k] = innerMap
+		}
 	}
 
 	// Compile action patterns and matchers
 	for _, action := range stmt.Action.Strings() {
+		if action == "" {
+			continue
+		}
+		// Check for dynamic variables
+		if PolicyVariableRegex.MatchString(action) {
+			compiled.DynamicActionPatterns = append(compiled.DynamicActionPatterns, action)
+			continue
+		}
+
 		pattern, err := compilePattern(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile action pattern %s: %v", action, err)
 		}
 		compiled.ActionPatterns = append(compiled.ActionPatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(action)
+		matcher, err := wildcard.NewWildcardMatcher(action)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create action matcher %s: %v", action, err)
 		}
@@ -229,14 +362,23 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	}
 
 	// Compile resource patterns and matchers
-	for _, resource := range stmt.Resource.Strings() {
+	for _, resource := range resStrings {
+		if resource == "" {
+			continue
+		}
+		// Check for dynamic variables
+		if PolicyVariableRegex.MatchString(resource) {
+			compiled.DynamicResourcePatterns = append(compiled.DynamicResourcePatterns, resource)
+			continue
+		}
+
 		pattern, err := compilePattern(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to compile resource pattern %s: %v", resource, err)
 		}
 		compiled.ResourcePatterns = append(compiled.ResourcePatterns, pattern)
 
-		matcher, err := NewWildcardMatcher(resource)
+		matcher, err := wildcard.NewWildcardMatcher(resource)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource matcher %s: %v", resource, err)
 		}
@@ -246,17 +388,55 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 	// Compile principal patterns and matchers if present
 	if stmt.Principal != nil && len(stmt.Principal.Strings()) > 0 {
 		for _, principal := range stmt.Principal.Strings() {
+			if principal == "" {
+				continue
+			}
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(principal) {
+				compiled.DynamicPrincipalPatterns = append(compiled.DynamicPrincipalPatterns, principal)
+				continue
+			}
+
 			pattern, err := compilePattern(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to compile principal pattern %s: %v", principal, err)
 			}
 			compiled.PrincipalPatterns = append(compiled.PrincipalPatterns, pattern)
 
-			matcher, err := NewWildcardMatcher(principal)
+			matcher, err := wildcard.NewWildcardMatcher(principal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to create principal matcher %s: %v", principal, err)
 			}
 			compiled.PrincipalMatchers = append(compiled.PrincipalMatchers, matcher)
+		}
+	}
+
+	// Compile NotResource patterns (resource should NOT match these)
+	if len(notResStrings) > 0 {
+		for _, notResource := range notResStrings {
+			if notResource == "" {
+				continue
+			}
+			// Check for dynamic variables
+			if PolicyVariableRegex.MatchString(notResource) {
+				compiled.DynamicNotResourcePatterns = append(compiled.DynamicNotResourcePatterns, notResource)
+				continue
+			}
+
+			pattern, err := compilePattern(notResource)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile NotResource pattern %s: %v", notResource, err)
+			}
+			compiled.NotResourcePatterns = append(compiled.NotResourcePatterns, pattern)
+
+			matcher, err := wildcard.NewWildcardMatcher(notResource)
+			if err != nil {
+				return nil, fmt.Errorf("failed to create NotResource matcher %s: %v", notResource, err)
+			}
+			compiled.NotResourceMatchers = append(compiled.NotResourceMatchers, matcher)
+
+			// Debug log
+			// fmt.Printf("Compiled NotResource: %s\n", notResource)
 		}
 	}
 
@@ -265,7 +445,7 @@ func compileStatement(stmt *PolicyStatement) (*CompiledStatement, error) {
 
 // compilePattern compiles a wildcard pattern to regex
 func compilePattern(pattern string) (*regexp.Regexp, error) {
-	return CompileWildcardPattern(pattern)
+	return wildcard.CompileWildcardPattern(pattern)
 }
 
 // normalizeToStringSlice converts various types to string slice - kept for backward compatibility
@@ -293,6 +473,8 @@ func normalizeToStringSliceWithError(value interface{}) ([]string, error) {
 		return result, nil
 	case StringOrStringSlice:
 		return v.Strings(), nil
+	case *StringOrStringSlice:
+		return v.Strings(), nil
 	default:
 		return nil, fmt.Errorf("unexpected type for policy value: %T", v)
 	}
@@ -313,55 +495,33 @@ func IsObjectResource(resource string) bool {
 	return strings.Contains(resource, "/")
 }
 
-// S3Actions contains common S3 actions
-var S3Actions = map[string]string{
-	"GetObject":                        "s3:GetObject",
-	"PutObject":                        "s3:PutObject",
-	"DeleteObject":                     "s3:DeleteObject",
-	"GetObjectVersion":                 "s3:GetObjectVersion",
-	"DeleteObjectVersion":              "s3:DeleteObjectVersion",
-	"ListBucket":                       "s3:ListBucket",
-	"ListBucketVersions":               "s3:ListBucketVersions",
-	"GetBucketLocation":                "s3:GetBucketLocation",
-	"GetBucketVersioning":              "s3:GetBucketVersioning",
-	"PutBucketVersioning":              "s3:PutBucketVersioning",
-	"GetBucketAcl":                     "s3:GetBucketAcl",
-	"PutBucketAcl":                     "s3:PutBucketAcl",
-	"GetObjectAcl":                     "s3:GetObjectAcl",
-	"PutObjectAcl":                     "s3:PutObjectAcl",
-	"GetBucketPolicy":                  "s3:GetBucketPolicy",
-	"PutBucketPolicy":                  "s3:PutBucketPolicy",
-	"DeleteBucketPolicy":               "s3:DeleteBucketPolicy",
-	"GetBucketCors":                    "s3:GetBucketCors",
-	"PutBucketCors":                    "s3:PutBucketCors",
-	"DeleteBucketCors":                 "s3:DeleteBucketCors",
-	"GetBucketNotification":            "s3:GetBucketNotification",
-	"PutBucketNotification":            "s3:PutBucketNotification",
-	"GetBucketTagging":                 "s3:GetBucketTagging",
-	"PutBucketTagging":                 "s3:PutBucketTagging",
-	"DeleteBucketTagging":              "s3:DeleteBucketTagging",
-	"GetObjectTagging":                 "s3:GetObjectTagging",
-	"PutObjectTagging":                 "s3:PutObjectTagging",
-	"DeleteObjectTagging":              "s3:DeleteObjectTagging",
-	"ListMultipartUploads":             "s3:ListMultipartUploads",
-	"AbortMultipartUpload":             "s3:AbortMultipartUpload",
-	"ListParts":                        "s3:ListParts",
-	"GetObjectRetention":               "s3:GetObjectRetention",
-	"PutObjectRetention":               "s3:PutObjectRetention",
-	"GetObjectLegalHold":               "s3:GetObjectLegalHold",
-	"PutObjectLegalHold":               "s3:PutObjectLegalHold",
-	"GetBucketObjectLockConfiguration": "s3:GetBucketObjectLockConfiguration",
-	"PutBucketObjectLockConfiguration": "s3:PutBucketObjectLockConfiguration",
-	"BypassGovernanceRetention":        "s3:BypassGovernanceRetention",
-}
-
-// MatchesAction checks if an action matches any of the compiled action matchers
+// MatchesAction checks if an action matches any of the compiled action matchers.
+// It also implicitly grants multipart upload actions if s3:PutObject is allowed,
+// since multipart upload is an implementation detail of putting objects.
 func (cs *CompiledStatement) MatchesAction(action string) bool {
+	var matchedAction, hasPutObjectPermission bool
+
+	// Scan all matchers to check for both direct action match and s3:PutObject grant
 	for _, matcher := range cs.ActionMatchers {
 		if matcher.Match(action) {
-			return true
+			matchedAction = true
+		}
+		if !hasPutObjectPermission && matcher.Match("s3:PutObject") {
+			hasPutObjectPermission = true
 		}
 	}
+
+	// Return true if action matched directly or if multipart action with PutObject permission
+	if matchedAction {
+		return true
+	}
+
+	// Multipart upload operations are part of s3:PutObject permission
+	// If s3:PutObject is allowed, implicitly allow multipart operations
+	if hasPutObjectPermission && multipartActionSet[action] {
+		return true
+	}
+
 	return false
 }
 
@@ -439,11 +599,11 @@ func (cp *CompiledPolicy) EvaluatePolicy(args *PolicyEvaluationArgs) (bool, Poli
 
 // FastMatchesWildcard uses cached WildcardMatcher for performance
 func FastMatchesWildcard(pattern, str string) bool {
-	matcher, err := GetCachedWildcardMatcher(pattern)
+	matcher, err := wildcard.GetCachedWildcardMatcher(pattern)
 	if err != nil {
 		glog.Errorf("Error getting cached WildcardMatcher for pattern %s: %v", pattern, err)
 		// Fall back to the original implementation
-		return MatchesWildcard(pattern, str)
+		return wildcard.MatchesWildcard(pattern, str)
 	}
 	return matcher.Match(str)
 }

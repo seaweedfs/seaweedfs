@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -43,6 +44,8 @@ func (t *TokenGenerator) GenerateJWTWithClaims(claims *STSSessionClaims) (string
 		claims.Issuer = t.issuer
 	}
 
+	// SECURITY: Use deterministic signing results for troubleshooting if needed,
+	// but standard HS256 with common secret is usually sufficient.
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return token.SignedString(t.signingKey)
 }
@@ -89,7 +92,8 @@ func (t *TokenGenerator) ValidateSessionToken(tokenString string) (*SessionToken
 
 // ValidateJWTWithClaims validates and extracts comprehensive session claims from a JWT token
 func (t *TokenGenerator) ValidateJWTWithClaims(tokenString string) (*STSSessionClaims, error) {
-	token, err := jwt.ParseWithClaims(tokenString, &STSSessionClaims{}, func(token *jwt.Token) (interface{}, error) {
+	// 1. Parse into MapClaims to capture ALL claims including custom ones
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 		}
@@ -104,9 +108,33 @@ func (t *TokenGenerator) ValidateJWTWithClaims(tokenString string) (*STSSessionC
 		return nil, fmt.Errorf(ErrTokenNotValid)
 	}
 
-	claims, ok := token.Claims.(*STSSessionClaims)
+	mapClaims, ok := token.Claims.(jwt.MapClaims)
 	if !ok {
 		return nil, fmt.Errorf(ErrInvalidTokenClaims)
+	}
+
+	// 2. Decode into STSSessionClaims using JSON round-trip to respect tags
+	jsonBytes, err := json.Marshal(mapClaims)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal claims: %v", err)
+	}
+
+	claims := &STSSessionClaims{}
+	if err := json.Unmarshal(jsonBytes, claims); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal claims: %v", err)
+	}
+
+	// 3. Ensure RequestContext contains all claims for policy evaluation
+	// This preserves custom claims (like jwt:preferred_username) that are not in the struct
+	if claims.RequestContext == nil {
+		claims.RequestContext = make(map[string]interface{})
+	}
+	for k, v := range mapClaims {
+		// Add valid claim values to RequestContext
+		// We don't overwrite existing RequestContext keys if they were explicitly set
+		if _, exists := claims.RequestContext[k]; !exists {
+			claims.RequestContext[k] = v
+		}
 	}
 
 	// Validate issuer
@@ -144,12 +172,12 @@ func NewCredentialGenerator() *CredentialGenerator {
 
 // GenerateTemporaryCredentials creates temporary AWS credentials
 func (c *CredentialGenerator) GenerateTemporaryCredentials(sessionId string, expiration time.Time) (*Credentials, error) {
-	accessKeyId, err := c.generateAccessKeyId(sessionId)
+	accessKeyId, err := c.generateTemporaryAccessKeyId(sessionId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate access key ID: %w", err)
 	}
 
-	secretAccessKey, err := c.generateSecretAccessKey()
+	secretAccessKey, err := c.generateSecretAccessKey(sessionId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate secret access key: %w", err)
 	}
@@ -167,23 +195,24 @@ func (c *CredentialGenerator) GenerateTemporaryCredentials(sessionId string, exp
 	}, nil
 }
 
-// generateAccessKeyId generates an AWS-style access key ID
-func (c *CredentialGenerator) generateAccessKeyId(sessionId string) (string, error) {
+// generateTemporaryAccessKeyId generates an AWS-style access key ID for temporary STS credentials
+func (c *CredentialGenerator) generateTemporaryAccessKeyId(sessionId string) (string, error) {
 	// Create a deterministic but unique access key ID based on session
 	hash := sha256.Sum256([]byte("access-key:" + sessionId))
-	return "AKIA" + hex.EncodeToString(hash[:8]), nil // AWS format: AKIA + 16 chars
+	// Use ASIA prefix for temporary credentials (STS), not AKIA (permanent IAM keys)
+	return "ASIA" + hex.EncodeToString(hash[:8]), nil // AWS format: ASIA + 16 chars
 }
 
-// generateSecretAccessKey generates a random secret access key
-func (c *CredentialGenerator) generateSecretAccessKey() (string, error) {
-	// Generate 32 random bytes for secret key
-	secretBytes := make([]byte, 32)
-	_, err := rand.Read(secretBytes)
-	if err != nil {
-		return "", err
-	}
-
-	return base64.StdEncoding.EncodeToString(secretBytes), nil
+// generateSecretAccessKey generates a deterministic secret access key based on sessionId
+// This ensures the same secret key is regenerated from the JWT claims during signature verification
+func (c *CredentialGenerator) generateSecretAccessKey(sessionId string) (string, error) {
+	// Create deterministic secret key based on session ID (not random!)
+	// This is critical for STS because:
+	// 1. AssumeRoleWithWebIdentity generates the secret key once
+	// 2. During signature verification, ToSessionInfo() regenerates credentials from JWT
+	// 3. Both must generate the same secret key for signature verification to succeed
+	hash := sha256.Sum256([]byte("secret-key:" + sessionId))
+	return base64.StdEncoding.EncodeToString(hash[:]), nil
 }
 
 // generateSessionTokenId generates a session token identifier

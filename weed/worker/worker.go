@@ -172,6 +172,13 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 	// Use the global unified registry that already has all tasks registered
 	registry := tasks.GetGlobalTaskRegistry()
 
+	// Ensure the base working directory exists
+	if config.BaseWorkingDir != "" {
+		if err := os.MkdirAll(config.BaseWorkingDir, 0755); err != nil {
+			return nil, fmt.Errorf("failed to create base working directory %s: %v", config.BaseWorkingDir, err)
+		}
+	}
+
 	// Initialize task log handler
 	logDir := filepath.Join(config.BaseWorkingDir, "task_logs")
 	// Ensure the base task log directory exists to avoid errors when admin requests logs
@@ -195,7 +202,7 @@ func NewWorker(config *types.WorkerConfig) (*Worker, error) {
 
 func (w *Worker) managerLoop() {
 	w.state = &workerState{
-		startTime:    time.Now(),
+		running:      false,
 		stopChan:     make(chan struct{}),
 		currentTasks: make(map[string]*types.TaskInput),
 	}
@@ -428,6 +435,7 @@ func (w *Worker) Start() error {
 
 // Start starts the worker
 func (w *Worker) handleStart(cmd workerCommand) {
+	glog.Infof("Worker %s handleStart called", w.id)
 	if w.state.running {
 		cmd.resp <- fmt.Errorf("worker is already running")
 		return
@@ -676,6 +684,7 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 
 	// Task execution uses the new unified Task interface
 	glog.V(2).Infof("Executing task %s in working directory: %s", task.ID, taskWorkingDir)
+	taskInstance.SetWorkingDir(taskWorkingDir)
 
 	// If we have a file logger, adapt it so task WithFields logs are captured into file
 	if fileLogger != nil {
@@ -706,6 +715,9 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 	err = taskInstance.Execute(ctx, task.TypedParams)
 
 	// Report completion
+	if fileLogger != nil {
+		fileLogger.Sync()
+	}
 	if err != nil {
 		w.completeTask(task.ID, false, err.Error())
 		w.cmds <- workerCommand{
@@ -717,14 +729,15 @@ func (w *Worker) executeTask(task *types.TaskInput) {
 			fileLogger.Error("Task %s failed: %v", task.ID, err)
 		}
 	} else {
+		if fileLogger != nil {
+			fileLogger.Info("Task %s completed successfully", task.ID)
+			fileLogger.Sync()
+		}
 		w.completeTask(task.ID, true, "")
 		w.cmds <- workerCommand{
 			action: ActionIncTaskComplete,
 		}
 		glog.Infof("Worker %s completed task %s successfully", w.id, task.ID)
-		if fileLogger != nil {
-			fileLogger.Info("Task %s completed successfully", task.ID)
-		}
 	}
 }
 
@@ -794,7 +807,7 @@ func (w *Worker) requestTasks() {
 	}
 
 	if w.getAdmin() != nil {
-		glog.V(3).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
+		glog.V(4).Infof("REQUESTING TASK: Worker %s requesting task from admin server (current load: %d/%d, capabilities: %v)",
 			w.id, currentLoad, w.config.MaxConcurrent, w.config.Capabilities)
 
 		task, err := w.getAdmin().RequestTask(w.id, w.config.Capabilities)
@@ -810,7 +823,7 @@ func (w *Worker) requestTasks() {
 				glog.Errorf("TASK HANDLING FAILED: Worker %s failed to handle task %s: %v", w.id, task.ID, err)
 			}
 		} else {
-			glog.V(3).Infof("NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
+			glog.V(4).Infof("NO TASK AVAILABLE: Worker %s - admin server has no tasks available", w.id)
 		}
 	}
 }
@@ -818,24 +831,6 @@ func (w *Worker) requestTasks() {
 // GetTaskRegistry returns the task registry
 func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
 	return w.registry
-}
-
-// registerWorker registers the worker with the admin server
-func (w *Worker) registerWorker() {
-	workerInfo := &types.WorkerData{
-		ID:            w.id,
-		Capabilities:  w.config.Capabilities,
-		MaxConcurrent: w.config.MaxConcurrent,
-		Status:        "active",
-		CurrentLoad:   0,
-		LastHeartbeat: time.Now(),
-	}
-
-	if err := w.getAdmin().RegisterWorker(workerInfo); err != nil {
-		glog.Warningf("Failed to register worker (will retry on next heartbeat): %v", err)
-	} else {
-		glog.Infof("Worker %s registered successfully with admin server", w.id)
-	}
 }
 
 // connectionMonitorLoop monitors connection status
@@ -863,7 +858,7 @@ func (w *Worker) connectionMonitorLoop() {
 				lastConnectionStatus = currentConnectionStatus
 			} else {
 				if currentConnectionStatus {
-					glog.V(3).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
+					glog.V(4).Infof("CONNECTION OK: Worker %s connection status: connected", w.id)
 				} else {
 					glog.V(1).Infof("CONNECTION DOWN: Worker %s connection status: disconnected, reconnection in progress", w.id)
 				}
@@ -896,6 +891,10 @@ func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
 	}
 }
 
+func (w *Worker) GetAdmin() AdminClient {
+	return w.getAdmin()
+}
+
 // messageProcessingLoop processes incoming admin messages
 func (w *Worker) messageProcessingLoop() {
 	glog.Infof("MESSAGE LOOP STARTED: Worker %s message processing loop started", w.id)
@@ -917,10 +916,10 @@ func (w *Worker) messageProcessingLoop() {
 			return
 		case message := <-incomingChan:
 			if message != nil {
-				glog.V(3).Infof("MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
+				glog.V(4).Infof("MESSAGE PROCESSING: Worker %s processing incoming message", w.id)
 				w.processAdminMessage(message)
 			} else {
-				glog.V(3).Infof("NULL MESSAGE: Worker %s received nil message", w.id)
+				glog.V(4).Infof("NULL MESSAGE: Worker %s received nil message", w.id)
 			}
 		}
 	}
@@ -942,6 +941,10 @@ func (w *Worker) processAdminMessage(message *worker_pb.AdminMessage) {
 		w.handleTaskLogRequest(msg.TaskLogRequest)
 	case *worker_pb.AdminMessage_TaskAssignment:
 		taskAssign := msg.TaskAssignment
+		if taskAssign.TaskId == "" {
+			glog.V(4).Infof("Worker %s received empty task assignment, going to sleep", w.id)
+			return
+		}
 		glog.V(1).Infof("Worker %s received direct task assignment %s (type: %s, volume: %d)",
 			w.id, taskAssign.TaskId, taskAssign.TaskType, taskAssign.Params.VolumeId)
 

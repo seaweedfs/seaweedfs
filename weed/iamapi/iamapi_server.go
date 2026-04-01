@@ -12,6 +12,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -20,8 +21,10 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 type IamS3ApiConfig interface {
@@ -39,14 +42,17 @@ type IamS3ApiConfigure struct {
 
 type IamServerOption struct {
 	Masters        map[string]pb.ServerAddress
-	Filer          pb.ServerAddress
+	Filers         []pb.ServerAddress
 	Port           int
 	GrpcDialOption grpc.DialOption
 }
 
 type IamApiServer struct {
-	s3ApiConfig IamS3ApiConfig
-	iam         *s3api.IdentityAccessManagement
+	s3ApiConfig     IamS3ApiConfig
+	iam             *s3api.IdentityAccessManagement
+	shutdownContext context.Context
+	shutdownCancel  context.CancelFunc
+	masterClient    *wdclient.MasterClient
 }
 
 var s3ApiConfigure IamS3ApiConfig
@@ -56,25 +62,53 @@ func NewIamApiServer(router *mux.Router, option *IamServerOption) (iamApiServer 
 }
 
 func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, explicitStore string) (iamApiServer *IamApiServer, err error) {
+	if len(option.Filers) == 0 {
+		return nil, fmt.Errorf("at least one filer address is required")
+	}
+
+	masterClient := wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters))
+
+	// Create a cancellable context for the master client connection
+	// This allows graceful shutdown via Shutdown() method
+	shutdownCtx, shutdownCancel := context.WithCancel(context.Background())
+
+	// Start KeepConnectedToMaster for volume location lookups
+	// IAM config files are typically small and inline, but if they ever have chunks,
+	// ReadEntry→StreamContent needs masterClient for volume lookups
+	glog.V(0).Infof("IAM API starting master client connection for volume location lookups")
+	go masterClient.KeepConnectedToMaster(shutdownCtx)
+
 	configure := &IamS3ApiConfigure{
 		option:       option,
-		masterClient: wdclient.NewMasterClient(option.GrpcDialOption, "", "iam", "", "", "", *pb.NewServiceDiscoveryFromMap(option.Masters)),
+		masterClient: masterClient,
 	}
 
 	s3ApiConfigure = configure
 
 	s3Option := s3api.S3ApiServerOption{
-		Filer:          option.Filer,
+		Filers:         option.Filers,
 		GrpcDialOption: option.GrpcDialOption,
 	}
 
-	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, explicitStore)
+	// Initialize FilerClient for IAM - explicit filers only (no discovery as FilerGroup unspecified)
+	filerClient := wdclient.NewFilerClient(option.Filers, option.GrpcDialOption, "")
+	iam := s3api.NewIdentityAccessManagementWithStore(&s3Option, filerClient, explicitStore)
 	configure.credentialManager = iam.GetCredentialManager()
 
 	iamApiServer = &IamApiServer{
-		s3ApiConfig: s3ApiConfigure,
-		iam:         iam,
+		s3ApiConfig:     s3ApiConfigure,
+		iam:             iam,
+		shutdownContext: shutdownCtx,
+		shutdownCancel:  shutdownCancel,
+		masterClient:    masterClient,
 	}
+
+	// Keep attempting to load configuration from filer now that we have a client
+	go func() {
+		if err := iam.LoadS3ApiConfigurationFromCredentialManager(); err != nil {
+			glog.Warningf("Failed to load IAM config from credential manager after client update: %v", err)
+		}
+	}()
 
 	iamApiServer.registerRouter(router)
 
@@ -84,6 +118,7 @@ func NewIamApiServerWithStore(router *mux.Router, option *IamServerOption, expli
 func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	// API Router
 	apiRouter := router.PathPrefix("/").Subrouter()
+	apiRouter.Use(request_id.Middleware)
 	// ListBuckets
 
 	// apiRouter.Methods("GET").Path("/").HandlerFunc(track(s3a.iam.Auth(s3a.ListBucketsHandler, ACTION_ADMIN), "LIST"))
@@ -91,6 +126,23 @@ func (iama *IamApiServer) registerRouter(router *mux.Router) {
 	//
 	// NotFound
 	apiRouter.NotFoundHandler = http.HandlerFunc(s3err.NotFoundHandler)
+}
+
+// Shutdown gracefully stops the IAM API server and releases resources.
+// It cancels the master client connection goroutine and closes gRPC connections.
+// This method is safe to call multiple times.
+//
+// Note: This method is called via defer in weed/command/iam.go for best-effort cleanup.
+// For proper graceful shutdown on SIGTERM/SIGINT, signal handling should be added to
+// the command layer to call this method before process exit.
+func (iama *IamApiServer) Shutdown() {
+	if iama.shutdownCancel != nil {
+		glog.V(0).Infof("IAM API server shutting down, stopping master client connection")
+		iama.shutdownCancel()
+	}
+	if iama.iam != nil {
+		iama.iam.Shutdown()
+	}
 }
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
@@ -106,7 +158,8 @@ func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromCredentialManager(s3cfg 
 	if err != nil {
 		return fmt.Errorf("failed to load configuration from credential manager: %w", err)
 	}
-	*s3cfg = *config
+	// Use proto.Merge to avoid copying the sync.Mutex embedded in the message
+	proto.Merge(s3cfg, config)
 	return nil
 }
 
@@ -116,7 +169,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToCredentialManager(s3cfg *i
 
 func (iama *IamS3ApiConfigure) GetS3ApiConfigurationFromFiler(s3cfg *iam_pb.S3ApiConfiguration) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithGrpcFilerClient(false, 0, iama.option.Filer, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamIdentityFile, &buf); err != nil {
 			return err
 		}
@@ -138,7 +191,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 	if err := filer.ProtoToText(&buf, s3cfg); err != nil {
 		return fmt.Errorf("ProtoToText: %s", err)
 	}
-	return pb.WithGrpcFilerClient(false, 0, iama.option.Filer, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		err = util.Retry("saveIamIdentity", func() error {
 			return filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamIdentityFile, buf.Bytes())
 		})
@@ -151,7 +204,7 @@ func (iama *IamS3ApiConfigure) PutS3ApiConfigurationToFiler(s3cfg *iam_pb.S3ApiC
 
 func (iama *IamS3ApiConfigure) GetPolicies(policies *Policies) (err error) {
 	var buf bytes.Buffer
-	err = pb.WithGrpcFilerClient(false, 0, iama.option.Filer, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	err = pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if err = filer.ReadEntry(iama.masterClient, client, filer.IamConfigDirectory, filer.IamPoliciesFile, &buf); err != nil {
 			return err
 		}
@@ -175,7 +228,7 @@ func (iama *IamS3ApiConfigure) PutPolicies(policies *Policies) (err error) {
 	if b, err = json.Marshal(policies); err != nil {
 		return err
 	}
-	return pb.WithGrpcFilerClient(false, 0, iama.option.Filer, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+	return pb.WithOneOfGrpcFilerClients(false, iama.option.Filers, iama.option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		if err := filer.SaveInsideFiler(client, filer.IamConfigDirectory, filer.IamPoliciesFile, b); err != nil {
 			return err
 		}

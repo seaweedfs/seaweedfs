@@ -11,9 +11,17 @@ import (
 )
 
 var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrUserAlreadyExists = errors.New("user already exists")
-	ErrAccessKeyNotFound = errors.New("access key not found")
+	ErrUserNotFound           = errors.New("user not found")
+	ErrUserAlreadyExists      = errors.New("user already exists")
+	ErrAccessKeyNotFound      = errors.New("access key not found")
+	ErrServiceAccountNotFound = errors.New("service account not found")
+	ErrPolicyNotFound         = errors.New("policy not found")
+	ErrPolicyAlreadyAttached  = errors.New("policy already attached")
+	ErrPolicyNotAttached      = errors.New("policy not attached to user")
+	ErrGroupNotFound          = errors.New("group not found")
+	ErrGroupAlreadyExists     = errors.New("group already exists")
+	ErrGroupNotEmpty          = errors.New("group is not empty")
+	ErrUserNotInGroup         = errors.New("user is not a member of the group")
 )
 
 // CredentialStoreTypeName represents the type name of a credential store
@@ -24,6 +32,7 @@ const (
 	StoreTypeMemory   CredentialStoreTypeName = "memory"
 	StoreTypeFilerEtc CredentialStoreTypeName = "filer_etc"
 	StoreTypePostgres CredentialStoreTypeName = "postgres"
+	StoreTypeGrpc     CredentialStoreTypeName = "grpc"
 )
 
 // CredentialStore defines the interface for user credential storage and retrieval
@@ -63,6 +72,38 @@ type CredentialStore interface {
 
 	// DeleteAccessKey removes an access key for a user
 	DeleteAccessKey(ctx context.Context, username string, accessKey string) error
+
+	// Policy Management
+	GetPolicies(ctx context.Context) (map[string]policy_engine.PolicyDocument, error)
+	// ListPolicyNames returns the names of all policies
+	ListPolicyNames(ctx context.Context) ([]string, error)
+	// PutPolicy creates or replaces a policy document.
+	PutPolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error
+	DeletePolicy(ctx context.Context, name string) error
+	GetPolicy(ctx context.Context, name string) (*policy_engine.PolicyDocument, error)
+
+	// Service Account Management
+	CreateServiceAccount(ctx context.Context, sa *iam_pb.ServiceAccount) error
+	UpdateServiceAccount(ctx context.Context, id string, sa *iam_pb.ServiceAccount) error
+	DeleteServiceAccount(ctx context.Context, id string) error
+	GetServiceAccount(ctx context.Context, id string) (*iam_pb.ServiceAccount, error)
+	ListServiceAccounts(ctx context.Context) ([]*iam_pb.ServiceAccount, error)
+	GetServiceAccountByAccessKey(ctx context.Context, accessKey string) (*iam_pb.ServiceAccount, error)
+
+	// User Policy Attachment Management
+	// AttachUserPolicy attaches a managed policy to a user by policy name
+	AttachUserPolicy(ctx context.Context, username string, policyName string) error
+	// DetachUserPolicy detaches a managed policy from a user
+	DetachUserPolicy(ctx context.Context, username string, policyName string) error
+	// ListAttachedUserPolicies returns the list of policy names attached to a user
+	ListAttachedUserPolicies(ctx context.Context, username string) ([]string, error)
+
+	// Group Management
+	CreateGroup(ctx context.Context, group *iam_pb.Group) error
+	GetGroup(ctx context.Context, groupName string) (*iam_pb.Group, error)
+	DeleteGroup(ctx context.Context, groupName string) error
+	ListGroups(ctx context.Context) ([]string, error)
+	UpdateGroup(ctx context.Context, group *iam_pb.Group) error
 
 	// Shutdown performs cleanup when the store is being shut down
 	Shutdown()

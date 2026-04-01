@@ -50,7 +50,7 @@ func (t Topic) Dir() string {
 }
 
 func (t Topic) ReadConfFile(client filer_pb.SeaweedFilerClient) (*mq_pb.ConfigureTopicResponse, error) {
-	data, err := filer.ReadInsideFiler(client, t.Dir(), filer.TopicConfFile)
+	data, err := filer.ReadInsideFiler(context.Background(), client, t.Dir(), filer.TopicConfFile)
 	if errors.Is(err, filer_pb.ErrNotFound) {
 		return nil, err
 	}

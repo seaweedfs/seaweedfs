@@ -1,9 +1,6 @@
 package mount
 
-import (
-	"github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/seaweedfs/seaweedfs/weed/glog"
-)
+import "github.com/seaweedfs/go-fuse/v2/fuse"
 
 /**
 	 * Open a file
@@ -66,15 +63,7 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	fileHandle, status = wfs.AcquireHandle(in.NodeId, in.Flags, in.Uid, in.Gid)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
-		out.OpenFlags = in.Flags
-		if wfs.option.IsMacOs {
-			// remove the direct_io flag, as it is not well-supported on macOS
-			// https://code.google.com/archive/p/macfuse/wikis/OPTIONS.wiki recommended to avoid the direct_io flag
-			if in.Flags&fuse.FOPEN_DIRECT_IO != 0 {
-				glog.V(4).Infof("macfuse direct_io mode %v => false\n", in.Flags&fuse.FOPEN_DIRECT_IO != 0)
-				out.OpenFlags &^= fuse.FOPEN_DIRECT_IO
-			}
-		}
+		out.OpenFlags = 0
 		// TODO https://github.com/libfuse/libfuse/blob/master/include/fuse_common.h#L64
 	}
 	return status
@@ -106,5 +95,8 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
  * @param fi file information
  */
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
+	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
+		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)
+	}
 	wfs.ReleaseHandle(FileHandleId(in.Fh))
 }

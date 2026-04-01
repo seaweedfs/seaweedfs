@@ -3,7 +3,6 @@ package source
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -17,10 +16,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
-
-type ReplicationSource interface {
-	ReadPart(part string) io.ReadCloser
-}
 
 type FilerSource struct {
 	grpcAddress    string
@@ -104,10 +99,16 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 	return
 }
 
-func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Header, resp *http.Response, err error) {
+func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, header http.Header, resp *http.Response, err error) {
 
 	if fs.proxyByFiler {
-		return util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "")
+		filename, header, resp, err = util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
+		if err != nil {
+			glog.V(0).Infof("read part %s via filer proxy %s offset %d: %v", fileId, fs.address, offset, err)
+		} else {
+			glog.V(4).Infof("read part %s via filer proxy %s offset %d content-length:%s", fileId, fs.address, offset, header.Get("Content-Length"))
+		}
+		return
 	}
 
 	fileUrls, err := fs.LookupFileId(context.Background(), fileId)
@@ -116,10 +117,11 @@ func (fs *FilerSource) ReadPart(fileId string) (filename string, header http.Hea
 	}
 
 	for _, fileUrl := range fileUrls {
-		filename, header, resp, err = util_http.DownloadFile(fileUrl, "")
+		filename, header, resp, err = util_http.DownloadFile(fileUrl, "", offset)
 		if err != nil {
-			glog.V(1).Infof("fail to read from %s: %v", fileUrl, err)
+			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
 		} else {
+			glog.V(4).Infof("read part %s from %s offset %d content-length:%s", fileId, fileUrl, offset, header.Get("Content-Length"))
 			break
 		}
 	}

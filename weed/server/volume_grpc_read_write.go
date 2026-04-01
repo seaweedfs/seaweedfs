@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -54,7 +55,12 @@ func (vs *VolumeServer) ReadNeedleMeta(ctx context.Context, req *volume_server_p
 }
 
 func (vs *VolumeServer) WriteNeedleBlob(ctx context.Context, req *volume_server_pb.WriteNeedleBlobRequest) (resp *volume_server_pb.WriteNeedleBlobResponse, err error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
+
 	resp = &volume_server_pb.WriteNeedleBlobResponse{}
+
 	v := vs.store.GetVolume(needle.VolumeId(req.VolumeId))
 	if v == nil {
 		return nil, fmt.Errorf("not found volume id %d", req.VolumeId)

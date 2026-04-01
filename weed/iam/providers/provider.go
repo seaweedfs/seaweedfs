@@ -47,6 +47,10 @@ type ExternalIdentity struct {
 
 	// Provider is the name of the identity provider
 	Provider string `json:"provider"`
+
+	// TokenExpiration is the expiration time of the source identity token
+	// This is used to limit session duration to not exceed the token's exp claim
+	TokenExpiration *time.Time `json:"tokenExpiration,omitempty"`
 }
 
 // Validate validates the external identity structure

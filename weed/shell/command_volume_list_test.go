@@ -1,8 +1,6 @@
 package shell
 
 import (
-	_ "embed"
-
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/stretchr/testify/assert"
@@ -32,6 +30,7 @@ func TestParsing(t *testing.T) {
 
 }
 
+// TODO: actually parsing all fields would be nice...
 func parseOutput(output string) *master_pb.TopologyInfo {
 	lines := strings.Split(output, "\n")
 	var topo *master_pb.TopologyInfo
@@ -45,7 +44,9 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 		switch parts[0] {
 		case "Topology":
 			if topo == nil {
-				topo = &master_pb.TopologyInfo{}
+				topo = &master_pb.TopologyInfo{
+					Id: parts[1],
+				}
 			}
 		case "DataCenter":
 			if dc == nil {
@@ -107,15 +108,17 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 				if strings.HasPrefix(part, "collection:") {
 					ecShard.Collection = part[len("collection:"):]
 				}
+				// TODO: we need to parse EC shard sizes as well
 				if strings.HasPrefix(part, "shards:") {
 					shards := part[len("shards:["):]
 					shards = strings.TrimRight(shards, "]")
-					shardBits := erasure_coding.ShardBits(0)
+					shardsInfo := erasure_coding.NewShardsInfo()
 					for _, shardId := range strings.Split(shards, ",") {
 						sid, _ := strconv.Atoi(shardId)
-						shardBits = shardBits.AddShardId(erasure_coding.ShardId(sid))
+						shardsInfo.Set(erasure_coding.NewShardInfo(erasure_coding.ShardId(sid), 0))
 					}
-					ecShard.EcIndexBits = uint32(shardBits)
+					ecShard.EcIndexBits = shardsInfo.Bitmap()
+					ecShard.ShardSizes = shardsInfo.SizesInt64()
 				}
 			}
 			disk.EcShardInfos = append(disk.EcShardInfos, ecShard)
@@ -124,12 +127,3 @@ func parseOutput(output string) *master_pb.TopologyInfo {
 
 	return topo
 }
-
-//go:embed volume.list.txt
-var topoData string
-
-//go:embed volume.list2.txt
-var topoData2 string
-
-//go:embed volume.ecshards.txt
-var topoDataEc string

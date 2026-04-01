@@ -1,10 +1,11 @@
 package redis_lua
 
 import (
+	"time"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/util"
-	"time"
 )
 
 func init() {
@@ -26,10 +27,11 @@ func (store *RedisLuaSentinelStore) Initialize(configuration util.Configuration,
 		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 	)
 }
 
-func (store *RedisLuaSentinelStore) initialize(addresses []string, masterName string, username string, password string, database int) (err error) {
+func (store *RedisLuaSentinelStore) initialize(addresses []string, masterName string, username string, password string, database int, keyPrefix string) (err error) {
 	store.Client = redis.NewFailoverClient(&redis.FailoverOptions{
 		MasterName:      masterName,
 		SentinelAddrs:   addresses,
@@ -41,5 +43,6 @@ func (store *RedisLuaSentinelStore) initialize(addresses []string, masterName st
 		ReadTimeout:     time.Second * 30,
 		WriteTimeout:    time.Second * 5,
 	})
+	store.keyPrefix = keyPrefix
 	return
 }

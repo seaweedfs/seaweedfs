@@ -68,6 +68,7 @@ const (
 	ErrInvalidMaxDeleteObjects
 	ErrInvalidPartNumberMarker
 	ErrInvalidPart
+	ErrInvalidPartOrder
 	ErrInvalidRange
 	ErrInternalError
 	ErrInvalidCopyDest
@@ -95,6 +96,7 @@ const (
 	ErrInvalidQueryParams
 	ErrInvalidQuerySignatureAlgo
 	ErrExpiredPresignRequest
+	ErrExpiredToken
 	ErrMalformedExpires
 	ErrNegativeExpires
 	ErrMaximumExpires
@@ -115,6 +117,7 @@ const (
 
 	ErrTooManyRequest
 	ErrRequestBytesExceed
+	ErrServiceUnavailable
 
 	OwnershipControlsNotFoundError
 	ErrNoSuchTagSet
@@ -140,6 +143,12 @@ const (
 
 	// Bucket encryption errors
 	ErrNoSuchBucketEncryptionConfiguration
+	ErrInvalidStorageClass
+
+	ErrInvalidAttributeName
+
+	// Object key length errors
+	ErrKeyTooLongError
 )
 
 // Error message constants for checksum validation
@@ -283,6 +292,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "One or more of the specified parts could not be found.  The part may not have been uploaded, or the specified entity tag may not match the part's entity tag.",
 		HTTPStatusCode: http.StatusBadRequest,
 	},
+	ErrInvalidPartOrder: {
+		Code:           "InvalidPartOrder",
+		Description:    "The list of parts was not in ascending order. The parts list must be specified in order by part number.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 
 	ErrInvalidCopyDest: {
 		Code:           "InvalidRequest",
@@ -405,6 +419,11 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Description:    "Request has expired",
 		HTTPStatusCode: http.StatusForbidden,
 	},
+	ErrExpiredToken: {
+		Code:           "ExpiredToken",
+		Description:    "The provided token has expired.",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
 	ErrMalformedExpires: {
 		Code:           "AuthorizationQueryParametersError",
 		Description:    "X-Amz-Expires should be a number",
@@ -498,12 +517,17 @@ var errorCodeResponse = map[ErrorCode]APIError{
 	ErrTooManyRequest: {
 		Code:           "ErrTooManyRequest",
 		Description:    "Too many simultaneous request count",
-		HTTPStatusCode: http.StatusTooManyRequests,
+		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 	ErrRequestBytesExceed: {
 		Code:           "ErrRequestBytesExceed",
 		Description:    "Simultaneous request bytes exceed limitations",
-		HTTPStatusCode: http.StatusTooManyRequests,
+		HTTPStatusCode: http.StatusServiceUnavailable,
+	},
+	ErrServiceUnavailable: {
+		Code:           "ServiceUnavailable",
+		Description:    "Service Unavailable",
+		HTTPStatusCode: http.StatusServiceUnavailable,
 	},
 
 	OwnershipControlsNotFoundError: {
@@ -581,6 +605,23 @@ var errorCodeResponse = map[ErrorCode]APIError{
 		Code:           "ServerSideEncryptionConfigurationNotFoundError",
 		Description:    "The server side encryption configuration was not found.",
 		HTTPStatusCode: http.StatusNotFound,
+	},
+	ErrInvalidStorageClass: {
+		Code:           "InvalidStorageClass",
+		Description:    "The storage class you specified is not valid",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrInvalidAttributeName: {
+		Code:           "InvalidArgument",
+		Description:    "Invalid attribute name specified",
+		HTTPStatusCode: http.StatusBadRequest,
+	},
+
+	ErrKeyTooLongError: {
+		Code:           "KeyTooLongError",
+		Description:    "Your key is too long.",
+		HTTPStatusCode: http.StatusBadRequest,
 	},
 }
 

@@ -50,6 +50,82 @@ setup_keycloak() {
     echo -e "${GREEN}[OK] Keycloak setup completed${NC}"
 }
 
+# Set up OpenLDAP for LDAP-based STS testing
+setup_ldap() {
+    echo -e "\n${BLUE}1a. Setting up OpenLDAP for STS LDAP testing...${NC}"
+    
+    # Check if LDAP container is already running
+    if docker ps --format '{{.Names}}' | grep -q '^openldap-iam-test$'; then
+        echo -e "${YELLOW}OpenLDAP container already running${NC}"
+        echo -e "${GREEN}[OK] LDAP setup completed (using existing container)${NC}"
+        return 0
+    fi
+    
+    # Remove any stopped container with the same name
+    docker rm -f openldap-iam-test 2>/dev/null || true
+    
+    # Start OpenLDAP container
+    echo -e "${YELLOW}🔧 Starting OpenLDAP container...${NC}"
+    docker run -d \
+        --name openldap-iam-test \
+        -p 389:389 \
+        -p 636:636 \
+        -e LDAP_ADMIN_PASSWORD=adminpassword \
+        -e LDAP_ORGANISATION="SeaweedFS" \
+        -e LDAP_DOMAIN="seaweedfs.test" \
+        osixia/openldap:latest || {
+            echo -e "${YELLOW}⚠️  OpenLDAP setup failed (optional for basic STS tests)${NC}"
+            return 0  # Don't fail - LDAP is optional
+        }
+    
+    # Wait for LDAP to be ready
+    echo -e "${YELLOW}⏳ Waiting for OpenLDAP to be ready...${NC}"
+    for i in $(seq 1 30); do
+        if docker exec openldap-iam-test ldapsearch -x -H ldap://localhost -b "dc=seaweedfs,dc=test" -D "cn=admin,dc=seaweedfs,dc=test" -w adminpassword "(objectClass=*)" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    
+    # Add test users for LDAP STS testing
+    echo -e "${YELLOW}📝 Adding test users for LDAP STS...${NC}"
+    docker exec -i openldap-iam-test ldapadd -x -D "cn=admin,dc=seaweedfs,dc=test" -w adminpassword <<EOF 2>/dev/null || true
+dn: ou=users,dc=seaweedfs,dc=test
+objectClass: organizationalUnit
+ou: users
+
+dn: cn=testuser,ou=users,dc=seaweedfs,dc=test
+objectClass: inetOrgPerson
+cn: testuser
+sn: Test User
+uid: testuser
+userPassword: testpass
+
+dn: cn=ldapadmin,ou=users,dc=seaweedfs,dc=test
+objectClass: inetOrgPerson
+cn: ldapadmin
+sn: LDAP Admin
+uid: ldapadmin
+userPassword: ldapadminpass
+EOF
+    
+    # Verify test users were created successfully
+    echo -e "${YELLOW}🔍 Verifying LDAP test users...${NC}"
+    if docker exec openldap-iam-test ldapsearch -x -D "cn=admin,dc=seaweedfs,dc=test" -w adminpassword -b "ou=users,dc=seaweedfs,dc=test" "(cn=testuser)" cn 2>/dev/null | grep -q "cn: testuser"; then
+        echo -e "${GREEN}[OK] Test user 'testuser' verified${NC}"
+    else
+        echo -e "${RED}[WARN] Could not verify test user 'testuser' - LDAP tests may fail${NC}"
+    fi
+    
+    # Set environment for LDAP tests
+    export LDAP_URL="ldap://localhost:389"
+    export LDAP_BASE_DN="dc=seaweedfs,dc=test"
+    export LDAP_BIND_DN="cn=admin,dc=seaweedfs,dc=test"
+    export LDAP_BIND_PASSWORD="adminpassword"
+    
+    echo -e "${GREEN}[OK] LDAP setup completed${NC}"
+}
+
 # Set up SeaweedFS test cluster
 setup_seaweedfs_cluster() {
     echo -e "\n${BLUE}2. Setting up SeaweedFS test cluster...${NC}"
@@ -153,6 +229,7 @@ display_summary() {
     echo -e "\n${BLUE}📊 Setup Summary${NC}"
     echo -e "${BLUE}=================${NC}"
     echo -e "Keycloak URL: ${KEYCLOAK_URL:-http://localhost:8080}"
+    echo -e "LDAP URL: ${LDAP_URL:-ldap://localhost:389}"
     echo -e "S3 Endpoint: ${S3_ENDPOINT:-http://localhost:8333}"
     echo -e "Test Timeout: ${TEST_TIMEOUT:-60m}"
     echo -e "IAM Config: ${SCRIPT_DIR}/iam_config.json"
@@ -161,6 +238,7 @@ display_summary() {
     echo -e "${YELLOW}💡 You can now run tests with: make run-all-tests${NC}"
     echo -e "${YELLOW}💡 Or run specific tests with: go test -v -timeout=60m -run TestName${NC}"
     echo -e "${YELLOW}💡 To stop Keycloak: docker stop keycloak-iam-test${NC}"
+    echo -e "${YELLOW}💡 To stop LDAP: docker stop openldap-iam-test${NC}"
 }
 
 # Main execution
@@ -176,6 +254,10 @@ main() {
         echo -e "${RED}[FAIL] Failed to set up Keycloak${NC}"
         exit 1
     fi
+    
+    # LDAP is optional but we try to set it up
+    setup_ldap
+    setup_steps+=("ldap")
     
     if setup_seaweedfs_cluster; then
         setup_steps+=("seaweedfs")

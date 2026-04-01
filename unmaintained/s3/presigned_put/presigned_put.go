@@ -4,13 +4,14 @@ import (
 	"crypto/md5"
 	"encoding/base64"
 	"fmt"
+	"net/http"
+	"strings"
+	"time"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
-	"net/http"
-	"strings"
-	"time"
 )
 
 // Downloads an item from an S3 Bucket in the region configured in the shared config

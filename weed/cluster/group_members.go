@@ -1,8 +1,9 @@
 package cluster
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 type GroupMembers struct {

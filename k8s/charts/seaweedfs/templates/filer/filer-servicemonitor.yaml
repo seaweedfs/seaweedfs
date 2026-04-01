@@ -1,10 +1,11 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.filer.enabled }}
 {{- if .Values.filer.metricsPort }}
-{{- if .Values.global.monitoring.enabled }}
+{{- if .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ template "seaweedfs.name" . }}-filer
+  name: {{ include "seaweedfs.fullname" . }}-filer
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -12,7 +13,7 @@ metadata:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
     app.kubernetes.io/instance: {{ .Release.Name }}
     app.kubernetes.io/component: filer
-    {{- with .Values.global.monitoring.additionalLabels }}
+    {{- with .Values.global.seaweedfs.monitoring.additionalLabels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 {{- if .Values.filer.annotations }}
@@ -27,6 +28,7 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: filer
 {{- end }}
 {{- end }}

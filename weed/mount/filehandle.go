@@ -4,6 +4,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -24,12 +25,18 @@ type FileHandle struct {
 	wfs             *WFS
 
 	// cache file has been written to
-	dirtyMetadata bool
-	dirtyPages    *PageWriter
-	reader        *filer.ChunkReadAt
-	contentType   string
+	dirtyMetadata     bool
+	dirtyPages        *PageWriter
+	reader            *filer.ChunkReadAt
+	contentType       string
+	asyncFlushPending bool   // set in writebackCache mode to defer flush to Release
+	asyncFlushUid     uint32 // saved uid for deferred metadata flush
+	asyncFlushGid     uint32 // saved gid for deferred metadata flush
+	savedDir          string // last known parent path if inode-to-path state is forgotten
+	savedName         string // last known file name if inode-to-path state is forgotten
 
 	isDeleted bool
+	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
 
 	// RDMA chunk offset cache for performance optimization
 	chunkOffsetCache []int64
@@ -68,8 +75,20 @@ func newFileHandle(wfs *WFS, handleId FileHandleId, inode uint64, entry *filer_p
 }
 
 func (fh *FileHandle) FullPath() util.FullPath {
-	fp, _ := fh.wfs.inodeToPath.GetPath(fh.inode)
-	return fp
+	if fp, status := fh.wfs.inodeToPath.GetPath(fh.inode); status == fuse.OK {
+		return fp
+	}
+	if fh.savedName != "" {
+		return util.FullPath(fh.savedDir).Child(fh.savedName)
+	}
+	return ""
+}
+
+func (fh *FileHandle) RememberPath(fullPath util.FullPath) {
+	if fullPath == "" {
+		return
+	}
+	fh.savedDir, fh.savedName = fullPath.DirAndName()
 }
 
 func (fh *FileHandle) GetEntry() *LockedEntry {
@@ -81,7 +100,7 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 		fileSize := filer.FileSize(entry)
 		entry.Attributes.FileSize = fileSize
 		var resolveManifestErr error
-		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks)
+		fh.entryChunkGroup, resolveManifestErr = filer.NewChunkGroup(fh.wfs.LookupFn(), fh.wfs.chunkCache, entry.Chunks, fh.wfs.option.ConcurrentReaders)
 		if resolveManifestErr != nil {
 			glog.Warningf("failed to resolve manifest chunks in %+v", entry)
 		}
@@ -92,6 +111,13 @@ func (fh *FileHandle) SetEntry(entry *filer_pb.Entry) {
 
 	// Invalidate chunk offset cache since chunks may have changed
 	fh.invalidateChunkCache()
+}
+
+func (fh *FileHandle) ResetDirtyPages() {
+	fh.dirtyPages.Destroy()
+	fh.dirtyPages = newPageWriter(fh, fh.wfs.option.ChunkSizeLimit)
+	fh.dirtyMetadata = false
+	fh.contentType = ""
 }
 
 func (fh *FileHandle) UpdateEntry(fn func(entry *filer_pb.Entry)) *filer_pb.Entry {

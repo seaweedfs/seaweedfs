@@ -12,20 +12,20 @@ COVERAGE_FILE := coverage.out
 # Check if weed binary exists
 check-binary:
 	@if [ ! -f "$(WEED_BINARY)" ]; then \
-		echo "❌ SeaweedFS binary not found at $(WEED_BINARY)"; \
+		echo "ERROR SeaweedFS binary not found at $(WEED_BINARY)"; \
 		echo "   Please run 'make' in the root directory first"; \
 		exit 1; \
 	fi
-	@echo "✅ SeaweedFS binary found"
+	@echo "OK SeaweedFS binary found"
 
 # Check FUSE installation
 check-fuse:
 	@if command -v fusermount >/dev/null 2>&1; then \
-		echo "✅ FUSE is installed (Linux)"; \
+		echo "OK FUSE is installed (Linux)"; \
 	elif command -v umount >/dev/null 2>&1 && [ "$$(uname)" = "Darwin" ]; then \
-		echo "✅ FUSE is available (macOS)"; \
+		echo "OK FUSE is available (macOS)"; \
 	else \
-		echo "❌ FUSE not found. Please install:"; \
+			echo "ERROR FUSE not found. Please install:"; \
 		echo "   Ubuntu/Debian: sudo apt-get install fuse"; \
 		echo "   CentOS/RHEL:   sudo yum install fuse"; \
 		echo "   macOS:         brew install macfuse"; \
@@ -36,8 +36,8 @@ check-fuse:
 check-go:
 	@go version | grep -q "go1\.[2-9][0-9]" || \
 	go version | grep -q "go1\.2[1-9]" || \
-	(echo "❌ Go $(GO_VERSION)+ required. Current: $$(go version)" && exit 1)
-	@echo "✅ Go version check passed"
+	(echo "ERROR Go $(GO_VERSION)+ required. Current: $$(go version)" && exit 1)
+	@echo "OK Go version check passed"
 
 # Verify all prerequisites
 check-prereqs: check-go check-fuse
@@ -45,9 +45,9 @@ check-prereqs: check-go check-fuse
 
 # Build the SeaweedFS binary (if needed)
 build:
-	@echo "🔨 Building SeaweedFS..."
+	@echo "Building SeaweedFS..."
 	cd ../.. && make
-	@echo "✅ Build complete"
+	@echo "OK Build complete"
 
 # Initialize go module (if needed)
 init-module:

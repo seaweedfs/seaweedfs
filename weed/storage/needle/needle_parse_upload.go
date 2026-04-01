@@ -42,6 +42,7 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 			pu.PairMap[k] = v[0]
 		}
 	}
+	// glog.V(4).Infof("ParseUpload: r.URL=%s, Content-MD5 header=%s", r.URL.String(), r.Header.Get("Content-MD5"))
 
 	e = parseUpload(r, sizeLimit, pu)
 
@@ -83,11 +84,15 @@ func ParseUpload(r *http.Request, sizeLimit int64, bytesBuffer *bytes.Buffer) (p
 		}
 	}
 
-	// md5
-	h := md5.New()
-	h.Write(pu.UncompressedData)
-	pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
-	if expectedChecksum := r.Header.Get("Content-MD5"); expectedChecksum != "" {
+	// verify Content-MD5
+	expectedChecksum := r.Header.Get("Content-MD5")
+	if expectedChecksum == "" {
+		expectedChecksum = pu.ContentMd5
+	}
+	if expectedChecksum != "" {
+		h := md5.New()
+		h.Write(pu.UncompressedData)
+		pu.ContentMd5 = base64.StdEncoding.EncodeToString(h.Sum(nil))
 		if expectedChecksum != pu.ContentMd5 {
 			e = fmt.Errorf("Content-MD5 did not match md5 of file data expected [%s] received [%s] size %d", expectedChecksum, pu.ContentMd5, len(pu.UncompressedData))
 			return
@@ -128,7 +133,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 		pu.FileName = part.FileName()
 		if pu.FileName != "" {
-			pu.FileName = path.Base(pu.FileName)
+			pu.FileName = util.CleanWindowsPathBase(pu.FileName)
 		}
 
 		dataSize, e = pu.bytesBuffer.ReadFrom(io.LimitReader(part, sizeLimit+1))
@@ -143,6 +148,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		pu.Data = pu.bytesBuffer.Bytes()
 
 		contentType = part.Header.Get("Content-Type")
+		pu.ContentMd5 = part.Header.Get("Content-MD5")
 
 		// if the filename is empty string, do a search on the other multi-part items
 		for pu.FileName == "" {
@@ -169,8 +175,9 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 
 				// update
 				pu.Data = pu.bytesBuffer.Bytes()
-				pu.FileName = path.Base(fName)
+				pu.FileName = util.CleanWindowsPathBase(fName)
 				contentType = part.Header.Get("Content-Type")
+				pu.ContentMd5 = part2.Header.Get("Content-MD5")
 				part = part2
 				break
 			}
@@ -207,7 +214,7 @@ func parseUpload(r *http.Request, sizeLimit int64, pu *ParsedUpload) (e error) {
 		}
 
 		if pu.FileName != "" {
-			pu.FileName = path.Base(pu.FileName)
+			pu.FileName = util.CleanWindowsPathBase(pu.FileName)
 		} else {
 			pu.FileName = path.Base(r.URL.Path)
 		}

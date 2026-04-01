@@ -1,5 +1,4 @@
 //go:build tikv
-// +build tikv
 
 package tikv
 
@@ -20,6 +19,8 @@ import (
 	"github.com/tikv/client-go/v2/txnkv"
 )
 
+const defaultBatchCommitSize = 10000
+
 var (
 	_ filer.FilerStore = ((*TikvStore)(nil))
 )
@@ -29,9 +30,10 @@ func init() {
 }
 
 type TikvStore struct {
-	client                 *txnkv.Client
-	deleteRangeConcurrency int
-	onePC                  bool
+	client          *txnkv.Client
+	onePC           bool
+	batchCommitSize int
+	keyPrefix       []byte
 }
 
 // Basic APIs
@@ -45,13 +47,16 @@ func (store *TikvStore) Initialize(config util.Configuration, prefix string) err
 	key := config.GetString(prefix + "key_path")
 	verify_cn := strings.Split(config.GetString(prefix+"verify_cn"), ",")
 	pdAddrs := strings.Split(config.GetString(prefix+"pdaddrs"), ",")
+	keyPrefix := config.GetString(prefix + "keyPrefix")
 
-	drc := config.GetInt(prefix + "deleterange_concurrency")
-	if drc <= 0 {
-		drc = 1
+	bdc := config.GetInt(prefix + "batchdelete_count")
+	if bdc <= 0 {
+		bdc = defaultBatchCommitSize
 	}
+
 	store.onePC = config.GetBool(prefix + "enable_1pc")
-	store.deleteRangeConcurrency = drc
+	store.batchCommitSize = bdc
+	store.keyPrefix = []byte(keyPrefix)
 	return store.initialize(ca, cert, key, verify_cn, pdAddrs)
 }
 
@@ -76,7 +81,7 @@ func (store *TikvStore) Shutdown() {
 // Entry APIs
 func (store *TikvStore) InsertEntry(ctx context.Context, entry *filer.Entry) error {
 	dir, name := entry.DirAndName()
-	key := generateKey(dir, name)
+	key := store.generateKey(dir, name)
 
 	value, err := entry.EncodeAttributesAndChunks()
 	if err != nil {
@@ -86,7 +91,7 @@ func (store *TikvStore) InsertEntry(ctx context.Context, entry *filer.Entry) err
 	if err != nil {
 		return err
 	}
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
+	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Set(key, value)
 	})
 	if err != nil {
@@ -101,15 +106,15 @@ func (store *TikvStore) UpdateEntry(ctx context.Context, entry *filer.Entry) err
 
 func (store *TikvStore) FindEntry(ctx context.Context, path util.FullPath) (*filer.Entry, error) {
 	dir, name := path.DirAndName()
-	key := generateKey(dir, name)
+	key := store.generateKey(dir, name)
 
 	txn, err := store.getTxn(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var value []byte = nil
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
-		val, err := txn.Get(context.TODO(), key)
+	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
+		val, err := txn.Get(ctx, key)
 		if err == nil {
 			value = val
 		}
@@ -136,14 +141,14 @@ func (store *TikvStore) FindEntry(ctx context.Context, path util.FullPath) (*fil
 
 func (store *TikvStore) DeleteEntry(ctx context.Context, path util.FullPath) error {
 	dir, name := path.DirAndName()
-	key := generateKey(dir, name)
+	key := store.generateKey(dir, name)
 
 	txn, err := store.getTxn(ctx)
 	if err != nil {
 		return err
 	}
 
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
+	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		return txn.Delete(key)
 	})
 	if err != nil {
@@ -156,55 +161,81 @@ func (store *TikvStore) DeleteEntry(ctx context.Context, path util.FullPath) err
 
 // Directory APIs
 func (store *TikvStore) DeleteFolderChildren(ctx context.Context, path util.FullPath) error {
-	directoryPrefix := genDirectoryKeyPrefix(path, "")
+	directoryPrefix := store.genDirectoryKeyPrefix(path, "")
 
-	txn, err := store.getTxn(ctx)
+	iterTxn, err := store.getTxn(ctx)
 	if err != nil {
 		return err
 	}
-	var (
-		startKey []byte = nil
-		endKey   []byte = nil
-	)
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
-		iter, err := txn.Iter(directoryPrefix, nil)
-		if err != nil {
-			return err
-		}
-		defer iter.Close()
-		for iter.Valid() {
-			key := iter.Key()
-			endKey = key
-			if !bytes.HasPrefix(key, directoryPrefix) {
-				break
-			}
-			if startKey == nil {
-				startKey = key
-			}
 
-			err = iter.Next()
-			if err != nil {
+	if !iterTxn.inContext {
+		defer func() {
+			_ = iterTxn.Rollback()
+		}()
+	}
+
+	iter, err := iterTxn.Iter(directoryPrefix, nil)
+	if err != nil {
+		return err
+	}
+	defer iter.Close()
+
+	var keys [][]byte
+
+	flush := func() error {
+		if len(keys) == 0 {
+			return nil
+		}
+		if err := store.deleteBatch(ctx, keys); err != nil {
+			return fmt.Errorf("delete batch in %s, error: %w", path, err)
+		}
+		keys = keys[:0]
+		return nil
+	}
+
+	for iter.Valid() {
+		key := iter.Key()
+		if !bytes.HasPrefix(key, directoryPrefix) {
+			break
+		}
+
+		keys = append(keys, append([]byte(nil), key...))
+
+		if len(keys) >= store.batchCommitSize {
+			if err := flush(); err != nil {
 				return err
 			}
 		}
-		// Only one Key matched just delete it.
-		if startKey != nil && bytes.Equal(startKey, endKey) {
-			return txn.Delete(startKey)
+
+		if err := iter.Next(); err != nil {
+			return err
 		}
-		return nil
-	})
-	if err != nil {
-		return fmt.Errorf("delete %s : %v", path, err)
 	}
 
-	if startKey != nil && endKey != nil && !bytes.Equal(startKey, endKey) {
-		// has startKey and endKey and they are not equals, so use delete range
-		_, err = store.client.DeleteRange(context.Background(), startKey, endKey, store.deleteRangeConcurrency)
-		if err != nil {
-			return fmt.Errorf("delete %s : %v", path, err)
+	return flush()
+}
+
+func (store *TikvStore) deleteBatch(ctx context.Context, keys [][]byte) error {
+	deleteTxn, err := store.getTxn(ctx)
+	if err != nil {
+		return err
+	}
+
+	if !deleteTxn.inContext {
+		defer func() { _ = deleteTxn.Rollback() }()
+	}
+
+	for _, key := range keys {
+		if err := deleteTxn.Delete(key); err != nil {
+			return err
 		}
 	}
-	return err
+
+	if !deleteTxn.inContext {
+		return deleteTxn.Commit(ctx)
+	}
+
+	return nil
 }
 
 func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
@@ -213,17 +244,18 @@ func (store *TikvStore) ListDirectoryEntries(ctx context.Context, dirPath util.F
 
 func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPath util.FullPath, startFileName string, includeStartFile bool, limit int64, prefix string, eachEntryFunc filer.ListEachEntryFunc) (string, error) {
 	lastFileName := ""
-	directoryPrefix := genDirectoryKeyPrefix(dirPath, prefix)
+	directoryPrefix := store.genDirectoryKeyPrefix(dirPath, prefix)
 	lastFileStart := directoryPrefix
 	if startFileName != "" {
-		lastFileStart = genDirectoryKeyPrefix(dirPath, startFileName)
+		lastFileStart = store.genDirectoryKeyPrefix(dirPath, startFileName)
 	}
 
 	txn, err := store.getTxn(ctx)
 	if err != nil {
 		return lastFileName, err
 	}
-	err = txn.RunInTxn(func(txn *txnkv.KVTxn) error {
+	var callbackErr error
+	err = txn.RunInTxn(ctx, func(txn *txnkv.KVTxn) error {
 		iter, err := txn.Iter(lastFileStart, nil)
 		if err != nil {
 			return err
@@ -235,7 +267,7 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			if !bytes.HasPrefix(key, directoryPrefix) {
 				break
 			}
-			fileName := getNameFromKey(key)
+			fileName := store.getNameFromKey(key)
 			if fileName == "" {
 				if err := iter.Next(); err != nil {
 					break
@@ -283,12 +315,33 @@ func (store *TikvStore) ListDirectoryPrefixedEntries(ctx context.Context, dirPat
 			// Only increment counter for non-expired entries
 			i++
 
-			if err := iter.Next(); !eachEntryFunc(entry) || err != nil {
+			resEachEntryFunc, resEachEntryFuncErr := eachEntryFunc(entry)
+			if resEachEntryFuncErr != nil {
+				glog.V(0).InfofCtx(ctx, "failed to process eachEntryFunc for entry %q: %v", fileName, resEachEntryFuncErr)
+				callbackErr = resEachEntryFuncErr
+				break
+			}
+
+			nextErr := iter.Next()
+			if nextErr != nil {
+				err = nextErr
+				break
+			}
+
+			if !resEachEntryFunc {
 				break
 			}
 		}
 		return err
 	})
+
+	if callbackErr != nil {
+		return lastFileName, fmt.Errorf(
+			"failed to process eachEntryFunc for dir %q, entry %q: %w",
+			dirPath, lastFileName, callbackErr,
+		)
+	}
+
 	if err != nil {
 		return lastFileName, fmt.Errorf("prefix list %s : %v", dirPath, err)
 	}
@@ -331,15 +384,14 @@ type TxnWrapper struct {
 	inContext bool
 }
 
-func (w *TxnWrapper) RunInTxn(f func(txn *txnkv.KVTxn) error) error {
+func (w *TxnWrapper) RunInTxn(ctx context.Context, f func(txn *txnkv.KVTxn) error) error {
 	err := f(w.KVTxn)
 	if !w.inContext {
 		if err != nil {
 			w.KVTxn.Rollback()
 			return err
 		}
-		w.KVTxn.Commit(context.Background())
-		return nil
+		return w.KVTxn.Commit(ctx)
 	}
 	return err
 }
@@ -368,22 +420,37 @@ func hashToBytes(dir string) []byte {
 	return b
 }
 
-func generateKey(dirPath, fileName string) []byte {
+func (store *TikvStore) getKey(key []byte) []byte {
+	if len(store.keyPrefix) == 0 {
+		return key
+	}
+	result := make([]byte, len(store.keyPrefix)+len(key))
+	copy(result, store.keyPrefix)
+	copy(result[len(store.keyPrefix):], key)
+	return result
+}
+
+func (store *TikvStore) generateKey(dirPath, fileName string) []byte {
 	key := hashToBytes(dirPath)
 	key = append(key, []byte(fileName)...)
-	return key
+	return store.getKey(key)
 }
 
-func getNameFromKey(key []byte) string {
-	return string(key[sha1.Size:])
+func (store *TikvStore) getNameFromKey(key []byte) string {
+	minKeyLen := len(store.keyPrefix) + sha1.Size
+	if len(key) < minKeyLen {
+		glog.Warningf("malformed key: length %d is less than minimum %d", len(key), minKeyLen)
+		return ""
+	}
+	return string(key[minKeyLen:])
 }
 
-func genDirectoryKeyPrefix(fullpath util.FullPath, startFileName string) (keyPrefix []byte) {
+func (store *TikvStore) genDirectoryKeyPrefix(fullpath util.FullPath, startFileName string) (keyPrefix []byte) {
 	keyPrefix = hashToBytes(string(fullpath))
 	if len(startFileName) > 0 {
 		keyPrefix = append(keyPrefix, []byte(startFileName)...)
 	}
-	return keyPrefix
+	return store.getKey(keyPrefix)
 }
 
 func isNotExists(err error) bool {

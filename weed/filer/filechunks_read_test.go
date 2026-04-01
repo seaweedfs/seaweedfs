@@ -2,10 +2,11 @@ package filer
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
 
 func TestReadResolvedChunks(t *testing.T) {

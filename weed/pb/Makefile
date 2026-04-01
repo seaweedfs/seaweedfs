@@ -14,8 +14,11 @@ gen:
 	protoc mq_schema.proto --go_out=./schema_pb --go-grpc_out=./schema_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc mq_agent.proto --go_out=./mq_agent_pb --go-grpc_out=./mq_agent_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	protoc worker.proto --go_out=./worker_pb --go-grpc_out=./worker_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
+	mkdir -p ./plugin_pb
+	protoc plugin.proto --go_out=./plugin_pb --go-grpc_out=./plugin_pb --go_opt=paths=source_relative --go-grpc_opt=paths=source_relative
 	# protoc filer.proto --java_out=../../other/java/client/src/main/java
 	cp filer.proto ../../other/java/client/src/main/proto
+	cp volume_server.proto master.proto remote.proto ../../seaweed-volume/proto/
 
 fbs:
 	flatc --go -o . --go-namespace message_fbs message.fbs

@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/topology"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
@@ -229,6 +230,12 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 			continue
 		}
 
+		// Cancel stale pending tasks for this type before re-detection
+		maintenanceType := s.taskTypeMap[taskType]
+		if cancelled := s.maintenanceQueue.CancelPendingTasksByType(maintenanceType); cancelled > 0 {
+			glog.Infof("Cancelled %d stale pending %s tasks before re-detection", cancelled, taskType)
+		}
+
 		glog.V(2).Infof("Running detection for task type: %s", taskType)
 
 		results, err := detector.ScanForTasks(filteredMetrics, clusterInfo)
@@ -266,7 +273,26 @@ func (s *MaintenanceIntegration) ScanWithTaskDetectors(volumeMetrics []*types.Vo
 
 // UpdateTopologyInfo updates the volume shard tracker with topology information for empty servers
 func (s *MaintenanceIntegration) UpdateTopologyInfo(topologyInfo *master_pb.TopologyInfo) error {
-	return s.activeTopology.UpdateTopology(topologyInfo)
+	// Log topology details before update for diagnostics
+	if topologyInfo != nil {
+		dcCount, nodeCount, diskCount := topology.CountTopologyResources(topologyInfo)
+		glog.V(2).Infof("UpdateTopologyInfo: received topology with %d datacenters, %d nodes, %d disks",
+			dcCount, nodeCount, diskCount)
+	} else {
+		glog.Warningf("UpdateTopologyInfo: received nil topologyInfo")
+	}
+
+	err := s.activeTopology.UpdateTopology(topologyInfo)
+
+	if err != nil {
+		glog.Errorf("UpdateTopologyInfo: topology update failed: %v", err)
+	} else {
+		// Log success with current disk count
+		currentDiskCount := s.activeTopology.GetDiskCount()
+		glog.V(1).Infof("UpdateTopologyInfo: topology update successful, active topology now has %d disks", currentDiskCount)
+	}
+
+	return err
 }
 
 // convertToExistingFormat converts task results to existing system format using dynamic mapping
@@ -286,6 +312,7 @@ func (s *MaintenanceIntegration) convertToExistingFormat(result *types.TaskDetec
 	}
 
 	return &TaskDetectionResult{
+		TaskID:      result.TaskID,
 		TaskType:    existingType,
 		VolumeID:    result.VolumeID,
 		Server:      result.Server,
@@ -473,4 +500,76 @@ func (s *MaintenanceIntegration) GetPendingOperations() *PendingOperations {
 // GetActiveTopology returns the active topology for task detection
 func (s *MaintenanceIntegration) GetActiveTopology() *topology.ActiveTopology {
 	return s.activeTopology
+}
+
+// SyncTask synchronizes a maintenance task with the active topology for capacity tracking
+func (s *MaintenanceIntegration) SyncTask(task *MaintenanceTask) {
+	if s.activeTopology == nil {
+		return
+	}
+
+	// Convert task type
+	taskType, exists := s.revTaskTypeMap[task.Type]
+	if !exists {
+		return
+	}
+
+	// Convert status
+	var status topology.TaskStatus
+	switch task.Status {
+	case TaskStatusPending:
+		status = topology.TaskStatusPending
+	case TaskStatusAssigned, TaskStatusInProgress:
+		status = topology.TaskStatusInProgress
+	default:
+		return // Don't sync completed/failed/cancelled tasks
+	}
+
+	// Extract sources and destinations from TypedParams
+	var sources []topology.TaskSource
+	var destinations []topology.TaskDestination
+	var estimatedSize int64
+
+	if task.TypedParams != nil {
+		// Calculate storage impact for this task type
+		// Volume size is not currently used for Balance/Vacuum impact and is not stored in MaintenanceTask
+		sourceImpact, targetImpact := topology.CalculateTaskStorageImpact(topology.TaskType(string(taskType)), 0)
+
+		// Use unified sources and targets from TaskParams.
+		// Task protos store ServerAddresses (with gRPC port, e.g., "host:port.grpcPort")
+		// but the topology indexes disks by NodeId (e.g., "host:port").
+		// Strip the gRPC port suffix via ToHttpAddress() to match the topology key.
+		for _, src := range task.TypedParams.Sources {
+			resolvedSrc := pb.ServerAddress(src.Node).ToHttpAddress()
+			glog.V(2).Infof("SyncTask %s: source proto Node=%q resolved to %q, diskId=%d", task.ID, src.Node, resolvedSrc, src.DiskId)
+			sources = append(sources, topology.TaskSource{
+				SourceServer:  resolvedSrc,
+				SourceDisk:    src.DiskId,
+				StorageChange: sourceImpact,
+			})
+			// Sum estimated size from all sources
+			estimatedSize += int64(src.EstimatedSize)
+		}
+		for _, target := range task.TypedParams.Targets {
+			resolvedTarget := pb.ServerAddress(target.Node).ToHttpAddress()
+			glog.V(2).Infof("SyncTask %s: target proto Node=%q resolved to %q, diskId=%d", task.ID, target.Node, resolvedTarget, target.DiskId)
+			destinations = append(destinations, topology.TaskDestination{
+				TargetServer:  resolvedTarget,
+				TargetDisk:    target.DiskId,
+				StorageChange: targetImpact,
+			})
+		}
+
+		// Handle type-specific params for additional task-specific sync logic
+		if vacuumParams := task.TypedParams.GetVacuumParams(); vacuumParams != nil {
+			// TODO: Add vacuum-specific sync logic if necessary
+		} else if ecParams := task.TypedParams.GetErasureCodingParams(); ecParams != nil {
+			// TODO: Add EC-specific sync logic if necessary
+		} else if balanceParams := task.TypedParams.GetBalanceParams(); balanceParams != nil {
+			// TODO: Add balance-specific sync logic if necessary
+		}
+	}
+
+	// Restore into topology
+	s.activeTopology.RestoreMaintenanceTask(task.ID, task.VolumeID, topology.TaskType(string(taskType)), status, sources, destinations, estimatedSize)
 }

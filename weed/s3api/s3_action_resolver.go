@@ -159,6 +159,13 @@ func resolveFromQueryParameters(query url.Values, method string, hasObject bool)
 		}
 	}
 
+	// GetObjectAttributes (object-level only)
+	// Must be checked before versionId, because GET /bucket/key?attributes&versionId=xyz
+	// is a GetObjectAttributes request, not a GetObjectVersion request
+	if hasObject && query.Has("attributes") && method == http.MethodGet {
+		return s3_constants.S3_ACTION_GET_OBJECT_ATTRIBUTES
+	}
+
 	// Versioning operations - distinguish between versionId (specific version) and versions (list versions)
 	// versionId: Used to access/delete a specific version of an object (e.g., GET /bucket/key?versionId=xyz)
 	if query.Has("versionId") {
@@ -289,8 +296,8 @@ func resolveBucketLevelAction(method string, baseAction string) string {
 // mapBaseActionToS3Format converts coarse-grained base actions to S3 format
 // This is the fallback when no specific resolution is found
 func mapBaseActionToS3Format(baseAction string) string {
-	// Handle actions that already have s3: prefix
-	if strings.HasPrefix(baseAction, "s3:") {
+	// Handle actions that already have s3: or iam: prefix
+	if strings.HasPrefix(baseAction, "s3:") || strings.HasPrefix(baseAction, "iam:") {
 		return baseAction
 	}
 

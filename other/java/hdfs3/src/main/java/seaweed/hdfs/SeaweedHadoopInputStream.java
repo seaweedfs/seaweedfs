@@ -2,7 +2,6 @@ package seaweed.hdfs;
 
 // based on org.apache.hadoop.fs.azurebfs.services.AbfsInputStream
 
-import org.apache.hadoop.fs.ByteBufferReadable;
 import org.apache.hadoop.fs.FSInputStream;
 import org.apache.hadoop.fs.FileSystem.Statistics;
 import seaweedfs.client.FilerClient;
@@ -11,12 +10,21 @@ import seaweedfs.client.SeaweedInputStream;
 
 import java.io.EOFException;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 
-public class SeaweedHadoopInputStream extends FSInputStream implements ByteBufferReadable {
+/**
+ * SeaweedFS Hadoop InputStream.
+ * 
+ * NOTE: Does NOT implement ByteBufferReadable to match RawLocalFileSystem
+ * behavior.
+ * This ensures BufferedFSInputStream is used, which properly handles position
+ * tracking
+ * for positioned reads (critical for Parquet and other formats).
+ */
+public class SeaweedHadoopInputStream extends FSInputStream {
 
     private final SeaweedInputStream seaweedInputStream;
     private final Statistics statistics;
+    private final String path;
 
     public SeaweedHadoopInputStream(
             final FilerClient filerClient,
@@ -25,6 +33,7 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
             final FilerProto.Entry entry) throws IOException {
         this.seaweedInputStream = new SeaweedInputStream(filerClient, path, entry);
         this.statistics = statistics;
+        this.path = path;
     }
 
     @Override
@@ -35,20 +44,6 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
     @Override
     public int read(final byte[] b, final int off, final int len) throws IOException {
         return seaweedInputStream.read(b, off, len);
-    }
-
-    // implement ByteBufferReadable
-    @Override
-    public synchronized int read(ByteBuffer buf) throws IOException {
-        int bytesRead = seaweedInputStream.read(buf);
-
-        if (bytesRead > 0) {
-            if (statistics != null) {
-                statistics.incrementBytesRead(bytesRead);
-            }
-        }
-
-        return bytesRead;
     }
 
     /**
@@ -83,8 +78,10 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
     }
 
     /**
-     * Returns the length of the file that this stream refers to. Note that the length returned is the length
-     * as of the time the Stream was opened. Specifically, if there have been subsequent appends to the file,
+     * Returns the length of the file that this stream refers to. Note that the
+     * length returned is the length
+     * as of the time the Stream was opened. Specifically, if there have been
+     * subsequent appends to the file,
      * they wont be reflected in the returned length.
      *
      * @return length of the file.
@@ -104,8 +101,12 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
         return seaweedInputStream.getPos();
     }
 
+    public String getPath() {
+        return path;
+    }
+
     /**
-     * Seeks a different copy of the data.  Returns true if
+     * Seeks a different copy of the data. Returns true if
      * found a new source, false otherwise.
      *
      * @throws IOException throws {@link IOException} if there is an error
@@ -139,7 +140,9 @@ public class SeaweedHadoopInputStream extends FSInputStream implements ByteBuffe
     }
 
     /**
-     * gets whether mark and reset are supported by {@code ADLFileInputStream}. Always returns false.
+     * gets whether mark and reset are supported by
+     * {@code SeaweedHadoopInputStream}.
+     * Always returns false.
      *
      * @return always {@code false}
      */

@@ -202,6 +202,30 @@ func TestParseObjectRetention(t *testing.T) {
 			},
 		},
 		{
+			name: "Valid retention XML without namespace (Veeam compatibility)",
+			xmlBody: `<Retention>
+				<Mode>GOVERNANCE</Mode>
+				<RetainUntilDate>2024-12-31T23:59:59Z</RetainUntilDate>
+			</Retention>`,
+			expectError: false,
+			expectedResult: &ObjectRetention{
+				Mode:            "GOVERNANCE",
+				RetainUntilDate: timePtr(time.Date(2024, 12, 31, 23, 59, 59, 0, time.UTC)),
+			},
+		},
+		{
+			name: "Valid compliance retention XML without namespace (Veeam compatibility)",
+			xmlBody: `<Retention>
+				<Mode>COMPLIANCE</Mode>
+				<RetainUntilDate>2025-01-01T00:00:00Z</RetainUntilDate>
+			</Retention>`,
+			expectError: false,
+			expectedResult: &ObjectRetention{
+				Mode:            "COMPLIANCE",
+				RetainUntilDate: timePtr(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)),
+			},
+		},
+		{
 			name:        "Empty XML body",
 			xmlBody:     "",
 			expectError: true,
@@ -312,6 +336,26 @@ func TestParseObjectLegalHold(t *testing.T) {
 			},
 		},
 		{
+			name: "Valid legal hold ON without namespace",
+			xmlBody: `<LegalHold>
+				<Status>ON</Status>
+			</LegalHold>`,
+			expectError: false,
+			expectedResult: &ObjectLegalHold{
+				Status: "ON",
+			},
+		},
+		{
+			name: "Valid legal hold OFF without namespace",
+			xmlBody: `<LegalHold>
+				<Status>OFF</Status>
+			</LegalHold>`,
+			expectError: false,
+			expectedResult: &ObjectLegalHold{
+				Status: "OFF",
+			},
+		},
+		{
 			name:        "Empty XML body",
 			xmlBody:     "",
 			expectError: true,
@@ -386,6 +430,38 @@ func TestParseObjectLockConfiguration(t *testing.T) {
 		{
 			name: "Valid object lock configuration with rule",
 			xmlBody: `<ObjectLockConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">
+				<ObjectLockEnabled>Enabled</ObjectLockEnabled>
+				<Rule>
+					<DefaultRetention>
+						<Mode>GOVERNANCE</Mode>
+						<Days>30</Days>
+					</DefaultRetention>
+				</Rule>
+			</ObjectLockConfiguration>`,
+			expectError: false,
+			expectedResult: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+				Rule: &ObjectLockRule{
+					DefaultRetention: &DefaultRetention{
+						Mode: "GOVERNANCE",
+						Days: 30,
+					},
+				},
+			},
+		},
+		{
+			name: "Valid object lock configuration without namespace",
+			xmlBody: `<ObjectLockConfiguration>
+				<ObjectLockEnabled>Enabled</ObjectLockEnabled>
+			</ObjectLockConfiguration>`,
+			expectError: false,
+			expectedResult: &ObjectLockConfiguration{
+				ObjectLockEnabled: "Enabled",
+			},
+		},
+		{
+			name: "Valid object lock configuration with rule without namespace",
+			xmlBody: `<ObjectLockConfiguration>
 				<ObjectLockEnabled>Enabled</ObjectLockEnabled>
 				<Rule>
 					<DefaultRetention>

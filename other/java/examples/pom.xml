@@ -16,14 +16,14 @@
         </dependency>
         <dependency>
             <groupId>com.seaweedfs</groupId>
-            <artifactId>seaweedfs-hadoop2-client</artifactId>
+            <artifactId>seaweedfs-hadoop3-client</artifactId>
             <version>3.80</version>
             <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>org.apache.hadoop</groupId>
             <artifactId>hadoop-common</artifactId>
-            <version>2.10.2</version>
+            <version>3.4.0</version>
             <scope>compile</scope>
         </dependency>
     </dependencies>

@@ -33,6 +33,9 @@ service SeaweedFiler {
     rpc StreamRenameEntry (StreamRenameEntryRequest) returns (stream StreamRenameEntryResponse) {
     }
 
+    rpc StreamMutateEntry (stream StreamMutateEntryRequest) returns (stream StreamMutateEntryResponse) {
+    }
+
     rpc AssignVolume (AssignVolumeRequest) returns (AssignVolumeResponse) {
     }
 
@@ -81,6 +84,8 @@ service SeaweedFiler {
     // distributed lock management internal use only
     rpc TransferLocks(TransferLocksRequest) returns (TransferLocksResponse) {
     }
+    rpc ReplicateLock(ReplicateLockRequest) returns (ReplicateLockResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -100,10 +105,12 @@ message ListEntriesRequest {
     string startFromFileName = 3;
     bool inclusiveStartFrom = 4;
     uint32 limit = 5;
+    int64 snapshot_ts_ns = 6;
 }
 
 message ListEntriesResponse {
     Entry entry = 1;
+    int64 snapshot_ts_ns = 2;
 }
 
 message RemoteEntry {
@@ -201,8 +208,21 @@ message CreateEntryRequest {
     bool skip_check_parent_directory = 6;
 }
 
+// Structured error codes for filer entry operations.
+// Values are stable — do not reorder or reuse numbers.
+enum FilerError {
+    OK                    = 0;
+    ENTRY_NAME_TOO_LONG   = 1; // name exceeds max_file_name_length
+    PARENT_IS_FILE        = 2; // parent path component is a file, not a directory
+    EXISTING_IS_DIRECTORY = 3; // cannot overwrite directory with file
+    EXISTING_IS_FILE      = 4; // cannot overwrite file with directory
+    ENTRY_ALREADY_EXISTS  = 5; // O_EXCL and entry already exists
+}
+
 message CreateEntryResponse {
-    string error = 1;
+    string error = 1;                          // kept for human readability + backward compat
+    SubscribeMetadataResponse metadata_event = 2;
+    FilerError error_code = 3;                 // machine-readable error code
 }
 
 message UpdateEntryRequest {
@@ -210,8 +230,10 @@ message UpdateEntryRequest {
     Entry entry = 2;
     bool is_from_other_cluster = 3;
     repeated int32 signatures = 4;
+    map<string, bytes> expected_extended = 5;
 }
 message UpdateEntryResponse {
+    SubscribeMetadataResponse metadata_event = 1;
 }
 
 message AppendToEntryRequest {
@@ -236,6 +258,7 @@ message DeleteEntryRequest {
 
 message DeleteEntryResponse {
     string error = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 message AtomicRenameEntryRequest {
@@ -369,11 +392,23 @@ message SubscribeMetadataRequest {
     int64 until_ns = 8;
     int32 client_epoch = 9;
     repeated string directories = 10;  // exact directory to watch
+    bool client_supports_batching = 11; // client can unpack SubscribeMetadataResponse.events
+    bool client_supports_metadata_chunks = 12; // client can read log file chunks from volume servers
 }
 message SubscribeMetadataResponse {
     string directory = 1;
     EventNotification event_notification = 2;
     int64 ts_ns = 3;
+    repeated SubscribeMetadataResponse events = 4; // batch of additional events (backlog catch-up)
+    repeated LogFileChunkRef log_file_refs = 5;    // log file chunk refs for client direct-read
+}
+// A persisted log file that the client can read directly from volume servers.
+// The file format is: [4-byte size | protobuf LogEntry] repeated.
+// Each LogEntry.Data contains a marshaled SubscribeMetadataResponse.
+message LogFileChunkRef {
+    repeated FileChunk chunks = 1; // chunk references (fids) to read from volume servers
+    int64 file_ts_ns = 2;         // minute-level timestamp of the log file
+    string filer_id = 3;          // filer signature suffix from log filename
 }
 
 message TraverseBfsMetadataRequest {
@@ -466,9 +501,12 @@ message FilerConf {
 message CacheRemoteObjectToLocalClusterRequest {
     string directory = 1;
     string name = 2;
+    int32 chunk_concurrency = 3; // parallel chunk downloads per file, 0 = default (8)
+    int32 download_concurrency = 4; // multipart download concurrency per chunk (if supported by remote storage), 0 = default (5 for S3)
 }
 message CacheRemoteObjectToLocalClusterResponse {
     Entry entry = 1;
+    SubscribeMetadataResponse metadata_event = 2;
 }
 
 /////////////////////////
@@ -486,6 +524,7 @@ message LockResponse {
     string lock_owner = 2;
     string lock_host_moved_to = 3;
     string error = 4;
+    int64 generation = 5;
 }
 message UnlockRequest {
     string name = 1;
@@ -508,9 +547,52 @@ message Lock {
     string renew_token = 2;
     int64 expired_at_ns = 3;
     string owner = 4;
+    int64 generation = 5;
+    bool is_backup = 6;
+    int64 seq = 7;
 }
 message TransferLocksRequest {
     repeated Lock locks = 1;
 }
 message TransferLocksResponse {
+}
+message ReplicateLockRequest {
+    string name = 1;
+    string renew_token = 2;
+    int64 expired_at_ns = 3;
+    string owner = 4;
+    int64 generation = 5;
+    bool is_unlock = 6;
+    int64 seq = 7;
+}
+message ReplicateLockResponse {
+}
+
+//////////////////////////////////////////////////
+// StreamMutateEntry: ordered bidirectional streaming for all filer mutations.
+// All create/update/delete/rename operations from a single mount go through
+// one stream, preserving mutation ordering and eliminating per-request
+// connection overhead.
+
+message StreamMutateEntryRequest {
+    uint64 request_id = 1;
+    oneof request {
+        CreateEntryRequest create_request = 2;
+        UpdateEntryRequest update_request = 3;
+        DeleteEntryRequest delete_request = 4;
+        StreamRenameEntryRequest rename_request = 5;
+    }
+}
+
+message StreamMutateEntryResponse {
+    uint64 request_id = 1;
+    bool is_last = 2; // always true except for rename, which sends multiple events
+    oneof response {
+        CreateEntryResponse create_response = 3;
+        UpdateEntryResponse update_response = 4;
+        DeleteEntryResponse delete_response = 5;
+        StreamRenameEntryResponse rename_response = 6;
+    }
+    string error = 7; // human-readable error message when the operation failed
+    int32 errno = 8;  // POSIX errno (e.g. ENOENT=2, ENOTEMPTY=66) for direct FUSE status mapping
 }

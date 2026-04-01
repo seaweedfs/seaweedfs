@@ -1,18 +1,80 @@
 package s3api
 
 import (
+	"context"
+	"crypto/tls"
+	"fmt"
+	"net/http"
 	"os"
 	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
-	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/stretchr/testify/assert"
-
+	"github.com/seaweedfs/seaweedfs/weed/credential/memory"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
+	. "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	jsonpb "google.golang.org/protobuf/encoding/protojson"
+
+	_ "github.com/seaweedfs/seaweedfs/weed/credential/filer_etc"
 )
+
+type loadConfigurationDropsPoliciesStore struct {
+	*memory.MemoryStore
+	loadManagedPoliciesCalled bool
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+	stripped := *config
+	stripped.Policies = nil
+	return &stripped, nil
+}
+
+func (store *loadConfigurationDropsPoliciesStore) LoadManagedPolicies(ctx context.Context) ([]*iam_pb.Policy, error) {
+	store.loadManagedPoliciesCalled = true
+
+	config, err := store.MemoryStore.LoadConfiguration(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	policies := make([]*iam_pb.Policy, 0, len(config.Policies))
+	for _, policy := range config.Policies {
+		policies = append(policies, &iam_pb.Policy{
+			Name:    policy.Name,
+			Content: policy.Content,
+		})
+	}
+
+	return policies, nil
+}
+
+type inlinePolicyRuntimeStore struct {
+	*memory.MemoryStore
+	inlinePolicies map[string]map[string]policy_engine.PolicyDocument
+}
+
+func (store *inlinePolicyRuntimeStore) LoadInlinePolicies(ctx context.Context) (map[string]map[string]policy_engine.PolicyDocument, error) {
+	_ = ctx
+	return store.inlinePolicies, nil
+}
+
+func newPolicyAuthRequest(t *testing.T, method string) *http.Request {
+	t.Helper()
+	req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+	require.NoError(t, err)
+	return req
+}
 
 func TestIdentityListFileFormat(t *testing.T) {
 
@@ -82,11 +144,11 @@ func TestCanDo(t *testing.T) {
 		},
 	}
 	// object specific
-	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d/e.txt"))
-	assert.Equal(t, false, ident1.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
-	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
-	assert.Equal(t, false, ident1.canDo(ACTION_WRITE, "bucket1", "/a/b/*"), "action on parent directory")
+	assert.Equal(t, true, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d/e.txt"))
+	assert.Equal(t, false, ident1.CanDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+	assert.Equal(t, false, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/other/some"), "action without *")
+	assert.Equal(t, false, ident1.CanDo(ACTION_WRITE, "bucket1", "/a/b/*"), "action on parent directory")
 
 	// bucket specific
 	ident2 := &Identity{
@@ -97,11 +159,11 @@ func TestCanDo(t *testing.T) {
 			"WriteAcp:bucket1",
 		},
 	}
-	assert.Equal(t, true, ident2.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident2.canDo(ACTION_WRITE_ACP, "bucket1", ""))
-	assert.Equal(t, false, ident2.canDo(ACTION_READ_ACP, "bucket1", ""))
-	assert.Equal(t, false, ident2.canDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident2.CanDo(ACTION_WRITE_ACP, "bucket1", ""))
+	assert.Equal(t, false, ident2.CanDo(ACTION_READ_ACP, "bucket1", ""))
+	assert.Equal(t, false, ident2.CanDo(ACTION_LIST, "bucket1", "/a/b/c/d.txt"))
 
 	// across buckets
 	ident3 := &Identity{
@@ -111,10 +173,10 @@ func TestCanDo(t *testing.T) {
 			"Write",
 		},
 	}
-	assert.Equal(t, true, ident3.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident3.canDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
-	assert.Equal(t, false, ident3.canDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
-	assert.Equal(t, false, ident3.canDo(ACTION_WRITE_ACP, "bucket1", ""))
+	assert.Equal(t, true, ident3.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident3.CanDo(ACTION_WRITE, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, false, ident3.CanDo(ACTION_LIST, "bucket1", "/a/b/other/some"))
+	assert.Equal(t, false, ident3.CanDo(ACTION_WRITE_ACP, "bucket1", ""))
 
 	// partial buckets
 	ident4 := &Identity{
@@ -124,9 +186,9 @@ func TestCanDo(t *testing.T) {
 			"ReadAcp:special_*",
 		},
 	}
-	assert.Equal(t, true, ident4.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident4.canDo(ACTION_READ_ACP, "special_bucket", ""))
-	assert.Equal(t, false, ident4.canDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.CanDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident4.CanDo(ACTION_READ_ACP, "special_bucket", ""))
+	assert.Equal(t, false, ident4.CanDo(ACTION_READ, "bucket1", "/a/b/c/d.txt"))
 
 	// admin buckets
 	ident5 := &Identity{
@@ -135,10 +197,10 @@ func TestCanDo(t *testing.T) {
 			"Admin:special_*",
 		},
 	}
-	assert.Equal(t, true, ident5.canDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_READ_ACP, "special_bucket", ""))
-	assert.Equal(t, true, ident5.canDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
-	assert.Equal(t, true, ident5.canDo(ACTION_WRITE_ACP, "special_bucket", ""))
+	assert.Equal(t, true, ident5.CanDo(ACTION_READ, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.CanDo(ACTION_READ_ACP, "special_bucket", ""))
+	assert.Equal(t, true, ident5.CanDo(ACTION_WRITE, "special_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident5.CanDo(ACTION_WRITE_ACP, "special_bucket", ""))
 
 	// anonymous buckets
 	ident6 := &Identity{
@@ -147,7 +209,7 @@ func TestCanDo(t *testing.T) {
 			"Read",
 		},
 	}
-	assert.Equal(t, true, ident6.canDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
+	assert.Equal(t, true, ident6.CanDo(ACTION_READ, "anything_bucket", "/a/b/c/d.txt"))
 
 	//test deleteBucket operation
 	ident7 := &Identity{
@@ -156,7 +218,550 @@ func TestCanDo(t *testing.T) {
 			"DeleteBucket:bucket1",
 		},
 	}
-	assert.Equal(t, true, ident7.canDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+	assert.Equal(t, true, ident7.CanDo(ACTION_DELETE_BUCKET, "bucket1", ""))
+}
+
+func TestMatchWildcardPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		target  string
+		match   bool
+	}{
+		// Basic * wildcard tests
+		{"Bucket/*", "Bucket/a/b", true},
+		{"Bucket/*", "x/Bucket/a", false},
+		{"Bucket/*/admin", "Bucket/x/admin", true},
+		{"Bucket/*/admin", "Bucket/x/y/admin", true},
+		{"Bucket/*/admin", "Bucket////x////uwu////y////admin", true},
+		{"abc*def", "abcXYZdef", true},
+		{"abc*def", "abcXYZdefZZ", false},
+		{"syr/*", "syr/a/b", true},
+
+		// ? wildcard tests (matches exactly one character)
+		{"ab?d", "abcd", true},
+		{"ab?d", "abXd", true},
+		{"ab?d", "abd", false},   // ? must match exactly one character
+		{"ab?d", "abcXd", false}, // ? matches only one character
+		{"a?c", "abc", true},
+		{"a?c", "aXc", true},
+		{"a?c", "ac", false},
+		{"???", "abc", true},
+		{"???", "ab", false},
+		{"???", "abcd", false},
+
+		// Combined * and ? wildcards
+		{"a*?", "ab", true},   // * matches empty, ? matches 'b'
+		{"a*?", "abc", true},  // * matches 'b', ? matches 'c'
+		{"a*?", "a", false},   // ? must match something
+		{"a?*", "ab", true},   // ? matches 'b', * matches empty
+		{"a?*", "abc", true},  // ? matches 'b', * matches 'c'
+		{"a?*b", "aXb", true}, // ? matches 'X', * matches empty
+		{"a?*b", "aXYZb", true},
+		{"*?*", "a", true},
+		{"*?*", "", false}, // ? requires at least one character
+
+		// Edge cases: * matches empty string
+		{"a*b", "ab", true},   // * matches empty string
+		{"a**b", "ab", true},  // multiple stars match empty
+		{"a**b", "axb", true}, // multiple stars match 'x'
+		{"a**b", "axyb", true},
+		{"*", "", true},
+		{"*", "anything", true},
+		{"**", "", true},
+		{"**", "anything", true},
+
+		// Edge cases: empty strings
+		{"", "", true},
+		{"a", "", false},
+		{"", "a", false},
+
+		// Trailing * matches empty
+		{"a*", "a", true},
+		{"a*", "abc", true},
+		{"abc*", "abc", true},
+		{"abc*", "abcdef", true},
+
+		// Leading * matches empty
+		{"*a", "a", true},
+		{"*a", "XXXa", true},
+		{"*abc", "abc", true},
+		{"*abc", "XXXabc", true},
+
+		// Multiple wildcards
+		{"*a*", "a", true},
+		{"*a*", "Xa", true},
+		{"*a*", "aX", true},
+		{"*a*", "XaX", true},
+		{"*a*b*", "ab", true},
+		{"*a*b*", "XaYbZ", true},
+
+		// Exact match (no wildcards)
+		{"exact", "exact", true},
+		{"exact", "notexact", false},
+		{"exact", "exactnot", false},
+
+		// S3-style action patterns
+		{"Read:bucket*", "Read:bucket-test", true},
+		{"Read:bucket*", "Read:bucket", true},
+		{"Write:bucket/path/*", "Write:bucket/path/file.txt", true},
+		{"Admin:*", "Admin:anything", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.pattern+"_"+tt.target, func(t *testing.T) {
+			result := wildcard.MatchesWildcard(tt.pattern, tt.target)
+			if result != tt.match {
+				t.Errorf("wildcard.MatchesWildcard(%q, %q) = %v, want %v", tt.pattern, tt.target, result, tt.match)
+			}
+		})
+	}
+}
+
+func TestVerifyActionPermissionPolicyFallback(t *testing.T) {
+	buildRequest := func(t *testing.T, method string) *http.Request {
+		t.Helper()
+		req, err := http.NewRequest(method, "http://s3.amazonaws.com/test-bucket/test-object", nil)
+		assert.NoError(t, err)
+		return req
+	}
+
+	t.Run("policy allow grants access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowGet"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("explicit deny overrides allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("denySecret", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/secret.txt"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denySecret"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("implicit deny when no statement matches", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowOtherBucket", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::other-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowOtherBucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("invalid policy document does not allow", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("invalidPolicy", "{not-json")
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"invalidPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("notresource excludes denied object", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("denyNotResource", `{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Action":"s3:GetObject","NotResource":"arn:aws:s3:::test-bucket/public/*"}]}`)
+		assert.NoError(t, err)
+		err = iam.PutPolicy("allowAllGet", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowAllGet", "denyNotResource"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "private/secret.txt")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "public/readme.txt")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("condition securetransport enforced", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("allowTLSOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*","Condition":{"Bool":{"aws:SecureTransport":"true"}}}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"allowTLSOnly"},
+		}
+
+		httpReq := buildRequest(t, http.MethodGet)
+		errCode := iam.VerifyActionPermission(httpReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+
+		httpsReq := buildRequest(t, http.MethodGet)
+		httpsReq.TLS = &tls.ConnectionState{}
+		errCode = iam.VerifyActionPermission(httpsReq, identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+
+	t.Run("attached policies override coarse legacy actions", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("putOnly", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:PutObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			Actions:     []Action{"Write:test-bucket"},
+			PolicyNames: []string{"putOnly"},
+		}
+
+		putErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, putErrCode)
+
+		deleteErrCode := iam.VerifyActionPermission(buildRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+	})
+
+	t.Run("valid policy updated to invalid denies access", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		err := iam.PutPolicy("myPolicy", `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`)
+		assert.NoError(t, err)
+
+		identity := &Identity{
+			Name:        "policy-user",
+			Account:     &AccountAdmin,
+			PolicyNames: []string{"myPolicy"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+
+		// Update to invalid JSON — should revoke access.
+		err = iam.PutPolicy("myPolicy", "{broken")
+		assert.NoError(t, err)
+
+		errCode = iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+		assert.Equal(t, s3err.ErrAccessDenied, errCode)
+	})
+
+	t.Run("actions based path still works", func(t *testing.T) {
+		iam := &IdentityAccessManagement{}
+		identity := &Identity{
+			Name:    "legacy-user",
+			Account: &AccountAdmin,
+			Actions: []Action{"Read:test-bucket"},
+		}
+
+		errCode := iam.VerifyActionPermission(buildRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "any-object")
+		assert.Equal(t, s3err.ErrNone, errCode)
+	})
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedGet"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000001", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedGet",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+	assert.True(t, store.loadManagedPoliciesCalled)
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	errCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesManagedPoliciesThroughPropagatingStore(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	upstream := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+	wrappedStore := credential.NewPropagatingCredentialStore(upstream, nil, nil)
+	cm := &credential.CredentialManager{Store: wrappedStore}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedGet"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000010", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedGet",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+	assert.True(t, upstream.loadManagedPoliciesCalled)
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	errCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodGet), identity, Action(ACTION_READ), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, errCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerSyncsPoliciesToIAMManager(t *testing.T) {
+	ctx := context.Background()
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	cm := &credential.CredentialManager{Store: baseStore}
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:        "managed-user",
+				PolicyNames: []string{"managedPut"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAMANAGED000002", SecretKey: "managed-secret"},
+				},
+			},
+		},
+		Policies: []*iam_pb.Policy{
+			{
+				Name:    "managedPut",
+				Content: `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:ListBucket"],"Resource":["arn:aws:s3:::cli-allowed-bucket","arn:aws:s3:::cli-allowed-bucket/*"]}]}`,
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(ctx, config))
+
+	iamManager, err := loadIAMManagerFromConfig("", func() string { return "localhost:8888" }, func() string {
+		return "fallback-key-for-zero-config"
+	})
+	assert.NoError(t, err)
+	iamManager.SetUserStore(cm)
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	iam.SetIAMIntegration(NewS3IAMIntegration(iamManager, ""))
+
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("managed-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+
+	allowedErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-allowed-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, allowedErrCode)
+
+	forbiddenErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "cli-forbidden-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, forbiddenErrCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePolicies(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	inlinePolicy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
+			},
+		},
+	}
+
+	store := &inlinePolicyRuntimeStore{
+		MemoryStore: baseStore,
+		inlinePolicies: map[string]map[string]policy_engine.PolicyDocument{
+			"inline-user": {
+				"PutOnly": inlinePolicy,
+			},
+		},
+	}
+	cm := &credential.CredentialManager{Store: store}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "inline-user",
+				Actions: []string{"Write:test-bucket"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAINLINE0000001", SecretKey: "inline-secret"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("inline-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+	assert.Contains(t, identity.PolicyNames, inlinePolicyRuntimeName("inline-user", "PutOnly"))
+
+	putErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+}
+
+func TestLoadS3ApiConfigurationFromCredentialManagerHydratesInlinePoliciesThroughPropagatingStore(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	assert.NoError(t, baseStore.Initialize(nil, ""))
+
+	inlinePolicy := policy_engine.PolicyDocument{
+		Version: policy_engine.PolicyVersion2012_10_17,
+		Statement: []policy_engine.PolicyStatement{
+			{
+				Effect:   policy_engine.PolicyEffectAllow,
+				Action:   policy_engine.NewStringOrStringSlice("s3:PutObject"),
+				Resource: policy_engine.NewStringOrStringSlicePtr("arn:aws:s3:::test-bucket/*"),
+			},
+		},
+	}
+
+	upstream := &inlinePolicyRuntimeStore{
+		MemoryStore: baseStore,
+		inlinePolicies: map[string]map[string]policy_engine.PolicyDocument{
+			"inline-user": {
+				"PutOnly": inlinePolicy,
+			},
+		},
+	}
+	wrappedStore := credential.NewPropagatingCredentialStore(upstream, nil, nil)
+	cm := &credential.CredentialManager{Store: wrappedStore}
+
+	config := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "inline-user",
+				Actions: []string{"Write:test-bucket"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "AKIAINLINE0000010", SecretKey: "inline-secret"},
+				},
+			},
+		},
+	}
+	assert.NoError(t, cm.SaveConfiguration(context.Background(), config))
+
+	iam := &IdentityAccessManagement{credentialManager: cm}
+	assert.NoError(t, iam.LoadS3ApiConfigurationFromCredentialManager())
+
+	identity := iam.lookupByIdentityName("inline-user")
+	if !assert.NotNil(t, identity) {
+		return
+	}
+	assert.Contains(t, identity.PolicyNames, inlinePolicyRuntimeName("inline-user", "PutOnly"))
+
+	putErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodPut), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrNone, putErrCode)
+
+	deleteErrCode := iam.VerifyActionPermission(newPolicyAuthRequest(t, http.MethodDelete), identity, Action(ACTION_WRITE), "test-bucket", "test-object")
+	assert.Equal(t, s3err.ErrAccessDenied, deleteErrCode)
+}
+
+func TestLoadConfigurationDropsPoliciesStoreDoesNotMutateSourceConfig(t *testing.T) {
+	baseStore := &memory.MemoryStore{}
+	require.NoError(t, baseStore.Initialize(nil, ""))
+
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			{Name: "managedGet", Content: `{"Version":"2012-10-17","Statement":[]}`},
+		},
+	}
+	require.NoError(t, baseStore.SaveConfiguration(context.Background(), config))
+
+	store := &loadConfigurationDropsPoliciesStore{MemoryStore: baseStore}
+
+	stripped, err := store.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	assert.Nil(t, stripped.Policies)
+
+	source, err := baseStore.LoadConfiguration(context.Background())
+	require.NoError(t, err)
+	require.Len(t, source.Policies, 1)
+	assert.Equal(t, "managedGet", source.Policies[0].Name)
+}
+
+func TestMergePoliciesIntoConfigurationSkipsNilPolicies(t *testing.T) {
+	config := &iam_pb.S3ApiConfiguration{
+		Policies: []*iam_pb.Policy{
+			nil,
+			{Name: "existing", Content: "old"},
+		},
+	}
+
+	mergePoliciesIntoConfiguration(config, []*iam_pb.Policy{
+		nil,
+		{Name: "", Content: "ignored"},
+		{Name: "existing", Content: "updated"},
+		{Name: "new", Content: "created"},
+	})
+
+	require.Len(t, config.Policies, 3)
+	assert.Nil(t, config.Policies[0])
+	assert.Equal(t, "existing", config.Policies[1].Name)
+	assert.Equal(t, "updated", config.Policies[1].Content)
+	assert.Equal(t, "new", config.Policies[2].Name)
+	assert.Equal(t, "created", config.Policies[2].Content)
 }
 
 type LoadS3ApiConfigurationTestCase struct {
@@ -194,7 +799,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "notSpecifyAccountId",
 				Account:      &AccountAdmin,
-				PrincipalArn: "arn:aws:iam::user/notSpecifyAccountId",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/notSpecifyAccountId", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -220,7 +825,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "specifiedAccountID",
 				Account:      &specifiedAccount,
-				PrincipalArn: "arn:aws:iam::user/specifiedAccountID",
+				PrincipalArn: fmt.Sprintf("arn:aws:iam::%s:user/specifiedAccountID", defaultAccountID),
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -238,7 +843,7 @@ func TestLoadS3ApiConfiguration(t *testing.T) {
 			expectIdent: &Identity{
 				Name:         "anonymous",
 				Account:      &AccountAnonymous,
-				PrincipalArn: "arn:aws:iam::user/anonymous",
+				PrincipalArn: "*",
 				Actions: []Action{
 					"Read",
 					"Write",
@@ -326,6 +931,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Reset the memory store to avoid test pollution
+			if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+				if memStore, ok := store.(interface{ Reset() }); ok {
+					memStore.Reset()
+				}
+			}
+
 			// Set up environment variables
 			if tt.accessKeyId != "" {
 				os.Setenv("AWS_ACCESS_KEY_ID", tt.accessKeyId)
@@ -342,7 +954,7 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 			option := &S3ApiServerOption{
 				Config: "", // No config file - this should trigger environment variable fallback
 			}
-			iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+			iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 			if tt.expectEnvIdentity {
 				// Should have exactly one identity from environment variables
@@ -366,6 +978,13 @@ func TestNewIdentityAccessManagementWithStoreEnvVars(t *testing.T) {
 // but contains no identities (e.g., only KMS settings), environment variables should still work.
 // This test validates the fix for issue #7311.
 func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
+	// Reset the memory store to avoid test pollution
+	if store := credential.Stores[0]; store.GetName() == credential.StoreTypeMemory {
+		if memStore, ok := store.(interface{ Reset() }); ok {
+			memStore.Reset()
+		}
+	}
+
 	// Set environment variables
 	testAccessKey := "AKIATEST1234567890AB"
 	testSecretKey := "testSecret1234567890123456789012345678901234"
@@ -395,7 +1014,7 @@ func TestConfigFileWithNoIdentitiesAllowsEnvVars(t *testing.T) {
 	option := &S3ApiServerOption{
 		Config: tmpFile.Name(),
 	}
-	iam := NewIdentityAccessManagementWithStore(option, string(credential.StoreTypeMemory))
+	iam := NewIdentityAccessManagementWithStore(option, nil, string(credential.StoreTypeMemory))
 
 	// Should have exactly one identity from environment variables
 	assert.Len(t, iam.identities, 1, "Should have exactly one identity from environment variables even when config file exists with no identities")
@@ -480,7 +1099,7 @@ func TestBucketLevelListPermissions(t *testing.T) {
 
 		for _, tc := range testCases {
 			t.Run(tc.name, func(t *testing.T) {
-				result := identity.canDo(tc.action, tc.bucket, tc.object)
+				result := identity.CanDo(tc.action, tc.bucket, tc.object)
 				assert.Equal(t, tc.shouldAllow, result, tc.description)
 			})
 		}
@@ -499,7 +1118,7 @@ func TestBucketLevelListPermissions(t *testing.T) {
 		testCases := []string{"anybucket", "mybucket", "test-bucket", "prod-data"}
 
 		for _, bucket := range testCases {
-			result := identity.canDo("List", bucket, "")
+			result := identity.CanDo("List", bucket, "")
 			assert.True(t, result, "Global List permission should allow access to bucket %s", bucket)
 		}
 	})
@@ -514,9 +1133,9 @@ func TestBucketLevelListPermissions(t *testing.T) {
 		}
 
 		// Should only allow access to the exact bucket
-		assert.True(t, identity.canDo("List", "specificbucket", ""), "Should allow access to exact bucket")
-		assert.False(t, identity.canDo("List", "specificbucket-test", ""), "Should deny access to bucket with suffix")
-		assert.False(t, identity.canDo("List", "otherbucket", ""), "Should deny access to different bucket")
+		assert.True(t, identity.CanDo("List", "specificbucket", ""), "Should allow access to exact bucket")
+		assert.False(t, identity.CanDo("List", "specificbucket-test", ""), "Should deny access to bucket with suffix")
+		assert.False(t, identity.CanDo("List", "otherbucket", ""), "Should deny access to different bucket")
 	})
 
 	t.Log("This test validates the fix for issue #7066")
@@ -539,26 +1158,26 @@ func TestListBucketsAuthRequest(t *testing.T) {
 		}
 
 		// Test 1: ListBuckets operation should succeed (bucket = "")
-		// This would have failed before the fix because canDo("List", "", "") would return false
-		// After the fix, it bypasses the canDo check for ListBuckets operations
+		// This would have failed before the fix because CanDo("List", "", "") would return false
+		// After the fix, it bypasses the CanDo check for ListBuckets operations
 
 		// Simulate what happens in authRequest for ListBuckets:
 		// action = ACTION_LIST, bucket = "", object = ""
 
-		// Before fix: identity.canDo(ACTION_LIST, "", "") would fail
-		// After fix: the canDo check should be bypassed
+		// Before fix: identity.CanDo(ACTION_LIST, "", "") would fail
+		// After fix: the CanDo check should be bypassed
 
-		// Test the individual canDo method to show it would fail without the special case
-		result := identity.canDo(Action(ACTION_LIST), "", "")
-		assert.False(t, result, "canDo should return false for empty bucket with bucket-specific permissions")
+		// Test the individual CanDo method to show it would fail without the special case
+		result := identity.CanDo(Action(ACTION_LIST), "", "")
+		assert.False(t, result, "CanDo should return false for empty bucket with bucket-specific permissions")
 
 		// Test with a specific bucket that matches the permission
-		result2 := identity.canDo(Action(ACTION_LIST), "mybucket", "")
-		assert.True(t, result2, "canDo should return true for matching bucket")
+		result2 := identity.CanDo(Action(ACTION_LIST), "mybucket", "")
+		assert.True(t, result2, "CanDo should return true for matching bucket")
 
 		// Test with a specific bucket that doesn't match
-		result3 := identity.canDo(Action(ACTION_LIST), "otherbucket", "")
-		assert.False(t, result3, "canDo should return false for non-matching bucket")
+		result3 := identity.CanDo(Action(ACTION_LIST), "otherbucket", "")
+		assert.False(t, result3, "CanDo should return false for non-matching bucket")
 	})
 
 	t.Run("Object listing maintains permission enforcement", func(t *testing.T) {
@@ -575,14 +1194,14 @@ func TestListBucketsAuthRequest(t *testing.T) {
 		// These operations have a specific bucket in the URL
 
 		// Should succeed for allowed bucket
-		result1 := identity.canDo(Action(ACTION_LIST), "mybucket", "prefix/")
+		result1 := identity.CanDo(Action(ACTION_LIST), "mybucket", "prefix/")
 		assert.True(t, result1, "Should allow listing objects in permitted bucket")
 
-		result2 := identity.canDo(Action(ACTION_LIST), "mybucket-prod", "")
+		result2 := identity.CanDo(Action(ACTION_LIST), "mybucket-prod", "")
 		assert.True(t, result2, "Should allow listing objects in wildcard-matched bucket")
 
 		// Should fail for disallowed bucket
-		result3 := identity.canDo(Action(ACTION_LIST), "otherbucket", "")
+		result3 := identity.CanDo(Action(ACTION_LIST), "otherbucket", "")
 		assert.False(t, result3, "Should deny listing objects in non-permitted bucket")
 	})
 
@@ -634,14 +1253,141 @@ func TestSignatureVerificationDoesNotCheckPermissions(t *testing.T) {
 		assert.Equal(t, "list_secret_key", cred.SecretKey)
 
 		// User should have the correct permissions
-		assert.True(t, identity.canDo(Action(ACTION_LIST), "bucket-123", ""))
-		assert.True(t, identity.canDo(Action(ACTION_READ), "bucket-123", ""))
+		assert.True(t, identity.CanDo(Action(ACTION_LIST), "bucket-123", ""))
+		assert.True(t, identity.CanDo(Action(ACTION_READ), "bucket-123", ""))
 
 		// User should NOT have write permissions
-		assert.False(t, identity.canDo(Action(ACTION_WRITE), "bucket-123", ""))
+		assert.False(t, identity.CanDo(Action(ACTION_WRITE), "bucket-123", ""))
 	})
 
 	t.Log("This test validates the fix for issue #7334")
 	t.Log("Signature verification no longer checks for Write permission")
 	t.Log("This allows list-only and read-only users to authenticate via AWS Signature V4")
+}
+
+func TestStaticIdentityProtection(t *testing.T) {
+	iam := NewIdentityAccessManagement(&S3ApiServerOption{}, nil)
+
+	// Add a static identity
+	staticIdent := &Identity{
+		Name:     "static-user",
+		IsStatic: true,
+	}
+	iam.m.Lock()
+	if iam.nameToIdentity == nil {
+		iam.nameToIdentity = make(map[string]*Identity)
+	}
+	iam.identities = append(iam.identities, staticIdent)
+	iam.nameToIdentity[staticIdent.Name] = staticIdent
+	iam.m.Unlock()
+
+	// Add a dynamic identity
+	dynamicIdent := &Identity{
+		Name:     "dynamic-user",
+		IsStatic: false,
+	}
+	iam.m.Lock()
+	iam.identities = append(iam.identities, dynamicIdent)
+	iam.nameToIdentity[dynamicIdent.Name] = dynamicIdent
+	iam.m.Unlock()
+
+	// Try to remove static identity
+	iam.RemoveIdentity("static-user")
+
+	// Verify static identity still exists
+	iam.m.RLock()
+	_, ok := iam.nameToIdentity["static-user"]
+	iam.m.RUnlock()
+	assert.True(t, ok, "Static identity should not be removed")
+
+	// Try to remove dynamic identity
+	iam.RemoveIdentity("dynamic-user")
+
+	// Verify dynamic identity is removed
+	iam.m.RLock()
+	_, ok = iam.nameToIdentity["dynamic-user"]
+	iam.m.RUnlock()
+	assert.False(t, ok, "Dynamic identity should have been removed")
+}
+
+func TestParseExternalUrlToHost(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		expected  string
+		expectErr bool
+	}{
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+		{
+			name:     "HTTPS with default port stripped",
+			input:    "https://api.example.com:443",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP with default port stripped",
+			input:    "http://api.example.com:80",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTPS with non-standard port preserved",
+			input:    "https://api.example.com:9000",
+			expected: "api.example.com:9000",
+		},
+		{
+			name:     "HTTP with non-standard port preserved",
+			input:    "http://api.example.com:8080",
+			expected: "api.example.com:8080",
+		},
+		{
+			name:     "HTTPS without port",
+			input:    "https://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "HTTP without port",
+			input:    "http://api.example.com",
+			expected: "api.example.com",
+		},
+		{
+			name:     "IPv6 with non-standard port",
+			input:    "https://[::1]:9000",
+			expected: "[::1]:9000",
+		},
+		{
+			name:     "IPv6 with default HTTPS port stripped",
+			input:    "https://[::1]:443",
+			expected: "::1",
+		},
+		{
+			name:     "IPv6 without port",
+			input:    "https://[::1]",
+			expected: "::1",
+		},
+		{
+			name:      "invalid URL",
+			input:     "://not-a-url",
+			expectErr: true,
+		},
+		{
+			name:      "missing host",
+			input:     "https://",
+			expectErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := parseExternalUrlToHost(tt.input)
+			if tt.expectErr {
+				assert.Error(t, err)
+				return
+			}
+			assert.NoError(t, err)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
 }

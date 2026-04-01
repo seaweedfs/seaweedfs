@@ -1,48 +1,57 @@
 # Available parameters and their default values for the SeaweedFS chart.
 
 global:
-  createClusterRole: true
-  registry: ""
-  # if repository is set, it overrides the namespace part of imageName
-  repository: ""
-  imageName: chrislusf/seaweedfs
-  imagePullPolicy: IfNotPresent
+  # global.imageRegistry and global.imagePullSecrets are standard Helm conventions
+  # shared across subcharts. See https://helm.sh/docs/chart_template_guide/subcharts_and_globals/
+  imageRegistry: ""
   imagePullSecrets: ""
-  restartPolicy: Always
-  loggingLevel: 1
-  enableSecurity: false
-  masterServer: null
-  securityConfig:
-    jwtSigning:
-      volumeWrite: true
-      volumeRead: false
-      filerWrite: false
-      filerRead: false
-  # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
-  serviceAccountName: "seaweedfs"
-  automountServiceAccountToken: true
-  certificates:
-    alphacrds: false
-  monitoring:
-    enabled: false
-    gatewayHost: null
-    gatewayPort: null
-    additionalLabels: {}
-  # if enabled will use global.replicationPlacement and override master & filer defaultReplicaPlacement config
-  enableReplication: false
-  #  replication type is XYZ:
-  # X number of replica in other data centers
-  # Y number of replica in other racks in the same data center
-  # Z number of replica in other servers in the same rack
-  replicationPlacement: "001"
-  extraEnvironmentVars:
-    WEED_CLUSTER_DEFAULT: "sw"
-    WEED_CLUSTER_SW_MASTER: "seaweedfs-master.seaweedfs:9333"
-    WEED_CLUSTER_SW_FILER: "seaweedfs-filer-client.seaweedfs:8888"
-    # WEED_JWT_SIGNING_KEY:
-    #   secretKeyRef:
-    #     name: seaweedfs-signing-key
-    #     key: signingKey
+  # All app-specific global values are namespaced under global.seaweedfs
+  # to avoid polluting the shared global namespace when used as a subchart.
+  seaweedfs:
+    createClusterRole: true
+    image:
+      # if repository is set, it overrides the namespace part of image.name
+      repository: ""
+      name: chrislusf/seaweedfs
+    imagePullPolicy: IfNotPresent
+    restartPolicy: Always
+    loggingLevel: 1
+    enableSecurity: false
+    masterServer: null
+    securityConfig:
+      jwtSigning:
+        volumeWrite: true
+        volumeRead: false
+        filerWrite: false
+        filerRead: false
+    # we will use this serviceAccountName for all ClusterRoles/ClusterRoleBindings
+    serviceAccountName: "seaweedfs"
+    serviceAccountAnnotations: {}
+    automountServiceAccountToken: true
+    certificates:
+      duration: 87600h
+      renewBefore: 720h
+      alphacrds: false
+    monitoring:
+      enabled: false
+      gatewayHost: null
+      gatewayPort: null
+      additionalLabels: {}
+    # if enabled will use global.seaweedfs.replicationPlacement and override master & filer defaultReplicaPlacement config
+    enableReplication: false
+    #  replication type is XYZ:
+    # X number of replica in other data centers
+    # Y number of replica in other racks in the same data center
+    # Z number of replica in other servers in the same rack
+    replicationPlacement: "001"
+    extraEnvironmentVars:
+      WEED_CLUSTER_DEFAULT: "sw"
+      WEED_CLUSTER_SW_MASTER: "{{ include \"seaweedfs.cluster.masterAddress\" . }}"
+      WEED_CLUSTER_SW_FILER: "{{ include \"seaweedfs.cluster.filerAddress\" . }}"
+      # WEED_JWT_SIGNING_KEY:
+      #   secretKeyRef:
+      #     name: seaweedfs-signing-key
+      #     key: signingKey
 
 image:
   registry: ""
@@ -259,10 +268,10 @@ master:
     tls: []
 
   extraEnvironmentVars:
-    WEED_MASTER_VOLUME_GROWTH_COPY_1: '7'
-    WEED_MASTER_VOLUME_GROWTH_COPY_2: '6'
-    WEED_MASTER_VOLUME_GROWTH_COPY_3: '3'
-    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: '1'
+    WEED_MASTER_VOLUME_GROWTH_COPY_1: "7"
+    WEED_MASTER_VOLUME_GROWTH_COPY_2: "6"
+    WEED_MASTER_VOLUME_GROWTH_COPY_3: "3"
+    WEED_MASTER_VOLUME_GROWTH_COPY_OTHER: "1"
 
   # used to configure livenessProbe on master-server containers
   #
@@ -308,7 +317,7 @@ volume:
   # limit file size to avoid out of memory, default 256mb
   fileSizeLimitMB: null
   # minimum free disk space(in percents). If free disk space lower this value - all volumes marks as ReadOnly
-  minFreeSpacePercent: 7
+  minFreeSpacePercent: 1
 
   # Custom command line arguments to add to the volume command
   # Example to fix IPv6 metrics connectivity issues:
@@ -346,16 +355,16 @@ volume:
   #     maxVolumes: 0  # If set to zero on non-windows OS, the limit will be auto configured. (default "7")
 
   dataDirs:
-  - name: data1
-    type: "hostPath"
-    hostPathPrefix: /ssd
-    maxVolumes: 0
+    - name: data1
+      type: "hostPath"
+      hostPathPrefix: /ssd
+      maxVolumes: 0
 
-   # - name: data2
-   #   type: "persistentVolumeClaim"
-   #   storageClass: "yourClassNameOfChoice"
-   #   size: "800Gi"
-   #   maxVolumes: 0
+      # - name: data2
+      #   type: "persistentVolumeClaim"
+      #   storageClass: "yourClassNameOfChoice"
+      #   size: "800Gi"
+      #   maxVolumes: 0
 
   # This will automatically create a job for patching Kubernetes resources if the dataDirs type is 'persistentVolumeClaim' and the size has changed.
   resizeHook:
@@ -390,14 +399,23 @@ volume:
 
   idx: {}
 
+  # Resource requests, limits, etc. for the vol-move-idx initContainer. This
+  # should map directly to the value of the resources field for a PodSpec,
+  # formatted as a multi-line string. By default no direct resource request
+  # is made.
+  idxVolMoveResources: {}
+
   logs: {}
 
   # limit background compaction or copying speed in mega bytes per second
   compactionMBps: "50"
 
-
   # Volume server's rack name
   rack: null
+
+  # Stable identifier for the volume server, independent of IP address
+  # Useful for Kubernetes environments with hostPath volumes to maintain stable identity
+  id: null
 
   # Volume server's data center name
   dataCenter: null
@@ -538,6 +556,30 @@ volume:
     successThreshold: 1
     failureThreshold: 100
     timeoutSeconds: 30
+
+  ingress:
+    enabled: false
+    className: ""
+    host: "volume.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations:
+      nginx.ingress.kubernetes.io/app-root: /ui/index.html
+      # nginx.ingress.kubernetes.io/use-regex: "true"
+      # nginx.ingress.kubernetes.io/rewrite-target: /$1
+      # nginx.ingress.kubernetes.io/auth-type: "basic"
+      # nginx.ingress.kubernetes.io/auth-secret: "default/ingress-basic-auth-secret"
+      # nginx.ingress.kubernetes.io/auth-realm: 'Authentication Required - SW-Volume'
+      # nginx.ingress.kubernetes.io/service-upstream: "true"
+      # nginx.ingress.kubernetes.io/enable-rewrite-log: "true"
+      # nginx.ingress.kubernetes.io/ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+      # nginx.ingress.kubernetes.io/configuration-snippet: |
+      #   sub_filter '<head>' '<head> <base href="/sw-volume/">'; #add base url
+      #   sub_filter '="/' '="./';                               #make absolute paths to relative
+      #   sub_filter '=/' '=./';
+      #   sub_filter '/seaweedfsstatic' './seaweedfsstatic';
+      #   sub_filter_once off;
 
 # Map of named volume groups for topology-aware deployments.
 # Each key inherits all fields from the `volume` section but can override
@@ -840,22 +882,20 @@ filer:
 
   # secret env variables
   secretExtraEnvironmentVars: {}
-      # WEED_POSTGRES_USERNAME:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: username
-      # WEED_POSTGRES_PASSWORD:
-      #   secretKeyRef:
-      #     name: postgres-credentials
-      #     key: password
+    # WEED_POSTGRES_USERNAME:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: username
+    # WEED_POSTGRES_PASSWORD:
+    #   secretKeyRef:
+    #     name: postgres-credentials
+    #     key: password
 
   s3:
     enabled: false
     port: 8333
     # add additional https port
     httpsPort: 0
-    # allow empty folders
-    allowEmptyFolder: false
     # Suffix of the host name, {bucket}.{domainName}
     domainName: ""
     # enable user & permission to s3 (need to inject to all services)
@@ -863,14 +903,26 @@ filer:
     # set to the name of an existing kubernetes Secret with the s3 json config file
     # should have a secret key called seaweedfs_s3_config with an inline json configure
     existingConfigSecret: null
+    # To provide explicit credentials for the S3 gateway, set them under
+    # the top-level s3.credentials key (not filer.s3.credentials).
+    # The s3-secret.yaml template only reads from .Values.s3.credentials.
+    # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
     auditLogConfig: {}
-    # You may specify buckets to be created during the install process.
+    # You may specify buckets to be created during the install or upgrade process.
     # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+    # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # objectLock enables S3 Object Lock (irreversible, forces versioning)
+    # versioning: Enabled or Suspended (or true to enable)
     # createBuckets:
     #   - name: bucket-a
     #     anonymousRead: true
+    #     ttl: 7d
+    #     objectLock: true
+    #     versioning: Enabled
     #   - name: bucket-b
     #     anonymousRead: false
+    createBucketsHook:
+      resources: {}
 
 s3:
   enabled: false
@@ -881,16 +933,47 @@ s3:
   port: 8333
   # add additional https port
   httpsPort: 0
+  # Use a custom TLS certificate secret for the S3 HTTPS endpoint.
+  # When set, this Kubernetes Secret (must contain tls.crt and tls.key) is used
+  # instead of the internal self-signed client certificate generated by cert-manager.
+  # This allows using a publicly trusted certificate (e.g., from Let's Encrypt)
+  # so that S3 clients don't need to trust the internal CA.
+  # Requires global.seaweedfs.enableSecurity to be true.
+  tlsSecret: null
   metricsPort: 9327
+  # Iceberg catalog REST port (Apache Iceberg REST Catalog API)
+  # Set to a port number to enable, or 0/null to disable
+  icebergPort: null
   loggingOverrideLevel: null
-  # allow empty folders
-  allowEmptyFolder: true
   # enable user & permission to s3 (need to inject to all services)
   enableAuth: false
   # set to the name of an existing kubernetes Secret with the s3 json config file
   # should have a secret key called seaweedfs_s3_config with an inline json config
   existingConfigSecret: null
+  # Optionally provide explicit credentials for the S3 gateway.
+  # When set, these are used in the generated s3 secret instead of
+  # auto-generating random credentials.
+  # credentials:
+  #   admin:
+  #     accessKey: ""
+  #     secretKey: ""
+  #   read:
+  #     accessKey: ""
+  #     secretKey: ""
   auditLogConfig: {}
+  # You may specify buckets to be created during the install or upgrade process.
+  # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+  # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+  # objectLock enables S3 Object Lock (irreversible, forces versioning)
+  # versioning: Enabled or Suspended (or true to enable)
+  # createBuckets:
+  #   - name: bucket-a
+  #     anonymousRead: true
+  #     ttl: 7d
+  #     objectLock: true
+  #     versioning: Enabled
+  #   - name: bucket-b
+  #     anonymousRead: false
 
   # Suffix of the host name, {bucket}.{domainName}
   domainName: ""
@@ -977,9 +1060,9 @@ s3:
   extraEnvironmentVars:
 
   # Custom command line arguments to add to the s3 command
-  # Example to fix connection idle seconds:
-  extraArgs: ["-idleTimeout=30"]
-  # extraArgs: []
+  # Default idleTimeout is 120 seconds. Example to customize:
+  # extraArgs: ["-idleTimeout=300"]
+  extraArgs: []
 
   # used to configure livenessProbe on s3 containers
   #
@@ -1007,14 +1090,30 @@ s3:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  createBucketsHook:
+    resources: {}
+
   ingress:
     enabled: false
     className: ""
-    # host: false for "*" hostname
+    # host: false for "*" hostname, or an array for multiple hostnames
     host: "seaweedfs.cluster.local"
     path: "/"
     pathType: Prefix
     # additional ingress annotations for the s3 endpoint
+    annotations: {}
+    tls: []
+
+  # Service settings
+  service:
+    type: ClusterIP
+
+  icebergIngress:
+    enabled: false
+    className: ""
+    host: "seaweedfs-iceberg.cluster.local"
+    path: "/"
+    pathType: Prefix
     annotations: {}
     tls: []
 
@@ -1090,11 +1189,263 @@ sftp:
     failureThreshold: 100
     timeoutSeconds: 10
 
+  # Service settings
+  service:
+    type: ClusterIP
+
+admin:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  port: 23646  # Default admin port
+  grpcPort: 33646  # Default gRPC port for worker connections
+  loggingOverrideLevel: null
+
+  # Admin authentication
+  secret:
+    # Name of an existing secret containing admin credentials. If set, adminUser and adminPassword below are ignored.
+    existingSecret: ""
+    # Key in the existing secret for the admin username. Required if existingSecret is set.
+    userKey: ""
+    # Key in the existing secret for the admin password. Required if existingSecret is set.
+    pwKey: ""
+    adminUser: "admin"
+    adminPassword: ""  # If empty, authentication is disabled.
+
+  # Data directory for admin configuration and maintenance data
+  dataDir: ""  # If empty, configuration is kept in memory only
+
+  # Master servers to connect to
+  # If empty, uses global.seaweedfs.masterServer or auto-discovers from master statefulset
+  masters: ""
+
+  # URL path prefix when running behind a reverse proxy under a subdirectory
+  # Example: "/seaweedfs-admin" makes the UI available at /seaweedfs-admin/
+  # If empty and ingress is enabled with a non-root path, the ingress path is used automatically
+  urlPrefix: ""
+
+  # Custom command line arguments to add to the admin command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration
+  data:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "10Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
+    size: "5Gi"
+    storageClass: ""
+    hostPathPrefix: /storage
+    claimName: ""
+    annotations: {}
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+
+  ## Set podManagementPolicy
+  podManagementPolicy: Parallel
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: admin
+          topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: ""
+
+  resources: {}
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
+  # Health checks
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 20
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      scheme: HTTP
+    initialDelaySeconds: 15
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
+  ingress:
+    enabled: false
+    className: "nginx"
+    # host: false for "*" hostname
+    host: "admin.seaweedfs.local"
+    path: "/"
+    pathType: Prefix
+    annotations: {}
+    tls: []
+
+  service:
+    type: ClusterIP
+    annotations: {}
+
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
+
+worker:
+  enabled: false
+  imageOverride: null
+  restartPolicy: null
+  replicas: 1
+  loggingOverrideLevel: null
+  metricsPort: 9327
+  metricsIp: ""  # If empty, defaults to 0.0.0.0
+
+  # Admin server to connect to
+  adminServer: ""
+
+  # Worker job types - comma-separated list
+  # Available: vacuum, volume_balance, erasure_coding
+  jobType: "vacuum,volume_balance,erasure_coding"
+
+  # Maximum number of concurrent detection requests
+  maxDetect: 1
+
+  # Maximum number of concurrent execution jobs
+  maxExecute: 4
+
+  # Working directory for task execution
+  workingDir: "/tmp/seaweedfs-worker"
+
+  # Custom command line arguments to add to the worker command
+  # Example: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Storage configuration for working directory
+  # Note: Workers use Deployment, so use "emptyDir", "hostPath", or "existingClaim"
+  # Do NOT use "persistentVolumeClaim" - use "existingClaim" with pre-provisioned PVC instead
+  data:
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    hostPathPrefix: /storage
+    claimName: ""  # For existingClaim type
+
+  logs:
+    type: "emptyDir"  # Options: "hostPath", "emptyDir", "existingClaim"
+    hostPathPrefix: /storage
+    claimName: ""  # For existingClaim type
+
+  # Additional resources
+  sidecars: []
+  initContainers: ""
+  extraVolumes: ""
+  extraVolumeMounts: ""
+  podLabels: {}
+  podAnnotations: {}
+  annotations: {}
+
+  # Affinity Settings
+  # Commenting out or setting as empty the affinity variable, will allow
+  # deployment to single node services such as Minikube
+  affinity: |
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: worker
+          topologyKey: kubernetes.io/hostname
+
+  # Topology Spread Constraints Settings
+  # This should map directly to the value of the topologySpreadConstraints
+  # for a PodSpec. By Default no constraints are set.
+  topologySpreadConstraints: ""
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "512Mi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"
+  tolerations: ""
+  nodeSelector: ""
+  priorityClassName: ""
+  serviceAccountName: ""
+  podSecurityContext: {}
+  containerSecurityContext: {}
+
+  extraEnvironmentVars: {}
+
+  # Health checks for worker pods
+  # Workers expose /health (liveness) and /ready (readiness) endpoints on the metricsPort
+  livenessProbe:
+    enabled: true
+    httpGet:
+      path: /health
+      port: metrics
+    initialDelaySeconds: 30
+    periodSeconds: 60
+    successThreshold: 1
+    failureThreshold: 5
+    timeoutSeconds: 10
+
+  readinessProbe:
+    enabled: true
+    httpGet:
+      path: /ready
+      port: metrics
+    initialDelaySeconds: 20
+    periodSeconds: 15
+    successThreshold: 1
+    failureThreshold: 3
+    timeoutSeconds: 10
+
+  # ServiceMonitor annotations (separate from pod/deployment annotations)
+  serviceMonitor:
+    annotations: {}
+
 # All-in-one deployment configuration
 allInOne:
   enabled: false
   imageOverride: null
   restartPolicy: Always
+  replicas: 1  # Number of replicas (note: multiple replicas may require shared storage)
 
   # Core configuration
   idleTimeout: 30  # Connection idle seconds
@@ -1106,24 +1457,98 @@ allInOne:
   metricsIp: ""  # Metrics listen IP. If empty, defaults to bindAddress
   loggingOverrideLevel: null  # Override logging level
 
-  # Service configuration
+  # Custom command line arguments to add to the server command
+  # Example to fix IPv6 metrics connectivity issues:
+  # extraArgs: ["-metricsIp", "0.0.0.0"]
+  # Example with multiple args:
+  # extraArgs: ["-customFlag", "value", "-anotherFlag"]
+  extraArgs: []
+
+  # Update strategy configuration
+  # type: Recreate or RollingUpdate
+  # For single replica, Recreate is recommended to avoid data conflicts.
+  # For multiple replicas with RollingUpdate, you MUST use shared storage
+  # (e.g., data.type: persistentVolumeClaim with ReadWriteMany access mode)
+  # to avoid data loss or inconsistency between pods.
+  updateStrategy:
+    type: Recreate
+
+  # S3 gateway configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global s3.* settings. Set explicit values here to override for allInOne only.
   s3:
     enabled: false  # Whether to enable S3 gateway
+    port: null  # S3 gateway port (null inherits from s3.port)
+    httpsPort: null  # S3 gateway HTTPS port (null inherits from s3.httpsPort)
+    domainName: null  # Suffix of the host name (null inherits from s3.domainName)
+    enableAuth: false  # Enable user & permission to S3
+    # Set to the name of an existing kubernetes Secret with the s3 json config file
+    # should have a secret key called seaweedfs_s3_config with an inline json config
+    existingConfigSecret: null
+    # To provide explicit credentials for the S3 gateway, set them under
+    # the top-level s3.credentials key (not allInOne.s3.credentials).
+    # The s3-secret.yaml template only reads from .Values.s3.credentials.
+    # See: s3.credentials.admin.accessKey, s3.credentials.read.accessKey
+    auditLogConfig: null  # S3 audit log configuration (null inherits from s3.auditLogConfig)
+    trafficDistribution: null  # Service traffic distribution (e.g., "PreferClose"); auto-converts to "PreferSameZone" on k8s >=1.35
+    # You may specify buckets to be created during the install process.
+    # Buckets may be exposed publicly by setting `anonymousRead` to `true`
+    # ttl format: [1-255][m|h|d|w|M|y] (e.g., 7d)
+    # objectLock enables S3 Object Lock (irreversible, forces versioning)
+    # versioning: Enabled or Suspended (or true to enable)
+    # createBuckets:
+    #   - name: bucket-a
+    #     anonymousRead: true
+    #     ttl: 7d
+    #     objectLock: true
+    #     versioning: Enabled
+    #   - name: bucket-b
+    #     anonymousRead: false
+    createBucketsHook:
+      resources: {}
+
+  # SFTP server configuration
+  # Note: Most parameters below default to null, which means they inherit from
+  # the global sftp.* settings. Set explicit values here to override for allInOne only.
   sftp:
     enabled: false  # Whether to enable SFTP server
+    port: null  # SFTP port (null inherits from sftp.port)
+    sshPrivateKey: null  # Path to SSH private key (null inherits from sftp.sshPrivateKey)
+    hostKeysFolder: null  # Path to SSH host keys folder (null inherits from sftp.hostKeysFolder)
+    authMethods: null  # Comma-separated auth methods (null inherits from sftp.authMethods)
+    maxAuthTries: null  # Maximum authentication attempts (null inherits from sftp.maxAuthTries)
+    bannerMessage: null  # Banner message (null inherits from sftp.bannerMessage)
+    loginGraceTime: null  # Login grace time (null inherits from sftp.loginGraceTime)
+    clientAliveInterval: null  # Client keep-alive interval (null inherits from sftp.clientAliveInterval)
+    clientAliveCountMax: null  # Maximum missed keep-alive messages (null inherits from sftp.clientAliveCountMax)
+    enableAuth: false  # Enable SFTP authentication
+    # Set to the name of an existing kubernetes Secret with the sftp json config file
+    existingConfigSecret: null
+    # Set to the name of an existing kubernetes Secret with the SSH keys
+    existingSshConfigSecret: null
 
   # Service settings
   service:
     annotations: {}  # Annotations for the service
     type: ClusterIP  # Service type (ClusterIP, NodePort, LoadBalancer)
+    internalTrafficPolicy: Cluster  # Internal traffic policy
+
+  # Note: For ingress in all-in-one mode, use the standard s3.ingress and
+  # filer.ingress settings. The templates automatically detect all-in-one mode
+  # and point to the correct service (seaweedfs-all-in-one instead of
+  # seaweedfs-s3 or seaweedfs-filer).
 
   # Storage configuration
   data:
-    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir"
+    type: "emptyDir"  # Options: "hostPath", "persistentVolumeClaim", "emptyDir", "existingClaim"
     hostPathPrefix: /mnt/data  # Path prefix for hostPath volumes
-    claimName: seaweedfs-data-pvc  # Name of the PVC to use
-    size: ""  # Size of the PVC
-    storageClass: ""  # Storage class for the PVC
+    claimName: seaweedfs-data-pvc  # Name of the PVC to use (for existingClaim type)
+    size: null  # Size of the PVC (null defaults to 10Gi for persistentVolumeClaim type)
+    storageClass: null  # Storage class for the PVC (null uses cluster default)
+    # accessModes for the PVC. Default is ["ReadWriteOnce"].
+    # For multi-replica deployments, use ["ReadWriteMany"] with a compatible storage class.
+    accessModes: []
+    annotations: {}  # Annotations for the PVC
 
   # Health checks
   readinessProbe:
@@ -1131,7 +1556,7 @@ allInOne:
     httpGet:
       path: /cluster/status
       port: 9333
-    scheme: HTTP
+      scheme: HTTP
     initialDelaySeconds: 10
     periodSeconds: 15
     successThreshold: 1
@@ -1143,7 +1568,7 @@ allInOne:
     httpGet:
       path: /cluster/status
       port: 9333
-    scheme: HTTP
+      scheme: HTTP
     initialDelaySeconds: 20
     periodSeconds: 30
     successThreshold: 1
@@ -1152,6 +1577,18 @@ allInOne:
 
   # Additional resources
   extraEnvironmentVars: {}  # Additional environment variables
+  # Secret environment variables (for database credentials, etc.)
+  # Example:
+  # secretExtraEnvironmentVars:
+  #   WEED_POSTGRES_USERNAME:
+  #     secretKeyRef:
+  #       name: postgres-credentials
+  #       key: username
+  #   WEED_POSTGRES_PASSWORD:
+  #     secretKeyRef:
+  #       name: postgres-credentials
+  #       key: password
+  secretExtraEnvironmentVars: {}
   extraVolumeMounts: ""  # Additional volume mounts
   extraVolumes: ""  # Additional volumes
   initContainers: ""  # Init containers
@@ -1171,7 +1608,7 @@ allInOne:
             matchLabels:
               app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
               app.kubernetes.io/instance: {{ .Release.Name }}
-              app.kubernetes.io/component: master
+              app.kubernetes.io/component: seaweedfs-all-in-one
           topologyKey: kubernetes.io/hostname
 
   # Topology Spread Constraints Settings
@@ -1179,16 +1616,16 @@ allInOne:
   # for a PodSpec. By Default no constraints are set.
   topologySpreadConstraints: ""
 
-  # Toleration Settings for master pods
+  # Toleration Settings for pods
   # This should be a multi-line string matching the Toleration array
   # in a PodSpec.
   tolerations: ""
 
-  # nodeSelector labels for master pod assignment, formatted as a muli-line string.
+  # nodeSelector labels for pod assignment, formatted as a muli-line string.
   # ref: https://kubernetes.io/docs/concepts/configuration/assign-pod-node/#nodeselector
   nodeSelector: ""
 
-  # Used to assign priority to master pods
+  # Used to assign priority to pods
   # ref: https://kubernetes.io/docs/concepts/configuration/pod-priority-preemption/
   priorityClassName: ""
 
@@ -1232,6 +1669,8 @@ cosi:
   image: "ghcr.io/seaweedfs/seaweedfs-cosi-driver:v0.1.2"
   driverName: "seaweedfs.objectstorage.k8s.io"
   bucketClassName: "seaweedfs"
+  # Optional parameters to pass to the default BucketClass (e.g., diskType for tiered storage)
+  bucketClassParameters: {}
   endpoint: ""
   region: ""
 
@@ -1268,6 +1707,9 @@ certificates:
   keySize: 2048
   duration: 2160h  # 90d
   renewBefore: 360h  # 15d
+  ca:
+    duration: 87600h  # 10 years
+    renewBefore: 720h  # 30d
   externalCertificates:
     # This will avoid the need to use cert-manager and will rely on providing your own external certificates and CA
     # you will need to store your provided certificates in the secret read by the different services:

@@ -2,6 +2,7 @@ package filer
 
 import (
 	"bytes"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -13,30 +14,74 @@ func (f *Filer) onMetadataChangeEvent(event *filer_pb.SubscribeMetadataResponse)
 	f.maybeReloadFilerConfiguration(event)
 	f.maybeReloadRemoteStorageConfigurationAndMapping(event)
 	f.onBucketEvents(event)
+	f.onEmptyFolderCleanupEvents(event)
 }
 
 func (f *Filer) onBucketEvents(event *filer_pb.SubscribeMetadataResponse) {
 	message := event.EventNotification
+	oldDir := event.Directory
+	newDir := filer_pb.MetadataEventTargetDirectory(event)
 
-	if f.DirBucketsPath == event.Directory {
-		if filer_pb.IsCreate(event) {
-			if message.NewEntry.IsDirectory {
-				f.Store.OnBucketCreation(message.NewEntry.Name)
-			}
+	if filer_pb.IsCreate(event) {
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
 		}
-		if filer_pb.IsDelete(event) {
-			if message.OldEntry.IsDirectory {
-				f.Store.OnBucketDeletion(message.OldEntry.Name)
+	}
+	if filer_pb.IsDelete(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
+		}
+	}
+	if filer_pb.IsRename(event) {
+		if oldDir == f.DirBucketsPath && message.OldEntry.IsDirectory {
+			f.Store.OnBucketDeletion(message.OldEntry.Name)
+		}
+		if newDir == f.DirBucketsPath && message.NewEntry.IsDirectory {
+			f.Store.OnBucketCreation(message.NewEntry.Name)
+		}
+	}
+}
+
+// onEmptyFolderCleanupEvents handles create/delete events for empty folder cleanup
+func (f *Filer) onEmptyFolderCleanupEvents(event *filer_pb.SubscribeMetadataResponse) {
+	if f.EmptyFolderCleaner == nil || !f.EmptyFolderCleaner.IsEnabled() {
+		return
+	}
+
+	message := event.EventNotification
+	directory := event.Directory
+	eventTime := time.Unix(0, event.TsNs)
+
+	// Handle delete events - trigger folder cleanup check
+	if filer_pb.IsDelete(event) && message.OldEntry != nil {
+		f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+	}
+
+	// Handle create events - cancel pending cleanup for the folder
+	if filer_pb.IsCreate(event) && message.NewEntry != nil {
+		f.EmptyFolderCleaner.OnCreateEvent(directory, message.NewEntry.Name, message.NewEntry.IsDirectory)
+	}
+
+	// Handle rename/move events
+	if filer_pb.IsRename(event) {
+		// Treat the old location as a delete
+		if message.OldEntry != nil {
+			f.EmptyFolderCleaner.OnDeleteEvent(directory, message.OldEntry.Name, message.OldEntry.IsDirectory, eventTime)
+		}
+		// Treat the new location as a create
+		if message.NewEntry != nil {
+			newDir := message.NewParentPath
+			if newDir == "" {
+				newDir = directory
 			}
+			f.EmptyFolderCleaner.OnCreateEvent(newDir, message.NewEntry.Name, message.NewEntry.IsDirectory)
 		}
 	}
 }
 
 func (f *Filer) maybeReloadFilerConfiguration(event *filer_pb.SubscribeMetadataResponse) {
-	if DirectoryEtcSeaweedFS != event.Directory {
-		if DirectoryEtcSeaweedFS != event.EventNotification.NewParentPath {
-			return
-		}
+	if !filer_pb.MetadataEventTouchesDirectory(event, DirectoryEtcSeaweedFS) {
+		return
 	}
 
 	entry := event.EventNotification.NewEntry

@@ -55,6 +55,7 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 		if OffsetSize == 4 && offset < int64(MaxPossibleVolumeSize) {
 			return ErrorSizeMismatch
 		}
+		return fmt.Errorf("size mismatch for entry at offset %d: found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
 	}
 	n.DataSize = util.BytesToUint32(bytes[NeedleHeaderSize : NeedleHeaderSize+DataSizeSize])
 	startOffset := offset + NeedleHeaderSize
@@ -64,6 +65,9 @@ func (n *Needle) ReadNeedleMeta(r backend.BackendStorageFile, offset int64, size
 	dataSize := GetActualSize(size, version)
 	stopOffset := offset + dataSize
 	metaSize := stopOffset - startOffset
+	if metaSize < 0 || metaSize > 128*1024 {
+		return fmt.Errorf("invalid needle meta size %d: DataSize=%d, size=%d, offset=%d", metaSize, n.DataSize, size, offset)
+	}
 	metaSlice := make([]byte, int(metaSize))
 
 	count, err = r.ReadAt(metaSlice, startOffset)

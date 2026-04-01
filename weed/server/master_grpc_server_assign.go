@@ -17,6 +17,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/topology"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer) error {
@@ -28,8 +30,15 @@ func (ms *MasterServer) StreamAssign(server master_pb.Seaweed_StreamAssignServer
 		}
 		resp, err := ms.Assign(context.Background(), req)
 		if err != nil {
-			glog.Errorf("StreamAssign failed to assign: %v", err)
-			return err
+			// Return transient errors (e.g. warmup) as in-band error responses
+			// instead of killing the stream, so pooled connections survive.
+			if st, ok := status.FromError(err); ok && st.Code() == codes.Unavailable {
+				glog.V(1).Infof("StreamAssign transient error: %v", err)
+				resp = &master_pb.AssignResponse{Error: st.Message()}
+			} else {
+				glog.Errorf("StreamAssign failed to assign: %v", err)
+				return err
+			}
 		}
 		if err = server.Send(resp); err != nil {
 			glog.Errorf("StreamAssign failed to send: %v", err)
@@ -58,6 +67,10 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	if err != nil {
 		return nil, err
 	}
+
+	if ms.Topo.IsWarmingUp() {
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
+	}
 	diskType := types.ToDiskType(req.DiskType)
 
 	ver := needle.GetCurrentVersion()
@@ -79,6 +92,16 @@ func (ms *MasterServer) Assign(ctx context.Context, req *master_pb.AssignRequest
 	}
 
 	vl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, option.DiskType)
+	if req.DiskType == "" {
+		if writable, _ := vl.GetWritableVolumeCount(); writable == 0 {
+			if hddVl := ms.Topo.GetVolumeLayout(option.Collection, option.ReplicaPlacement, option.Ttl, types.ToDiskType(types.HddType)); hddVl != nil {
+				if writable, _ := hddVl.GetWritableVolumeCount(); writable > 0 {
+					option.DiskType = types.ToDiskType(types.HddType)
+					vl = hddVl
+				}
+			}
+		}
+	}
 	vl.SetLastGrowCount(req.WritableVolumeCount)
 
 	var (

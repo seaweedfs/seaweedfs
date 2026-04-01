@@ -17,16 +17,27 @@
 package s3_constants
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
 	"github.com/gorilla/mux"
 )
 
+// S3 XML namespace
+const (
+	S3Namespace = "http://s3.amazonaws.com/doc/2006-03-01/"
+)
+
+// S3 object key limits
+const (
+	MaxS3ObjectKeyLength = 1024
+)
+
 // Standard S3 HTTP request constants
 const (
 	// S3 storage class
-	AmzStorageClass = "x-amz-storage-class"
+	AmzStorageClass = "X-Amz-Storage-Class"
 
 	// S3 user-defined metadata
 	AmzUserMetaPrefix    = "X-Amz-Meta-"
@@ -39,10 +50,17 @@ const (
 	AmzObjectTaggingDirective = "X-Amz-Tagging-Directive"
 	AmzTagCount               = "x-amz-tagging-count"
 
-	SeaweedFSIsDirectoryKey = "X-Seaweedfs-Is-Directory-Key"
-	SeaweedFSPartNumber     = "X-Seaweedfs-Part-Number"
-	SeaweedFSUploadId       = "X-Seaweedfs-Upload-Id"
-	SeaweedFSExpiresS3      = "X-Seaweedfs-Expires-S3"
+	// GetObjectAttributes headers
+	AmzObjectAttributes = "X-Amz-Object-Attributes"
+	AmzMaxParts         = "X-Amz-Max-Parts"
+	AmzPartNumberMarker = "X-Amz-Part-Number-Marker"
+	AmzDeleteMarker     = "X-Amz-Delete-Marker"
+
+	SeaweedFSUploadId                = "X-Seaweedfs-Upload-Id"
+	SeaweedFSMultipartPartsCount     = "X-Seaweedfs-Multipart-Parts-Count"
+	SeaweedFSMultipartPartBoundaries = "X-Seaweedfs-Multipart-Part-Boundaries" // JSON: [{part:1,start:0,end:2,etag:"abc"},{part:2,start:2,end:3,etag:"def"}]
+	SeaweedFSExpiresS3               = "X-Seaweedfs-Expires-S3"
+	AmzMpPartsCount                  = "x-amz-mp-parts-count"
 
 	// S3 ACL headers
 	AmzCannedAcl      = "X-Amz-Acl"
@@ -69,8 +87,6 @@ const (
 	AmzCopySourceIfNoneMatch       = "X-Amz-Copy-Source-If-None-Match"
 	AmzCopySourceIfModifiedSince   = "X-Amz-Copy-Source-If-Modified-Since"
 	AmzCopySourceIfUnmodifiedSince = "X-Amz-Copy-Source-If-Unmodified-Since"
-
-	AmzMpPartsCount = "X-Amz-Mp-Parts-Count"
 
 	// S3 Server-Side Encryption with Customer-provided Keys (SSE-C)
 	AmzServerSideEncryptionCustomerAlgorithm = "X-Amz-Server-Side-Encryption-Customer-Algorithm"
@@ -135,21 +151,57 @@ const (
 func GetBucketAndObject(r *http.Request) (bucket, object string) {
 	vars := mux.Vars(r)
 	bucket = vars["bucket"]
-	object = vars["object"]
-	if !strings.HasPrefix(object, "/") {
-		object = "/" + object
+	object = NormalizeObjectKey(vars["object"])
+	return
+}
+
+// NormalizeObjectKey normalizes object keys by removing duplicate slashes and converting backslashes.
+// This normalizes keys from various sources (URL path, form values, etc.) to a consistent format.
+// It also converts Windows-style backslashes to forward slashes for cross-platform compatibility.
+// Returns keys WITHOUT leading slash to match S3 API format (e.g., "foo/bar" not "/foo/bar").
+// Preserves trailing slash if present (e.g., "foo/" stays "foo/").
+func NormalizeObjectKey(object string) string {
+	// Preserve trailing slash if present
+	hasTrailingSlash := strings.HasSuffix(object, "/")
+
+	// Convert Windows-style backslashes to forward slashes
+	object = strings.ReplaceAll(object, "\\", "/")
+	object = removeDuplicateSlashes(object)
+	// Remove leading slash to match S3 API format
+	object = strings.TrimPrefix(object, "/")
+
+	// Restore trailing slash if it was present and result is not empty
+	if hasTrailingSlash && object != "" && !strings.HasSuffix(object, "/") {
+		object = object + "/"
 	}
 
-	return
+	return object
+}
+
+// removeDuplicateSlashes removes consecutive slashes from a path
+func removeDuplicateSlashes(s string) string {
+	var result strings.Builder
+	result.Grow(len(s))
+
+	lastWasSlash := false
+	for _, r := range s {
+		if r == '/' {
+			if !lastWasSlash {
+				result.WriteRune(r)
+			}
+			lastWasSlash = true
+		} else {
+			result.WriteRune(r)
+			lastWasSlash = false
+		}
+	}
+	return result.String()
 }
 
 func GetPrefix(r *http.Request) string {
 	query := r.URL.Query()
 	prefix := query.Get("prefix")
-	if !strings.HasPrefix(prefix, "/") {
-		prefix = "/" + prefix
-	}
-
+	prefix = removeDuplicateSlashes(prefix)
 	return prefix
 }
 
@@ -167,4 +219,46 @@ var PassThroughHeaders = map[string]string{
 // Header names are case-insensitive in HTTP, so this function normalizes to lowercase.
 func IsSeaweedFSInternalHeader(headerKey string) bool {
 	return strings.HasPrefix(strings.ToLower(headerKey), SeaweedFSInternalPrefix)
+}
+
+// Context keys for storing authenticated identity information
+type contextKey string
+
+const (
+	contextKeyIdentityName   contextKey = "s3-identity-name"
+	contextKeyIdentityObject contextKey = "s3-identity-object"
+)
+
+// SetIdentityNameInContext stores the authenticated identity name in the request context
+// This is the secure way to propagate identity - headers can be spoofed, context cannot
+func SetIdentityNameInContext(ctx context.Context, identityName string) context.Context {
+	if identityName != "" {
+		return context.WithValue(ctx, contextKeyIdentityName, identityName)
+	}
+	return ctx
+}
+
+// GetIdentityNameFromContext retrieves the authenticated identity name from the request context
+// Returns empty string if no identity is set (unauthenticated request)
+// This is the secure way to retrieve identity - never read from headers directly
+func GetIdentityNameFromContext(r *http.Request) string {
+	if name, ok := r.Context().Value(contextKeyIdentityName).(string); ok {
+		return name
+	}
+	return ""
+}
+
+// SetIdentityInContext stores the full authenticated identity object in the request context
+// This is used to pass the full identity (including for JWT users) to handlers
+func SetIdentityInContext(ctx context.Context, identity interface{}) context.Context {
+	if identity != nil {
+		return context.WithValue(ctx, contextKeyIdentityObject, identity)
+	}
+	return ctx
+}
+
+// GetIdentityFromContext retrieves the full identity object from the request context
+// Returns nil if no identity is set (unauthenticated request)
+func GetIdentityFromContext(r *http.Request) interface{} {
+	return r.Context().Value(contextKeyIdentityObject)
 }

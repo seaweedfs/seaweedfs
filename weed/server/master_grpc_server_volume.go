@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 const (
@@ -59,8 +61,8 @@ func (ms *MasterServer) ProcessGrowRequest() {
 				continue
 			}
 			dcs := ms.Topo.ListDCAndRacks()
-			var err error
 			for _, vlc := range ms.Topo.ListVolumeLayoutCollections() {
+				var err error
 				vl := vlc.VolumeLayout
 				lastGrowCount := vl.GetLastGrowCount()
 				if vl.HasGrowRequest() {
@@ -74,8 +76,14 @@ func (ms *MasterServer) ProcessGrowRequest() {
 
 				switch {
 				case mustGrow > 0:
-					vgr.WritableVolumeCount = uint32(mustGrow)
-					_, err = ms.VolumeGrow(ctx, vgr)
+					if rp, rpErr := super_block.NewReplicaPlacementFromString(vgr.Replication); rpErr != nil {
+						glog.V(0).Infof("failed to parse replica placement %s: %v", vgr.Replication, rpErr)
+					} else {
+						vgr.WritableVolumeCount = uint32(mustGrow)
+						if ms.Topo.AvailableSpaceFor(&topology.VolumeGrowOption{DiskType: types.ToDiskType(vgr.DiskType)}) >= int64(vgr.WritableVolumeCount*uint32(rp.GetCopyCount())) {
+							_, err = ms.VolumeGrow(ctx, vgr)
+						}
+					}
 				case lastGrowCount > 0 && writable < int(lastGrowCount*2) && float64(crowded+volumeGrowStepCount) > float64(writable)*topology.VolumeGrowStrategy.Threshold:
 					vgr.WritableVolumeCount = volumeGrowStepCount
 					_, err = ms.VolumeGrow(ctx, vgr)
@@ -157,6 +165,7 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 	resp := &master_pb.LookupVolumeResponse{}
 	volumeLocations := ms.lookupVolumeId(req.VolumeOrFileIds, req.Collection)
 
+	notFoundCount := 0
 	for _, volumeOrFileId := range req.VolumeOrFileIds {
 		vid := volumeOrFileId
 		commaSep := strings.Index(vid, ",")
@@ -177,6 +186,9 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 			if commaSep > 0 { // this is a file id
 				auth = string(security.GenJwtForVolumeServer(ms.guard.SigningKey, ms.guard.ExpiresAfterSec, result.VolumeOrFileId))
 			}
+			if result.NotFound {
+				notFoundCount++
+			}
 			resp.VolumeIdLocations = append(resp.VolumeIdLocations, &master_pb.LookupVolumeResponse_VolumeIdLocation{
 				VolumeOrFileId: result.VolumeOrFileId,
 				Locations:      locations,
@@ -184,6 +196,12 @@ func (ms *MasterServer) LookupVolume(ctx context.Context, req *master_pb.LookupV
 				Auth:           auth,
 			})
 		}
+	}
+
+	// Only return Unavailable during warmup when every requested ID was a transient not-found
+	if len(req.VolumeOrFileIds) > 0 && notFoundCount == len(req.VolumeOrFileIds) && ms.Topo.IsLeader() && ms.Topo.IsWarmingUp() {
+		glog.V(0).Infof("lookup volume warming up: topology is still loading (%d not found)", notFoundCount)
+		return nil, status.Errorf(codes.Unavailable, "master is warming up, topology is still loading")
 	}
 
 	return resp, nil
@@ -253,7 +271,7 @@ func (ms *MasterServer) LookupEcVolume(ctx context.Context, req *master_pb.Looku
 		var locations []*master_pb.Location
 		for _, dn := range shardLocations {
 			locations = append(locations, &master_pb.Location{
-				Url:        string(dn.Id()),
+				Url:        dn.Url(),
 				PublicUrl:  dn.PublicUrl,
 				DataCenter: dn.GetDataCenterId(),
 			})
@@ -281,15 +299,24 @@ func (ms *MasterServer) VacuumVolume(ctx context.Context, req *master_pb.VacuumV
 }
 
 func (ms *MasterServer) DisableVacuum(ctx context.Context, req *master_pb.DisableVacuumRequest) (*master_pb.DisableVacuumResponse, error) {
-
-	ms.Topo.DisableVacuum()
+	// The caller explicitly indicates whether this disable request comes
+	// from the vacuum plugin monitor. Track ownership so the safety net
+	// in the vacuum loop won't override an operator's intentional disable.
+	if req.GetByPlugin() {
+		ms.Topo.DisableVacuumByPlugin()
+	} else {
+		ms.Topo.DisableVacuum()
+	}
 	resp := &master_pb.DisableVacuumResponse{}
 	return resp, nil
 }
 
 func (ms *MasterServer) EnableVacuum(ctx context.Context, req *master_pb.EnableVacuumRequest) (*master_pb.EnableVacuumResponse, error) {
-
-	ms.Topo.EnableVacuum()
+	if req.GetByPlugin() {
+		ms.Topo.EnableVacuumByPlugin()
+	} else {
+		ms.Topo.EnableVacuum()
+	}
 	resp := &master_pb.EnableVacuumResponse{}
 	return resp, nil
 }
@@ -361,10 +388,6 @@ func (ms *MasterServer) VolumeGrow(ctx context.Context, req *master_pb.VolumeGro
 
 	if ms.Topo.AvailableSpaceFor(&volumeGrowOption) < replicaCount {
 		return nil, fmt.Errorf("only %d volumes left, not enough for %d", ms.Topo.AvailableSpaceFor(&volumeGrowOption), replicaCount)
-	}
-
-	if !ms.Topo.DataCenterExists(volumeGrowOption.DataCenter) {
-		err = fmt.Errorf("data center %v not found in topology", volumeGrowOption.DataCenter)
 	}
 
 	ms.DoAutomaticVolumeGrow(&volumeGrowRequest)

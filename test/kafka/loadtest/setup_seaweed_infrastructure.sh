@@ -76,7 +76,7 @@ echo "=== Starting SeaweedFS Components ==="
 # Start Master
 if ! check_service "localhost:9333" "SeaweedFS Master"; then
     start_service \
-        "weed master -defaultReplication=001 -mdir=$BASE_DIR/master" \
+        "weed master -defaultReplication=001 -mdir=$BASE_DIR/master -peers=none" \
         "SeaweedFS Master" \
         "$LOG_DIR/master.log" \
         "localhost:9333"

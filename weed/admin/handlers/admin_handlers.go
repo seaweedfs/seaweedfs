@@ -2,379 +2,501 @@ package handlers
 
 import (
 	"net/http"
+	"net/url"
+	"strconv"
 	"time"
 
-	"github.com/gin-gonic/gin"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/sessions"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/seaweedfs/seaweedfs/weed/admin/dash"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/app"
 	"github.com/seaweedfs/seaweedfs/weed/admin/view/layout"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // AdminHandlers contains all the HTTP handlers for the admin interface
 type AdminHandlers struct {
-	adminServer         *dash.AdminServer
-	authHandlers        *AuthHandlers
-	clusterHandlers     *ClusterHandlers
-	fileBrowserHandlers *FileBrowserHandlers
-	userHandlers        *UserHandlers
-	policyHandlers      *PolicyHandlers
-	maintenanceHandlers *MaintenanceHandlers
-	mqHandlers          *MessageQueueHandlers
+	adminServer            *dash.AdminServer
+	sessionStore           sessions.Store
+	authHandlers           *AuthHandlers
+	clusterHandlers        *ClusterHandlers
+	fileBrowserHandlers    *FileBrowserHandlers
+	userHandlers           *UserHandlers
+	policyHandlers         *PolicyHandlers
+	pluginHandlers         *PluginHandlers
+	mqHandlers             *MessageQueueHandlers
+	serviceAccountHandlers *ServiceAccountHandlers
+	groupHandlers          *GroupHandlers
 }
 
 // NewAdminHandlers creates a new instance of AdminHandlers
-func NewAdminHandlers(adminServer *dash.AdminServer) *AdminHandlers {
-	authHandlers := NewAuthHandlers(adminServer)
+func NewAdminHandlers(adminServer *dash.AdminServer, store sessions.Store) *AdminHandlers {
+	authHandlers := NewAuthHandlers(adminServer, store)
 	clusterHandlers := NewClusterHandlers(adminServer)
 	fileBrowserHandlers := NewFileBrowserHandlers(adminServer)
 	userHandlers := NewUserHandlers(adminServer)
 	policyHandlers := NewPolicyHandlers(adminServer)
-	maintenanceHandlers := NewMaintenanceHandlers(adminServer)
+	pluginHandlers := NewPluginHandlers(adminServer)
 	mqHandlers := NewMessageQueueHandlers(adminServer)
+	serviceAccountHandlers := NewServiceAccountHandlers(adminServer)
+	groupHandlers := NewGroupHandlers(adminServer)
 	return &AdminHandlers{
-		adminServer:         adminServer,
-		authHandlers:        authHandlers,
-		clusterHandlers:     clusterHandlers,
-		fileBrowserHandlers: fileBrowserHandlers,
-		userHandlers:        userHandlers,
-		policyHandlers:      policyHandlers,
-		maintenanceHandlers: maintenanceHandlers,
-		mqHandlers:          mqHandlers,
+		adminServer:            adminServer,
+		sessionStore:           store,
+		authHandlers:           authHandlers,
+		clusterHandlers:        clusterHandlers,
+		fileBrowserHandlers:    fileBrowserHandlers,
+		userHandlers:           userHandlers,
+		policyHandlers:         policyHandlers,
+		pluginHandlers:         pluginHandlers,
+		mqHandlers:             mqHandlers,
+		serviceAccountHandlers: serviceAccountHandlers,
+		groupHandlers:          groupHandlers,
 	}
 }
 
 // SetupRoutes configures all the routes for the admin interface
-func (h *AdminHandlers) SetupRoutes(r *gin.Engine, authRequired bool, username, password string) {
+func (h *AdminHandlers) SetupRoutes(r *mux.Router, authRequired bool, adminUser, adminPassword, readOnlyUser, readOnlyPassword string, enableUI bool) {
 	// Health check (no auth required)
-	r.GET("/health", h.HealthCheck)
+	r.HandleFunc("/health", h.HealthCheck).Methods(http.MethodGet)
+
+	// Prometheus metrics endpoint (no auth required)
+	r.Handle("/metrics", promhttp.HandlerFor(stats.Gather, promhttp.HandlerOpts{})).Methods(http.MethodGet)
 
 	// Favicon route (no auth required) - redirect to static version
-	r.GET("/favicon.ico", func(c *gin.Context) {
-		c.Redirect(http.StatusMovedPermanently, "/static/favicon.ico")
-	})
+	r.HandleFunc("/favicon.ico", func(w http.ResponseWriter, req *http.Request) {
+		http.Redirect(w, req, dash.P(req.Context(), "/static/favicon.ico"), http.StatusMovedPermanently)
+	}).Methods(http.MethodGet)
+
+	// Skip UI routes if UI is not enabled
+	if !enableUI {
+		return
+	}
 
 	if authRequired {
 		// Authentication routes (no auth required)
-		r.GET("/login", h.authHandlers.ShowLogin)
-		r.POST("/login", h.authHandlers.HandleLogin(username, password))
-		r.GET("/logout", h.authHandlers.HandleLogout)
+		r.HandleFunc("/login", h.authHandlers.ShowLogin).Methods(http.MethodGet)
+		r.Handle("/login", h.authHandlers.HandleLogin(adminUser, adminPassword, readOnlyUser, readOnlyPassword)).Methods(http.MethodPost)
+		r.HandleFunc("/logout", h.authHandlers.HandleLogout).Methods(http.MethodGet)
 
-		// Protected routes group
-		protected := r.Group("/")
-		protected.Use(dash.RequireAuth())
+		protected := r.NewRoute().Subrouter()
+		protected.Use(dash.RequireAuth(h.sessionStore))
+		h.registerUIRoutes(protected)
 
-		// Main admin interface routes
-		protected.GET("/", h.ShowDashboard)
-		protected.GET("/admin", h.ShowDashboard)
-
-		// Object Store management routes
-		protected.GET("/object-store/buckets", h.ShowS3Buckets)
-		protected.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		protected.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
-		protected.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
-
-		// File browser routes
-		protected.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
-
-		// Cluster management routes
-		protected.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
-		protected.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
-		protected.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
-		protected.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
-		protected.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		protected.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
-		protected.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		protected.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		protected.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
-
-		// Message Queue management routes
-		protected.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
-		protected.GET("/mq/topics", h.mqHandlers.ShowTopics)
-		protected.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
-
-		// Maintenance system routes
-		protected.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
-		protected.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
-		protected.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
-		protected.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
-		protected.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
-		protected.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
-		protected.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
-
-		// API routes for AJAX calls
-		api := r.Group("/api")
-		api.Use(dash.RequireAuthAPI()) // Use API-specific auth middleware
-		{
-			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
-			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
-			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
-			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
-			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
-
-			// S3 API routes
-			s3Api := api.Group("/s3")
-			{
-				s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
-				s3Api.POST("/buckets", h.adminServer.CreateBucket)
-				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
-				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
-				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
-			}
-
-			// User management API routes
-			usersApi := api.Group("/users")
-			{
-				usersApi.GET("", h.userHandlers.GetUsers)
-				usersApi.POST("", h.userHandlers.CreateUser)
-				usersApi.GET("/:username", h.userHandlers.GetUserDetails)
-				usersApi.PUT("/:username", h.userHandlers.UpdateUser)
-				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
-				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
-				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
-				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
-				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
-			}
-
-			// Object Store Policy management API routes
-			objectStorePoliciesApi := api.Group("/object-store/policies")
-			{
-				objectStorePoliciesApi.GET("", h.policyHandlers.GetPolicies)
-				objectStorePoliciesApi.POST("", h.policyHandlers.CreatePolicy)
-				objectStorePoliciesApi.GET("/:name", h.policyHandlers.GetPolicy)
-				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
-				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
-				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
-			}
-
-			// File management API routes
-			filesApi := api.Group("/files")
-			{
-				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
-				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
-				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
-				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
-				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
-				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
-				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
-			}
-
-			// Volume management API routes
-			volumeApi := api.Group("/volumes")
-			{
-				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
-			}
-
-			// Maintenance API routes
-			maintenanceApi := api.Group("/maintenance")
-			{
-				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
-				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
-				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
-				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
-				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
-				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
-				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
-				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
-				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
-				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
-			}
-
-			// Message Queue API routes
-			mqApi := api.Group("/mq")
-			{
-				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
-				mqApi.POST("/topics/create", h.mqHandlers.CreateTopicAPI)
-				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
-				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
-			}
-		}
-	} else {
-		// No authentication required - all routes are public
-		r.GET("/", h.ShowDashboard)
-		r.GET("/admin", h.ShowDashboard)
-
-		// Object Store management routes
-		r.GET("/object-store/buckets", h.ShowS3Buckets)
-		r.GET("/object-store/buckets/:bucket", h.ShowBucketDetails)
-		r.GET("/object-store/users", h.userHandlers.ShowObjectStoreUsers)
-		r.GET("/object-store/policies", h.policyHandlers.ShowPolicies)
-
-		// File browser routes
-		r.GET("/files", h.fileBrowserHandlers.ShowFileBrowser)
-
-		// Cluster management routes
-		r.GET("/cluster/masters", h.clusterHandlers.ShowClusterMasters)
-		r.GET("/cluster/filers", h.clusterHandlers.ShowClusterFilers)
-		r.GET("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers)
-		r.GET("/cluster/volumes", h.clusterHandlers.ShowClusterVolumes)
-		r.GET("/cluster/volumes/:id/:server", h.clusterHandlers.ShowVolumeDetails)
-		r.GET("/cluster/collections", h.clusterHandlers.ShowClusterCollections)
-		r.GET("/cluster/collections/:name", h.clusterHandlers.ShowCollectionDetails)
-		r.GET("/cluster/ec-shards", h.clusterHandlers.ShowClusterEcShards)
-		r.GET("/cluster/ec-volumes/:id", h.clusterHandlers.ShowEcVolumeDetails)
-
-		// Message Queue management routes
-		r.GET("/mq/brokers", h.mqHandlers.ShowBrokers)
-		r.GET("/mq/topics", h.mqHandlers.ShowTopics)
-		r.GET("/mq/topics/:namespace/:topic", h.mqHandlers.ShowTopicDetails)
-
-		// Maintenance system routes
-		r.GET("/maintenance", h.maintenanceHandlers.ShowMaintenanceQueue)
-		r.GET("/maintenance/workers", h.maintenanceHandlers.ShowMaintenanceWorkers)
-		r.GET("/maintenance/config", h.maintenanceHandlers.ShowMaintenanceConfig)
-		r.POST("/maintenance/config", h.maintenanceHandlers.UpdateMaintenanceConfig)
-		r.GET("/maintenance/config/:taskType", h.maintenanceHandlers.ShowTaskConfig)
-		r.POST("/maintenance/config/:taskType", h.maintenanceHandlers.UpdateTaskConfig)
-		r.GET("/maintenance/tasks/:id", h.maintenanceHandlers.ShowTaskDetail)
-
-		// API routes for AJAX calls
-		api := r.Group("/api")
-		{
-			api.GET("/cluster/topology", h.clusterHandlers.GetClusterTopology)
-			api.GET("/cluster/masters", h.clusterHandlers.GetMasters)
-			api.GET("/cluster/volumes", h.clusterHandlers.GetVolumeServers)
-			api.GET("/admin", h.adminServer.ShowAdmin)      // JSON API for admin data
-			api.GET("/config", h.adminServer.GetConfigInfo) // Configuration information
-
-			// S3 API routes
-			s3Api := api.Group("/s3")
-			{
-				s3Api.GET("/buckets", h.adminServer.ListBucketsAPI)
-				s3Api.POST("/buckets", h.adminServer.CreateBucket)
-				s3Api.DELETE("/buckets/:bucket", h.adminServer.DeleteBucket)
-				s3Api.GET("/buckets/:bucket", h.adminServer.ShowBucketDetails)
-				s3Api.PUT("/buckets/:bucket/quota", h.adminServer.UpdateBucketQuota)
-			}
-
-			// User management API routes
-			usersApi := api.Group("/users")
-			{
-				usersApi.GET("", h.userHandlers.GetUsers)
-				usersApi.POST("", h.userHandlers.CreateUser)
-				usersApi.GET("/:username", h.userHandlers.GetUserDetails)
-				usersApi.PUT("/:username", h.userHandlers.UpdateUser)
-				usersApi.DELETE("/:username", h.userHandlers.DeleteUser)
-				usersApi.POST("/:username/access-keys", h.userHandlers.CreateAccessKey)
-				usersApi.DELETE("/:username/access-keys/:accessKeyId", h.userHandlers.DeleteAccessKey)
-				usersApi.GET("/:username/policies", h.userHandlers.GetUserPolicies)
-				usersApi.PUT("/:username/policies", h.userHandlers.UpdateUserPolicies)
-			}
-
-			// Object Store Policy management API routes
-			objectStorePoliciesApi := api.Group("/object-store/policies")
-			{
-				objectStorePoliciesApi.GET("", h.policyHandlers.GetPolicies)
-				objectStorePoliciesApi.POST("", h.policyHandlers.CreatePolicy)
-				objectStorePoliciesApi.GET("/:name", h.policyHandlers.GetPolicy)
-				objectStorePoliciesApi.PUT("/:name", h.policyHandlers.UpdatePolicy)
-				objectStorePoliciesApi.DELETE("/:name", h.policyHandlers.DeletePolicy)
-				objectStorePoliciesApi.POST("/validate", h.policyHandlers.ValidatePolicy)
-			}
-
-			// File management API routes
-			filesApi := api.Group("/files")
-			{
-				filesApi.DELETE("/delete", h.fileBrowserHandlers.DeleteFile)
-				filesApi.DELETE("/delete-multiple", h.fileBrowserHandlers.DeleteMultipleFiles)
-				filesApi.POST("/create-folder", h.fileBrowserHandlers.CreateFolder)
-				filesApi.POST("/upload", h.fileBrowserHandlers.UploadFile)
-				filesApi.GET("/download", h.fileBrowserHandlers.DownloadFile)
-				filesApi.GET("/view", h.fileBrowserHandlers.ViewFile)
-				filesApi.GET("/properties", h.fileBrowserHandlers.GetFileProperties)
-			}
-
-			// Volume management API routes
-			volumeApi := api.Group("/volumes")
-			{
-				volumeApi.POST("/:id/:server/vacuum", h.clusterHandlers.VacuumVolume)
-			}
-
-			// Maintenance API routes
-			maintenanceApi := api.Group("/maintenance")
-			{
-				maintenanceApi.POST("/scan", h.adminServer.TriggerMaintenanceScan)
-				maintenanceApi.GET("/tasks", h.adminServer.GetMaintenanceTasks)
-				maintenanceApi.GET("/tasks/:id", h.adminServer.GetMaintenanceTask)
-				maintenanceApi.GET("/tasks/:id/detail", h.adminServer.GetMaintenanceTaskDetailAPI)
-				maintenanceApi.POST("/tasks/:id/cancel", h.adminServer.CancelMaintenanceTask)
-				maintenanceApi.GET("/workers", h.adminServer.GetMaintenanceWorkersAPI)
-				maintenanceApi.GET("/workers/:id", h.adminServer.GetMaintenanceWorker)
-				maintenanceApi.GET("/workers/:id/logs", h.adminServer.GetWorkerLogs)
-				maintenanceApi.GET("/stats", h.adminServer.GetMaintenanceStats)
-				maintenanceApi.GET("/config", h.adminServer.GetMaintenanceConfigAPI)
-				maintenanceApi.PUT("/config", h.adminServer.UpdateMaintenanceConfigAPI)
-			}
-
-			// Message Queue API routes
-			mqApi := api.Group("/mq")
-			{
-				mqApi.GET("/topics/:namespace/:topic", h.mqHandlers.GetTopicDetailsAPI)
-				mqApi.POST("/topics/create", h.mqHandlers.CreateTopicAPI)
-				mqApi.POST("/topics/retention/update", h.mqHandlers.UpdateTopicRetentionAPI)
-				mqApi.POST("/retention/purge", h.adminServer.TriggerTopicRetentionPurgeAPI)
-			}
-		}
+		api := r.PathPrefix("/api").Subrouter()
+		api.Use(dash.RequireAuthAPI(h.sessionStore))
+		h.registerAPIRoutes(api, true)
+		return
 	}
+
+	// No authentication required - all routes are public
+	h.registerUIRoutes(r)
+	api := r.PathPrefix("/api").Subrouter()
+	h.registerAPIRoutes(api, false)
+}
+
+func (h *AdminHandlers) registerUIRoutes(r *mux.Router) {
+	// Main admin interface routes
+	r.HandleFunc("/", h.ShowDashboard).Methods(http.MethodGet)
+	r.HandleFunc("/admin", h.ShowDashboard).Methods(http.MethodGet)
+
+	// Object Store management routes
+	r.HandleFunc("/object-store/buckets", h.ShowS3Buckets).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/buckets/{bucket}", h.ShowBucketDetails).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/users", h.userHandlers.ShowObjectStoreUsers).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/policies", h.policyHandlers.ShowPolicies).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/groups", h.groupHandlers.ShowGroups).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/service-accounts", h.serviceAccountHandlers.ShowServiceAccounts).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/s3tables/buckets", h.ShowS3TablesBuckets).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces", h.ShowS3TablesNamespaces).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables", h.ShowS3TablesTables).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/s3tables/buckets/{bucket}/namespaces/{namespace}/tables/{table}", h.ShowS3TablesTableDetails).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/iceberg", h.ShowIcebergCatalog).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/iceberg/{catalog}/namespaces", h.ShowIcebergNamespaces).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/iceberg/{catalog}/namespaces/{namespace}/tables", h.ShowIcebergTables).Methods(http.MethodGet)
+	r.HandleFunc("/object-store/iceberg/{catalog}/namespaces/{namespace}/tables/{table}", h.ShowIcebergTableDetails).Methods(http.MethodGet)
+
+	// File browser routes
+	r.HandleFunc("/files", h.fileBrowserHandlers.ShowFileBrowser).Methods(http.MethodGet)
+
+	// Cluster management routes
+	r.HandleFunc("/cluster/masters", h.clusterHandlers.ShowClusterMasters).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/filers", h.clusterHandlers.ShowClusterFilers).Methods(http.MethodGet)
+	r.HandleFunc("/cluster/volume-servers", h.clusterHandlers.ShowClusterVolumeServers).Methods(http.MethodGet)
+
+	// Storage management routes
+	r.HandleFunc("/storage/volumes", h.clusterHandlers.ShowClusterVolumes).Methods(http.MethodGet)
+	r.HandleFunc("/storage/volumes/{id}/{server}", h.clusterHandlers.ShowVolumeDetails).Methods(http.MethodGet)
+	r.HandleFunc("/storage/collections", h.clusterHandlers.ShowClusterCollections).Methods(http.MethodGet)
+	r.HandleFunc("/storage/collections/{name}", h.clusterHandlers.ShowCollectionDetails).Methods(http.MethodGet)
+	r.HandleFunc("/storage/ec-shards", h.clusterHandlers.ShowClusterEcShards).Methods(http.MethodGet)
+	r.HandleFunc("/storage/ec-volumes/{id}", h.clusterHandlers.ShowEcVolumeDetails).Methods(http.MethodGet)
+
+	// Message Queue management routes
+	r.HandleFunc("/mq/brokers", h.mqHandlers.ShowBrokers).Methods(http.MethodGet)
+	r.HandleFunc("/mq/topics", h.mqHandlers.ShowTopics).Methods(http.MethodGet)
+	r.HandleFunc("/mq/topics/{namespace}/{topic}", h.mqHandlers.ShowTopicDetails).Methods(http.MethodGet)
+
+	// Plugin pages
+	r.HandleFunc("/plugin", h.pluginHandlers.ShowPlugin).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/configuration", h.pluginHandlers.ShowPluginConfiguration).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/queue", h.pluginHandlers.ShowPluginQueue).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/detection", h.pluginHandlers.ShowPluginDetection).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/execution", h.pluginHandlers.ShowPluginExecution).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/monitoring", h.pluginHandlers.ShowPluginMonitoring).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}", h.pluginHandlers.ShowPluginLane).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/configuration", h.pluginHandlers.ShowPluginLaneConfiguration).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/queue", h.pluginHandlers.ShowPluginLaneQueue).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/detection", h.pluginHandlers.ShowPluginLaneDetection).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/execution", h.pluginHandlers.ShowPluginLaneExecution).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/monitoring", h.pluginHandlers.ShowPluginLaneMonitoring).Methods(http.MethodGet)
+	r.HandleFunc("/plugin/lanes/{lane}/workers", h.pluginHandlers.ShowPluginLaneWorkers).Methods(http.MethodGet)
+}
+
+func (h *AdminHandlers) registerAPIRoutes(api *mux.Router, enforceWrite bool) {
+	wrapWrite := func(handler http.HandlerFunc) http.Handler {
+		if !enforceWrite {
+			return handler
+		}
+		return dash.RequireWriteAccess()(handler)
+	}
+
+	api.HandleFunc("/cluster/topology", h.clusterHandlers.GetClusterTopology).Methods(http.MethodGet)
+	api.HandleFunc("/cluster/masters", h.clusterHandlers.GetMasters).Methods(http.MethodGet)
+	api.HandleFunc("/cluster/volumes", h.clusterHandlers.GetVolumeServers).Methods(http.MethodGet)
+	api.HandleFunc("/admin", h.adminServer.ShowAdmin).Methods(http.MethodGet)
+	api.HandleFunc("/config", h.adminServer.GetConfigInfo).Methods(http.MethodGet)
+
+	s3Api := api.PathPrefix("/s3").Subrouter()
+	s3Api.HandleFunc("/buckets", h.adminServer.ListBucketsAPI).Methods(http.MethodGet)
+	s3Api.Handle("/buckets", wrapWrite(h.adminServer.CreateBucket)).Methods(http.MethodPost)
+	s3Api.Handle("/buckets/{bucket}", wrapWrite(h.adminServer.DeleteBucket)).Methods(http.MethodDelete)
+	s3Api.HandleFunc("/buckets/{bucket}", h.adminServer.ShowBucketDetails).Methods(http.MethodGet)
+	s3Api.Handle("/buckets/{bucket}/quota", wrapWrite(h.adminServer.UpdateBucketQuota)).Methods(http.MethodPut)
+	s3Api.Handle("/buckets/{bucket}/owner", wrapWrite(h.adminServer.UpdateBucketOwner)).Methods(http.MethodPut)
+
+	usersApi := api.PathPrefix("/users").Subrouter()
+	usersApi.HandleFunc("", h.userHandlers.GetUsers).Methods(http.MethodGet)
+	usersApi.Handle("", wrapWrite(h.userHandlers.CreateUser)).Methods(http.MethodPost)
+	usersApi.HandleFunc("/{username}", h.userHandlers.GetUserDetails).Methods(http.MethodGet)
+	usersApi.Handle("/{username}", wrapWrite(h.userHandlers.UpdateUser)).Methods(http.MethodPut)
+	usersApi.Handle("/{username}", wrapWrite(h.userHandlers.DeleteUser)).Methods(http.MethodDelete)
+	usersApi.Handle("/{username}/access-keys", wrapWrite(h.userHandlers.CreateAccessKey)).Methods(http.MethodPost)
+	usersApi.Handle("/{username}/access-keys/{accessKeyId}", wrapWrite(h.userHandlers.DeleteAccessKey)).Methods(http.MethodDelete)
+	usersApi.Handle("/{username}/access-keys/{accessKeyId}/status", wrapWrite(h.userHandlers.UpdateAccessKeyStatus)).Methods(http.MethodPut)
+	usersApi.HandleFunc("/{username}/policies", h.userHandlers.GetUserPolicies).Methods(http.MethodGet)
+	usersApi.Handle("/{username}/policies", wrapWrite(h.userHandlers.UpdateUserPolicies)).Methods(http.MethodPut)
+
+	saApi := api.PathPrefix("/service-accounts").Subrouter()
+	saApi.HandleFunc("", h.serviceAccountHandlers.GetServiceAccounts).Methods(http.MethodGet)
+	saApi.Handle("", wrapWrite(h.serviceAccountHandlers.CreateServiceAccount)).Methods(http.MethodPost)
+	saApi.HandleFunc("/{id}", h.serviceAccountHandlers.GetServiceAccountDetails).Methods(http.MethodGet)
+	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.UpdateServiceAccount)).Methods(http.MethodPut)
+	saApi.Handle("/{id}", wrapWrite(h.serviceAccountHandlers.DeleteServiceAccount)).Methods(http.MethodDelete)
+
+	groupsApi := api.PathPrefix("/groups").Subrouter()
+	groupsApi.HandleFunc("", h.groupHandlers.GetGroups).Methods(http.MethodGet)
+	groupsApi.Handle("", wrapWrite(h.groupHandlers.CreateGroup)).Methods(http.MethodPost)
+	groupsApi.HandleFunc("/{name}", h.groupHandlers.GetGroupDetails).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}", wrapWrite(h.groupHandlers.DeleteGroup)).Methods(http.MethodDelete)
+	groupsApi.Handle("/{name}/status", wrapWrite(h.groupHandlers.SetGroupStatus)).Methods(http.MethodPut)
+	groupsApi.HandleFunc("/{name}/members", h.groupHandlers.GetGroupMembers).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/members", wrapWrite(h.groupHandlers.AddGroupMember)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/members/{username}", wrapWrite(h.groupHandlers.RemoveGroupMember)).Methods(http.MethodDelete)
+	groupsApi.HandleFunc("/{name}/policies", h.groupHandlers.GetGroupPolicies).Methods(http.MethodGet)
+	groupsApi.Handle("/{name}/policies", wrapWrite(h.groupHandlers.AttachGroupPolicy)).Methods(http.MethodPost)
+	groupsApi.Handle("/{name}/policies/{policyName}", wrapWrite(h.groupHandlers.DetachGroupPolicy)).Methods(http.MethodDelete)
+
+	policyApi := api.PathPrefix("/object-store/policies").Subrouter()
+	policyApi.HandleFunc("", h.policyHandlers.GetPolicies).Methods(http.MethodGet)
+	policyApi.Handle("", wrapWrite(h.policyHandlers.CreatePolicy)).Methods(http.MethodPost)
+	policyApi.HandleFunc("/{name}", h.policyHandlers.GetPolicy).Methods(http.MethodGet)
+	policyApi.Handle("/{name}", wrapWrite(h.policyHandlers.UpdatePolicy)).Methods(http.MethodPut)
+	policyApi.Handle("/{name}", wrapWrite(h.policyHandlers.DeletePolicy)).Methods(http.MethodDelete)
+	policyApi.HandleFunc("/validate", h.policyHandlers.ValidatePolicy).Methods(http.MethodPost)
+
+	s3TablesApi := api.PathPrefix("/s3tables").Subrouter()
+	s3TablesApi.HandleFunc("/buckets", h.adminServer.ListS3TablesBucketsAPI).Methods(http.MethodGet)
+	s3TablesApi.Handle("/buckets", wrapWrite(h.adminServer.CreateS3TablesBucket)).Methods(http.MethodPost)
+	s3TablesApi.Handle("/buckets", wrapWrite(h.adminServer.DeleteS3TablesBucket)).Methods(http.MethodDelete)
+	s3TablesApi.HandleFunc("/namespaces", h.adminServer.ListS3TablesNamespacesAPI).Methods(http.MethodGet)
+	s3TablesApi.Handle("/namespaces", wrapWrite(h.adminServer.CreateS3TablesNamespace)).Methods(http.MethodPost)
+	s3TablesApi.Handle("/namespaces", wrapWrite(h.adminServer.DeleteS3TablesNamespace)).Methods(http.MethodDelete)
+	s3TablesApi.HandleFunc("/tables", h.adminServer.ListS3TablesTablesAPI).Methods(http.MethodGet)
+	s3TablesApi.Handle("/tables", wrapWrite(h.adminServer.CreateS3TablesTable)).Methods(http.MethodPost)
+	s3TablesApi.Handle("/tables", wrapWrite(h.adminServer.DeleteS3TablesTable)).Methods(http.MethodDelete)
+	s3TablesApi.Handle("/bucket-policy", wrapWrite(h.adminServer.PutS3TablesBucketPolicy)).Methods(http.MethodPut)
+	s3TablesApi.HandleFunc("/bucket-policy", h.adminServer.GetS3TablesBucketPolicy).Methods(http.MethodGet)
+	s3TablesApi.Handle("/bucket-policy", wrapWrite(h.adminServer.DeleteS3TablesBucketPolicy)).Methods(http.MethodDelete)
+	s3TablesApi.Handle("/table-policy", wrapWrite(h.adminServer.PutS3TablesTablePolicy)).Methods(http.MethodPut)
+	s3TablesApi.HandleFunc("/table-policy", h.adminServer.GetS3TablesTablePolicy).Methods(http.MethodGet)
+	s3TablesApi.Handle("/table-policy", wrapWrite(h.adminServer.DeleteS3TablesTablePolicy)).Methods(http.MethodDelete)
+	s3TablesApi.Handle("/tags", wrapWrite(h.adminServer.TagS3TablesResource)).Methods(http.MethodPut)
+	s3TablesApi.HandleFunc("/tags", h.adminServer.ListS3TablesTags).Methods(http.MethodGet)
+	s3TablesApi.Handle("/tags", wrapWrite(h.adminServer.UntagS3TablesResource)).Methods(http.MethodDelete)
+
+	filesApi := api.PathPrefix("/files").Subrouter()
+	filesApi.Handle("/delete", wrapWrite(h.fileBrowserHandlers.DeleteFile)).Methods(http.MethodDelete)
+	filesApi.Handle("/delete-multiple", wrapWrite(h.fileBrowserHandlers.DeleteMultipleFiles)).Methods(http.MethodDelete)
+	filesApi.Handle("/create-folder", wrapWrite(h.fileBrowserHandlers.CreateFolder)).Methods(http.MethodPost)
+	filesApi.Handle("/upload", wrapWrite(h.fileBrowserHandlers.UploadFile)).Methods(http.MethodPost)
+	filesApi.HandleFunc("/download", h.fileBrowserHandlers.DownloadFile).Methods(http.MethodGet)
+	filesApi.HandleFunc("/view", h.fileBrowserHandlers.ViewFile).Methods(http.MethodGet)
+	filesApi.HandleFunc("/properties", h.fileBrowserHandlers.GetFileProperties).Methods(http.MethodGet)
+
+	volumeApi := api.PathPrefix("/volumes").Subrouter()
+	volumeApi.Handle("/{id}/{server}/vacuum", wrapWrite(h.clusterHandlers.VacuumVolume)).Methods(http.MethodPost)
+
+	pluginApi := api.PathPrefix("/plugin").Subrouter()
+	pluginApi.HandleFunc("/status", h.adminServer.GetPluginStatusAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/lanes", h.adminServer.GetPluginLanesAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/workers", h.adminServer.GetPluginWorkersAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/job-types", h.adminServer.GetPluginJobTypesAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/jobs", h.adminServer.GetPluginJobsAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/jobs/{jobId}", h.adminServer.GetPluginJobAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/jobs/{jobId}/detail", h.adminServer.GetPluginJobDetailAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/activities", h.adminServer.GetPluginActivitiesAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/scheduler-states", h.adminServer.GetPluginSchedulerStatesAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/scheduler-status", h.adminServer.GetPluginSchedulerStatusAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/job-types/{jobType}/descriptor", h.adminServer.GetPluginJobTypeDescriptorAPI).Methods(http.MethodGet)
+	pluginApi.HandleFunc("/job-types/{jobType}/schema", h.adminServer.RequestPluginJobTypeSchemaAPI).Methods(http.MethodPost)
+	pluginApi.HandleFunc("/job-types/{jobType}/config", h.adminServer.GetPluginJobTypeConfigAPI).Methods(http.MethodGet)
+	pluginApi.Handle("/job-types/{jobType}/config", wrapWrite(h.adminServer.UpdatePluginJobTypeConfigAPI)).Methods(http.MethodPut)
+	pluginApi.HandleFunc("/job-types/{jobType}/runs", h.adminServer.GetPluginRunHistoryAPI).Methods(http.MethodGet)
+	pluginApi.Handle("/job-types/{jobType}/detect", wrapWrite(h.adminServer.TriggerPluginDetectionAPI)).Methods(http.MethodPost)
+	pluginApi.Handle("/job-types/{jobType}/run", wrapWrite(h.adminServer.RunPluginJobTypeAPI)).Methods(http.MethodPost)
+	pluginApi.Handle("/jobs/execute", wrapWrite(h.adminServer.ExecutePluginJobAPI)).Methods(http.MethodPost)
+	pluginApi.Handle("/jobs/{jobId}/expire", wrapWrite(h.adminServer.ExpirePluginJobAPI)).Methods(http.MethodPost)
+
+	mqApi := api.PathPrefix("/mq").Subrouter()
+	mqApi.HandleFunc("/topics/{namespace}/{topic}", h.mqHandlers.GetTopicDetailsAPI).Methods(http.MethodGet)
+	mqApi.Handle("/topics/create", wrapWrite(h.mqHandlers.CreateTopicAPI)).Methods(http.MethodPost)
+	mqApi.Handle("/topics/retention/update", wrapWrite(h.mqHandlers.UpdateTopicRetentionAPI)).Methods(http.MethodPost)
+	mqApi.Handle("/retention/purge", wrapWrite(h.adminServer.TriggerTopicRetentionPurgeAPI)).Methods(http.MethodPost)
 }
 
 // HealthCheck returns the health status of the admin interface
-func (h *AdminHandlers) HealthCheck(c *gin.Context) {
-	c.JSON(200, gin.H{"health": "ok"})
+func (h *AdminHandlers) HealthCheck(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]string{"health": "ok"})
 }
 
 // ShowDashboard renders the main admin dashboard
-func (h *AdminHandlers) ShowDashboard(c *gin.Context) {
+func (h *AdminHandlers) ShowDashboard(w http.ResponseWriter, r *http.Request) {
 	// Get admin data from the server
-	adminData := h.getAdminData(c)
+	adminData := h.getAdminData(r)
+	username := h.getUsername(r)
 
 	// Render HTML template
-	c.Header("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html")
 	adminComponent := app.Admin(adminData)
-	layoutComponent := layout.Layout(c, adminComponent)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, adminComponent)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
 	}
 }
 
 // ShowS3Buckets renders the Object Store buckets management page
-func (h *AdminHandlers) ShowS3Buckets(c *gin.Context) {
-	// Get Object Store buckets data from the server
-	s3Data := h.getS3BucketsData(c)
+func (h *AdminHandlers) ShowS3Buckets(w http.ResponseWriter, r *http.Request) {
+	// Get pagination and sorting parameters from query string
+	page := 1
+	if p := r.URL.Query().Get("page"); p != "" {
+		if parsed, err := strconv.Atoi(p); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+
+	pageSize := 100
+	if ps := r.URL.Query().Get("pageSize"); ps != "" {
+		if parsed, err := strconv.Atoi(ps); err == nil && parsed > 0 && parsed <= 1000 {
+			pageSize = parsed
+		}
+	}
+
+	sortBy := defaultQuery(r.URL.Query().Get("sortBy"), "name")
+	sortOrder := defaultQuery(r.URL.Query().Get("sortOrder"), "asc")
+
+	// Get Object Store buckets data with pagination
+	s3Data := h.getS3BucketsData(r, page, pageSize, sortBy, sortOrder)
+	username := h.getUsername(r)
 
 	// Render HTML template
-	c.Header("Content-Type", "text/html")
+	w.Header().Set("Content-Type", "text/html")
 	s3Component := app.S3Buckets(s3Data)
-	layoutComponent := layout.Layout(c, s3Component)
-	err := layoutComponent.Render(c.Request.Context(), c.Writer)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to render template: " + err.Error()})
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, s3Component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
 		return
 	}
+}
+
+// ShowS3TablesBuckets renders the S3 Tables buckets page
+func (h *AdminHandlers) ShowS3TablesBuckets(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+
+	data, err := h.adminServer.GetS3TablesBucketsData(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get S3 Tables buckets: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	component := app.S3TablesBuckets(data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3TablesNamespaces renders namespaces for a table bucket
+func (h *AdminHandlers) ShowS3TablesNamespaces(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+
+	bucketName := mux.Vars(r)["bucket"]
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesNamespacesData(r.Context(), arn)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get S3 Tables namespaces: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	component := app.S3TablesNamespaces(data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3TablesTables renders tables for a namespace
+func (h *AdminHandlers) ShowS3TablesTables(w http.ResponseWriter, r *http.Request) {
+	username := h.getUsername(r)
+
+	bucketName := mux.Vars(r)["bucket"]
+	namespace := mux.Vars(r)["namespace"]
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	data, err := h.adminServer.GetS3TablesTablesData(r.Context(), arn, namespace)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get S3 Tables tables: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	component := app.S3TablesTables(data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+// ShowS3TablesTableDetails renders Iceberg table metadata and snapshot details on the merged S3 Tables path.
+func (h *AdminHandlers) ShowS3TablesTableDetails(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
+	namespace := mux.Vars(r)["namespace"]
+	tableName := mux.Vars(r)["table"]
+	arn, err := buildS3TablesBucketArn(bucketName)
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	username := h.getUsername(r)
+	data, err := h.adminServer.GetIcebergTableDetailsData(r.Context(), bucketName, arn, namespace, tableName)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get table details: "+err.Error())
+		return
+	}
+	data.Username = username
+
+	w.Header().Set("Content-Type", "text/html")
+	component := app.IcebergTableDetails(data)
+	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
+	layoutComponent := layout.Layout(viewCtx, component)
+	if err := layoutComponent.Render(r.Context(), w); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
+	}
+}
+
+func buildS3TablesBucketArn(bucketName string) (string, error) {
+	return s3tables.BuildBucketARN(s3tables.DefaultRegion, s3_constants.AccountAdminId, bucketName)
+}
+
+// getUsername returns the username from context, defaulting to "admin" if not set
+func (h *AdminHandlers) getUsername(r *http.Request) string {
+	username := dash.UsernameFromContext(r.Context())
+	if username == "" {
+		username = "admin"
+	}
+	return username
+}
+
+// ShowIcebergCatalog redirects legacy Iceberg catalog URL to the merged S3 Tables buckets page.
+func (h *AdminHandlers) ShowIcebergCatalog(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets"), http.StatusMovedPermanently)
+}
+
+// ShowIcebergNamespaces redirects legacy Iceberg namespaces URL to the merged S3 Tables namespaces page.
+func (h *AdminHandlers) ShowIcebergNamespaces(w http.ResponseWriter, r *http.Request) {
+	catalogName := mux.Vars(r)["catalog"]
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces"), http.StatusMovedPermanently)
+}
+
+// ShowIcebergTables redirects legacy Iceberg tables URL to the merged S3 Tables tables page.
+func (h *AdminHandlers) ShowIcebergTables(w http.ResponseWriter, r *http.Request) {
+	catalogName := mux.Vars(r)["catalog"]
+	namespace := mux.Vars(r)["namespace"]
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables"), http.StatusMovedPermanently)
+}
+
+// ShowIcebergTableDetails redirects legacy Iceberg table details URL to the merged S3 Tables details page.
+func (h *AdminHandlers) ShowIcebergTableDetails(w http.ResponseWriter, r *http.Request) {
+	catalogName := mux.Vars(r)["catalog"]
+	namespace := mux.Vars(r)["namespace"]
+	tableName := mux.Vars(r)["table"]
+	http.Redirect(w, r, dash.P(r.Context(), "/object-store/s3tables/buckets/"+url.PathEscape(catalogName)+"/namespaces/"+url.PathEscape(namespace)+"/tables/"+url.PathEscape(tableName)), http.StatusMovedPermanently)
 }
 
 // ShowBucketDetails returns detailed information about a specific bucket
-func (h *AdminHandlers) ShowBucketDetails(c *gin.Context) {
-	bucketName := c.Param("bucket")
+func (h *AdminHandlers) ShowBucketDetails(w http.ResponseWriter, r *http.Request) {
+	bucketName := mux.Vars(r)["bucket"]
 	details, err := h.adminServer.GetBucketDetails(bucketName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to get bucket details: " + err.Error()})
+		writeJSONError(w, http.StatusInternalServerError, "Failed to get bucket details: "+err.Error())
 		return
 	}
-	c.JSON(http.StatusOK, details)
+	writeJSON(w, http.StatusOK, details)
 }
 
-// getS3BucketsData retrieves Object Store buckets data from the server
-func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
-	username := c.GetString("username")
+// getS3BucketsData retrieves Object Store buckets data from the server with pagination
+func (h *AdminHandlers) getS3BucketsData(r *http.Request, page, pageSize int, sortBy, sortOrder string) dash.S3BucketsData {
+	username := dash.UsernameFromContext(r.Context())
 	if username == "" {
 		username = "admin"
 	}
 
-	// Get Object Store buckets
-	buckets, err := h.adminServer.GetS3Buckets()
+	// Get Object Store buckets data
+	data, err := h.adminServer.GetS3BucketsData(page, pageSize, sortBy, sortOrder)
 	if err != nil {
 		// Return empty data on error
 		return dash.S3BucketsData{
@@ -383,27 +505,21 @@ func (h *AdminHandlers) getS3BucketsData(c *gin.Context) dash.S3BucketsData {
 			TotalBuckets: 0,
 			TotalSize:    0,
 			LastUpdated:  time.Now(),
+			CurrentPage:  1,
+			TotalPages:   1,
+			PageSize:     pageSize,
+			SortBy:       sortBy,
+			SortOrder:    sortOrder,
 		}
 	}
 
-	// Calculate totals
-	var totalSize int64
-	for _, bucket := range buckets {
-		totalSize += bucket.Size
-	}
-
-	return dash.S3BucketsData{
-		Username:     username,
-		Buckets:      buckets,
-		TotalBuckets: len(buckets),
-		TotalSize:    totalSize,
-		LastUpdated:  time.Now(),
-	}
+	data.Username = username
+	return data
 }
 
 // getAdminData retrieves admin data from the server (now uses consolidated method)
-func (h *AdminHandlers) getAdminData(c *gin.Context) dash.AdminData {
-	username := c.GetString("username")
+func (h *AdminHandlers) getAdminData(r *http.Request) dash.AdminData {
+	username := dash.UsernameFromContext(r.Context())
 
 	// Use the consolidated GetAdminData method from AdminServer
 	adminData, err := h.adminServer.GetAdminData(username)

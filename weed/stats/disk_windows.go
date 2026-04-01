@@ -1,10 +1,11 @@
 package stats
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
-	"golang.org/x/sys/windows"
 	"syscall"
 	"unsafe"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"golang.org/x/sys/windows"
 )
 
 var (

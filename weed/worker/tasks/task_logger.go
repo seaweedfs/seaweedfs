@@ -30,6 +30,7 @@ type TaskLogger interface {
 	LogWithFields(level string, message string, fields map[string]interface{})
 
 	// Lifecycle
+	Sync() error
 	Close() error
 	GetLogDir() string
 }
@@ -230,6 +231,17 @@ func (l *FileTaskLogger) LogWithFields(level string, message string, fields map[
 	l.writeLogEntry(entry)
 }
 
+// Sync flushes buffered data to disk
+func (l *FileTaskLogger) Sync() error {
+	l.mutex.Lock()
+	defer l.mutex.Unlock()
+
+	if l.logFile != nil {
+		return l.logFile.Sync()
+	}
+	return nil
+}
+
 // Close closes the logger and finalizes metadata
 func (l *FileTaskLogger) Close() error {
 	l.Info("Task logger closed for %s", l.taskID)
@@ -305,26 +317,15 @@ func (l *FileTaskLogger) writeLogEntry(entry TaskLogEntry) {
 		return
 	}
 
-	// Flush to disk
-	if err := l.logFile.Sync(); err != nil {
-		glog.Errorf("Failed to sync log file: %v", err)
-	}
-
-	// Also log to console and stderr if enabled
+	// Only forward errors and warnings to glog; routine task logs stay in the task log file.
 	if l.config.EnableConsole {
-		// Log to glog with proper call depth to show actual source location
-		// We need depth 3 to skip: writeLogEntry -> log -> Info/Warning/Error calls to reach the original caller
 		formattedMsg := fmt.Sprintf("[TASK-%s] %s: %s", l.taskID, entry.Level, entry.Message)
 		switch entry.Level {
 		case "ERROR":
-			glog.ErrorDepth(3, formattedMsg)
+			glog.ErrorDepth(4, formattedMsg)
 		case "WARNING":
-			glog.WarningDepth(3, formattedMsg)
-		default: // INFO, DEBUG, etc.
-			glog.InfoDepth(3, formattedMsg)
+			glog.WarningDepth(4, formattedMsg)
 		}
-		// Also log to stderr for immediate visibility
-		fmt.Fprintf(os.Stderr, "[TASK-%s] %s: %s\n", l.taskID, entry.Level, entry.Message)
 	}
 }
 
@@ -423,7 +424,10 @@ func ReadTaskLogs(logDir string) ([]TaskLogEntry, error) {
 			if err == io.EOF {
 				break
 			}
-			return nil, fmt.Errorf("failed to decode log entry: %w", err)
+			// If we fail to decode an entry, it might be a partial write at the end of the file
+			// Return what we have so far instead of failing the entire request
+			glog.V(1).Infof("Failed to decode log entry in %s: %v (returning %d partial logs)", logPath, err, len(entries))
+			break
 		}
 		entries = append(entries, entry)
 	}

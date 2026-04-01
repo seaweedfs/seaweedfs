@@ -3,6 +3,7 @@ package topology
 import (
 	"fmt"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
@@ -83,6 +84,7 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 
 	var available []*DiskInfo
 
+	glog.V(2).Infof("GetDisksWithEffectiveCapacity checking %d disks for type %s, minCapacity %d", len(at.disks), taskType, minCapacity)
 	for _, disk := range at.disks {
 		if disk.NodeID == excludeNodeID {
 			continue // Skip excluded node
@@ -113,13 +115,27 @@ func (at *ActiveTopology) GetDisksWithEffectiveCapacity(taskType TaskType, exclu
 					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
 					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
 					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+					Tags:              append([]string(nil), disk.DiskInfo.DiskInfo.Tags...),
 				}
 				diskCopy.DiskInfo = diskInfoCopy
+				diskCopy.DiskInfo.MaxVolumeCount = disk.DiskInfo.DiskInfo.MaxVolumeCount // Ensure Max is set
 
 				available = append(available, &diskCopy)
+			} else {
+				glog.V(2).Infof("Disk %s:%d capacity %d < %d (Max:%d, Vol:%d)", disk.NodeID, disk.DiskInfo.DiskID, effectiveCapacity.VolumeSlots, minCapacity, disk.DiskInfo.DiskInfo.MaxVolumeCount, disk.DiskInfo.DiskInfo.VolumeCount)
 			}
+		} else {
+			tasksInfo := ""
+			for _, t := range disk.pendingTasks {
+				tasksInfo += fmt.Sprintf("[P:%s,Vol:%d] ", t.TaskType, t.VolumeID)
+			}
+			for _, t := range disk.assignedTasks {
+				tasksInfo += fmt.Sprintf("[A:%s,Vol:%d] ", t.TaskType, t.VolumeID)
+			}
+			glog.V(2).Infof("Disk %s:%d unavailable. Load: %d, MaxLoad: %d. Tasks: %s", disk.NodeID, disk.DiskInfo.DiskID, len(disk.pendingTasks)+len(disk.assignedTasks), MaxConcurrentTasksPerDisk, tasksInfo)
 		}
 	}
+	glog.V(2).Infof("GetDisksWithEffectiveCapacity found %d available disks", len(available))
 
 	return available
 }
@@ -163,6 +179,7 @@ func (at *ActiveTopology) GetDisksForPlanning(taskType TaskType, excludeNodeID s
 					RemoteVolumeCount: disk.DiskInfo.DiskInfo.RemoteVolumeCount,
 					ActiveVolumeCount: disk.DiskInfo.DiskInfo.ActiveVolumeCount,
 					FreeVolumeCount:   disk.DiskInfo.DiskInfo.FreeVolumeCount,
+					Tags:              append([]string(nil), disk.DiskInfo.DiskInfo.Tags...),
 				}
 				diskCopy.DiskInfo = diskInfoCopy
 
@@ -223,7 +240,7 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType TaskType) bool {
 	// Check total load including pending tasks
 	totalLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
-	if totalLoad >= MaxTotalTaskLoadPerDisk {
+	if MaxTotalTaskLoadPerDisk > 0 && totalLoad >= MaxTotalTaskLoadPerDisk {
 		return false
 	}
 
@@ -284,6 +301,16 @@ func (at *ActiveTopology) getEffectiveAvailableCapacityUnsafe(disk *activeDisk) 
 	}
 
 	baseAvailable := disk.DiskInfo.DiskInfo.MaxVolumeCount - disk.DiskInfo.DiskInfo.VolumeCount
+	if baseAvailable <= 0 &&
+		disk.DiskInfo.DiskInfo.MaxVolumeCount == 0 &&
+		disk.DiskInfo.DiskInfo.VolumeCount == 0 &&
+		len(disk.DiskInfo.DiskInfo.VolumeInfos) == 0 &&
+		len(disk.DiskInfo.DiskInfo.EcShardInfos) == 0 {
+		// Some empty volume servers can report max_volume_counts=0 before
+		// publishing concrete slot limits. Keep one provisional slot so EC
+		// detection still sees the disk for placement planning.
+		baseAvailable = 1
+	}
 	netImpact := at.getEffectiveCapacityUnsafe(disk)
 
 	// Calculate available volume slots (negative impact reduces availability)

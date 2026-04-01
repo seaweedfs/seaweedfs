@@ -205,4 +205,3 @@ func TestResumeMillionRecords_Fixed(t *testing.T) {
 
 	glog.Infof("🏆 MILLION RECORD KAFKA INTEGRATION TEST COMPLETED SUCCESSFULLY!")
 }
-

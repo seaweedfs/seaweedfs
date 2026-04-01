@@ -1,8 +1,9 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.cosi.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-objectstorage-provisioner
+  name: {{ include "seaweedfs.fullname" . }}-objectstorage-provisioner
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -38,7 +39,7 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.cosi.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.cosi.restartPolicy }}
       {{- if .Values.cosi.affinity }}
       affinity:
         {{ tpl .Values.cosi.affinity . | nindent 8 | trim }}
@@ -57,7 +58,7 @@ spec:
       priorityClassName: {{ .Values.cosi.priorityClassName | quote }}
       {{- end }}
       enableServiceLinks: false
-      serviceAccountName: {{ .Values.global.serviceAccountName }}-objectstorage-provisioner
+      serviceAccountName: {{ include "seaweedfs.componentName" (list . "objectstorage-provisioner") }}
       {{- if .Values.cosi.initContainers }}
       initContainers:
         {{ tpl .Values.cosi.initContainers . | nindent 8 | trim }}
@@ -68,7 +69,7 @@ spec:
       containers:
         - name: seaweedfs-cosi-driver
           image: "{{ .Values.cosi.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: DRIVERNAME
               value: "{{ .Values.cosi.driverName }}"
@@ -78,17 +79,17 @@ spec:
               {{- else if .Values.s3.ingress.enabled }}
               value: "{{ printf "https://%s" .Values.s3.ingress.host }}"
               {{- else if .Values.s3.enabled }}
-              value: "{{ printf "https://%s-s3.%s.svc" (include "seaweedfs.name" .) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "s3")) .Release.Namespace }}"
               {{- else }}
-              value: "{{ printf "https://%s-filer.%s.svc" (include "seaweedfs.name" .) .Release.Namespace }}"
+              value: "{{ printf "https://%s.%s.svc" (include "seaweedfs.componentName" (list . "filer")) .Release.Namespace }}"
               {{- end }}
             {{- with .Values.cosi.region }}
             - name: REGION
               value: "{{ . }}"
             {{- end }}
             - name: SEAWEEDFS_FILER
-              value: "{{ template "seaweedfs.name" . }}-filer:{{ .Values.filer.grpcPort }}"
-            {{- if .Values.global.enableSecurity }}
+              value: "{{ include "seaweedfs.componentName" (list . "filer") }}:{{ .Values.filer.grpcPort }}"
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: WEED_GRPC_CLIENT_KEY
               value: /usr/local/share/ca-certificates/client/tls.key
             - name: WEED_GRPC_CLIENT_CERT
@@ -96,27 +97,17 @@ spec:
             - name: WEED_GRPC_CA
               value: /usr/local/share/ca-certificates/client/ca.crt
             {{- end }}
-            {{- if .Values.cosi.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.cosi.extraEnvironmentVars }}
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.cosi "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           volumeMounts:
             - mountPath: /var/lib/cosi
@@ -126,7 +117,7 @@ spec:
               name: config-users
               readOnly: true
             {{- end }}
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -154,7 +145,7 @@ spec:
           {{- end }}
         - name: seaweedfs-cosi-sidecar
           image: "{{ .Values.cosi.sidecar.image }}"
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           args:
             - {{ printf "--v=%s" (default "5" .Values.cosi.sidecar.logLevel) }}
           env:
@@ -185,28 +176,28 @@ spec:
             {{- if .Values.cosi.existingConfigSecret }}
             secretName: {{ .Values.cosi.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-s3-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-s3-secret
             {{- end }}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.cosi.extraVolumes . | indent 8 | trim }}
       {{- if .Values.cosi.nodeSelector }}

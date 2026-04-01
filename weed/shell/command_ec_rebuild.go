@@ -5,12 +5,14 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func init() {
@@ -18,12 +20,15 @@ func init() {
 }
 
 type ecRebuilder struct {
-	// TODO: add ErrorWaitGroup for parallelization
 	commandEnv   *CommandEnv
 	ecNodes      []*EcNode
 	writer       io.Writer
 	applyChanges bool
 	collections  []string
+	diskType     types.DiskType
+
+	ewg       *ErrorWaitGroup
+	ecNodesMu sync.Mutex
 }
 
 type commandEcRebuild struct {
@@ -36,7 +41,15 @@ func (c *commandEcRebuild) Name() string {
 func (c *commandEcRebuild) Help() string {
 	return `find and rebuild missing ec shards among volume servers
 
-	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply]
+	ec.rebuild [-c EACH_COLLECTION|<collection_name>] [-apply] [-maxParallelization N] [-diskType=<disk_type>]
+
+	Options:
+	  -collection: specify a collection name, or "EACH_COLLECTION" to process all collections
+	  -apply: actually perform the rebuild operations (default is dry-run mode)
+	  -maxParallelization: number of volumes to rebuild concurrently (default: 10)
+	                       Increase for faster rebuilds with more system resources.
+	                       Decrease if experiencing resource contention or instability.
+	  -diskType: disk type for EC shards (hdd, ssd, or empty for default hdd)
 
 	Algorithm:
 
@@ -71,13 +84,14 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 
 	fixCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	collection := fixCommand.String("collection", "EACH_COLLECTION", "collection name, or \"EACH_COLLECTION\" for each collection")
+	maxParallelization := fixCommand.Int("maxParallelization", DefaultMaxParallelization, "run up to X tasks in parallel, whenever possible")
 	applyChanges := fixCommand.Bool("apply", false, "apply the changes")
+	diskTypeStr := fixCommand.String("diskType", "", "disk type for EC shards (hdd, ssd, or empty for default hdd)")
 	// TODO: remove this alias
 	applyChangesAlias := fixCommand.Bool("force", false, "apply the changes (alias for -apply)")
 	if err = fixCommand.Parse(args); err != nil {
 		return nil
 	}
-
 	handleDeprecatedForceFlag(writer, fixCommand, applyChangesAlias, applyChanges)
 	infoAboutSimulationMode(writer, *applyChanges, "-apply")
 
@@ -85,8 +99,10 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		return
 	}
 
+	diskType := types.ToDiskType(*diskTypeStr)
+
 	// collect all ec nodes
-	allEcNodes, _, err := collectEcNodes(commandEnv)
+	allEcNodes, _, err := collectEcNodes(commandEnv, diskType)
 	if err != nil {
 		return err
 	}
@@ -107,17 +123,17 @@ func (c *commandEcRebuild) Do(args []string, commandEnv *CommandEnv, writer io.W
 		writer:       writer,
 		applyChanges: *applyChanges,
 		collections:  collections,
+		diskType:     diskType,
+
+		ewg: NewErrorWaitGroup(*maxParallelization),
 	}
 
 	fmt.Printf("rebuildEcVolumes for %d collection(s)\n", len(collections))
 	for _, c := range collections {
-		fmt.Printf("rebuildEcVolumes collection %s\n", c)
-		if err = erb.rebuildEcVolumes(c); err != nil {
-			return err
-		}
+		erb.rebuildEcVolumes(c)
 	}
 
-	return nil
+	return erb.ewg.Wait()
 }
 
 func (erb *ecRebuilder) write(format string, a ...any) {
@@ -128,30 +144,86 @@ func (erb *ecRebuilder) isLocked() bool {
 	return erb.commandEnv.isLocked()
 }
 
-// ecNodeWithMoreFreeSlots returns the EC node with higher free slot count, from all nodes visible to the rebuilder.
-func (erb *ecRebuilder) ecNodeWithMoreFreeSlots() *EcNode {
+// countLocalShards returns the number of shards already present locally on the node for the given volume.
+func (erb *ecRebuilder) countLocalShards(node *EcNode, collection string, volumeId needle.VolumeId) int {
+	for _, diskInfo := range node.info.DiskInfos {
+		for _, ecShardInfo := range diskInfo.EcShardInfos {
+			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
+				return erasure_coding.GetShardCount(ecShardInfo)
+			}
+		}
+	}
+	return 0
+}
+
+// selectAndReserveRebuilder atomically selects a rebuilder node with sufficient free slots
+// and reserves slots only for the non-local shards that need to be copied/generated.
+func (erb *ecRebuilder) selectAndReserveRebuilder(collection string, volumeId needle.VolumeId) (*EcNode, int, error) {
+	erb.ecNodesMu.Lock()
+	defer erb.ecNodesMu.Unlock()
+
 	if len(erb.ecNodes) == 0 {
-		return nil
+		return nil, 0, fmt.Errorf("no ec nodes available")
 	}
 
-	res := erb.ecNodes[0]
-	for i := 1; i < len(erb.ecNodes); i++ {
-		if erb.ecNodes[i].freeEcSlot > res.freeEcSlot {
-			res = erb.ecNodes[i]
+	// Find the node with the most free slots, considering local shards
+	var bestNode *EcNode
+	var bestSlotsNeeded int
+	var maxAvailableSlots int
+	var minSlotsNeeded int = erasure_coding.TotalShardsCount // Start with maximum possible
+	for _, node := range erb.ecNodes {
+		localShards := erb.countLocalShards(node, collection, volumeId)
+		slotsNeeded := erasure_coding.TotalShardsCount - localShards
+		if slotsNeeded < 0 {
+			slotsNeeded = 0
+		}
+
+		if node.freeEcSlot > maxAvailableSlots {
+			maxAvailableSlots = node.freeEcSlot
+		}
+
+		if slotsNeeded < minSlotsNeeded {
+			minSlotsNeeded = slotsNeeded
+		}
+
+		if node.freeEcSlot >= slotsNeeded {
+			if bestNode == nil || node.freeEcSlot > bestNode.freeEcSlot {
+				bestNode = node
+				bestSlotsNeeded = slotsNeeded
+			}
 		}
 	}
 
-	return res
+	if bestNode == nil {
+		return nil, 0, fmt.Errorf("no node has sufficient free slots for volume %d (need at least %d slots, max available: %d)",
+			volumeId, minSlotsNeeded, maxAvailableSlots)
+	}
+
+	// Reserve slots only for non-local shards
+	bestNode.freeEcSlot -= bestSlotsNeeded
+
+	return bestNode, bestSlotsNeeded, nil
 }
 
-func (erb *ecRebuilder) rebuildEcVolumes(collection string) error {
-	fmt.Printf("rebuildEcVolumes %s\n", collection)
+// releaseRebuilder releases the reserved slots back to the rebuilder node.
+func (erb *ecRebuilder) releaseRebuilder(node *EcNode, slotsToRelease int) {
+	erb.ecNodesMu.Lock()
+	defer erb.ecNodesMu.Unlock()
+
+	// Release slots by incrementing the free slot count
+	node.freeEcSlot += slotsToRelease
+}
+
+func (erb *ecRebuilder) rebuildEcVolumes(collection string) {
+	fmt.Printf("rebuildEcVolumes for %q\n", collection)
 
 	// collect vid => each shard locations, similar to ecShardMap in topology.go
 	ecShardMap := make(EcShardMap)
+	erb.ecNodesMu.Lock()
 	for _, ecNode := range erb.ecNodes {
 		ecShardMap.registerEcNode(ecNode, collection)
 	}
+	erb.ecNodesMu.Unlock()
 
 	for vid, locations := range ecShardMap {
 		shardCount := locations.shardCount()
@@ -159,35 +231,36 @@ func (erb *ecRebuilder) rebuildEcVolumes(collection string) error {
 			continue
 		}
 		if shardCount < erasure_coding.DataShardsCount {
-			return fmt.Errorf("ec volume %d is unrepairable with %d shards", vid, shardCount)
+			erb.write("ec volume %d is unrepairable with %d shards (need %d), skipping\n", vid, shardCount, erasure_coding.DataShardsCount)
+			continue
 		}
 
-		if err := erb.rebuildOneEcVolume(collection, vid, locations); err != nil {
-			return err
-		}
+		// Capture variables for closure
+		vid := vid
+		locations := locations
+
+		erb.ewg.Add(func() error {
+			// Select rebuilder and reserve slots atomically per volume
+			rebuilder, slotsToReserve, err := erb.selectAndReserveRebuilder(collection, vid)
+			if err != nil {
+				return fmt.Errorf("failed to select rebuilder for volume %d: %v", vid, err)
+			}
+			defer erb.releaseRebuilder(rebuilder, slotsToReserve)
+
+			return erb.rebuildOneEcVolume(collection, vid, locations, rebuilder)
+		})
 	}
-
-	return nil
 }
 
-func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.VolumeId, locations EcShardLocations) error {
+func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.VolumeId, locations EcShardLocations, rebuilder *EcNode) error {
 	if !erb.isLocked() {
 		return fmt.Errorf("lock is lost")
-	}
-
-	// TODO: fix this logic so it supports concurrent executions
-	rebuilder := erb.ecNodeWithMoreFreeSlots()
-	if rebuilder == nil {
-		return fmt.Errorf("no EC nodes available for rebuild")
-	}
-	if rebuilder.freeEcSlot < erasure_coding.TotalShardsCount {
-		return fmt.Errorf("disk space is not enough")
 	}
 
 	fmt.Printf("rebuildOneEcVolume %s %d\n", collection, volumeId)
 
 	// collect shard files to rebuilder local disk
-	var generatedShardIds []uint32
+	var generatedShardIds []erasure_coding.ShardId
 	copiedShardIds, _, err := erb.prepareDataToRecover(rebuilder, collection, volumeId, locations)
 	if err != nil {
 		return err
@@ -219,12 +292,15 @@ func (erb *ecRebuilder) rebuildOneEcVolume(collection string, volumeId needle.Vo
 		return err
 	}
 
-	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds)
+	// ensure ECNode updates are atomic
+	erb.ecNodesMu.Lock()
+	defer erb.ecNodesMu.Unlock()
+	rebuilder.addEcVolumeShards(volumeId, collection, generatedShardIds, erb.diskType)
 
 	return nil
 }
 
-func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []uint32, err error) {
+func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle.VolumeId, sourceLocation pb.ServerAddress) (rebuiltShardIds []erasure_coding.ShardId, err error) {
 
 	err = operation.WithVolumeServerClient(false, sourceLocation, erb.commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		resp, rebuildErr := volumeServerClient.VolumeEcShardsRebuild(context.Background(), &volume_server_pb.VolumeEcShardsRebuildRequest{
@@ -232,34 +308,43 @@ func (erb *ecRebuilder) generateMissingShards(collection string, volumeId needle
 			Collection: collection,
 		})
 		if rebuildErr == nil {
-			rebuiltShardIds = resp.RebuiltShardIds
+			rebuiltShardIds = erasure_coding.Uint32ToShardIds(resp.RebuiltShardIds)
 		}
 		return rebuildErr
 	})
 	return
 }
 
-func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []uint32, localShardIds []uint32, err error) {
+func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection string, volumeId needle.VolumeId, locations EcShardLocations) (copiedShardIds []erasure_coding.ShardId, localShardIds []erasure_coding.ShardId, err error) {
 
 	needEcxFile := true
-	var localShardBits erasure_coding.ShardBits
+	localShardsInfo := erasure_coding.NewShardsInfo()
 	for _, diskInfo := range rebuilder.info.DiskInfos {
 		for _, ecShardInfo := range diskInfo.EcShardInfos {
 			if ecShardInfo.Collection == collection && needle.VolumeId(ecShardInfo.Id) == volumeId {
 				needEcxFile = false
-				localShardBits = erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
+				localShardsInfo = erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 			}
 		}
 	}
 
-	for shardId, ecNodes := range locations {
+	targetShardCount := erasure_coding.TotalShardsCount
+	for i := erasure_coding.TotalShardsCount; i < len(locations); i++ {
+		if len(locations[i]) > 0 {
+			targetShardCount = i + 1
+		}
+	}
+
+	for i := 0; i < targetShardCount; i++ {
+		ecNodes := locations[i]
+		shardId := erasure_coding.ShardId(i)
 		if len(ecNodes) == 0 {
 			erb.write("missing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
 
-		if localShardBits.HasShardId(erasure_coding.ShardId(shardId)) {
-			localShardIds = append(localShardIds, uint32(shardId))
+		if localShardsInfo.Has(shardId) {
+			localShardIds = append(localShardIds, shardId)
 			erb.write("use existing shard %d.%d\n", volumeId, shardId)
 			continue
 		}
@@ -286,7 +371,7 @@ func (erb *ecRebuilder) prepareDataToRecover(rebuilder *EcNode, collection strin
 			erb.write("%s failed to copy %d.%d from %s: %v\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id, copyErr)
 		} else {
 			erb.write("%s copied %d.%d from %s\n", rebuilder.info.Id, volumeId, shardId, ecNodes[0].info.Id)
-			copiedShardIds = append(copiedShardIds, uint32(shardId))
+			copiedShardIds = append(copiedShardIds, shardId)
 		}
 
 	}
@@ -312,7 +397,7 @@ func (ecShardMap EcShardMap) registerEcNode(ecNode *EcNode, collection string) {
 					existing = make([][]*EcNode, erasure_coding.MaxShardCount)
 					ecShardMap[needle.VolumeId(shardInfo.Id)] = existing
 				}
-				for _, shardId := range erasure_coding.ShardBits(shardInfo.EcIndexBits).ShardIds() {
+				for _, shardId := range erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(shardInfo).Ids() {
 					existing[shardId] = append(existing[shardId], ecNode)
 				}
 			}

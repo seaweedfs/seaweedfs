@@ -2,11 +2,12 @@ package pub_balancer
 
 import (
 	"fmt"
+	"testing"
+
 	cmap "github.com/orcaman/concurrent-map/v2"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/stretchr/testify/assert"
-	"testing"
 )
 
 func Test_allocateOneBroker(t *testing.T) {

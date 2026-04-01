@@ -10,7 +10,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"golang.org/x/sync/singleflight"
 
 	"google.golang.org/grpc"
 
@@ -28,6 +30,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/cassandra2"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/elastic/v7"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/etcd"
+	_ "github.com/seaweedfs/seaweedfs/weed/filer/foundationdb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/hbase"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb"
 	_ "github.com/seaweedfs/seaweedfs/weed/filer/leveldb2"
@@ -55,32 +58,36 @@ import (
 )
 
 type FilerOption struct {
-	Masters               *pb.ServerDiscovery
-	FilerGroup            string
-	Collection            string
-	DefaultReplication    string
-	DisableDirListing     bool
-	MaxMB                 int
-	DirListingLimit       int
-	DataCenter            string
-	Rack                  string
-	DataNode              string
-	DefaultLevelDbDir     string
-	DisableHttp           bool
-	Host                  pb.ServerAddress
-	recursiveDelete       bool
-	Cipher                bool
-	SaveToFilerLimit      int64
-	ConcurrentUploadLimit int64
-	ShowUIDirectoryDelete bool
-	DownloadMaxBytesPs    int64
-	DiskType              string
-	AllowedOrigins        []string
-	ExposeDirectoryData   bool
+	Masters                   *pb.ServerDiscovery
+	FilerGroup                string
+	Collection                string
+	DefaultReplication        string
+	DisableDirListing         bool
+	MaxMB                     int
+	DirListingLimit           int
+	DataCenter                string
+	Rack                      string
+	DataNode                  string
+	DefaultLevelDbDir         string
+	DisableHttp               bool
+	Host                      pb.ServerAddress
+	recursiveDelete           bool
+	Cipher                    bool
+	SaveToFilerLimit          int64
+	ConcurrentUploadLimit     int64
+	ConcurrentFileUploadLimit int64
+	ShowUIDirectoryDelete     bool
+	DownloadMaxBytesPs        int64
+	DiskType                  string
+	AllowedOrigins            []string
+	ExposeDirectoryData       bool
+	TusBasePath               string
+	CredentialManager         *credential.CredentialManager
 }
 
 type FilerServer struct {
 	inFlightDataSize int64
+	inFlightUploads  int64
 	listenersWaits   int64
 
 	// notifying clients
@@ -104,6 +111,15 @@ type FilerServer struct {
 	// track known metadata listeners
 	knownListenersLock sync.Mutex
 	knownListeners     map[int32]int32
+
+	// deduplicates concurrent remote object caching operations
+	remoteCacheGroup singleflight.Group
+
+	recentCopyRequestsMu sync.Mutex
+	recentCopyRequests   map[string]recentCopyRequest
+
+	// credential manager for IAM operations
+	CredentialManager *credential.CredentialManager
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -140,6 +156,8 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		grpcDialOption:        security.LoadClientTLS(util.GetViper(), "grpc.filer"),
 		knownListeners:        make(map[int32]int32),
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
+		recentCopyRequests:    make(map[string]recentCopyRequest),
+		CredentialManager:     option.CredentialManager,
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
@@ -170,14 +188,17 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		}
 	})
 	fs.filer.Cipher = option.Cipher
-	whiteList := util.StringSplit(v.GetString("guard.white_list"), ",")
-	fs.filerGuard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
+	// we do not support IP whitelist right now https://github.com/seaweedfs/seaweedfs/issues/7094
+	if v.GetString("guard.white_list") != "" {
+		glog.Warningf("filer: guard.white_list is configured but the IP whitelist feature is currently disabled. See https://github.com/seaweedfs/seaweedfs/issues/7094")
+	}
+	fs.filerGuard = security.NewGuard([]string{}, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 	fs.volumeGuard = security.NewGuard([]string{}, volumeSigningKey, volumeExpiresAfterSec, volumeReadSigningKey, volumeReadExpiresAfterSec)
 
 	fs.checkWithMaster()
 
 	go stats.LoopPushingMetric("filer", string(fs.option.Host), fs.metricsAddress, fs.metricsIntervalSec)
-	go fs.filer.KeepMasterClientConnected(context.Background())
+	go fs.filer.MasterClient.KeepConnectedToMaster(context.Background())
 
 	fs.option.recursiveDelete = v.GetBool("filer.options.recursive_delete")
 	v.SetDefault("filer.options.buckets_folder", "/buckets")
@@ -192,6 +213,24 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	handleStaticResources(defaultMux)
 	if !option.DisableHttp {
 		defaultMux.HandleFunc("/healthz", requestIDMiddleware(fs.filerHealthzHandler))
+		// TUS resumable upload protocol handler
+		if option.TusBasePath != "" {
+			// Normalize TusPath to always have a leading slash and no trailing slash
+			if !strings.HasPrefix(option.TusBasePath, "/") {
+				option.TusBasePath = "/" + option.TusBasePath
+			}
+			option.TusBasePath = strings.TrimRight(option.TusBasePath, "/")
+
+			// Disallow using "/" as TUS base to avoid hijacking all filer routes
+			if option.TusBasePath == "" {
+				glog.Warningf("Invalid TUS base path; TUS disabled (must not be root '/')")
+			} else {
+				handlePath := option.TusBasePath + "/"
+				defaultMux.HandleFunc(handlePath, fs.filerGuard.WhiteList(requestIDMiddleware(fs.tusHandler)))
+				// Start background cleanup of expired TUS sessions (every hour)
+				fs.StartTusSessionCleanup(1 * time.Hour)
+			}
+		}
 		defaultMux.HandleFunc("/", fs.filerGuard.WhiteList(requestIDMiddleware(fs.filerHandler)))
 	}
 	if defaultMux != readonlyMux {
@@ -219,7 +258,15 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		fs.filer.Shutdown()
 	})
 
+	fs.SetupDlmReplication()
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
+
+	if fs.CredentialManager != nil {
+		fs.CredentialManager.SetFilerAddressFunc(func() pb.ServerAddress {
+			return fs.option.Host
+		}, fs.grpcDialOption)
+		fs.CredentialManager.SetMasterClient(fs.filer.MasterClient, fs.grpcDialOption)
+	}
 
 	return fs, nil
 }
@@ -251,6 +298,4 @@ func (fs *FilerServer) Reload() {
 	glog.V(0).Infoln("Reload filer server...")
 
 	util.LoadConfiguration("security", false)
-	v := util.GetViper()
-	fs.filerGuard.UpdateWhiteList(util.StringSplit(v.GetString("guard.white_list"), ","))
 }

@@ -3,7 +3,6 @@ package command
 import (
 	"context"
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"net"
 	"os"
 	"runtime"
@@ -16,6 +15,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/sftpd"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
 var (
@@ -59,7 +60,7 @@ func init() {
 	cmdSftp.Run = runSftp
 
 	sftpOptionsStandalone.filer = cmdSftp.Flag.String("filer", "localhost:8888", "filer server address (ip:port)")
-	sftpOptionsStandalone.bindIp = cmdSftp.Flag.String("ip.bind", "0.0.0.0", "ip address to bind SFTP server")
+	sftpOptionsStandalone.bindIp = cmdSftp.Flag.String("ip.bind", "", "ip address to bind to. If empty, default to 0.0.0.0.")
 	sftpOptionsStandalone.port = cmdSftp.Flag.Int("port", 2022, "SFTP server listen port")
 	sftpOptionsStandalone.sshPrivateKey = cmdSftp.Flag.String("sshPrivateKey", "", "path to the SSH private key file for host authentication")
 	sftpOptionsStandalone.hostKeysFolder = cmdSftp.Flag.String("hostKeysFolder", "", "path to folder containing SSH private key files for host authentication")
@@ -94,8 +95,17 @@ func runSftp(cmd *Command, args []string) bool {
 }
 
 func (sftpOpt *SftpOptions) startSftpServer() bool {
+	if *sftpOpt.bindIp == "" {
+		*sftpOpt.bindIp = "0.0.0.0"
+	}
 	filerAddress := pb.ServerAddress(*sftpOpt.filer)
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
+	// Load JWT configuration for filer signing
+	v := util.GetViper()
+	filerSigningKey := v.GetString("jwt.filer_signing.key")
+	v.SetDefault("jwt.filer_signing.expires_after_seconds", 600)
+	filerSigningExpiresAfter := v.GetInt("jwt.filer_signing.expires_after_seconds")
 
 	// metrics read from the filer
 	var metricsAddress string
@@ -133,20 +143,25 @@ func (sftpOpt *SftpOptions) startSftpServer() bool {
 
 	// Create a new SFTP service instance with all options
 	service := sftpd.NewSFTPService(&sftpd.SFTPServiceOptions{
-		GrpcDialOption:      grpcDialOption,
-		DataCenter:          *sftpOpt.dataCenter,
-		FilerGroup:          filerGroup,
-		Filer:               filerAddress,
-		SshPrivateKey:       *sftpOpt.sshPrivateKey,
-		HostKeysFolder:      *sftpOpt.hostKeysFolder,
-		AuthMethods:         authMethods,
-		MaxAuthTries:        *sftpOpt.maxAuthTries,
-		BannerMessage:       *sftpOpt.bannerMessage,
-		LoginGraceTime:      *sftpOpt.loginGraceTime,
-		ClientAliveInterval: *sftpOpt.clientAliveInterval,
-		ClientAliveCountMax: *sftpOpt.clientAliveCountMax,
-		UserStoreFile:       *sftpOpt.userStoreFile,
+		GrpcDialOption:           grpcDialOption,
+		DataCenter:               *sftpOpt.dataCenter,
+		FilerGroup:               filerGroup,
+		Filer:                    filerAddress,
+		SshPrivateKey:            *sftpOpt.sshPrivateKey,
+		HostKeysFolder:           *sftpOpt.hostKeysFolder,
+		AuthMethods:              authMethods,
+		MaxAuthTries:             *sftpOpt.maxAuthTries,
+		BannerMessage:            *sftpOpt.bannerMessage,
+		LoginGraceTime:           *sftpOpt.loginGraceTime,
+		ClientAliveInterval:      *sftpOpt.clientAliveInterval,
+		ClientAliveCountMax:      *sftpOpt.clientAliveCountMax,
+		UserStoreFile:            *sftpOpt.userStoreFile,
+		FilerSigningKey:          []byte(filerSigningKey),
+		FilerSigningExpiresAfter: filerSigningExpiresAfter,
 	})
+
+	// Register reload hook for HUP signal
+	grace.OnReload(service.Reload)
 
 	// Set up Unix socket if on non-Windows platforms
 	if runtime.GOOS != "windows" {

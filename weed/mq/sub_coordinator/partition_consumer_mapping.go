@@ -2,8 +2,9 @@ package sub_coordinator
 
 import (
 	"fmt"
-	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/pub_balancer"
 )
 
 type PartitionConsumerMapping struct {

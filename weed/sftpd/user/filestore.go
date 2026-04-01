@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"sync"
 
 	"golang.org/x/crypto/ssh"
@@ -98,6 +99,10 @@ func (s *FileStore) loadUsers() error {
 				// If successful, store the marshaled binary format
 				user.PublicKeys[i] = string(pubKey.Marshal())
 			}
+		}
+		// Clean HomeDir to handle trailing slashes and normalize path
+		if user.HomeDir != "" {
+			user.HomeDir = path.Clean(user.HomeDir)
 		}
 		s.users[user.Username] = user
 
@@ -258,4 +263,9 @@ func (s *FileStore) CreateUser(username, password string) (*User, error) {
 	}
 
 	return user, nil
+}
+
+// Reload reloads users from the file, useful for HUP signal handling
+func (s *FileStore) Reload() error {
+	return s.loadUsers()
 }

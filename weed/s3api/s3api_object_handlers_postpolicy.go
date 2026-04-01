@@ -56,7 +56,11 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	if fileName != "" && strings.Contains(formValues.Get("Key"), "${filename}") {
 		formValues.Set("Key", strings.Replace(formValues.Get("Key"), "${filename}", fileName, -1))
 	}
-	object := formValues.Get("Key")
+	object := s3_constants.NormalizeObjectKey(formValues.Get("Key"))
+	if err := s3a.validateTableBucketObjectPath(bucket, object); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
 
 	successRedirect := formValues.Get("success_action_redirect")
 	successStatus := formValues.Get("success_action_status")
@@ -114,7 +118,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	uploadUrl := fmt.Sprintf("http://%s%s/%s%s", s3a.option.Filer.ToHttpAddress(), s3a.option.BucketsPath, bucket, urlEscapeObject(object))
+	filePath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), object)
 
 	// Get ContentType from post formData
 	// Otherwise from formFile ContentType
@@ -136,7 +140,7 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	etag, errCode, _ := s3a.putToFiler(r, uploadUrl, fileBody, "", bucket, 1)
+	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, nil)
 
 	if errCode != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, errCode)
@@ -152,6 +156,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 
 	setEtag(w, etag)
+	// Include SSE response headers (important for bucket-default encryption)
+	s3a.setSSEResponseHeaders(w, r, sseMetadata)
 
 	// Decide what http response to send depending on success_action_status parameter
 	switch successStatus {

@@ -1,4 +1,5 @@
-{{- if .Values.global.monitoring.enabled }}
+{{- include "seaweedfs.compat" . -}}
+{{- if .Values.global.seaweedfs.monitoring.enabled }}
 {{- $files := .Files.Glob "dashboards/*.json" }}
 {{- if $files }}
 {{- range $path, $file := $files }}
@@ -7,7 +8,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ printf "%s" $dashboardName | lower | replace "_" "-" }}
+  name: {{ include "seaweedfs.fullname" $ }}-{{ printf "%s" $dashboardName | lower | replace "_" "-" }}
   namespace: {{ $.Release.Namespace }}
   labels:
     grafana_dashboard: "1"

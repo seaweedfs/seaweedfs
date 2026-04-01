@@ -1,9 +1,10 @@
 package pub_balancer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"reflect"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 )
 
 func Test_findMissingPartitions(t *testing.T) {

@@ -4,15 +4,15 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"database/sql"
+	"errors"
 	"fmt"
-	"github.com/go-sql-driver/mysql"
 	"os"
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
-
+	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -66,6 +66,19 @@ func (store *MysqlStore) initialize(dsn string, upsertQuery string, enableUpsert
 		CreateTableSqlTemplate: "",
 		DropTableSqlTemplate:   "DROP TABLE `%s`",
 		UpsertQueryTemplate:    upsertQuery,
+	}
+
+	store.RetryableErrorCallback = func(err error) bool {
+		var mysqlError *mysql.MySQLError
+		if errors.As(err, &mysqlError) {
+			if mysqlError.Number == 1213 { // ER_LOCK_DEADLOCK
+				return true
+			}
+			if mysqlError.Number == 1205 { // ER_LOCK_WAIT_TIMEOUT
+				return true
+			}
+		}
+		return false
 	}
 
 	if enableTls {

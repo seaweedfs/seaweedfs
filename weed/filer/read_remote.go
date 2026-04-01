@@ -2,6 +2,7 @@ package filer
 
 import (
 	"context"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -25,12 +26,22 @@ func MapRemoteStorageLocationPathToFullPath(localMountedDir util.FullPath, remot
 	return localMountedDir.Child(remoteLocationPath[len(remoteMountedLocation.Path):])
 }
 
-func CacheRemoteObjectToLocalCluster(filerClient filer_pb.FilerClient, remoteConf *remote_pb.RemoteConf, remoteLocation *remote_pb.RemoteStorageLocation, parent util.FullPath, entry *filer_pb.Entry) error {
-	return filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
-			Directory: string(parent),
-			Name:      entry.Name,
+// CacheRemoteObjectToLocalCluster caches a remote object to the local cluster.
+// It returns the updated entry with local chunk locations.
+// chunkConcurrency and downloadConcurrency of 0 mean use server defaults.
+func CacheRemoteObjectToLocalCluster(filerClient filer_pb.FilerClient, parent util.FullPath, entry *filer_pb.Entry, chunkConcurrency int32, downloadConcurrency int32) (*filer_pb.Entry, error) {
+	var cachedEntry *filer_pb.Entry
+	err := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, cacheErr := client.CacheRemoteObjectToLocalCluster(context.Background(), &filer_pb.CacheRemoteObjectToLocalClusterRequest{
+			Directory:           string(parent),
+			Name:                entry.Name,
+			ChunkConcurrency:    chunkConcurrency,
+			DownloadConcurrency: downloadConcurrency,
 		})
-		return err
+		if cacheErr == nil && resp != nil {
+			cachedEntry = resp.Entry
+		}
+		return cacheErr
 	})
+	return cachedEntry, err
 }

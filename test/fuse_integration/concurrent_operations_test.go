@@ -386,18 +386,20 @@ func testHighFrequencySmallWrites(t *testing.T, framework *FuseTestFramework) {
 	// Perform many small writes
 	numWrites := 1000
 	writeSize := 100
+	totalSize := int64(0)
 
 	for i := 0; i < numWrites; i++ {
 		data := []byte(fmt.Sprintf("Write %04d: %s\n", i, bytes.Repeat([]byte("x"), writeSize-20)))
 		_, err := file.Write(data)
 		require.NoError(t, err)
+		totalSize += int64(len(data))
 	}
 	file.Close()
 
 	// Verify file size
 	info, err := os.Stat(mountPath)
 	require.NoError(t, err)
-	assert.Equal(t, totalSize, info.Size())
+	assert.Equal(t, totalSize, info.Size(), "file size should match total bytes written")
 }
 
 // testManySmallFiles tests creating many small files

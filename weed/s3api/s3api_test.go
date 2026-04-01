@@ -1,9 +1,10 @@
 package s3api
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
 func TestCopyObjectResponse(t *testing.T) {

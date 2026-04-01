@@ -18,7 +18,7 @@ import (
 func (vs *VolumeServer) uiStatusHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Server", "SeaweedFS Volume "+version.VERSION)
 	infos := make(map[string]interface{})
-	infos["Up Time"] = time.Now().Sub(startTime).String()
+	infos["Up Time"] = time.Since(startTime).Truncate(time.Second).String()
 	var ds []*volume_server_pb.DiskStatus
 	for _, loc := range vs.store.Locations {
 		if dir, e := filepath.Abs(loc.Directory); e == nil {

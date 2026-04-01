@@ -1169,6 +1169,108 @@
       "type": "timeseries"
     },
     {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short",
+          "unitScale": true
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "id": 91,
+      "links": [],
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true,
+          "width": 250
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "exemplar": true,
+          "expr": "sum by (code) (rate(SeaweedFS_upload_error_total{namespace=\"$NAMESPACE\"}[$__rate_interval]))",
+          "format": "time_series",
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "{{code}}",
+          "refId": "A",
+          "step": 30
+        }
+      ],
+      "title": "Upload Errors",
+      "type": "timeseries"
+    },
+    {
       "collapsed": false,
       "datasource": {
         "type": "prometheus",
@@ -1178,7 +1280,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 28
+        "y": 35
       },
       "id": 61,
       "panels": [],
@@ -1251,7 +1353,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 29
+        "y": 36
       },
       "id": 65,
       "links": [],
@@ -1357,7 +1459,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 29
+        "y": 36
       },
       "id": 56,
       "links": [],
@@ -1463,7 +1565,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 29
+        "y": 36
       },
       "id": 58,
       "links": [],
@@ -1520,7 +1622,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 36
+        "y": 43
       },
       "id": 84,
       "links": [],
@@ -1539,7 +1641,7 @@
       "pluginVersion": "10.3.1",
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total{namespace=\"$NAMESPACE\"}[$__interval])) by (bucket)",
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_received_bytes_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1565,7 +1667,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 43
       },
       "id": 85,
       "links": [],
@@ -1584,7 +1686,7 @@
       "pluginVersion": "10.3.1",
       "targets": [
         {
-          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total{namespace=\"$NAMESPACE\"}[$__interval])) by (bucket)",
+          "expr": "sum(rate(SeaweedFS_s3_bucket_traffic_sent_bytes_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (bucket)",
           "format": "time_series",
           "hide": false,
           "intervalFactor": 2,
@@ -1652,6 +1754,101 @@
               }
             ]
           },
+          "unit": "reqps",
+          "unitScale": true
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 48
+      },
+      "id": 86,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "expr": "sum(rate(SeaweedFS_s3_request_total{namespace=\"$NAMESPACE\"}[$__rate_interval])) by (bucket)",
+          "format": "time_series",
+          "hide": false,
+          "intervalFactor": 2,
+          "legendFormat": "{{bucket}}",
+          "refId": "A"
+        }
+      ],
+      "title": "S3 API Calls per Bucket",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
           "unit": "s",
           "unitScale": true
         },
@@ -1659,9 +1856,9 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 24,
-        "x": 0,
-        "y": 41
+        "w": 12,
+        "x": 12,
+        "y": 48
       },
       "id": 72,
       "links": [],
@@ -1779,7 +1976,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 50
+        "y": 57
       },
       "id": 73,
       "links": [],
@@ -1935,7 +2132,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 57
+        "y": 64
       },
       "id": 55,
       "links": [],
@@ -2092,7 +2289,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 64
+        "y": 71
       },
       "hideTimeOverride": false,
       "id": 59,
@@ -2164,7 +2361,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 71
+        "y": 78
       },
       "id": 62,
       "panels": [],
@@ -2236,7 +2433,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 72
+        "y": 79
       },
       "id": 47,
       "links": [],
@@ -2379,7 +2576,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 72
+        "y": 79
       },
       "id": 40,
       "links": [],
@@ -2476,7 +2673,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 79
+        "y": 86
       },
       "id": 48,
       "links": [],
@@ -2586,7 +2783,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 86
+        "y": 93
       },
       "id": 50,
       "links": [],
@@ -2688,7 +2885,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 93
+        "y": 100
       },
       "id": 51,
       "links": [],
@@ -2728,7 +2925,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 93
+        "y": 100
       },
       "id": 63,
       "panels": [],
@@ -2801,7 +2998,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 101
+        "y": 108
       },
       "id": 12,
       "links": [],
@@ -2896,7 +3093,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 101
+        "y": 108
       },
       "id": 14,
       "links": [],
@@ -2938,7 +3135,7 @@
         "h": 1,
         "w": 24,
         "x": 0,
-        "y": 108
+        "y": 115
       },
       "id": 64,
       "panels": [],
@@ -3011,7 +3208,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 109
+        "y": 116
       },
       "id": 52,
       "links": [],
@@ -3139,7 +3336,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 109
+        "y": 116
       },
       "id": 54,
       "links": [],
@@ -3236,7 +3433,7 @@
         "h": 7,
         "w": 24,
         "x": 0,
-        "y": 116
+        "y": 123
       },
       "id": 53,
       "links": [],
@@ -3265,6 +3462,209 @@
         }
       ],
       "title": "Filer Go Routines",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "decbytes"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 55
+      },
+      "id": 89,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max(SeaweedFS_s3_bucket_size_bytes{namespace=\"$NAMESPACE\"}) by (bucket)",
+          "legendFormat": "{{bucket}} (logical)",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max(SeaweedFS_s3_bucket_physical_size_bytes{namespace=\"$NAMESPACE\"}) by (bucket)",
+          "legendFormat": "{{bucket}} (physical)",
+          "range": true,
+          "refId": "B"
+        }
+      ],
+      "title": "S3 Bucket Size",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${DS_PROMETHEUS}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "linear",
+            "lineWidth": 1,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 55
+      },
+      "id": 90,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "10.3.1",
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${DS_PROMETHEUS}"
+          },
+          "editorMode": "code",
+          "expr": "max(SeaweedFS_s3_bucket_object_count{namespace=\"$NAMESPACE\"}) by (bucket)",
+          "legendFormat": "{{bucket}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "S3 Bucket Object Count",
       "type": "timeseries"
     }
   ],

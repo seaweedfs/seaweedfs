@@ -28,3 +28,7 @@ var cmdFuse = &Command{
   To check valid options look "weed mount --help"
   `,
 }
+
+func GetFuseCommandName() string {
+	return cmdFuse.Name()
+}

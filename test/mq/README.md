@@ -13,11 +13,11 @@ This directory contains test programs for SeaweedFS Message Queue (MQ) functiona
 
 ```bash
 # Start SeaweedFS server with MQ broker and agent
-weed server -mq.broker -mq.agent -filer -volume
+weed server -mq.broker -mq.agent -filer -volume -master.peers=none
 
 # Or start components separately
-weed master
-weed volume -mserver=localhost:9333
+weed master -peers=none
+weed volume -master=localhost:9333
 weed filer -master=localhost:9333
 weed mq.broker -filer=localhost:8888
 weed mq.agent -brokers=localhost:17777

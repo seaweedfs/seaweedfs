@@ -1,0 +1,33 @@
+# Iceberg REST Catalog Compatibility Test Docker Compose
+#
+# This compose file sets up a test environment for validating
+# the SeaweedFS Iceberg REST Catalog implementation.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yaml up --build
+#
+# Note: SeaweedFS must be running on the host with the Iceberg REST port exposed.
+# Set ICEBERG_CATALOG_URL environment variable to point to your catalog.
+
+services:
+  # PyIceberg-based REST catalog test
+  pyiceberg-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.pyiceberg
+    environment:
+      - CATALOG_URL=${CATALOG_URL:-http://host.docker.internal:8182}
+      - WAREHOUSE=${WAREHOUSE:-s3://test-bucket/}
+      - PREFIX=${PREFIX:-pyiceberg-test}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-test}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-test}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./test_rest_catalog.py:/app/test_rest_catalog.py:ro
+    command: >
+      python3 /app/test_rest_catalog.py
+      --catalog-url ${CATALOG_URL:-http://host.docker.internal:8182}
+      --warehouse ${WAREHOUSE:-s3://test-bucket/}
+      --prefix ${PREFIX:-pyiceberg-test}

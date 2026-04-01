@@ -7,6 +7,7 @@ import (
 	"math/rand/v2"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -27,6 +28,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	// WarmupPulseMultiplier is the number of heartbeat intervals to wait after
+	// a leader change before treating volume lookup misses as definitive.
+	WarmupPulseMultiplier = 3
+)
+
 type Topology struct {
 	vacuumLockCounter int64
 	NodeImpl
@@ -37,9 +44,11 @@ type Topology struct {
 
 	pulse int64
 
-	volumeSizeLimit  uint64
-	replicationAsMin bool
-	isDisableVacuum  bool
+	volumeSizeLimit          uint64
+	replicationAsMin         bool
+	vacuumDisabledByOperator atomic.Bool // true when operator manually disables vacuum
+	vacuumDisabledByPlugin   atomic.Bool // true when disabled by the vacuum plugin monitor
+	adminServerConnectedFunc func() bool // optional callback to check admin server presence
 
 	Sequence sequence.Sequencer
 
@@ -57,7 +66,11 @@ type Topology struct {
 	UuidAccessLock sync.RWMutex
 	UuidMap        map[string][]string
 
-	LastLeaderChangeTime time.Time
+	topologyId     string
+	topologyIdLock sync.RWMutex
+
+	lastLeaderChangeTime     time.Time
+	lastLeaderChangeTimeLock sync.RWMutex
 }
 
 func NewTopology(id string, seq sequence.Sequencer, volumeSizeLimit uint64, pulse int, replicationAsMin bool) *Topology {
@@ -106,6 +119,51 @@ func (t *Topology) IsChildLocked() (bool, error) {
 	return false, nil
 }
 
+// SetLastLeaderChangeTime records the time of the most recent leader transition.
+func (t *Topology) SetLastLeaderChangeTime(ts time.Time) {
+	t.lastLeaderChangeTimeLock.Lock()
+	defer t.lastLeaderChangeTimeLock.Unlock()
+	t.lastLeaderChangeTime = ts
+}
+
+// GetLastLeaderChangeTime returns the time of the most recent leader transition.
+func (t *Topology) GetLastLeaderChangeTime() time.Time {
+	t.lastLeaderChangeTimeLock.RLock()
+	defer t.lastLeaderChangeTimeLock.RUnlock()
+	return t.lastLeaderChangeTime
+}
+
+// IsWarmingUp returns true if the master recently became leader and may not yet
+// have a complete topology. After a leader change or restart, volume servers need
+// up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
+// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
+// existing volumes to wait for.
+func (t *Topology) IsWarmingUp() bool {
+	if t.GetMaxVolumeId() == 0 {
+		return false
+	}
+	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
+	lastChange := t.GetLastLeaderChangeTime()
+	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+}
+
+// WarmupDuration returns the configured warmup duration based on pulse interval.
+func (t *Topology) WarmupDuration() time.Duration {
+	return time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
+}
+
+// RemainingWarmupDuration returns how much warmup time is left, or 0 if not warming up.
+func (t *Topology) RemainingWarmupDuration() time.Duration {
+	if !t.IsWarmingUp() {
+		return 0
+	}
+	remaining := t.WarmupDuration() - time.Since(t.GetLastLeaderChangeTime())
+	if remaining < 0 {
+		return 0
+	}
+	return remaining
+}
+
 func (t *Topology) IsLeader() bool {
 	t.RaftServerAccessLock.RLock()
 	defer t.RaftServerAccessLock.RUnlock()
@@ -114,8 +172,10 @@ func (t *Topology) IsLeader() bool {
 		if t.RaftServer.State() == raft.Leader {
 			return true
 		}
-		if leader, err := t.Leader(); err == nil {
-			if pb.ServerAddress(t.RaftServer.Name()) == leader {
+		// Directly check leader to avoid re-acquiring lock via MaybeLeader()
+		leader := pb.ServerAddress(t.RaftServer.Leader())
+		if leader != "" {
+			if pb.ServerAddress(t.RaftServer.Name()).Equals(leader) {
 				return true
 			}
 		}
@@ -172,6 +232,16 @@ func (t *Topology) Leader() (l pb.ServerAddress, err error) {
 		func() (l pb.ServerAddress, err error) {
 			l, err = t.MaybeLeader()
 			if err == nil && l == "" {
+				// Thread-safe check if we are the leader
+				t.RaftServerAccessLock.RLock()
+				if t.RaftServer != nil && t.RaftServer.State() == raft.Leader {
+					l = pb.ServerAddress(t.RaftServer.Name())
+				}
+				t.RaftServerAccessLock.RUnlock()
+
+				if l != "" {
+					return l, nil
+				}
 				err = leaderNotSelected
 			}
 			return l, err
@@ -234,11 +304,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	defer t.RaftServerAccessLock.RUnlock()
 
 	if t.RaftServer != nil {
-		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next)); err != nil {
+		if _, err := t.RaftServer.Do(NewMaxVolumeIdCommand(next, t.GetTopologyId())); err != nil {
 			return 0, err
 		}
 	} else if t.HashicorpRaft != nil {
-		b, err := json.Marshal(NewMaxVolumeIdCommand(next))
+		b, err := json.Marshal(NewMaxVolumeIdCommand(next, t.GetTopologyId()))
 		if err != nil {
 			return 0, fmt.Errorf("failed marshal NewMaxVolumeIdCommand: %+v", err)
 		}
@@ -459,12 +529,68 @@ func (t *Topology) DataNodeRegistration(dcName, rackName string, dn *DataNode) {
 	glog.Infof("[%s] reLink To topo  ", dn.Id())
 }
 
-func (t *Topology) DisableVacuum() {
-	glog.V(0).Infof("DisableVacuum")
-	t.isDisableVacuum = true
+// IsVacuumDisabled returns true if vacuum is disabled by either the
+// operator or the plugin monitor.
+func (t *Topology) IsVacuumDisabled() bool {
+	return t.vacuumDisabledByOperator.Load() || t.vacuumDisabledByPlugin.Load()
 }
 
+// DisableVacuum is called by the operator (shell command / manual RPC).
+// Only sets the operator flag; does not affect the plugin flag.
+func (t *Topology) DisableVacuum() {
+	glog.V(0).Infof("DisableVacuum (by operator)")
+	t.vacuumDisabledByOperator.Store(true)
+}
+
+// EnableVacuum is called by the operator (shell command / manual RPC).
+// Only clears the operator flag; does not affect the plugin flag.
 func (t *Topology) EnableVacuum() {
-	glog.V(0).Infof("EnableVacuum")
-	t.isDisableVacuum = false
+	glog.V(0).Infof("EnableVacuum (by operator)")
+	t.vacuumDisabledByOperator.Store(false)
+}
+
+// DisableVacuumByPlugin is called by the admin server's vacuum monitor
+// when a vacuum plugin worker connects. Only sets the plugin flag.
+func (t *Topology) DisableVacuumByPlugin() {
+	glog.V(0).Infof("DisableVacuum (by plugin worker)")
+	t.vacuumDisabledByPlugin.Store(true)
+}
+
+// EnableVacuumByPlugin is called by the admin server's vacuum monitor
+// when a vacuum plugin worker disconnects. Only clears the plugin flag.
+func (t *Topology) EnableVacuumByPlugin() {
+	glog.V(0).Infof("EnableVacuum (by plugin worker)")
+	t.vacuumDisabledByPlugin.Store(false)
+}
+
+// IsVacuumDisabledByPlugin returns whether the plugin monitor has disabled vacuum.
+func (t *Topology) IsVacuumDisabledByPlugin() bool {
+	return t.vacuumDisabledByPlugin.Load()
+}
+
+// SetAdminServerConnectedFunc sets an optional callback used by the vacuum
+// safety net to detect when the admin server has disconnected.
+func (t *Topology) SetAdminServerConnectedFunc(f func() bool) {
+	t.adminServerConnectedFunc = f
+}
+
+func (t *Topology) GetTopologyId() string {
+	t.topologyIdLock.RLock()
+	defer t.topologyIdLock.RUnlock()
+	return t.topologyId
+}
+
+func (t *Topology) SetTopologyId(topologyId string) {
+	t.topologyIdLock.Lock()
+	defer t.topologyIdLock.Unlock()
+	if topologyId == "" {
+		return
+	}
+	if t.topologyId == "" {
+		t.topologyId = topologyId
+		return
+	}
+	if t.topologyId != topologyId {
+		glog.Fatalf("Split-brain detected! Current TopologyId is %s, but received %s. Stopping to prevent data corruption.", t.topologyId, topologyId)
+	}
 }

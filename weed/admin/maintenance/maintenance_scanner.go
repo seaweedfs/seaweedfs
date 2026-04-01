@@ -115,6 +115,7 @@ func (ms *MaintenanceScanner) getVolumeHealthMetrics() ([]*VolumeHealthMetrics, 
 							metric := &VolumeHealthMetrics{
 								VolumeID:         volInfo.Id,
 								Server:           node.Id,
+								ServerAddress:    node.Address,
 								DiskType:         diskType,       // Track which disk this volume is on
 								DiskId:           volInfo.DiskId, // Use disk ID from volume info
 								DataCenter:       dc.Id,          // Data center from current loop
@@ -207,6 +208,7 @@ func (ms *MaintenanceScanner) convertToTaskMetrics(metrics []*VolumeHealthMetric
 		simplified = append(simplified, &types.VolumeHealthMetrics{
 			VolumeID:         metric.VolumeID,
 			Server:           metric.Server,
+			ServerAddress:    metric.ServerAddress,
 			DiskType:         metric.DiskType,
 			DiskId:           metric.DiskId,
 			DataCenter:       metric.DataCenter,

@@ -17,13 +17,8 @@ func getRequestDataReader(s3a *S3ApiServer, r *http.Request) (io.ReadCloser, s3e
 	dataReader := r.Body
 	rAuthType := getRequestAuthType(r)
 	if s3a.iam.isEnabled() {
-		switch rAuthType {
-		case authTypeStreamingSigned, authTypeStreamingUnsigned:
+		if rAuthType == authTypeStreamingSigned || rAuthType == authTypeStreamingUnsigned {
 			dataReader, s3ErrCode = s3a.iam.newChunkedReader(r)
-		case authTypeSignedV2, authTypePresignedV2:
-			_, s3ErrCode = s3a.iam.isReqAuthenticatedV2(r)
-		case authTypePresigned, authTypeSigned:
-			_, s3ErrCode = s3a.iam.reqSignatureV4Verify(r)
 		}
 	} else {
 		switch rAuthType {

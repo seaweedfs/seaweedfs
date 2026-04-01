@@ -1,7 +1,9 @@
 package filer
 
 import (
+	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -12,7 +14,7 @@ import (
 func ReadMountMappings(grpcDialOption grpc.DialOption, filerAddress pb.ServerAddress) (mappings *remote_pb.RemoteStorageMapping, readErr error) {
 	var oldContent []byte
 	if readErr = pb.WithFilerClient(false, 0, filerAddress, grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, readErr = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+		oldContent, readErr = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return readErr
 	}); readErr != nil {
 		if readErr != filer_pb.ErrNotFound {
@@ -33,7 +35,7 @@ func InsertMountMapping(filerClient filer_pb.FilerClient, dir string, remoteStor
 	// read current mapping
 	var oldContent, newContent []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+		oldContent, err = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return err
 	})
 	if err != nil {
@@ -64,7 +66,7 @@ func DeleteMountMapping(filerClient filer_pb.FilerClient, dir string) (err error
 	// read current mapping
 	var oldContent, newContent []byte
 	err = filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		oldContent, err = ReadInsideFiler(client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
+		oldContent, err = ReadInsideFiler(context.Background(), client, DirectoryEtcRemote, REMOTE_STORAGE_MOUNT_FILE)
 		return err
 	})
 	if err != nil {

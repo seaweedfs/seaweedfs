@@ -34,6 +34,10 @@ func (vs *VolumeServer) VacuumVolumeCheck(ctx context.Context, req *volume_serve
 }
 
 func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCompactRequest, stream volume_server_pb.VolumeServer_VacuumVolumeCompactServer) error {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return err
+	}
+
 	start := time.Now()
 	defer func(start time.Time) {
 		stats.VolumeServerVacuumingHistogram.WithLabelValues("compact").Observe(time.Since(start).Seconds())
@@ -76,6 +80,10 @@ func (vs *VolumeServer) VacuumVolumeCompact(req *volume_server_pb.VacuumVolumeCo
 }
 
 func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_server_pb.VacuumVolumeCommitRequest) (*volume_server_pb.VacuumVolumeCommitResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
+
 	start := time.Now()
 	defer func(start time.Time) {
 		stats.VolumeServerVacuumingHistogram.WithLabelValues("commit").Observe(time.Since(start).Seconds())
@@ -98,9 +106,11 @@ func (vs *VolumeServer) VacuumVolumeCommit(ctx context.Context, req *volume_serv
 }
 
 func (vs *VolumeServer) VacuumVolumeCleanup(ctx context.Context, req *volume_server_pb.VacuumVolumeCleanupRequest) (*volume_server_pb.VacuumVolumeCleanupResponse, error) {
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return nil, err
+	}
 
 	resp := &volume_server_pb.VacuumVolumeCleanupResponse{}
-
 	err := vs.store.CommitCleanupVolume(needle.VolumeId(req.VolumeId))
 
 	if err != nil {

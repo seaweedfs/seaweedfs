@@ -16,6 +16,7 @@ func (s *Store) CheckCompactVolume(volumeId needle.VolumeId) (float64, error) {
 	}
 	return 0, fmt.Errorf("volume id %d is not found during check compact", volumeId)
 }
+
 func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compactionBytePerSecond int64, progressFn ProgressFunc) error {
 	if v := s.findVolume(vid); v != nil {
 		// Get current volume size for space calculation
@@ -39,10 +40,15 @@ func (s *Store) CompactVolume(vid needle.VolumeId, preallocate int64, compaction
 		glog.V(1).Infof("volume %d compaction space check: volume=%d, index=%d, space_needed=%d, free_space=%d",
 			vid, volumeSize, indexSize, spaceNeeded, diskStatus.Free)
 
-		return v.Compact2(preallocate, compactionBytePerSecond, progressFn)
+		return v.CompactByIndex(&CompactOptions{
+			PreallocateBytes:  preallocate,
+			MaxBytesPerSecond: compactionBytePerSecond,
+			ProgressCallback:  progressFn,
+		})
 	}
 	return fmt.Errorf("volume id %d is not found during compact", vid)
 }
+
 func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
 	if s.isStopping {
 		return false, 0, fmt.Errorf("volume id %d skips compact because volume is stopping", vid)
@@ -58,6 +64,7 @@ func (s *Store) CommitCompactVolume(vid needle.VolumeId) (bool, int64, error) {
 	}
 	return false, 0, fmt.Errorf("volume id %d is not found during commit compact", vid)
 }
+
 func (s *Store) CommitCleanupVolume(vid needle.VolumeId) error {
 	if v := s.findVolume(vid); v != nil {
 		return v.cleanupCompact()

@@ -58,9 +58,23 @@ func selectIpV4(netInterfaces []net.Interface, isIpV4 bool) string {
 }
 
 func JoinHostPort(host string, port int) string {
-	portStr := strconv.Itoa(port)
+	return JoinHostPortStr(host, strconv.Itoa(port))
+}
+
+func JoinHostPortStr(host string, port string) string {
 	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		return host + ":" + portStr
+		return host + ":" + port
 	}
-	return net.JoinHostPort(host, portStr)
+	return net.JoinHostPort(host, port)
+}
+
+// GetVolumeServerId returns the volume server ID.
+// If id is provided (non-empty after trimming), use it as the identifier.
+// Otherwise, fall back to ip:port for backward compatibility.
+func GetVolumeServerId(id, ip string, port int) string {
+	volumeServerId := strings.TrimSpace(id)
+	if volumeServerId == "" {
+		volumeServerId = JoinHostPort(ip, port)
+	}
+	return volumeServerId
 }

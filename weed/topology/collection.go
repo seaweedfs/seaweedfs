@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"

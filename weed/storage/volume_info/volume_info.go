@@ -2,7 +2,6 @@ package volume_info
 
 import (
 	"fmt"
-	jsonpb "google.golang.org/protobuf/encoding/protojson"
 	"os"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -10,6 +9,7 @@ import (
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/rclone_backend"
 	_ "github.com/seaweedfs/seaweedfs/weed/storage/backend/s3_backend"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	jsonpb "google.golang.org/protobuf/encoding/protojson"
 )
 
 // MaybeLoadVolumeInfo load the file data as *volume_server_pb.VolumeInfo, the returned volumeInfo will not be nil
@@ -40,6 +40,14 @@ func MaybeLoadVolumeInfo(fileName string) (volumeInfo *volume_server_pb.VolumeIn
 		err = fmt.Errorf("fail to read %s : %v", fileName, readErr)
 		return
 
+	}
+
+	// Handle empty .vif files gracefully - treat as if file doesn't exist
+	// This can happen when ec.decode copies from a source that doesn't have a .vif file
+	if len(fileData) == 0 {
+		glog.Warningf("empty volume info file %s, treating as non-existent", fileName)
+		hasVolumeInfoFile = false
+		return
 	}
 
 	glog.V(1).Infof("maybeLoadVolumeInfo Unmarshal volume info %v", fileName)

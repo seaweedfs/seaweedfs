@@ -5,11 +5,12 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -25,7 +26,7 @@ When creating a link:
 
 /** Create a hard link to a file */
 func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *fuse.EntryOut) (code fuse.Status) {
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 
@@ -54,11 +55,16 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// update old file to hardlink mode
+	origHardLinkId := oldEntry.HardLinkId
+	origHardLinkCounter := oldEntry.HardLinkCounter
 	if len(oldEntry.HardLinkId) == 0 {
 		oldEntry.HardLinkId = filer.NewHardLinkId()
 		oldEntry.HardLinkCounter = 1
+		glog.V(4).Infof("Link: new HardLinkId %x for %s", oldEntry.HardLinkId, oldEntryPath)
 	}
 	oldEntry.HardLinkCounter++
+	glog.V(4).Infof("Link: %s -> %s/%s HardLinkId %x counter=%d",
+		oldEntryPath, newParentPath, name, oldEntry.HardLinkId, oldEntry.HardLinkCounter)
 	updateOldEntryRequest := &filer_pb.UpdateEntryRequest{
 		Directory:  oldParentPath,
 		Entry:      oldEntry,
@@ -83,26 +89,51 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// apply changes to the filer, and also apply to local metaCache
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		if err := filer_pb.UpdateEntry(context.Background(), client, updateOldEntryRequest); err != nil {
-			return err
+	ctx := context.Background()
+	updateResp, err := wfs.streamUpdateEntry(ctx, updateOldEntryRequest)
+	if err == nil {
+		updateEvent := updateResp.GetMetadataEvent()
+		if updateEvent == nil {
+			updateEvent = metadataUpdateEvent(oldParentPath, updateOldEntryRequest.Entry)
 		}
-		wfs.metaCache.UpdateEntry(context.Background(), filer.FromPbEntry(updateOldEntryRequest.Directory, updateOldEntryRequest.Entry))
-
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			return err
+		if applyErr := wfs.applyLocalMetadataEvent(ctx, updateEvent); applyErr != nil {
+			glog.Warningf("link %s: best-effort metadata apply failed: %v", oldEntryPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(oldParentPath))
 		}
-
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
-
-		return nil
-	})
+	}
+	if err == nil {
+		var createResp *filer_pb.CreateEntryResponse
+		createResp, err = wfs.streamCreateEntry(ctx, request)
+		if err != nil {
+			// Rollback: restore original HardLinkId/Counter on the source entry
+			oldEntry.HardLinkId = origHardLinkId
+			oldEntry.HardLinkCounter = origHardLinkCounter
+			rollbackReq := &filer_pb.UpdateEntryRequest{
+				Directory:  oldParentPath,
+				Entry:      oldEntry,
+				Signatures: []int32{wfs.signature},
+			}
+			if _, rollbackErr := wfs.streamUpdateEntry(ctx, rollbackReq); rollbackErr != nil {
+				glog.Warningf("link rollback %s: %v", oldEntryPath, rollbackErr)
+			}
+		} else {
+			createEvent := createResp.GetMetadataEvent()
+			if createEvent == nil {
+				createEvent = metadataCreateEvent(string(newParentPath), request.Entry)
+			}
+			if applyErr := wfs.applyLocalMetadataEvent(ctx, createEvent); applyErr != nil {
+				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
+				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
+			}
+		}
+	}
 
 	newEntryPath := newParentPath.Child(name)
+
+	// Map back to local uid/gid before writing attributes to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
 
 	if err != nil {
 		glog.V(0).Infof("Link %v -> %s: %v", oldEntryPath, newEntryPath, err)

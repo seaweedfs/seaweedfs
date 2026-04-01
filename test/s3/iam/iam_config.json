@@ -1,7 +1,7 @@
 {
   "sts": {
     "tokenDuration": "1h",
-    "maxSessionLength": "12h", 
+    "maxSessionLength": "12h",
     "issuer": "seaweedfs-sts",
     "signingKey": "dGVzdC1zaWduaW5nLWtleS0zMi1jaGFyYWN0ZXJzLWxvbmc="
   },
@@ -24,7 +24,11 @@
         "clientSecret": "seaweedfs-s3-secret",
         "jwksUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/certs",
         "userInfoUri": "http://localhost:8080/realms/seaweedfs-test/protocol/openid-connect/userinfo",
-        "scopes": ["openid", "profile", "email"],
+        "scopes": [
+          "openid",
+          "profile",
+          "email"
+        ],
         "claimsMapping": {
           "username": "preferred_username",
           "email": "email",
@@ -38,13 +42,13 @@
               "role": "arn:aws:iam::role/KeycloakAdminRole"
             },
             {
-              "claim": "roles", 
+              "claim": "roles",
               "value": "s3-read-only",
               "role": "arn:aws:iam::role/KeycloakReadOnlyRole"
             },
             {
               "claim": "roles",
-              "value": "s3-write-only", 
+              "value": "s3-write-only",
               "role": "arn:aws:iam::role/KeycloakWriteOnlyRole"
             },
             {
@@ -73,15 +77,19 @@
             "Principal": {
               "Federated": "test-oidc"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3AdminPolicy"],
+      "attachedPolicies": [
+        "S3AdminPolicy"
+      ],
       "description": "Admin role for testing"
     },
     {
-      "roleName": "TestReadOnlyRole", 
+      "roleName": "TestReadOnlyRole",
       "roleArn": "arn:aws:iam::role/TestReadOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
@@ -91,15 +99,19 @@
             "Principal": {
               "Federated": "test-oidc"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "attachedPolicies": [
+        "S3ReadOnlyPolicy"
+      ],
       "description": "Read-only role for testing"
     },
     {
-      "roleName": "TestWriteOnlyRole", 
+      "roleName": "TestWriteOnlyRole",
       "roleArn": "arn:aws:iam::role/TestWriteOnlyRole",
       "trustPolicy": {
         "Version": "2012-10-17",
@@ -109,11 +121,15 @@
             "Principal": {
               "Federated": "test-oidc"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3WriteOnlyPolicy"],
+      "attachedPolicies": [
+        "S3WriteOnlyPolicy"
+      ],
       "description": "Write-only role for testing"
     },
     {
@@ -127,11 +143,15 @@
             "Principal": {
               "Federated": "keycloak"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3AdminPolicy"],
+      "attachedPolicies": [
+        "S3AdminPolicy"
+      ],
       "description": "Admin role for Keycloak users"
     },
     {
@@ -145,11 +165,15 @@
             "Principal": {
               "Federated": "keycloak"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3ReadOnlyPolicy"],
+      "attachedPolicies": [
+        "S3ReadOnlyPolicy"
+      ],
       "description": "Read-only role for Keycloak users"
     },
     {
@@ -163,11 +187,15 @@
             "Principal": {
               "Federated": "keycloak"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3WriteOnlyPolicy"],
+      "attachedPolicies": [
+        "S3WriteOnlyPolicy"
+      ],
       "description": "Write-only role for Keycloak users"
     },
     {
@@ -181,11 +209,15 @@
             "Principal": {
               "Federated": "keycloak"
             },
-            "Action": ["sts:AssumeRoleWithWebIdentity"]
+            "Action": [
+              "sts:AssumeRoleWithWebIdentity"
+            ]
           }
         ]
       },
-      "attachedPolicies": ["S3ReadWritePolicy"],
+      "attachedPolicies": [
+        "S3ReadWritePolicy"
+      ],
       "description": "Read-write role for Keycloak users"
     }
   ],
@@ -197,13 +229,23 @@
         "Statement": [
           {
             "Effect": "Allow",
-            "Action": ["s3:*"],
-            "Resource": ["*"]
+            "Action": [
+              "s3:*",
+              "iam:*"
+            ],
+            "Resource": [
+              "*",
+              "arn:aws:iam:::*"
+            ]
           },
           {
             "Effect": "Allow",
-            "Action": ["sts:ValidateSession"],
-            "Resource": ["*"]
+            "Action": [
+              "sts:ValidateSession"
+            ],
+            "Resource": [
+              "*"
+            ]
           }
         ]
       }
@@ -211,7 +253,7 @@
     {
       "name": "S3ReadOnlyPolicy",
       "document": {
-        "Version": "2012-10-17", 
+        "Version": "2012-10-17",
         "Statement": [
           {
             "Effect": "Allow",
@@ -226,8 +268,12 @@
           },
           {
             "Effect": "Allow",
-            "Action": ["sts:ValidateSession"],
-            "Resource": ["*"]
+            "Action": [
+              "sts:ValidateSession"
+            ],
+            "Resource": [
+              "*"
+            ]
           }
         ]
       }
@@ -260,8 +306,12 @@
           },
           {
             "Effect": "Allow",
-            "Action": ["sts:ValidateSession"],
-            "Resource": ["*"]
+            "Action": [
+              "sts:ValidateSession"
+            ],
+            "Resource": [
+              "*"
+            ]
           }
         ]
       }
@@ -283,8 +333,12 @@
           },
           {
             "Effect": "Allow",
-            "Action": ["sts:ValidateSession"],
-            "Resource": ["*"]
+            "Action": [
+              "sts:ValidateSession"
+            ],
+            "Resource": [
+              "*"
+            ]
           }
         ]
       }

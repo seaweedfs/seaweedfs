@@ -2,6 +2,7 @@ package topology
 
 import (
 	"fmt"
+	"slices"
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -22,6 +23,9 @@ type DataNode struct {
 	LastSeen      int64 // unix time in seconds
 	Counter       int   // in race condition, the previous dataNode was not dead
 	IsTerminating bool
+
+	MaintenanceMode bool
+	diskTags        map[uint32][]string
 }
 
 func NewDataNode(id string) *DataNode {
@@ -266,15 +270,61 @@ func (dn *DataNode) ToInfo() (info DataNodeInfo) {
 
 func (dn *DataNode) ToDataNodeInfo() *master_pb.DataNodeInfo {
 	m := &master_pb.DataNodeInfo{
-		Id:        string(dn.Id()),
-		DiskInfos: make(map[string]*master_pb.DiskInfo),
+		Id: string(dn.Id()),
+		// Start from disk usage counters so empty disks are still represented
+		// even when there are no volumes/EC shards on this data node yet.
+		DiskInfos: dn.diskUsages.ToDiskInfo(),
 		GrpcPort:  uint32(dn.GrpcPort),
+		Address:   dn.Url(), // ip:port for connecting to the volume server
 	}
+	if m.DiskInfos == nil {
+		m.DiskInfos = make(map[string]*master_pb.DiskInfo)
+	}
+	for diskType, diskInfo := range m.DiskInfos {
+		if diskInfo == nil {
+			m.DiskInfos[diskType] = &master_pb.DiskInfo{Type: diskType}
+			continue
+		}
+		diskInfo.Type = diskType
+	}
+
 	for _, c := range dn.Children() {
 		disk := c.(*Disk)
 		m.DiskInfos[string(disk.Id())] = disk.ToDiskInfo()
 	}
+
+	dn.RLock()
+	diskTags := make(map[uint32][]string, len(dn.diskTags))
+	for diskID, tags := range dn.diskTags {
+		diskTags[diskID] = append([]string(nil), tags...)
+	}
+	dn.RUnlock()
+	for _, diskInfo := range m.DiskInfos {
+		if diskInfo == nil {
+			continue
+		}
+		if tags, found := diskTags[diskInfo.DiskId]; found {
+			diskInfo.Tags = append([]string(nil), tags...)
+		}
+	}
 	return m
+}
+
+func (dn *DataNode) UpdateDiskTags(tags []*master_pb.DiskTag) {
+	if len(tags) == 0 {
+		return
+	}
+	dn.Lock()
+	if dn.diskTags == nil {
+		dn.diskTags = make(map[uint32][]string, len(tags))
+	}
+	for _, tagInfo := range tags {
+		if tagInfo == nil {
+			continue
+		}
+		dn.diskTags[tagInfo.DiskId] = append([]string(nil), tagInfo.Tags...)
+	}
+	dn.Unlock()
 }
 
 // GetVolumeIds returns the human readable volume ids limited to count of max 100.
@@ -287,6 +337,8 @@ func (dn *DataNode) GetVolumeIds() string {
 	for k := range existingVolumes {
 		ids = append(ids, int(k))
 	}
+
+	slices.Sort(ids)
 
 	return util.HumanReadableIntsMax(100, ids...)
 }

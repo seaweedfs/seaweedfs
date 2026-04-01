@@ -2,11 +2,12 @@ package agent
 
 import (
 	"context"
+	"log/slog"
+	"math/rand/v2"
+
 	"github.com/seaweedfs/seaweedfs/weed/mq/client/pub_client"
 	"github.com/seaweedfs/seaweedfs/weed/mq/topic"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_agent_pb"
-	"log/slog"
-	"math/rand/v2"
 )
 
 func (a *MessageQueueAgent) StartPublishSession(ctx context.Context, req *mq_agent_pb.StartPublishSessionRequest) (*mq_agent_pb.StartPublishSessionResponse, error) {

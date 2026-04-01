@@ -81,7 +81,7 @@ func TestWriteRowsNoPanic(t *testing.T) {
 		}
 
 		// Log columns
-		rec.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: int64(1756913789000000000 + i)}}
+		rec.Fields[SW_COLUMN_NAME_TS] = &schema_pb.Value{Kind: &schema_pb.Value_Int64Value{Int64Value: 1756913789000000000 + int64(i)}}
 		var keyBytes []byte
 		if i%7 == 0 {
 			keyBytes = nil // ensure nil-keys are handled

@@ -1,8 +1,9 @@
+{{- include "seaweedfs.compat" . -}}
 {{- if .Values.sftp.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ template "seaweedfs.name" . }}-sftp
+  name: {{ include "seaweedfs.fullname" . }}-sftp
   namespace: {{ .Release.Namespace }}
   labels:
     app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
@@ -42,14 +43,14 @@ spec:
       {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
-      restartPolicy: {{ default .Values.global.restartPolicy .Values.sftp.restartPolicy }}
+      restartPolicy: {{ default .Values.global.seaweedfs.restartPolicy .Values.sftp.restartPolicy }}
       {{- if .Values.sftp.affinity }}
       affinity:
         {{ tpl .Values.sftp.affinity . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.sftp.topologySpreadConstraints }}
       topologySpreadConstraints:
-        {{ tpl .Values.sftp.topologySpreadConstraint . | nindent 8 | trim }}
+        {{ tpl .Values.sftp.topologySpreadConstraints . | nindent 8 | trim }}
       {{- end }}
       {{- if .Values.sftp.tolerations }}
       tolerations:
@@ -74,7 +75,7 @@ spec:
       containers:
         - name: seaweedfs
           image: {{ template "sftp.image" . }}
-          imagePullPolicy: {{ default "IfNotPresent" .Values.global.imagePullPolicy }}
+          imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
               valueFrom:
@@ -89,28 +90,18 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: SEAWEEDFS_FULLNAME
-              value: "{{ template "seaweedfs.name" . }}"
-            {{- if .Values.sftp.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.sftp.extraEnvironmentVars }}
+              value: "{{ include "seaweedfs.fullname" . }}"
+            {{- $mergedExtraEnvironmentVars := dict }}
+            {{- include "seaweedfs.mergeExtraEnvironmentVars" (dict "global" .Values.global.seaweedfs "component" .Values.sftp "target" $mergedExtraEnvironmentVars) }}
+            {{- range $key := keys $mergedExtraEnvironmentVars | sortAlpha }}
+            {{- $value := index $mergedExtraEnvironmentVars $key }}
             - name: {{ $key }}
             {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
+              value: {{ tpl $value $ | quote }}
             {{- else }}
               valueFrom:
                 {{ toYaml $value | nindent 16 | trim }}
             {{- end -}}
-            {{- end }}
-            {{- end }}
-            {{- if .Values.global.extraEnvironmentVars }}
-            {{- range $key, $value := .Values.global.extraEnvironmentVars }}
-            - name: {{ $key }}
-            {{- if kindIs "string" $value }}
-              value: {{ $value | quote }}
-            {{- else }}
-              valueFrom:
-                {{ toYaml $value | nindent 16 | trim }}
-            {{- end -}}
-            {{- end }}
             {{- end }}
           command:
             - "/bin/sh"
@@ -125,7 +116,7 @@ spec:
               {{- if .Values.sftp.loggingOverrideLevel }}
               -v={{ .Values.sftp.loggingOverrideLevel }} \
               {{- else }}
-              -v={{ .Values.global.loggingLevel }} \
+              -v={{ .Values.global.seaweedfs.loggingLevel }} \
               {{- end }}
               sftp \
               -ip.bind={{ .Values.sftp.bindAddress }} \
@@ -166,12 +157,12 @@ spec:
               {{- if .Values.sftp.localSocket }}
               -localSocket={{ .Values.sftp.localSocket }} \
               {{- end }}
-              {{- if .Values.global.enableSecurity }}
+              {{- if .Values.global.seaweedfs.enableSecurity }}
               -cert.file=/usr/local/share/ca-certificates/client/tls.crt \
               -key.file=/usr/local/share/ca-certificates/client/tls.key \
               {{- end }}
               -userStoreFile=/etc/sw/seaweedfs_sftp_config \
-              -filer={{ template "seaweedfs.name" . }}-filer-client.{{ .Release.Namespace }}:{{ .Values.filer.port }}
+              -filer={{ include "seaweedfs.componentName" (list . "filer-client") }}.{{ .Release.Namespace }}:{{ .Values.filer.port }}
           volumeMounts:
             {{- if or (eq .Values.sftp.logs.type "hostPath") (eq .Values.sftp.logs.type "emptyDir") }}
             - name: logs
@@ -185,7 +176,7 @@ spec:
             - mountPath: /etc/sw/ssh
               name: config-ssh
               readOnly: true
-            {{- if .Values.global.enableSecurity }}
+            {{- if .Values.global.seaweedfs.enableSecurity }}
             - name: security-config
               readOnly: true
               mountPath: /etc/seaweedfs/security.toml
@@ -252,7 +243,7 @@ spec:
             {{- if .Values.sftp.existingConfigSecret }}
             secretName: {{ .Values.sftp.existingConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-sftp-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-sftp-secret
             {{- end }}
         {{- end }}
         - name: config-ssh
@@ -261,7 +252,7 @@ spec:
             {{- if .Values.sftp.existingSshConfigSecret }}
             secretName: {{ .Values.sftp.existingSshConfigSecret }}
             {{- else }}
-            secretName: seaweedfs-sftp-ssh-secret
+            secretName: {{ include "seaweedfs.fullname" . }}-sftp-ssh-secret
             {{- end }}
         {{- if eq .Values.sftp.logs.type "hostPath" }}
         - name: logs
@@ -273,25 +264,25 @@ spec:
         - name: logs
           emptyDir: {}
         {{- end }}
-        {{- if .Values.global.enableSecurity }}
+        {{- if .Values.global.seaweedfs.enableSecurity }}
         - name: security-config
           configMap:
-            name: {{ template "seaweedfs.name" . }}-security-config
+            name: {{ include "seaweedfs.fullname" . }}-security-config
         - name: ca-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-ca-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-ca-cert
         - name: master-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-master-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-master-cert
         - name: volume-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-volume-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-volume-cert
         - name: filer-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-filer-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-filer-cert
         - name: client-cert
           secret:
-            secretName: {{ template "seaweedfs.name" . }}-client-cert
+            secretName: {{ include "seaweedfs.fullname" . }}-client-cert
         {{- end }}
         {{ tpl .Values.sftp.extraVolumes . | indent 8 | trim }}
       {{- if .Values.sftp.nodeSelector }}

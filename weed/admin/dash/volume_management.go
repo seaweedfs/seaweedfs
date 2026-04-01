@@ -413,6 +413,9 @@ func (s *AdminServer) VacuumVolume(volumeID int, server string) error {
 func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, error) {
 	var volumeServerMap map[string]*VolumeServer
 
+	// Fetch public URL mapping from master HTTP API
+	publicUrls := s.fetchPublicUrlMap()
+
 	// Make only ONE VolumeList call and use it for both topology building AND EC shard processing
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		resp, err := client.VolumeList(context.Background(), &master_pb.VolumeListRequest{})
@@ -436,8 +439,18 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 					for _, node := range rack.DataNodeInfos {
 						// Initialize volume server if not exists
 						if volumeServerMap[node.Id] == nil {
+							// Look up PublicUrl from master HTTP API
+							nodeAddr := node.Address
+							if nodeAddr == "" {
+								nodeAddr = node.Id
+							}
+							publicUrl := publicUrls[nodeAddr]
+							if publicUrl == "" {
+								publicUrl = nodeAddr
+							}
 							volumeServerMap[node.Id] = &VolumeServer{
 								Address:        node.Id,
+								PublicURL:      publicUrl,
 								DataCenter:     dc.Id,
 								Rack:           rack.Id,
 								Volumes:        0,
@@ -457,6 +470,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 
 						// Process disk information
 						for _, diskInfo := range node.DiskInfos {
+							vs.MaxVolumes += int(diskInfo.MaxVolumeCount)
 							vs.DiskCapacity += int64(diskInfo.MaxVolumeCount) * int64(volumeSizeLimitMB) * 1024 * 1024 // Use actual volume size limit
 
 							// Count regular volumes and calculate disk usage
@@ -492,20 +506,17 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 							// Merge EcIndexBits from all disks and collect shard sizes
 							allShardSizes := make(map[erasure_coding.ShardId]int64)
 							for _, ecShardInfo := range ecShardInfos {
-								ecInfo.EcIndexBits |= ecShardInfo.EcIndexBits
+								si := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
+								ecInfo.EcIndexBits |= si.Bitmap()
 
 								// Collect shard sizes from this disk
-								shardBits := erasure_coding.ShardBits(ecShardInfo.EcIndexBits)
-								shardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
-									if size, found := erasure_coding.GetShardSize(ecShardInfo, shardId); found {
-										allShardSizes[shardId] = size
-									}
-								})
+								for _, id := range si.Ids() {
+									allShardSizes[id] += int64(si.Size(id))
+								}
 							}
 
 							// Process final merged shard information
-							finalShardBits := erasure_coding.ShardBits(ecInfo.EcIndexBits)
-							finalShardBits.EachSetIndex(func(shardId erasure_coding.ShardId) {
+							for shardId := range allShardSizes {
 								ecInfo.ShardCount++
 								ecInfo.ShardNumbers = append(ecInfo.ShardNumbers, int(shardId))
 								vs.EcShards++
@@ -516,7 +527,7 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 									ecInfo.TotalSize += shardSize
 									vs.DiskUsage += shardSize // Add EC shard size to total disk usage
 								}
-							})
+							}
 
 							ecVolumeMap[volumeId] = ecInfo
 						}
@@ -543,6 +554,11 @@ func (s *AdminServer) GetClusterVolumeServers() (*ClusterVolumeServersData, erro
 	for _, vs := range volumeServerMap {
 		volumeServers = append(volumeServers, *vs)
 	}
+
+	// Sort volume servers by address for consistent ordering on page refresh
+	sort.Slice(volumeServers, func(i, j int) bool {
+		return volumeServers[i].GetDisplayAddress() < volumeServers[j].GetDisplayAddress()
+	})
 
 	var totalCapacity int64
 	var totalVolumes int

@@ -1,8 +1,9 @@
 package page_writer
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestUploadPipeline(t *testing.T) {

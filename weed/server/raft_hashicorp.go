@@ -4,23 +4,26 @@ package weed_server
 // https://github.com/Jille/raft-grpc-example/blob/cd5bcab0218f008e044fbeee4facdd01b06018ad/application.go#L18
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 	"time"
 
 	transport "github.com/Jille/raft-grpc-transport"
 	"github.com/armon/go-metrics"
 	"github.com/armon/go-metrics/prometheus"
 	"github.com/hashicorp/raft"
+	hashicorpRaft "github.com/hashicorp/raft"
 	boltdb "github.com/hashicorp/raft-boltdb/v2"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
+	"github.com/seaweedfs/seaweedfs/weed/topology"
 	"google.golang.org/grpc"
 )
 
@@ -31,26 +34,56 @@ const (
 )
 
 func getPeerIdx(self pb.ServerAddress, mapPeers map[string]pb.ServerAddress) int {
-	peers := make([]pb.ServerAddress, 0, len(mapPeers))
+	peerIDs := make([]string, 0, len(mapPeers))
+	seen := make(map[string]struct{}, len(mapPeers))
 	for _, peer := range mapPeers {
-		peers = append(peers, peer)
-	}
-	sort.Slice(peers, func(i, j int) bool {
-		return strings.Compare(string(peers[i]), string(peers[j])) < 0
-	})
-	for i, peer := range peers {
-		if string(peer) == string(self) {
-			return i
+		id := raftServerID(peer)
+		if _, ok := seen[id]; ok {
+			continue
 		}
+		seen[id] = struct{}{}
+		peerIDs = append(peerIDs, id)
+	}
+	sort.Strings(peerIDs)
+	selfID := raftServerID(self)
+	idx := sort.SearchStrings(peerIDs, selfID)
+	if idx < len(peerIDs) && peerIDs[idx] == selfID {
+		return idx
 	}
 	return -1
+}
+
+func raftServerID(server pb.ServerAddress) string {
+	return server.ToHttpAddress()
+}
+
+// recoverTopologyIdFromHashicorpSnapshot reads the TopologyId from the latest
+// hashicorp raft snapshot before state cleanup.
+func recoverTopologyIdFromHashicorpSnapshot(dataDir string, topo *topology.Topology) {
+	fss, err := raft.NewFileSnapshotStore(dataDir, 1, io.Discard)
+	if err != nil {
+		return
+	}
+	snapshots, err := fss.List()
+	if err != nil || len(snapshots) == 0 {
+		return
+	}
+	_, rc, err := fss.Open(snapshots[0].ID)
+	if err != nil {
+		return
+	}
+	defer rc.Close()
+
+	if b, err := io.ReadAll(rc); err == nil {
+		recoverTopologyIdFromState(b, topo)
+	}
 }
 
 func (s *RaftServer) AddPeersConfiguration() (cfg raft.Configuration) {
 	for _, peer := range s.peers {
 		cfg.Servers = append(cfg.Servers, raft.Server{
 			Suffrage: raft.Voter,
-			ID:       raft.ServerID(peer),
+			ID:       raft.ServerID(raftServerID(peer)),
 			Address:  raft.ServerAddress(peer.ToGrpcAddress()),
 		})
 	}
@@ -63,6 +96,7 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 		select {
 		case isLeader := <-s.RaftHashicorp.LeaderCh():
 			leader, _ := s.RaftHashicorp.LeaderWithID()
+			s.topo.SetLastLeaderChangeTime(time.Now())
 			if isLeader {
 
 				if updatePeers {
@@ -72,19 +106,34 @@ func (s *RaftServer) monitorLeaderLoop(updatePeers bool) {
 
 				s.topo.DoBarrier()
 
+				EnsureTopologyId(s.topo, func() bool {
+					return s.RaftHashicorp.State() == hashicorpRaft.Leader
+				}, func(topologyId string) error {
+					command := topology.NewMaxVolumeIdCommand(s.topo.GetMaxVolumeId(), topologyId)
+					b, err := json.Marshal(command)
+					if err != nil {
+						return err
+					}
+					return s.RaftHashicorp.Apply(b, 5*time.Second).Error()
+				})
+
 				stats.MasterLeaderChangeCounter.WithLabelValues(fmt.Sprintf("%+v", leader)).Inc()
 			} else {
 				s.topo.BarrierReset()
 			}
 			glog.V(0).Infof("is leader %+v change event: %+v => %+v", isLeader, prevLeader, leader)
 			prevLeader = leader
-			s.topo.LastLeaderChangeTime = time.Now()
 		}
 	}
 }
 
 func (s *RaftServer) updatePeers() {
-	peerLeader := string(s.serverAddr)
+	peerLeader := raftServerID(s.serverAddr)
+	desiredPeers := make(map[string]pb.ServerAddress, len(s.peers))
+	for _, peer := range s.peers {
+		desiredPeers[raftServerID(peer)] = peer
+	}
+
 	existsPeerName := make(map[string]bool)
 	for _, server := range s.RaftHashicorp.GetConfiguration().Configuration().Servers {
 		if string(server.ID) == peerLeader {
@@ -92,8 +141,7 @@ func (s *RaftServer) updatePeers() {
 		}
 		existsPeerName[string(server.ID)] = true
 	}
-	for _, peer := range s.peers {
-		peerName := string(peer)
+	for peerName, peer := range desiredPeers {
 		if peerName == peerLeader || existsPeerName[peerName] {
 			continue
 		}
@@ -102,12 +150,12 @@ func (s *RaftServer) updatePeers() {
 			raft.ServerID(peerName), raft.ServerAddress(peer.ToGrpcAddress()), 0, 0)
 	}
 	for peer := range existsPeerName {
-		if _, found := s.peers[peer]; !found {
+		if _, found := desiredPeers[peer]; !found {
 			glog.V(0).Infof("removing old peer: %s", peer)
 			s.RaftHashicorp.RemoveServer(raft.ServerID(peer), 0, 0)
 		}
 	}
-	if _, found := s.peers[peerLeader]; !found {
+	if _, found := desiredPeers[peerLeader]; !found {
 		glog.V(0).Infof("removing old leader peer: %s", peerLeader)
 		s.RaftHashicorp.RemoveServer(raft.ServerID(peerLeader), 0, 0)
 	}
@@ -122,7 +170,7 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	c := raft.DefaultConfig()
-	c.LocalID = raft.ServerID(s.serverAddr) // TODO maybee the IP:port address will change
+	c.LocalID = raft.ServerID(raftServerID(s.serverAddr))
 	c.HeartbeatTimeout = time.Duration(float64(option.HeartbeatInterval) * (rand.Float64()*0.25 + 1))
 	c.ElectionTimeout = option.ElectionTimeout
 	if c.LeaderLeaseTimeout > c.HeartbeatTimeout {
@@ -143,6 +191,8 @@ func NewHashicorpRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	}
 
 	if option.RaftBootstrap {
+		recoverTopologyIdFromHashicorpSnapshot(s.dataDir, option.Topo)
+
 		os.RemoveAll(path.Join(s.dataDir, ldbFile))
 		os.RemoveAll(path.Join(s.dataDir, sdbFile))
 		os.RemoveAll(path.Join(s.dataDir, "snapshots"))

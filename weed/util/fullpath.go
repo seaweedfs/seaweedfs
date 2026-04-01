@@ -1,6 +1,7 @@
 package util
 
 import (
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -79,9 +80,46 @@ func (fp FullPath) IsUnder(other FullPath) bool {
 	return strings.HasPrefix(string(fp), string(other)+"/")
 }
 
+// IsEqualOrUnder reports whether candidate is equal to or a descendant of
+// other using proper directory boundaries (not a plain string prefix check).
+// Empty strings always return false.
+func IsEqualOrUnder(candidate, other string) bool {
+	candidatePath := NormalizePath(candidate)
+	otherPath := NormalizePath(other)
+	if candidatePath == "" || otherPath == "" {
+		return false
+	}
+	return candidatePath == otherPath || candidatePath.IsUnder(otherPath)
+}
+
+// NormalizePath trims a trailing slash and returns a FullPath.
+// Empty input returns "" (callers should treat this as "no path").
+func NormalizePath(p string) FullPath {
+	if p == "" {
+		return ""
+	}
+	trimmed := strings.TrimSuffix(p, "/")
+	if trimmed == "" {
+		return "/"
+	}
+	return FullPath(trimmed)
+}
+
 func StringSplit(separatedValues string, sep string) []string {
 	if separatedValues == "" {
 		return nil
 	}
 	return strings.Split(separatedValues, sep)
+}
+
+// CleanWindowsPath normalizes Windows-style backslashes to forward slashes.
+// This handles paths from Windows clients where paths use backslashes.
+func CleanWindowsPath(p string) string {
+	return strings.ReplaceAll(p, "\\", "/")
+}
+
+// CleanWindowsPathBase normalizes Windows-style backslashes to forward slashes
+// and returns the base name of the path.
+func CleanWindowsPathBase(p string) string {
+	return path.Base(strings.ReplaceAll(p, "\\", "/"))
 }

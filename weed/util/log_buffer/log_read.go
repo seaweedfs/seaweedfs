@@ -2,6 +2,7 @@ package log_buffer
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"time"
 
@@ -74,8 +75,52 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 		}
 		bytesBuf, batchIndex, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		if err == ResumeFromDiskError {
-			time.Sleep(1127 * time.Millisecond)
-			return lastReadPosition, isDone, ResumeFromDiskError
+			// Try to read from disk if readFromDiskFn is available
+			if logBuffer.ReadFromDiskFn != nil {
+				prevReadPosition := lastReadPosition
+				lastReadPosition, isDone, err = logBuffer.ReadFromDiskFn(lastReadPosition, stopTsNs, eachLogDataFn)
+				if err != nil {
+					return lastReadPosition, isDone, err
+				}
+				if isDone {
+					return lastReadPosition, isDone, nil
+				}
+				if lastReadPosition != prevReadPosition {
+					continue
+				}
+			} else if logBuffer.HasData() {
+				return lastReadPosition, isDone, ResumeFromDiskError
+			}
+
+			// CRITICAL: Check if client is still connected
+			if !waitForDataFn() {
+				// Client disconnected - exit cleanly
+				glog.V(4).Infof("%s: Client disconnected after disk read attempt", readerName)
+				return lastReadPosition, true, nil
+			}
+
+			// Wait for notification or timeout (instant wake-up when data arrives)
+			select {
+			case <-notifyChan:
+				// New data available, retry immediately
+				glog.V(3).Infof("%s: Woke up from notification after ResumeFromDiskError", readerName)
+			case <-time.After(10 * time.Millisecond):
+				// Timeout, retry anyway (fallback for edge cases)
+				glog.V(4).Infof("%s: Notification timeout after ResumeFromDiskError, polling", readerName)
+			}
+
+			// Continue to next iteration (don't return ResumeFromDiskError)
+			continue
+		}
+		if err != nil {
+			// Check for buffer corruption error
+			if errors.Is(err, ErrBufferCorrupted) {
+				glog.Errorf("%s: Buffer corruption detected: %v", readerName, err)
+				return lastReadPosition, true, fmt.Errorf("buffer corruption: %w", err)
+			}
+			// Other errors
+			glog.Errorf("%s: ReadFromBuffer error: %v", readerName, err)
+			return lastReadPosition, true, err
 		}
 		readSize := 0
 		if bytesBuf != nil {
@@ -212,9 +257,17 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 		}
 		bytesBuf, offset, err = logBuffer.ReadFromBuffer(lastReadPosition)
 		glog.V(4).Infof("ReadFromBuffer for %s returned bytesBuf=%v, offset=%d, err=%v", readerName, bytesBuf != nil, offset, err)
+
+		// Check for buffer corruption error before other error handling
+		if err != nil && errors.Is(err, ErrBufferCorrupted) {
+			glog.Errorf("%s: Buffer corruption detected: %v", readerName, err)
+			return lastReadPosition, true, fmt.Errorf("buffer corruption: %w", err)
+		}
+
 		if err == ResumeFromDiskError {
 			// Try to read from disk if readFromDiskFn is available
 			if logBuffer.ReadFromDiskFn != nil {
+				prevReadPosition := lastReadPosition
 				// Wrap eachLogDataFn to match the expected signature
 				diskReadFn := func(logEntry *filer_pb.LogEntry) (bool, error) {
 					return eachLogDataFn(logEntry, logEntry.Offset)
@@ -226,7 +279,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				if isDone {
 					return lastReadPosition, isDone, nil
 				}
-				// Continue to next iteration after disk read
+				if lastReadPosition != prevReadPosition {
+					continue
+				}
+			} else if logBuffer.HasData() {
+				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
 			// CRITICAL: Check if client is still connected after disk read

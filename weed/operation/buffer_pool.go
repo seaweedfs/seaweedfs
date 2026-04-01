@@ -1,8 +1,9 @@
 package operation
 
 import (
-	"github.com/valyala/bytebufferpool"
 	"sync/atomic"
+
+	"github.com/valyala/bytebufferpool"
 )
 
 var bufferCounter int64

@@ -4,11 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+)
+
+var (
+	ErrAccessKeyInUse = errors.New("access key already in use")
+	ErrUserNotFound   = errors.New("user not found")
+	ErrInvalidInput   = errors.New("invalid input")
 )
 
 // CreateObjectStoreUser creates a new user using the credential manager
@@ -21,8 +29,9 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 
 	// Create new identity
 	newIdentity := &iam_pb.Identity{
-		Name:    req.Username,
-		Actions: req.Actions,
+		Name:        req.Username,
+		Actions:     req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	// Add account if email is provided
@@ -63,6 +72,7 @@ func (s *AdminServer) CreateObjectStoreUser(req CreateUserRequest) (*ObjectStore
 		AccessKey:   accessKey,
 		SecretKey:   secretKey,
 		Permissions: req.Actions,
+		PolicyNames: req.PolicyNames,
 	}
 
 	return user, nil
@@ -91,11 +101,16 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update actions if provided
-	if len(req.Actions) > 0 {
+	if req.Actions != nil {
 		updatedIdentity.Actions = req.Actions
+	}
+	// Always update policy names when present in request (even if empty to allow clearing)
+	if req.PolicyNames != nil {
+		updatedIdentity.PolicyNames = req.PolicyNames
 	}
 
 	// Update email if provided
@@ -120,6 +135,7 @@ func (s *AdminServer) UpdateObjectStoreUser(username string, req UpdateUserReque
 		Username:    username,
 		Email:       req.Email,
 		Permissions: updatedIdentity.Actions,
+		PolicyNames: updatedIdentity.PolicyNames,
 	}
 
 	// Get first access key for display
@@ -169,8 +185,9 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 	}
 
 	details := &UserDetails{
-		Username: username,
-		Actions:  identity.Actions,
+		Username:    username,
+		Actions:     identity.Actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Set email from account if available
@@ -178,11 +195,30 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 		details.Email = identity.Account.EmailAddress
 	}
 
+	// Look up groups the user belongs to
+	groupNames, err := s.credentialManager.ListGroups(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list groups: %w", err)
+	}
+	for _, gName := range groupNames {
+		g, err := s.credentialManager.GetGroup(ctx, gName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get group %s: %w", gName, err)
+		}
+		for _, member := range g.Members {
+			if member == username {
+				details.Groups = append(details.Groups, gName)
+				break
+			}
+		}
+	}
+
 	// Convert credentials to access key info
 	for _, cred := range identity.Credentials {
 		details.AccessKeys = append(details.AccessKeys, AccessKeyInfo{
 			AccessKey: cred.AccessKey,
 			SecretKey: cred.SecretKey,
+			Status:    cred.Status,
 			CreatedAt: time.Now().AddDate(0, -1, 0), // Mock creation date
 		})
 	}
@@ -191,7 +227,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 }
 
 // CreateAccessKey creates a new access key for a user
-func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
+func (s *AdminServer) CreateAccessKey(username string, req *CreateAccessKeyRequest) (*AccessKeyInfo, error) {
 	if s.credentialManager == nil {
 		return nil, fmt.Errorf("credential manager not available")
 	}
@@ -202,18 +238,46 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	_, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
-			return nil, fmt.Errorf("user %s not found", username)
+			return nil, fmt.Errorf("user %s: %w", username, ErrUserNotFound)
 		}
 		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
-	// Generate new access key
-	accessKey := generateAccessKey()
-	secretKey := generateSecretKey()
+	if req == nil {
+		req = &CreateAccessKeyRequest{}
+	}
+
+	// Validate provided keys
+	if req.AccessKey != "" && (len(req.AccessKey) < 4 || len(req.AccessKey) > 128) {
+		return nil, fmt.Errorf("access key must be between 4 and 128 characters: %w", ErrInvalidInput)
+	}
+	if req.SecretKey != "" && (len(req.SecretKey) < 8 || len(req.SecretKey) > 128) {
+		return nil, fmt.Errorf("secret key must be between 8 and 128 characters: %w", ErrInvalidInput)
+	}
+
+	// Use provided keys or generate new ones
+	accessKey := req.AccessKey
+	if accessKey == "" {
+		accessKey = generateAccessKey()
+	}
+	secretKey := req.SecretKey
+	if secretKey == "" {
+		secretKey = generateSecretKey()
+	}
+
+	// Verify access key is globally unique
+	existingUser, err := s.credentialManager.GetUserByAccessKey(ctx, accessKey)
+	if existingUser != nil {
+		return nil, ErrAccessKeyInUse
+	}
+	if err != nil && !errors.Is(err, credential.ErrAccessKeyNotFound) && !isNotFoundError(err) {
+		return nil, fmt.Errorf("failed to check access key uniqueness: %w", err)
+	}
 
 	credential := &iam_pb.Credential{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    AccessKeyStatusActive,
 	}
 
 	// Create access key using credential manager
@@ -225,6 +289,7 @@ func (s *AdminServer) CreateAccessKey(username string) (*AccessKeyInfo, error) {
 	return &AccessKeyInfo{
 		AccessKey: accessKey,
 		SecretKey: secretKey,
+		Status:    AccessKeyStatusActive,
 		CreatedAt: time.Now(),
 	}, nil
 }
@@ -247,6 +312,51 @@ func (s *AdminServer) DeleteAccessKey(username, accessKeyId string) error {
 			return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
 		}
 		return fmt.Errorf("failed to delete access key: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateAccessKeyStatus updates the status of an access key for a user
+func (s *AdminServer) UpdateAccessKeyStatus(username, accessKeyId, status string) error {
+	if s.credentialManager == nil {
+		return fmt.Errorf("credential manager not available")
+	}
+
+	// Validate status against allowed values
+	if status != AccessKeyStatusActive && status != AccessKeyStatusInactive {
+		return fmt.Errorf("invalid status '%s': must be '%s' or '%s'", status, AccessKeyStatusActive, AccessKeyStatusInactive)
+	}
+
+	ctx := context.Background()
+
+	// Get user using credential manager
+	identity, err := s.credentialManager.GetUser(ctx, username)
+	if err != nil {
+		if err == credential.ErrUserNotFound {
+			return fmt.Errorf("user %s not found", username)
+		}
+		return fmt.Errorf("failed to get user: %w", err)
+	}
+
+	// Find and update the access key status
+	found := false
+	for _, cred := range identity.Credentials {
+		if cred.AccessKey == accessKeyId {
+			cred.Status = status
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("access key %s not found for user %s", accessKeyId, username)
+	}
+
+	// Update user using credential manager
+	err = s.credentialManager.UpdateUser(ctx, username, identity)
+	if err != nil {
+		return fmt.Errorf("failed to update user access key status: %w", err)
 	}
 
 	return nil
@@ -295,6 +405,7 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 		Account:     identity.Account,
 		Credentials: identity.Credentials,
 		Actions:     actions,
+		PolicyNames: identity.PolicyNames,
 	}
 
 	// Update user using credential manager
@@ -304,6 +415,12 @@ func (s *AdminServer) UpdateUserPolicies(username string, actions []string) erro
 	}
 
 	return nil
+}
+
+// isNotFoundError checks for "not found" in the error message as a fallback
+// for stores (e.g. gRPC) that don't return the credential.ErrAccessKeyNotFound sentinel.
+func isNotFoundError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "not found")
 }
 
 // Helper functions for generating keys and IDs
@@ -326,9 +443,10 @@ func generateSecretKey() string {
 
 func generateAccountId() string {
 	// Generate 12-digit account ID
-	b := make([]byte, 8)
+	b := make([]byte, 4)
 	rand.Read(b)
-	return fmt.Sprintf("%012d", b[0]<<24|b[1]<<16|b[2]<<8|b[3])
+	val := (uint32(b[0])<<24 | uint32(b[1])<<16 | uint32(b[2])<<8 | uint32(b[3]))
+	return fmt.Sprintf("%012d", val)
 }
 
 func randomInt(max int) int {

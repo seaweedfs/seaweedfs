@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -38,6 +39,7 @@ type UploadOption struct {
 	RetryForever      bool
 	Md5               string
 	BytesBuffer       *bytes.Buffer
+	SourceUrl         string // optional: for logging when reading from a remote source
 }
 
 type UploadResult struct {
@@ -90,11 +92,17 @@ func (uploadResult *UploadResult) ToPbFileChunkWithSSE(fileId string, offset int
 }
 
 var (
-	fileNameEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", "")
-	uploader        *Uploader
-	uploaderErr     error
-	once            sync.Once
+	uploader    *Uploader
+	uploaderErr error
+	once        sync.Once
 )
+
+var uploadRetryableAssignErrList = []string{
+	"transport",
+	"is read only",
+	"failed to write to local disk",
+	"Volume Size ",
+}
 
 // HTTPClient interface for testing
 type HTTPClient interface {
@@ -127,14 +135,51 @@ func newUploader(httpClient HTTPClient) *Uploader {
 	}
 }
 
+func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, data []byte) (fileId string, uploadResult *UploadResult, err error) {
+	doUploadFunc := func() error {
+		var host string
+		var auth security.EncodedJwt
+		fileId, host, auth, err = assignFn()
+		if err != nil {
+			return err
+		}
+
+		uploadOption.UploadUrl = genFileUrlFn(host, fileId)
+		uploadOption.Jwt = auth
+
+		uploadResult, err = uploader.retriedUploadData(context.Background(), data, uploadOption)
+		return err
+	}
+
+	if uploadOption.RetryForever {
+		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
+			glog.V(0).Infof("upload content: %v", err)
+			return true
+		})
+	} else {
+		err = util.MultiRetry("uploadWithRetry", uploadRetryableAssignErrList, doUploadFunc)
+	}
+
+	return
+}
+
 // UploadWithRetry will retry both assigning volume request and uploading content
 // The option parameter does not need to specify UploadUrl and Jwt, which will come from assigning volume.
 func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.AssignVolumeRequest, uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (fileId string, uploadResult *UploadResult, err error, data []byte) {
-	doUploadFunc := func() error {
+	bytesReader, ok := reader.(*util.BytesReader)
+	if ok {
+		data = bytesReader.Bytes
+	} else {
+		data, err = io.ReadAll(reader)
+		if err != nil {
+			glog.V(0).Infof("upload read input %s: %v", uploadOption.SourceUrl, err)
+			err = fmt.Errorf("read input: %w", err)
+			return
+		}
+		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
+	}
 
-		var host string
-		var auth security.EncodedJwt
-
+	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, assignErr := client.AssignVolume(context.Background(), assignRequest)
@@ -152,26 +197,10 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 
 			return nil
 		}); grpcAssignErr != nil {
-			return fmt.Errorf("filerGrpcAddress assign volume: %w", grpcAssignErr)
+			err = fmt.Errorf("filerGrpcAddress assign volume: %w", grpcAssignErr)
 		}
-
-		uploadOption.UploadUrl = genFileUrlFn(host, fileId)
-		uploadOption.Jwt = auth
-
-		var uploadErr error
-		uploadResult, uploadErr, data = uploader.doUpload(context.Background(), reader, uploadOption)
-		return uploadErr
-	}
-	if uploadOption.RetryForever {
-		util.RetryUntil("uploadWithRetryForever", doUploadFunc, func(err error) (shouldContinue bool) {
-			glog.V(0).Infof("upload content: %v", err)
-			return true
-		})
-	} else {
-		uploadErrList := []string{"transport", "is read only"}
-		err = util.MultiRetry("uploadWithRetry", uploadErrList, doUploadFunc)
-	}
-
+		return
+	}, uploadOption, genFileUrlFn, data)
 	return
 }
 
@@ -250,8 +279,10 @@ func (uploader *Uploader) doUploadData(ctx context.Context, data []byte, option 
 		compressed, compressErr := util.GzipData(data)
 		// fmt.Printf("data is compressed from %d ==> %d\n", len(data), len(compressed))
 		if compressErr == nil {
-			data = compressed
-			contentIsGzipped = true
+			if len(compressed) < len(data) {
+				data = compressed
+				contentIsGzipped = true
+			}
 		}
 	} else if option.IsInputCompressed {
 		// just to get the clear data length
@@ -336,8 +367,9 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		body_writer = multipart.NewWriter(option.BytesBuffer)
 	}
 	h := make(textproto.MIMEHeader)
-	filename := fileNameEscaper.Replace(option.Filename)
-	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, filename))
+	// Use mime.FormatMediaType for RFC 6266 compliant Content-Disposition,
+	// properly handling non-ASCII characters and special characters
+	h.Set("Content-Disposition", mime.FormatMediaType("form-data", map[string]string{"name": "file", "filename": option.Filename}))
 	h.Set("Idempotency-Key", option.UploadUrl)
 	if option.MimeType == "" {
 		option.MimeType = mime.TypeByExtension(strings.ToLower(filepath.Ext(option.Filename)))
@@ -371,7 +403,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 	} else {
 		reqReader = bytes.NewReader(option.BytesBuffer.Bytes())
 	}
-	req, postErr := http.NewRequest(http.MethodPost, option.UploadUrl, reqReader)
+	req, postErr := http.NewRequestWithContext(ctx, http.MethodPost, option.UploadUrl, reqReader)
 	if postErr != nil {
 		glog.V(1).InfofCtx(ctx, "create upload request %s: %v", option.UploadUrl, postErr)
 		return nil, fmt.Errorf("create upload request %s: %v", option.UploadUrl, postErr)
@@ -399,6 +431,7 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 		}
 	}
 	if post_err != nil {
+		stats.UploadErrorCounter.WithLabelValues("0").Inc()
 		return nil, fmt.Errorf("upload %s %d bytes to %v: %v", option.Filename, originalDataSize, option.UploadUrl, post_err)
 	}
 	// print("-")
@@ -412,15 +445,18 @@ func (uploader *Uploader) upload_content(ctx context.Context, fillBufferFunction
 
 	resp_body, ra_err := io.ReadAll(resp.Body)
 	if ra_err != nil {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, fmt.Errorf("read response body %v: %w", option.UploadUrl, ra_err)
 	}
 
 	unmarshal_err := json.Unmarshal(resp_body, &ret)
 	if unmarshal_err != nil {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		glog.ErrorfCtx(ctx, "unmarshal %s: %v", option.UploadUrl, string(resp_body))
 		return nil, fmt.Errorf("unmarshal %v: %w", option.UploadUrl, unmarshal_err)
 	}
 	if ret.Error != "" {
+		stats.UploadErrorCounter.WithLabelValues(strconv.Itoa(resp.StatusCode)).Inc()
 		return nil, fmt.Errorf("unmarshalled error %v: %v", option.UploadUrl, ret.Error)
 	}
 	ret.ETag = etag

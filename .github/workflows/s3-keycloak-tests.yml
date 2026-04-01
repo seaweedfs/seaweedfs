@@ -35,7 +35,7 @@ jobs:
     
     steps:
       - name: Check out code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
 
       - name: Set up Go
         uses: actions/setup-go@v6
@@ -97,7 +97,7 @@ jobs:
           # Verify service accessibility
           echo "=== Verifying Service Accessibility ==="
           curl -f http://localhost:8080/realms/master
-          curl -s http://localhost:8333
+          curl -s http://localhost:8333/healthz
           echo "✅ SeaweedFS S3 API is responding (IAM-protected endpoint)"
           
           # Run Keycloak-specific tests
@@ -152,7 +152,7 @@ jobs:
 
       - name: Upload test logs on failure
         if: failure()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: s3-keycloak-test-logs
           path: |

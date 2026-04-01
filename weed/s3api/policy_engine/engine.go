@@ -64,7 +64,7 @@ func (engine *PolicyEngine) SetBucketPolicy(bucketName string, policyJSON string
 	}
 
 	engine.contexts[bucketName] = context
-	glog.V(2).Infof("Set bucket policy for %s", bucketName)
+	glog.V(4).Infof("SetBucketPolicy: Successfully cached policy for bucket=%s, statements=%d", bucketName, len(compiled.Statements))
 	return nil
 }
 
@@ -91,6 +91,14 @@ func (engine *PolicyEngine) DeleteBucketPolicy(bucketName string) error {
 	return nil
 }
 
+// HasPolicyForBucket checks if a bucket has a policy configured
+func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
+	engine.mutex.RLock()
+	defer engine.mutex.RUnlock()
+	_, exists := engine.contexts[bucketName]
+	return exists
+}
+
 // EvaluatePolicy evaluates a policy for the given arguments
 func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvaluationArgs) PolicyEvaluationResult {
 	engine.mutex.RLock()
@@ -98,9 +106,12 @@ func (engine *PolicyEngine) EvaluatePolicy(bucketName string, args *PolicyEvalua
 	engine.mutex.RUnlock()
 
 	if !exists {
+		glog.V(4).Infof("EvaluatePolicy: No policy found for bucket=%s (PolicyResultIndeterminate)", bucketName)
 		return PolicyResultIndeterminate
 	}
 
+	glog.V(4).Infof("EvaluatePolicy: Found policy for bucket=%s, evaluating with action=%s resource=%s principal=%s",
+		bucketName, args.Action, args.Resource, args.Principal)
 	return engine.evaluateCompiledPolicy(context.policy, args)
 }
 
@@ -114,7 +125,7 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	hasExplicitAllow := false
 
 	for _, stmt := range policy.Statements {
-		if engine.evaluateStatement(&stmt, args) {
+		if engine.evaluateStatement(stmt, args) {
 			if stmt.Statement.Effect == PolicyEffectDeny {
 				return PolicyResultDeny // Explicit deny trumps everything
 			}
@@ -133,28 +144,82 @@ func (engine *PolicyEngine) evaluateCompiledPolicy(policy *CompiledPolicy, args 
 	return PolicyResultIndeterminate
 }
 
+// matchesDynamicPatterns checks if a value matches any of the dynamic patterns after variable substitution
+func (engine *PolicyEngine) matchesDynamicPatterns(patterns []string, value string, args *PolicyEvaluationArgs) bool {
+	for _, pattern := range patterns {
+		substituted := SubstituteVariables(pattern, args.Conditions, args.Claims)
+		if FastMatchesWildcard(substituted, value) {
+			return true
+		}
+	}
+	return false
+}
+
 // evaluateStatement evaluates a single policy statement
 func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *PolicyEvaluationArgs) bool {
 	// Check if action matches
-	if !engine.matchesPatterns(stmt.ActionPatterns, args.Action) {
+	matchedAction := engine.matchesPatterns(stmt.ActionPatterns, args.Action)
+	if !matchedAction {
+		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
+	}
+	if !matchedAction {
 		return false
 	}
 
 	// Check if resource matches
-	if !engine.matchesPatterns(stmt.ResourcePatterns, args.Resource) {
-		return false
+	hasResource := len(stmt.ResourcePatterns) > 0 || len(stmt.DynamicResourcePatterns) > 0
+	hasNotResource := len(stmt.NotResourcePatterns) > 0 || len(stmt.DynamicNotResourcePatterns) > 0
+	if hasResource {
+		matchedResource := engine.matchesPatterns(stmt.ResourcePatterns, args.Resource)
+		if !matchedResource {
+			matchedResource = engine.matchesDynamicPatterns(stmt.DynamicResourcePatterns, args.Resource, args)
+		}
+		if !matchedResource {
+			return false
+		}
 	}
 
-	// Check if principal matches (if specified)
-	if len(stmt.PrincipalPatterns) > 0 {
-		if !engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal) {
+	if hasNotResource {
+		matchedNotResource := false
+		for _, matcher := range stmt.NotResourceMatchers {
+			if matcher.Match(args.Resource) {
+				matchedNotResource = true
+				break
+			}
+		}
+
+		if !matchedNotResource {
+			matchedNotResource = engine.matchesDynamicPatterns(stmt.DynamicNotResourcePatterns, args.Resource, args)
+		}
+
+		if matchedNotResource {
+			return false
+		}
+	}
+
+	// Check if principal matches
+	if len(stmt.PrincipalPatterns) > 0 || len(stmt.DynamicPrincipalPatterns) > 0 {
+		matchedPrincipal := engine.matchesPatterns(stmt.PrincipalPatterns, args.Principal)
+		if !matchedPrincipal {
+			matchedPrincipal = engine.matchesDynamicPatterns(stmt.DynamicPrincipalPatterns, args.Principal, args)
+		}
+		if !matchedPrincipal {
 			return false
 		}
 	}
 
 	// Check conditions
 	if len(stmt.Statement.Condition) > 0 {
-		if !EvaluateConditions(stmt.Statement.Condition, args.Conditions) {
+		condCtx := args.Conditions
+		// Multipart continuation actions (UploadPart, UploadPartCopy) inherit SSE
+		// from CreateMultipartUpload and do not carry their own SSE header.
+		// Inject the real inherited algorithm so Null/StringEquals conditions
+		// evaluate against the value that was set at upload initiation.
+		if IsMultipartContinuationAction(args.Action) {
+			condCtx = injectSSEForMultipart(args.Conditions, args.InheritedSSEAlgorithm)
+		}
+		match := EvaluateConditions(stmt.Statement.Condition, condCtx, args.ObjectEntry, args.Claims)
+		if !match {
 			return false
 		}
 	}
@@ -172,20 +237,159 @@ func (engine *PolicyEngine) matchesPatterns(patterns []*regexp.Regexp, value str
 	return false
 }
 
+// SubstituteVariables replaces ${variable} in a pattern with values from context and claims
+// Supports:
+//   - Standard context variables (aws:SourceIp, s3:prefix, etc.)
+//   - JWT claims (jwt:preferred_username, jwt:sub, jwt:*)
+//   - LDAP claims (ldap:username, ldap:dn, ldap:*)
+func SubstituteVariables(pattern string, context map[string][]string, claims map[string]interface{}) string {
+	result := PolicyVariableRegex.ReplaceAllStringFunc(pattern, func(match string) string {
+		// match is like "${aws:username}"
+		// extract variable name "aws:username"
+		variable := match[2 : len(match)-1]
+
+		// Check standard context first
+		if values, ok := context[variable]; ok && len(values) > 0 {
+			return values[0]
+		}
+
+		// Check JWT claims for jwt:* variables
+		if strings.HasPrefix(variable, "jwt:") {
+			claimName := variable[4:] // Remove "jwt:" prefix
+			if claimValue, ok := claims[claimName]; ok {
+				switch v := claimValue.(type) {
+				case string:
+					return v
+				case float64:
+					// JWT numbers are often float64
+					if v == float64(int64(v)) {
+						return fmt.Sprintf("%d", int64(v))
+					}
+					return fmt.Sprintf("%g", v)
+				case bool:
+					return fmt.Sprintf("%t", v)
+				case int:
+					return fmt.Sprintf("%d", v)
+				case int32:
+					return fmt.Sprintf("%d", v)
+				case int64:
+					return fmt.Sprintf("%d", v)
+				default:
+					return fmt.Sprintf("%v", v)
+				}
+			}
+		}
+
+		// Check LDAP claims for ldap:* variables
+		// FALLBACK MECHANISM: Try both prefixed and unprefixed keys
+		// Some LDAP providers store claims with the "ldap:" prefix (e.g., "ldap:username")
+		// while others store them without the prefix (e.g., "username").
+		// We check the prefixed key first for consistency, then fall back to unprefixed.
+		if strings.HasPrefix(variable, "ldap:") {
+			claimName := variable[5:] // Remove "ldap:" prefix
+			// Try prefixed key first (e.g., "ldap:username"), then unprefixed
+			var claimValue interface{}
+			var ok bool
+			if claimValue, ok = claims[variable]; !ok {
+				claimValue, ok = claims[claimName]
+			}
+			if ok {
+				switch v := claimValue.(type) {
+				case string:
+					return v
+				case float64:
+					if v == float64(int64(v)) {
+						return fmt.Sprintf("%d", int64(v))
+					}
+					return fmt.Sprintf("%g", v)
+				case bool:
+					return fmt.Sprintf("%t", v)
+				case int:
+					return fmt.Sprintf("%d", v)
+				case int32:
+					return fmt.Sprintf("%d", v)
+				case int64:
+					return fmt.Sprintf("%d", v)
+				default:
+					return fmt.Sprintf("%v", v)
+				}
+			}
+		}
+
+		// Variable not found, leave as-is to avoid unexpected matching
+		return match
+	})
+	return result
+}
+
+// ExtractPrincipalVariables extracts policy variables from a principal ARN
+func ExtractPrincipalVariables(principal string) map[string][]string {
+	vars := make(map[string][]string)
+
+	// Handle non-ARN principals (e.g., "*" or simple usernames)
+	if !strings.HasPrefix(principal, "arn:aws:") {
+		return vars
+	}
+
+	// Parse ARN: arn:aws:service::account:resource
+	parts := strings.Split(principal, ":")
+	if len(parts) < 6 {
+		return vars
+	}
+
+	account := parts[4]      // account ID
+	resourcePart := parts[5] // user/username or assumed-role/role/session
+
+	// Set aws:PrincipalAccount if account is present
+	if account != "" {
+		vars["aws:PrincipalAccount"] = []string{account}
+	}
+
+	resourceParts := strings.Split(resourcePart, "/")
+	if len(resourceParts) < 2 {
+		return vars
+	}
+
+	resourceType := resourceParts[0] // "user", "role", "assumed-role"
+
+	// Set aws:principaltype and extract username/userid based on resource type
+	switch resourceType {
+	case "user":
+		vars["aws:principaltype"] = []string{"IAMUser"}
+		// For users with paths like "user/path/to/username", use the last segment
+		username := resourceParts[len(resourceParts)-1]
+		vars["aws:username"] = []string{username}
+		vars["aws:userid"] = []string{username} // In SeaweedFS, userid is same as username
+	case "role":
+		vars["aws:principaltype"] = []string{"IAMRole"}
+		// For roles with paths like "role/path/to/rolename", use the last segment
+		// Note: IAM Roles do NOT have aws:userid, but aws:PrincipalAccount is kept for condition evaluations
+		if len(resourceParts) >= 2 {
+			roleName := resourceParts[len(resourceParts)-1]
+			vars["aws:username"] = []string{roleName}
+		}
+	case "assumed-role":
+		vars["aws:principaltype"] = []string{"AssumedRole"}
+		// For assumed roles: assumed-role/RoleName/SessionName or assumed-role/path/to/RoleName/SessionName
+		// The session name is always the last segment
+		if len(resourceParts) >= 3 {
+			sessionName := resourceParts[len(resourceParts)-1]
+			vars["aws:username"] = []string{sessionName}
+			vars["aws:userid"] = []string{sessionName}
+		}
+	}
+
+	// Note: principaltype is already set correctly in the switch above based on resource type
+
+	return vars
+}
+
 // ExtractConditionValuesFromRequest extracts condition values from HTTP request
 func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	values := make(map[string][]string)
 
 	// AWS condition keys
-	// Extract IP address without port for proper IP matching
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		// Log a warning if splitting fails
-		glog.Warningf("Failed to parse IP address from RemoteAddr %q: %v", r.RemoteAddr, err)
-		// If splitting fails, use the original RemoteAddr (might be just IP without port)
-		host = r.RemoteAddr
-	}
-	values["aws:SourceIp"] = []string{host}
+	values["aws:SourceIp"] = []string{extractSourceIP(r)}
 	values["aws:SecureTransport"] = []string{fmt.Sprintf("%t", r.TLS != nil)}
 	// Use AWS standard condition key for current time
 	values["aws:CurrentTime"] = []string{time.Now().Format(time.RFC3339)}
@@ -201,10 +405,8 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 		values["aws:Referer"] = []string{referer}
 	}
 
-	// S3 object-level conditions
-	if r.Method == "GET" || r.Method == "HEAD" {
-		values["s3:ExistingObjectTag"] = extractObjectTags(r)
-	}
+	// Note: s3:ExistingObjectTag/<key> conditions are evaluated using objectEntry
+	// passed to EvaluatePolicy, not extracted from the request.
 
 	// S3 bucket-level conditions
 	if delimiter := r.URL.Query().Get("delimiter"); delimiter != "" {
@@ -233,21 +435,163 @@ func ExtractConditionValuesFromRequest(r *http.Request) map[string][]string {
 	// HTTP method
 	values["s3:RequestMethod"] = []string{r.Method}
 
-	// Extract custom headers
+	// Extract custom headers with s3: prefix for AWS-compatible condition keys
 	for key, headerValues := range r.Header {
-		if strings.HasPrefix(strings.ToLower(key), "x-amz-") {
-			values[strings.ToLower(key)] = headerValues
+		lowerKey := strings.ToLower(key)
+		if strings.HasPrefix(lowerKey, "x-amz-") {
+			values["s3:"+lowerKey] = headerValues
 		}
+	}
+
+	// Normalize s3:x-amz-server-side-encryption value to canonical form.
+	// AWS accepts "AES256" case-insensitively; normalise so that policy
+	// StringEquals conditions work regardless of client capitalisation.
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if sseVals, ok := values[sseKey]; ok {
+		normalized := make([]string, len(sseVals))
+		for i, v := range sseVals {
+			switch strings.ToUpper(v) {
+			case "AES256":
+				normalized[i] = "AES256"
+			case "AWS:KMS":
+				normalized[i] = "aws:kms"
+			default:
+				normalized[i] = v
+			}
+		}
+		values[sseKey] = normalized
 	}
 
 	return values
 }
 
-// extractObjectTags extracts object tags from request (placeholder implementation)
-func extractObjectTags(r *http.Request) []string {
-	// This would need to be implemented based on how object tags are stored
-	// For now, return empty slice
-	return []string{}
+// IsMultipartContinuationAction returns true for actions that do not carry
+// their own SSE header because SSE is inherited from CreateMultipartUpload.
+func IsMultipartContinuationAction(action string) bool {
+	return action == "s3:UploadPart" || action == "s3:UploadPartCopy"
+}
+
+// injectSSEForMultipart returns a condition context augmented with the
+// inherited SSE algorithm for multipart continuation actions.
+//
+// UploadPart and UploadPartCopy do not re-send the SSE header because
+// encryption is set once at CreateMultipartUpload. The caller supplies
+// inheritedSSE (the canonical algorithm, e.g. "AES256" or "aws:kms") so
+// that Null/StringEquals conditions on s3:x-amz-server-side-encryption
+// evaluate against the real value.
+//
+// If inheritedSSE is empty (no SSE was requested at initiation), the
+// conditions map is returned unchanged so Null("true") will correctly
+// match and deny the request.
+func injectSSEForMultipart(conditions map[string][]string, inheritedSSE string) map[string][]string {
+	const sseKey = "s3:x-amz-server-side-encryption"
+	if inheritedSSE == "" {
+		return conditions // no SSE at upload initiation; let Null("true") fire
+	}
+	if _, exists := conditions[sseKey]; exists {
+		return conditions // SSE header was actually sent on this request
+	}
+	modified := make(map[string][]string, len(conditions)+1)
+	for k, v := range conditions {
+		modified[k] = v
+	}
+	modified[sseKey] = []string{inheritedSSE}
+	return modified
+}
+
+// extractSourceIP returns the best-effort client IP address for condition evaluation.
+// Preference order: X-Forwarded-For (first valid IP), X-Real-Ip, then RemoteAddr.
+// IMPORTANT: X-Forwarded-For and X-Real-Ip are trusted without validation.
+// When the service is exposed directly, clients can spoof aws:SourceIp unless a
+// reverse proxy overwrites these headers.
+
+// isPrivateIP returns true if the given IP is considered a "trusted proxy"
+// address, such as loopback, link-local, or RFC1918 private ranges.
+// isPrivateIP returns true if the given IP is considered a "trusted proxy"
+// address, such as loopback, link-local, or private ranges.
+func isPrivateIP(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsPrivate()
+}
+
+func extractSourceIP(r *http.Request) string {
+	if r == nil {
+		return ""
+	}
+
+	remoteAddr := strings.TrimSpace(r.RemoteAddr)
+	if remoteAddr == "" {
+		return ""
+	}
+
+	// Fall back to unix socket markers or other non-IP placeholders.
+	if remoteAddr == "@" {
+		return remoteAddr
+	}
+
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+
+	remoteIP := net.ParseIP(host)
+	if remoteIP == nil {
+		// Do not return DNS names or unparseable values.
+		return ""
+	}
+
+	// Only trust forwarding headers when the connection appears to come from
+	// a trusted proxy (e.g., private/loopback address).
+	if isPrivateIP(remoteIP) {
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			// Iterate right-to-left to find the first non-trusted (public) IP
+			entries := strings.Split(xff, ",")
+			for i := len(entries) - 1; i >= 0; i-- {
+				candidate := strings.TrimSpace(entries[i])
+				if candidate == "" {
+					continue
+				}
+
+				ip := net.ParseIP(candidate)
+				if ip == nil {
+					continue
+				}
+
+				// If the IP is trusted/private, we treat it as another proxy in the chain and continue
+				if isPrivateIP(ip) {
+					continue
+				}
+
+				// Found a public/non-trusted IP, return it as the client IP
+				return ip.String()
+			}
+
+			// If we exhausted the list (all were private/trusted) or found no valid IPs,
+			// fallback related logic could go here.
+			// For now, if all are private, we continue to check X-Real-Ip or return RemoteIP?
+			// The prompt implies we should prefer the extracted IP.
+			// If all in XFF are private, likely the original client IS private (internal network).
+			// The best guess for "original client" in a fully trusted chain is the left-most valid IP.
+			for _, candidate := range entries {
+				candidate = strings.TrimSpace(candidate)
+				if ip := net.ParseIP(candidate); ip != nil {
+					return ip.String()
+				}
+			}
+		}
+
+		if xRealIP := strings.TrimSpace(r.Header.Get("X-Real-Ip")); xRealIP != "" {
+			if ip := net.ParseIP(xRealIP); ip != nil {
+				return ip.String()
+			}
+		}
+	}
+
+	// Default to the actual peer IP when no trusted proxy is detected or the
+	// forwarding headers are absent/invalid.
+	return remoteIP.String()
 }
 
 // BuildResourceArn builds an ARN for the given bucket and object
@@ -352,15 +696,6 @@ func GetObjectNameFromArn(arn string) string {
 	return ""
 }
 
-// HasPolicyForBucket checks if a bucket has a policy
-func (engine *PolicyEngine) HasPolicyForBucket(bucketName string) bool {
-	engine.mutex.RLock()
-	defer engine.mutex.RUnlock()
-
-	_, exists := engine.contexts[bucketName]
-	return exists
-}
-
 // GetPolicyStatements returns all policy statements for a bucket
 func (engine *PolicyEngine) GetPolicyStatements(bucketName string) []PolicyStatement {
 	engine.mutex.RLock()
@@ -422,6 +757,12 @@ func (engine *PolicyEngine) EvaluatePolicyForRequest(bucketName, objectName, act
 	resource := BuildResourceArn(bucketName, objectName)
 	actionName := BuildActionName(action)
 	conditions := ExtractConditionValuesFromRequest(r)
+
+	// Extract principal information for variables
+	principalVars := ExtractPrincipalVariables(principal)
+	for k, v := range principalVars {
+		conditions[k] = v
+	}
 
 	args := &PolicyEvaluationArgs{
 		Action:     actionName,

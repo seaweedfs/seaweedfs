@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer_client"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -180,6 +181,7 @@ func (cr *CoordinatorRegistry) startLeaderElection() {
 			GatewayLeaderLockKey,
 			cr.gatewayAddress,
 			cr.onLeadershipChange,
+			lock_manager.LiveLockTTL,
 		)
 
 		// Wait for shutdown
@@ -676,7 +678,7 @@ func (cr *CoordinatorRegistry) loadCoordinatorAssignmentWithClient(consumerGroup
 	err := clientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		// Load from individual file: /topics/kafka/.meta/coordinators/<consumer-group>_assignments.json
 		fileName := fmt.Sprintf("%s_assignments.json", consumerGroup)
-		data, err := filer.ReadInsideFiler(client, CoordinatorAssignmentsDir, fileName)
+		data, err := filer.ReadInsideFiler(context.Background(), client, CoordinatorAssignmentsDir, fileName)
 		if err != nil {
 			return fmt.Errorf("assignment file not found for group %s: %w", consumerGroup, err)
 		}

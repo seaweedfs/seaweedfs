@@ -16,7 +16,7 @@ This project implements a **high-performance RDMA (Remote Direct Memory Access) 
 ```
 ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
 │   SeaweedFS     │    │   Go Sidecar    │    │  Rust Engine    │
-│  Volume Server  │◄──►│  (Control Plane) │◄──►│  (Data Plane)   │
+│  Volume Server  │◄──►│ (Control Plane) │◄──►│  (Data Plane)   │
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                       │                       │
          │                       │                       │

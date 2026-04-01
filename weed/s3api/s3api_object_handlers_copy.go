@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +25,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"google.golang.org/protobuf/proto"
 )
 
 const (
@@ -32,19 +34,37 @@ const (
 )
 
 func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request) {
+	t := time.Now().UTC().Truncate(time.Millisecond)
 
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
 		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		cpSrcPath = rawCopySource
 	}
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
 
 	glog.V(3).Infof("CopyObjectHandler %s %s (version: %s) => %s %s", srcBucket, srcObject, srcVersionId, dstBucket, dstObject)
+	if len(dstObject) > s3_constants.MaxS3ObjectKeyLength {
+		s3err.WriteErrorResponse(w, r, s3err.ErrKeyTooLongError)
+		return
+	}
+	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket {
+		if err := s3a.validateTableBucketObjectPath(srcBucket, srcObject); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	}
 
 	// Validate copy source and destination
 	if err := ValidateCopySource(cpSrcPath, srcBucket, srcObject); err != nil {
@@ -63,33 +83,6 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 
 	replaceMeta, replaceTagging := replaceDirective(r.Header)
 
-	if (srcBucket == dstBucket && srcObject == dstObject || cpSrcPath == "") && (replaceMeta || replaceTagging) {
-		fullPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
-		dir, name := fullPath.DirAndName()
-		entry, err := s3a.getEntry(dir, name)
-		if err != nil || entry.IsDirectory {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-			return
-		}
-		entry.Extended, err = processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
-		entry.Attributes.Mtime = time.Now().Unix()
-		if err != nil {
-			glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidTag)
-			return
-		}
-		err = s3a.touch(dir, name, entry)
-		if err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
-			return
-		}
-		writeSuccessResponseXML(w, r, CopyObjectResult{
-			ETag:         fmt.Sprintf("%x", entry.Attributes.Md5),
-			LastModified: time.Now().UTC(),
-		})
-		return
-	}
-
 	// If source object is empty or bucket is empty, reply back invalid copy source.
 	if srcObject == "" || srcBucket == "" {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
@@ -104,38 +97,14 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Get the source entry with version awareness based on versioning state
-	var entry *filer_pb.Entry
-	if srcVersionId != "" {
-		// Specific version requested - always use version-aware retrieval
-		entry, err = s3a.getSpecificObjectVersion(srcBucket, srcObject, srcVersionId)
-	} else if srcVersioningState == s3_constants.VersioningEnabled {
-		// Versioning enabled - get latest version from .versions directory
-		entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-	} else if srcVersioningState == s3_constants.VersioningSuspended {
-		// Versioning suspended - current object is stored as regular file ("null" version)
-		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-		if err != nil {
-			// If regular file doesn't exist, try latest version as fallback
-			glog.V(2).Infof("CopyObject: regular file not found for suspended versioning, trying latest version")
-			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-		}
-	} else {
-		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-	}
-
+	entry, err := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
 	if err != nil || entry.IsDirectory {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
 
-	if srcBucket == dstBucket && srcObject == dstObject {
+	sameDestination := srcBucket == dstBucket && srcObject == dstObject
+	if sameDestination && !(replaceMeta || replaceTagging) {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopyDest)
 		return
 	}
@@ -143,6 +112,10 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	// Validate conditional copy headers
 	if err := s3a.validateConditionalCopyHeaders(r, entry); err != s3err.ErrNone {
 		s3err.WriteErrorResponse(w, r, err)
+		return
+	}
+	if errCode := s3a.checkConditionalHeaders(r, dstBucket, dstObject); errCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, errCode)
 		return
 	}
 
@@ -154,11 +127,81 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	dstVersioningState, err := s3a.getVersioningState(dstBucket)
+	if err != nil {
+		glog.Errorf("Error checking versioning state for destination bucket %s: %v", dstBucket, err)
+		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+		return
+	}
+
+	if sameDestination && (replaceMeta || replaceTagging) && s3a.canUseMetadataOnlySelfCopy(entry, r, dstBucket, dstObject) {
+		var dstVersionId string
+		var etag string
+		updateCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+			return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+		}, func() s3err.ErrorCode {
+			currentEntry, currentErr := s3a.resolveCopySourceEntry(srcBucket, srcObject, srcVersionId, srcVersioningState)
+			if currentErr != nil || currentEntry.IsDirectory {
+				return s3err.ErrInvalidCopySource
+			}
+			if errCode := s3a.validateConditionalCopyHeaders(r, currentEntry); errCode != s3err.ErrNone {
+				return errCode
+			}
+
+			updatedEntry := cloneProtoEntry(currentEntry)
+			updatedMetadata, metadataErr := processMetadataBytes(r.Header, updatedEntry.Extended, replaceMeta, replaceTagging)
+			currentErr = metadataErr
+			if currentErr != nil {
+				glog.Errorf("CopyObjectHandler ValidateTags error %s: %v", r.URL, currentErr)
+				return s3err.ErrInvalidTag
+			}
+			updatedEntry.Extended = mergeCopyMetadata(updatedEntry.Extended, updatedMetadata)
+			if updatedEntry.Attributes == nil {
+				updatedEntry.Attributes = &filer_pb.FuseAttributes{}
+			}
+			updatedEntry.Attributes.Mtime = t.Unix()
+
+			dstVersionId, etag, currentErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, updatedEntry)
+			if currentErr != nil {
+				return filerErrorToS3Error(currentErr)
+			}
+			return s3err.ErrNone
+		})
+		if updateCode != s3err.ErrNone {
+			s3err.WriteErrorResponse(w, r, updateCode)
+			return
+		}
+
+		if dstVersionId != "" {
+			w.Header().Set("x-amz-version-id", dstVersionId)
+		}
+		setEtag(w, etag)
+		writeSuccessResponseXML(w, r, CopyObjectResult{
+			ETag:         etag,
+			LastModified: t,
+		})
+		return
+	}
+
+	// Determine whether we can reuse the source MD5 (direct copy without encryption changes).
+	canReuseSourceMd5 := false
+	var sourceMd5 []byte
+	if entry.Attributes != nil && len(entry.Attributes.Md5) > 0 {
+		sourceMd5 = append([]byte(nil), entry.Attributes.Md5...)
+		srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject)
+		dstPath := fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), dstObject)
+		state := DetectEncryptionStateWithEntry(entry, r, srcPath, dstPath)
+		s3a.applyCopyBucketDefaultEncryption(state, dstBucket)
+		if strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r); err == nil && strategy == CopyStrategyDirect {
+			canReuseSourceMd5 = true
+		}
+	}
+
 	// Create new entry for destination
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
 			FileSize: entry.Attributes.FileSize,
-			Mtime:    time.Now().Unix(),
+			Mtime:    t.Unix(),
 			Crtime:   entry.Attributes.Crtime,
 			Mime:     entry.Attributes.Mime,
 		},
@@ -166,21 +209,27 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Copy extended attributes from source, filtering out conflicting encryption metadata
+	// Pre-compute encryption state once for efficiency
+	srcHasSSEC := IsSSECEncrypted(entry.Extended)
+	srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
+	srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
+	dstWantsSSEC := IsSSECRequest(r)
+	dstWantsSSEKMS := IsSSEKMSRequest(r)
+	dstWantsSSES3 := IsSSES3RequestInternal(r)
+
 	for k, v := range entry.Extended {
 		// Skip encryption-specific headers that might conflict with destination encryption type
 		skipHeader := false
 
-		// If we're doing cross-encryption, skip conflicting headers
-		if len(entry.GetChunks()) > 0 {
-			// Detect source and destination encryption types
-			srcHasSSEC := IsSSECEncrypted(entry.Extended)
-			srcHasSSEKMS := IsSSEKMSEncrypted(entry.Extended)
-			srcHasSSES3 := IsSSES3EncryptedInternal(entry.Extended)
-			dstWantsSSEC := IsSSECRequest(r)
-			dstWantsSSEKMS := IsSSEKMSRequest(r)
-			dstWantsSSES3 := IsSSES3RequestInternal(r)
+		// Skip orphaned SSE-S3 headers (header exists but key is missing)
+		// This prevents confusion about the object's actual encryption state
+		if isOrphanedSSES3Header(k, entry.Extended) {
+			skipHeader = true
+		}
 
-			// Use helper function to determine if header should be skipped
+		// Filter conflicting headers for cross-encryption or encrypted→unencrypted copies
+		// This applies to both inline files (no chunks) and chunked files - fixes GitHub #7562
+		if !skipHeader {
 			skipHeader = shouldSkipEncryptionHeader(k,
 				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
 				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
@@ -192,7 +241,9 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 	}
 
 	// Process metadata and tags and apply to destination
-	processedMetadata, tagErr := processMetadataBytes(r.Header, entry.Extended, replaceMeta, replaceTagging)
+	// Use dstEntry.Extended (already filtered) as the source, not entry.Extended,
+	// to preserve the encryption header filtering. Fixes GitHub #7562.
+	processedMetadata, tagErr := processMetadataBytes(r.Header, dstEntry.Extended, replaceMeta, replaceTagging)
 	if tagErr != nil {
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
@@ -203,13 +254,42 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 		dstEntry.Extended[k] = v
 	}
 
-	// For zero-size files or files without chunks, use the original approach
+	// For zero-size files or files without chunks, handle inline content
+	// This includes encrypted inline files that need decryption/re-encryption
 	if entry.Attributes.FileSize == 0 || len(entry.GetChunks()) == 0 {
-		// Just copy the entry structure without chunks for zero-size files
 		dstEntry.Chunks = nil
+
+		// Handle inline encrypted content - fixes GitHub #7562
+		if len(entry.Content) > 0 {
+			inlineContent, inlineMetadata, inlineErr := s3a.processInlineContentForCopy(
+				entry, r, dstBucket, dstObject,
+				srcHasSSEC, srcHasSSEKMS, srcHasSSES3,
+				dstWantsSSEC, dstWantsSSEKMS, dstWantsSSES3)
+			if inlineErr != nil {
+				glog.Errorf("CopyObjectHandler inline content error: %v", inlineErr)
+				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
+				return
+			}
+			dstEntry.Content = inlineContent
+
+			// Apply inline destination metadata
+			if inlineMetadata != nil {
+				for k, v := range inlineMetadata {
+					dstEntry.Extended[k] = v
+				}
+			}
+		}
+
+		if dstEntry.Attributes != nil {
+			if len(dstEntry.Attributes.Md5) == 0 && canReuseSourceMd5 {
+				dstEntry.Attributes.Md5 = append([]byte(nil), sourceMd5...)
+			} else if uint64(len(dstEntry.Content)) == dstEntry.Attributes.FileSize {
+				dstEntry.Attributes.Md5 = util.Md5(dstEntry.Content)
+			}
+		}
 	} else {
 		// Use unified copy strategy approach
-		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, dstBucket, srcObject, dstObject)
+		dstChunks, dstMetadata, copyErr := s3a.executeUnifiedCopyStrategy(entry, r, srcBucket, dstBucket, srcObject, dstObject)
 		if copyErr != nil {
 			glog.Errorf("CopyObjectHandler unified copy error: %v", copyErr)
 			// Map errors to appropriate S3 errors
@@ -227,135 +307,282 @@ func (s3a *S3ApiServer) CopyObjectHandler(w http.ResponseWriter, r *http.Request
 			}
 			glog.V(2).Infof("Applied %d destination metadata entries for copy: %s", len(dstMetadata), r.URL.Path)
 		}
-	}
 
-	// Check if destination bucket has versioning configured
-	dstVersioningConfigured, err := s3a.isVersioningConfigured(dstBucket)
-	if err != nil {
-		glog.Errorf("Error checking versioning status for destination bucket %s: %v", dstBucket, err)
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return
+		if dstEntry.Attributes != nil && len(dstEntry.Attributes.Md5) == 0 && canReuseSourceMd5 {
+			dstEntry.Attributes.Md5 = append([]byte(nil), sourceMd5...)
+		}
 	}
 
 	var dstVersionId string
 	var etag string
 
-	if dstVersioningConfigured {
-		// For versioned destination, create a new version
-		dstVersionId = generateVersionId()
-		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", dstVersionId, dstBucket, dstObject)
-
-		// Add version metadata to the entry
-		if dstEntry.Extended == nil {
-			dstEntry.Extended = make(map[string][]byte)
+	finalizeCode := s3a.withObjectWriteLock(dstBucket, dstObject, func() s3err.ErrorCode {
+		return s3a.checkConditionalHeaders(r, dstBucket, dstObject)
+	}, func() s3err.ErrorCode {
+		var finalizeErr error
+		dstVersionId, etag, finalizeErr = s3a.finalizeCopyDestination(dstBucket, dstObject, dstVersioningState, dstEntry)
+		if finalizeErr != nil {
+			return filerErrorToS3Error(finalizeErr)
 		}
-		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(dstVersionId)
+		return s3err.ErrNone
+	})
+	if finalizeCode != s3err.ErrNone {
+		s3err.WriteErrorResponse(w, r, finalizeCode)
+		return
+	}
 
-		// Calculate ETag for versioning
-		filerEntry := &filer.Entry{
-			FullPath: util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject)),
-			Attr: filer.Attr{
-				FileSize: dstEntry.Attributes.FileSize,
-				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-				Mime:     dstEntry.Attributes.Mime,
-			},
-			Chunks: dstEntry.Chunks,
-		}
-		etag = filer.ETagEntry(filerEntry)
-		if !strings.HasPrefix(etag, "\"") {
-			etag = "\"" + etag + "\""
-		}
-		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
-
-		// Create version file
-		versionFileName := s3a.getVersionFileName(dstVersionId)
-		versionObjectPath := dstObject + ".versions/" + versionFileName
-		bucketDir := s3a.option.BucketsPath + "/" + dstBucket
-
-		if err := s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
-			entry.Attributes = dstEntry.Attributes
-			entry.Extended = dstEntry.Extended
-		}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-
-		// Update the .versions directory metadata
-		err = s3a.updateLatestVersionInDirectory(dstBucket, dstObject, dstVersionId, versionFileName)
-		if err != nil {
-			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-
-		// Set version ID in response header
+	if dstVersionId != "" {
 		w.Header().Set("x-amz-version-id", dstVersionId)
-	} else {
-		// For non-versioned destination, use regular copy
-		dstPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, dstBucket, dstObject))
-		dstDir, dstName := dstPath.DirAndName()
-
-		// Check if destination exists and remove it first (S3 copy overwrites)
-		if exists, _ := s3a.exists(dstDir, dstName, false); exists {
-			if err := s3a.rm(dstDir, dstName, false, false); err != nil {
-				s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-				return
-			}
-		}
-
-		// Create the new file
-		if err := s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
-			entry.Attributes = dstEntry.Attributes
-			entry.Extended = dstEntry.Extended
-		}); err != nil {
-			s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-			return
-		}
-
-		// Calculate ETag
-		filerEntry := &filer.Entry{
-			FullPath: dstPath,
-			Attr: filer.Attr{
-				FileSize: dstEntry.Attributes.FileSize,
-				Mtime:    time.Unix(dstEntry.Attributes.Mtime, 0),
-				Crtime:   time.Unix(dstEntry.Attributes.Crtime, 0),
-				Mime:     dstEntry.Attributes.Mime,
-			},
-			Chunks: dstEntry.Chunks,
-		}
-		etag = filer.ETagEntry(filerEntry)
 	}
 
 	setEtag(w, etag)
 
 	response := CopyObjectResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: t,
 	}
 
 	writeSuccessResponseXML(w, r, response)
 
 }
 
-func pathToBucketAndObject(path string) (bucket, object string) {
-	path = strings.TrimPrefix(path, "/")
-	parts := strings.SplitN(path, "/", 2)
-	if len(parts) == 2 {
-		return parts[0], "/" + parts[1]
+func cloneProtoEntry(entry *filer_pb.Entry) *filer_pb.Entry {
+	if entry == nil {
+		return nil
 	}
-	return parts[0], "/"
+	return proto.Clone(entry).(*filer_pb.Entry)
 }
 
-func pathToBucketObjectAndVersion(path string) (bucket, object, versionId string) {
-	// Parse versionId from query string if present
-	// Format: /bucket/object?versionId=version-id
-	if idx := strings.Index(path, "?versionId="); idx != -1 {
-		versionId = path[idx+len("?versionId="):] // dynamically calculate length
-		path = path[:idx]
+func copyEntryETag(fullPath util.FullPath, entry *filer_pb.Entry) string {
+	if entry != nil && entry.Extended != nil {
+		if etag, ok := entry.Extended[s3_constants.ExtETagKey]; ok && len(etag) > 0 {
+			return string(etag)
+		}
+	}
+	attr := filer.Attr{}
+	if entry.Attributes != nil {
+		attr = filer.Attr{
+			FileSize: entry.Attributes.FileSize,
+			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
+			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
+			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5,
+		}
+	}
+	return filer.ETagEntry(&filer.Entry{
+		FullPath: fullPath,
+		Attr:     attr,
+		Chunks:   entry.Chunks,
+		Content:  entry.Content,
+		Remote:   entry.RemoteEntry,
+	})
+}
+
+func copyEntryToTarget(dst, src *filer_pb.Entry) {
+	dst.IsDirectory = src.IsDirectory
+	dst.Attributes = src.Attributes
+	dst.Extended = src.Extended
+	dst.Chunks = src.Chunks
+	dst.Content = src.Content
+	dst.RemoteEntry = src.RemoteEntry
+	dst.HardLinkId = src.HardLinkId
+	dst.HardLinkCounter = src.HardLinkCounter
+	dst.Quota = src.Quota
+	dst.WormEnforcedAtTsNs = src.WormEnforcedAtTsNs
+}
+
+func (s3a *S3ApiServer) finalizeCopyDestination(dstBucket, dstObject, dstVersioningState string, dstEntry *filer_pb.Entry) (versionId string, etag string, err error) {
+	normalizedObject := s3_constants.NormalizeObjectKey(dstObject)
+	dstPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(dstBucket), normalizedObject))
+	dstDir, dstName := dstPath.DirAndName()
+
+	if dstEntry.Attributes == nil {
+		dstEntry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	if dstEntry.Extended == nil {
+		dstEntry.Extended = make(map[string][]byte)
 	}
 
-	bucket, object = pathToBucketAndObject(path)
+	etag = copyEntryETag(dstPath, dstEntry)
+
+	switch dstVersioningState {
+	case s3_constants.VersioningEnabled:
+		versionId = s3a.generateVersionIdForObject(dstBucket, normalizedObject)
+		glog.V(2).Infof("CopyObjectHandler: creating version %s for destination %s/%s", versionId, dstBucket, normalizedObject)
+
+		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte(versionId)
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		versionFileName := s3a.getVersionFileName(versionId)
+		versionObjectPath := normalizedObject + s3_constants.VersionsFolder + "/" + versionFileName
+		bucketDir := s3a.bucketDir(dstBucket)
+
+		if err = s3a.mkFile(bucketDir, versionObjectPath, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		if err = s3a.updateLatestVersionInDirectory(dstBucket, normalizedObject, versionId, versionFileName, dstEntry); err != nil {
+			if rollbackErr := s3a.rollbackCopyVersion(bucketDir, versionObjectPath); rollbackErr != nil {
+				glog.Errorf("CopyObjectHandler: failed to rollback version %s for %s/%s after latest pointer update error: %v", versionId, dstBucket, normalizedObject, rollbackErr)
+			}
+			glog.Errorf("CopyObjectHandler: failed to update latest version in directory: %v", err)
+			return "", "", fmt.Errorf("update latest version metadata: %w", err)
+		}
+
+		return versionId, etag, nil
+
+	case s3_constants.VersioningSuspended:
+		cleanupVersioningMetadata(dstEntry.Extended)
+		dstEntry.Extended[s3_constants.ExtVersionIdKey] = []byte("null")
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		if err = s3a.updateIsLatestFlagsForSuspendedVersioning(dstBucket, normalizedObject); err != nil {
+			glog.Warningf("CopyObjectHandler: failed to update suspended version latest flags for %s/%s: %v", dstBucket, normalizedObject, err)
+		}
+
+		return "", etag, nil
+
+	default:
+		cleanupVersioningMetadata(dstEntry.Extended)
+		dstEntry.Extended[s3_constants.ExtETagKey] = []byte(etag)
+
+		if err = s3a.mkFile(dstDir, dstName, dstEntry.Chunks, func(entry *filer_pb.Entry) {
+			copyEntryToTarget(entry, dstEntry)
+		}); err != nil {
+			return "", "", err
+		}
+
+		return "", etag, nil
+	}
+}
+
+func (s3a *S3ApiServer) rollbackCopyVersion(bucketDir, versionObjectPath string) error {
+	versionPath := util.FullPath(fmt.Sprintf("%s/%s", bucketDir, versionObjectPath))
+	versionDir, versionName := versionPath.DirAndName()
+	return s3a.rmObject(versionDir, versionName, true, false)
+}
+
+func (s3a *S3ApiServer) resolveCopySourceEntry(bucket, object, versionId, versioningState string) (*filer_pb.Entry, error) {
+	normalizedObject := s3_constants.NormalizeObjectKey(object)
+
+	if versionId != "" {
+		return s3a.getSpecificObjectVersion(bucket, normalizedObject, versionId)
+	}
+
+	switch versioningState {
+	case s3_constants.VersioningEnabled:
+		return s3a.getLatestObjectVersion(bucket, normalizedObject)
+	case s3_constants.VersioningSuspended:
+		return s3a.resolveSuspendedCopySourceEntry(bucket, normalizedObject, "CopyObject")
+	default:
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
+		dir, name := srcPath.DirAndName()
+		return s3a.getEntry(dir, name)
+	}
+}
+
+func mergeCopyMetadata(existing, updated map[string][]byte) map[string][]byte {
+	merged := make(map[string][]byte, len(existing)+len(updated))
+	for k, v := range existing {
+		merged[k] = v
+	}
+	for k := range merged {
+		if isManagedCopyMetadataKey(k) {
+			delete(merged, k)
+		}
+	}
+	for k, v := range updated {
+		merged[k] = v
+	}
+	return merged
+}
+
+func isManagedCopyMetadataKey(key string) bool {
+	switch key {
+	case s3_constants.AmzStorageClass,
+		s3_constants.AmzServerSideEncryption,
+		s3_constants.AmzServerSideEncryptionAwsKmsKeyId,
+		s3_constants.AmzServerSideEncryptionContext,
+		s3_constants.AmzServerSideEncryptionBucketKeyEnabled,
+		s3_constants.AmzServerSideEncryptionCustomerAlgorithm,
+		s3_constants.AmzServerSideEncryptionCustomerKeyMD5,
+		s3_constants.AmzTagCount:
+		return true
+	}
+	return strings.HasPrefix(key, s3_constants.AmzUserMetaPrefix) || strings.HasPrefix(key, s3_constants.AmzObjectTagging)
+}
+
+func (s3a *S3ApiServer) resolveSuspendedCopySourceEntry(bucket, normalizedObject, operation string) (*filer_pb.Entry, error) {
+	srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), normalizedObject))
+	dir, name := srcPath.DirAndName()
+	entry, err := s3a.getEntry(dir, name)
+	if err == nil {
+		return entry, nil
+	}
+	if !errors.Is(err, filer_pb.ErrNotFound) {
+		return nil, err
+	}
+	glog.V(2).Infof("%s: regular file not found for suspended versioning, trying latest version", operation)
+	return s3a.getLatestObjectVersion(bucket, normalizedObject)
+}
+
+func (s3a *S3ApiServer) canUseMetadataOnlySelfCopy(entry *filer_pb.Entry, r *http.Request, bucket, object string) bool {
+	srcPath := fmt.Sprintf("%s/%s", s3a.bucketDir(bucket), s3_constants.NormalizeObjectKey(object))
+	state := DetectEncryptionStateWithEntry(entry, r, srcPath, srcPath)
+	s3a.applyCopyBucketDefaultEncryption(state, bucket)
+	strategy, err := DetermineUnifiedCopyStrategy(state, entry.Extended, r)
+	return err == nil && strategy == CopyStrategyDirect
+}
+
+func pathToBucketAndObject(path string) (bucket, object string) {
+	// Remove leading slash if present
+	path = strings.TrimPrefix(path, "/")
+
+	// Split by first slash to separate bucket and object
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 2 {
+		bucket = parts[0]
+		object = parts[1]
+		return bucket, object
+	} else if len(parts) == 1 && parts[0] != "" {
+		// Only bucket provided, no object
+		return parts[0], ""
+	}
+	// Empty path
+	return "", ""
+}
+
+func pathToBucketObjectAndVersion(rawPath, decodedPath string) (bucket, object, versionId string) {
+	pathForBucket := decodedPath
+
+	if rawPath != "" {
+		if idx := strings.Index(rawPath, "?"); idx != -1 {
+			queryPart := rawPath[idx+1:]
+			if values, err := url.ParseQuery(queryPart); err == nil && values.Has("versionId") {
+				versionId = values.Get("versionId")
+
+				rawPathNoQuery := rawPath[:idx]
+				if unescaped, err := url.PathUnescape(rawPathNoQuery); err == nil {
+					pathForBucket = unescaped
+				} else {
+					pathForBucket = rawPathNoQuery
+				}
+
+				bucket, object = pathToBucketAndObject(pathForBucket)
+				return bucket, object, versionId
+			}
+		}
+	}
+
+	bucket, object = pathToBucketAndObject(pathForBucket)
 	return bucket, object, versionId
 }
 
@@ -365,20 +592,46 @@ type CopyPartResult struct {
 }
 
 func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Request) {
+	t := time.Now().UTC().Truncate(time.Millisecond)
 	// https://docs.aws.amazon.com/AmazonS3/latest/dev/CopyingObjctsUsingRESTMPUapi.html
 	// https://docs.aws.amazon.com/AmazonS3/latest/API/API_UploadPartCopy.html
 	dstBucket, dstObject := s3_constants.GetBucketAndObject(r)
 
 	// Copy source path.
-	cpSrcPath, err := url.QueryUnescape(r.Header.Get("X-Amz-Copy-Source"))
+	rawCopySource := r.Header.Get("X-Amz-Copy-Source")
+
+	glog.V(4).Infof("CopyObjectPart: Raw copy source header=%q", rawCopySource)
+
+	// Use PathUnescape (not QueryUnescape) because the copy source is a path,
+	// not a query string. QueryUnescape would incorrectly convert '+' to space.
+	cpSrcPath, err := url.PathUnescape(rawCopySource)
 	if err != nil {
-		// Save unescaped string as is.
-		cpSrcPath = r.Header.Get("X-Amz-Copy-Source")
+		// If unescaping fails, log and use original
+		glog.V(4).Infof("CopyObjectPart: Failed to unescape copy source %q: %v, using as-is", rawCopySource, err)
+		cpSrcPath = rawCopySource
 	}
 
-	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(cpSrcPath)
+	srcBucket, srcObject, srcVersionId := pathToBucketObjectAndVersion(rawCopySource, cpSrcPath)
+
+	glog.V(4).Infof("CopyObjectPart: Parsed srcBucket=%q, srcObject=%q, srcVersionId=%q",
+		srcBucket, srcObject, srcVersionId)
+
+	if err := s3a.validateTableBucketObjectPath(dstBucket, dstObject); err != nil {
+		s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+		return
+	}
+	if srcBucket != "" && srcBucket != dstBucket {
+		if err := s3a.validateTableBucketObjectPath(srcBucket, srcObject); err != nil {
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
+			return
+		}
+	}
+
 	// If source object is empty or bucket is empty, reply back invalid copy source.
+	// Note: srcObject can be "/" for root-level objects, but empty string means parsing failed
 	if srcObject == "" || srcBucket == "" {
+		glog.Errorf("CopyObjectPart: Invalid copy source - srcBucket=%q, srcObject=%q (original header: %q)",
+			srcBucket, srcObject, r.Header.Get("X-Amz-Copy-Source"))
 		s3err.WriteErrorResponse(w, r, s3err.ErrInvalidCopySource)
 		return
 	}
@@ -426,17 +679,10 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	} else if srcVersioningState == s3_constants.VersioningSuspended {
 		// Versioning suspended - current object is stored as regular file ("null" version)
 		// Try regular file first, fall back to latest version if needed
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
-		dir, name := srcPath.DirAndName()
-		entry, err = s3a.getEntry(dir, name)
-		if err != nil {
-			// If regular file doesn't exist, try latest version as fallback
-			glog.V(2).Infof("CopyObjectPart: regular file not found for suspended versioning, trying latest version")
-			entry, err = s3a.getLatestObjectVersion(srcBucket, srcObject)
-		}
+		entry, err = s3a.resolveSuspendedCopySourceEntry(srcBucket, s3_constants.NormalizeObjectKey(srcObject), "CopyObjectPart")
 	} else {
 		// No versioning configured - use regular retrieval
-		srcPath := util.FullPath(fmt.Sprintf("%s/%s%s", s3a.option.BucketsPath, srcBucket, srcObject))
+		srcPath := util.FullPath(fmt.Sprintf("%s/%s", s3a.bucketDir(srcBucket), srcObject))
 		dir, name := srcPath.DirAndName()
 		entry, err = s3a.getEntry(dir, name)
 	}
@@ -471,11 +717,17 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 	}
 
 	// Create new entry for the part
+	// Calculate part size, avoiding underflow for invalid ranges
+	partSize := uint64(0)
+	if endOffset >= startOffset {
+		partSize = uint64(endOffset - startOffset + 1)
+	}
+
 	dstEntry := &filer_pb.Entry{
 		Attributes: &filer_pb.FuseAttributes{
-			FileSize: uint64(endOffset - startOffset + 1),
-			Mtime:    time.Now().Unix(),
-			Crtime:   time.Now().Unix(),
+			FileSize: partSize,
+			Mtime:    t.Unix(),
+			Crtime:   t.Unix(),
 			Mime:     entry.Attributes.Mime,
 		},
 		Extended: make(map[string][]byte),
@@ -483,7 +735,8 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	// Handle zero-size files or empty ranges
 	if entry.Attributes.FileSize == 0 || endOffset < startOffset {
-		// For zero-size files or invalid ranges, create an empty part
+		// For zero-size files or invalid ranges, create an empty part with size 0
+		dstEntry.Attributes.FileSize = 0
 		dstEntry.Chunks = nil
 	} else {
 		// Copy chunks that overlap with the range
@@ -534,7 +787,7 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 	response := CopyPartResult{
 		ETag:         etag,
-		LastModified: time.Now().UTC(),
+		LastModified: t,
 	}
 
 	writeSuccessResponseXML(w, r, response)
@@ -660,15 +913,37 @@ func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, rep
 	if replaceMeta {
 		for header, values := range reqHeader {
 			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
+				// Go's HTTP server canonicalizes headers (e.g., x-amz-meta-foo → X-Amz-Meta-Foo)
+				// We store them as they come in (after canonicalization) to preserve the user's intent
 				for _, value := range values {
 					metadata[header] = []byte(value)
 				}
 			}
 		}
 	} else {
+		// Copy existing metadata as-is
+		// Note: Metadata should already be normalized during storage (X-Amz-Meta-*),
+		// but we handle legacy non-canonical formats for backward compatibility
 		for k, v := range existing {
 			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
+				// Already in canonical format
 				metadata[k] = v
+			} else if len(k) >= 11 && strings.EqualFold(k[:11], "x-amz-meta-") {
+				// Backward compatibility: migrate old non-canonical format to canonical format
+				// This ensures gradual migration of metadata to consistent format
+				suffix := k[11:] // Extract suffix after "x-amz-meta-"
+				canonicalKey := s3_constants.AmzUserMetaPrefix + suffix
+
+				if glog.V(3) {
+					glog.Infof("Migrating legacy user metadata key %q to canonical format %q during copy", k, canonicalKey)
+				}
+
+				// Check for collision with canonical key
+				if _, exists := metadata[canonicalKey]; exists {
+					glog.Warningf("User metadata key collision during copy migration: canonical key %q already exists, skipping legacy key %q", canonicalKey, k)
+				} else {
+					metadata[canonicalKey] = v
+				}
 			}
 		}
 	}
@@ -746,12 +1021,12 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 	}
 
 	// Download and upload the chunk
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, chunk.IsCompressed); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -781,12 +1056,12 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 	offsetInChunk := overlapStart - chunkStart
 
 	// Download and upload the chunk portion
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, offsetInChunk, int64(rangeChunk.Size), originalChunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk range data: %w", err)
 	}
 
-	if err := s3a.uploadChunkData(chunkData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(chunkData, assignResult, originalChunk.IsCompressed); err != nil {
 		return nil, fmt.Errorf("upload chunk range data: %w", err)
 	}
 
@@ -820,22 +1095,6 @@ func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeR
 	return assignResult, nil
 }
 
-// min returns the minimum of two int64 values
-func min(a, b int64) int64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-// max returns the maximum of two int64 values
-func max(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
-}
-
 // parseRangeHeader parses the x-amz-copy-source-range header
 func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err error) {
 	// Remove "bytes=" prefix if present
@@ -861,6 +1120,7 @@ func parseRangeHeader(rangeHeader string) (startOffset, endOffset int64, err err
 // copyChunksForRange copies chunks that overlap with the specified range
 func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, endOffset int64, dstPath string) ([]*filer_pb.FileChunk, error) {
 	var relevantChunks []*filer_pb.FileChunk
+	var originalChunks []*filer_pb.FileChunk
 
 	// Find chunks that overlap with the range
 	for _, chunk := range entry.GetChunks() {
@@ -885,6 +1145,7 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 				Fid:          chunk.Fid,
 			}
 			relevantChunks = append(relevantChunks, newChunk)
+			originalChunks = append(originalChunks, chunk)
 		}
 	}
 
@@ -893,20 +1154,6 @@ func (s3a *S3ApiServer) copyChunksForRange(entry *filer_pb.Entry, startOffset, e
 	const defaultChunkCopyConcurrency = 4
 	executor := util.NewLimitedConcurrentExecutor(defaultChunkCopyConcurrency)
 	errChan := make(chan error, len(relevantChunks))
-
-	// Create a map to track original chunks for each relevant chunk
-	originalChunks := make([]*filer_pb.FileChunk, len(relevantChunks))
-	relevantIndex := 0
-	for _, chunk := range entry.GetChunks() {
-		chunkStart := chunk.Offset
-		chunkEnd := chunk.Offset + int64(chunk.Size)
-
-		// Check if chunk overlaps with the range
-		if chunkStart < endOffset+1 && chunkEnd > startOffset {
-			originalChunks[relevantIndex] = chunk
-			relevantIndex++
-		}
-	}
 
 	for i, chunk := range relevantChunks {
 		chunkIndex := i
@@ -945,6 +1192,7 @@ func (s3a *S3ApiServer) validateConditionalCopyHeaders(r *http.Request, entry *f
 			Mtime:    time.Unix(entry.Attributes.Mtime, 0),
 			Crtime:   time.Unix(entry.Attributes.Crtime, 0),
 			Mime:     entry.Attributes.Mime,
+			Md5:      entry.Attributes.Md5,
 		},
 		Chunks: entry.Chunks,
 	}
@@ -1074,13 +1322,14 @@ func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string) (*filer_p
 }
 
 // uploadChunkData uploads chunk data to the destination using common upload logic
-func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse) error {
+// isCompressed indicates if the data is already compressed and should not be compressed again
+func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb.AssignVolumeResponse, isCompressed bool) error {
 	dstUrl := fmt.Sprintf("http://%s/%s", assignResult.Location.Url, assignResult.FileId)
 
 	uploadOption := &operation.UploadOption{
 		UploadUrl:         dstUrl,
-		Cipher:            false,
-		IsInputCompressed: false,
+		Cipher:            false, // Data is already encrypted if source had CipherKey; don't re-encrypt
+		IsInputCompressed: isCompressed,
 		MimeType:          "",
 		PairMap:           nil,
 		Jwt:               security.EncodedJwt(assignResult.Auth),
@@ -1098,10 +1347,40 @@ func (s3a *S3ApiServer) uploadChunkData(chunkData []byte, assignResult *filer_pb
 }
 
 // downloadChunkData downloads chunk data from the source URL
-func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64) ([]byte, error) {
+func (s3a *S3ApiServer) downloadChunkData(srcUrl, fileId string, offset, size int64, cipherKey []byte) ([]byte, error) {
 	jwt := filer.JwtForVolumeServer(fileId)
+	// Only perform HEAD request for encrypted chunks to get physical size
+	if offset == 0 && len(cipherKey) > 0 {
+		req, err := http.NewRequest(http.MethodHead, srcUrl, nil)
+		if err == nil {
+			if jwt != "" {
+				req.Header.Set("Authorization", "BEARER "+string(jwt))
+			}
+			resp, err := util_http.GetGlobalHttpClient().Do(req)
+			if err == nil {
+				defer util_http.CloseResponse(resp)
+				if resp.StatusCode == http.StatusOK {
+					contentLengthStr := resp.Header.Get("Content-Length")
+					if contentLength, err := strconv.ParseInt(contentLengthStr, 10, 64); err == nil {
+						// Validate contentLength fits in int32 range before comparison
+						if contentLength > int64(2147483647) { // math.MaxInt32
+							return nil, fmt.Errorf("content length %d exceeds maximum int32 size", contentLength)
+						}
+						if contentLength > size {
+							size = contentLength
+						}
+					}
+				}
+			}
+		}
+	}
+	// Validate size fits in int32 range before conversion to int
+	if size > int64(2147483647) { // math.MaxInt32
+		return nil, fmt.Errorf("chunk size %d exceeds maximum int32 size", size)
+	}
+	sizeInt := int(size)
 	var chunkData []byte
-	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, int(size), func(data []byte) {
+	shouldRetry, err := util_http.ReadUrlAsStream(context.Background(), srcUrl, jwt, nil, false, false, offset, sizeInt, func(data []byte) {
 		chunkData = append(chunkData, data...)
 	})
 	if err != nil {
@@ -1233,7 +1512,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1272,6 +1551,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		}
 
 		// Encrypt with destination key
+		originalSize := len(finalData)
 		encryptedReader, destSSEKey, encErr := CreateSSEKMSEncryptedReaderWithBucketKey(bytes.NewReader(finalData), destKeyID, encryptionContext, bucketKeyEnabled)
 		if encErr != nil {
 			return nil, fmt.Errorf("create SSE-KMS encrypted reader: %w", encErr)
@@ -1296,11 +1576,11 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 		dstChunk.SseType = filer_pb.SSEType_SSE_KMS
 		dstChunk.SseMetadata = kmsMetadata
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-KMS chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1331,7 +1611,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1360,16 +1640,26 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		// Decrypt the chunk data
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), copySourceKey, chunkIV)
 		if decErr != nil {
 			return nil, nil, fmt.Errorf("create decrypted reader: %w", decErr)
+		}
+
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
 		}
 
 		decryptedData, readErr := io.ReadAll(decryptedReader)
@@ -1393,6 +1683,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		destIV = newIV
 
 		// Encrypt with new key and IV
+		originalSize := len(finalData)
 		encryptedReader, iv, encErr := CreateSSECEncryptedReader(bytes.NewReader(finalData), destKey)
 		if encErr != nil {
 			return nil, nil, fmt.Errorf("create encrypted reader: %w", encErr)
@@ -1415,11 +1706,11 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 		dstChunk.SseType = filer_pb.SSEType_SSE_C
 		dstChunk.SseMetadata = ssecMetadata // Use unified metadata field
 
-		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", len(finalData)-len(reencryptedData)+len(finalData), len(finalData))
+		glog.V(4).Infof("Re-encrypted multipart SSE-C chunk: %d bytes → %d bytes", originalSize, len(finalData))
 	}
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1433,7 +1724,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 }
 
 // copyMultipartCrossEncryption handles all cross-encryption and decrypt-only copy scenarios
-// This unified function supports: SSE-C↔SSE-KMS, SSE-C→Plain, SSE-KMS→Plain
+// This unified function supports: SSE-C↔SSE-KMS↔SSE-S3, and any→Plain
 func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *http.Request, state *EncryptionState, dstBucket, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 	var dstChunks []*filer_pb.FileChunk
 
@@ -1442,6 +1733,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 	var destKMSKeyID string
 	var destKMSEncryptionContext map[string]string
 	var destKMSBucketKeyEnabled bool
+	var destSSES3Key *SSES3Key
 
 	if state.DstSSEC {
 		var err error
@@ -1455,7 +1747,13 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		if err != nil {
 			return nil, nil, fmt.Errorf("failed to parse destination SSE-KMS headers: %w", err)
 		}
-	} else {
+	} else if state.DstSSES3 {
+		// Generate SSE-S3 key for destination
+		var err error
+		destSSES3Key, err = GenerateSSES3Key()
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate SSE-S3 key: %w", err)
+		}
 	}
 
 	// Parse source encryption parameters
@@ -1474,12 +1772,18 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		var err error
 
 		if chunk.GetSseType() == filer_pb.SSEType_SSE_C {
-			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, sourceSSECKey, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, dstPath, dstBucket, state)
+			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, sourceSSECKey, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, destSSES3Key, dstPath, dstBucket, state)
 		} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
-			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, dstPath, dstBucket, state)
+			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, destSSES3Key, dstPath, dstBucket, state)
+		} else if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
+			copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, destSSES3Key, dstPath, dstBucket, state)
 		} else {
-			// Unencrypted chunk, copy directly
-			copiedChunk, err = s3a.copySingleChunk(chunk, dstPath)
+			// Unencrypted chunk - may need encryption if destination requires it
+			if state.DstSSEC || state.DstSSEKMS || state.DstSSES3 {
+				copiedChunk, err = s3a.copyCrossEncryptionChunk(chunk, nil, destSSECKey, destKMSKeyID, destKMSEncryptionContext, destKMSBucketKeyEnabled, destSSES3Key, dstPath, dstBucket, state)
+			} else {
+				copiedChunk, err = s3a.copySingleChunk(chunk, dstPath)
+			}
 		}
 
 		if err != nil {
@@ -1530,6 +1834,40 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 		} else {
 			glog.Errorf("Failed to serialize SSE-KMS metadata: %v", serErr)
 		}
+	} else if state.DstSSES3 && destSSES3Key != nil {
+		// For SSE-S3 destination, create object-level metadata
+		var sses3Metadata *SSES3Key
+		if len(dstChunks) == 0 {
+			// Handle 0-byte files - generate IV for metadata even though there's no content to encrypt
+			if entry.Attributes.FileSize != 0 {
+				return nil, nil, fmt.Errorf("internal error: no chunks created for non-empty SSE-S3 destination object")
+			}
+			// Generate IV for 0-byte object metadata
+			iv := make([]byte, s3_constants.AESBlockSize)
+			if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+				return nil, nil, fmt.Errorf("generate IV for 0-byte object: %w", err)
+			}
+			destSSES3Key.IV = iv
+			sses3Metadata = destSSES3Key
+		} else {
+			// For non-empty objects, use the first chunk's metadata
+			if dstChunks[0].GetSseType() != filer_pb.SSEType_SSE_S3 || len(dstChunks[0].GetSseMetadata()) == 0 {
+				return nil, nil, fmt.Errorf("internal error: first chunk is missing expected SSE-S3 metadata for destination object")
+			}
+			keyManager := GetSSES3KeyManager()
+			var err error
+			sses3Metadata, err = DeserializeSSES3Metadata(dstChunks[0].GetSseMetadata(), keyManager)
+			if err != nil {
+				return nil, nil, fmt.Errorf("failed to deserialize SSE-S3 metadata from first chunk: %w", err)
+			}
+		}
+		// Use the derived key with its IV for object-level metadata
+		keyData, serErr := SerializeSSES3Metadata(sses3Metadata)
+		if serErr != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", serErr)
+		}
+		dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
 	}
 	// For unencrypted destination, no metadata needed (dstMetadata remains empty)
 
@@ -1537,7 +1875,7 @@ func (s3a *S3ApiServer) copyMultipartCrossEncryption(entry *filer_pb.Entry, r *h
 }
 
 // copyCrossEncryptionChunk handles copying a single chunk with cross-encryption support
-func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sourceSSECKey *SSECustomerKey, destSSECKey *SSECustomerKey, destKMSKeyID string, destKMSEncryptionContext map[string]string, destKMSBucketKeyEnabled bool, dstPath, dstBucket string, state *EncryptionState) (*filer_pb.FileChunk, error) {
+func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sourceSSECKey *SSECustomerKey, destSSECKey *SSECustomerKey, destKMSKeyID string, destKMSEncryptionContext map[string]string, destKMSBucketKeyEnabled bool, destSSES3Key *SSES3Key, dstPath, dstBucket string, state *EncryptionState) (*filer_pb.FileChunk, error) {
 	// Create destination chunk
 	dstChunk := s3a.createDestinationChunk(chunk, chunk.Offset, chunk.Size)
 
@@ -1554,7 +1892,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1580,10 +1918,12 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 		// Calculate the correct IV for this chunk using within-part offset
 		var chunkIV []byte
+		var ivSkip int
 		if ssecMetadata.PartOffset > 0 {
-			chunkIV = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
+			chunkIV, ivSkip = calculateIVWithOffset(chunkBaseIV, ssecMetadata.PartOffset)
 		} else {
 			chunkIV = chunkBaseIV
+			ivSkip = 0
 		}
 
 		decryptedReader, decErr := CreateSSECDecryptedReader(bytes.NewReader(encryptedData), sourceSSECKey, chunkIV)
@@ -1591,15 +1931,19 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 			return nil, fmt.Errorf("create SSE-C decrypted reader: %w", decErr)
 		}
 
+		// CRITICAL: Skip intra-block bytes from CTR decryption (non-block-aligned offset handling)
+		if ivSkip > 0 {
+			_, skipErr := io.CopyN(io.Discard, decryptedReader, int64(ivSkip))
+			if skipErr != nil {
+				return nil, fmt.Errorf("failed to skip intra-block bytes (%d): %w", ivSkip, skipErr)
+			}
+		}
+
 		decryptedData, readErr := io.ReadAll(decryptedReader)
 		if readErr != nil {
 			return nil, fmt.Errorf("decrypt SSE-C chunk data: %w", readErr)
 		}
 		finalData = decryptedData
-		previewLen := 16
-		if len(finalData) < previewLen {
-			previewLen = len(finalData)
-		}
 
 	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_KMS {
 		// Decrypt SSE-KMS source
@@ -1622,10 +1966,30 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 			return nil, fmt.Errorf("decrypt SSE-KMS chunk data: %w", readErr)
 		}
 		finalData = decryptedData
-		previewLen := 16
-		if len(finalData) < previewLen {
-			previewLen = len(finalData)
+
+	} else if chunk.GetSseType() == filer_pb.SSEType_SSE_S3 {
+		// Decrypt SSE-S3 source
+		if len(chunk.GetSseMetadata()) == 0 {
+			return nil, fmt.Errorf("SSE-S3 chunk missing per-chunk metadata")
 		}
+
+		keyManager := GetSSES3KeyManager()
+		sourceSSEKey, err := DeserializeSSES3Metadata(chunk.GetSseMetadata(), keyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-S3 metadata: %w", err)
+		}
+
+		decryptedReader, decErr := CreateSSES3DecryptedReader(bytes.NewReader(encryptedData), sourceSSEKey, sourceSSEKey.IV)
+		if decErr != nil {
+			return nil, fmt.Errorf("create SSE-S3 decrypted reader: %w", decErr)
+		}
+
+		decryptedData, readErr := io.ReadAll(decryptedReader)
+		if readErr != nil {
+			return nil, fmt.Errorf("decrypt SSE-S3 chunk data: %w", readErr)
+		}
+		finalData = decryptedData
+		glog.V(4).Infof("Decrypted SSE-S3 chunk, size: %d", len(finalData))
 
 	} else {
 		// Source is unencrypted
@@ -1688,11 +2052,41 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		dstChunk.SseMetadata = kmsMetadata
 
 		glog.V(4).Infof("Re-encrypted chunk with SSE-KMS")
+
+	} else if state.DstSSES3 && destSSES3Key != nil {
+		// Encrypt with SSE-S3
+		encryptedReader, iv, encErr := CreateSSES3EncryptedReader(bytes.NewReader(finalData), destSSES3Key)
+		if encErr != nil {
+			return nil, fmt.Errorf("create SSE-S3 encrypted reader: %w", encErr)
+		}
+
+		reencryptedData, readErr := io.ReadAll(encryptedReader)
+		if readErr != nil {
+			return nil, fmt.Errorf("re-encrypt with SSE-S3: %w", readErr)
+		}
+		finalData = reencryptedData
+
+		// Create per-chunk SSE-S3 metadata with chunk-specific IV
+		chunkSSEKey := &SSES3Key{
+			Key:       destSSES3Key.Key,
+			KeyID:     destSSES3Key.KeyID,
+			Algorithm: destSSES3Key.Algorithm,
+			IV:        iv,
+		}
+		sses3Metadata, err := SerializeSSES3Metadata(chunkSSEKey)
+		if err != nil {
+			return nil, fmt.Errorf("serialize SSE-S3 metadata: %w", err)
+		}
+
+		dstChunk.SseType = filer_pb.SSEType_SSE_S3
+		dstChunk.SseMetadata = sses3Metadata
+
+		glog.V(4).Infof("Re-encrypted chunk with SSE-S3")
 	}
 	// For unencrypted destination, finalData remains as decrypted plaintext
 
 	// Upload the final data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload chunk data: %w", err)
 	}
 
@@ -1703,18 +2097,6 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 		chunk.GetFileIdString(), dstChunk.GetFileIdString())
 
 	return dstChunk, nil
-}
-
-// getEncryptionTypeString returns a string representation of encryption type for logging
-func (s3a *S3ApiServer) getEncryptionTypeString(isSSEC, isSSEKMS, isSSES3 bool) string {
-	if isSSEC {
-		return s3_constants.SSETypeC
-	} else if isSSEKMS {
-		return s3_constants.SSETypeKMS
-	} else if isSSES3 {
-		return s3_constants.SSETypeS3
-	}
-	return "Plain"
 }
 
 // copyChunksWithSSEC handles SSE-C aware copying with smart fast/slow path selection
@@ -1852,7 +2234,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Download encrypted chunk data
-	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	encryptedData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download encrypted chunk data: %w", err)
 	}
@@ -1903,7 +2285,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 	}
 
 	// Upload the processed data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
 
@@ -1912,7 +2294,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 // copyChunksWithSSEKMS handles SSE-KMS aware copying with smart fast/slow path selection
 // Returns chunks and destination metadata like SSE-C for consistency
-func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
+func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Request, bucket string, dstPath string) ([]*filer_pb.FileChunk, map[string][]byte, error) {
 
 	// Parse SSE-KMS headers from copy request
 	destKeyID, encryptionContext, bucketKeyEnabled, err := ParseSSEKMSCopyHeaders(r)
@@ -1933,13 +2315,13 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 
 	if isMultipartSSEKMS {
 		glog.V(2).Infof("Detected multipart SSE-KMS object with %d encrypted chunks for copy", sseKMSChunks)
-		return s3a.copyMultipartSSEKMSChunks(entry, destKeyID, encryptionContext, bucketKeyEnabled, r.URL.Path, bucket)
+		return s3a.copyMultipartSSEKMSChunks(entry, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 	}
 
 	// Single-part SSE-KMS object: use existing logic
 	// If no SSE-KMS headers and source is not SSE-KMS encrypted, use regular copy
 	if destKeyID == "" && !IsSSEKMSEncrypted(entry.Extended) {
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		return chunks, nil, err
 	}
 
@@ -1960,19 +2342,19 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 		return nil, nil, err
 	}
 
-	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", r.URL.Path, strategy)
+	glog.V(2).Infof("SSE-KMS copy strategy for %s: %v", dstPath, strategy)
 
 	switch strategy {
 	case SSEKMSCopyStrategyDirect:
 		// FAST PATH: Direct chunk copy (same key or both unencrypted)
-		glog.V(2).Infof("Using fast path: direct chunk copy for %s", r.URL.Path)
-		chunks, err := s3a.copyChunks(entry, r.URL.Path)
+		glog.V(2).Infof("Using fast path: direct chunk copy for %s", dstPath)
+		chunks, err := s3a.copyChunks(entry, dstPath)
 		// For direct copy, generate destination metadata if we're encrypting to SSE-KMS
 		var dstMetadata map[string][]byte
 		if destKeyID != "" {
 			dstMetadata = make(map[string][]byte)
 			if encryptionContext == nil {
-				encryptionContext = BuildEncryptionContext(bucket, r.URL.Path, bucketKeyEnabled)
+				encryptionContext = BuildEncryptionContext(bucket, dstPath, bucketKeyEnabled)
 			}
 			sseKey := &SSEKMSKey{
 				KeyID:             destKeyID,
@@ -1990,8 +2372,8 @@ func (s3a *S3ApiServer) copyChunksWithSSEKMS(entry *filer_pb.Entry, r *http.Requ
 
 	case SSEKMSCopyStrategyDecryptEncrypt:
 		// SLOW PATH: Decrypt source and re-encrypt for destination
-		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", r.URL.Path)
-		return s3a.copyChunksWithSSEKMSReencryption(entry, destKeyID, encryptionContext, bucketKeyEnabled, r.URL.Path, bucket)
+		glog.V(2).Infof("Using slow path: decrypt/re-encrypt for %s", dstPath)
+		return s3a.copyChunksWithSSEKMSReencryption(entry, destKeyID, encryptionContext, bucketKeyEnabled, dstPath, bucket)
 
 	default:
 		return nil, nil, fmt.Errorf("unknown SSE-KMS copy strategy: %v", strategy)
@@ -2071,7 +2453,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Download chunk data
-	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size))
+	chunkData, err := s3a.downloadChunkData(srcUrl, fileId, 0, int64(chunk.Size), chunk.CipherKey)
 	if err != nil {
 		return nil, fmt.Errorf("download chunk data: %w", err)
 	}
@@ -2126,7 +2508,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 	}
 
 	// Upload the processed data
-	if err := s3a.uploadChunkData(finalData, assignResult); err != nil {
+	if err := s3a.uploadChunkData(finalData, assignResult, false); err != nil {
 		return nil, fmt.Errorf("upload processed chunk data: %w", err)
 	}
 
@@ -2238,6 +2620,46 @@ func (ctx *EncryptionHeaderContext) shouldSkipEncryptedToUnencryptedHeader() boo
 	return hasSourceEncryption && !hasDestinationEncryption && isAnyEncryptionHeader
 }
 
+// cleanupVersioningMetadata removes versioning-related metadata from Extended attributes
+// when copying to non-versioned or suspended-versioning buckets.
+// This prevents objects in non-versioned buckets from carrying invalid versioning metadata.
+// It also removes the source ETag to prevent metadata inconsistency, as a new ETag will be
+// calculated for the destination object.
+func cleanupVersioningMetadata(metadata map[string][]byte) {
+	delete(metadata, s3_constants.ExtVersionIdKey)
+	delete(metadata, s3_constants.ExtDeleteMarkerKey)
+	delete(metadata, s3_constants.ExtIsLatestKey)
+	delete(metadata, s3_constants.ExtETagKey)
+}
+
+// shouldCreateVersionForCopy determines whether a version should be created during a copy operation
+// based on the destination bucket's versioning state.
+// Returns true only if versioning is explicitly "Enabled", not "Suspended" or unconfigured.
+func shouldCreateVersionForCopy(versioningState string) bool {
+	return versioningState == s3_constants.VersioningEnabled
+}
+
+// isOrphanedSSES3Header checks if a header is an orphaned SSE-S3 encryption header.
+// An orphaned header is one where the encryption indicator exists but the actual key is missing.
+// This can happen when an object was previously encrypted but then copied without encryption,
+// leaving behind the header but removing the key. These orphaned headers should be stripped
+// during copy operations to prevent confusion about the object's actual encryption state.
+// Fixes GitHub issue #7562.
+func isOrphanedSSES3Header(headerKey string, metadata map[string][]byte) bool {
+	if headerKey != s3_constants.AmzServerSideEncryption {
+		return false
+	}
+
+	// The header is AmzServerSideEncryption. Check if its value indicates SSE-S3.
+	if string(metadata[headerKey]) == "AES256" {
+		// It's an SSE-S3 header. It's orphaned if the actual encryption key is missing.
+		_, hasKey := metadata[s3_constants.SeaweedFSSSES3Key]
+		return !hasKey
+	}
+
+	return false
+}
+
 // shouldSkipEncryptionHeader determines if a header should be skipped when copying extended attributes
 // based on the source and destination encryption types. This consolidates the repetitive logic for
 // filtering encryption-related headers during copy operations.
@@ -2265,4 +2687,234 @@ func shouldSkipEncryptionHeader(headerKey string,
 
 	// Default: don't skip the header
 	return false
+}
+
+// processInlineContentForCopy handles encryption/decryption for inline content during copy
+// This fixes GitHub #7562 where small files stored inline weren't properly decrypted/re-encrypted
+func (s3a *S3ApiServer) processInlineContentForCopy(
+	entry *filer_pb.Entry, r *http.Request, dstBucket, dstObject string,
+	srcSSEC, srcSSEKMS, srcSSES3 bool,
+	dstSSEC, dstSSEKMS, dstSSES3 bool) ([]byte, map[string][]byte, error) {
+
+	content := entry.Content
+	var dstMetadata map[string][]byte
+
+	// Check if source is encrypted and needs decryption
+	srcEncrypted := srcSSEC || srcSSEKMS || srcSSES3
+
+	// Check if destination needs encryption (explicit request or bucket default)
+	dstNeedsEncryption := dstSSEC || dstSSEKMS || dstSSES3
+	if !dstNeedsEncryption {
+		// Check bucket default encryption
+		bucketMetadata, err := s3a.getBucketMetadata(dstBucket)
+		if err == nil && bucketMetadata != nil && bucketMetadata.Encryption != nil {
+			switch bucketMetadata.Encryption.SseAlgorithm {
+			case "aws:kms":
+				dstSSEKMS = true
+				dstNeedsEncryption = true
+			case "AES256":
+				dstSSES3 = true
+				dstNeedsEncryption = true
+			}
+		}
+	}
+
+	// Decrypt source content if encrypted
+	if srcEncrypted {
+		decryptedContent, decErr := s3a.decryptInlineContent(entry, srcSSEC, srcSSEKMS, srcSSES3, r)
+		if decErr != nil {
+			return nil, nil, fmt.Errorf("failed to decrypt inline content: %w", decErr)
+		}
+		content = decryptedContent
+		glog.V(3).Infof("Decrypted inline content: %d bytes", len(content))
+	}
+
+	// Re-encrypt if destination needs encryption
+	if dstNeedsEncryption {
+		encryptedContent, encMetadata, encErr := s3a.encryptInlineContent(content, dstBucket, dstObject, dstSSEC, dstSSEKMS, dstSSES3, r)
+		if encErr != nil {
+			return nil, nil, fmt.Errorf("failed to encrypt inline content: %w", encErr)
+		}
+		content = encryptedContent
+		dstMetadata = encMetadata
+		glog.V(3).Infof("Encrypted inline content: %d bytes", len(content))
+	}
+
+	return content, dstMetadata, nil
+}
+
+// decryptInlineContent decrypts inline content from an encrypted source
+func (s3a *S3ApiServer) decryptInlineContent(entry *filer_pb.Entry, srcSSEC, srcSSEKMS, srcSSES3 bool, r *http.Request) ([]byte, error) {
+	content := entry.Content
+
+	if srcSSES3 {
+		// Get SSE-S3 key from metadata
+		keyData, exists := entry.Extended[s3_constants.SeaweedFSSSES3Key]
+		if !exists {
+			return nil, fmt.Errorf("SSE-S3 key not found in metadata")
+		}
+
+		keyManager := GetSSES3KeyManager()
+		sseKey, err := DeserializeSSES3Metadata(keyData, keyManager)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-S3 key: %w", err)
+		}
+
+		// Get IV
+		iv := sseKey.IV
+		if len(iv) == 0 {
+			return nil, fmt.Errorf("SSE-S3 IV not found")
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSES3DecryptedReader(bytes.NewReader(content), sseKey, iv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-S3 decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+
+	} else if srcSSEKMS {
+		// Get SSE-KMS key from metadata
+		keyData, exists := entry.Extended[s3_constants.SeaweedFSSSEKMSKey]
+		if !exists {
+			return nil, fmt.Errorf("SSE-KMS key not found in metadata")
+		}
+
+		sseKey, err := DeserializeSSEKMSMetadata(keyData)
+		if err != nil {
+			return nil, fmt.Errorf("failed to deserialize SSE-KMS key: %w", err)
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSEKMSDecryptedReader(bytes.NewReader(content), sseKey)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-KMS decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+
+	} else if srcSSEC {
+		// Get SSE-C key from request headers
+		sourceKey, err := ParseSSECCopySourceHeaders(r)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse SSE-C copy source headers: %w", err)
+		}
+
+		// Get IV from metadata
+		iv, err := GetSSECIVFromMetadata(entry.Extended)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get SSE-C IV: %w", err)
+		}
+
+		// Decrypt content
+		decryptedReader, err := CreateSSECDecryptedReader(bytes.NewReader(content), sourceKey, iv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create SSE-C decrypted reader: %w", err)
+		}
+		return io.ReadAll(decryptedReader)
+	}
+
+	// Source not encrypted, return as-is
+	return content, nil
+}
+
+// encryptInlineContent encrypts inline content for the destination
+func (s3a *S3ApiServer) encryptInlineContent(content []byte, dstBucket, dstObject string,
+	dstSSEC, dstSSEKMS, dstSSES3 bool, r *http.Request) ([]byte, map[string][]byte, error) {
+
+	dstMetadata := make(map[string][]byte)
+
+	if dstSSES3 {
+		// Generate SSE-S3 key
+		keyManager := GetSSES3KeyManager()
+		key, err := keyManager.GetOrCreateKey("")
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to generate SSE-S3 key: %w", err)
+		}
+
+		// Encrypt content
+		encryptedReader, iv, err := CreateSSES3EncryptedReader(bytes.NewReader(content), key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-S3 encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Store IV on key and serialize metadata
+		key.IV = iv
+		keyData, err := SerializeSSES3Metadata(key)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-S3 metadata: %w", err)
+		}
+
+		dstMetadata[s3_constants.SeaweedFSSSES3Key] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("AES256")
+
+		return encryptedContent, dstMetadata, nil
+
+	} else if dstSSEKMS {
+		// Parse SSE-KMS headers
+		keyID, encryptionContext, bucketKeyEnabled, err := ParseSSEKMSCopyHeaders(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse SSE-KMS headers: %w", err)
+		}
+
+		// Build encryption context if needed
+		if encryptionContext == nil {
+			encryptionContext = BuildEncryptionContext(dstBucket, dstObject, bucketKeyEnabled)
+		}
+
+		// Encrypt content
+		encryptedReader, sseKey, err := CreateSSEKMSEncryptedReaderWithBucketKey(
+			bytes.NewReader(content), keyID, encryptionContext, bucketKeyEnabled)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-KMS encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Serialize metadata
+		keyData, err := SerializeSSEKMSMetadata(sseKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to serialize SSE-KMS metadata: %w", err)
+		}
+
+		dstMetadata[s3_constants.SeaweedFSSSEKMSKey] = keyData
+		dstMetadata[s3_constants.AmzServerSideEncryption] = []byte("aws:kms")
+
+		return encryptedContent, dstMetadata, nil
+
+	} else if dstSSEC {
+		// Parse SSE-C headers
+		destKey, err := ParseSSECHeaders(r)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to parse SSE-C headers: %w", err)
+		}
+
+		// Encrypt content
+		encryptedReader, iv, err := CreateSSECEncryptedReader(bytes.NewReader(content), destKey)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to create SSE-C encrypted reader: %w", err)
+		}
+
+		encryptedContent, err := io.ReadAll(encryptedReader)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to read encrypted content: %w", err)
+		}
+
+		// Store IV in metadata
+		StoreSSECIVInMetadata(dstMetadata, iv)
+		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerAlgorithm] = []byte("AES256")
+		dstMetadata[s3_constants.AmzServerSideEncryptionCustomerKeyMD5] = []byte(destKey.KeyMD5)
+
+		return encryptedContent, dstMetadata, nil
+	}
+
+	// No encryption needed
+	return content, nil, nil
 }

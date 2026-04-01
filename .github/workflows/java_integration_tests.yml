@@ -1,0 +1,193 @@
+name: Java Client Integration Tests
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'other/java/**'
+      - 'weed/**'
+      - '.github/workflows/java_integration_tests.yml'
+  pull_request:
+    branches: [ master ]
+    paths:
+      - 'other/java/**'
+      - 'weed/**'
+      - '.github/workflows/java_integration_tests.yml'
+
+jobs:
+  test:
+    name: Java Integration Tests
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        java: ['11', '17']
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+      
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+      
+      - name: Set up Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+          cache: 'maven'
+      
+      - name: Build SeaweedFS
+        run: |
+          cd weed
+          go install -buildvcs=false
+          weed version
+      
+      - name: Start SeaweedFS Server
+        run: |
+          # Create clean data directory
+          export WEED_DATA_DIR="/tmp/seaweedfs-java-tests-$(date +%s)"
+          mkdir -p "$WEED_DATA_DIR"
+          
+          # Start SeaweedFS with optimized settings for CI
+          # Include S3 API for s3copier integration tests
+          weed server -dir="$WEED_DATA_DIR" \
+            -master.raftHashicorp \
+            -master.electionTimeout=1s \
+            -master.volumeSizeLimitMB=100 \
+            -volume.max=100 \
+            -volume.preStopSeconds=1 \
+            -master.peers=none \
+            -filer -filer.maxMB=64 \
+            -s3 -s3.port=8333 \
+            -s3.config="$GITHUB_WORKSPACE/docker/compose/s3.json" \
+            -s3.allowDeleteBucketNotEmpty=true \
+            -master.port=9333 \
+            -volume.port=8080 \
+            -filer.port=8888 \
+            -metricsPort=9324 > seaweedfs.log 2>&1 &
+          
+          SERVER_PID=$!
+          echo "SERVER_PID=$SERVER_PID" >> $GITHUB_ENV
+          echo "WEED_DATA_DIR=$WEED_DATA_DIR" >> $GITHUB_ENV
+          echo "SeaweedFS server started with PID: $SERVER_PID"
+      
+      - name: Wait for SeaweedFS Components
+        run: |
+          echo "Waiting for SeaweedFS components to start..."
+          
+          # Wait for master
+          for i in {1..30}; do
+            if curl -s http://localhost:9333/cluster/status > /dev/null 2>&1; then
+              echo "✓ Master server is ready"
+              break
+            fi
+            echo "Waiting for master server... ($i/30)"
+            sleep 2
+          done
+          
+          # Wait for volume
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/status > /dev/null 2>&1; then
+              echo "✓ Volume server is ready"
+              break
+            fi
+            echo "Waiting for volume server... ($i/30)"
+            sleep 2
+          done
+          
+          # Wait for filer
+          for i in {1..30}; do
+            if curl -s http://localhost:8888/ > /dev/null 2>&1; then
+              echo "✓ Filer is ready"
+              break
+            fi
+            echo "Waiting for filer... ($i/30)"
+            sleep 2
+          done
+          
+          # Wait for S3 API
+          for i in {1..30}; do
+            if curl -s http://localhost:8333/healthz > /dev/null 2>&1; then
+              echo "✓ S3 API is ready"
+              break
+            fi
+            echo "Waiting for S3 API... ($i/30)"
+            sleep 2
+          done
+          
+          echo "✓ All SeaweedFS components are ready!"
+          
+          # Display cluster status
+          echo "Cluster status:"
+          curl -s http://localhost:9333/cluster/status | head -20
+      
+      - name: Build and Install SeaweedFS Client
+        working-directory: other/java/client
+        run: |
+          mvn clean install -DskipTests -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Run Client Unit Tests
+        working-directory: other/java/client
+        run: |
+          mvn test -Dtest=SeaweedReadTest,SeaweedCipherTest
+      
+      - name: Run Client Integration Tests
+        working-directory: other/java/client
+        env:
+          SEAWEEDFS_TEST_ENABLED: true
+        run: |
+          mvn test -Dtest=*IntegrationTest
+      
+      - name: Run HDFS3 Configuration Tests
+        working-directory: other/java/hdfs3
+        run: |
+          mvn test -Dtest=SeaweedFileSystemConfigTest -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Run S3 ETag Validation Tests (Issue #7768)
+        working-directory: other/java/s3copier
+        env:
+          S3_ENDPOINT: http://127.0.0.1:8333
+          S3_ACCESS_KEY: some_access_key1
+          S3_SECRET_KEY: some_secret_key1
+        run: |
+          echo "Running S3 ETag validation tests against $S3_ENDPOINT"
+          mvn test -Dtest=ETagValidationTest \
+            -DS3_ENDPOINT=$S3_ENDPOINT \
+            -DS3_ACCESS_KEY=$S3_ACCESS_KEY \
+            -DS3_SECRET_KEY=$S3_SECRET_KEY \
+            -Dmaven.javadoc.skip=true -Dgpg.skip=true
+      
+      - name: Display logs on failure
+        if: failure()
+        run: |
+          echo "=== SeaweedFS Server Log ==="
+          tail -100 seaweedfs.log || echo "No server log"
+          echo ""
+          echo "=== Cluster Status ==="
+          curl -s http://localhost:9333/cluster/status || echo "Cannot reach cluster"
+          echo ""
+          echo "=== Process Status ==="
+          ps aux | grep weed || echo "No weed processes"
+      
+      - name: Cleanup
+        if: always()
+        run: |
+          # Stop server using stored PID
+          if [ -n "$SERVER_PID" ]; then
+            echo "Stopping SeaweedFS server (PID: $SERVER_PID)"
+            kill -9 $SERVER_PID 2>/dev/null || true
+          fi
+          
+          # Fallback: kill any remaining weed processes
+          pkill -f "weed server" || true
+          
+          # Clean up data directory
+          if [ -n "$WEED_DATA_DIR" ]; then
+            echo "Cleaning up data directory: $WEED_DATA_DIR"
+            rm -rf "$WEED_DATA_DIR" || true
+          fi
+

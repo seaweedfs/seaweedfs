@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+
 	"github.com/redis/go-redis/v9"
 	"github.com/seaweedfs/seaweedfs/weed/util/skiplist"
 )
@@ -313,8 +314,6 @@ func (nl *ItemList) DeleteName(name string) error {
 		// no action to take
 		return nil
 	}
-
-	return nil
 }
 
 func (nl *ItemList) ListNames(startFrom string, visitNamesFn func(name string) bool) error {

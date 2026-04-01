@@ -23,20 +23,19 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 30
     steps:
-    - name: Set up Go 1.x
-      uses: actions/setup-go@c0137caad775660c0844396c52da96e560aba63d # v2
-      with:
-        go-version: ^1.13
-      id: go
-
     - name: Check out code into the Go module directory
-      uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v2
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
 
     - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      uses: docker/setup-buildx-action@v4
       
     - name: Cache Docker layers
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         path: /tmp/.buildx-cache
         key: ${{ runner.os }}-buildx-e2e-${{ github.sha }}
@@ -46,6 +45,7 @@ jobs:
     - name: Install dependencies
       run: |
         # Use faster mirrors and install with timeout
+        sudo rm -f /etc/apt/sources.list.d/azure-cli.list /etc/apt/sources.list.d/microsoft-prod.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs) main restricted universe multiverse" | sudo tee /etc/apt/sources.list
         echo "deb http://azure.archive.ubuntu.com/ubuntu/ $(lsb_release -cs)-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
         
@@ -134,7 +134,7 @@ jobs:
 
     - name: Archive logs
       if: always()
-      uses: actions/upload-artifact@v5
+      uses: actions/upload-artifact@v7
       with:
         name: output-logs
         path: docker/output.log

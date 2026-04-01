@@ -32,7 +32,7 @@ func newSealedBuffers(size int) *SealedBuffers {
 }
 
 func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, pos int, startOffset int64, endOffset int64) (newBuf []byte) {
-	oldMemBuffer := sbs.buffers[0]
+	oldBuf := sbs.buffers[0].buf
 	size := len(sbs.buffers)
 	for i := 0; i < size-1; i++ {
 		sbs.buffers[i].buf = sbs.buffers[i+1].buf
@@ -48,19 +48,23 @@ func (sbs *SealedBuffers) SealBuffer(startTime, stopTime time.Time, buf []byte, 
 	sbs.buffers[size-1].stopTime = stopTime
 	sbs.buffers[size-1].startOffset = startOffset
 	sbs.buffers[size-1].offset = endOffset
-	return oldMemBuffer.buf
+	return oldBuf
 }
 
-func (mb *MemBuffer) locateByTs(lastReadTime time.Time) (pos int) {
+func (mb *MemBuffer) locateByTs(lastReadTime time.Time) (pos int, err error) {
 	lastReadTs := lastReadTime.UnixNano()
-	for pos < len(mb.buf) {
-		size, t := readTs(mb.buf, pos)
+	for pos < mb.size {
+		size, t, readErr := readTs(mb.buf, pos)
+		if readErr != nil {
+			// Return error if buffer is corrupted
+			return 0, fmt.Errorf("locateByTs: buffer corruption at pos %d: %w", pos, readErr)
+		}
 		if t > lastReadTs {
-			return
+			return pos, nil
 		}
 		pos += size + 4
 	}
-	return len(mb.buf)
+	return mb.size, nil
 }
 
 func (mb *MemBuffer) String() string {

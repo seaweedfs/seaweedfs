@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/admin/maintenance"
@@ -87,6 +88,11 @@ func isValidTaskID(taskID string) bool {
 // ConfigPersistence handles saving and loading configuration files
 type ConfigPersistence struct {
 	dataDir string
+	// tasksMu serializes all filesystem operations on the tasks/ directory.
+	// SaveTaskState, LoadTaskState, LoadAllTaskStates, DeleteTaskState, and
+	// CleanupCompletedTasks are called from multiple goroutines concurrently
+	// after saveTaskState was moved outside mq.mutex in the maintenance queue.
+	tasksMu sync.Mutex
 }
 
 // NewConfigPersistence creates a new configuration persistence manager
@@ -285,7 +291,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
 	return &VacuumTaskConfig{
 		GarbageThreshold:   0.3,
 		MinVolumeAgeHours:  24,
-		MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 	}, nil
 }
 
@@ -302,7 +307,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   0.3,
 					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 				},
 			},
 		}, nil
@@ -323,7 +327,6 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   0.3,
 					MinVolumeAgeHours:  24,
-					MinIntervalSeconds: 7 * 24 * 60 * 60, // 7 days
 				},
 			},
 		}, nil
@@ -620,6 +623,26 @@ func (cp *ConfigPersistence) loadTaskConfig(filename string, config proto.Messag
 	return nil
 }
 
+// SaveTaskPolicy generic dispatcher for task persistence
+func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.TaskPolicy) error {
+	switch taskType {
+	case "vacuum":
+		return cp.SaveVacuumTaskPolicy(policy)
+	case "erasure_coding":
+		return cp.SaveErasureCodingTaskPolicy(policy)
+	case "balance":
+		return cp.SaveBalanceTaskPolicy(policy)
+	case "replication":
+		return cp.SaveReplicationTaskPolicy(policy)
+	}
+	return fmt.Errorf("unknown task type: %s", taskType)
+}
+
+// SaveReplicationTaskPolicy saves complete replication task policy to protobuf file
+func (cp *ConfigPersistence) SaveReplicationTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	return cp.saveTaskConfig(ReplicationTaskConfigFile, policy)
+}
+
 // GetDataDir returns the data directory path
 func (cp *ConfigPersistence) GetDataDir() string {
 	return cp.dataDir
@@ -684,7 +707,6 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
 					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
 					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
 				},
 			},
 		}
@@ -917,6 +939,8 @@ func (cp *ConfigPersistence) ListTaskDetails() ([]string, error) {
 
 // CleanupCompletedTasks removes old completed tasks beyond the retention limit
 func (cp *ConfigPersistence) CleanupCompletedTasks() error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot cleanup completed tasks")
 	}
@@ -926,8 +950,8 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 		return nil // No tasks directory, nothing to cleanup
 	}
 
-	// Load all tasks and find completed/failed ones
-	allTasks, err := cp.LoadAllTaskStates()
+	// Use unlocked helpers to avoid deadlock (tasksMu is already held)
+	allTasks, err := cp.loadAllTaskStatesLocked()
 	if err != nil {
 		return fmt.Errorf("failed to load tasks for cleanup: %w", err)
 	}
@@ -942,14 +966,43 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 
 	// Sort by completion time (most recent first)
 	sort.Slice(completedTasks, func(i, j int) bool {
-		return completedTasks[i].CompletedAt.After(*completedTasks[j].CompletedAt)
+		t1 := completedTasks[i].CompletedAt
+		t2 := completedTasks[j].CompletedAt
+
+		// Handle nil completion times
+		if t1 == nil && t2 == nil {
+			// Both nil, fallback to CreatedAt
+			if !completedTasks[i].CreatedAt.Equal(completedTasks[j].CreatedAt) {
+				return completedTasks[i].CreatedAt.After(completedTasks[j].CreatedAt)
+			}
+			return completedTasks[i].ID > completedTasks[j].ID
+		}
+		if t1 == nil {
+			return false // t1 (nil) goes to bottom
+		}
+		if t2 == nil {
+			return true // t2 (nil) goes to bottom
+		}
+
+		// Compare completion times
+		if !t1.Equal(*t2) {
+			return t1.After(*t2)
+		}
+
+		// Fallback to CreatedAt if completion times are identical
+		if !completedTasks[i].CreatedAt.Equal(completedTasks[j].CreatedAt) {
+			return completedTasks[i].CreatedAt.After(completedTasks[j].CreatedAt)
+		}
+
+		// Final tie-breaker: ID
+		return completedTasks[i].ID > completedTasks[j].ID
 	})
 
 	// Keep only the most recent MaxCompletedTasks, delete the rest
 	if len(completedTasks) > MaxCompletedTasks {
 		tasksToDelete := completedTasks[MaxCompletedTasks:]
 		for _, task := range tasksToDelete {
-			if err := cp.DeleteTaskState(task.ID); err != nil {
+			if err := cp.deleteTaskStateLocked(task.ID); err != nil {
 				glog.Warningf("Failed to delete old completed task %s: %v", task.ID, err)
 			} else {
 				glog.V(2).Infof("Cleaned up old completed task %s (completed: %v)", task.ID, task.CompletedAt)
@@ -963,6 +1016,8 @@ func (cp *ConfigPersistence) CleanupCompletedTasks() error {
 
 // SaveTaskState saves a task state to protobuf file
 func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot save task state")
 	}
@@ -1002,6 +1057,13 @@ func (cp *ConfigPersistence) SaveTaskState(task *maintenance.MaintenanceTask) er
 
 // LoadTaskState loads a task state from protobuf file
 func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.MaintenanceTask, error) {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.loadTaskStateLocked(taskID)
+}
+
+// loadTaskStateLocked loads a single task state. Must be called with tasksMu held.
+func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.MaintenanceTask, error) {
 	if cp.dataDir == "" {
 		return nil, fmt.Errorf("no data directory specified, cannot load task state")
 	}
@@ -1035,6 +1097,13 @@ func (cp *ConfigPersistence) LoadTaskState(taskID string) (*maintenance.Maintena
 
 // LoadAllTaskStates loads all task states from disk
 func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask, error) {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.loadAllTaskStatesLocked()
+}
+
+// loadAllTaskStatesLocked loads all task states from disk. Must be called with tasksMu held.
+func (cp *ConfigPersistence) loadAllTaskStatesLocked() ([]*maintenance.MaintenanceTask, error) {
 	if cp.dataDir == "" {
 		return []*maintenance.MaintenanceTask{}, nil
 	}
@@ -1053,7 +1122,7 @@ func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask
 	for _, entry := range entries {
 		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".pb" {
 			taskID := entry.Name()[:len(entry.Name())-3] // Remove .pb extension
-			task, err := cp.LoadTaskState(taskID)
+			task, err := cp.loadTaskStateLocked(taskID)
 			if err != nil {
 				glog.Warningf("Failed to load task state for %s: %v", taskID, err)
 				continue
@@ -1068,6 +1137,13 @@ func (cp *ConfigPersistence) LoadAllTaskStates() ([]*maintenance.MaintenanceTask
 
 // DeleteTaskState removes a task state file from disk
 func (cp *ConfigPersistence) DeleteTaskState(taskID string) error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+	return cp.deleteTaskStateLocked(taskID)
+}
+
+// deleteTaskStateLocked removes a task state file. Must be called with tasksMu held.
+func (cp *ConfigPersistence) deleteTaskStateLocked(taskID string) error {
 	if cp.dataDir == "" {
 		return fmt.Errorf("no data directory specified, cannot delete task state")
 	}

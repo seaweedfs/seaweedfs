@@ -1,8 +1,9 @@
 package leveldb
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"os"
+
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 )
 
 var _ filer.BucketAware = (*LevelDB3Store)(nil)

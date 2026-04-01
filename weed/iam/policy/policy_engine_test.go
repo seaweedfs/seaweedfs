@@ -184,7 +184,7 @@ func TestPolicyEvaluation(t *testing.T) {
 				Action:    "s3:GetObject",
 				Resource:  "arn:aws:s3:::public-bucket/file.txt",
 				RequestContext: map[string]interface{}{
-					"sourceIP": "192.168.1.100",
+					"aws:SourceIp": "192.168.1.100",
 				},
 			},
 			policies: []string{"read-policy"},
@@ -252,7 +252,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Resource: []string{"arn:aws:s3:::*"},
 				Condition: map[string]map[string]interface{}{
 					"IpAddress": {
-						"seaweed:SourceIP": []string{"192.168.1.0/24", "10.0.0.0/8"},
+						"aws:SourceIp": []string{"192.168.1.0/24", "10.0.0.0/8"},
 					},
 				},
 			},
@@ -274,7 +274,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Action:    "s3:GetObject",
 				Resource:  "arn:aws:s3:::mybucket/file.txt",
 				RequestContext: map[string]interface{}{
-					"sourceIP": "192.168.1.100",
+					"aws:SourceIp": "192.168.1.100",
 				},
 			},
 			want: EffectAllow,
@@ -286,7 +286,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Action:    "s3:GetObject",
 				Resource:  "arn:aws:s3:::mybucket/file.txt",
 				RequestContext: map[string]interface{}{
-					"sourceIP": "8.8.8.8",
+					"aws:SourceIp": "8.8.8.8",
 				},
 			},
 			want: EffectDeny,
@@ -298,7 +298,7 @@ func TestConditionEvaluation(t *testing.T) {
 				Action:    "s3:PutObject",
 				Resource:  "arn:aws:s3:::mybucket/newfile.txt",
 				RequestContext: map[string]interface{}{
-					"sourceIP": "10.1.2.3",
+					"aws:SourceIp": "10.1.2.3",
 				},
 			},
 			want: EffectAllow,

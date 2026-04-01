@@ -85,16 +85,25 @@ func startTelemetryServer() (*exec.Cmd, error) {
 		return nil, fmt.Errorf("failed to get working directory: %v", err)
 	}
 
-	// Navigate to the server directory (from main seaweedfs directory)
-	serverDir := filepath.Join(testDir, "telemetry", "server")
-
-	cmd := exec.Command("go", "run", ".",
-		"-port="+serverPort,
+	// Use pre-built binary if available (faster in CI), otherwise fall back to go run
+	args := []string{
+		"-port=" + serverPort,
 		"-dashboard=false",
 		"-cleanup=1m",
-		"-max-age=1h")
+		"-max-age=1h",
+	}
 
-	cmd.Dir = serverDir
+	serverBin := filepath.Join(testDir, "telemetry", "server", "telemetry-server")
+	var cmd *exec.Cmd
+	if _, err := os.Stat(serverBin); err == nil {
+		fmt.Printf("Using pre-built binary: %s\n", serverBin)
+		cmd = exec.Command(serverBin, args...)
+	} else {
+		fmt.Println("No pre-built binary found, using go run")
+		serverDir := filepath.Join(testDir, "telemetry", "server")
+		cmd = exec.Command("go", append([]string{"run", "."}, args...)...)
+		cmd.Dir = serverDir
+	}
 
 	// Create log files for server output
 	logFile, err := os.Create("telemetry-server-test.log")
@@ -148,7 +157,7 @@ func waitForServer(url string, timeout time.Duration) bool {
 func testProtobufMarshaling() error {
 	// Test protobuf marshaling/unmarshaling
 	testData := &proto.TelemetryData{
-		ClusterId:         "test-cluster-12345",
+		TopologyId:        "test-cluster-12345",
 		Version:           "test-3.45",
 		Os:                "linux/amd64",
 		VolumeServerCount: 2,
@@ -174,9 +183,9 @@ func testProtobufMarshaling() error {
 	}
 
 	// Verify data
-	if testData2.ClusterId != testData.ClusterId {
-		return fmt.Errorf("protobuf data mismatch: expected %s, got %s",
-			testData.ClusterId, testData2.ClusterId)
+	if testData2.TopologyId != testData.TopologyId {
+		return fmt.Errorf("TopologyId mismatch: expected %s, got %s",
+			testData.TopologyId, testData2.TopologyId)
 	}
 
 	if testData2.VolumeServerCount != testData.VolumeServerCount {
@@ -190,6 +199,7 @@ func testProtobufMarshaling() error {
 func testTelemetryClient() error {
 	// Create telemetry client
 	client := telemetry.NewClient(serverURL+"/api/collect", true)
+	client.SetTopologyId("test-topology-12345")
 
 	// Create test data using protobuf format
 	testData := &proto.TelemetryData{

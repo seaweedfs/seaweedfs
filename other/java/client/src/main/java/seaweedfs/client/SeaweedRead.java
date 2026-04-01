@@ -24,9 +24,10 @@ public class SeaweedRead {
 
     // returns bytesRead
     public static long read(FilerClient filerClient, List<VisibleInterval> visibleIntervals,
-                            final long position, final ByteBuffer buf, final long fileSize) throws IOException {
+            final long position, final ByteBuffer buf, final long fileSize) throws IOException {
 
-        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, buf.remaining());
+        int originalRemaining = buf.remaining();
+        List<ChunkView> chunkViews = viewFromVisibles(visibleIntervals, position, originalRemaining);
 
         Map<String, FilerProto.Locations> knownLocations = new HashMap<>();
 
@@ -51,7 +52,7 @@ public class SeaweedRead {
             }
         }
 
-        //TODO parallel this
+        // TODO parallel this
         long readCount = 0;
         long startOffset = position;
         for (ChunkView chunkView : chunkViews) {
@@ -59,7 +60,7 @@ public class SeaweedRead {
             if (startOffset < chunkView.logicOffset) {
                 long gap = chunkView.logicOffset - startOffset;
                 LOG.debug("zero [{},{})", startOffset, startOffset + gap);
-                buf.position(buf.position()+ (int)gap);
+                buf.position(buf.position() + (int) gap);
                 readCount += gap;
                 startOffset += gap;
             }
@@ -81,12 +82,17 @@ public class SeaweedRead {
 
         }
 
-        long limit = Math.min(buf.limit(), fileSize);
+        // Fix: Calculate the correct limit based on the read position and requested
+        // size,
+        // not the buffer's absolute limit. This fixes the 78-byte EOF error when
+        // seeking
+        // near the end of the file.
+        long limit = Math.min(position + originalRemaining, fileSize);
 
         if (startOffset < limit) {
             long gap = limit - startOffset;
             LOG.debug("zero2 [{},{})", startOffset, startOffset + gap);
-            buf.position(buf.position()+ (int)gap);
+            buf.position(buf.position() + (int) gap);
             readCount += gap;
             startOffset += gap;
         }
@@ -94,7 +100,8 @@ public class SeaweedRead {
         return readCount;
     }
 
-    private static int readChunkView(FilerClient filerClient, long startOffset, ByteBuffer buf, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    private static int readChunkView(FilerClient filerClient, long startOffset, ByteBuffer buf, ChunkView chunkView,
+            FilerProto.Locations locations) throws IOException {
 
         byte[] chunkData = chunkCache.getChunk(chunkView.fileId);
 
@@ -105,13 +112,15 @@ public class SeaweedRead {
 
         int len = (int) chunkView.size - (int) (startOffset - chunkView.logicOffset);
         LOG.debug("readChunkView fid:{} chunkData.length:{} chunkView.offset:{} chunkView[{};{}) startOffset:{}",
-                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset, chunkView.logicOffset + chunkView.size, startOffset);
+                chunkView.fileId, chunkData.length, chunkView.offset, chunkView.logicOffset,
+                chunkView.logicOffset + chunkView.size, startOffset);
         buf.put(chunkData, (int) (startOffset - chunkView.logicOffset + chunkView.offset), len);
 
         return len;
     }
 
-    public static byte[] doFetchFullChunkData(FilerClient filerClient, ChunkView chunkView, FilerProto.Locations locations) throws IOException {
+    public static byte[] doFetchFullChunkData(FilerClient filerClient, ChunkView chunkView,
+            FilerProto.Locations locations) throws IOException {
 
         byte[] data = null;
         IOException lastException = null;
@@ -214,8 +223,7 @@ public class SeaweedRead {
                         chunkStart,
                         isFullChunk,
                         chunk.cipherKey,
-                        chunk.isCompressed
-                ));
+                        chunk.isCompressed));
             }
         }
         return views;
@@ -239,7 +247,10 @@ public class SeaweedRead {
     }
 
     public static long fileSize(FilerProto.Entry entry) {
-        return Math.max(totalSize(entry.getChunksList()), entry.getAttributes().getFileSize());
+        long chunksSize = totalSize(entry.getChunksList());
+        long attrSize = entry.getAttributes().getFileSize();
+        long finalSize = Math.max(chunksSize, attrSize);
+        return finalSize;
     }
 
     public static long totalSize(List<FilerProto.FileChunk> chunksList) {
@@ -263,7 +274,8 @@ public class SeaweedRead {
         public final byte[] cipherKey;
         public final boolean isCompressed;
 
-        public VisibleInterval(long start, long stop, String fileId, long modifiedTime, long chunkOffset, boolean isFullChunk, byte[] cipherKey, boolean isCompressed) {
+        public VisibleInterval(long start, long stop, String fileId, long modifiedTime, long chunkOffset,
+                boolean isFullChunk, byte[] cipherKey, boolean isCompressed) {
             this.start = start;
             this.stop = stop;
             this.modifiedTime = modifiedTime;
@@ -297,7 +309,8 @@ public class SeaweedRead {
         public final byte[] cipherKey;
         public final boolean isCompressed;
 
-        public ChunkView(String fileId, long offset, long size, long logicOffset, boolean isFullChunk, byte[] cipherKey, boolean isCompressed) {
+        public ChunkView(String fileId, long offset, long size, long logicOffset, boolean isFullChunk, byte[] cipherKey,
+                boolean isCompressed) {
             this.fileId = fileId;
             this.offset = offset;
             this.size = size;

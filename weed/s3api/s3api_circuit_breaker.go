@@ -1,8 +1,13 @@
 package s3api
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"sync"
+	"sync/atomic"
+
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -11,9 +16,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"net/http"
-	"sync"
-	"sync/atomic"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 type CircuitBreaker struct {
@@ -21,6 +24,7 @@ type CircuitBreaker struct {
 	Enabled     bool
 	counters    map[string]*int64
 	limitations map[string]int64
+	s3a         *S3ApiServer
 }
 
 func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
@@ -29,8 +33,9 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 		limitations: make(map[string]int64),
 	}
 
-	err := pb.WithFilerClient(false, 0, option.Filer, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
-		content, err := filer.ReadInsideFiler(client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
+	// Use WithOneOfGrpcFilerClients to support multiple filers with failover
+	err := pb.WithOneOfGrpcFilerClients(false, option.Filers, option.GrpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		content, err := filer.ReadInsideFiler(context.Background(), client, s3_constants.CircuitBreakerConfigDir, s3_constants.CircuitBreakerConfigFile)
 		if errors.Is(err, filer_pb.ErrNotFound) {
 			return nil
 		}
@@ -41,6 +46,7 @@ func NewCircuitBreaker(option *S3ApiServerOption) *CircuitBreaker {
 	})
 
 	if err != nil {
+		glog.Warningf("S3 circuit breaker disabled; failed to load config from any filer: %v", err)
 	}
 
 	return cb
@@ -87,6 +93,54 @@ func (cb *CircuitBreaker) loadCircuitBreakerConfig(cfg *s3_pb.S3CircuitBreakerCo
 
 func (cb *CircuitBreaker) Limit(f func(w http.ResponseWriter, r *http.Request), action string) (http.HandlerFunc, Action) {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Apply upload limiting for write actions if configured
+		if cb.s3a != nil && (action == s3_constants.ACTION_WRITE) &&
+			(cb.s3a.option.ConcurrentUploadLimit != 0 || cb.s3a.option.ConcurrentFileUploadLimit != 0) {
+
+			// Get content length, default to 0 if not provided
+			contentLength := r.ContentLength
+			if contentLength < 0 {
+				contentLength = 0
+			}
+
+			// Wait until in flight data is less than the limit
+			cb.s3a.inFlightDataLimitCond.L.Lock()
+			inFlightDataSize := atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+			inFlightUploads := atomic.LoadInt64(&cb.s3a.inFlightUploads)
+
+			// Wait if either data size limit or file count limit is exceeded
+			for (cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit) ||
+				(cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit) {
+				if cb.s3a.option.ConcurrentUploadLimit != 0 && inFlightDataSize > cb.s3a.option.ConcurrentUploadLimit {
+					glog.V(4).Infof("wait because inflight data %d > %d", inFlightDataSize, cb.s3a.option.ConcurrentUploadLimit)
+				}
+				if cb.s3a.option.ConcurrentFileUploadLimit != 0 && inFlightUploads >= cb.s3a.option.ConcurrentFileUploadLimit {
+					glog.V(4).Infof("wait because inflight uploads %d >= %d", inFlightUploads, cb.s3a.option.ConcurrentFileUploadLimit)
+				}
+				cb.s3a.inFlightDataLimitCond.Wait()
+				inFlightDataSize = atomic.LoadInt64(&cb.s3a.inFlightDataSize)
+				inFlightUploads = atomic.LoadInt64(&cb.s3a.inFlightUploads)
+			}
+			cb.s3a.inFlightDataLimitCond.L.Unlock()
+
+			// Increment counters
+			newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, 1)
+			newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, contentLength)
+			// Update metrics
+			stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
+			stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
+			defer func() {
+				// Decrement counters
+				newUploads := atomic.AddInt64(&cb.s3a.inFlightUploads, -1)
+				newSize := atomic.AddInt64(&cb.s3a.inFlightDataSize, -contentLength)
+				// Update metrics
+				stats.S3InFlightUploadCountGauge.Set(float64(newUploads))
+				stats.S3InFlightUploadBytesGauge.Set(float64(newSize))
+				cb.s3a.inFlightDataLimitCond.Signal()
+			}()
+		}
+
+		// Apply circuit breaker logic
 		if !cb.Enabled {
 			f(w, r)
 			return

@@ -157,7 +157,7 @@ func syscallMode(i os.FileMode) (o uint32) {
 	return
 }
 
-//If the bool is set to true then the file is opened with the parameters FILE_ATTRIBUTE_TEMPORARY and
+// If the bool is set to true then the file is opened with the parameters FILE_ATTRIBUTE_TEMPORARY and
 // FILE_FLAG_DELETE_ON_CLOSE
 func OpenFile(name string, flag int, perm os.FileMode, setToTempAndDelete bool) (file *os.File, err error) {
 	r, e := Open(fixLongPath(name), flag|windows.O_CLOEXEC, syscallMode(perm), setToTempAndDelete)

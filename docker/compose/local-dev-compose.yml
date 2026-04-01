@@ -16,7 +16,7 @@ services:
     ports:
       - 8080:8080
       - 18080:18080
-    command: "-v=1 volume -mserver=master:9333 -port=8080 -ip=volume -preStopSeconds=1 -max=10000"
+    command: "-v=1 volume -master=master:9333 -port=8080 -ip=volume -preStopSeconds=1 -max=10000"
     depends_on:
       - master
     volumes:

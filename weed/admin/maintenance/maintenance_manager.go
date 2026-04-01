@@ -31,9 +31,8 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
-					MinIntervalSeconds: int32(vacuumConfig.MinIntervalSeconds),
+					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
+					MinVolumeAgeHours: int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
 				},
 			},
 		}
@@ -137,6 +136,7 @@ func (mm *MaintenanceManager) Start() error {
 	// Start background processes
 	go mm.scanLoop()
 	go mm.cleanupLoop()
+	go mm.topologyStatusLoop() // Periodic diagnostic logging
 
 	glog.Infof("Maintenance manager started with scan interval %ds", mm.config.ScanIntervalSeconds)
 	return nil
@@ -253,6 +253,54 @@ func (mm *MaintenanceManager) cleanupLoop() {
 			mm.performCleanup()
 		}
 	}
+}
+
+// topologyStatusLoop periodically logs topology status for diagnostics
+func (mm *MaintenanceManager) topologyStatusLoop() {
+	// Log topology status every 5 minutes for diagnostic purposes
+	statusInterval := 5 * time.Minute
+	ticker := time.NewTicker(statusInterval)
+	defer ticker.Stop()
+
+	for mm.running {
+		select {
+		case <-mm.stopChan:
+			return
+		case <-ticker.C:
+			mm.logTopologyStatus()
+		}
+	}
+}
+
+// logTopologyStatus logs current topology and worker status for diagnostics
+func (mm *MaintenanceManager) logTopologyStatus() {
+	if mm.scanner == nil || mm.scanner.integration == nil {
+		glog.V(2).Infof("Topology status: scanner/integration not available")
+		return
+	}
+
+	activeTopology := mm.scanner.integration.GetActiveTopology()
+	if activeTopology == nil {
+		glog.V(1).Infof("Topology status: ActiveTopology is nil")
+		return
+	}
+
+	diskCount := activeTopology.GetDiskCount()
+	nodeCount := len(activeTopology.GetAllNodes())
+
+	// Get queue stats
+	stats := mm.queue.GetStats()
+	workerCount := len(mm.queue.GetWorkers())
+
+	mm.mutex.RLock()
+	errorCount := mm.errorCount
+	mm.mutex.RUnlock()
+
+	glog.V(1).Infof("Topology status: %d nodes, %d disks, %d workers, %d pending tasks, %d running tasks, errors: %d",
+		nodeCount, diskCount, workerCount,
+		stats.TasksByStatus[TaskStatusPending],
+		stats.TasksByStatus[TaskStatusInProgress]+stats.TasksByStatus[TaskStatusAssigned],
+		errorCount)
 }
 
 // performScan executes a maintenance scan with error handling and backoff
@@ -509,8 +557,27 @@ func (mm *MaintenanceManager) UpdateConfig(config *MaintenanceConfig) error {
 	mm.queue.policy = config.Policy
 	mm.scanner.policy = config.Policy
 
+	// Propagate global policy changes to individual task configuration files
+	if config.Policy != nil {
+		mm.saveTaskConfigsFromPolicy(config.Policy)
+	}
+
 	glog.V(1).Infof("Maintenance configuration updated")
 	return nil
+}
+
+// saveTaskConfigsFromPolicy propagates global policy settings to separate task configuration files
+func (mm *MaintenanceManager) saveTaskConfigsFromPolicy(policy *worker_pb.MaintenancePolicy) {
+	if mm.queue.persistence == nil || policy == nil {
+		return
+	}
+
+	glog.V(1).Infof("Propagating maintenance policy changes to separate task configs")
+	for taskType, taskPolicy := range policy.TaskPolicies {
+		if err := mm.queue.persistence.SaveTaskPolicy(taskType, taskPolicy); err != nil {
+			glog.Errorf("Failed to save task policy for %s: %v", taskType, err)
+		}
+	}
 }
 
 // CancelTask cancels a pending task
@@ -532,6 +599,13 @@ func (mm *MaintenanceManager) CancelTask(taskID string) error {
 			if pendingTask.ID == taskID {
 				mm.queue.pendingTasks = append(mm.queue.pendingTasks[:i], mm.queue.pendingTasks[i+1:]...)
 				break
+			}
+		}
+
+		// Notify ActiveTopology to release capacity
+		if mm.scanner != nil && mm.scanner.integration != nil {
+			if at := mm.scanner.integration.GetActiveTopology(); at != nil {
+				_ = at.CompleteTask(taskID)
 			}
 		}
 

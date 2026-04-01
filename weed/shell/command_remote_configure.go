@@ -4,15 +4,16 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/protobuf/proto"
-	"io"
-	"regexp"
-	"strings"
 )
 
 func init() {
@@ -34,6 +35,7 @@ func (c *commandRemoteConfigure) Help() string {
 
 	# set or update a configuration
 	remote.configure -name=cloud1 -type=s3 -s3.access_key=xxx -s3.secret_key=yyy -s3.region=us-east-2
+	remote.configure -name=cloud1_deep -type=s3 -s3.access_key=xxx -s3.secret_key=yyy -s3.region=us-east-2 -s3.storage_class=DEEP_ARCHIVE
 	remote.configure -name=cloud2 -type=gcs -gcs.appCredentialsFile=~/service-account-file.json -gcs.projectId=yyy
 	remote.configure -name=cloud3 -type=azure -azure.account_name=xxx -azure.account_key=yyy
 	remote.configure -name=cloud4 -type=aliyun -aliyun.access_key=xxx -aliyun.secret_key=yyy -aliyun.endpoint=oss-cn-shenzhen.aliyuncs.com -aliyun.region=cn-sehnzhen

@@ -11,8 +11,11 @@ import (
 )
 
 func (vs *VolumeServer) BatchDelete(ctx context.Context, req *volume_server_pb.BatchDeleteRequest) (*volume_server_pb.BatchDeleteResponse, error) {
-
 	resp := &volume_server_pb.BatchDeleteResponse{}
+
+	if err := vs.CheckMaintenanceMode(); err != nil {
+		return resp, err
+	}
 
 	now := uint64(time.Now().Unix())
 

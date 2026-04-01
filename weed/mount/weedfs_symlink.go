@@ -2,14 +2,12 @@ package mount
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"syscall"
 	"time"
 
-	"github.com/hanwen/go-fuse/v2/fuse"
+	"github.com/seaweedfs/go-fuse/v2/fuse"
 
-	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 )
@@ -17,7 +15,7 @@ import (
 /** Create a symbolic link */
 func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target string, name string, out *fuse.EntryOut) (code fuse.Status) {
 
-	if wfs.IsOverQuota {
+	if wfs.IsOverQuotaWithUncommitted() {
 		return fuse.Status(syscall.ENOSPC)
 	}
 	if s := checkName(name); s != fuse.OK {
@@ -48,19 +46,23 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		SkipCheckParentDirectory: true,
 	}
 
-	err := wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+	wfs.mapPbIdFromLocalToFiler(request.Entry)
 
-		wfs.mapPbIdFromLocalToFiler(request.Entry)
-		defer wfs.mapPbIdFromFilerToLocal(request.Entry)
-
-		if err := filer_pb.CreateEntry(context.Background(), client, request); err != nil {
-			return fmt.Errorf("symlink %s: %v", entryFullPath, err)
+	resp, err := wfs.streamCreateEntry(context.Background(), request)
+	if err == nil {
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(string(dirPath), request.Entry)
 		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("symlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirPath)
+		}
+	}
 
-		wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(request.Directory, request.Entry))
+	// Map back to local uid/gid before writing to the kernel.
+	wfs.mapPbIdFromFilerToLocal(request.Entry)
 
-		return nil
-	})
 	if err != nil {
 		glog.V(0).Infof("Symlink %s => %s: %v", entryFullPath, target, err)
 		return fuse.EIO

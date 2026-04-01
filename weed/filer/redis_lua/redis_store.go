@@ -21,18 +21,22 @@ func (store *RedisLuaStore) GetName() string {
 func (store *RedisLuaStore) Initialize(configuration util.Configuration, prefix string) (err error) {
 	return store.initialize(
 		configuration.GetString(prefix+"address"),
+		configuration.GetString(prefix+"username"),
 		configuration.GetString(prefix+"password"),
 		configuration.GetInt(prefix+"database"),
+		configuration.GetString(prefix+"keyPrefix"),
 		configuration.GetStringSlice(prefix+"superLargeDirectories"),
 	)
 }
 
-func (store *RedisLuaStore) initialize(hostPort string, password string, database int, superLargeDirectories []string) (err error) {
+func (store *RedisLuaStore) initialize(hostPort string, username string, password string, database int, keyPrefix string, superLargeDirectories []string) (err error) {
 	store.Client = redis.NewClient(&redis.Options{
 		Addr:     hostPort,
+		Username: username,
 		Password: password,
 		DB:       database,
 	})
+	store.keyPrefix = keyPrefix
 	store.loadSuperLargeDirectories(superLargeDirectories)
 	return
 }

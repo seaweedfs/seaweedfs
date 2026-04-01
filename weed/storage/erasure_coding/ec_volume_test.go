@@ -13,7 +13,7 @@ import (
 
 func TestPositioning(t *testing.T) {
 
-	ecxFile, err := os.OpenFile("389.ecx", os.O_RDONLY, 0)
+	ecxFile, err := os.OpenFile("./test_files/389.ecx", os.O_RDONLY, 0)
 	if err != nil {
 		t.Errorf("failed to open ecx file: %v", err)
 	}

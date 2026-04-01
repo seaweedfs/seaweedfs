@@ -1,0 +1,93 @@
+name: "SFTP Integration Tests"
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/sftpd/**'
+      - 'weed/command/sftp.go'
+      - 'test/sftp/**'
+      - '.github/workflows/sftp-tests.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/sftpd/**'
+      - 'weed/command/sftp.go'
+      - 'test/sftp/**'
+      - '.github/workflows/sftp-tests.yml'
+
+concurrency:
+  group: ${{ github.head_ref }}/sftp-tests
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  TEST_TIMEOUT: '15m'
+
+jobs:
+  sftp-integration:
+    name: SFTP Integration Testing
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+      
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y openssh-client
+        
+    - name: Build SeaweedFS
+      run: |
+        cd weed
+        go build -o weed .
+        chmod +x weed
+        ./weed version
+        
+    - name: Run SFTP Integration Tests
+      run: |
+        cd test/sftp
+        
+        echo "🧪 Running SFTP integration tests..."
+        echo "============================================"
+        
+        # Install test dependencies
+        go mod download
+        
+        # Run all SFTP tests
+        go test -v -timeout=${{ env.TEST_TIMEOUT }} ./...
+        
+        echo "============================================"
+        echo "✅ SFTP integration tests completed"
+        
+    - name: Test Summary
+      if: always()
+      run: |
+        echo "## 🔐 SFTP Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Coverage" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **HomeDir Path Translation**: User home directory mapping (fixes #7470)" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **File Operations**: Upload, download, delete" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Directory Operations**: Create, list, remove" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Large File Handling**: 1MB+ file support" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Path Edge Cases**: Unicode, trailing slashes, .. paths" >> $GITHUB_STEP_SUMMARY
+        echo "- ✅ **Admin Access**: Root user verification" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+        echo "| User | HomeDir | Permissions |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|---------|-------------|" >> $GITHUB_STEP_SUMMARY
+        echo "| admin | / | Full access |" >> $GITHUB_STEP_SUMMARY
+        echo "| testuser | /sftp/testuser | Home directory only |" >> $GITHUB_STEP_SUMMARY
+        echo "| readonly | /public | Read-only |" >> $GITHUB_STEP_SUMMARY
+
+
+

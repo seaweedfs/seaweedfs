@@ -3,6 +3,8 @@ package cluster
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
@@ -30,16 +32,19 @@ func NewLockClient(grpcDialOption grpc.DialOption, seedFiler pb.ServerAddress) *
 }
 
 type LiveLock struct {
-	key            string
-	renewToken     string
-	expireAtNs     int64
-	hostFiler      pb.ServerAddress
-	cancelCh       chan struct{}
-	grpcDialOption grpc.DialOption
-	isLocked       bool
-	self           string
-	lc             *LockClient
-	owner          string
+	key                 string
+	renewToken          string
+	expireAtNs          int64
+	hostFiler           pb.ServerAddress
+	cancelCh            chan struct{}
+	grpcDialOption      grpc.DialOption
+	isLocked            int32 // 0 = unlocked, 1 = locked; use atomic operations
+	self                string
+	lc                  *LockClient
+	owner               string
+	lockTTL             time.Duration
+	consecutiveFailures int   // Track connection failures to trigger fallback
+	generation          int64 // fencing token from the lock server
 }
 
 // NewShortLivedLock creates a lock with a 5-second duration
@@ -58,17 +63,24 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 }
 
 // StartLongLivedLock starts a goroutine to lock the key and returns immediately.
-func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string)) (lock *LiveLock) {
+// lockTTL specifies how long the lock should be held. The renewal interval is
+// automatically derived as lockTTL / 2 to ensure timely renewals.
+func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerChange func(newLockOwner string), lockTTL time.Duration) (lock *LiveLock) {
 	lock = &LiveLock{
 		key:            key,
 		hostFiler:      lc.seedFiler,
 		cancelCh:       make(chan struct{}),
-		expireAtNs:     time.Now().Add(lock_manager.LiveLockTTL).UnixNano(),
+		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
 		grpcDialOption: lc.grpcDialOption,
 		self:           owner,
 		lc:             lc,
+		lockTTL:        lockTTL,
+	}
+	if lock.lockTTL == 0 {
+		lock.lockTTL = lock_manager.LiveLockTTL
 	}
 	go func() {
+		renewInterval := lock.lockTTL / 2
 		isLocked := false
 		lockOwner := ""
 		for {
@@ -81,13 +93,15 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			}
 
 			if isLocked {
-				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err != nil {
+				if err := lock.AttemptToLock(lock.lockTTL); err != nil {
 					glog.V(0).Infof("Lost lock %s: %v", key, err)
 					isLocked = false
+					atomic.StoreInt32(&lock.isLocked, 0)
 				}
 			} else {
-				if err := lock.AttemptToLock(lock_manager.LiveLockTTL); err == nil {
+				if err := lock.AttemptToLock(lock.lockTTL); err == nil {
 					isLocked = true
+					// Note: AttemptToLock already sets lock.isLocked atomically on success
 				}
 			}
 			if lockOwner != lock.LockOwner() && lock.LockOwner() != "" {
@@ -99,7 +113,11 @@ func (lc *LockClient) StartLongLivedLock(key string, owner string, onLockOwnerCh
 			case <-lock.cancelCh:
 				return
 			default:
-				time.Sleep(lock_manager.RenewInterval)
+				if isLocked {
+					time.Sleep(renewInterval)
+				} else {
+					time.Sleep(5 * renewInterval)
+				}
 			}
 		}
 	}()
@@ -126,24 +144,28 @@ func (lock *LiveLock) AttemptToLock(lockDuration time.Duration) error {
 		return err
 	}
 	if errorMessage != "" {
-		glog.V(1).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		if strings.Contains(errorMessage, "lock already owned") {
+			glog.V(3).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		} else {
+			glog.V(2).Infof("LOCK: doLock returned error message for key=%s: %s", lock.key, errorMessage)
+		}
 		time.Sleep(time.Second)
 		return fmt.Errorf("%v", errorMessage)
 	}
-	if !lock.isLocked {
+	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		// Only log when transitioning from unlocked to locked
 		glog.V(1).Infof("LOCK: Successfully acquired key=%s owner=%s", lock.key, lock.self)
 	}
-	lock.isLocked = true
+	atomic.StoreInt32(&lock.isLocked, 1)
 	return nil
 }
 
 func (lock *LiveLock) StopShortLivedLock() error {
-	if !lock.isLocked {
+	if atomic.LoadInt32(&lock.isLocked) == 0 {
 		return nil
 	}
 	defer func() {
-		lock.isLocked = false
+		atomic.StoreInt32(&lock.isLocked, 0)
 	}()
 	return pb.WithFilerClient(false, 0, lock.hostFiler, lock.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		_, err := client.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
@@ -193,6 +215,10 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		glog.V(4).Infof("LOCK: DistributedLock response - key=%s err=%v", lock.key, err)
 		if err == nil && resp != nil {
 			lock.renewToken = resp.RenewToken
+			if resp.Generation > 0 {
+				atomic.StoreInt64(&lock.generation, resp.Generation)
+			}
+			lock.consecutiveFailures = 0 // Reset failure counter on success
 			glog.V(4).Infof("LOCK: Got renewToken for key=%s", lock.key)
 		} else {
 			//this can be retried. Need to remember the last valid renewToken
@@ -203,28 +229,52 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 			errorMessage = resp.Error
 			if resp.LockHostMovedTo != "" && resp.LockHostMovedTo != string(previousHostFiler) {
 				// Only log if the host actually changed
-				glog.V(1).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
+				glog.V(2).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
-				lock.lc.seedFiler = lock.hostFiler
+				// Don't update seedFiler - keep original for fallback
 			} else if resp.LockHostMovedTo != "" {
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
 			}
 			if resp.LockOwner != "" && resp.LockOwner != previousOwner {
 				// Only log if the owner actually changed
-				glog.V(1).Infof("LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
+				glog.V(2).Infof("LOCK: Owner changed from %s to %s for key=%s", previousOwner, resp.LockOwner, lock.key)
 				lock.owner = resp.LockOwner
 			} else if resp.LockOwner != "" {
 				lock.owner = resp.LockOwner
 			} else if previousOwner != "" {
-				glog.V(1).Infof("LOCK: Owner cleared for key=%s", lock.key)
+				glog.V(2).Infof("LOCK: Owner cleared for key=%s", lock.key)
 				lock.owner = ""
 			}
 		}
 		return err
 	})
+
+	if err != nil && lock.hostFiler != lock.lc.seedFiler {
+		lock.consecutiveFailures++
+		// Fall back to seed filer after 3 consecutive connection failures
+		if lock.consecutiveFailures >= 3 {
+			glog.V(0).Infof("LOCK: Connection failed %d times for key=%s filer=%s, falling back to seed filer=%s",
+				lock.consecutiveFailures, lock.key, lock.hostFiler, lock.lc.seedFiler)
+			lock.hostFiler = lock.lc.seedFiler
+			lock.consecutiveFailures = 0
+			lock.renewToken = ""
+		}
+	}
+
 	return
 }
 
 func (lock *LiveLock) LockOwner() string {
 	return lock.owner
+}
+
+// Generation returns the fencing token for this lock.
+// It increments on each fresh acquisition and stays the same on renewal.
+func (lock *LiveLock) Generation() int64 {
+	return atomic.LoadInt64(&lock.generation)
+}
+
+// IsLocked returns true if this instance currently holds the lock
+func (lock *LiveLock) IsLocked() bool {
+	return atomic.LoadInt32(&lock.isLocked) == 1
 }

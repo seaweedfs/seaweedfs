@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
@@ -14,6 +13,11 @@ import (
 // BucketPolicyEngine wraps the policy_engine to provide bucket policy evaluation
 type BucketPolicyEngine struct {
 	engine *policy_engine.PolicyEngine
+	// MultipartSSELookup retrieves the canonical SSE algorithm ("AES256" or
+	// "aws:kms") that was stored when a multipart upload was initiated.
+	// Returns "" when the upload had no SSE or when the entry cannot be found.
+	// Set by S3ApiServer after construction to give the engine filer access.
+	MultipartSSELookup func(bucket, uploadID string) string
 }
 
 // NewBucketPolicyEngine creates a new bucket policy engine
@@ -48,25 +52,17 @@ func (bpe *BucketPolicyEngine) LoadBucketPolicy(bucket string, entry *filer_pb.E
 
 // LoadBucketPolicyFromCache loads a bucket policy from a cached BucketConfig
 //
-// This function uses a type-safe conversion function to convert between
-// policy.PolicyDocument and policy_engine.PolicyDocument with explicit field mapping and error handling.
-func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy.PolicyDocument) error {
+// This function loads the policy directly into the engine
+func (bpe *BucketPolicyEngine) LoadBucketPolicyFromCache(bucket string, policyDoc *policy_engine.PolicyDocument) error {
 	if policyDoc == nil {
 		// No policy for this bucket - remove it if it exists
 		bpe.engine.DeleteBucketPolicy(bucket)
 		return nil
 	}
 
-	// Convert policy.PolicyDocument to policy_engine.PolicyDocument without a JSON round-trip
-	// This removes the prior intermediate marshal/unmarshal and adds type safety
-	enginePolicyDoc, err := ConvertPolicyDocumentToPolicyEngine(policyDoc)
-	if err != nil {
-		glog.Errorf("Failed to convert bucket policy for %s: %v", bucket, err)
-		return fmt.Errorf("failed to convert bucket policy: %w", err)
-	}
-	
-	// Marshal the converted policy to JSON for storage in the engine
-	policyJSON, err := json.Marshal(enginePolicyDoc)
+	// Policy is already in correct format, just load it
+	// We need to re-marshal to string because SetBucketPolicy expects JSON string
+	policyJSON, err := json.Marshal(policyDoc)
 	if err != nil {
 		glog.Errorf("Failed to marshal bucket policy for %s: %v", bucket, err)
 		return err
@@ -87,56 +83,37 @@ func (bpe *BucketPolicyEngine) DeleteBucketPolicy(bucket string) error {
 	return bpe.engine.DeleteBucketPolicy(bucket)
 }
 
-// EvaluatePolicy evaluates whether an action is allowed by bucket policy
-// Returns: (allowed bool, evaluated bool, error)
-// - allowed: whether the policy allows the action
-// - evaluated: whether a policy was found and evaluated (false = no policy exists)
-// - error: any error during evaluation
-func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string) (allowed bool, evaluated bool, err error) {
-	// Validate required parameters
-	if bucket == "" {
-		return false, false, fmt.Errorf("bucket cannot be empty")
-	}
-	if action == "" {
-		return false, false, fmt.Errorf("action cannot be empty")
-	}
-
-	// Convert action to S3 action format using base mapping (no HTTP context available)
-	s3Action := mapBaseActionToS3Format(action)
-
-	// Build resource ARN
-	resource := buildResourceARN(bucket, object)
-
-	glog.V(4).Infof("EvaluatePolicy: bucket=%s, resource=%s, action=%s, principal=%s", bucket, resource, s3Action, principal)
-
-	// Evaluate using the policy engine
-	args := &policy_engine.PolicyEvaluationArgs{
-		Action:    s3Action,
-		Resource:  resource,
-		Principal: principal,
-	}
-
-	result := bpe.engine.EvaluatePolicy(bucket, args)
-
-	switch result {
-	case policy_engine.PolicyResultAllow:
-		glog.V(3).Infof("EvaluatePolicy: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
-		return true, true, nil
-	case policy_engine.PolicyResultDeny:
-		glog.V(3).Infof("EvaluatePolicy: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
-		return false, true, nil
-	case policy_engine.PolicyResultIndeterminate:
-		// No policy exists for this bucket
-		glog.V(4).Infof("EvaluatePolicy: INDETERMINATE (no policy) - bucket=%s", bucket)
-		return false, false, nil
-	default:
-		return false, false, fmt.Errorf("unknown policy result: %v", result)
-	}
+// HasPolicyForBucket checks if a bucket has a policy configured
+func (bpe *BucketPolicyEngine) HasPolicyForBucket(bucket string) bool {
+	return bpe.engine.HasPolicyForBucket(bucket)
 }
 
-// EvaluatePolicyWithContext evaluates whether an action is allowed by bucket policy using HTTP request context
-// This version uses the HTTP request to determine the actual S3 action more accurately
-func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action, principal string, r *http.Request) (allowed bool, evaluated bool, err error) {
+// GetBucketPolicy gets the policy for a bucket
+func (bpe *BucketPolicyEngine) GetBucketPolicy(bucket string) (*policy_engine.PolicyDocument, error) {
+	return bpe.engine.GetBucketPolicy(bucket)
+}
+
+// ListBucketPolicies returns all buckets that have policies
+func (bpe *BucketPolicyEngine) ListBucketPolicies() []string {
+	return bpe.engine.GetAllBucketsWithPolicies()
+}
+
+// EvaluatePolicy evaluates whether an action is allowed by bucket policy
+//
+// Parameters:
+//   - bucket: the bucket name
+//   - object: the object key (can be empty for bucket-level operations)
+//   - action: the action being performed (e.g., "Read", "Write")
+//   - principal: the principal ARN or identifier
+//   - r: the HTTP request (optional, used for condition evaluation and action resolution)
+//   - objectEntry: the object's metadata from entry.Extended (can be nil at auth time,
+//     should be passed when available for tag-based conditions like s3:ExistingObjectTag)
+//
+// Returns:
+//   - allowed: whether the policy allows the action
+//   - evaluated: whether a policy was found and evaluated (false = no policy exists)
+//   - error: any error during evaluation
+func (bpe *BucketPolicyEngine) EvaluatePolicy(bucket, object, action, principal string, r *http.Request, claims map[string]interface{}, objectEntry map[string][]byte) (allowed bool, evaluated bool, err error) {
 	// Validate required parameters
 	if bucket == "" {
 		return false, false, fmt.Errorf("bucket cannot be empty")
@@ -145,41 +122,71 @@ func (bpe *BucketPolicyEngine) EvaluatePolicyWithContext(bucket, object, action,
 		return false, false, fmt.Errorf("action cannot be empty")
 	}
 
-	// Convert action to S3 action format using request context
+	// Convert action to S3 action format
 	// ResolveS3Action handles nil request internally (falls back to mapBaseActionToS3Format)
 	s3Action := ResolveS3Action(r, action, bucket, object)
 
 	// Build resource ARN
 	resource := buildResourceARN(bucket, object)
 
-	glog.V(4).Infof("EvaluatePolicyWithContext: bucket=%s, resource=%s, action=%s (from %s), principal=%s", 
-		bucket, resource, s3Action, action, principal)
+	glog.V(4).Infof("EvaluatePolicy: bucket=%s, resource=%s, action=%s, principal=%s",
+		bucket, resource, s3Action, principal)
 
 	// Evaluate using the policy engine
 	args := &policy_engine.PolicyEvaluationArgs{
-		Action:    s3Action,
-		Resource:  resource,
-		Principal: principal,
+		Action:      s3Action,
+		Resource:    resource,
+		Principal:   principal,
+		ObjectEntry: objectEntry,
+	}
+
+	// glog.V(4).Infof("EvaluatePolicy [Wrapper]: bucket=%s, resource=%s, action=%s, principal=%s",
+	// 	bucket, resource, s3Action, principal)
+
+	// Extract conditions and claims from request if available
+	if r != nil {
+		args.Conditions = policy_engine.ExtractConditionValuesFromRequest(r)
+
+		// Extract principal-related variables (aws:username, etc.) from principal ARN
+		principalVars := policy_engine.ExtractPrincipalVariables(principal)
+		for k, v := range principalVars {
+			args.Conditions[k] = v
+		}
+
+		// Extract JWT claims if authenticated via JWT or STS
+		if claims != nil {
+			args.Claims = claims
+		} else {
+			// If claims were not provided directly, try to get them from context Identity?
+			// But the caller is responsible for passing them.
+			// Falling back to empty claims if not provided.
+		}
+
+		// For multipart continuation actions look up the SSE algorithm that was
+		// set at CreateMultipartUpload time. UploadPart/UploadPartCopy do not
+		// re-send the SSE header, so we inject the stored value so that bucket
+		// policy conditions on s3:x-amz-server-side-encryption evaluate correctly.
+		if policy_engine.IsMultipartContinuationAction(s3Action) && bpe.MultipartSSELookup != nil {
+			if uploadID := r.URL.Query().Get("uploadId"); uploadID != "" {
+				args.InheritedSSEAlgorithm = bpe.MultipartSSELookup(bucket, uploadID)
+			}
+		}
 	}
 
 	result := bpe.engine.EvaluatePolicy(bucket, args)
 
 	switch result {
 	case policy_engine.PolicyResultAllow:
-		glog.V(3).Infof("EvaluatePolicyWithContext: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: ALLOW - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
 		return true, true, nil
 	case policy_engine.PolicyResultDeny:
-		glog.V(3).Infof("EvaluatePolicyWithContext: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: DENY - bucket=%s, action=%s, principal=%s", bucket, s3Action, principal)
 		return false, true, nil
 	case policy_engine.PolicyResultIndeterminate:
 		// No policy exists for this bucket
-		glog.V(4).Infof("EvaluatePolicyWithContext: INDETERMINATE (no policy) - bucket=%s", bucket)
+		// glog.V(4).Infof("EvaluatePolicy [Wrapper]: INDETERMINATE (no policy) - bucket=%s", bucket)
 		return false, false, nil
 	default:
 		return false, false, fmt.Errorf("unknown policy result: %v", result)
 	}
 }
-
-// NOTE: The convertActionToS3Format wrapper has been removed for simplicity.
-// EvaluatePolicy and EvaluatePolicyWithContext now call ResolveS3Action or
-// mapBaseActionToS3Format directly, making the control flow more explicit.

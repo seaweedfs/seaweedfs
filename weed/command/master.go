@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,6 +72,8 @@ type MasterOptions struct {
 	raftBootstrap      *bool
 	telemetryUrl       *string
 	telemetryEnabled   *bool
+	debug              *bool
+	debugPort          *int
 }
 
 func init() {
@@ -98,6 +103,8 @@ func init() {
 	m.raftBootstrap = cmdMaster.Flag.Bool("raftBootstrap", false, "Whether to bootstrap the Raft cluster")
 	m.telemetryUrl = cmdMaster.Flag.String("telemetry.url", "https://telemetry.seaweedfs.com/api/collect", "telemetry server URL to send usage statistics")
 	m.telemetryEnabled = cmdMaster.Flag.Bool("telemetry", false, "enable telemetry reporting")
+	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
 }
 
 var cmdMaster = &Command{
@@ -121,6 +128,9 @@ var (
 )
 
 func runMaster(cmd *Command, args []string) bool {
+	if *m.debug {
+		grace.StartDebugServer(*m.debugPort)
+	}
 
 	util.LoadSecurityConfiguration()
 	util.LoadConfiguration("master", false)
@@ -244,16 +254,32 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		go grpcS.Serve(grpcLocalL)
 	}
 	go grpcS.Serve(grpcL)
+	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
 	// For multi-master mode with non-Hashicorp raft, wait and check if we should join
 	if !*masterOption.raftHashicorp && !isSingleMaster {
 		go func() {
-			time.Sleep(raftJoinCheckDelay)
+			// Stagger bootstrap by peer index so masters don't all check
+			// simultaneously. Peer 0 waits ~1.5s, peer 1 ~3s, etc.
+			idx := peerIndex(myMasterAddress, peers)
+			delay := time.Duration(float64(raftJoinCheckDelay) * (rand.Float64()*0.25 + 1) * float64(idx+1))
+			glog.V(0).Infof("bootstrap check in %v (peer index %d of %d)", delay, idx, len(peers))
+			time.Sleep(delay)
 
 			ms.Topo.RaftServerAccessLock.RLock()
 			isEmptyMaster := ms.Topo.RaftServer.Leader() == "" && ms.Topo.RaftServer.IsLogEmpty()
-			if isEmptyMaster && isTheFirstOne(myMasterAddress, peers) && ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress) == "" {
-				raftServer.DoJoinCommand()
+			isFirst := idx == 0
+			if isEmptyMaster && isFirst {
+				existingLeader := ms.MasterClient.FindLeaderFromOtherPeers(myMasterAddress)
+				if existingLeader == "" {
+					raftServer.DoJoinCommand()
+				} else {
+					glog.V(0).Infof("skip bootstrap: existing leader %s found from peers", existingLeader)
+				}
+			} else if !isEmptyMaster {
+				glog.V(0).Infof("skip bootstrap: leader=%q logEmpty=%v", ms.Topo.RaftServer.Leader(), ms.Topo.RaftServer.IsLogEmpty())
+			} else {
+				glog.V(0).Infof("skip bootstrap: %v is not the first master in peers (index %d)", myMasterAddress, idx)
 			}
 			ms.Topo.RaftServerAccessLock.RUnlock()
 		}()
@@ -304,7 +330,14 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
 		}
 	})
-	select {}
+	ctx := MiniClusterCtx
+	if ctx != nil {
+		<-ctx.Done()
+		ms.Shutdown()
+		grpcS.Stop()
+	} else {
+		select {}
+	}
 }
 
 func isSingleMasterMode(peers string) bool {
@@ -324,8 +357,16 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 	}
 
 	peers = strings.TrimSpace(peers)
-
-	cleanedPeers = pb.ServerAddresses(peers).ToAddresses()
+	seenPeers := make(map[string]struct{})
+	for _, peer := range pb.ServerAddresses(peers).ToAddresses() {
+		normalizedPeer := normalizeMasterPeerAddress(peer, masterAddress)
+		key := string(normalizedPeer)
+		if _, found := seenPeers[key]; found {
+			continue
+		}
+		seenPeers[key] = struct{}{}
+		cleanedPeers = append(cleanedPeers, normalizedPeer)
+	}
 
 	hasSelf := false
 	for _, peer := range cleanedPeers {
@@ -344,14 +385,36 @@ func checkPeers(masterIp string, masterPort int, masterGrpcPort int, peers strin
 	return
 }
 
-func isTheFirstOne(self pb.ServerAddress, peers []pb.ServerAddress) bool {
-	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
-		return strings.Compare(string(a), string(b))
-	})
-	if len(peers) <= 0 {
-		return true
+func normalizeMasterPeerAddress(peer pb.ServerAddress, self pb.ServerAddress) pb.ServerAddress {
+	if peer.ToHttpAddress() == self.ToHttpAddress() {
+		return self
 	}
-	return self == peers[0]
+
+	_, grpcPort, err := net.SplitHostPort(peer.ToGrpcAddress())
+	if err != nil {
+		return peer
+	}
+	grpcPortValue, err := strconv.Atoi(grpcPort)
+	if err != nil {
+		return peer
+	}
+
+	return pb.NewServerAddressWithGrpcPort(peer.ToHttpAddress(), grpcPortValue)
+}
+
+// peerIndex returns the 0-based position of self in the sorted peer list.
+// Peer 0 is the designated bootstrap node. Returns -1 if self is not found.
+func peerIndex(self pb.ServerAddress, peers []pb.ServerAddress) int {
+	slices.SortFunc(peers, func(a, b pb.ServerAddress) int {
+		return strings.Compare(a.ToHttpAddress(), b.ToHttpAddress())
+	})
+	for i, peer := range peers {
+		if peer.ToHttpAddress() == self.ToHttpAddress() {
+			return i
+		}
+	}
+	glog.Warningf("peerIndex: self %s not found in peers %v", self, peers)
+	return -1
 }
 
 func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOption {

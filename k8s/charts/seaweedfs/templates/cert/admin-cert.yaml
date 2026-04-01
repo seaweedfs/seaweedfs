@@ -1,0 +1,44 @@
+{{- include "seaweedfs.compat" . -}}
+{{- if and .Values.global.seaweedfs.enableSecurity (not .Values.certificates.externalCertificates.enabled)}}
+apiVersion: cert-manager.io/v1{{ if .Values.global.seaweedfs.certificates.alphacrds }}alpha1{{ end }}
+kind: Certificate
+metadata:
+  name: {{ include "seaweedfs.fullname" . }}-admin-cert
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
+    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: admin
+  {{- if .Values.admin.annotations }}
+  annotations:
+    {{- toYaml .Values.admin.annotations | nindent 4 }}
+  {{- end }}
+spec:
+  secretName: {{ include "seaweedfs.fullname" . }}-admin-cert
+  issuerRef:
+    name: {{ include "seaweedfs.fullname" . }}-ca-issuer
+    kind: Issuer
+  commonName: {{ .Values.certificates.commonName }}
+  subject:
+    organizations:
+    - "SeaweedFS CA"
+  dnsNames:
+    - '*.{{ include "seaweedfs.fullname" . }}-admin'
+    - '*.{{ include "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}'
+    - '*.{{ include "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}.svc'
+    - '*.{{ include "seaweedfs.fullname" . }}-admin.{{ .Release.Namespace }}.svc.cluster.local'
+{{- if .Values.certificates.ipAddresses }}
+  ipAddresses:
+    {{- range .Values.certificates.ipAddresses }}
+    - {{ . }}
+    {{- end }}
+{{- end }}
+  privateKey:
+    algorithm: {{ .Values.certificates.keyAlgorithm }}
+    size: {{ .Values.certificates.keySize }}
+  duration: {{ .Values.certificates.duration }}
+  renewBefore: {{ .Values.certificates.renewBefore }}
+{{- end }}
+

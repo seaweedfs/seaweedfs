@@ -1,10 +1,11 @@
 package cluster
 
 import (
-	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"strconv"
 	"sync"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 )
 
 func TestConcurrentAddRemoveNodes(t *testing.T) {

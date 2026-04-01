@@ -278,14 +278,14 @@ func TestVolumeCheckDiskHelperMethods(t *testing.T) {
 	}
 
 	// Test write method
-	vcd.write("test %s\n", "message")
+	vcd.write("test %s", "message")
 	if buf.String() != "test message\n" {
 		t.Errorf("write() output = %q, want %q", buf.String(), "test message\n")
 	}
 
 	// Test writeVerbose with verbose=true
 	buf.Reset()
-	vcd.writeVerbose("verbose %d\n", 123)
+	vcd.writeVerbose("verbose %d", 123)
 	if buf.String() != "verbose 123\n" {
 		t.Errorf("writeVerbose() with verbose=true output = %q, want %q", buf.String(), "verbose 123\n")
 	}
@@ -293,7 +293,7 @@ func TestVolumeCheckDiskHelperMethods(t *testing.T) {
 	// Test writeVerbose with verbose=false
 	buf.Reset()
 	vcd.verbose = false
-	vcd.writeVerbose("should not appear\n")
+	vcd.writeVerbose("should not appear")
 	if buf.String() != "" {
 		t.Errorf("writeVerbose() with verbose=false output = %q, want empty", buf.String())
 	}

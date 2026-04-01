@@ -4,7 +4,7 @@ import (
 	"strings"
 )
 
-func (f *Filer) isBucket(entry *Entry) bool {
+func (f *Filer) IsBucket(entry *Entry) bool {
 	if !entry.IsDirectory() {
 		return false
 	}

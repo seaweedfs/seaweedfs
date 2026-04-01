@@ -2,11 +2,13 @@ package gcs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"reflect"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -14,6 +16,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
 	"github.com/seaweedfs/seaweedfs/weed/remote_storage"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"golang.org/x/oauth2"
+	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 )
@@ -36,25 +40,45 @@ func (s gcsRemoteStorageMaker) Make(conf *remote_pb.RemoteConf) (remote_storage.
 	googleApplicationCredentials := conf.GcsGoogleApplicationCredentials
 
 	if googleApplicationCredentials == "" {
-		found := false
-		googleApplicationCredentials, found = os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS")
-		if !found {
-			return nil, fmt.Errorf("need to specific GOOGLE_APPLICATION_CREDENTIALS env variable")
+		if creds, found := os.LookupEnv("GOOGLE_APPLICATION_CREDENTIALS"); found {
+			googleApplicationCredentials = creds
+		} else {
+			glog.Warningf("no GOOGLE_APPLICATION_CREDENTIALS env variable found, falling back to Application Default Credentials")
 		}
 	}
 
 	projectID := conf.GcsProjectId
 	if projectID == "" {
-		found := false
-		projectID, found = os.LookupEnv("GOOGLE_CLOUD_PROJECT")
-		if !found {
-			glog.Warningf("need to specific GOOGLE_CLOUD_PROJECT env variable")
+		if pid, found := os.LookupEnv("GOOGLE_CLOUD_PROJECT"); found {
+			projectID = pid
+		} else {
+			glog.Warningf("need to specify GOOGLE_CLOUD_PROJECT env variable")
 		}
 	}
 
-	googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
+	var clientOpts []option.ClientOption
 
-	c, err := storage.NewClient(context.Background(), option.WithCredentialsFile(googleApplicationCredentials))
+	if googleApplicationCredentials != "" {
+		googleApplicationCredentials = util.ResolvePath(googleApplicationCredentials)
+		var data []byte
+		var err error
+		if strings.HasPrefix(googleApplicationCredentials, "{") {
+			data = []byte(googleApplicationCredentials)
+		} else {
+			data, err = os.ReadFile(googleApplicationCredentials)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read credentials file %s: %w", googleApplicationCredentials, err)
+			}
+		}
+		creds, err := google.CredentialsFromJSON(context.Background(), data, storage.ScopeFullControl)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse credentials: %w", err)
+		}
+		httpClient := oauth2.NewClient(context.Background(), creds.TokenSource)
+		clientOpts = append(clientOpts, option.WithHTTPClient(httpClient), option.WithoutAuthentication())
+	}
+
+	c, err := storage.NewClient(context.Background(), clientOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create client: %w", err)
 	}
@@ -104,6 +128,74 @@ func (gcs *gcsRemoteStorageClient) Traverse(loc *remote_pb.RemoteStorageLocation
 	}
 	return
 }
+
+const defaultGCSOpTimeout = 30 * time.Second
+
+func (gcs *gcsRemoteStorageClient) ListDirectory(ctx context.Context, loc *remote_pb.RemoteStorageLocation, visitFn remote_storage.VisitFunc) (err error) {
+	pathKey := loc.Path[1:]
+	if pathKey != "" && !strings.HasSuffix(pathKey, "/") {
+		pathKey += "/"
+	}
+
+	objectIterator := gcs.client.Bucket(loc.Bucket).Objects(ctx, &storage.Query{
+		Delimiter: "/",
+		Prefix:    pathKey,
+		Versions:  false,
+	})
+
+	for {
+		objectAttr, iterErr := objectIterator.Next()
+		if iterErr != nil {
+			if iterErr == iterator.Done {
+				return nil
+			}
+			return fmt.Errorf("list directory %s%s: %w", loc.Bucket, loc.Path, iterErr)
+		}
+
+		if objectAttr.Prefix != "" {
+			// Common prefix → subdirectory
+			dirKey := "/" + strings.TrimSuffix(objectAttr.Prefix, "/")
+			dir, name := util.FullPath(dirKey).DirAndName()
+			if err = visitFn(dir, name, true, nil); err != nil {
+				return err
+			}
+		} else {
+			key := "/" + objectAttr.Name
+			if strings.HasSuffix(key, "/") {
+				continue // skip directory markers
+			}
+			dir, name := util.FullPath(key).DirAndName()
+			if err = visitFn(dir, name, false, &filer_pb.RemoteEntry{
+				RemoteMtime: objectAttr.Updated.Unix(),
+				RemoteSize:  objectAttr.Size,
+				RemoteETag:  objectAttr.Etag,
+				StorageName: gcs.conf.Name,
+			}); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (gcs *gcsRemoteStorageClient) StatFile(loc *remote_pb.RemoteStorageLocation) (remoteEntry *filer_pb.RemoteEntry, err error) {
+	key := loc.Path[1:]
+	ctx, cancel := context.WithTimeout(context.Background(), defaultGCSOpTimeout)
+	defer cancel()
+	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(ctx)
+	if err != nil {
+		if errors.Is(err, storage.ErrObjectNotExist) {
+			return nil, remote_storage.ErrRemoteObjectNotFound
+		}
+		return nil, fmt.Errorf("stat gcs %s%s: %w", loc.Bucket, loc.Path, err)
+	}
+	return &filer_pb.RemoteEntry{
+		StorageName: gcs.conf.Name,
+		RemoteMtime: attr.Updated.Unix(),
+		RemoteSize:  attr.Size,
+		RemoteETag:  attr.Etag,
+	}, nil
+}
+
 func (gcs *gcsRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocation, offset int64, size int64) (data []byte, err error) {
 
 	key := loc.Path[1:]
@@ -148,20 +240,7 @@ func (gcs *gcsRemoteStorageClient) WriteFile(loc *remote_pb.RemoteStorageLocatio
 }
 
 func (gcs *gcsRemoteStorageClient) readFileRemoteEntry(loc *remote_pb.RemoteStorageLocation) (*filer_pb.RemoteEntry, error) {
-	key := loc.Path[1:]
-	attr, err := gcs.client.Bucket(loc.Bucket).Object(key).Attrs(context.Background())
-
-	if err != nil {
-		return nil, err
-	}
-
-	return &filer_pb.RemoteEntry{
-		RemoteMtime: attr.Updated.Unix(),
-		RemoteSize:  attr.Size,
-		RemoteETag:  attr.Etag,
-		StorageName: gcs.conf.Name,
-	}, nil
-
+	return gcs.StatFile(loc)
 }
 
 func toMetadata(attributes map[string][]byte) map[string]string {

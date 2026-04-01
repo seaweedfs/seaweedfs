@@ -62,6 +62,10 @@ func (c *Collector) CollectAndSendAsync() {
 		return
 	}
 
+	if c.topo != nil {
+		c.client.SetTopologyId(c.topo.GetTopologyId())
+	}
+
 	go func() {
 		data := c.collectData()
 		c.client.SendTelemetryAsync(data)

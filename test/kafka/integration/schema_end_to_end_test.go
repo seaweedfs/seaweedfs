@@ -86,7 +86,7 @@ func TestSchemaEndToEnd_AvroRoundTrip(t *testing.T) {
 		// Verify all fields
 		assert.Equal(t, int32(12345), decodedMap["id"])
 		assert.Equal(t, "Alice Johnson", decodedMap["name"])
-		
+
 		// Verify union fields
 		emailUnion, ok := decodedMap["email"].(map[string]interface{})
 		require.True(t, ok, "Email should be a union")
@@ -126,7 +126,7 @@ func TestSchemaEndToEnd_ProtobufRoundTrip(t *testing.T) {
 		require.Equal(t, uint32(2), envelope.SchemaID, "Schema ID should match")
 		// Note: ParseConfluentEnvelope defaults to FormatAvro; format detection requires schema registry
 		require.Equal(t, schema.FormatAvro, envelope.Format, "Format defaults to Avro without schema registry lookup")
-		
+
 		// For Protobuf with indexes, we need to use the specialized parser
 		protobufEnvelope, ok := schema.ParseConfluentProtobufEnvelopeWithIndexCount(confluentMsg, 1)
 		require.True(t, ok, "Message should be a valid Protobuf envelope")
@@ -268,7 +268,6 @@ func createMockSchemaRegistryForE2E(t *testing.T) *httptest.Server {
 		}
 	}))
 }
-
 
 func getUserAvroSchemaForE2E() string {
 	return `{

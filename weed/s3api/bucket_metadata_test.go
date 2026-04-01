@@ -3,15 +3,16 @@ package s3api
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
-	"reflect"
-	"sync"
-	"testing"
-	"time"
 )
 
 type BucketMetadataTestCase struct {

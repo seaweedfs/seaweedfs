@@ -625,6 +625,9 @@ func (hms *HybridMessageScanner) countLiveLogFiles(partition topic.Partition) (i
 				return err
 			}
 
+			if resp.Entry == nil {
+				continue
+			}
 			// Count files that are not .parquet files (live log files)
 			// Live log files typically have timestamps or are named like log files
 			fileName := resp.Entry.Name
@@ -1286,7 +1289,7 @@ func (h *HybridMessageScanner) extractParquetFileStats(entry *filer_pb.Entry, lo
 	visibleIntervals, _ := filer.NonOverlappingVisibleIntervals(context.Background(), lookupFileIdFn, entry.Chunks, 0, int64(fileSize))
 	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, 0, int64(fileSize))
 	readerCache := filer.NewReaderCache(32, chunkCache, lookupFileIdFn)
-	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize))
+	readerAt := filer.NewChunkReaderAtFromClient(context.Background(), readerCache, chunkViews, int64(fileSize), filer.DefaultPrefetchCount)
 
 	// Create parquet reader - this only reads metadata, not data
 	parquetReader := parquet.NewReader(readerAt)

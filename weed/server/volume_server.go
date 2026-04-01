@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -42,21 +43,22 @@ type VolumeServer struct {
 	guard           *security.Guard
 	grpcDialOption  grpc.DialOption
 
-	needleMapKind           storage.NeedleMapKind
-	ldbTimout               int64
-	FixJpgOrientation       bool
-	ReadMode                string
-	compactionBytePerSecond int64
-	metricsAddress          string
-	metricsIntervalSec      int
-	fileSizeLimitBytes      int64
-	isHeartbeating          bool
-	stopChan                chan bool
+	needleMapKind            storage.NeedleMapKind
+	ldbTimout                int64
+	FixJpgOrientation        bool
+	ReadMode                 string
+	compactionBytePerSecond  int64
+	maintenanceBytePerSecond int64
+	metricsAddress           string
+	metricsIntervalSec       int
+	fileSizeLimitBytes       int64
+	isHeartbeating           bool
+	stopChan                 chan bool
 }
 
 func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
-	port int, grpcPort int, publicUrl string,
-	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType,
+	port int, grpcPort int, publicUrl string, id string,
+	folders []string, maxCounts []int32, minFreeSpaces []util.MinFreeSpace, diskTypes []types.DiskType, diskTags [][]string,
 	idxFolder string,
 	needleMapKind storage.NeedleMapKind,
 	masterNodes []pb.ServerAddress, pulsePeriod time.Duration,
@@ -65,6 +67,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 	fixJpgOrientation bool,
 	readMode string,
 	compactionMBPerSecond int,
+	maintenanceMBPerSecond int,
 	fileSizeLimitMB int,
 	concurrentUploadLimit int64,
 	concurrentDownloadLimit int64,
@@ -94,6 +97,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 		ReadMode:                      readMode,
 		grpcDialOption:                security.LoadClientTLS(util.GetViper(), "grpc.volume"),
 		compactionBytePerSecond:       int64(compactionMBPerSecond) * 1024 * 1024,
+		maintenanceBytePerSecond:      int64(maintenanceMBPerSecond) * 1024 * 1024,
 		fileSizeLimitBytes:            int64(fileSizeLimitMB) * 1024 * 1024,
 		isHeartbeating:                true,
 		stopChan:                      make(chan bool),
@@ -114,7 +118,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	vs.checkWithMaster()
 
-	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, ldbTimeout)
+	vs.store = storage.NewStore(vs.grpcDialOption, ip, port, grpcPort, publicUrl, id, folders, maxCounts, minFreeSpaces, idxFolder, vs.needleMapKind, diskTypes, diskTags, ldbTimeout)
 	vs.guard = security.NewGuard(whiteList, signingKey, expiresAfterSec, readSigningKey, readExpiresAfterSec)
 
 	handleStaticResources(adminMux)
@@ -167,4 +171,20 @@ func (vs *VolumeServer) Reload() {
 	util.LoadConfiguration("security", false)
 	v := util.GetViper()
 	vs.guard.UpdateWhiteList(append(vs.whiteList, util.StringSplit(v.GetString("guard.white_list"), ",")...))
+}
+
+// Returns whether a volume server is in maintenance (i.e. read-only) mode.
+func (vs *VolumeServer) MaintenanceMode() bool {
+	if vs.store == nil {
+		return false
+	}
+	return vs.store.State.Proto().GetMaintenance()
+}
+
+// Checks if a volume server is in maintenance mode, and returns an error explaining why.
+func (vs *VolumeServer) CheckMaintenanceMode() error {
+	if !vs.MaintenanceMode() {
+		return nil
+	}
+	return fmt.Errorf("volume server %s is in maintenance mode", vs.store.Id)
 }

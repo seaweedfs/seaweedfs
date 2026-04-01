@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -46,7 +47,8 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ret := operation.UploadResult{}
-	isUnchanged, writeError := topology.ReplicatedWrite(ctx, vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
+	// use context.WithoutCancel to avoid context cancellation when the client connection is closed
+	isUnchanged, writeError := topology.ReplicatedWrite(context.WithoutCancel(ctx), vs.GetMaster, vs.grpcDialOption, vs.store, volumeId, reqNeedle, r, contentMd5)
 	if writeError != nil {
 		writeJsonError(w, r, http.StatusInternalServerError, writeError)
 		return
@@ -66,6 +68,7 @@ func (vs *VolumeServer) PostHandler(w http.ResponseWriter, r *http.Request) {
 	ret.Size = uint32(originalSize)
 	ret.ETag = reqNeedle.Etag()
 	ret.Mime = string(reqNeedle.Mime)
+	ret.ContentMd5 = contentMd5
 	SetEtag(w, ret.ETag)
 	w.Header().Set("Content-MD5", contentMd5)
 	writeJsonQuiet(w, r, httpStatus, ret)

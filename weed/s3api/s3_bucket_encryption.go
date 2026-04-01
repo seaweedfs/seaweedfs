@@ -2,15 +2,21 @@ package s3api
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/s3_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
+
+// ErrNoEncryptionConfig is returned when a bucket has no encryption configuration
+var ErrNoEncryptionConfig = errors.New("no encryption configuration found")
 
 // ServerSideEncryptionConfiguration represents the bucket encryption configuration
 type ServerSideEncryptionConfiguration struct {
@@ -28,18 +34,6 @@ type ServerSideEncryptionRule struct {
 type ApplyServerSideEncryptionByDefault struct {
 	SSEAlgorithm   string `xml:"SSEAlgorithm"`
 	KMSMasterKeyID string `xml:"KMSMasterKeyID,omitempty"`
-}
-
-// encryptionConfigToProto converts EncryptionConfiguration to protobuf format
-func encryptionConfigToProto(config *s3_pb.EncryptionConfiguration) *s3_pb.EncryptionConfiguration {
-	if config == nil {
-		return nil
-	}
-	return &s3_pb.EncryptionConfiguration{
-		SseAlgorithm:     config.SseAlgorithm,
-		KmsKeyId:         config.KmsKeyId,
-		BucketKeyEnabled: config.BucketKeyEnabled,
-	}
 }
 
 // encryptionConfigFromXML converts XML ServerSideEncryptionConfiguration to protobuf
@@ -186,7 +180,7 @@ func (s3a *S3ApiServer) GetBucketEncryptionConfig(bucket string) (*s3_pb.Encrypt
 	config, errCode := s3a.getEncryptionConfiguration(bucket)
 	if errCode != s3err.ErrNone {
 		if errCode == s3err.ErrNoSuchBucketEncryptionConfiguration {
-			return nil, fmt.Errorf("no encryption configuration found")
+			return nil, ErrNoEncryptionConfig
 		}
 		return nil, fmt.Errorf("failed to get encryption configuration")
 	}
@@ -200,6 +194,13 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 	// Get metadata using structured API
 	metadata, err := s3a.GetBucketMetadata(bucket)
 	if err != nil {
+		// If the bucket directory is not found (e.g., during bucket recreation after
+		// a partial delete), treat it as having no encryption configured rather than
+		// failing the upload with an internal error.
+		if errors.Is(err, filer_pb.ErrNotFound) || strings.Contains(err.Error(), "bucket directory not found") {
+			glog.Warningf("getEncryptionConfiguration: bucket metadata not found for %s, treating as no encryption: %v", bucket, err)
+			return nil, s3err.ErrNoSuchBucketEncryptionConfiguration
+		}
 		glog.Errorf("getEncryptionConfiguration: failed to get bucket metadata for bucket %s: %v", bucket, err)
 		return nil, s3err.ErrInternalError
 	}
@@ -214,13 +215,14 @@ func (s3a *S3ApiServer) getEncryptionConfiguration(bucket string) (*s3_pb.Encryp
 // updateEncryptionConfiguration updates the encryption configuration for a bucket
 func (s3a *S3ApiServer) updateEncryptionConfiguration(bucket string, encryptionConfig *s3_pb.EncryptionConfiguration) s3err.ErrorCode {
 	// Update using structured API
+	// Note: UpdateBucketEncryption -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err := s3a.UpdateBucketEncryption(bucket, encryptionConfig)
 	if err != nil {
 		glog.Errorf("updateEncryptionConfiguration: failed to update encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
@@ -238,20 +240,25 @@ func (s3a *S3ApiServer) removeEncryptionConfiguration(bucket string) s3err.Error
 	}
 
 	// Update using structured API
+	// Note: ClearBucketEncryption -> UpdateBucketMetadata -> setBucketMetadata
+	// already invalidates the cache synchronously after successful update
 	err = s3a.ClearBucketEncryption(bucket)
 	if err != nil {
 		glog.Errorf("removeEncryptionConfiguration: failed to remove encryption config for bucket %s: %v", bucket, err)
 		return s3err.ErrInternalError
 	}
 
-	// Cache will be updated automatically via metadata subscription
 	return s3err.ErrNone
 }
 
 // IsDefaultEncryptionEnabled checks if default encryption is enabled for a bucket
 func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("IsDefaultEncryptionEnabled: failed to get encryption config for bucket %s: %v", bucket, err)
+		return false
+	}
+	if config == nil {
 		return false
 	}
 	return config.SseAlgorithm != ""
@@ -260,7 +267,11 @@ func (s3a *S3ApiServer) IsDefaultEncryptionEnabled(bucket string) bool {
 // GetDefaultEncryptionHeaders returns the default encryption headers for a bucket
 func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]string {
 	config, err := s3a.GetBucketEncryptionConfig(bucket)
-	if err != nil || config == nil {
+	if err != nil {
+		glog.V(4).Infof("GetDefaultEncryptionHeaders: failed to get encryption config for bucket %s: %v", bucket, err)
+		return nil
+	}
+	if config == nil {
 		return nil
 	}
 

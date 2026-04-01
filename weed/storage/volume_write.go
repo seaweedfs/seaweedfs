@@ -70,7 +70,7 @@ func (v *Volume) Destroy(onlyEmpty bool) (err error) {
 			return
 		}
 	}
-	if v.isCompacting || v.isCommitCompacting {
+	if !v.isCompactionInProgress.CompareAndSwap(false, true) {
 		err = fmt.Errorf("volume %d is compacting", v.Id)
 		return
 	}
@@ -99,6 +99,8 @@ func removeVolumeFiles(filename string) {
 	os.Remove(filename + ".cpx")
 	// level db index file
 	os.RemoveAll(filename + ".ldb")
+	// redb index file (Rust volume server)
+	os.Remove(filename + ".rdb")
 	// marker for damaged or incomplete volume
 	os.Remove(filename + ".note")
 }

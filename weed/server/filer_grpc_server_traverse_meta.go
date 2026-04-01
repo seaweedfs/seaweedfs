@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -63,13 +64,13 @@ func (fs *FilerServer) iterateDirectory(ctx context.Context, dirPath util.FullPa
 	var listErr error
 	for {
 		var hasEntries bool
-		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(ctx, dirPath, lastFileName, false, 1024, "", "", "", func(entry *filer.Entry) bool {
+		lastFileName, listErr = fs.filer.StreamListDirectoryEntries(ctx, dirPath, lastFileName, false, 1024, "", "", "", func(entry *filer.Entry) (bool, error) {
 			hasEntries = true
 			if fnErr := fn(entry); fnErr != nil {
 				err = fnErr
-				return false
+				return false, err
 			}
-			return true
+			return true, nil
 		})
 		if listErr != nil {
 			return listErr

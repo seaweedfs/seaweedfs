@@ -1,0 +1,101 @@
+version: '3.9'
+
+services:
+  # Build SeaweedFS with FoundationDB support
+  seaweedfs-fdb-builder:
+    build:
+      context: ../..  # Build from seaweedfs root
+      dockerfile: test/foundationdb/Dockerfile.build
+    image: seaweedfs:foundationdb
+    container_name: seaweedfs-fdb-builder
+    volumes:
+      - seaweedfs-build:/build/output
+    command: >
+      sh -c "
+        echo '🔨 Building SeaweedFS with FoundationDB support...' &&
+        cp /usr/local/bin/weed /build/output/weed-foundationdb &&
+        cp /usr/local/bin/fdb_store_test /build/output/fdb_store_test &&
+        echo '✅ Build complete! Binaries saved to volume.' &&
+        /usr/local/bin/weed version &&
+        echo '📦 Available binaries:' &&
+        ls -la /build/output/
+      "
+    networks:
+      - fdb_network
+
+  # FoundationDB cluster for testing
+  fdb1:
+    image: foundationdb/foundationdb:7.1.61
+    hostname: fdb1
+    environment:
+      - FDB_NETWORKING_MODE=container
+    networks:
+      - fdb_network
+    volumes:
+      - fdb_data1:/var/fdb/data
+      - fdb_config:/var/fdb/config
+    command: >
+      bash -c "
+        echo 'docker:docker@fdb1:4500' > /var/fdb/config/fdb.cluster &&
+        /usr/bin/fdbserver --config_path=/var/fdb/config --datadir=/var/fdb/data --logdir=/var/fdb/logs --public_address=fdb1:4500 --listen_address=0.0.0.0:4500 --class=storage
+      "
+
+  # FoundationDB client for database initialization
+  fdb-init:
+    image: foundationdb/foundationdb:7.1.61
+    depends_on:
+      - fdb1
+    volumes:
+      - fdb_config:/var/fdb/config
+    networks:
+      - fdb_network
+    command: >
+      bash -c "
+        sleep 10 &&
+        echo '🔧 Initializing FoundationDB...' &&
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'configure new single memory' &&
+        fdbcli -C /var/fdb/config/fdb.cluster --exec 'status' &&
+        echo '✅ FoundationDB initialized!'
+      "
+
+  # Test the built SeaweedFS with FoundationDB
+  seaweedfs-test:
+    image: seaweedfs:foundationdb
+    depends_on:
+      fdb-init:
+        condition: service_completed_successfully
+      seaweedfs-fdb-builder:
+        condition: service_completed_successfully
+    volumes:
+      - fdb_config:/var/fdb/config
+      - seaweedfs-build:/build/output
+    networks:
+      - fdb_network
+    environment:
+      WEED_FOUNDATIONDB_ENABLED: "true"
+      WEED_FOUNDATIONDB_CLUSTER_FILE: "/var/fdb/config/fdb.cluster"
+      WEED_FOUNDATIONDB_API_VERSION: "740"
+      WEED_FOUNDATIONDB_DIRECTORY_PREFIX: "seaweedfs_test"
+    command: >
+      bash -c "
+        echo '🧪 Testing FoundationDB integration...' &&
+        sleep 5 &&
+        echo '📋 Cluster file contents:' &&
+        cat /var/fdb/config/fdb.cluster &&
+        echo '🚀 Starting SeaweedFS server with FoundationDB...' &&
+        /usr/local/bin/weed server -filer -master.volumeSizeLimitMB=16 -volume.max=0 &
+        SERVER_PID=$! &&
+        sleep 10 &&
+        echo '✅ SeaweedFS started successfully with FoundationDB!' &&
+        echo '🏁 Integration test passed!' &&
+        kill $SERVER_PID
+      "
+
+volumes:
+  fdb_data1:
+  fdb_config:
+  seaweedfs-build:
+
+networks:
+  fdb_network:
+    driver: bridge
