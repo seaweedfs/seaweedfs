@@ -22,7 +22,10 @@ Current WAL V2 design set:
 - `v2-engine-slicing-plan.md`
 - `v2-protocol-truths.md`
 - `v2-production-roadmap.md`
+- `v2-product-completion-overview.md`
+- `v2-phase-development-plan.md`
 - `phase-07-service-slice-plan.md`
+- `phase-08-engine-skeleton-map.md`
 - `agent_dev_process.md`
 
 These documents are the working design home for the V2 line.

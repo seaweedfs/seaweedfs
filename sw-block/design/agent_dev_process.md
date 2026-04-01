@@ -101,6 +101,10 @@ Each delivery should include:
 3. resources acquired/released
 4. test inventory
 5. known carry-forward notes
+6. reuse note:
+   - files updated in place
+   - files used as references only
+   - files copied and why
 
 This template is required between:
 
@@ -125,6 +129,9 @@ Test inventory:
 - ...
 
 Carry-forward notes:
+- ...
+
+Reuse note:
 - ...
 ```
 
@@ -153,6 +160,10 @@ Use for:
 3. carry-forward discussion
 4. open observations
 5. why wording or scope changed
+6. slice-level reuse instructions:
+   - `update in place`
+   - `reference only`
+   - `copy is allowed`
 
 This document may be longer and more detailed.
 
@@ -289,6 +300,20 @@ Any such reuse should be reviewed explicitly as:
 2. reuse with explicit boundary
 3. temporary carry-forward
 4. hard gate before later phases
+
+### Rule 6: Every substantial slice should declare reuse instructions
+
+Before implementation grows, the slice package should state:
+
+1. which existing files are expected to be updated in place
+2. which existing files are reference-only
+3. whether any copying is allowed and why
+
+This helps prevent:
+
+1. accidental scope growth
+2. unclear ownership of old files
+3. hidden semantic inheritance from V1/V1.5 paths
 
 ## Current Direction
 
