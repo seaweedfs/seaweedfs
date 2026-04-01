@@ -943,7 +943,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			leaderCount++
 		}
 
-		masterMap[pb.ServerAddress(master.Address).ToHttpAddress()] = masterInfo
+		masterMap[masterInfo.Address] = masterInfo
 	}
 
 	// Then, get additional master information from Raft cluster
