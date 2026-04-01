@@ -609,6 +609,17 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
+	if !util.FileExists(indexBaseFileName + ".ecx") {
+		indexBaseFileName = dataBaseFileName
+	}
+
+	// Merge .ecj deletions into .ecx so that HasLiveNeedles and FindDatFileSize
+	// see the full set of deleted needles. Without this, needles deleted after the
+	// last ecx rebuild would still appear live, causing the decoded .dat to include
+	// data that should be skipped and HasLiveNeedles to return a false positive.
+	if err := erasure_coding.RebuildEcxFile(indexBaseFileName); err != nil {
+		return nil, fmt.Errorf("RebuildEcxFile %s: %v", indexBaseFileName, err)
+	}
 
 	// If the EC index contains no live entries, decoding should be a no-op:
 	// just allow the caller to purge EC shards and do not generate an empty normal volume.
@@ -634,6 +645,29 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	// write .idx file from .ecx and .ecj files
 	if err := erasure_coding.WriteIdxFileFromEcIndex(indexBaseFileName); err != nil {
 		return nil, fmt.Errorf("WriteIdxFileFromEcIndex %s: %v", v.IndexBaseFileName(), err)
+	}
+
+	var volumeLocation *storage.DiskLocation
+	for _, location := range vs.store.Locations {
+		if candidate, found := location.FindEcVolume(needle.VolumeId(req.VolumeId)); found && candidate == v {
+			volumeLocation = location
+			break
+		}
+	}
+	if volumeLocation == nil {
+		return nil, fmt.Errorf("ec volume %d location not found for offline compaction", req.VolumeId)
+	}
+
+	if err := vs.store.CompactVolumeFiles(
+		needle.VolumeId(req.VolumeId),
+		v.Collection,
+		volumeLocation,
+		vs.needleMapKind,
+		vs.ldbTimout,
+		0,
+		vs.compactionBytePerSecond,
+	); err != nil {
+		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil

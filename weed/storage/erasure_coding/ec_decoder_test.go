@@ -174,6 +174,218 @@ func TestWriteIdxFileFromEcIndex_ProcessesEcjJournal(t *testing.T) {
 	}
 }
 
+// TestDecodeWithNonEmptyEcj_AllDeleted verifies the full decode pre-processing
+// when .ecj contains deletions for ALL live entries in .ecx.
+// After RebuildEcxFile merges .ecj into .ecx, HasLiveNeedles must return false
+// and WriteIdxFileFromEcIndex must produce an .idx where every entry is tombstoned.
+func TestDecodeWithNonEmptyEcj_AllDeleted(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "test_1")
+
+	// .ecx: two live entries
+	needle1 := makeNeedleMapEntry(types.NeedleId(1), types.ToOffset(64), types.Size(100))
+	needle2 := makeNeedleMapEntry(types.NeedleId(2), types.ToOffset(128), types.Size(200))
+	ecxData := append(needle1, needle2...)
+	if err := os.WriteFile(base+".ecx", ecxData, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	// .ecj: both needles deleted
+	ecjData := make([]byte, 2*types.NeedleIdSize)
+	types.NeedleIdToBytes(ecjData[0:types.NeedleIdSize], types.NeedleId(1))
+	types.NeedleIdToBytes(ecjData[types.NeedleIdSize:], types.NeedleId(2))
+	if err := os.WriteFile(base+".ecj", ecjData, 0644); err != nil {
+		t.Fatalf("write ecj: %v", err)
+	}
+
+	// Before rebuild, ecx entries look live
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles before rebuild: %v", err)
+	}
+	if !hasLive {
+		t.Fatal("expected live entries before rebuild")
+	}
+
+	// Simulate what VolumeEcShardsToVolume now does: merge .ecj into .ecx
+	if err := erasure_coding.RebuildEcxFile(base); err != nil {
+		t.Fatalf("RebuildEcxFile: %v", err)
+	}
+
+	// .ecj should be removed after rebuild
+	if _, err := os.Stat(base + ".ecj"); !os.IsNotExist(err) {
+		t.Fatal("expected .ecj to be removed after RebuildEcxFile")
+	}
+
+	// After rebuild, HasLiveNeedles must return false
+	hasLive, err = erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles after rebuild: %v", err)
+	}
+	if hasLive {
+		t.Fatal("expected no live entries after rebuild merged all deletions")
+	}
+
+	// WriteIdxFileFromEcIndex should still work (no .ecj to process)
+	if err := erasure_coding.WriteIdxFileFromEcIndex(base); err != nil {
+		t.Fatalf("WriteIdxFileFromEcIndex: %v", err)
+	}
+
+	idxData, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read idx: %v", err)
+	}
+
+	// .idx should have exactly 2 entries (copied from .ecx, both now tombstoned)
+	entrySize := types.NeedleIdSize + types.OffsetSize + types.SizeSize
+	if len(idxData) != 2*entrySize {
+		t.Fatalf("idx file size: got %d, want %d", len(idxData), 2*entrySize)
+	}
+
+	// Both entries must be tombstoned
+	for i := 0; i < 2; i++ {
+		entry := idxData[i*entrySize : (i+1)*entrySize]
+		size := types.BytesToSize(entry[types.NeedleIdSize+types.OffsetSize:])
+		if !size.IsDeleted() {
+			t.Fatalf("entry %d: expected tombstone, got size %d", i+1, size)
+		}
+	}
+}
+
+// TestDecodeWithNonEmptyEcj_PartiallyDeleted verifies decode pre-processing
+// when .ecj deletes only some entries. After RebuildEcxFile, HasLiveNeedles
+// must still return true for the surviving entries, and WriteIdxFileFromEcIndex
+// must produce an .idx that correctly distinguishes live from deleted needles.
+func TestDecodeWithNonEmptyEcj_PartiallyDeleted(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "test_1")
+
+	// .ecx: three live entries
+	needle1 := makeNeedleMapEntry(types.NeedleId(1), types.ToOffset(64), types.Size(100))
+	needle2 := makeNeedleMapEntry(types.NeedleId(2), types.ToOffset(128), types.Size(200))
+	needle3 := makeNeedleMapEntry(types.NeedleId(3), types.ToOffset(256), types.Size(300))
+	ecxData := append(append(needle1, needle2...), needle3...)
+	if err := os.WriteFile(base+".ecx", ecxData, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	// .ecj: only needle 2 is deleted
+	ecjData := make([]byte, types.NeedleIdSize)
+	types.NeedleIdToBytes(ecjData, types.NeedleId(2))
+	if err := os.WriteFile(base+".ecj", ecjData, 0644); err != nil {
+		t.Fatalf("write ecj: %v", err)
+	}
+
+	// Merge .ecj into .ecx
+	if err := erasure_coding.RebuildEcxFile(base); err != nil {
+		t.Fatalf("RebuildEcxFile: %v", err)
+	}
+
+	// HasLiveNeedles must still return true (needles 1 and 3 survive)
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles: %v", err)
+	}
+	if !hasLive {
+		t.Fatal("expected live entries after partial deletion")
+	}
+
+	// WriteIdxFileFromEcIndex
+	if err := erasure_coding.WriteIdxFileFromEcIndex(base); err != nil {
+		t.Fatalf("WriteIdxFileFromEcIndex: %v", err)
+	}
+
+	idxData, err := os.ReadFile(base + ".idx")
+	if err != nil {
+		t.Fatalf("read idx: %v", err)
+	}
+
+	entrySize := types.NeedleIdSize + types.OffsetSize + types.SizeSize
+	if len(idxData) != 3*entrySize {
+		t.Fatalf("idx file size: got %d, want %d", len(idxData), 3*entrySize)
+	}
+
+	// Verify each entry
+	for i := 0; i < 3; i++ {
+		entry := idxData[i*entrySize : (i+1)*entrySize]
+		key := types.BytesToNeedleId(entry[0:types.NeedleIdSize])
+		size := types.BytesToSize(entry[types.NeedleIdSize+types.OffsetSize:])
+
+		switch key {
+		case types.NeedleId(1), types.NeedleId(3):
+			if size.IsDeleted() {
+				t.Fatalf("needle %d: should be live, got tombstone", key)
+			}
+		case types.NeedleId(2):
+			if !size.IsDeleted() {
+				t.Fatalf("needle %d: should be tombstoned, got size %d", key, size)
+			}
+		default:
+			t.Fatalf("unexpected needle id %d", key)
+		}
+	}
+}
+
+// TestDecodeWithEmptyEcj verifies that the decode flow is a no-op when
+// .ecj exists but is empty (no deletions recorded).
+func TestDecodeWithEmptyEcj(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "test_1")
+
+	// .ecx: one live entry
+	needle1 := makeNeedleMapEntry(types.NeedleId(1), types.ToOffset(64), types.Size(100))
+	if err := os.WriteFile(base+".ecx", needle1, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	// .ecj: empty
+	if err := os.WriteFile(base+".ecj", []byte{}, 0644); err != nil {
+		t.Fatalf("write ecj: %v", err)
+	}
+
+	// RebuildEcxFile with empty .ecj should not change anything
+	if err := erasure_coding.RebuildEcxFile(base); err != nil {
+		t.Fatalf("RebuildEcxFile: %v", err)
+	}
+
+	// HasLiveNeedles must still return true
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles: %v", err)
+	}
+	if !hasLive {
+		t.Fatal("expected live entries with empty .ecj")
+	}
+}
+
+// TestDecodeWithNoEcjFile verifies that the decode flow works when no .ecj
+// file exists at all.
+func TestDecodeWithNoEcjFile(t *testing.T) {
+	dir := t.TempDir()
+	base := filepath.Join(dir, "test_1")
+
+	// .ecx: one live entry
+	needle1 := makeNeedleMapEntry(types.NeedleId(1), types.ToOffset(64), types.Size(100))
+	if err := os.WriteFile(base+".ecx", needle1, 0644); err != nil {
+		t.Fatalf("write ecx: %v", err)
+	}
+
+	// No .ecj file
+
+	// RebuildEcxFile should be a no-op
+	if err := erasure_coding.RebuildEcxFile(base); err != nil {
+		t.Fatalf("RebuildEcxFile: %v", err)
+	}
+
+	hasLive, err := erasure_coding.HasLiveNeedles(base)
+	if err != nil {
+		t.Fatalf("HasLiveNeedles: %v", err)
+	}
+	if !hasLive {
+		t.Fatal("expected live entries without .ecj file")
+	}
+}
+
 // TestEcxFileDeletionVisibleAfterSync verifies that deletions made to .ecx
 // via MarkNeedleDeleted are visible to other readers after Sync().
 // This is a regression test for issue #7751.

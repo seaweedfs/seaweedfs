@@ -169,8 +169,14 @@ func doEcDecode(commandEnv *CommandEnv, topoInfo *master_pb.TopologyInfo, collec
 		return fmt.Errorf("generate normal volume %d on %s: %v", vid, targetNodeLocation, err)
 	}
 
+	// mount the decoded volume after server-side offline compaction succeeded
+	err = mountDecodedVolume(commandEnv.option.GrpcDialOption, targetNodeLocation, vid)
+	if err != nil {
+		return fmt.Errorf("mount decoded volume %d on %s: %v", vid, targetNodeLocation, err)
+	}
+
 	// delete the previous ec shards
-	err = mountVolumeAndDeleteEcShards(commandEnv.option.GrpcDialOption, collection, targetNodeLocation, nodeToEcShardsInfo, vid)
+	err = unmountAndDeleteEcShardsWithPrefix("deleteDecodedEcShards", commandEnv.option.GrpcDialOption, collection, nodeToEcShardsInfo, vid)
 	if err != nil {
 		return fmt.Errorf("delete ec shards for volume %d: %v", vid, err)
 	}
@@ -219,23 +225,16 @@ func unmountAndDeleteEcShardsWithPrefix(prefix string, grpcDialOption grpc.DialO
 	return ewg.Wait()
 }
 
-func mountVolumeAndDeleteEcShards(grpcDialOption grpc.DialOption, collection string, targetNodeLocation pb.ServerAddress, nodeToShardsInfo map[pb.ServerAddress]*erasure_coding.ShardsInfo, vid needle.VolumeId) error {
-
-	// mount volume
-	if err := operation.WithVolumeServerClient(false, targetNodeLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+func mountDecodedVolume(grpcDialOption grpc.DialOption, targetNodeLocation pb.ServerAddress, vid needle.VolumeId) error {
+	return operation.WithVolumeServerClient(false, targetNodeLocation, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 		_, mountErr := volumeServerClient.VolumeMount(context.Background(), &volume_server_pb.VolumeMountRequest{
 			VolumeId: uint32(vid),
 		})
 		return mountErr
-	}); err != nil {
-		return fmt.Errorf("mountVolumeAndDeleteEcShards mount volume %d on %s: %v", vid, targetNodeLocation, err)
-	}
-
-	return unmountAndDeleteEcShardsWithPrefix("mountVolumeAndDeleteEcShards", grpcDialOption, collection, nodeToShardsInfo, vid)
+	})
 }
 
 func generateNormalVolume(grpcDialOption grpc.DialOption, vid needle.VolumeId, collection string, sourceVolumeServer pb.ServerAddress) error {
-
 	fmt.Printf("generateNormalVolume from ec volume %d on %s\n", vid, sourceVolumeServer)
 
 	err := operation.WithVolumeServerClient(false, sourceVolumeServer, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
@@ -280,13 +279,18 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 		}
 
 		needToCopyShardsInfo := si.Minus(existingShardsInfo).MinusParityShards()
-		if needToCopyShardsInfo.Count() == 0 {
-			continue
-		}
 
 		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
-			fmt.Printf("copy %d.%v %s => %s\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation)
+			// Always collect .ecj from every shard location. Each server's .ecj
+			// only contains deletions for needles whose data resides in shards
+			// held by that server. Without merging all .ecj files, deletions
+			// recorded on other servers would be lost during decode.
+			if needToCopyShardsInfo.Count() > 0 {
+				fmt.Printf("copy %d.%v %s => %s\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation)
+			} else {
+				fmt.Printf("collect ecj %d %s => %s\n", vid, loc, targetNodeLocation)
+			}
 
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(vid),
@@ -294,21 +298,23 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 				ShardIds:       needToCopyShardsInfo.IdsUint32(),
 				CopyEcxFile:    false,
 				CopyEcjFile:    true,
-				CopyVifFile:    true,
+				CopyVifFile:    needToCopyShardsInfo.Count() > 0,
 				SourceDataNode: string(loc),
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation, copyErr)
 			}
 
-			fmt.Printf("mount %d.%v on %s\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation)
-			_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
-				VolumeId:   uint32(vid),
-				Collection: collection,
-				ShardIds:   needToCopyShardsInfo.IdsUint32(),
-			})
-			if mountErr != nil {
-				return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
+			if needToCopyShardsInfo.Count() > 0 {
+				fmt.Printf("mount %d.%v on %s\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation)
+				_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+					VolumeId:   uint32(vid),
+					Collection: collection,
+					ShardIds:   needToCopyShardsInfo.IdsUint32(),
+				})
+				if mountErr != nil {
+					return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
+				}
 			}
 
 			return nil

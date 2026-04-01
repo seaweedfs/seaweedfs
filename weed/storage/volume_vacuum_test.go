@@ -2,6 +2,8 @@ package storage
 
 import (
 	"math/rand"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 /*
@@ -146,6 +149,90 @@ func testCompactionByIndex(t *testing.T, needleMapKind NeedleMapKind) {
 	}
 
 }
+
+func TestCompactVolumeFilesOffline(t *testing.T) {
+	dir := t.TempDir()
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	defer location.Close()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	infos := make([]*needleInfo, 32)
+	for i := 1; i <= 32; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
+	}
+	v.Close()
+
+	store := &Store{}
+	if err := store.CompactVolumeFiles(needle.VolumeId(1), "", location, NeedleMapInMemory, 0, 0, 0); err != nil {
+		t.Fatalf("CompactVolumeFiles: %v", err)
+	}
+
+	reloaded, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, nil, nil, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume reload: %v", err)
+	}
+	defer reloaded.Close()
+
+	if _, err := os.Stat(filepath.Join(dir, "1.cpd")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .cpd after successful offline compaction, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "1.cpx")); !os.IsNotExist(err) {
+		t.Fatalf("expected no .cpx after successful offline compaction, got err=%v", err)
+	}
+}
+
+func TestCleanupCompactRemovesTempFiles(t *testing.T) {
+	dir := t.TempDir()
+	location := NewDiskLocation(dir, 10, util.MinFreeSpace{}, dir, "", nil)
+	defer location.Close()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	infos := make([]*needleInfo, 16)
+	for i := 1; i <= 16; i++ {
+		doSomeWritesDeletes(i, v, t, infos)
+	}
+	v.Close()
+
+	if err := os.WriteFile(filepath.Join(dir, "1.cpx"), []byte("broken"), 0o644); err != nil {
+		t.Fatalf("write broken cpx: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "1.cpd"), []byte("temp"), 0o644); err != nil {
+		t.Fatalf("write cpd: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(dir, "1.cpldb"), 0o755); err != nil {
+		t.Fatalf("mkdir cpldb: %v", err)
+	}
+
+	tempVolume, err := loadVolumeWithoutWorker(dir, dir, "", needle.VolumeId(1), NeedleMapInMemory, 0)
+	if err != nil {
+		t.Fatalf("loadVolumeWithoutWorker: %v", err)
+	}
+	tempVolume.location = location
+	defer tempVolume.doClose()
+
+	if err := tempVolume.cleanupCompact(); err != nil {
+		t.Fatalf("cleanupCompact: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(dir, "1.cpd")); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup to remove .cpd, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "1.cpx")); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup to remove .cpx, got err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "1.cpldb")); !os.IsNotExist(err) {
+		t.Fatalf("expected cleanup to remove .cpldb, got err=%v", err)
+	}
+}
+
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {
 	n := newRandomNeedle(uint64(i))
 	_, size, _, err := v.writeNeedle2(n, true, false)
