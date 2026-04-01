@@ -152,10 +152,16 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 	grpcDialOptionA := grpcDialOption
 	grpcDialOptionB := grpcDialOption
 	if *syncOptions.aSecurity != "" {
-		grpcDialOptionA = security.LoadClientTLSFromFile(*syncOptions.aSecurity, "grpc.client")
+		var err error
+		if grpcDialOptionA, err = security.LoadClientTLSFromFile(*syncOptions.aSecurity, "grpc.client"); err != nil {
+			glog.Fatalf("load security config for filer A: %v", err)
+		}
 	}
 	if *syncOptions.bSecurity != "" {
-		grpcDialOptionB = security.LoadClientTLSFromFile(*syncOptions.bSecurity, "grpc.client")
+		var err error
+		if grpcDialOptionB, err = security.LoadClientTLSFromFile(*syncOptions.bSecurity, "grpc.client"); err != nil {
+			glog.Fatalf("load security config for filer B: %v", err)
+		}
 	}
 
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
