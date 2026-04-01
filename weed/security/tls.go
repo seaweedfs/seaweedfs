@@ -145,8 +145,7 @@ func LoadClientTLSFromFile(configFile string, component string) grpc.DialOption 
 	v := viper.New()
 	v.SetConfigFile(configFile)
 	if err := v.ReadInConfig(); err != nil {
-		glog.Warningf("failed to read security config %s: %v", configFile, err)
-		return grpc.WithTransportCredentials(insecure.NewCredentials())
+		glog.Fatalf("failed to read security config %s: %v", configFile, err)
 	}
 	return LoadClientTLS(&util.ViperProxy{Viper: v}, component)
 }
