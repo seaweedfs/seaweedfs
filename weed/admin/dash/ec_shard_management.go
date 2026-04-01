@@ -506,18 +506,6 @@ func getShardCount(ecIndexBits uint32) int {
 	return count
 }
 
-// getMissingShards returns a slice of missing shard IDs for a volume
-// Assumes default 10+4 EC configuration (14 total shards)
-func getMissingShards(ecIndexBits uint32) []int {
-	var missing []int
-	for i := 0; i < erasure_coding.TotalShardsCount; i++ {
-		if (ecIndexBits & (1 << uint(i))) == 0 {
-			missing = append(missing, i)
-		}
-	}
-	return missing
-}
-
 // sortEcShards sorts EC shards based on the specified field and order
 func sortEcShards(shards []EcShardWithInfo, sortBy string, sortOrder string) {
 	sort.Slice(shards, func(i, j int) bool {
