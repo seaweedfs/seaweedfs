@@ -2,8 +2,6 @@ package dash
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -849,43 +847,6 @@ func normalizeTimeout(timeoutSeconds int, defaultTimeout, maxTimeout time.Durati
 		return maxTimeout
 	}
 	return timeout
-}
-
-func buildJobSpecFromProposal(jobType string, proposal *plugin_pb.JobProposal, index int) *plugin_pb.JobSpec {
-	now := timestamppb.Now()
-	suffix := make([]byte, 4)
-	if _, err := rand.Read(suffix); err != nil {
-		// Fallback to simpler ID if rand fails
-		suffix = []byte(fmt.Sprintf("%d", index))
-	}
-	jobID := fmt.Sprintf("%s-%d-%s", jobType, now.AsTime().UnixNano(), hex.EncodeToString(suffix))
-
-	jobSpec := &plugin_pb.JobSpec{
-		JobId:      jobID,
-		JobType:    jobType,
-		Priority:   plugin_pb.JobPriority_JOB_PRIORITY_NORMAL,
-		CreatedAt:  now,
-		Labels:     make(map[string]string),
-		Parameters: make(map[string]*plugin_pb.ConfigValue),
-		DedupeKey:  "",
-	}
-
-	if proposal != nil {
-		jobSpec.Summary = proposal.Summary
-		jobSpec.Detail = proposal.Detail
-		if proposal.Priority != plugin_pb.JobPriority_JOB_PRIORITY_UNSPECIFIED {
-			jobSpec.Priority = proposal.Priority
-		}
-		jobSpec.DedupeKey = proposal.DedupeKey
-		jobSpec.Parameters = plugin.CloneConfigValueMap(proposal.Parameters)
-		if proposal.Labels != nil {
-			for k, v := range proposal.Labels {
-				jobSpec.Labels[k] = v
-			}
-		}
-	}
-
-	return jobSpec
 }
 
 func applyDescriptorDefaultsToPersistedConfig(

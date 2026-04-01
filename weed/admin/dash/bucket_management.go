@@ -361,26 +361,6 @@ func normalizeQuotaUnit(unit string) (string, error) {
 	}
 }
 
-// Helper function to convert bytes to appropriate unit and size
-func convertBytesToQuota(bytes int64) (int64, string) {
-	if bytes == 0 {
-		return 0, "MB"
-	}
-
-	// Convert to TB if >= 1TB
-	if bytes >= 1024*1024*1024*1024 && bytes%(1024*1024*1024*1024) == 0 {
-		return bytes / (1024 * 1024 * 1024 * 1024), "TB"
-	}
-
-	// Convert to GB if >= 1GB
-	if bytes >= 1024*1024*1024 && bytes%(1024*1024*1024) == 0 {
-		return bytes / (1024 * 1024 * 1024), "GB"
-	}
-
-	// Convert to MB (default)
-	return bytes / (1024 * 1024), "MB"
-}
-
 // SetBucketQuota sets the quota for a bucket
 func (s *AdminServer) SetBucketQuota(bucketName string, quotaBytes int64, quotaEnabled bool) error {
 	return s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

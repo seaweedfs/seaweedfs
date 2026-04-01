@@ -430,67 +430,6 @@ func (s *AdminServer) GetConsumerGroupOffsets(namespace, topicName string) ([]Co
 	return offsets, nil
 }
 
-// convertRecordTypeToSchemaFields converts a protobuf RecordType to SchemaFieldInfo slice
-func convertRecordTypeToSchemaFields(recordType *schema_pb.RecordType) []SchemaFieldInfo {
-	var schemaFields []SchemaFieldInfo
-
-	if recordType == nil || recordType.Fields == nil {
-		return schemaFields
-	}
-
-	for _, field := range recordType.Fields {
-		schemaField := SchemaFieldInfo{
-			Name:     field.Name,
-			Type:     getFieldTypeString(field.Type),
-			Required: field.IsRequired,
-		}
-		schemaFields = append(schemaFields, schemaField)
-	}
-
-	return schemaFields
-}
-
-// getFieldTypeString converts a protobuf Type to a human-readable string
-func getFieldTypeString(fieldType *schema_pb.Type) string {
-	if fieldType == nil {
-		return "unknown"
-	}
-
-	switch kind := fieldType.Kind.(type) {
-	case *schema_pb.Type_ScalarType:
-		return getScalarTypeString(kind.ScalarType)
-	case *schema_pb.Type_RecordType:
-		return "record"
-	case *schema_pb.Type_ListType:
-		elementType := getFieldTypeString(kind.ListType.ElementType)
-		return fmt.Sprintf("list<%s>", elementType)
-	default:
-		return "unknown"
-	}
-}
-
-// getScalarTypeString converts a protobuf ScalarType to a string
-func getScalarTypeString(scalarType schema_pb.ScalarType) string {
-	switch scalarType {
-	case schema_pb.ScalarType_BOOL:
-		return "bool"
-	case schema_pb.ScalarType_INT32:
-		return "int32"
-	case schema_pb.ScalarType_INT64:
-		return "int64"
-	case schema_pb.ScalarType_FLOAT:
-		return "float"
-	case schema_pb.ScalarType_DOUBLE:
-		return "double"
-	case schema_pb.ScalarType_BYTES:
-		return "bytes"
-	case schema_pb.ScalarType_STRING:
-		return "string"
-	default:
-		return "unknown"
-	}
-}
-
 // convertTopicPublishers converts protobuf TopicPublisher slice to PublisherInfo slice
 func convertTopicPublishers(publishers []*mq_pb.TopicPublisher) []PublisherInfo {
 	publisherInfos := make([]PublisherInfo, 0, len(publishers))

@@ -787,15 +787,6 @@ func (s *WorkerGrpcServer) RequestTaskLogsFromAllWorkers(taskID string, maxEntri
 	return results, nil
 }
 
-// convertTaskParameters converts task parameters to protobuf format
-func convertTaskParameters(params map[string]interface{}) map[string]string {
-	result := make(map[string]string)
-	for key, value := range params {
-		result[key] = fmt.Sprintf("%v", value)
-	}
-	return result
-}
-
 func findClientAddress(ctx context.Context) string {
 	// fmt.Printf("FromContext %+v\n", ctx)
 	pr, ok := peer.FromContext(ctx)
