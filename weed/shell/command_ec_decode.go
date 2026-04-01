@@ -283,13 +283,18 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 		}
 
 		needToCopyShardsInfo := si.Minus(existingShardsInfo).MinusParityShards()
-		if needToCopyShardsInfo.Count() == 0 {
-			continue
-		}
 
 		err = operation.WithVolumeServerClient(false, targetNodeLocation, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 
-			fmt.Printf("copy %d.%v %s => %s\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation)
+			// Always collect .ecj from every shard location. Each server's .ecj
+			// only contains deletions for needles whose data resides in shards
+			// held by that server. Without merging all .ecj files, deletions
+			// recorded on other servers would be lost during decode.
+			if needToCopyShardsInfo.Count() > 0 {
+				fmt.Printf("copy %d.%v %s => %s\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation)
+			} else {
+				fmt.Printf("collect ecj %d %s => %s\n", vid, loc, targetNodeLocation)
+			}
 
 			_, copyErr := volumeServerClient.VolumeEcShardsCopy(context.Background(), &volume_server_pb.VolumeEcShardsCopyRequest{
 				VolumeId:       uint32(vid),
@@ -297,21 +302,23 @@ func collectEcShards(commandEnv *CommandEnv, nodeToShardsInfo map[pb.ServerAddre
 				ShardIds:       needToCopyShardsInfo.IdsUint32(),
 				CopyEcxFile:    false,
 				CopyEcjFile:    true,
-				CopyVifFile:    true,
+				CopyVifFile:    needToCopyShardsInfo.Count() > 0,
 				SourceDataNode: string(loc),
 			})
 			if copyErr != nil {
 				return fmt.Errorf("copy %d.%v %s => %s : %v\n", vid, needToCopyShardsInfo.Ids(), loc, targetNodeLocation, copyErr)
 			}
 
-			fmt.Printf("mount %d.%v on %s\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation)
-			_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
-				VolumeId:   uint32(vid),
-				Collection: collection,
-				ShardIds:   needToCopyShardsInfo.IdsUint32(),
-			})
-			if mountErr != nil {
-				return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
+			if needToCopyShardsInfo.Count() > 0 {
+				fmt.Printf("mount %d.%v on %s\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation)
+				_, mountErr := volumeServerClient.VolumeEcShardsMount(context.Background(), &volume_server_pb.VolumeEcShardsMountRequest{
+					VolumeId:   uint32(vid),
+					Collection: collection,
+					ShardIds:   needToCopyShardsInfo.IdsUint32(),
+				})
+				if mountErr != nil {
+					return fmt.Errorf("mount %d.%v on %s : %v\n", vid, needToCopyShardsInfo.Ids(), targetNodeLocation, mountErr)
+				}
 			}
 
 			return nil
