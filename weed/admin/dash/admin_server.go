@@ -943,7 +943,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			leaderCount++
 		}
 
-		masterMap[master.Address] = masterInfo
+		masterMap[pb.ServerAddress(master.Address).ToHttpAddress()] = masterInfo
 	}
 
 	// Then, get additional master information from Raft cluster
@@ -955,11 +955,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
-			address := server.Address
-			httpAddress := pb.ServerAddress(address).ToHttpAddress()
+			// Raft stores gRPC addresses, convert to HTTP address
+			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
 
 			// Update existing master info or create new one
-			if masterInfo, exists := masterMap[address]; exists {
+			if masterInfo, exists := masterMap[httpAddress]; exists {
 				// Update existing master with raft data
 				masterInfo.IsLeader = server.IsLeader
 				masterInfo.Suffrage = server.Suffrage
@@ -970,7 +970,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
-				masterMap[address] = masterInfo
+				masterMap[httpAddress] = masterInfo
 			}
 
 			if server.IsLeader {
