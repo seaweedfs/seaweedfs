@@ -69,7 +69,7 @@ func ensureCompactVolumeSpace(v *Volume, preallocate int64) error {
 
 	diskStatus := stats.NewDiskStatus(v.dir)
 	if int64(diskStatus.Free) < spaceNeeded {
-		return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d, buffer: 10%%), but only %d bytes available",
+		return fmt.Errorf("insufficient free space for compaction: need %d bytes (volume: %d, index: %d), but only %d bytes available",
 			spaceNeeded, volumeSize, indexSize, diskStatus.Free)
 	}
 

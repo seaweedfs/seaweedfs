@@ -609,6 +609,9 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 	}
 
 	dataBaseFileName, indexBaseFileName := v.DataBaseFileName(), v.IndexBaseFileName()
+	if !util.FileExists(indexBaseFileName + ".ecx") {
+		indexBaseFileName = dataBaseFileName
+	}
 
 	// Merge .ecj deletions into .ecx so that HasLiveNeedles and FindDatFileSize
 	// see the full set of deleted needles. Without this, needles deleted after the
@@ -664,7 +667,7 @@ func (vs *VolumeServer) VolumeEcShardsToVolume(ctx context.Context, req *volume_
 		0,
 		vs.compactionBytePerSecond,
 	); err != nil {
-		return nil, fmt.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
+		glog.Errorf("CompactVolumeFiles %s: %v", dataBaseFileName, err)
 	}
 
 	return &volume_server_pb.VolumeEcShardsToVolumeResponse{}, nil
