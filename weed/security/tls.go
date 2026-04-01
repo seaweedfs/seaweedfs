@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/viper"
+
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
@@ -137,6 +139,16 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil
 	}
 	return grpc.Creds(ta), nil
+}
+
+func LoadClientTLSFromFile(configFile string, component string) grpc.DialOption {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		glog.Warningf("failed to read security config %s: %v", configFile, err)
+		return grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
+	return LoadClientTLS(&util.ViperProxy{Viper: v}, component)
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
