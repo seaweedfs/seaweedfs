@@ -313,7 +313,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 	// Check authorizations
 	if roleArn != "" {
 		// Check if the caller is authorized to assume the role (sts:AssumeRole permission)
-		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", roleArn); authErr != s3err.ErrNone {
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", roleArn); authErr != s3err.ErrNone {
 			glog.V(2).Infof("AssumeRole: caller %s is not authorized to assume role %s", identity.Name, roleArn)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 				fmt.Errorf("user %s is not authorized to assume role %s", identity.Name, roleArn))
@@ -337,7 +337,7 @@ func (h *STSHandlers) handleAssumeRole(w http.ResponseWriter, r *http.Request) {
 		// For safety/consistency with previous logic, we keep the check but strictly it might not be required by AWS for GetSessionToken.
 		// But since this IS AssumeRole, let's keep it.
 		// Admin/Global check when no specific role is requested
-		if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:AssumeRole"), "", ""); authErr != s3err.ErrNone {
+		if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionAssumeRole), "", ""); authErr != s3err.ErrNone {
 			glog.Warningf("AssumeRole: caller %s attempted to assume role without RoleArn and lacks global sts:AssumeRole permission", identity.Name)
 			h.writeSTSErrorResponse(w, r, STSErrAccessDenied, fmt.Errorf("access denied"))
 			return
@@ -600,7 +600,7 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
 
 	// Check if the caller is authorized to call GetFederationToken
-	if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:GetFederationToken"), "", ""); authErr != s3err.ErrNone {
+	if authErr := h.iam.VerifyActionPermission(r, identity, Action(sts.ActionGetFederationToken), "", ""); authErr != s3err.ErrNone {
 		glog.V(2).Infof("GetFederationToken: caller %s is not authorized to call GetFederationToken", identity.Name)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
 			fmt.Errorf("user %s is not authorized to call GetFederationToken", identity.Name))
