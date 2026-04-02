@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -18,14 +19,20 @@ import (
 
 // S3PresignedURLManager handles IAM integration for presigned URLs
 type S3PresignedURLManager struct {
-	s3iam *S3IAMIntegration
+	s3iam      *S3IAMIntegration
+	signingKey string // secret key used for HMAC-SHA256 presigned URL signatures
 }
 
-// NewS3PresignedURLManager creates a new presigned URL manager with IAM integration
-func NewS3PresignedURLManager(s3iam *S3IAMIntegration) *S3PresignedURLManager {
-	return &S3PresignedURLManager{
+// NewS3PresignedURLManager creates a new presigned URL manager with IAM integration.
+// signingKey is the server-side secret used to sign presigned URLs.
+func NewS3PresignedURLManager(s3iam *S3IAMIntegration, signingKey ...string) *S3PresignedURLManager {
+	pm := &S3PresignedURLManager{
 		s3iam: s3iam,
 	}
+	if len(signingKey) > 0 {
+		pm.signingKey = signingKey[0]
+	}
+	return pm
 }
 
 // PresignedURLRequest represents a request to generate a presigned URL
@@ -163,10 +170,9 @@ func (pm *S3PresignedURLManager) generatePresignedURL(req *PresignedURLRequest, 
 	// Build canonical query string
 	canonicalQuery := buildCanonicalQuery(queryParams)
 
-	// For now, we'll create a mock signature
-	// In production, this would use proper AWS signature v4 signing
-	mockSignature := generateMockSignature(req.Method, urlPath, canonicalQuery, identity.SessionToken)
-	queryParams["X-Amz-Signature"] = mockSignature
+	// Sign using HMAC-SHA256 with the server signing key (AWS SigV4-style)
+	signature := pm.signPresignedURL(req.Method, urlPath, canonicalQuery, expiresAt)
+	queryParams["X-Amz-Signature"] = signature
 
 	// Build final URL
 	finalQuery := buildCanonicalQuery(queryParams)
@@ -262,13 +268,32 @@ func buildCanonicalQuery(params map[string]string) string {
 	return strings.Join(parts, "&")
 }
 
-// generateMockSignature generates a mock signature for testing purposes
-func generateMockSignature(method, path, query, sessionToken string) string {
-	// This is a simplified signature for demonstration
-	// In production, use proper AWS signature v4 calculation
-	data := fmt.Sprintf("%s\n%s\n%s\n%s", method, path, query, sessionToken)
-	hash := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(hash[:])[:16] // Truncate for readability
+// signPresignedURL produces an HMAC-SHA256 signature following AWS SigV4
+// conventions: signingKey is derived from the server secret, date, region,
+// and service, then used to sign the string-to-sign.
+func (pm *S3PresignedURLManager) signPresignedURL(method, path, query string, date time.Time) string {
+	dateStamp := date.Format("20060102")
+	// Derive signing key: HMAC chain of date / region / service / "aws4_request"
+	kDate := hmacSHA256([]byte("AWS4"+pm.signingKey), []byte(dateStamp))
+	kRegion := hmacSHA256(kDate, []byte("us-east-1"))
+	kService := hmacSHA256(kRegion, []byte("s3"))
+	kSigning := hmacSHA256(kService, []byte("aws4_request"))
+
+	// Build string to sign
+	canonicalRequest := fmt.Sprintf("%s\n%s\n%s\nhost\nhost\nUNSIGNED-PAYLOAD", method, path, query)
+	canonicalHash := sha256.Sum256([]byte(canonicalRequest))
+	scope := fmt.Sprintf("%s/us-east-1/s3/aws4_request", dateStamp)
+	stringToSign := fmt.Sprintf("AWS4-HMAC-SHA256\n%s\n%s\n%s",
+		date.Format("20060102T150405Z"), scope, hex.EncodeToString(canonicalHash[:]))
+
+	sig := hmacSHA256(kSigning, []byte(stringToSign))
+	return hex.EncodeToString(sig)
+}
+
+func hmacSHA256(key, data []byte) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write(data)
+	return h.Sum(nil)
 }
 
 // ValidatePresignedURLExpiration validates that a presigned URL hasn't expired
