@@ -6,19 +6,12 @@ import (
 )
 
 type MemoryBuffer struct {
-	aligned_length uint64
-	length         uint64
-	aligned_ptr    uintptr
-	ptr            uintptr
-	Buffer         []byte
+	Buffer []byte
 }
 
 type MemoryMap struct {
-	File                   *os.File
-	file_memory_map_handle uintptr
-	write_map_views        []MemoryBuffer
-	max_length             uint64
-	End_of_file            int64
+	File        *os.File
+	End_of_file int64
 }
 
 func ReadMemoryMapMaxSizeMb(memoryMapMaxSizeMbString string) (uint32, error) {
