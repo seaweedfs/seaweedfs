@@ -3,8 +3,13 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net"
 	"path/filepath"
 	"time"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 
@@ -22,9 +27,33 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
+// checkGrpcAdminAuth verifies the gRPC caller is authorized for destructive
+// admin operations by checking the peer address against the guard's whitelist.
+func (vs *VolumeServer) checkGrpcAdminAuth(ctx context.Context) error {
+	if vs.guard == nil {
+		return nil
+	}
+	pr, ok := peer.FromContext(ctx)
+	if !ok {
+		return status.Error(codes.PermissionDenied, "no peer info")
+	}
+	host, _, err := net.SplitHostPort(pr.Addr.String())
+	if err != nil {
+		return status.Errorf(codes.PermissionDenied, "bad peer address: %v", err)
+	}
+	if !vs.guard.IsWhiteListed(host) {
+		return status.Errorf(codes.PermissionDenied, "not authorized: %s", host)
+	}
+	return nil
+}
+
 func (vs *VolumeServer) DeleteCollection(ctx context.Context, req *volume_server_pb.DeleteCollectionRequest) (*volume_server_pb.DeleteCollectionResponse, error) {
 
 	resp := &volume_server_pb.DeleteCollectionResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	err := vs.store.DeleteCollection(req.Collection)
 
@@ -102,6 +131,10 @@ func (vs *VolumeServer) VolumeUnmount(ctx context.Context, req *volume_server_pb
 
 func (vs *VolumeServer) VolumeDelete(ctx context.Context, req *volume_server_pb.VolumeDeleteRequest) (*volume_server_pb.VolumeDeleteResponse, error) {
 	resp := &volume_server_pb.VolumeDeleteResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	if err := vs.CheckMaintenanceMode(); err != nil {
 		return resp, err
@@ -307,6 +340,10 @@ func (vs *VolumeServer) VolumeServerStatus(ctx context.Context, req *volume_serv
 func (vs *VolumeServer) VolumeServerLeave(ctx context.Context, req *volume_server_pb.VolumeServerLeaveRequest) (*volume_server_pb.VolumeServerLeaveResponse, error) {
 
 	resp := &volume_server_pb.VolumeServerLeaveResponse{}
+
+	if err := vs.checkGrpcAdminAuth(ctx); err != nil {
+		return resp, err
+	}
 
 	vs.StopHeartbeat()
 

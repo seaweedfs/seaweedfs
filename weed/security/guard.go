@@ -125,6 +125,29 @@ func (g *Guard) checkWhiteList(w http.ResponseWriter, r *http.Request) error {
 	return fmt.Errorf("Not in whitelist: %s", host)
 }
 
+// IsWhiteListed returns true if the given host IP is allowed by the guard.
+// When no whitelist is configured (security inactive), all hosts are allowed.
+func (g *Guard) IsWhiteListed(host string) bool {
+	if !g.isWriteActive {
+		return true
+	}
+	if g.isEmptyWhiteList {
+		return true
+	}
+	if _, ok := g.whiteListIp[host]; ok {
+		return true
+	}
+	remote := net.ParseIP(host)
+	if remote != nil {
+		for _, cidrnet := range g.whiteListCIDR {
+			if cidrnet.Contains(remote) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (g *Guard) UpdateWhiteList(whiteList []string) {
 	whiteListIp := make(map[string]struct{})
 	whiteListCIDR := make(map[string]*net.IPNet)
