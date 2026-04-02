@@ -38,6 +38,7 @@ type SSEKMSKey struct {
 	BucketKeyEnabled  bool              // Whether S3 Bucket Keys are enabled
 	IV                []byte            // The initialization vector for encryption
 	ChunkOffset       int64             // Offset of this chunk within the original part (for IV calculation)
+	KeyCommitment     []byte            // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // SSEKMSMetadata represents the metadata stored with SSE-KMS objects
@@ -49,6 +50,7 @@ type SSEKMSMetadata struct {
 	BucketKeyEnabled  bool              `json:"bucketKeyEnabled"`  // S3 Bucket Key optimization
 	IV                string            `json:"iv"`                // Base64-encoded initialization vector
 	PartOffset        int64             `json:"partOffset"`        // Offset within original multipart part (for IV calculation)
+	KeyCommitment     string            `json:"keyCommitment,omitempty"`     // Base64-encoded HMAC key commitment
 }
 
 const (
@@ -100,6 +102,9 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 
 	// Create the SSE-KMS metadata using utility function
 	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
+
+	// Compute key commitment before plaintext key is cleared by deferred clearKMSDataKey
+	sseKey.KeyCommitment = ComputeKeyCommitment(dataKeyResult.Response.Plaintext, iv, s3_constants.SSEAlgorithmKMS)
 
 	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
 	// This ensures correct Content-Length for clients
@@ -415,6 +420,11 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 		return nil, fmt.Errorf("KMS key ID mismatch: expected %s, got %s", sseKey.KeyID, decryptResp.KeyID)
 	}
 
+	// Verify key commitment before decryption if one exists in metadata
+	if err := VerifyKeyCommitment(decryptResp.Plaintext, sseKey.IV, s3_constants.SSEAlgorithmKMS, sseKey.KeyCommitment); err != nil {
+		return nil, err
+	}
+
 	// Use the IV from the SSE key metadata, calculating offset if this is a chunked part
 	if err := ValidateIV(sseKey.IV, "SSE key IV"); err != nil {
 		return nil, fmt.Errorf("invalid IV in SSE key: %w", err)
@@ -567,6 +577,11 @@ func SerializeSSEKMSMetadata(sseKey *SSEKMSKey) ([]byte, error) {
 		PartOffset:        sseKey.ChunkOffset,                           // Store within-part offset
 	}
 
+	// Include key commitment if present
+	if len(sseKey.KeyCommitment) > 0 {
+		metadata.KeyCommitment = base64.StdEncoding.EncodeToString(sseKey.KeyCommitment)
+	}
+
 	data, err := json.Marshal(metadata)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal SSE-KMS metadata: %w", err)
@@ -612,6 +627,15 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		}
 	}
 
+	// Decode key commitment if present
+	var keyCommitment []byte
+	if metadata.KeyCommitment != "" {
+		keyCommitment, err = base64.StdEncoding.DecodeString(metadata.KeyCommitment)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode key commitment: %w", err)
+		}
+	}
+
 	sseKey := &SSEKMSKey{
 		KeyID:             metadata.KeyID,
 		EncryptedDataKey:  encryptedDataKey,
@@ -619,6 +643,7 @@ func DeserializeSSEKMSMetadata(data []byte) (*SSEKMSKey, error) {
 		BucketKeyEnabled:  metadata.BucketKeyEnabled,
 		IV:                iv,                  // Restore IV for decryption
 		ChunkOffset:       metadata.PartOffset, // Use stored within-part offset
+		KeyCommitment:     keyCommitment,
 	}
 
 	glog.V(4).Infof("Deserialized SSE-KMS metadata: keyID=%s, bucketKey=%t", sseKey.KeyID, sseKey.BucketKeyEnabled)

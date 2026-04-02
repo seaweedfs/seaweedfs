@@ -36,10 +36,11 @@ const (
 
 // SSES3Key represents a server-managed encryption key for SSE-S3
 type SSES3Key struct {
-	Key       []byte
-	KeyID     string
-	Algorithm string
-	IV        []byte // Initialization Vector for this key
+	Key           []byte
+	KeyID         string
+	Algorithm     string
+	IV            []byte // Initialization Vector for this key
+	KeyCommitment []byte // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // IsSSES3RequestInternal checks if the request specifies SSE-S3 encryption
@@ -116,6 +117,11 @@ func CreateSSES3EncryptedReader(reader io.Reader, key *SSES3Key) (io.Reader, []b
 
 // CreateSSES3DecryptedReader creates a decrypted reader for SSE-S3 using IV from metadata
 func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.Reader, error) {
+	// Verify key commitment before decryption if one exists in metadata
+	if err := VerifyKeyCommitment(key.Key, iv, key.Algorithm, key.KeyCommitment); err != nil {
+		return nil, err
+	}
+
 	// Create AES cipher
 	block, err := aes.NewCipher(key.Key)
 	if err != nil {
@@ -167,6 +173,9 @@ func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	// Include IV if present (needed for chunk-level decryption)
 	if key.IV != nil {
 		metadata["iv"] = base64.StdEncoding.EncodeToString(key.IV)
+		// Compute and store key commitment binding key ↔ IV + algorithm
+		commitment := ComputeKeyCommitment(key.Key, key.IV, key.Algorithm)
+		metadata["keyCommitment"] = base64.StdEncoding.EncodeToString(commitment)
 	}
 
 	// Use JSON for proper serialization
@@ -243,6 +252,15 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 			return nil, fmt.Errorf("failed to decode IV: %w", err)
 		}
 		key.IV = iv
+	}
+
+	// Restore key commitment if present (for tamper detection)
+	if commitStr, exists := metadata["keyCommitment"]; exists {
+		commitment, err := base64.StdEncoding.DecodeString(commitStr)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode key commitment: %w", err)
+		}
+		key.KeyCommitment = commitment
 	}
 
 	return key, nil
