@@ -251,10 +251,11 @@ func DeserializeSSES3Metadata(data []byte, keyManager *SSES3KeyManager) (*SSES3K
 // SSES3KeyManager manages SSE-S3 encryption keys using envelope encryption
 // Instead of storing keys in memory, it uses a super key (KEK) to encrypt/decrypt DEKs
 type SSES3KeyManager struct {
-	mu          sync.RWMutex
-	superKey    []byte               // 256-bit master key (KEK - Key Encryption Key)
-	filerClient filer_pb.FilerClient // Filer client for KEK persistence
-	kekPath     string               // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
+	mu             sync.RWMutex
+	superKey       []byte               // 256-bit master key (KEK - Key Encryption Key)
+	filerClient    filer_pb.FilerClient // Filer client for KEK persistence
+	kekPath        string               // Path in filer where KEK is stored (e.g., /etc/s3/sse_kek)
+	kekPassphrase  string               // If set, KEK is encrypted at rest using a key derived from this passphrase
 }
 
 const (
@@ -268,12 +269,81 @@ const (
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 )
 
-// NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
-func NewSSES3KeyManager() *SSES3KeyManager {
-	// This will be initialized properly when attached to an S3ApiServer
-	return &SSES3KeyManager{
+// kekWrappingSalt is a fixed salt for HKDF derivation of the KEK-wrapping key.
+var kekWrappingSalt = []byte("seaweedfs-sse-s3-kek-wrapping-v1")
+
+// NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption.
+// If kekPassphrase is non-empty, the KEK is encrypted at rest using a key derived from it.
+func NewSSES3KeyManager(kekPassphrase ...string) *SSES3KeyManager {
+	km := &SSES3KeyManager{
 		kekPath: defaultKEKPath,
 	}
+	if len(kekPassphrase) > 0 {
+		km.kekPassphrase = kekPassphrase[0]
+	}
+	return km
+}
+
+// deriveWrappingKey derives a 256-bit AES key from the configured passphrase using HKDF-SHA256.
+func (km *SSES3KeyManager) deriveWrappingKey() ([]byte, error) {
+	if km.kekPassphrase == "" {
+		return nil, fmt.Errorf("no KEK passphrase configured")
+	}
+	hkdfReader := hkdf.New(sha256.New, []byte(km.kekPassphrase), kekWrappingSalt, []byte("kek-wrapping"))
+	wrappingKey := make([]byte, SSES3KeySize)
+	if _, err := io.ReadFull(hkdfReader, wrappingKey); err != nil {
+		return nil, fmt.Errorf("HKDF derive wrapping key: %w", err)
+	}
+	return wrappingKey, nil
+}
+
+// wrapKEK encrypts the KEK using AES-GCM with the derived wrapping key.
+// Returns base64(nonce || ciphertext).
+func (km *SSES3KeyManager) wrapKEK(kek []byte) ([]byte, error) {
+	wrappingKey, err := km.deriveWrappingKey()
+	if err != nil {
+		return nil, err
+	}
+	block, err := aes.NewCipher(wrappingKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, err
+	}
+	sealed := gcm.Seal(nonce, nonce, kek, nil) // nonce || ciphertext+tag
+	return []byte(base64.StdEncoding.EncodeToString(sealed)), nil
+}
+
+// unwrapKEK decrypts a wrapped KEK produced by wrapKEK.
+func (km *SSES3KeyManager) unwrapKEK(wrapped []byte) ([]byte, error) {
+	wrappingKey, err := km.deriveWrappingKey()
+	if err != nil {
+		return nil, err
+	}
+	raw, err := base64.StdEncoding.DecodeString(string(wrapped))
+	if err != nil {
+		return nil, fmt.Errorf("base64 decode wrapped KEK: %w", err)
+	}
+	block, err := aes.NewCipher(wrappingKey)
+	if err != nil {
+		return nil, err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) < gcm.NonceSize() {
+		return nil, fmt.Errorf("wrapped KEK too short")
+	}
+	nonce := raw[:gcm.NonceSize()]
+	ciphertext := raw[gcm.NonceSize():]
+	return gcm.Open(nil, nonce, ciphertext, nil)
 }
 
 // InitializeWithFiler initializes the key manager with a filer client
@@ -323,10 +393,30 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 		return fmt.Errorf("KEK entry is empty")
 	}
 
-	// Decode hex-encoded key
-	key, err := hex.DecodeString(string(entry.Content))
-	if err != nil {
-		return fmt.Errorf("failed to decode KEK: %w", err)
+	var key []byte
+	if km.kekPassphrase != "" {
+		// Try to unwrap encrypted KEK first
+		key, err = km.unwrapKEK(entry.Content)
+		if err != nil {
+			// Fall back: maybe this is a legacy plaintext hex KEK — try to decode and re-wrap
+			legacyKey, hexErr := hex.DecodeString(string(entry.Content))
+			if hexErr != nil || len(legacyKey) != SSES3KeySize {
+				return fmt.Errorf("failed to unwrap KEK: %w", err)
+			}
+			glog.Warningf("SSE-S3 KeyManager: migrating plaintext KEK to encrypted storage")
+			key = legacyKey
+			// Re-save in encrypted form
+			if wrapped, wrapErr := km.wrapKEK(key); wrapErr == nil {
+				_ = km.updateKEKContent(wrapped)
+			}
+		}
+	} else {
+		// Legacy plaintext hex mode
+		glog.Warningf("SSE-S3 KeyManager: KEK stored in plaintext — set a KEK passphrase for encrypted storage")
+		key, err = hex.DecodeString(string(entry.Content))
+		if err != nil {
+			return fmt.Errorf("failed to decode KEK: %w", err)
+		}
 	}
 
 	if len(key) != SSES3KeySize {
@@ -335,6 +425,15 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 
 	km.superKey = key
 	return nil
+}
+
+// updateKEKContent updates the KEK file content in the filer (used for plaintext→encrypted migration)
+func (km *SSES3KeyManager) updateKEKContent(content []byte) error {
+	return filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
+		entry.Content = content
+		entry.Attributes.FileMode = 0600
+		entry.Attributes.FileSize = uint64(len(content))
+	})
 }
 
 // generateAndSaveSuperKeyToFiler generates a new KEK and saves it to the filer
@@ -349,8 +448,18 @@ func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
 		return fmt.Errorf("failed to generate KEK: %w", err)
 	}
 
-	// Encode as hex for storage
-	encodedKey := []byte(hex.EncodeToString(superKey))
+	// Encode KEK for storage: encrypted if passphrase is set, hex otherwise
+	var encodedKey []byte
+	if km.kekPassphrase != "" {
+		var wrapErr error
+		encodedKey, wrapErr = km.wrapKEK(superKey)
+		if wrapErr != nil {
+			return fmt.Errorf("failed to wrap KEK: %w", wrapErr)
+		}
+	} else {
+		glog.Warningf("SSE-S3 KeyManager: saving KEK in plaintext — set a KEK passphrase for encrypted storage")
+		encodedKey = []byte(hex.EncodeToString(superKey))
+	}
 
 	// Create the entry in filer
 	// First ensure the parent directory exists
