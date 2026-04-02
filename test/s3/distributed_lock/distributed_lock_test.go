@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -15,9 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -149,28 +148,20 @@ func (c *distributedLockCluster) findLockOwnerKeys(bucket, prefix string) map[pb
 	for i := range c.filerPorts {
 		owners = append(owners, c.filerServerAddress(i))
 	}
-	sort.Slice(owners, func(i, j int) bool {
-		return owners[i] < owners[j]
-	})
+
+	ring := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
+	ring.SetServers(owners)
 
 	keysByOwner := make(map[pb.ServerAddress]string, len(owners))
 	for i := 0; i < 1024 && len(keysByOwner) < len(owners); i++ {
 		key := fmt.Sprintf("%s-%03d.txt", prefix, i)
-		lockOwner := ownerForObjectLock(bucket, key, owners)
+		lockKey := fmt.Sprintf("s3.object.write:/buckets/%s/%s", bucket, s3_constants.NormalizeObjectKey(key))
+		lockOwner := ring.GetPrimary(lockKey)
 		if _, exists := keysByOwner[lockOwner]; !exists {
 			keysByOwner[lockOwner] = key
 		}
 	}
 	return keysByOwner
-}
-
-func ownerForObjectLock(bucket, object string, owners []pb.ServerAddress) pb.ServerAddress {
-	lockKey := fmt.Sprintf("s3.object.write:/buckets/%s/%s", bucket, s3_constants.NormalizeObjectKey(object))
-	hash := util.HashStringToLong(lockKey)
-	if hash < 0 {
-		hash = -hash
-	}
-	return owners[hash%int64(len(owners))]
 }
 
 func lockOwnerLabel(owner pb.ServerAddress) string {

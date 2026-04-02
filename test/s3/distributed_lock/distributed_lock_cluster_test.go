@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -139,6 +140,7 @@ func startDistributedLockCluster(t *testing.T) *distributedLockCluster {
 		require.NoError(t, cluster.waitForTCP(cluster.filerGRPCAddress(i), 30*time.Second), "wait for filer %d grpc\n%s", i, cluster.tailLog(fmt.Sprintf("filer%d.log", i)))
 	}
 	require.NoError(t, cluster.waitForFilerCount(2, 30*time.Second), "wait for filer group registration")
+	require.NoError(t, cluster.waitForLockRingConverged(30*time.Second), "wait for lock ring convergence")
 
 	for i := 0; i < 2; i++ {
 		require.NoError(t, cluster.startS3(i), "start s3 %d", i)
@@ -409,6 +411,86 @@ func (c *distributedLockCluster) waitForFilerCount(expected int, timeout time.Du
 		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("timed out waiting for %d filers in group %q", expected, c.filerGroup)
+}
+
+// waitForLockRingConverged verifies that both filers have a consistent view of the
+// lock ring by acquiring the same lock through each filer and checking mutual exclusion.
+// This guards against the window between master seeing both filers and the filers
+// actually receiving the LockRingUpdate broadcast (delayed by the stabilization timer).
+func (c *distributedLockCluster) waitForLockRingConverged(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	testKey := fmt.Sprintf("lock-ring-convergence-%d", time.Now().UnixNano())
+
+	for time.Now().Before(deadline) {
+		converged, err := c.checkLockMutualExclusion(testKey)
+		if err == nil && converged {
+			return nil
+		}
+		// Use a fresh key each attempt to avoid stale lock state
+		testKey = fmt.Sprintf("lock-ring-convergence-%d", time.Now().UnixNano())
+		time.Sleep(500 * time.Millisecond)
+	}
+	return fmt.Errorf("lock ring did not converge: both filers independently grant the same lock")
+}
+
+// checkLockMutualExclusion acquires a lock via filer0, then tries the same lock via filer1.
+// Returns true if mutual exclusion holds (second attempt is denied).
+func (c *distributedLockCluster) checkLockMutualExclusion(testKey string) (bool, error) {
+	conn0, err := grpc.NewClient(c.filerGRPCAddress(0), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return false, err
+	}
+	defer conn0.Close()
+
+	conn1, err := grpc.NewClient(c.filerGRPCAddress(1), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return false, err
+	}
+	defer conn1.Close()
+
+	client0 := filer_pb.NewSeaweedFilerClient(conn0)
+	client1 := filer_pb.NewSeaweedFilerClient(conn1)
+
+	// Acquire lock via filer0
+	ctx0, cancel0 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel0()
+	resp0, err := client0.DistributedLock(ctx0, &filer_pb.LockRequest{
+		Name:          testKey,
+		SecondsToLock: 5,
+		Owner:         "convergence-filer0",
+	})
+	if err != nil || resp0.RenewToken == "" {
+		return false, fmt.Errorf("filer0 lock failed: err=%v resp=%v", err, resp0)
+	}
+	defer func() {
+		// Always release the lock we acquired
+		client0.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
+			Name:       testKey,
+			RenewToken: resp0.RenewToken,
+		})
+	}()
+
+	// Try the same lock via filer1 - should be denied
+	ctx1, cancel1 := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel1()
+	resp1, err := client1.DistributedLock(ctx1, &filer_pb.LockRequest{
+		Name:          testKey,
+		SecondsToLock: 5,
+		Owner:         "convergence-filer1",
+	})
+	if err != nil {
+		return false, err
+	}
+	if resp1.RenewToken != "" {
+		// Both filers granted the lock - ring not converged. Release the second lock.
+		client1.DistributedUnlock(context.Background(), &filer_pb.UnlockRequest{
+			Name:       testKey,
+			RenewToken: resp1.RenewToken,
+		})
+		return false, nil
+	}
+	// Second attempt was denied - mutual exclusion holds
+	return true, nil
 }
 
 func (c *distributedLockCluster) waitForHTTP(url string, timeout time.Duration) error {
