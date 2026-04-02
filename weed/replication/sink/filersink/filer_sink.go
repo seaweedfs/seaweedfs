@@ -22,7 +22,11 @@ import (
 )
 
 // ChunkTransferStatus tracks the progress of a single chunk being replicated.
+// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
+// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
+// read by ActiveTransfers.
 type ChunkTransferStatus struct {
+	mu            sync.RWMutex
 	ChunkFileId   string
 	Path          string
 	BytesReceived int64
@@ -112,11 +116,20 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 	}
 }
 
-// ActiveTransfers returns a snapshot of all in-progress chunk transfers.
-func (fs *FilerSink) ActiveTransfers() []*ChunkTransferStatus {
-	var transfers []*ChunkTransferStatus
+// ActiveTransfers returns an immutable snapshot of all in-progress chunk transfers.
+func (fs *FilerSink) ActiveTransfers() []ChunkTransferStatus {
+	var transfers []ChunkTransferStatus
 	fs.activeTransfers.Range(func(key, value any) bool {
-		transfers = append(transfers, value.(*ChunkTransferStatus))
+		t := value.(*ChunkTransferStatus)
+		t.mu.RLock()
+		transfers = append(transfers, ChunkTransferStatus{
+			ChunkFileId:   t.ChunkFileId,
+			Path:          t.Path,
+			BytesReceived: t.BytesReceived,
+			Status:        t.Status,
+			LastErr:       t.LastErr,
+		})
+		t.mu.RUnlock()
 		return true
 	})
 	return transfers
