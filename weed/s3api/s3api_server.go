@@ -522,7 +522,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 
 	// 3. Dispatch
 	action := r.Form.Get("Action")
-	if strings.HasPrefix(action, "AssumeRole") {
+	if strings.HasPrefix(action, "AssumeRole") || action == "GetCallerIdentity" {
 		// STS
 		if s3a.stsHandlers == nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)
@@ -826,7 +826,11 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "AssumeRoleWithLDAPIdentity").
 			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-LDAP"))
 
-		glog.V(1).Infof("STS API enabled on S3 port (AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithLDAPIdentity)")
+		// GetCallerIdentity - returns caller identity based on SigV4 authentication
+		apiRouter.Methods(http.MethodPost).Path("/").Queries("Action", "GetCallerIdentity").
+			HandlerFunc(track(s3a.stsHandlers.HandleSTSRequest, "STS-GetCallerIdentity"))
+
+		glog.V(1).Infof("STS API enabled on S3 port (AssumeRole, AssumeRoleWithWebIdentity, AssumeRoleWithLDAPIdentity, GetCallerIdentity)")
 	}
 
 	// Embedded IAM API endpoint
@@ -849,7 +853,7 @@ func (s3a *S3ApiServer) registerRouter(router *mux.Router) {
 
 			// Action in Query String is handled by explicit STS routes above
 			action := r.URL.Query().Get("Action")
-			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" {
+			if action == "AssumeRole" || action == "AssumeRoleWithWebIdentity" || action == "AssumeRoleWithLDAPIdentity" || action == "GetCallerIdentity" {
 				return false
 			}
 

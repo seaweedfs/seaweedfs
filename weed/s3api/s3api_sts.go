@@ -36,6 +36,7 @@ const (
 	actionAssumeRole                 = "AssumeRole"
 	actionAssumeRoleWithWebIdentity  = "AssumeRoleWithWebIdentity"
 	actionAssumeRoleWithLDAPIdentity = "AssumeRoleWithLDAPIdentity"
+	actionGetCallerIdentity          = "GetCallerIdentity"
 
 	// LDAP parameter names
 	stsLDAPUsername     = "LDAPUsername"
@@ -121,6 +122,8 @@ func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
 		h.handleAssumeRoleWithWebIdentity(w, r)
 	case actionAssumeRoleWithLDAPIdentity:
 		h.handleAssumeRoleWithLDAPIdentity(w, r)
+	case actionGetCallerIdentity:
+		h.handleGetCallerIdentity(w, r)
 	default:
 		h.writeSTSErrorResponse(w, r, STSErrInvalidAction,
 			fmt.Errorf("unsupported action: %s", action))
@@ -616,6 +619,52 @@ func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSe
 	return stsCreds, assumedUser, nil
 }
 
+// handleGetCallerIdentity handles the GetCallerIdentity API action.
+// It returns the identity (ARN, account, user ID) of the caller based on SigV4 authentication.
+func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Request) {
+	if h.iam == nil {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("IAM not configured for STS"))
+		return
+	}
+
+	identity, _, _, _, sigErrCode := h.iam.verifyV4Signature(r, false)
+	if sigErrCode != s3err.ErrNone {
+		glog.V(2).Infof("GetCallerIdentity SigV4 verification failed: %v", sigErrCode)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("invalid AWS signature: %v", sigErrCode))
+		return
+	}
+
+	if identity == nil {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("unable to identify caller"))
+		return
+	}
+
+	accountID := h.getAccountID()
+
+	arn := identity.PrincipalArn
+	if arn == "" {
+		arn = fmt.Sprintf("arn:aws:iam::%s:user/%s", accountID, identity.Name)
+	}
+
+	userId := identity.Name
+
+	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)
+
+	xmlResponse := &GetCallerIdentityResponse{
+		Result: GetCallerIdentityResult{
+			Arn:     arn,
+			UserId:  userId,
+			Account: accountID,
+		},
+	}
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
+
+	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
+}
+
 // STS Response types for XML marshaling
 
 // AssumeRoleWithWebIdentityResponse is the response for AssumeRoleWithWebIdentity
@@ -676,6 +725,22 @@ type AssumeRoleWithLDAPIdentityResponse struct {
 type LDAPIdentityResult struct {
 	Credentials     STSCredentials   `xml:"Credentials"`
 	AssumedRoleUser *AssumedRoleUser `xml:"AssumedRoleUser,omitempty"`
+}
+
+// GetCallerIdentityResponse is the response for GetCallerIdentity
+type GetCallerIdentityResponse struct {
+	XMLName          xml.Name                `xml:"https://sts.amazonaws.com/doc/2011-06-15/ GetCallerIdentityResponse"`
+	Result           GetCallerIdentityResult `xml:"GetCallerIdentityResult"`
+	ResponseMetadata struct {
+		RequestId string `xml:"RequestId,omitempty"`
+	} `xml:"ResponseMetadata,omitempty"`
+}
+
+// GetCallerIdentityResult contains the result of GetCallerIdentity
+type GetCallerIdentityResult struct {
+	Arn     string `xml:"Arn"`
+	UserId  string `xml:"UserId"`
+	Account string `xml:"Account"`
 }
 
 // STS Error types
