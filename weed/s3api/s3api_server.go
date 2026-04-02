@@ -522,7 +522,7 @@ func (s3a *S3ApiServer) UnifiedPostHandler(w http.ResponseWriter, r *http.Reques
 
 	// 3. Dispatch
 	action := r.Form.Get("Action")
-	if strings.HasPrefix(action, "AssumeRole") {
+	if strings.HasPrefix(action, "AssumeRole") || action == "GetCallerIdentity" {
 		// STS
 		if s3a.stsHandlers == nil {
 			s3err.WriteErrorResponse(w, r, s3err.ErrServiceUnavailable)

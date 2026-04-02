@@ -628,7 +628,7 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	identity, credential, _, _, sigErrCode := h.iam.verifyV4Signature(r, false)
+	identity, _, _, _, sigErrCode := h.iam.verifyV4Signature(r, false)
 	if sigErrCode != s3err.ErrNone {
 		glog.V(2).Infof("GetCallerIdentity SigV4 verification failed: %v", sigErrCode)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
@@ -650,9 +650,6 @@ func (h *STSHandlers) handleGetCallerIdentity(w http.ResponseWriter, r *http.Req
 	}
 
 	userId := identity.Name
-	if credential != nil && credential.AccessKey != "" {
-		userId = credential.AccessKey
-	}
 
 	glog.V(2).Infof("GetCallerIdentity: identity=%s, arn=%s, account=%s", identity.Name, arn, accountID)
 
