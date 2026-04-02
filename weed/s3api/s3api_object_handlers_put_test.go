@@ -301,3 +301,41 @@ func TestWithObjectWriteLockSerializesConcurrentPreconditions(t *testing.T) {
 		t.Fatalf("expected %d precondition failures, got %d", workers-1, preconditionFailedCount)
 	}
 }
+
+func TestResolveFileMode(t *testing.T) {
+	tests := []struct {
+		name            string
+		acl             string
+		defaultFileMode uint32
+		expected        uint32
+	}{
+		{"no acl, no default", "", 0, 0660},
+		{"no acl, with default", "", 0644, 0644},
+		{"private", s3_constants.CannedAclPrivate, 0, 0660},
+		{"private overrides default", s3_constants.CannedAclPrivate, 0644, 0660},
+		{"public-read", s3_constants.CannedAclPublicRead, 0, 0644},
+		{"public-read overrides default", s3_constants.CannedAclPublicRead, 0666, 0644},
+		{"public-read-write", s3_constants.CannedAclPublicReadWrite, 0, 0666},
+		{"authenticated-read", s3_constants.CannedAclAuthenticatedRead, 0, 0644},
+		{"bucket-owner-read", s3_constants.CannedAclBucketOwnerRead, 0, 0644},
+		{"bucket-owner-full-control", s3_constants.CannedAclBucketOwnerFullControl, 0, 0660},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s3a := &S3ApiServer{
+				option: &S3ApiServerOption{
+					DefaultFileMode: tt.defaultFileMode,
+				},
+			}
+			req := httptest.NewRequest(http.MethodPut, "/bucket/object", nil)
+			if tt.acl != "" {
+				req.Header.Set(s3_constants.AmzCannedAcl, tt.acl)
+			}
+			got := s3a.resolveFileMode(req)
+			if got != tt.expected {
+				t.Errorf("resolveFileMode() = %04o, want %04o", got, tt.expected)
+			}
+		})
+	}
+}

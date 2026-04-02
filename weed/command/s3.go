@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +37,9 @@ var (
 	s3StandaloneOptions S3Options
 )
 
+// S3Options holds CLI flags for the S3 gateway.
+// Flags are registered in multiple commands: s3.go (standalone), server.go, filer.go, and mini.go.
+// When adding a new field, update all four flag registration sites.
 type S3Options struct {
 	filer                     *string
 	bindIp                    *string
@@ -68,6 +72,7 @@ type S3Options struct {
 	debugPort                 *int
 	cipher                    *bool
 	externalUrl               *string
+	defaultFileMode           *string
 }
 
 func init() {
@@ -103,6 +108,7 @@ func init() {
 	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 }
 
 var cmdS3 = &Command{
@@ -232,6 +238,17 @@ func (s3opt *S3Options) resolveExternalUrl() string {
 	return os.Getenv("S3_EXTERNAL_URL")
 }
 
+func (s3opt *S3Options) parseDefaultFileMode() (uint32, error) {
+	if s3opt.defaultFileMode == nil || *s3opt.defaultFileMode == "" {
+		return 0, nil
+	}
+	mode, err := strconv.ParseUint(*s3opt.defaultFileMode, 8, 32)
+	if err != nil {
+		return 0, fmt.Errorf("invalid defaultFileMode %q: %v", *s3opt.defaultFileMode, err)
+	}
+	return uint32(mode), nil
+}
+
 func (s3opt *S3Options) startS3Server() bool {
 
 	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
@@ -298,6 +315,11 @@ func (s3opt *S3Options) startS3Server() bool {
 		*s3opt.bindIp = "0.0.0.0"
 	}
 
+	defaultFileMode, fileModeErr := s3opt.parseDefaultFileMode()
+	if fileModeErr != nil {
+		glog.Fatalf("S3 API Server startup error: %v", fileModeErr)
+	}
+
 	s3ApiServer, s3ApiServer_err = s3api.NewS3ApiServer(router, &s3api.S3ApiServerOption{
 		Filers:                    filerAddresses,
 		Masters:                   masterAddresses,
@@ -320,6 +342,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		BindIp:                    *s3opt.bindIp,
 		GrpcPort:                  *s3opt.portGrpc,
 		ExternalUrl:               s3opt.resolveExternalUrl(),
+		DefaultFileMode:           defaultFileMode,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
