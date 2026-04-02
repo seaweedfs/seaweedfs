@@ -371,21 +371,15 @@ func TestVersioningPaginationDeepDirectoryHierarchy(t *testing.T) {
 			versionIdMarker = resp.NextVersionIdMarker
 		}
 
-		assert.Len(t, allVersions, totalObjects, "Should list all %d objects", totalObjects)
 		assert.Greater(t, pageCount, 1, "Should require multiple pages")
 
-		// Verify no duplicates
-		seen := make(map[string]bool)
+		// Verify listed keys exactly match the keys we created (same elements, same order)
+		listedKeys := make([]string, 0, len(allVersions))
 		for _, v := range allVersions {
-			assert.False(t, seen[*v.Key], "Duplicate key: %s", *v.Key)
-			seen[*v.Key] = true
+			listedKeys = append(listedKeys, *v.Key)
 		}
-
-		// Verify keys are in sorted order
-		for i := 1; i < len(allVersions); i++ {
-			assert.True(t, *allVersions[i-1].Key <= *allVersions[i].Key,
-				"Keys should be sorted: %s > %s", *allVersions[i-1].Key, *allVersions[i].Key)
-		}
+		assert.Equal(t, allKeys, listedKeys,
+			"Listed version keys should exactly match created keys")
 
 		// Check that later pages don't take dramatically longer than earlier ones.
 		// Before the fix, later pages were exponentially slower because they
