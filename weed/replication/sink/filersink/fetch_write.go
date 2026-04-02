@@ -335,6 +335,7 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 			glog.V(1).Infof("skip retrying stale source %s for %s: %v", sourceChunk.GetFileIdString(), path, retryErr)
 			return false
 		}
+		transferStatus.LastErr = retryErr.Error()
 		if isEofError(retryErr) {
 			eofBackoff = nextEofBackoff(eofBackoff)
 			transferStatus.BytesReceived = int64(len(partialData))

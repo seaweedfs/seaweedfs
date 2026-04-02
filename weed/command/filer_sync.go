@@ -375,8 +375,13 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 		lastLogTsNs = now
 		if offsetTsNs == lastProgressedTsNs {
 			for _, t := range filerSink.ActiveTransfers() {
-				glog.V(0).Infof("  %s %s: %d bytes received, %s",
-					t.ChunkFileId, t.Path, t.BytesReceived, t.Status)
+				if t.LastErr != "" {
+					glog.V(0).Infof("  %s %s: %d bytes received, %s, last error: %s",
+						t.ChunkFileId, t.Path, t.BytesReceived, t.Status, t.LastErr)
+				} else {
+					glog.V(0).Infof("  %s %s: %d bytes received, %s",
+						t.ChunkFileId, t.Path, t.BytesReceived, t.Status)
+				}
 			}
 		}
 		lastProgressedTsNs = offsetTsNs

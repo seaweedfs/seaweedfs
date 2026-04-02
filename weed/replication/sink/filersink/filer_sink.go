@@ -27,6 +27,7 @@ type ChunkTransferStatus struct {
 	Path          string
 	BytesReceived int64
 	Status        string // "downloading", "uploading", or "waiting 10s" etc.
+	LastErr       string
 }
 
 type FilerSink struct {
