@@ -999,7 +999,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
 	// List all remaining version files in the .versions directory
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	entries, isLast, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
 		glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
 		return fmt.Errorf("failed to list versions: %v", err)
@@ -1070,6 +1070,10 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
+	} else if !isLast {
+		// The listing was truncated - there may be content versions beyond the first page.
+		// Do not delete the .versions directory to avoid data loss.
+		glog.Warningf("updateLatestVersionAfterDeletion: listing for %s/%s was truncated, skipping .versions directory deletion", bucket, object)
 	} else {
 		// No versions left - delete the .versions metadata file entirely
 		// This prevents clients from seeing an empty .versions file
