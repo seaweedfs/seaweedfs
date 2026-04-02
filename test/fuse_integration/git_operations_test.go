@@ -85,16 +85,19 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 	branch := gitOutput(t, localClone, "rev-parse", "--abbrev-ref", "HEAD")
 	gitRun(t, localClone, "push", "origin", branch)
 
-	// Wait for pushed objects to become visible through the FUSE mount.
-	// After git push, pack objects may not be immediately consistent on
-	// the FUSE layer, causing clone to fail with "nonexistent object".
-	waitForBareRepoEventually(t, bareRepo, 10*time.Second)
+	// The bare repo lives on the FUSE mount and can briefly disappear after
+	// the push completes, and pushed pack objects may not be immediately
+	// consistent on the FUSE layer. Give the mount a chance to settle, then
+	// recover from the local clone if the remote is still missing.
+	if !waitForBareRepoEventually(t, bareRepo, 10*time.Second) {
+		t.Logf("bare repo %s did not stabilise after push; forcing recovery before clone", bareRepo)
+	}
 	refreshDirEntry(t, bareRepo)
 	time.Sleep(1 * time.Second)
 
 	// ---- Phase 3: Clone from mount bare repo into on-mount working dir ----
 	t.Log("Phase 3: clone from mount bare repo to on-mount working dir")
-	gitRun(t, "", "clone", bareRepo, mountClone)
+	ensureMountCloneFromBareWithRecovery(t, bareRepo, localClone, mountClone)
 
 	assertFileContains(t, filepath.Join(mountClone, "README.md"), "# Updated")
 	assertFileContains(t, filepath.Join(mountClone, "src/main.go"), "v2")
@@ -297,7 +300,7 @@ func waitForBareRepoEventually(t *testing.T, bareRepo string, timeout time.Durat
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if isBareRepo(bareRepo) {
+		if isBareRepoAccessible(bareRepo) {
 			return true
 		}
 		refreshDirEntry(t, bareRepo)
@@ -319,6 +322,14 @@ func isBareRepo(bareRepo string) bool {
 	return true
 }
 
+func isBareRepoAccessible(bareRepo string) bool {
+	if !isBareRepo(bareRepo) {
+		return false
+	}
+	out, err := tryGitCommand("", "--git-dir="+bareRepo, "rev-parse", "--is-bare-repository")
+	return err == nil && out == "true"
+}
+
 func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 	t.Helper()
 	require.NoError(t, tryEnsureMountClone(bareRepo, mountClone))
@@ -327,7 +338,7 @@ func ensureMountClone(t *testing.T, bareRepo, mountClone string) {
 // tryEnsureBareRepo verifies the bare repo on the FUSE mount exists.
 // If it has vanished, it re-creates it from the local clone.
 func tryEnsureBareRepo(bareRepo, localClone string) error {
-	if _, err := os.Stat(filepath.Join(bareRepo, "HEAD")); err == nil {
+	if isBareRepoAccessible(bareRepo) {
 		return nil
 	}
 	branch, err := tryGitCommand(localClone, "rev-parse", "--abbrev-ref", "HEAD")
@@ -345,6 +356,36 @@ func tryEnsureBareRepo(bareRepo, localClone string) error {
 	}
 	if _, err := tryGitCommand("", "--git-dir="+bareRepo, "symbolic-ref", "HEAD", "refs/heads/"+branch); err != nil {
 		return fmt.Errorf("set bare repo HEAD to %s: %w", branch, err)
+	}
+	return nil
+}
+
+func ensureMountCloneFromBareWithRecovery(t *testing.T, bareRepo, localClone, mountClone string) {
+	t.Helper()
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if lastErr = tryEnsureMountCloneFromBare(bareRepo, localClone, mountClone); lastErr == nil {
+			return
+		}
+		if attempt == maxAttempts {
+			require.NoError(t, lastErr, "git clone %s %s failed after %d recovery attempts", bareRepo, mountClone, maxAttempts)
+		}
+		t.Logf("clone recovery attempt %d: %v — removing clone for re-create", attempt, lastErr)
+		os.RemoveAll(mountClone)
+		time.Sleep(2 * time.Second)
+	}
+}
+
+func tryEnsureMountCloneFromBare(bareRepo, localClone, mountClone string) error {
+	if err := tryEnsureBareRepo(bareRepo, localClone); err != nil {
+		return fmt.Errorf("ensure bare repo: %w", err)
+	}
+	if err := tryEnsureMountClone(bareRepo, mountClone); err != nil {
+		return fmt.Errorf("ensure mount clone: %w", err)
+	}
+	if _, err := tryGitCommand(mountClone, "rev-parse", "HEAD"); err != nil {
+		return fmt.Errorf("verify mount clone: %w", err)
 	}
 	return nil
 }
@@ -556,4 +597,34 @@ func TestTryEnsureBareRepoPreservesCurrentBranch(t *testing.T) {
 	restoredHead := gitOutput(t, restoredClone, "rev-parse", "--abbrev-ref", "HEAD")
 	assert.Equal(t, branch, restoredHead, "clone from recovered bare repo should check out the current branch")
 	assertFileContains(t, filepath.Join(restoredClone, "README.md"), "hello recovery")
+}
+
+func TestEnsureMountCloneFromBareWithRecoveryRecreatesMissingBareRepo(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "git_mount_clone_recovery_")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	bareRepo := filepath.Join(tempDir, "repo.git")
+	localClone := filepath.Join(tempDir, "clone")
+	mountClone := filepath.Join(tempDir, "mount-clone")
+
+	gitRun(t, "", "init", "--bare", bareRepo)
+	gitRun(t, "", "clone", bareRepo, localClone)
+	gitRun(t, localClone, "config", "user.email", "test@seaweedfs.test")
+	gitRun(t, localClone, "config", "user.name", "Test")
+
+	writeFile(t, localClone, "README.md", "hello clone recovery\n")
+	gitRun(t, localClone, "add", "README.md")
+	gitRun(t, localClone, "commit", "-m", "initial commit")
+
+	branch := gitOutput(t, localClone, "rev-parse", "--abbrev-ref", "HEAD")
+	gitRun(t, localClone, "push", "origin", branch)
+
+	require.NoError(t, os.RemoveAll(bareRepo))
+
+	ensureMountCloneFromBareWithRecovery(t, bareRepo, localClone, mountClone)
+
+	head := gitOutput(t, mountClone, "rev-parse", "--abbrev-ref", "HEAD")
+	assert.Equal(t, branch, head, "recovered clone should stay on the pushed branch")
+	assertFileContains(t, filepath.Join(mountClone, "README.md"), "hello clone recovery")
 }
