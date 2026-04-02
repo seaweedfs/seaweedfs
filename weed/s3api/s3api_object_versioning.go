@@ -1075,7 +1075,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		// This prevents clients from seeing an empty .versions file
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions metadata file", bucket, object)
 
-		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
+		err = s3a.rm(bucketDir, versionsObjectPath, true, true)
 		if err != nil {
 			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions metadata file for %s/%s: %v", bucket, object, err)
 			// Don't return error - the versions are already deleted, this is just cleanup
