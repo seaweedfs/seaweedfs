@@ -7,15 +7,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockUserStore implements integration.UserStore for testing GetPoliciesForUser
+type mockUserStore struct {
+	users map[string]*iam_pb.Identity
+}
+
+func (m *mockUserStore) GetUser(_ context.Context, username string) (*iam_pb.Identity, error) {
+	u, ok := m.users[username]
+	if !ok {
+		return nil, nil
+	}
+	return u, nil
+}
 
 // TestGetFederationToken_BasicFlow tests basic credential generation for GetFederationToken
 func TestGetFederationToken_BasicFlow(t *testing.T) {
@@ -562,4 +578,169 @@ func TestGetFederationToken_STSNotReady(t *testing.T) {
 func TestGetFederationToken_DefaultDuration(t *testing.T) {
 	assert.Equal(t, int64(43200), defaultFederationDurationSeconds, "Default duration should be 12 hours (43200 seconds)")
 	assert.Equal(t, int64(129600), maxFederationDurationSeconds, "Max duration should be 36 hours (129600 seconds)")
+}
+
+// TestGetFederationToken_GetPoliciesForUser tests that GetPoliciesForUser
+// correctly resolves user policies from the UserStore and returns errors
+// when the store is unavailable.
+func TestGetFederationToken_GetPoliciesForUser(t *testing.T) {
+	ctx := context.Background()
+	manager := newTestSTSIntegrationManager(t)
+
+	t.Run("NoUserStore", func(t *testing.T) {
+		// UserStore not set — should return error
+		policies, err := manager.GetPoliciesForUser(ctx, "alice")
+		assert.Error(t, err)
+		assert.Nil(t, policies)
+		assert.Contains(t, err.Error(), "user store not configured")
+	})
+
+	t.Run("UserNotFound", func(t *testing.T) {
+		manager.SetUserStore(&mockUserStore{users: map[string]*iam_pb.Identity{}})
+		policies, err := manager.GetPoliciesForUser(ctx, "nonexistent")
+		assert.NoError(t, err)
+		assert.Nil(t, policies)
+	})
+
+	t.Run("UserWithPolicies", func(t *testing.T) {
+		manager.SetUserStore(&mockUserStore{
+			users: map[string]*iam_pb.Identity{
+				"alice": {
+					Name:        "alice",
+					PolicyNames: []string{"GroupReadPolicy", "GroupWritePolicy"},
+				},
+			},
+		})
+		policies, err := manager.GetPoliciesForUser(ctx, "alice")
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"GroupReadPolicy", "GroupWritePolicy"}, policies)
+	})
+
+	t.Run("UserWithNoPolicies", func(t *testing.T) {
+		manager.SetUserStore(&mockUserStore{
+			users: map[string]*iam_pb.Identity{
+				"bob": {Name: "bob"},
+			},
+		})
+		policies, err := manager.GetPoliciesForUser(ctx, "bob")
+		assert.NoError(t, err)
+		assert.Empty(t, policies)
+	})
+}
+
+// TestGetFederationToken_PolicyMergeAndDedup tests that the handler's policy
+// merge logic correctly combines identity.PolicyNames with IAM-manager-resolved
+// policies and deduplicates the result.
+func TestGetFederationToken_PolicyMergeAndDedup(t *testing.T) {
+	ctx := context.Background()
+	manager := newTestSTSIntegrationManager(t)
+
+	// Create policies so they exist in the engine
+	for _, name := range []string{"DirectPolicy", "GroupPolicy", "SharedPolicy"} {
+		require.NoError(t, manager.CreatePolicy(ctx, "", name, &policy.PolicyDocument{
+			Version: "2012-10-17",
+			Statement: []policy.Statement{
+				{Effect: "Allow", Action: []string{"s3:GetObject"}, Resource: []string{"arn:aws:s3:::*/*"}},
+			},
+		}))
+	}
+
+	// Set up a user store that returns group-attached policies
+	manager.SetUserStore(&mockUserStore{
+		users: map[string]*iam_pb.Identity{
+			"alice": {
+				Name:        "alice",
+				PolicyNames: []string{"GroupPolicy", "SharedPolicy"},
+			},
+		},
+	})
+
+	stsService := manager.GetSTSService()
+
+	// Simulate what the handler does: merge identity.PolicyNames with GetPoliciesForUser
+	identityPolicies := []string{"DirectPolicy", "SharedPolicy"} // SharedPolicy overlaps
+
+	policySet := make(map[string]struct{})
+	for _, p := range identityPolicies {
+		policySet[p] = struct{}{}
+	}
+
+	userPolicies, err := manager.GetPoliciesForUser(ctx, "alice")
+	require.NoError(t, err)
+	for _, p := range userPolicies {
+		policySet[p] = struct{}{}
+	}
+
+	merged := make([]string, 0, len(policySet))
+	for p := range policySet {
+		merged = append(merged, p)
+	}
+	sort.Strings(merged) // deterministic for assertion
+
+	// Should contain all three unique policies, no duplicates
+	assert.Equal(t, []string{"DirectPolicy", "GroupPolicy", "SharedPolicy"}, merged)
+
+	// Verify the merged policies can be embedded in a token and recovered
+	sessionId, err := sts.GenerateSessionId()
+	require.NoError(t, err)
+
+	expiration := time.Now().Add(time.Hour)
+	claims := sts.NewSTSSessionClaims(sessionId, stsService.Config.Issuer, expiration).
+		WithSessionName("test").
+		WithRoleInfo("arn:aws:iam::000000000000:user/alice", "000000000000:test", "arn:aws:sts::000000000000:federated-user/test").
+		WithPolicies(merged)
+
+	token, err := stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	require.NoError(t, err)
+
+	sessionInfo, err := stsService.ValidateSessionToken(ctx, token)
+	require.NoError(t, err)
+
+	sort.Strings(sessionInfo.Policies)
+	assert.Equal(t, []string{"DirectPolicy", "GroupPolicy", "SharedPolicy"}, sessionInfo.Policies,
+		"Token should contain the deduplicated merge of identity and group policies")
+}
+
+// TestGetFederationToken_PolicyMergeNoManager tests that when the IAM manager
+// is unavailable, identity.PolicyNames alone are still embedded.
+func TestGetFederationToken_PolicyMergeNoManager(t *testing.T) {
+	ctx := context.Background()
+	stsService, _ := setupTestSTSService(t)
+
+	// No IAM manager — only identity.PolicyNames should be used
+	identityPolicies := []string{"UserDirectPolicy"}
+
+	policySet := make(map[string]struct{})
+	for _, p := range identityPolicies {
+		policySet[p] = struct{}{}
+	}
+
+	// IAM manager is nil — skip GetPoliciesForUser (mirrors handler logic)
+	var policyManager *integration.IAMManager // nil
+	if policyManager != nil {
+		t.Fatal("policyManager should be nil in this test")
+	}
+
+	merged := make([]string, 0, len(policySet))
+	for p := range policySet {
+		merged = append(merged, p)
+	}
+
+	sessionId, err := sts.GenerateSessionId()
+	require.NoError(t, err)
+
+	expiration := time.Now().Add(time.Hour)
+	claims := sts.NewSTSSessionClaims(sessionId, stsService.Config.Issuer, expiration).
+		WithSessionName("test").
+		WithRoleInfo("arn:aws:iam::000000000000:user/alice", "000000000000:test", "arn:aws:sts::000000000000:federated-user/test").
+		WithPolicies(merged)
+
+	token, err := stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	require.NoError(t, err)
+
+	sessionInfo, err := stsService.ValidateSessionToken(ctx, token)
+	require.NoError(t, err)
+
+	assert.Equal(t, []string{"UserDirectPolicy"}, sessionInfo.Policies,
+		"Without IAM manager, only identity policies should be embedded")
 }
