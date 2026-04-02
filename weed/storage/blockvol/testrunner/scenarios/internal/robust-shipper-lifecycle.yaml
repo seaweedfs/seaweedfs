@@ -1,0 +1,240 @@
+name: robust-shipper-lifecycle
+timeout: 5m
+
+# Robust dimension: Shipper degradation → recovery lifecycle.
+# Uses /debug/block/shipper for real-time state (no heartbeat lag).
+# Uses exact replication ports from lookup_block_volume (not hardcoded range).
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: robust-ship
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ship-master /tmp/sw-ship-vs1 && mkdir -p /tmp/sw-ship-master /tmp/sw-ship-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ship-vs2 && mkdir -p /tmp/sw-ship-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-ship-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-ship-vs1
+        extra_args: "-block.dir=/tmp/sw-ship-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-ship-vs2
+        extra_args: "-block.dir=/tmp/sw-ship-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-and-write
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      # Lookup to get exact replication ports + primary host.
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: print
+        msg: "primary={{ vol_primary_host }} repl_data={{ vol_replica_data_addr }} repl_port={{ vol_replica_data_port }}"
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Wait for master assignment to set up shipper (heartbeat cycle ≈ 25s).
+      - action: sleep
+        duration: 30s
+
+      # Write to trigger shipper connection (sync_all → barrier).
+      - action: exec
+        node: m01
+        cmd: "dd if=/dev/urandom of={{ device }} bs=4k count=10 oflag=direct,sync 2>/dev/null"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+  - name: verify-in-sync
+    actions:
+      # Instant shipper state check.
+      - action: poll_shipper_state
+        node: m01
+        host: "{{ vol_primary_host }}"
+        port: "18480"
+        save_as: ship_initial
+        ignore_error: true
+
+      - action: print
+        msg: "=== Initial: state={{ ship_initial_state }} flushed={{ ship_initial_flushed_lsn }} ==="
+
+  - name: block-repl-ports
+    actions:
+      - action: print
+        msg: "=== Blocking replication port {{ vol_replica_data_port }} ==="
+
+      # Block exact replication data + ctrl ports from primary to replica.
+      - action: exec
+        node: m01
+        cmd: "iptables -A OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset; iptables -A OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m02
+        cmd: "iptables -A OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset; iptables -A OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset"
+        root: "true"
+        ignore_error: true
+
+      # Write to trigger Ship() failure → degradation.
+      - action: exec
+        node: m01
+        cmd: "dd if=/dev/urandom of={{ device }} bs=4k count=10 oflag=direct,sync 2>/dev/null"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 3s
+
+      # Poll — should be degraded now.
+      - action: poll_shipper_state
+        node: m01
+        host: "{{ vol_primary_host }}"
+        port: "18480"
+        expected_state: degraded
+        timeout: 10s
+        save_as: ship_degraded
+
+      - action: print
+        msg: "=== Degraded: state={{ ship_degraded_state }} flushed={{ ship_degraded_flushed_lsn }} ==="
+
+  - name: unblock-and-recover
+    actions:
+      - action: print
+        msg: "=== Unblocking replication ports ==="
+
+      - action: exec
+        node: m01
+        cmd: "iptables -D OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; iptables -D OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
+      - action: exec
+        node: m02
+        cmd: "iptables -D OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; iptables -D OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
+
+      # Write with sync to trigger barrier → reconnect.
+      - action: exec
+        node: m01
+        cmd: "dd if=/dev/urandom of={{ device }} bs=4k count=10 oflag=direct,sync 2>/dev/null"
+        root: "true"
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+      # Poll — should recover via barrier-triggered reconnect.
+      - action: poll_shipper_state
+        node: m01
+        host: "{{ vol_primary_host }}"
+        port: "18480"
+        expected_state: in_sync
+        timeout: 30s
+        save_as: ship_recovered
+
+      - action: print
+        msg: "=== Recovered: state={{ ship_recovered_state }} flushed={{ ship_recovered_flushed_lsn }} duration={{ ship_recovered_duration_ms }}ms ==="
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Shipper Lifecycle ==="
+      - action: print
+        msg: "Initial:   {{ ship_initial_state }} (flushed={{ ship_initial_flushed_lsn }})"
+      - action: print
+        msg: "Degraded:  {{ ship_degraded_state }} (flushed={{ ship_degraded_flushed_lsn }})"
+      - action: print
+        msg: "Recovered: {{ ship_recovered_state }} (flushed={{ ship_recovered_flushed_lsn }}, {{ ship_recovered_duration_ms }}ms)"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "iptables -D OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; iptables -D OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m02
+        cmd: "iptables -D OUTPUT -p tcp --dport {{ vol_replica_data_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; iptables -D OUTPUT -p tcp --dport {{ vol_replica_ctrl_port }} -j REJECT --reject-with tcp-reset 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

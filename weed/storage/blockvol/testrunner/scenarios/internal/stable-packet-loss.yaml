@@ -1,0 +1,291 @@
+name: stable-packet-loss
+timeout: 15m
+
+# Stable dimension: measure write IOPS under increasing packet loss
+# on the replication link. Uses netem loss (not delay).
+#
+# Loss levels: 0% (baseline from netem-sweep), 0.1%, 1%, 5%
+# Workload: 4K random write, QD16, 30s per level
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  volume_name: stable-loss
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-loss-master /tmp/sw-loss-vs1 && mkdir -p /tmp/sw-loss-master /tmp/sw-loss-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-loss-vs2 && mkdir -p /tmp/sw-loss-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-loss-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-loss-vs1
+        extra_args: "-block.dir=/tmp/sw-loss-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-loss-vs2
+        extra_args: "-block.dir=/tmp/sw-loss-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "sync_all"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: connect
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+  # === Baseline: 0% loss ===
+  - name: baseline
+    actions:
+      - action: print
+        msg: "=== Baseline: 0% packet loss ==="
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: baseline
+        save_as: fio_0
+
+      - action: fio_parse
+        json_var: fio_0
+        metric: iops
+        save_as: iops_0
+
+      - action: print
+        msg: "0% loss: {{ iops_0 }} IOPS"
+
+  # === 0.1% packet loss ===
+  - name: loss-01pct
+    actions:
+      - action: print
+        msg: "=== Injecting 0.1% packet loss ==="
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc add dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root netem loss 0.1%"
+        root: "true"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: loss-01pct
+        save_as: fio_01
+
+      - action: fio_parse
+        json_var: fio_01
+        metric: iops
+        save_as: iops_01
+
+      - action: print
+        msg: "0.1% loss: {{ iops_01 }} IOPS"
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc del dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root 2>/dev/null; true"
+        root: "true"
+
+      - action: sleep
+        duration: 2s
+
+  # === 1% packet loss ===
+  - name: loss-1pct
+    actions:
+      - action: print
+        msg: "=== Injecting 1% packet loss ==="
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc add dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root netem loss 1%"
+        root: "true"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: loss-1pct
+        save_as: fio_1
+
+      - action: fio_parse
+        json_var: fio_1
+        metric: iops
+        save_as: iops_1
+
+      - action: print
+        msg: "1% loss: {{ iops_1 }} IOPS"
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc del dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root 2>/dev/null; true"
+        root: "true"
+
+      - action: sleep
+        duration: 2s
+
+  # === 5% packet loss ===
+  - name: loss-5pct
+    actions:
+      - action: print
+        msg: "=== Injecting 5% packet loss ==="
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc add dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root netem loss 5%"
+        root: "true"
+
+      - action: sleep
+        duration: 2s
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: loss-5pct
+        save_as: fio_5
+
+      - action: fio_parse
+        json_var: fio_5
+        metric: iops
+        save_as: iops_5
+
+      - action: print
+        msg: "5% loss: {{ iops_5 }} IOPS"
+
+      - action: exec
+        node: m02
+        cmd: "tc qdisc del dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root 2>/dev/null; true"
+        root: "true"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Stable Dimension: Packet Loss Sweep (V1 sync_all RF=2) ==="
+      - action: print
+        msg: "0%   (baseline): {{ iops_0 }} IOPS"
+      - action: print
+        msg: "0.1% loss:       {{ iops_01 }} IOPS"
+      - action: print
+        msg: "1%   loss:       {{ iops_1 }} IOPS"
+      - action: print
+        msg: "5%   loss:       {{ iops_5 }} IOPS"
+
+      - action: collect_results
+        title: "Stable: Packet Loss Sweep (V1 sync_all RF=2)"
+        volume_name: "{{ volume_name }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m02
+        cmd: "tc qdisc del dev $(ip route get 192.168.1.181 | head -1 | awk '{for(i=1;i<=NF;i++) if($i==\"dev\") print $(i+1)}') root 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

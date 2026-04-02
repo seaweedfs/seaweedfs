@@ -130,3 +130,75 @@ func TestClassifyPath_RebuildPrecedence(t *testing.T) {
 		t.Fatalf("both catch-up and rebuild → %q, want rebuild", got)
 	}
 }
+
+func TestShipperStateInfo_ParseJSON(t *testing.T) {
+	raw := `[{"path":"/tmp/blocks/vol1.blk","role":"primary","epoch":3,"head_lsn":150,"degraded":true,"shippers":[{"data_addr":"10.0.0.2:4295","state":"degraded","flushed_lsn":120}],"timestamp":"2026-03-31T00:00:00Z"}]`
+
+	var infos []ShipperStateInfo
+	if err := json.Unmarshal([]byte(raw), &infos); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("count=%d", len(infos))
+	}
+	info := infos[0]
+	if info.Role != "primary" {
+		t.Fatalf("role=%s", info.Role)
+	}
+	if info.HeadLSN != 150 {
+		t.Fatalf("head_lsn=%d", info.HeadLSN)
+	}
+	if !info.Degraded {
+		t.Fatal("should be degraded")
+	}
+	if len(info.Shippers) != 1 {
+		t.Fatalf("shippers=%d", len(info.Shippers))
+	}
+	if info.Shippers[0].State != "degraded" {
+		t.Fatalf("shipper state=%s", info.Shippers[0].State)
+	}
+	if info.Shippers[0].FlushedLSN != 120 {
+		t.Fatalf("flushed_lsn=%d", info.Shippers[0].FlushedLSN)
+	}
+}
+
+func TestRebuildProfile_JSON(t *testing.T) {
+	p := RebuildProfile{
+		RebuildDurationMs: 45000,
+		SourceType:        "full_base",
+		SourceReason:      "untrusted_checkpoint",
+		DataIntegrity:     "pass",
+		RecoveryObservable: true,
+	}
+
+	data, err := json.Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var decoded RebuildProfile
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.RebuildDurationMs != 45000 {
+		t.Fatalf("duration=%d", decoded.RebuildDurationMs)
+	}
+	if decoded.SourceType != "full_base" {
+		t.Fatalf("source=%s", decoded.SourceType)
+	}
+	if decoded.SourceReason != "untrusted_checkpoint" {
+		t.Fatalf("reason=%s", decoded.SourceReason)
+	}
+}
+
+func TestShipperStateInfo_NoShippers(t *testing.T) {
+	raw := `[{"path":"/tmp/blocks/vol1.blk","role":"primary","epoch":1,"head_lsn":0,"degraded":false,"timestamp":"2026-03-31T00:00:00Z"}]`
+
+	var infos []ShipperStateInfo
+	if err := json.Unmarshal([]byte(raw), &infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos[0].Shippers) != 0 {
+		t.Fatalf("should have 0 shippers, got %d", len(infos[0].Shippers))
+	}
+}

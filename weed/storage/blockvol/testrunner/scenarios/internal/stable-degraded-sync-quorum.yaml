@@ -1,0 +1,236 @@
+name: stable-degraded-sync-quorum
+timeout: 12m
+
+# Stable dimension: RF=3 sync_quorum with one replica down.
+#
+# sync_quorum requires quorum (RF/2+1 = 2) of 3 nodes durable.
+# With one replica dead, 2 nodes remain — quorum met, writes succeed.
+# Expected: near-zero IOPS penalty (unlike sync_all which drops 66%).
+#
+# Comparison:
+#   sync_all degraded:   27,863 → 9,442 IOPS (−66%)
+#   best_effort degraded: 35,544 → 37,653 IOPS (+6%)
+#   sync_quorum degraded: ? → ? (this test)
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: stable-quorum
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+# NOTE: RF=3 requires 3 volume servers. With only 2 physical nodes,
+# we start 2 VS on m02 (ports 18480 and 18481) and 1 on m01.
+# This tests the quorum logic, not the physical redundancy.
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 18481/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-quorum-master /tmp/sw-quorum-vs1 /tmp/sw-quorum-vs3 && mkdir -p /tmp/sw-quorum-master /tmp/sw-quorum-vs1/blocks /tmp/sw-quorum-vs3/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-quorum-vs2 && mkdir -p /tmp/sw-quorum-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-quorum-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-quorum-vs1
+        extra_args: "-block.dir=/tmp/sw-quorum-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-quorum-vs2
+        extra_args: "-block.dir=/tmp/sw-quorum-vs2/blocks -block.listen=:3296 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      # Third VS on m02, different port.
+      - action: start_weed_volume
+        node: m02
+        port: "18481"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-quorum-vs3
+        extra_args: "-block.dir=/tmp/sw-quorum-vs3/blocks -block.listen=:3297 -ip=10.0.0.3"
+        save_as: vs3_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "3"
+        timeout: 30s
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "3"
+        durability_mode: "sync_quorum"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      # Force primary to m02:18480 for deterministic setup.
+      - action: block_promote
+        name: "{{ volume_name }}"
+        target_server: "10.0.0.3:18480"
+        force: "true"
+        reason: "quorum-setup"
+
+      - action: sleep
+        duration: 5s
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: print
+        msg: "RF=3 sync_quorum volume created, primary on m02"
+
+  - name: connect
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+  - name: baseline-healthy
+    actions:
+      - action: print
+        msg: "=== Baseline: RF=3 sync_quorum, all 3 replicas healthy ==="
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: baseline-healthy
+        save_as: fio_healthy
+
+      - action: fio_parse
+        json_var: fio_healthy
+        metric: iops
+        save_as: iops_healthy
+
+      - action: print
+        msg: "Healthy RF=3: {{ iops_healthy }} IOPS"
+
+  - name: kill-one-replica
+    actions:
+      - action: print
+        msg: "=== Killing one replica (m01 VS) — quorum still met ==="
+
+      - action: exec
+        node: m01
+        cmd: "kill -9 {{ vs2_pid }}"
+        root: "true"
+        ignore_error: true
+
+      # Wait for shipper to detect dead replica.
+      - action: sleep
+        duration: 10s
+
+  - name: degraded-one-dead
+    actions:
+      - action: print
+        msg: "=== Degraded: 1 of 2 replicas dead, quorum=2 still met ==="
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: degraded-one
+        save_as: fio_deg1
+
+      - action: fio_parse
+        json_var: fio_deg1
+        metric: iops
+        save_as: iops_deg1
+
+      - action: print
+        msg: "Degraded (1 dead): {{ iops_deg1 }} IOPS"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Stable: Degraded Mode (sync_quorum RF=3, iSCSI/RoCE) ==="
+      - action: print
+        msg: "Healthy (3/3):  {{ iops_healthy }} IOPS"
+      - action: print
+        msg: "Degraded (2/3): {{ iops_deg1 }} IOPS"
+
+      - action: collect_results
+        title: "Stable: Degraded Mode (sync_quorum RF=3)"
+        volume_name: "{{ volume_name }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs3_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

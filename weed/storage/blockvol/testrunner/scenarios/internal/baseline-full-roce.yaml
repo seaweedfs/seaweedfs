@@ -1,0 +1,295 @@
+name: baseline-full-roce
+timeout: 20m
+
+# Full baseline capture on 25Gbps RoCE.
+# Captures: write IOPS, read IOPS, mixed 70/30, QD sweep.
+# Results printed as structured table for baseline storage.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: baseline
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-bl-master /tmp/sw-bl-vs1 && mkdir -p /tmp/sw-bl-master /tmp/sw-bl-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-bl-vs2 && mkdir -p /tmp/sw-bl-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-bl-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-bl-vs1
+        extra_args: "-block.dir=/tmp/sw-bl-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4420 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-bl-vs2
+        extra_args: "-block.dir=/tmp/sw-bl-vs2/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.1:4420 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: validate_replication
+        volume_name: "{{ volume_name }}"
+        expected_rf: "2"
+        expected_durability: "sync_all"
+        require_not_degraded: "true"
+        require_cross_machine: "true"
+
+  - name: connect-nvme
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: exec
+        node: m01
+        cmd: "sh -c 'modprobe nvme_tcp; nvme disconnect-all >/dev/null 2>&1; nvme connect -t tcp -a {{ vol_iscsi_host }} -s 4420 -n nqn.2024-01.com.seaweedfs:vol.{{ volume_name }} >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: dev
+
+      - action: print
+        msg: "NVMe device: {{ dev }}"
+
+  # === Write IOPS at different queue depths ===
+  - name: write-qd1
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        runtime: "15"
+        time_based: "true"
+        name: w-qd1
+        save_as: fio_w1
+      - action: fio_parse
+        json_var: fio_w1
+        metric: iops
+        save_as: w_qd1
+      - action: print
+        msg: "Write QD1:   {{ w_qd1 }} IOPS"
+
+  - name: write-qd8
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "8"
+        runtime: "15"
+        time_based: "true"
+        name: w-qd8
+        save_as: fio_w8
+      - action: fio_parse
+        json_var: fio_w8
+        metric: iops
+        save_as: w_qd8
+      - action: print
+        msg: "Write QD8:   {{ w_qd8 }} IOPS"
+
+  - name: write-qd32
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "15"
+        time_based: "true"
+        name: w-qd32
+        save_as: fio_w32
+      - action: fio_parse
+        json_var: fio_w32
+        metric: iops
+        save_as: w_qd32
+      - action: print
+        msg: "Write QD32:  {{ w_qd32 }} IOPS"
+
+  - name: write-qd128
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "128"
+        runtime: "15"
+        time_based: "true"
+        name: w-qd128
+        save_as: fio_w128
+      - action: fio_parse
+        json_var: fio_w128
+        metric: iops
+        save_as: w_qd128
+      - action: print
+        msg: "Write QD128: {{ w_qd128 }} IOPS"
+
+  # === Read IOPS ===
+  - name: read-qd32
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        runtime: "15"
+        time_based: "true"
+        name: r-qd32
+        save_as: fio_r32
+      - action: fio_parse
+        json_var: fio_r32
+        metric: iops
+        direction: read
+        save_as: r_qd32
+      - action: print
+        msg: "Read QD32:   {{ r_qd32 }} IOPS"
+
+  # === Mixed 70/30 read/write ===
+  - name: mixed-qd32
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randrw
+        bs: 4k
+        iodepth: "32"
+        runtime: "15"
+        time_based: "true"
+        rwmixread: "70"
+        name: rw-qd32
+        save_as: fio_rw32
+      - action: fio_parse
+        json_var: fio_rw32
+        metric: iops
+        save_as: rw_qd32
+      - action: print
+        msg: "Mixed 70/30 QD32: {{ rw_qd32 }} IOPS (write component)"
+
+  # === Sequential write ===
+  - name: seq-write
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: write
+        bs: 1M
+        iodepth: "8"
+        runtime: "15"
+        time_based: "true"
+        name: seq-w
+        save_as: fio_sw
+      - action: fio_parse
+        json_var: fio_sw
+        metric: bw
+        save_as: seq_w_bw
+      - action: print
+        msg: "Seq Write 1M: {{ seq_w_bw }} KB/s"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=========================================="
+      - action: print
+        msg: "BASELINE: RF=2 sync_all NVMe-TCP 25Gbps RoCE"
+      - action: print
+        msg: "=========================================="
+      - action: print
+        msg: "Write 4K QD1:      {{ w_qd1 }} IOPS"
+      - action: print
+        msg: "Write 4K QD8:      {{ w_qd8 }} IOPS"
+      - action: print
+        msg: "Write 4K QD32:     {{ w_qd32 }} IOPS"
+      - action: print
+        msg: "Write 4K QD128:    {{ w_qd128 }} IOPS"
+      - action: print
+        msg: "Read 4K QD32:      {{ r_qd32 }} IOPS"
+      - action: print
+        msg: "Mixed 70/30 QD32:  {{ rw_qd32 }} IOPS"
+      - action: print
+        msg: "Seq Write 1M QD8:  {{ seq_w_bw }} KB/s"
+      - action: print
+        msg: "=========================================="
+
+      - action: collect_results
+        title: "Full Baseline — RF=2 sync_all NVMe-TCP 25Gbps RoCE"
+        volume_name: "{{ volume_name }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

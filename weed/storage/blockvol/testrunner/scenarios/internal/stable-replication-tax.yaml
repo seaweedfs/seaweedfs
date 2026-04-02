@@ -1,0 +1,245 @@
+name: stable-replication-tax
+timeout: 10m
+
+# Stable dimension: replication tax comparison.
+# RF=1 (no replication) vs RF=2 sync_all vs RF=2 best_effort.
+# All on the same hardware, same workload.
+#
+# Answers: what does replication cost in IOPS?
+
+env:
+  master_url: "http://192.168.1.184:9433"
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-tax-master /tmp/sw-tax-vs1 && mkdir -p /tmp/sw-tax-master /tmp/sw-tax-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-tax-vs2 && mkdir -p /tmp/sw-tax-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-tax-master
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "localhost:9433"
+        dir: /tmp/sw-tax-vs1
+        extra_args: "-block.dir=/tmp/sw-tax-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "192.168.1.184:9433"
+        dir: /tmp/sw-tax-vs2
+        extra_args: "-block.dir=/tmp/sw-tax-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  # === RF=1: No replication ===
+  - name: rf1-test
+    actions:
+      - action: create_block_volume
+        name: "tax-rf1"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+        durability_mode: "best_effort"
+
+      - action: sleep
+        duration: 2s
+
+      - action: lookup_block_volume
+        name: "tax-rf1"
+        save_as: rf1
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ rf1_iscsi_host }}"
+        port: "{{ rf1_iscsi_port }}"
+        iqn: "{{ rf1_iqn }}"
+        save_as: dev_rf1
+
+      - action: fio_json
+        node: m01
+        device: "{{ dev_rf1 }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: rf1
+        save_as: fio_rf1
+
+      - action: fio_parse
+        json_var: fio_rf1
+        metric: iops
+        save_as: iops_rf1
+
+      - action: print
+        msg: "RF=1:            {{ iops_rf1 }} IOPS"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  # === RF=2 best_effort ===
+  - name: rf2-best-effort
+    actions:
+      - action: create_block_volume
+        name: "tax-rf2be"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "tax-rf2be"
+        timeout: 60s
+
+      - action: lookup_block_volume
+        name: "tax-rf2be"
+        save_as: rf2be
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ rf2be_iscsi_host }}"
+        port: "{{ rf2be_iscsi_port }}"
+        iqn: "{{ rf2be_iqn }}"
+        save_as: dev_rf2be
+
+      - action: fio_json
+        node: m01
+        device: "{{ dev_rf2be }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: rf2-best-effort
+        save_as: fio_rf2be
+
+      - action: fio_parse
+        json_var: fio_rf2be
+        metric: iops
+        save_as: iops_rf2be
+
+      - action: print
+        msg: "RF=2 best_effort: {{ iops_rf2be }} IOPS"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  # === RF=2 sync_all ===
+  - name: rf2-sync-all
+    actions:
+      - action: create_block_volume
+        name: "tax-rf2sa"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "tax-rf2sa"
+        timeout: 60s
+
+      - action: lookup_block_volume
+        name: "tax-rf2sa"
+        save_as: rf2sa
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ rf2sa_iscsi_host }}"
+        port: "{{ rf2sa_iscsi_port }}"
+        iqn: "{{ rf2sa_iqn }}"
+        save_as: dev_rf2sa
+
+      - action: fio_json
+        node: m01
+        device: "{{ dev_rf2sa }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "30"
+        time_based: "true"
+        name: rf2-sync-all
+        save_as: fio_rf2sa
+
+      - action: fio_parse
+        json_var: fio_rf2sa
+        metric: iops
+        save_as: iops_rf2sa
+
+      - action: print
+        msg: "RF=2 sync_all:   {{ iops_rf2sa }} IOPS"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Replication Tax (4K randwrite QD16) ==="
+      - action: print
+        msg: "RF=1 (no repl):   {{ iops_rf1 }} IOPS"
+      - action: print
+        msg: "RF=2 best_effort: {{ iops_rf2be }} IOPS"
+      - action: print
+        msg: "RF=2 sync_all:    {{ iops_rf2sa }} IOPS"
+
+      - action: collect_results
+        title: "Replication Tax"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

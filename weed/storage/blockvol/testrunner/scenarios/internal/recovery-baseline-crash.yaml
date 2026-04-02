@@ -24,12 +24,14 @@ phases:
     actions:
       - action: exec
         node: m02
-        cmd: "rm -rf /tmp/sw-rb-master /tmp/sw-rb-vs1 /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-master /tmp/sw-rb-vs1/blocks /tmp/sw-rb-vs2/blocks"
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-rb-master /tmp/sw-rb-vs1 /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-master /tmp/sw-rb-vs1/blocks /tmp/sw-rb-vs2/blocks"
         root: "true"
+        ignore_error: true
       - action: exec
         node: m01
-        cmd: "rm -rf /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-vs2/blocks"
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-vs2/blocks"
         root: "true"
+        ignore_error: true
 
       - action: start_weed_master
         node: m02

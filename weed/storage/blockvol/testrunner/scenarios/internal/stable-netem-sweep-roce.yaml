@@ -1,0 +1,244 @@
+name: stable-netem-sweep-roce
+timeout: 15m
+
+# Stable dimension on 25Gbps RoCE: write IOPS under latency injection.
+# Uses NVMe-TCP for client path, netem on replication link.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: stable-roce
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-nroce-master /tmp/sw-nroce-vs1 && mkdir -p /tmp/sw-nroce-master /tmp/sw-nroce-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-nroce-vs2 && mkdir -p /tmp/sw-nroce-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-nroce-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-nroce-vs1
+        extra_args: "-block.dir=/tmp/sw-nroce-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4420 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-nroce-vs2
+        extra_args: "-block.dir=/tmp/sw-nroce-vs2/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.1:4420 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+  - name: connect-nvme
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: exec
+        node: m01
+        cmd: "sh -c 'modprobe nvme_tcp; nvme disconnect-all >/dev/null 2>&1; nvme connect -t tcp -a {{ vol_iscsi_host }} -s 4420 -n nqn.2024-01.com.seaweedfs:vol.{{ volume_name }} >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: dev
+
+  # Baseline
+  - name: baseline
+    actions:
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: baseline
+        save_as: fio_0
+      - action: fio_parse
+        json_var: fio_0
+        metric: iops
+        save_as: iops_0
+      - action: print
+        msg: "0ms: {{ iops_0 }} IOPS"
+
+  # 1ms
+  - name: netem-1ms
+    actions:
+      - action: inject_netem
+        node: m02
+        target_ip: "10.0.0.1"
+        delay_ms: "1"
+      - action: sleep
+        duration: 2s
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: netem-1ms
+        save_as: fio_1
+      - action: fio_parse
+        json_var: fio_1
+        metric: iops
+        save_as: iops_1
+      - action: print
+        msg: "1ms: {{ iops_1 }} IOPS"
+      - action: clear_fault
+        node: m02
+        type: netem
+      - action: sleep
+        duration: 2s
+
+  # 5ms
+  - name: netem-5ms
+    actions:
+      - action: inject_netem
+        node: m02
+        target_ip: "10.0.0.1"
+        delay_ms: "5"
+      - action: sleep
+        duration: 2s
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: netem-5ms
+        save_as: fio_5
+      - action: fio_parse
+        json_var: fio_5
+        metric: iops
+        save_as: iops_5
+      - action: print
+        msg: "5ms: {{ iops_5 }} IOPS"
+      - action: clear_fault
+        node: m02
+        type: netem
+      - action: sleep
+        duration: 2s
+
+  # 20ms
+  - name: netem-20ms
+    actions:
+      - action: inject_netem
+        node: m02
+        target_ip: "10.0.0.1"
+        delay_ms: "20"
+      - action: sleep
+        duration: 2s
+      - action: fio_json
+        node: m01
+        device: "{{ dev }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: netem-20ms
+        save_as: fio_20
+      - action: fio_parse
+        json_var: fio_20
+        metric: iops
+        save_as: iops_20
+      - action: print
+        msg: "20ms: {{ iops_20 }} IOPS"
+      - action: clear_fault
+        node: m02
+        type: netem
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Stable: Netem Sweep NVMe/RoCE (sync_all RF=2) ==="
+      - action: print
+        msg: "0ms:  {{ iops_0 }} IOPS"
+      - action: print
+        msg: "1ms:  {{ iops_1 }} IOPS"
+      - action: print
+        msg: "5ms:  {{ iops_5 }} IOPS"
+      - action: print
+        msg: "20ms: {{ iops_20 }} IOPS"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: clear_fault
+        node: m02
+        type: netem
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

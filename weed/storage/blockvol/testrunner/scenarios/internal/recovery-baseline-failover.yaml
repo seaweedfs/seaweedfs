@@ -1,21 +1,34 @@
 name: recovery-baseline-failover
 timeout: 10m
 
+# Robust dimension: automatic failover after primary death.
+#
+# Flow:
+#   1. Create RF=2 sync_all volume, record primary
+#   2. Write data, disconnect iSCSI
+#   3. Kill primary VS (SIGKILL)
+#   4. Wait for lease expiry (30s TTL + margin)
+#   5. Verify: master auto-promotes replica to primary (no manual promote)
+#   6. Reconnect iSCSI to new primary, verify I/O works
+#
+# This tests the master's automatic failover path via
+# evaluatePromotionLocked() in master_block_failover.go.
+
 env:
-  master_url: "http://192.168.1.184:9433"
+  master_url: "http://10.0.0.3:9433"
   volume_name: rb-failover
   vol_size: "1073741824"
-  __topology: "m02-primary_m01-replica"
-  __sync_mode: "sync_all"
 
 topology:
   nodes:
     m01:
       host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
       user: testdev
       key: "/opt/work/testdev_key"
     m02:
       host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
       user: testdev
       key: "/opt/work/testdev_key"
 
@@ -24,17 +37,20 @@ phases:
     actions:
       - action: exec
         node: m02
-        cmd: "rm -rf /tmp/sw-rb-master /tmp/sw-rb-vs1 /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-master /tmp/sw-rb-vs1/blocks /tmp/sw-rb-vs2/blocks"
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-fo-master /tmp/sw-fo-vs1 && mkdir -p /tmp/sw-fo-master /tmp/sw-fo-vs1/blocks"
         root: "true"
+        ignore_error: true
       - action: exec
         node: m01
-        cmd: "rm -rf /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-vs2/blocks"
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-fo-vs2 && mkdir -p /tmp/sw-fo-vs2/blocks"
         root: "true"
+        ignore_error: true
 
       - action: start_weed_master
         node: m02
         port: "9433"
-        dir: /tmp/sw-rb-master
+        dir: /tmp/sw-fo-master
+        extra_args: "-ip=10.0.0.3"
         save_as: master_pid
 
       - action: sleep
@@ -43,17 +59,17 @@ phases:
       - action: start_weed_volume
         node: m02
         port: "18480"
-        master: "localhost:9433"
-        dir: /tmp/sw-rb-vs1
-        extra_args: "-block.dir=/tmp/sw-rb-vs1/blocks -block.listen=:3295 -ip=192.168.1.184"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-fo-vs1
+        extra_args: "-block.dir=/tmp/sw-fo-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
         save_as: vs1_pid
 
       - action: start_weed_volume
         node: m01
         port: "18480"
-        master: "192.168.1.184:9433"
-        dir: /tmp/sw-rb-vs2
-        extra_args: "-block.dir=/tmp/sw-rb-vs2/blocks -block.listen=:3295 -ip=192.168.1.181"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-fo-vs2
+        extra_args: "-block.dir=/tmp/sw-fo-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
         save_as: vs2_pid
 
       - action: sleep
@@ -78,15 +94,30 @@ phases:
         name: "{{ volume_name }}"
         timeout: 60s
 
-      - action: validate_replication
-        volume_name: "{{ volume_name }}"
-        expected_rf: "2"
-        expected_durability: "sync_all"
-        require_not_degraded: "true"
-        require_cross_machine: "true"
+      # Force primary to m02 so we have a known node to kill.
+      - action: block_promote
+        name: "{{ volume_name }}"
+        target_server: "10.0.0.3:18480"
+        force: "true"
+        reason: "failover-setup"
 
-  - name: write-data
+      - action: sleep
+        duration: 5s
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+  - name: record-before
     actions:
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: before
+
+      - action: print
+        msg: "Before: primary={{ before }} ({{ before_server }}), replica={{ before_replica_node }}"
+
+      # Write data so volume has real state.
       - action: lookup_block_volume
         name: "{{ volume_name }}"
         save_as: vol
@@ -104,39 +135,94 @@ phases:
         rw: randwrite
         bs: 4k
         iodepth: "16"
-        runtime: "30"
+        runtime: "10"
         time_based: "true"
-        name: pre-fault-write
+        name: pre-write
 
       - action: iscsi_cleanup
         node: m01
         ignore_error: true
 
-  - name: fault-failover
+  - name: kill-primary
     actions:
+      - action: print
+        msg: "=== Killing primary on m02 ({{ before_server }}) ==="
+
       - action: exec
         node: m02
         cmd: "kill -9 {{ vs1_pid }}"
         root: "true"
         ignore_error: true
 
-      - action: measure_recovery
-        name: "{{ volume_name }}"
-        timeout: 120s
-        poll_interval: 1s
-        fault_type: failover
-        save_as: rp
+      - action: print
+        msg: "Primary killed. Waiting for lease expiry (45s)..."
 
-  - name: verify
+      # Lease TTL is 30s. Wait 45s for expiry + master failover cycle.
+      - action: sleep
+        duration: 45s
+
+  - name: verify-auto-failover
     actions:
+      # Master should auto-promote m01 (the surviving replica) to primary.
+      # Wait for primary to change from m02 to something else.
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "{{ before_server }}"
+        timeout: 60s
+        save_as: after
+
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: new_pri
+
+      - action: print
+        msg: "After auto-failover: primary={{ new_pri }} ({{ new_pri_server }})"
+
+      # Verify primary actually changed.
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: volume_server
+        expected: "10.0.0.1:18480"
+
+      - action: print
+        msg: "AUTO-FAILOVER VERIFIED: {{ before_server }} → {{ new_pri_server }}"
+
+  - name: verify-io-after
+    actions:
+      # Reconnect iSCSI to the new primary and verify I/O.
       - action: lookup_block_volume
         name: "{{ volume_name }}"
-        save_as: vol_after
+        save_as: vol2
 
-      - action: collect_results
-        title: "Recovery Baseline: Failover"
-        volume_name: "{{ volume_name }}"
-        recovery_profile: rp
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol2_iscsi_host }}"
+        port: "{{ vol2_iscsi_port }}"
+        iqn: "{{ vol2_iqn }}"
+        save_as: device2
+
+      - action: fio_json
+        node: m01
+        device: "{{ device2 }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: post-failover-write
+        save_as: fio_after
+
+      - action: fio_parse
+        json_var: fio_after
+        metric: iops
+        save_as: iops_after
+
+      - action: print
+        msg: "Post-failover write IOPS: {{ iops_after }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
 
   - name: cleanup
     always: true

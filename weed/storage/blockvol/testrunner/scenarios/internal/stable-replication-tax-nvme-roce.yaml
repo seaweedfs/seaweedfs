@@ -1,0 +1,264 @@
+name: stable-replication-tax-nvme-roce
+timeout: 10m
+
+# Replication tax on 25Gbps RoCE via NVMe-TCP (not iSCSI).
+# Previous results (iSCSI over RoCE):
+#   RF=1: 54,785  |  RF=2 be: 28,408  |  RF=2 sa: 29,893
+#
+# NVMe-TCP should have lower protocol overhead than iSCSI,
+# potentially showing higher IOPS and a different replication tax ratio.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-nvme-master /tmp/sw-nvme-vs1 && mkdir -p /tmp/sw-nvme-master /tmp/sw-nvme-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-nvme-vs2 && mkdir -p /tmp/sw-nvme-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-nvme-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      # VS1 on m02 with NVMe-TCP enabled on RoCE IP.
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-nvme-vs1
+        extra_args: "-block.dir=/tmp/sw-nvme-vs1/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.3:4420 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      # VS2 on m01 with NVMe-TCP on RoCE IP.
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-nvme-vs2
+        extra_args: "-block.dir=/tmp/sw-nvme-vs2/blocks -block.listen=:3295 -block.nvme.enable=true -block.nvme.listen=10.0.0.1:4420 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  # === RF=1 via NVMe-TCP ===
+  - name: rf1-nvme
+    actions:
+      - action: create_block_volume
+        name: "nvme-rf1"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+        durability_mode: "best_effort"
+
+      - action: sleep
+        duration: 2s
+
+      - action: lookup_block_volume
+        name: "nvme-rf1"
+        save_as: rf1
+
+      # Connect via NVMe-TCP.
+      - action: exec
+        node: m01
+        cmd: "sh -c 'modprobe nvme_tcp; nvme disconnect-all >/dev/null 2>&1; nvme connect -t tcp -a {{ rf1_iscsi_host }} -s 4420 -n nqn.2024-01.com.seaweedfs:vol.nvme-rf1 >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: nvme_dev_rf1
+
+      - action: print
+        msg: "RF=1 NVMe device: {{ nvme_dev_rf1 }}"
+
+      - action: fio_json
+        node: m01
+        device: "{{ nvme_dev_rf1 }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: rf1-nvme
+        save_as: fio_rf1
+
+      - action: fio_parse
+        json_var: fio_rf1
+        metric: iops
+        save_as: iops_rf1
+
+      - action: print
+        msg: "RF=1 NVMe (RoCE):       {{ iops_rf1 }} IOPS"
+
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+
+  # === RF=2 best_effort via NVMe-TCP ===
+  - name: rf2-be-nvme
+    actions:
+      - action: create_block_volume
+        name: "nvme-rf2be"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "best_effort"
+
+      - action: wait_volume_healthy
+        name: "nvme-rf2be"
+        timeout: 60s
+
+      - action: lookup_block_volume
+        name: "nvme-rf2be"
+        save_as: rf2be
+
+      - action: exec
+        node: m01
+        cmd: "sh -c 'nvme disconnect-all >/dev/null 2>&1; nvme connect -t tcp -a {{ rf2be_iscsi_host }} -s 4420 -n nqn.2024-01.com.seaweedfs:vol.nvme-rf2be >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: nvme_dev_rf2be
+
+      - action: print
+        msg: "RF=2 BE NVMe device: {{ nvme_dev_rf2be }}"
+
+      - action: fio_json
+        node: m01
+        device: "{{ nvme_dev_rf2be }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: rf2-be-nvme
+        save_as: fio_rf2be
+
+      - action: fio_parse
+        json_var: fio_rf2be
+        metric: iops
+        save_as: iops_rf2be
+
+      - action: print
+        msg: "RF=2 best_effort NVMe (RoCE): {{ iops_rf2be }} IOPS"
+
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+
+  # === RF=2 sync_all via NVMe-TCP ===
+  - name: rf2-sa-nvme
+    actions:
+      - action: create_block_volume
+        name: "nvme-rf2sa"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "nvme-rf2sa"
+        timeout: 60s
+
+      - action: lookup_block_volume
+        name: "nvme-rf2sa"
+        save_as: rf2sa
+
+      - action: exec
+        node: m01
+        cmd: "sh -c 'nvme disconnect-all >/dev/null 2>&1; nvme connect -t tcp -a {{ rf2sa_iscsi_host }} -s 4420 -n nqn.2024-01.com.seaweedfs:vol.nvme-rf2sa >/dev/null 2>&1; sleep 2; lsblk -dpno NAME,SIZE | grep 2G | head -1 | cut -d\" \" -f1'"
+        root: "true"
+        save_as: nvme_dev_rf2sa
+
+      - action: print
+        msg: "RF=2 SA NVMe device: {{ nvme_dev_rf2sa }}"
+
+      - action: fio_json
+        node: m01
+        device: "{{ nvme_dev_rf2sa }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "30"
+        time_based: "true"
+        name: rf2-sa-nvme
+        save_as: fio_rf2sa
+
+      - action: fio_parse
+        json_var: fio_rf2sa
+        metric: iops
+        save_as: iops_rf2sa
+
+      - action: print
+        msg: "RF=2 sync_all NVMe (RoCE):    {{ iops_rf2sa }} IOPS"
+
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== Replication Tax — NVMe-TCP over 25Gbps RoCE (4K randwrite QD32) ==="
+      - action: print
+        msg: "RF=1 (no repl):       {{ iops_rf1 }} IOPS"
+      - action: print
+        msg: "RF=2 best_effort:     {{ iops_rf2be }} IOPS"
+      - action: print
+        msg: "RF=2 sync_all:        {{ iops_rf2sa }} IOPS"
+
+      - action: collect_results
+        title: "Replication Tax — NVMe-TCP over 25Gbps RoCE"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "nvme disconnect-all 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

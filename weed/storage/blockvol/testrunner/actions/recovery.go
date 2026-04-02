@@ -16,6 +16,8 @@ import (
 func RegisterRecoveryActions(r *tr.Registry) {
 	r.RegisterFunc("measure_recovery", tr.TierBlock, measureRecovery)
 	r.RegisterFunc("validate_recovery_regression", tr.TierBlock, validateRecoveryRegression)
+	r.RegisterFunc("poll_shipper_state", tr.TierBlock, pollShipperState)
+	r.RegisterFunc("measure_rebuild", tr.TierBlock, measureRebuild)
 }
 
 // RecoveryProfile captures the full recovery profile from fault to InSync.
@@ -266,6 +268,317 @@ func profileToVars(p RecoveryProfile) map[string]string {
 	vars["json"] = string(jsonBytes)
 
 	return vars
+}
+
+// ShipperStateInfo mirrors the /debug/block/shipper JSON response.
+type ShipperStateInfo struct {
+	Path      string              `json:"path"`
+	Role      string              `json:"role"`
+	Epoch     uint64              `json:"epoch"`
+	HeadLSN   uint64              `json:"head_lsn"`
+	Degraded  bool                `json:"degraded"`
+	Shippers  []ShipperReplicaInfo `json:"shippers"`
+	Timestamp string              `json:"timestamp"`
+}
+
+// ShipperReplicaInfo is one shipper's state from the debug endpoint.
+type ShipperReplicaInfo struct {
+	DataAddr   string `json:"data_addr"`
+	State      string `json:"state"`
+	FlushedLSN uint64 `json:"flushed_lsn"`
+}
+
+// pollShipperState polls the VS's /debug/block/shipper endpoint for
+// real-time shipper state. Unlike master-reported replica_degraded
+// (heartbeat-lagged), this reads directly from the shipper's atomic
+// state field — zero delay.
+//
+// Params:
+//   - host: VS host (required, or from var)
+//   - port: VS HTTP port (required, or from var)
+//   - timeout: max wait (default: 60s)
+//   - poll_interval: polling interval (default: 1s)
+//   - expected_state: wait until shipper reaches this state (e.g., "in_sync", "degraded")
+//     If empty, returns immediately with current state.
+//   - volume_path: filter to specific volume (optional, matches path substring)
+//
+// save_as outputs:
+//   - {save_as}_state: current shipper state (e.g., "in_sync", "degraded", "disconnected")
+//   - {save_as}_head_lsn: WAL head LSN
+//   - {save_as}_degraded: true/false
+//   - {save_as}_flushed_lsn: replica's flushed LSN
+//   - {save_as}_duration_ms: time to reach expected state (if waiting)
+//   - {save_as}_json: full response JSON
+func pollShipperState(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	host := act.Params["host"]
+	if host == "" {
+		host = actx.Vars["vs_host"]
+	}
+	port := act.Params["port"]
+	if port == "" {
+		port = actx.Vars["vs_port"]
+	}
+	if host == "" || port == "" {
+		return nil, fmt.Errorf("poll_shipper_state: host and port params required")
+	}
+
+	node, err := GetNode(actx, act.Node)
+	if err != nil {
+		return nil, fmt.Errorf("poll_shipper_state: %w", err)
+	}
+
+	expectedState := act.Params["expected_state"]
+	volumePath := act.Params["volume_path"]
+
+	timeoutStr := paramDefault(act.Params, "timeout", "60s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		return nil, fmt.Errorf("poll_shipper_state: invalid timeout: %w", err)
+	}
+
+	intervalStr := paramDefault(act.Params, "poll_interval", "1s")
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return nil, fmt.Errorf("poll_shipper_state: invalid poll_interval: %w", err)
+	}
+
+	start := time.Now()
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		// Query the debug endpoint via SSH curl.
+		cmd := fmt.Sprintf("curl -s http://%s:%s/debug/block/shipper 2>&1", host, port)
+		stdout, _, code, err := node.Run(ctx, cmd)
+		if err != nil || code != 0 {
+			if expectedState == "" {
+				return nil, fmt.Errorf("poll_shipper_state: curl failed: code=%d err=%v", code, err)
+			}
+			// Waiting mode: VS might not be up yet, keep polling.
+			select {
+			case <-deadline:
+				return nil, fmt.Errorf("poll_shipper_state: timeout waiting for %s (VS unreachable)", expectedState)
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		var infos []ShipperStateInfo
+		if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &infos); err != nil {
+			if expectedState == "" {
+				return nil, fmt.Errorf("poll_shipper_state: parse JSON: %w", err)
+			}
+			select {
+			case <-deadline:
+				return nil, fmt.Errorf("poll_shipper_state: timeout (bad JSON)")
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// Find the matching volume.
+		var target *ShipperStateInfo
+		for i := range infos {
+			if volumePath == "" || strings.Contains(infos[i].Path, volumePath) {
+				target = &infos[i]
+				break
+			}
+		}
+
+		if target == nil {
+			if expectedState == "" {
+				return map[string]string{
+					"state":   "no_volume",
+					"json":    stdout,
+				}, nil
+			}
+			select {
+			case <-deadline:
+				return nil, fmt.Errorf("poll_shipper_state: timeout (volume not found)")
+			case <-ticker.C:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+
+		// Extract shipper state.
+		shipperState := "no_shippers"
+		var flushedLSN uint64
+		if len(target.Shippers) > 0 {
+			shipperState = target.Shippers[0].State
+			flushedLSN = target.Shippers[0].FlushedLSN
+		}
+
+		vars := map[string]string{
+			"state":       shipperState,
+			"head_lsn":    strconv.FormatUint(target.HeadLSN, 10),
+			"degraded":    strconv.FormatBool(target.Degraded),
+			"flushed_lsn": strconv.FormatUint(flushedLSN, 10),
+			"duration_ms": strconv.FormatInt(time.Since(start).Milliseconds(), 10),
+			"json":        stdout,
+		}
+
+		// If not waiting for a specific state, return immediately.
+		if expectedState == "" {
+			return vars, nil
+		}
+
+		// Check if expected state reached.
+		if shipperState == expectedState {
+			actx.Log("  poll_shipper_state: %s reached after %dms",
+				expectedState, time.Since(start).Milliseconds())
+			return vars, nil
+		}
+
+		actx.Log("  poll_shipper_state: state=%s (waiting for %s)", shipperState, expectedState)
+
+		select {
+		case <-deadline:
+			return nil, fmt.Errorf("poll_shipper_state: timeout waiting for %s (last=%s)",
+				expectedState, shipperState)
+		case <-ticker.C:
+			continue
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+}
+
+// RebuildProfile captures the full rebuild measurement.
+type RebuildProfile struct {
+	RebuildDurationMs    int64  `json:"rebuild_duration_ms"`
+	SourceType           string `json:"source_type"`    // full_base, snapshot, resync, unknown
+	SourceReason         string `json:"source_reason"`  // why this source (from logs or N/A)
+	FallbackOccurred     bool   `json:"fallback_occurred"`
+	DataIntegrity        string `json:"data_integrity"` // pass, fail, skipped
+	RecoveryObservable   bool   `json:"recovery_observable"`
+	PostRebuildStableMs  int64  `json:"post_rebuild_stable_ms"`
+	Topology             string `json:"topology,omitempty"`
+	SyncMode             string `json:"sync_mode,omitempty"`
+	CommitID             string `json:"commit_id,omitempty"`
+}
+
+// measureRebuild measures a full rebuild cycle: from degraded/no-replica
+// state to healthy. Polls via LookupVolume (master API).
+//
+// This is different from measure_recovery: measure_recovery starts from
+// a healthy state and waits for recovery after a fault. measure_rebuild
+// starts from a state where the replica needs full rebuild (not catch-up).
+//
+// Params:
+//   - name: block volume name (required)
+//   - master_url: master API (or from var)
+//   - timeout: max wait (default: 300s — rebuilds can be slow)
+//   - poll_interval: polling interval (default: 2s)
+//
+// save_as outputs:
+//   - {save_as}_duration_ms: time to reach healthy
+//   - {save_as}_source_type: full_base / snapshot / unknown
+//   - {save_as}_integrity: pass / fail / skipped
+//   - {save_as}_json: full profile
+func measureRebuild(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("measure_rebuild: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		name = actx.Vars["volume_name"]
+	}
+	if name == "" {
+		return nil, fmt.Errorf("measure_rebuild: name param required")
+	}
+
+	timeoutStr := paramDefault(act.Params, "timeout", "300s")
+	timeout, err := time.ParseDuration(timeoutStr)
+	if err != nil {
+		return nil, fmt.Errorf("measure_rebuild: invalid timeout: %w", err)
+	}
+
+	intervalStr := paramDefault(act.Params, "poll_interval", "2s")
+	interval, err := time.ParseDuration(intervalStr)
+	if err != nil {
+		return nil, fmt.Errorf("measure_rebuild: invalid poll_interval: %w", err)
+	}
+
+	profile := RebuildProfile{
+		SourceType:       "unknown",
+		DataIntegrity:    "skipped",
+		Topology:         actx.Vars["__topology"],
+		SyncMode:         actx.Vars["__sync_mode"],
+		CommitID:         actx.Vars["__git_sha"],
+	}
+
+	start := time.Now()
+	deadline := time.After(timeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	poll := 0
+	var lastState string
+
+	for {
+		select {
+		case <-deadline:
+			profile.RebuildDurationMs = time.Since(start).Milliseconds()
+			actx.Log("  measure_rebuild: TIMEOUT after %dms (%d polls, last=%s)",
+				profile.RebuildDurationMs, poll, lastState)
+			return nil, fmt.Errorf("measure_rebuild: %q not healthy after %s (%d polls, last=%s)",
+				name, timeout, poll, lastState)
+
+		case <-ctx.Done():
+			return nil, fmt.Errorf("measure_rebuild: context cancelled")
+
+		case <-ticker.C:
+			poll++
+			info, err := client.LookupVolume(ctx, name)
+			if err != nil {
+				lastState = "unreachable"
+				actx.Log("  rebuild poll %d: unreachable", poll)
+				continue
+			}
+
+			currentState := classifyVolumeState(info)
+			if currentState != lastState {
+				actx.Log("  rebuild poll %d (%dms): %s → %s",
+					poll, time.Since(start).Milliseconds(), lastState, currentState)
+			}
+			lastState = currentState
+
+			// Try to detect rebuild source from status field.
+			status := strings.ToLower(info.Status)
+			if strings.Contains(status, "rebuild") {
+				if profile.SourceType == "unknown" {
+					profile.SourceType = "full_base" // default assumption
+					profile.RecoveryObservable = true
+				}
+			}
+
+			if currentState == "healthy" {
+				profile.RebuildDurationMs = time.Since(start).Milliseconds()
+
+				actx.Log("  measure_rebuild: healthy after %dms (%d polls) source=%s",
+					profile.RebuildDurationMs, poll, profile.SourceType)
+
+				vars := map[string]string{
+					"duration_ms": strconv.FormatInt(profile.RebuildDurationMs, 10),
+					"source_type": profile.SourceType,
+					"integrity":   profile.DataIntegrity,
+					"polls":       strconv.Itoa(poll),
+				}
+				jsonBytes, _ := json.Marshal(profile)
+				vars["json"] = string(jsonBytes)
+				return vars, nil
+			}
+		}
+	}
 }
 
 // validateRecoveryRegression checks a recovery profile against baseline expectations.
