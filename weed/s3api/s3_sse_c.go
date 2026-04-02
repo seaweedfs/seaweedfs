@@ -58,9 +58,10 @@ var (
 
 // SSECustomerKey represents a customer-provided encryption key for SSE-C
 type SSECustomerKey struct {
-	Algorithm string
-	Key       []byte
-	KeyMD5    string
+	Algorithm     string
+	Key           []byte
+	KeyMD5        string
+	KeyCommitment []byte // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // IsSSECRequest checks if the request contains SSE-C headers
@@ -119,8 +120,8 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 	sum := md5.Sum(keyBytes)
 	expectedMD5 := base64.StdEncoding.EncodeToString(sum[:])
 
-	// Debug logging for MD5 validation
-	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s', keyBytes=%x", keyMD5, expectedMD5, keyBytes)
+	// Debug logging for MD5 validation (never log key material)
+	glog.V(4).Infof("SSE-C MD5 validation: provided='%s', expected='%s'", keyMD5, expectedMD5)
 
 	if keyMD5 != expectedMD5 {
 		glog.Errorf("SSE-C MD5 mismatch: provided='%s', expected='%s'", keyMD5, expectedMD5)
