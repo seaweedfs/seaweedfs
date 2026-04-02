@@ -441,6 +441,7 @@ async fn run(
     }
 
     // Build HTTP routers
+    #[allow(unused_mut)]
     let mut admin_router = seaweed_volume::server::volume_server::build_admin_router_with_ui(
         state.clone(),
         config.ui_enabled,
