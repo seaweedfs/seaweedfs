@@ -4,17 +4,20 @@ package user
 import (
 	"math/rand/v2"
 	"path/filepath"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // User represents an SFTP user with authentication and permission details
 type User struct {
-	Username    string              // Username for authentication
-	Password    string              // Plaintext password
-	PublicKeys  []string            // Authorized public keys
-	HomeDir     string              // User's home directory
-	Permissions map[string][]string // path -> permissions (read, write, list, etc.)
-	Uid         uint32              // User ID for file ownership
-	Gid         uint32              // Group ID for file ownership
+	Username       string              `json:"Username"`
+	HashedPassword string              `json:"HashedPassword"`          // bcrypt hash
+	Password       string              `json:"Password,omitempty"`      // deprecated: plaintext, migrated on next save
+	PublicKeys     []string            `json:"PublicKeys,omitempty"`
+	HomeDir        string              `json:"HomeDir"`
+	Permissions    map[string][]string `json:"Permissions,omitempty"`
+	Uid            uint32              `json:"Uid"`
+	Gid            uint32              `json:"Gid"`
 }
 
 // NewUser creates a new user with default settings
@@ -33,9 +36,29 @@ func NewUser(username string) *User {
 	}
 }
 
-// SetPassword sets a plaintext password for the user
+// SetPassword hashes and stores the password using bcrypt
 func (u *User) SetPassword(password string) {
-	u.Password = password
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		// bcrypt only errors on passwords > 72 bytes; truncate if needed
+		hash, _ = bcrypt.GenerateFromPassword([]byte(password[:72]), bcrypt.DefaultCost)
+	}
+	u.HashedPassword = string(hash)
+	u.Password = "" // clear any legacy plaintext
+}
+
+// CheckPassword verifies a password against the stored hash.
+// It transparently handles legacy plaintext passwords by upgrading them on match.
+func (u *User) CheckPassword(password string) bool {
+	if u.HashedPassword != "" {
+		return bcrypt.CompareHashAndPassword([]byte(u.HashedPassword), []byte(password)) == nil
+	}
+	// Legacy plaintext migration path
+	if u.Password != "" && u.Password == password {
+		u.SetPassword(password) // upgrade to bcrypt
+		return true
+	}
+	return false
 }
 
 // AddPublicKey adds a public key to the user

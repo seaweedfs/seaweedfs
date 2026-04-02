@@ -154,8 +154,14 @@ func (s *FileStore) ValidatePassword(username string, password []byte) bool {
 		return false
 	}
 
-	// Compare plaintext password using constant time comparison for security
-	return subtle.ConstantTimeCompare([]byte(user.Password), password) == 1
+	if user.CheckPassword(string(password)) {
+		// If legacy password was migrated to bcrypt, persist the change
+		if user.HashedPassword != "" && user.Password == "" {
+			_ = s.saveUsers()
+		}
+		return true
+	}
+	return false
 }
 
 // ValidatePublicKey checks if the public key is valid for the user
@@ -250,8 +256,8 @@ func (s *FileStore) CreateUser(username, password string) (*User, error) {
 	// Create new user
 	user := NewUser(username)
 
-	// Store plaintext password
-	user.Password = password
+	// Hash password with bcrypt
+	user.SetPassword(password)
 
 	// Add default permissions
 	user.Permissions[user.HomeDir] = []string{"all"}
