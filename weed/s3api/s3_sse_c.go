@@ -61,7 +61,6 @@ type SSECustomerKey struct {
 	Algorithm     string
 	Key           []byte
 	KeyMD5        string
-	KeyCommitment []byte // HMAC-SHA256 commitment binding key to IV+algorithm
 }
 
 // IsSSECRequest checks if the request contains SSE-C headers
