@@ -106,11 +106,13 @@ func AssignmentToProto(a BlockVolumeAssignment) *master_pb.BlockVolumeAssignment
 		ReplicaDataAddr: a.ReplicaDataAddr,
 		ReplicaCtrlAddr: a.ReplicaCtrlAddr,
 		RebuildAddr:     a.RebuildAddr,
+		ReplicaServerId: a.ReplicaServerID, // V2: stable identity
 	}
 	for _, ra := range a.ReplicaAddrs {
 		pb.ReplicaAddrs = append(pb.ReplicaAddrs, &master_pb.ReplicaAddrMessage{
 			DataAddr: ra.DataAddr,
 			CtrlAddr: ra.CtrlAddr,
+			ServerId: ra.ServerID, // V2: stable identity
 		})
 	}
 	return pb
@@ -123,11 +125,12 @@ func AssignmentFromProto(p *master_pb.BlockVolumeAssignment) BlockVolumeAssignme
 		return BlockVolumeAssignment{}
 	}
 	a := BlockVolumeAssignment{
-		Path:        p.Path,
-		Epoch:       p.Epoch,
-		Role:        p.Role,
-		LeaseTtlMs:  p.LeaseTtlMs,
-		RebuildAddr: p.RebuildAddr,
+		Path:            p.Path,
+		Epoch:           p.Epoch,
+		Role:            p.Role,
+		LeaseTtlMs:      p.LeaseTtlMs,
+		RebuildAddr:     p.RebuildAddr,
+		ReplicaServerID: p.ReplicaServerId, // V2: stable identity
 	}
 	if len(p.ReplicaAddrs) > 0 {
 		// Multi-replica: populate ReplicaAddrs, leave scalar fields empty.
@@ -135,6 +138,7 @@ func AssignmentFromProto(p *master_pb.BlockVolumeAssignment) BlockVolumeAssignme
 			a.ReplicaAddrs = append(a.ReplicaAddrs, ReplicaAddr{
 				DataAddr: ra.DataAddr,
 				CtrlAddr: ra.CtrlAddr,
+				ServerID: ra.ServerId, // V2: stable identity
 			})
 		}
 	} else {

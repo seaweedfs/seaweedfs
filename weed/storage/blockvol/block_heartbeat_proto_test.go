@@ -464,3 +464,76 @@ func TestInfoMessage_HealthFieldsZeroDefault(t *testing.T) {
 		t.Fatal("ReplicaDegraded zero default should be false")
 	}
 }
+
+// --- Phase 10 P1: Stable server identity on the proto wire ---
+
+func TestP10P1_ProtoRoundTrip_ScalarServerID(t *testing.T) {
+	a := BlockVolumeAssignment{
+		Path:            "/data/vol1.blk",
+		Epoch:           5,
+		Role:            RoleToWire(RolePrimary),
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+		ReplicaServerID: "vs2-grpc:18080",
+		RebuildAddr:     "10.0.0.1:5000",
+	}
+
+	pb := AssignmentToProto(a)
+	if pb.ReplicaServerId != "vs2-grpc:18080" {
+		t.Fatalf("proto encode: ReplicaServerId=%q, want vs2-grpc:18080", pb.ReplicaServerId)
+	}
+
+	decoded := AssignmentFromProto(pb)
+	if decoded.ReplicaServerID != "vs2-grpc:18080" {
+		t.Fatalf("proto decode: ReplicaServerID=%q, want vs2-grpc:18080", decoded.ReplicaServerID)
+	}
+}
+
+func TestP10P1_ProtoRoundTrip_MultiReplicaServerID(t *testing.T) {
+	a := BlockVolumeAssignment{
+		Path:  "/data/vol1.blk",
+		Epoch: 5,
+		Role:  RoleToWire(RolePrimary),
+		ReplicaAddrs: []ReplicaAddr{
+			{DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334", ServerID: "vs2-grpc:18080"},
+			{DataAddr: "10.0.0.3:9333", CtrlAddr: "10.0.0.3:9334", ServerID: "vs3-grpc:18080"},
+		},
+	}
+
+	pb := AssignmentToProto(a)
+	if pb.ReplicaAddrs[0].ServerId != "vs2-grpc:18080" {
+		t.Fatalf("encode[0]: ServerId=%q", pb.ReplicaAddrs[0].ServerId)
+	}
+	if pb.ReplicaAddrs[1].ServerId != "vs3-grpc:18080" {
+		t.Fatalf("encode[1]: ServerId=%q", pb.ReplicaAddrs[1].ServerId)
+	}
+
+	decoded := AssignmentFromProto(pb)
+	if decoded.ReplicaAddrs[0].ServerID != "vs2-grpc:18080" {
+		t.Fatalf("decode[0]: ServerID=%q", decoded.ReplicaAddrs[0].ServerID)
+	}
+	if decoded.ReplicaAddrs[1].ServerID != "vs3-grpc:18080" {
+		t.Fatalf("decode[1]: ServerID=%q", decoded.ReplicaAddrs[1].ServerID)
+	}
+}
+
+func TestP10P1_ProtoRoundTrip_MissingServerID_NotSynthesized(t *testing.T) {
+	a := BlockVolumeAssignment{
+		Path:            "/data/vol1.blk",
+		Epoch:           5,
+		Role:            RoleToWire(RolePrimary),
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+		// ReplicaServerID intentionally empty.
+	}
+
+	pb := AssignmentToProto(a)
+	if pb.ReplicaServerId != "" {
+		t.Fatalf("encode: ReplicaServerId=%q, want empty", pb.ReplicaServerId)
+	}
+
+	decoded := AssignmentFromProto(pb)
+	if decoded.ReplicaServerID != "" {
+		t.Fatalf("decode: ReplicaServerID=%q, want empty (not synthesized)", decoded.ReplicaServerID)
+	}
+}

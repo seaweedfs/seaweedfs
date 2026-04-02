@@ -104,6 +104,7 @@ type MasterServer struct {
 	blockVSSnapshot  func(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error)
 	blockVSDeleteSnap func(ctx context.Context, server string, name string, snapID uint32) error
 	blockVSListSnaps func(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error)
+	blockVSRestore   func(ctx context.Context, server string, name string, snapID uint32) error
 	blockVSExpand    func(ctx context.Context, server string, name string, newSize uint64) (uint64, error)
 	blockVSPrepareExpand func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error
 	blockVSCommitExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error)
@@ -172,6 +173,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.blockVSSnapshot = ms.defaultBlockVSSnapshot
 	ms.blockVSDeleteSnap = ms.defaultBlockVSDeleteSnap
 	ms.blockVSListSnaps = ms.defaultBlockVSListSnaps
+	ms.blockVSRestore = ms.defaultBlockVSRestore
 	ms.blockVSExpand = ms.defaultBlockVSExpand
 	ms.blockVSPrepareExpand = ms.defaultBlockVSPrepareExpand
 	ms.blockVSCommitExpand = ms.defaultBlockVSCommitExpand
@@ -648,6 +650,16 @@ func (ms *MasterServer) defaultBlockVSListSnaps(ctx context.Context, server stri
 		return nil
 	})
 	return infos, err
+}
+
+func (ms *MasterServer) defaultBlockVSRestore(ctx context.Context, server string, name string, snapID uint32) error {
+	return operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+		_, err := client.RestoreBlockSnapshot(ctx, &volume_server_pb.RestoreBlockSnapshotRequest{
+			Name:       name,
+			SnapshotId: snapID,
+		})
+		return err
+	})
 }
 
 func (ms *MasterServer) defaultBlockVSExpand(ctx context.Context, server string, name string, newSize uint64) (uint64, error) {

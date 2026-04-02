@@ -343,6 +343,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 	}
 	blockService := weed_server.StartBlockService(*v.blockListen, *v.blockDir, *v.blockIQNPrefix, blockPortal, nvmeCfg)
 	if blockService != nil {
+		// V2 P10-1: Use the same canonical volume server identity as the main
+		// volume server. One identity truth across VS, block service, control
+		// bridge, and runtime ownership.
+		blockService.SetServerID(volumeServerId)
 		volumeServer.SetBlockService(blockService)
 	}
 

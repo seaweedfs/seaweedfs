@@ -1127,6 +1127,12 @@ func (r *BlockVolumeRegistry) evaluatePromotionLocked(entry *BlockVolumeEntry) P
 		freshnessCutoff = 60 * time.Second
 	}
 	primaryLSN := entry.WALHeadLSN
+	// EC-6 fix: when the primary is dead, its last-reported WALHeadLSN
+	// includes entries that were fsync'd locally but never shipped.
+	// The replica can never catch up because the primary is gone.
+	// Skip the WAL LSN gate so the best available replica is promoted,
+	// accepting that the last few unshipped entries may be lost.
+	primaryAlive := r.blockServers[entry.VolumeServer] != nil
 
 	bestIdx := -1
 	for i := range entry.Replicas {
@@ -1149,8 +1155,11 @@ func (r *BlockVolumeRegistry) evaluatePromotionLocked(entry *BlockVolumeEntry) P
 			})
 			continue
 		}
-		// Gate 2: WAL LSN recency (skip if primary LSN is 0 — no data yet, all eligible).
-		if primaryLSN > 0 && ri.WALHeadLSN+r.promotionLSNTolerance < primaryLSN {
+		// Gate 2: WAL LSN recency.
+		// Skip if primary LSN is 0 (no data yet — all eligible).
+		// EC-6 fix: also skip if primary is dead — its LSN is stale and
+		// the replica can never catch up. Promote the best available.
+		if primaryAlive && primaryLSN > 0 && ri.WALHeadLSN+r.promotionLSNTolerance < primaryLSN {
 			result.Rejections = append(result.Rejections, PromotionRejection{
 				Server: ri.Server,
 				Reason: "wal_lag",

@@ -870,9 +870,12 @@ func TestRegistry_PromoteBestReplica_StaleHeartbeatIneligible(t *testing.T) {
 	}
 }
 
-// Fix #2: Replica with WAL lag too large is not eligible.
+// Fix #2: Replica with WAL lag too large is not eligible (when primary alive).
+// EC-6 fix: WAL lag gate only applies when primary is alive.
 func TestRegistry_PromoteBestReplica_WALLagIneligible(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary") // primary must be alive for WAL lag gate
+	r.MarkBlockCapable("lagging") // replica must be alive for other gates to pass
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",
 		VolumeServer: "primary",
@@ -968,8 +971,10 @@ func TestRegistry_PromoteBestReplica_EligibilityFiltersCorrectly(t *testing.T) {
 }
 
 // Configurable tolerance: widen tolerance to allow lagging replicas.
+// EC-6 fix: WAL lag gate only applies when primary is alive.
 func TestRegistry_PromoteBestReplica_ConfigurableTolerance(t *testing.T) {
 	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary") // primary must be alive for WAL lag gate to apply
 	r.MarkBlockCapable("lagging")
 	r.Register(&BlockVolumeEntry{
 		Name:         "vol1",

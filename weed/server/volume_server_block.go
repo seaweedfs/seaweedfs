@@ -22,6 +22,8 @@ import (
 type volReplState struct {
 	replicaDataAddr string
 	replicaCtrlAddr string
+	// allReplicas stores the full replica set for multi-replica idempotence.
+	allReplicas []blockvol.ReplicaAddr
 }
 
 // NVMeConfig holds NVMe/TCP target configuration passed from CLI flags.
@@ -51,6 +53,11 @@ type BlockService struct {
 	// V2 engine bridge (Phase 08 P1).
 	v2Bridge       *v2bridge.ControlBridge
 	v2Orchestrator *engine.RecoveryOrchestrator
+	v2Recovery     *RecoveryManager
+
+	// P3: last-applied assignment per volume path for idempotence.
+	lastAssignMu sync.RWMutex
+	lastAssign   map[string]lastAppliedAssignment
 	// localServerID: stable identity for this volume server.
 	// INTERIM: uses listenAddr (transport-shaped). Should be replaced
 	// with a registry-assigned stable server ID in a later hardening pass.
@@ -60,6 +67,13 @@ type BlockService struct {
 // V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
 func (bs *BlockService) V2Orchestrator() *engine.RecoveryOrchestrator {
 	return bs.v2Orchestrator
+}
+
+// SetServerID sets the stable server identity for V2 control semantics.
+// Should be called with the gRPC address that the master knows this VS by,
+// replacing the interim listenAddr-based identity.
+func (bs *BlockService) SetServerID(id string) {
+	bs.localServerID = id
 }
 
 // WireStateChangeNotify sets up shipper state change callbacks on all
@@ -103,6 +117,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
 		localServerID:  listenAddr, // INTERIM: transport-shaped, see field doc
 	}
+	bs.v2Recovery = NewRecoveryManager(bs)
 
 	// iSCSI target setup.
 	logger := log.New(os.Stderr, "iscsi: ", log.LstdFlags)
@@ -347,13 +362,27 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 // V2 bridge: also delivers each assignment to the V2 engine for recovery ownership.
 func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAssignment) {
 	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
+	// P3: skip V2 processing for repeated unchanged assignments.
+	// P4: RecoveryManager starts/cancels recovery goroutines based on results.
 	if bs.v2Bridge != nil && bs.v2Orchestrator != nil {
 		for _, a := range assignments {
+			// P3 idempotence: skip V2 processing if this assignment is
+			// materially unchanged from the last one applied for this path.
+			if bs.isAssignmentUnchanged(a) {
+				continue
+			}
+			bs.recordAppliedAssignment(a)
+
 			intent := bs.v2Bridge.ConvertAssignment(a, bs.localServerID)
 			result := bs.v2Orchestrator.ProcessAssignment(intent)
 			glog.V(1).Infof("v2bridge: assignment %s epoch=%d → added=%d removed=%d sessions=%d",
 				a.Path, a.Epoch, len(result.Added), len(result.Removed),
 				len(result.SessionsCreated)+len(result.SessionsSuperseded))
+
+			// P4: drive live recovery execution based on engine result.
+			if bs.v2Recovery != nil && (len(result.SessionsCreated) > 0 || len(result.SessionsSuperseded) > 0 || len(result.Removed) > 0) {
+				bs.v2Recovery.HandleAssignmentResult(result, assignments)
+			}
 		}
 	}
 
@@ -397,6 +426,15 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 // setupPrimaryReplication configures WAL shipping from primary to replica
 // and starts the rebuild server (R1-2).
 func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCtrlAddr string) {
+	// P3 idempotence: skip if replica state is unchanged.
+	bs.replMu.RLock()
+	existing := bs.replStates[path]
+	bs.replMu.RUnlock()
+	if existing != nil && existing.replicaDataAddr == replicaDataAddr && existing.replicaCtrlAddr == replicaCtrlAddr {
+		// Unchanged repeated assignment — idempotent, no side effects.
+		return
+	}
+
 	// Compute deterministic rebuild listen address.
 	_, _, rebuildPort := bs.ReplicationPorts(path)
 	host := bs.listenAddr
@@ -436,6 +474,17 @@ func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCt
 // setupPrimaryReplicationMulti configures WAL shipping from primary to N replicas
 // using SetReplicaAddrs (CP8-2: multi-replica support).
 func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockvol.ReplicaAddr) {
+	// P3 idempotence: skip if ALL replica addresses unchanged.
+	// Compare full replica set, not just the first entry.
+	if len(addrs) > 0 {
+		bs.replMu.RLock()
+		existing := bs.replStates[path]
+		bs.replMu.RUnlock()
+		if existing != nil && bs.multiReplicaUnchanged(path, addrs) {
+			return
+		}
+	}
+
 	// Compute deterministic rebuild listen address.
 	_, _, rebuildPort := bs.ReplicationPorts(path)
 	host := bs.listenAddr
@@ -459,11 +508,15 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 	if bs.replStates == nil {
 		bs.replStates = make(map[string]*volReplState)
 	}
-	// Store first replica in replState for backward compat heartbeat reporting.
+	// Store full replica set + first replica for backward compat heartbeat.
 	if len(addrs) > 0 {
+		// Copy the addrs slice to avoid aliasing.
+		copied := make([]blockvol.ReplicaAddr, len(addrs))
+		copy(copied, addrs)
 		bs.replStates[path] = &volReplState{
 			replicaDataAddr: addrs[0].DataAddr,
 			replicaCtrlAddr: addrs[0].CtrlAddr,
+			allReplicas:     copied,
 		}
 	}
 	bs.replMu.Unlock()
@@ -557,6 +610,15 @@ func (bs *BlockService) DeleteBlockSnapshot(name string, snapID uint32) error {
 			return nil // idempotent
 		}
 		return err
+	})
+}
+
+// RestoreBlockSnapshot restores the named volume to the specified snapshot.
+// This is a destructive operation: all writes after the snapshot are lost.
+func (bs *BlockService) RestoreBlockSnapshot(name string, snapID uint32) error {
+	path := bs.volumePath(name)
+	return bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		return vol.RestoreSnapshot(snapID)
 	})
 }
 
@@ -656,6 +718,101 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 	return msgs
 }
 
+// multiReplicaUnchanged checks if the full replica set is unchanged.
+func (bs *BlockService) multiReplicaUnchanged(path string, addrs []blockvol.ReplicaAddr) bool {
+	bs.replMu.RLock()
+	defer bs.replMu.RUnlock()
+	existing, ok := bs.replStates[path]
+	if !ok || existing == nil {
+		return false
+	}
+	if len(existing.allReplicas) != len(addrs) {
+		return false
+	}
+	for i := range addrs {
+		if existing.allReplicas[i].DataAddr != addrs[i].DataAddr ||
+			existing.allReplicas[i].CtrlAddr != addrs[i].CtrlAddr ||
+			existing.allReplicas[i].ServerID != addrs[i].ServerID {
+			return false
+		}
+	}
+	return true
+}
+
+// --- P3: Assignment idempotence ---
+
+// lastAppliedAssignment stores the full assignment for idempotence comparison.
+// Keyed by volume path.
+type lastAppliedAssignment struct {
+	Path            string
+	Epoch           uint64
+	Role            uint32
+	ReplicaServerID string
+	ReplicaDataAddr string
+	ReplicaCtrlAddr string
+	ReplicaAddrs    []blockvol.ReplicaAddr
+}
+
+func lastAppliedFrom(a blockvol.BlockVolumeAssignment) lastAppliedAssignment {
+	// Copy the slice to avoid aliasing.
+	var addrs []blockvol.ReplicaAddr
+	if len(a.ReplicaAddrs) > 0 {
+		addrs = make([]blockvol.ReplicaAddr, len(a.ReplicaAddrs))
+		copy(addrs, a.ReplicaAddrs)
+	}
+	return lastAppliedAssignment{
+		Path:            a.Path,
+		Epoch:           a.Epoch,
+		Role:            a.Role,
+		ReplicaServerID: a.ReplicaServerID,
+		ReplicaDataAddr: a.ReplicaDataAddr,
+		ReplicaCtrlAddr: a.ReplicaCtrlAddr,
+		ReplicaAddrs:    addrs,
+	}
+}
+
+func (la lastAppliedAssignment) equals(a blockvol.BlockVolumeAssignment) bool {
+	if la.Path != a.Path || la.Epoch != a.Epoch || la.Role != a.Role {
+		return false
+	}
+	if la.ReplicaServerID != a.ReplicaServerID || la.ReplicaDataAddr != a.ReplicaDataAddr || la.ReplicaCtrlAddr != a.ReplicaCtrlAddr {
+		return false
+	}
+	if len(la.ReplicaAddrs) != len(a.ReplicaAddrs) {
+		return false
+	}
+	for i := range la.ReplicaAddrs {
+		if la.ReplicaAddrs[i].DataAddr != a.ReplicaAddrs[i].DataAddr ||
+			la.ReplicaAddrs[i].CtrlAddr != a.ReplicaAddrs[i].CtrlAddr ||
+			la.ReplicaAddrs[i].ServerID != a.ReplicaAddrs[i].ServerID {
+			return false
+		}
+	}
+	return true
+}
+
+func (bs *BlockService) isAssignmentUnchanged(a blockvol.BlockVolumeAssignment) bool {
+	bs.lastAssignMu.RLock()
+	defer bs.lastAssignMu.RUnlock()
+	if bs.lastAssign == nil {
+		return false
+	}
+	last, ok := bs.lastAssign[a.Path]
+	if !ok {
+		return false
+	}
+	return last.equals(a)
+}
+
+func (bs *BlockService) recordAppliedAssignment(a blockvol.BlockVolumeAssignment) {
+	bs.lastAssignMu.Lock()
+	defer bs.lastAssignMu.Unlock()
+	if bs.lastAssign == nil {
+		bs.lastAssign = make(map[string]lastAppliedAssignment)
+	}
+	bs.lastAssign[a.Path] = lastAppliedFrom(a)
+}
+
 // ReplicationPorts computes deterministic replication ports for a volume.
 // Ports are derived from a hash of the volume path offset from the iSCSI base port.
 func (bs *BlockService) ReplicationPorts(volPath string) (dataPort, ctrlPort, rebuildPort int) {
@@ -681,6 +838,10 @@ func (bs *BlockService) Shutdown() {
 		return
 	}
 	glog.V(0).Infof("block service: shutting down...")
+	// P4: drain active recovery goroutines before closing volumes.
+	if bs.v2Recovery != nil {
+		bs.v2Recovery.Shutdown()
+	}
 	if bs.nvmeServer != nil {
 		bs.nvmeServer.Close()
 	}

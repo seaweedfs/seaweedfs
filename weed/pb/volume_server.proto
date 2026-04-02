@@ -149,6 +149,8 @@ service VolumeServer {
     }
     rpc ListBlockSnapshots (ListBlockSnapshotsRequest) returns (ListBlockSnapshotsResponse) {
     }
+    rpc RestoreBlockSnapshot (RestoreBlockSnapshotRequest) returns (RestoreBlockSnapshotResponse) {
+    }
     rpc ExpandBlockVolume (ExpandBlockVolumeRequest) returns (ExpandBlockVolumeResponse) {
     }
     rpc PrepareExpandBlockVolume (PrepareExpandBlockVolumeRequest) returns (PrepareExpandBlockVolumeResponse) {
@@ -819,6 +821,13 @@ message DeleteBlockSnapshotRequest {
     uint32 snapshot_id = 2;
 }
 message DeleteBlockSnapshotResponse {
+}
+
+message RestoreBlockSnapshotRequest {
+    string name = 1;
+    uint32 snapshot_id = 2;
+}
+message RestoreBlockSnapshotResponse {
 }
 
 message ListBlockSnapshotsRequest {

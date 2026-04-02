@@ -167,16 +167,19 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 			LeaseTtlMs: leaseTTLMs,
 		}
 		// CP8-2: populate ReplicaAddrs for multi-replica.
+		// V2 P10-1: include stable ServerID from registry.
 		for _, ri := range entry.Replicas {
 			primaryAssignment.ReplicaAddrs = append(primaryAssignment.ReplicaAddrs, blockvol.ReplicaAddr{
 				DataAddr: ri.DataAddr,
 				CtrlAddr: ri.CtrlAddr,
+				ServerID: ri.Server, // V2: stable identity = registry VS address
 			})
 		}
 		// Backward compat: also set scalar fields if exactly 1 replica.
 		if len(entry.Replicas) == 1 {
 			primaryAssignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
 			primaryAssignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+			primaryAssignment.ReplicaServerID = entry.Replicas[0].Server // V2: scalar stable ID
 		}
 		ms.blockAssignmentQueue.Enqueue(server, primaryAssignment)
 
@@ -366,6 +369,25 @@ func (ms *MasterServer) ListBlockSnapshots(ctx context.Context, req *master_pb.L
 		})
 	}
 	return resp, nil
+}
+
+// RestoreBlockSnapshot restores a block volume to the specified snapshot.
+// This is a destructive operation: all writes after the snapshot are lost.
+func (ms *MasterServer) RestoreBlockSnapshot(ctx context.Context, req *master_pb.RestoreBlockSnapshotRequest) (*master_pb.RestoreBlockSnapshotResponse, error) {
+	if req.VolumeName == "" {
+		return nil, fmt.Errorf("volume_name is required")
+	}
+
+	entry, ok := ms.blockRegistry.Lookup(req.VolumeName)
+	if !ok {
+		return nil, fmt.Errorf("block volume %q not found", req.VolumeName)
+	}
+
+	if err := ms.blockVSRestore(ctx, entry.VolumeServer, req.VolumeName, req.SnapshotId); err != nil {
+		return nil, fmt.Errorf("restore snapshot on %s: %w", entry.VolumeServer, err)
+	}
+
+	return &master_pb.RestoreBlockSnapshotResponse{}, nil
 }
 
 // ExpandBlockVolume expands a block volume. For standalone volumes (no replicas),

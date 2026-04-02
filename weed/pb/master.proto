@@ -69,6 +69,8 @@ service Seaweed {
   }
   rpc ListBlockSnapshots (ListBlockSnapshotsRequest) returns (ListBlockSnapshotsResponse) {
   }
+  rpc RestoreBlockSnapshot (RestoreBlockSnapshotRequest) returns (RestoreBlockSnapshotResponse) {
+  }
   rpc ExpandBlockVolume (ExpandBlockVolumeRequest) returns (ExpandBlockVolumeResponse) {
   }
 }
@@ -528,11 +530,13 @@ message BlockVolumeAssignment {
   string replica_ctrl_addr = 6;
   string rebuild_addr = 7;
   repeated ReplicaAddrMessage replica_addrs = 8;
+  string replica_server_id = 9;  // V2: stable server identity for scalar replica
 }
 
 message ReplicaAddrMessage {
   string data_addr = 1;
   string ctrl_addr = 2;
+  string server_id = 3;  // V2: stable server identity for this replica
 }
 
 message CreateBlockVolumeRequest {
@@ -603,6 +607,13 @@ message BlockSnapshotInfo {
   uint32 snapshot_id = 1;
   int64 created_at = 2;        // Unix timestamp in seconds
   uint64 volume_size_bytes = 3;
+}
+
+message RestoreBlockSnapshotRequest {
+  string volume_name = 1;
+  uint32 snapshot_id = 2;
+}
+message RestoreBlockSnapshotResponse {
 }
 
 message ExpandBlockVolumeRequest {
