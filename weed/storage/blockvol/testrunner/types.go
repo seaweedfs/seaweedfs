@@ -76,11 +76,12 @@ type Topology struct {
 
 // NodeSpec defines a remote (or local) machine.
 type NodeSpec struct {
-	Host    string `yaml:"host"`
-	User    string `yaml:"user"`
-	KeyFile string `yaml:"key"`
-	IsLocal bool   `yaml:"is_local"`
-	Agent   string `yaml:"agent"` // maps node to an agent (coordinator mode)
+	Host    string   `yaml:"host"`
+	AltIPs  []string `yaml:"alt_ips"` // additional IPs (e.g. RDMA) for node identification
+	User    string   `yaml:"user"`
+	KeyFile string   `yaml:"key"`
+	IsLocal bool     `yaml:"is_local"`
+	Agent   string   `yaml:"agent"` // maps node to an agent (coordinator mode)
 }
 
 // TargetSpec defines an iSCSI/NVMe target instance.

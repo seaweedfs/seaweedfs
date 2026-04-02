@@ -27,6 +27,8 @@ func TestDevOpsActions_Registration(t *testing.T) {
 		"assert_block_field",
 		"block_status",
 		"block_promote",
+		"wait_volume_healthy",
+		"discover_primary",
 	}
 
 	for _, name := range expected {
@@ -43,8 +45,8 @@ func TestDevOpsActions_Tier(t *testing.T) {
 	byTier := registry.ListByTier()
 	devopsActions := byTier[tr.TierDevOps]
 
-	if len(devopsActions) != 16 {
-		t.Errorf("devops tier has %d actions, want 16", len(devopsActions))
+	if len(devopsActions) != 17 {
+		t.Errorf("devops tier has %d actions, want 17", len(devopsActions))
 	}
 
 	// Verify all are in devops tier.
@@ -97,11 +99,11 @@ func TestAllActions_Registration(t *testing.T) {
 	if n := len(byTier[tr.TierCore]); n != 17 {
 		t.Errorf("core: %d, want 17", n)
 	}
-	if n := len(byTier[tr.TierBlock]); n != 62 {
-		t.Errorf("block: %d, want 62", n)
+	if n := len(byTier[tr.TierBlock]); n != 64 {
+		t.Errorf("block: %d, want 64", n)
 	}
-	if n := len(byTier[tr.TierDevOps]); n != 16 {
-		t.Errorf("devops: %d, want 16", n)
+	if n := len(byTier[tr.TierDevOps]); n != 17 {
+		t.Errorf("devops: %d, want 17", n)
 	}
 	if n := len(byTier[tr.TierChaos]); n != 5 {
 		t.Errorf("chaos: %d, want 5", n)
@@ -110,13 +112,13 @@ func TestAllActions_Registration(t *testing.T) {
 		t.Errorf("k8s: %d, want 14", n)
 	}
 
-	// Total should be 114 (112 prev + 2 recovery: measure_recovery, validate_recovery_regression).
+	// Total should be 116 (115 prev + 1 recovery: measure_rebuild).
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 114 {
-		t.Errorf("total actions: %d, want 114", total)
+	if total != 117 {
+		t.Errorf("total actions: %d, want 117", total)
 	}
 }
 

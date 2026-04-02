@@ -197,6 +197,14 @@ func (f *Flusher) PauseAndFlush() error {
 	return f.flushOnceLocked()
 }
 
+// Pause acquires flushMu, pausing the flusher without flushing.
+// The caller must call Resume() when done.
+// Used by TruncateToLSN to prevent the flusher from flushing ahead
+// entries while the dirty map and WAL are being cleared.
+func (f *Flusher) Pause() {
+	f.flushMu.Lock()
+}
+
 // Resume releases flushMu, allowing the flusher to resume.
 func (f *Flusher) Resume() {
 	f.flushMu.Unlock()
@@ -321,12 +329,26 @@ func (f *Flusher) flushOnceLocked() error {
 	}
 
 	// Batch-read full WAL entries for write ops.
+	// Deduplicate by WalOffset: multiple dirty blocks from the same multi-block
+	// write share one WAL entry. Without dedup, a 4MB write (1024 blocks) would
+	// allocate 1024 × 4MB buffers = 4GB instead of 1 × 4MB.
+	type walReadInfo struct {
+		buf   []byte
+		entry *WALEntry // decoded once, shared by all blocks in this WAL entry
+	}
+	walReadByOffset := make(map[uint64]*walReadInfo, len(pending))
 	var walReadOps []batchio.Op
 	for _, p := range pending {
-		if p.entryType == EntryTypeWrite {
+		if p.entryType != EntryTypeWrite {
+			continue
+		}
+		off := entries[p.idx].WalOffset
+		if _, ok := walReadByOffset[off]; !ok {
+			buf := make([]byte, p.entryLen)
+			walReadByOffset[off] = &walReadInfo{buf: buf}
 			walReadOps = append(walReadOps, batchio.Op{
-				Buf:    make([]byte, p.entryLen),
-				Offset: int64(f.walOffset + entries[p.idx].WalOffset),
+				Buf:    buf,
+				Offset: int64(f.walOffset + off),
 			})
 		}
 	}
@@ -334,22 +356,26 @@ func (f *Flusher) flushOnceLocked() error {
 		if err := f.bio.PreadBatch(f.fd, walReadOps); err != nil {
 			return fmt.Errorf("flusher: batch read WAL entries: %w", err)
 		}
+		// Decode each WAL entry once.
+		for _, ri := range walReadByOffset {
+			decoded, err := DecodeWALEntry(ri.buf)
+			if err == nil {
+				ri.entry = &decoded
+			}
+		}
 	}
 
-	// Step 2c: Decode entries and build extent write ops.
+	// Step 2c: Build extent write ops from decoded (shared) WAL entries.
 	var extentWriteOps []batchio.Op
-	walReadI := 0
 
 	for _, p := range pending {
 		e := entries[p.idx]
 		if p.entryType == EntryTypeWrite {
-			fullBuf := walReadOps[walReadI].Buf
-			walReadI++
-
-			entry, err := DecodeWALEntry(fullBuf)
-			if err != nil {
+			ri := walReadByOffset[e.WalOffset]
+			if ri == nil || ri.entry == nil {
 				continue
 			}
+			entry := ri.entry
 			if e.Lba < entry.LBA {
 				continue
 			}

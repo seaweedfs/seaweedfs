@@ -24,6 +24,9 @@ func TestFlusher(t *testing.T) {
 		{name: "flusher_notify_urgent_triggers_flush", run: testFlusherNotifyUrgentTriggersFlush},
 		// Phase 3 bug fix: P3-BUG-4 error logging.
 		{name: "flusher_error_logged", run: testFlusherErrorLogged},
+		// Multi-block write WAL dedup (flusher OOM fix).
+		{name: "flush_multiblock_shared_wal_read", run: testFlushMultiblockSharedWALRead},
+		{name: "flush_multiblock_data_correct", run: testFlushMultiblockDataCorrect},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -383,4 +386,154 @@ func openAndClose(path string) (*os.File, error) {
 	}
 	fd.Close()
 	return fd, nil
+}
+
+// --- Multi-block WAL dedup tests (flusher OOM fix) ---
+
+// testFlushMultiblockSharedWALRead verifies that a multi-block WriteLBA
+// (e.g. 64KB = 16 blocks) results in ONE WAL read during flush, not 16.
+// This is the core invariant of the flusher dedup fix.
+func testFlushMultiblockSharedWALRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "multiblock.blockvol")
+
+	// Volume large enough for multi-block writes: 1MB vol, 256KB WAL.
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write 64KB (16 blocks) in one call. This creates 1 WAL entry, 16 dirty map entries.
+	multiBlock := make([]byte, 64*1024) // 16 × 4KB
+	for i := range multiBlock {
+		multiBlock[i] = byte(i & 0xFF)
+	}
+	if err := v.WriteLBA(0, multiBlock); err != nil {
+		t.Fatalf("WriteLBA(64KB): %v", err)
+	}
+
+	// Dirty map should have 16 entries (one per block).
+	if n := v.dirtyMap.Len(); n != 16 {
+		t.Fatalf("dirty map len = %d, want 16", n)
+	}
+
+	// Verify all 16 entries share the same WAL offset.
+	snap := v.dirtyMap.Snapshot()
+	firstOff := snap[0].WalOffset
+	for i, e := range snap {
+		if e.WalOffset != firstOff {
+			t.Fatalf("block %d has WalOffset=%d, want %d (shared)", i, e.WalOffset, firstOff)
+		}
+	}
+	t.Logf("16 dirty blocks share WalOffset=%d — dedup should read WAL once", firstOff)
+
+	// Flush. Before the fix, this would allocate 16 × 64KB = 1MB.
+	// After the fix, it allocates 1 × 64KB = 64KB.
+	f := NewFlusher(FlusherConfig{
+		FD:       v.fd,
+		Super:    &v.super,
+		SuperMu:  &v.superMu,
+		WAL:      v.wal,
+		DirtyMap: v.dirtyMap,
+		Interval: 1 * time.Hour,
+	})
+	if err := f.FlushOnce(); err != nil {
+		t.Fatalf("FlushOnce: %v", err)
+	}
+
+	// Dirty map should be empty after flush.
+	if n := v.dirtyMap.Len(); n != 0 {
+		t.Fatalf("dirty map len after flush = %d, want 0", n)
+	}
+}
+
+// testFlushMultiblockDataCorrect verifies that after flushing a multi-block
+// write, each block is readable with correct data from the extent region.
+func testFlushMultiblockDataCorrect(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "multidata.blockvol")
+	v, err := CreateBlockVol(path, CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer v.Close()
+
+	// Write 3 different multi-block writes to exercise dedup across entries.
+	// Write 1: 32KB (8 blocks) at LBA 0, filled with 0xAA.
+	w1 := bytes.Repeat([]byte{0xAA}, 32*1024)
+	if err := v.WriteLBA(0, w1); err != nil {
+		t.Fatalf("WriteLBA w1: %v", err)
+	}
+
+	// Write 2: 16KB (4 blocks) at LBA 100, filled with 0xBB.
+	w2 := bytes.Repeat([]byte{0xBB}, 16*1024)
+	if err := v.WriteLBA(100, w2); err != nil {
+		t.Fatalf("WriteLBA w2: %v", err)
+	}
+
+	// Write 3: single 4KB block at LBA 50, filled with 0xCC.
+	w3 := bytes.Repeat([]byte{0xCC}, 4096)
+	if err := v.WriteLBA(50, w3); err != nil {
+		t.Fatalf("WriteLBA w3: %v", err)
+	}
+
+	// Should have 8 + 4 + 1 = 13 dirty entries from 3 WAL entries.
+	if n := v.dirtyMap.Len(); n != 13 {
+		t.Fatalf("dirty map len = %d, want 13", n)
+	}
+
+	f := NewFlusher(FlusherConfig{
+		FD:       v.fd,
+		Super:    &v.super,
+		SuperMu:  &v.superMu,
+		WAL:      v.wal,
+		DirtyMap: v.dirtyMap,
+		Interval: 1 * time.Hour,
+	})
+	if err := f.FlushOnce(); err != nil {
+		t.Fatalf("FlushOnce: %v", err)
+	}
+
+	// Verify each block from extent region.
+	// w1: LBA 0-7, each block = 0xAA.
+	for i := uint64(0); i < 8; i++ {
+		got, err := v.ReadLBA(i, 4096)
+		if err != nil {
+			t.Fatalf("ReadLBA(%d): %v", i, err)
+		}
+		if got[0] != 0xAA || got[4095] != 0xAA {
+			t.Errorf("LBA %d: expected 0xAA, got first=0x%02x last=0x%02x", i, got[0], got[4095])
+		}
+	}
+
+	// w3: LBA 50, block = 0xCC.
+	got50, err := v.ReadLBA(50, 4096)
+	if err != nil {
+		t.Fatalf("ReadLBA(50): %v", err)
+	}
+	if got50[0] != 0xCC {
+		t.Errorf("LBA 50: expected 0xCC, got 0x%02x", got50[0])
+	}
+
+	// w2: LBA 100-103, each block = 0xBB.
+	for i := uint64(100); i < 104; i++ {
+		got, err := v.ReadLBA(i, 4096)
+		if err != nil {
+			t.Fatalf("ReadLBA(%d): %v", i, err)
+		}
+		if got[0] != 0xBB || got[4095] != 0xBB {
+			t.Errorf("LBA %d: expected 0xBB, got first=0x%02x last=0x%02x", i, got[0], got[4095])
+		}
+	}
+
+	t.Log("multi-block flush dedup: 3 writes (8+4+1 blocks, 3 WAL entries) → all data correct")
 }

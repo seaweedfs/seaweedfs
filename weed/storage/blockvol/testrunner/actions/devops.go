@@ -31,6 +31,7 @@ func RegisterDevOpsActions(r *tr.Registry) {
 	r.RegisterFunc("block_status", tr.TierDevOps, blockStatus)
 	r.RegisterFunc("block_promote", tr.TierDevOps, blockPromote)
 	r.RegisterFunc("wait_volume_healthy", tr.TierDevOps, waitVolumeHealthy)
+	r.RegisterFunc("discover_primary", tr.TierDevOps, discoverPrimary)
 }
 
 // setISCSIVars sets the save_as_iscsi_host/port/addr/iqn vars from a VolumeInfo.
@@ -364,9 +365,25 @@ func lookupBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 
 	if act.SaveAs != "" {
 		setISCSIVars(actx, act.SaveAs, info)
+		// Also save replica data/ctrl addresses + ports for fault injection.
+		if info.ReplicaDataAddr != "" {
+			actx.Vars[act.SaveAs+"_replica_data_addr"] = info.ReplicaDataAddr
+			_, dataPort, _ := net.SplitHostPort(info.ReplicaDataAddr)
+			actx.Vars[act.SaveAs+"_replica_data_port"] = dataPort
+		}
+		if info.ReplicaCtrlAddr != "" {
+			actx.Vars[act.SaveAs+"_replica_ctrl_addr"] = info.ReplicaCtrlAddr
+			_, ctrlPort, _ := net.SplitHostPort(info.ReplicaCtrlAddr)
+			actx.Vars[act.SaveAs+"_replica_ctrl_port"] = ctrlPort
+		}
+		// Save primary server host for iptables targeting.
+		if info.VolumeServer != "" {
+			host, _, _ := net.SplitHostPort(info.VolumeServer)
+			actx.Vars[act.SaveAs+"_primary_host"] = host
+		}
 	}
 
-	actx.Log("  looked up %s: size=%d iscsi=%s", name, info.SizeBytes, info.ISCSIAddr)
+	actx.Log("  looked up %s: size=%d iscsi=%s repl_data=%s", name, info.SizeBytes, info.ISCSIAddr, info.ReplicaDataAddr)
 	return map[string]string{"value": strconv.FormatUint(info.SizeBytes, 10)}, nil
 }
 
@@ -739,6 +756,99 @@ func waitVolumeHealthy(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 			return map[string]string{"value": "healthy"}, nil
 		}
 	}
+}
+
+// discoverPrimary looks up a block volume and maps the primary's IP to a topology node name.
+// This solves the "which node to kill?" problem for degraded-mode and failover scenarios.
+//
+// Params:
+//   - name: volume name (required)
+//   - master_url: master API (or from var)
+//
+// Saves (using save_as prefix):
+//   - save_as = node name (e.g. "m01")
+//   - save_as_server = full server address (e.g. "10.0.0.3:18480")
+//   - save_as_host = server IP (e.g. "10.0.0.3")
+//   - save_as_replica_node = replica node name (if RF>1 and replica found)
+func discoverPrimary(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	client, err := blockAPIClient(actx, act)
+	if err != nil {
+		return nil, fmt.Errorf("discover_primary: %w", err)
+	}
+
+	name := act.Params["name"]
+	if name == "" {
+		name = actx.Vars["volume_name"]
+	}
+	if name == "" {
+		return nil, fmt.Errorf("discover_primary: name param required")
+	}
+
+	info, err := client.LookupVolume(ctx, name)
+	if err != nil {
+		return nil, fmt.Errorf("discover_primary: lookup %s: %w", name, err)
+	}
+
+	primaryHost, _, _ := net.SplitHostPort(info.VolumeServer)
+	if primaryHost == "" {
+		return nil, fmt.Errorf("discover_primary: volume_server %q has no host", info.VolumeServer)
+	}
+
+	// Match primary host to topology node (check Host and AltIPs).
+	primaryNode := ""
+	if actx.Scenario != nil {
+		for nodeName, nodeSpec := range actx.Scenario.Topology.Nodes {
+			if nodeSpec.Host == primaryHost {
+				primaryNode = nodeName
+				break
+			}
+			for _, altIP := range nodeSpec.AltIPs {
+				if altIP == primaryHost {
+					primaryNode = nodeName
+					break
+				}
+			}
+			if primaryNode != "" {
+				break
+			}
+		}
+	}
+	if primaryNode == "" {
+		return nil, fmt.Errorf("discover_primary: no topology node matches primary host %s", primaryHost)
+	}
+
+	result := map[string]string{"value": primaryNode}
+	if act.SaveAs != "" {
+		actx.Vars[act.SaveAs] = primaryNode
+		actx.Vars[act.SaveAs+"_server"] = info.VolumeServer
+		actx.Vars[act.SaveAs+"_host"] = primaryHost
+	}
+
+	// Also discover replica node if available.
+	if info.ReplicaServer != "" {
+		replicaHost, _, _ := net.SplitHostPort(info.ReplicaServer)
+		for nodeName, nodeSpec := range actx.Scenario.Topology.Nodes {
+			match := nodeSpec.Host == replicaHost
+			if !match {
+				for _, altIP := range nodeSpec.AltIPs {
+					if altIP == replicaHost {
+						match = true
+						break
+					}
+				}
+			}
+			if match {
+				if act.SaveAs != "" {
+					actx.Vars[act.SaveAs+"_replica_node"] = nodeName
+				}
+				actx.Log("  primary=%s (node %s), replica=%s (node %s)", info.VolumeServer, primaryNode, info.ReplicaServer, nodeName)
+				return result, nil
+			}
+		}
+	}
+
+	actx.Log("  primary=%s (node %s)", info.VolumeServer, primaryNode)
+	return result, nil
 }
 
 // clusterStatus fetches the full cluster status JSON.

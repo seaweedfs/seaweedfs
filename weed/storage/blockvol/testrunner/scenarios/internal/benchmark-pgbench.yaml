@@ -1,0 +1,209 @@
+name: benchmark-pgbench
+timeout: 15m
+
+# Database benchmark: PostgreSQL pgbench on sw-block.
+#
+# Measures TPS for TPC-B (mixed read/write) and SELECT-only at various
+# client counts. This is the most product-relevant benchmark — operators
+# care about database performance on block storage.
+#
+# Competitive reference (March 2024, RF=2 sync, 25Gbps):
+#   Ceph RBD:     431 TPS
+#   Longhorn V1: 2,754 TPS
+#   sw-block:    3,226 TPS (old code, commit e92263b)
+#   Mayastor:    5,801 TPS
+#
+# Current sw-block number after syncWithWALProgress fix: unknown.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: bench-pgbench
+  # 2GB is enough for pgbench scale=10 (~150MB data).
+  # 4GB caused OOM on VS (20GB RSS → OOM killed).
+  vol_size: "2147483648"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-pgb-master /tmp/sw-pgb-vs1; mkdir -p /tmp/sw-pgb-master /tmp/sw-pgb-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-pgb-vs2; mkdir -p /tmp/sw-pgb-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-pgb-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-pgb-vs1
+        extra_args: "-block.dir=/tmp/sw-pgb-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-pgb-vs2
+        extra_args: "-block.dir=/tmp/sw-pgb-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+  - name: connect
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Short sleep for device to settle.
+      - action: sleep
+        duration: 3s
+
+  - name: pgbench-setup
+    actions:
+      - action: pgbench_init
+        node: m01
+        device: "{{ device }}"
+        mount: "/mnt/pgbench"
+        port: "5434"
+        scale: "10"
+        fstype: "ext4"
+
+  - name: tpcb-c1
+    actions:
+      - action: pgbench_run
+        node: m01
+        clients: "1"
+        duration: "30"
+        save_as: tps_c1
+
+      - action: print
+        msg: "TPC-B c=1: {{ tps_c1 }} TPS"
+
+  - name: tpcb-c4
+    actions:
+      - action: pgbench_run
+        node: m01
+        clients: "4"
+        duration: "30"
+        save_as: tps_c4
+
+      - action: print
+        msg: "TPC-B c=4: {{ tps_c4 }} TPS"
+
+  - name: tpcb-c8
+    actions:
+      - action: pgbench_run
+        node: m01
+        clients: "8"
+        duration: "30"
+        save_as: tps_c8
+
+      - action: print
+        msg: "TPC-B c=8: {{ tps_c8 }} TPS"
+
+  - name: select-c4
+    actions:
+      - action: pgbench_run
+        node: m01
+        clients: "4"
+        duration: "30"
+        select_only: "true"
+        save_as: tps_sel
+
+      - action: print
+        msg: "SELECT-only c=4: {{ tps_sel }} TPS"
+
+  - name: results
+    actions:
+      - action: print
+        msg: "=== pgbench: RF=2 sync_all iSCSI/RoCE ==="
+      - action: print
+        msg: "TPC-B c=1:       {{ tps_c1 }} TPS"
+      - action: print
+        msg: "TPC-B c=4:       {{ tps_c4 }} TPS"
+      - action: print
+        msg: "TPC-B c=8:       {{ tps_c8 }} TPS"
+      - action: print
+        msg: "SELECT-only c=4: {{ tps_sel }} TPS"
+
+      - action: collect_results
+        title: "pgbench: RF=2 sync_all iSCSI/RoCE"
+        volume_name: "{{ volume_name }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: pgbench_cleanup
+        node: m01
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

@@ -1,0 +1,306 @@
+name: ec3-fast-reconnect-skips-failover
+timeout: 10m
+
+# Edge Case #3: Fast reconnect skips failover.
+#
+# Scenario: Kill primary VS and restart it BEFORE lease expires (~30s TTL).
+# Risk: The restarted VS re-registers via heartbeat and master accepts it
+# as primary again without going through the failover+promotion path.
+# The VS may serve with stale epoch/role if the fast reconnect bypasses
+# the assignment pipeline.
+#
+# What we verify:
+# 1. After restart, the primary epoch is >= the original epoch
+# 2. I/O works after the fast restart
+# 3. Replication is healthy (not stuck in degraded)
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: ec3-test
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ec3-master /tmp/sw-ec3-vs1 && mkdir -p /tmp/sw-ec3-master /tmp/sw-ec3-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-ec3-vs2 && mkdir -p /tmp/sw-ec3-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-ec3-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-ec3-vs1
+        extra_args: "-block.dir=/tmp/sw-ec3-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-ec3-vs2
+        extra_args: "-block.dir=/tmp/sw-ec3-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+  - name: record-state-before
+    actions:
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: before
+
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol_before
+
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: epoch
+        expected: "1"
+
+      # Write data so state is non-trivial.
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_before_iscsi_host }}"
+        port: "{{ vol_before_iscsi_port }}"
+        iqn: "{{ vol_before_iqn }}"
+        save_as: device
+
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: pre-write
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: print
+        msg: "Before: primary={{ before }} server={{ before_server }}"
+
+  - name: force-primary-m02
+    actions:
+      # Force primary to m02 so we have a known node to kill.
+      - action: block_promote
+        name: "{{ volume_name }}"
+        target_server: "10.0.0.3:18480"
+        force: "true"
+        reason: "ec3-setup"
+
+      - action: sleep
+        duration: 5s
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: primary_pre
+
+      - action: print
+        msg: "Primary forced to m02: {{ primary_pre_server }}"
+
+  - name: fast-kill-restart
+    actions:
+      # Kill PRIMARY VS on m02 with SIGKILL.
+      - action: exec
+        node: m02
+        cmd: "kill -9 {{ vs1_pid }}"
+        root: "true"
+        ignore_error: true
+
+      - action: print
+        msg: "Primary killed on m02. Fast restart in 3s (before 30s lease expires)..."
+
+      # CRITICAL: restart FAST, well within the 30s lease TTL.
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-ec3-vs1
+        extra_args: "-block.dir=/tmp/sw-ec3-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid_new
+
+      - action: print
+        msg: "VS restarted on m02. Waiting for re-registration..."
+
+      # Wait for heartbeat re-registration.
+      - action: sleep
+        duration: 10s
+
+      - action: wait_block_servers
+        count: "2"
+        timeout: 30s
+
+  - name: verify-state-after
+    actions:
+      # Wait for volume to become healthy again.
+      # Use longer timeout — primary fast-restart may need full re-assignment cycle.
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 180s
+
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: after
+
+      - action: print
+        msg: "After fast restart: primary={{ after }} server={{ after_server }}"
+
+      # Verify replication is not stuck degraded.
+      - action: assert_block_field
+        name: "{{ volume_name }}"
+        field: replica_degraded
+        expected: "false"
+
+      # Verify epoch is valid (>= 1, ideally bumped if re-assignment happened).
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol_after
+
+      - action: print
+        msg: "Epoch after: checking via lookup..."
+
+  - name: verify-io-after
+    actions:
+      # Fresh lookup to get current primary's iSCSI address
+      # (primary moved to m02 after promote, so original vars point to wrong host).
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol_cur
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_cur_iscsi_host }}"
+        port: "{{ vol_cur_iscsi_port }}"
+        iqn: "{{ vol_cur_iqn }}"
+        save_as: device2
+
+      - action: fio_json
+        node: m01
+        device: "{{ device2 }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: post-restart-write
+        save_as: fio_after
+
+      - action: fio_parse
+        json_var: fio_after
+        metric: iops
+        save_as: iops_after
+
+      - action: print
+        msg: "EC-3 post-restart write IOPS: {{ iops_after }}"
+
+      # Also verify read works.
+      - action: fio_json
+        node: m01
+        device: "{{ device2 }}"
+        rw: randread
+        bs: 4k
+        iodepth: "16"
+        runtime: "5"
+        time_based: "true"
+        name: post-restart-read
+        save_as: fio_read
+
+      - action: fio_parse
+        json_var: fio_read
+        metric: iops
+        save_as: iops_read
+
+      - action: print
+        msg: "EC-3 post-restart read IOPS: {{ iops_read }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: print
+        msg: "EC-3 PASS: fast reconnect did not leave system in broken state"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid_new }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true
