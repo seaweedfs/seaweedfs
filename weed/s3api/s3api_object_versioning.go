@@ -999,7 +999,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
 	// List all remaining version files in the .versions directory
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	entries, isLast, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
 		glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
 		return fmt.Errorf("failed to list versions: %v", err)
@@ -1011,6 +1011,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	var latestVersionId string
 	var latestVersionFileName string
 	var latestVersionEntry *filer_pb.Entry
+	hasDeleteMarkers := false
 
 	for _, entry := range entries {
 		if entry.Extended == nil {
@@ -1027,6 +1028,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		// Skip delete markers when finding latest content version
 		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
 		if string(isDeleteMarkerBytes) == "true" {
+			hasDeleteMarkers = true
 			continue
 		}
 
@@ -1070,14 +1072,18 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
+	} else if hasDeleteMarkers || !isLast {
+		// Delete markers still exist in the .versions directory, or the listing was
+		// truncated so there may be more entries. Either way, keep the directory.
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no content versions found for %s/%s but .versions directory still has entries (deleteMarkers=%v, isLast=%v), keeping directory",
+			bucket, object, hasDeleteMarkers, isLast)
 	} else {
-		// No versions left - delete the .versions metadata file entirely
-		// This prevents clients from seeing an empty .versions file
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions metadata file", bucket, object)
+		// No entries at all - delete the .versions directory entirely
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
 		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
 		if err != nil {
-			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions metadata file for %s/%s: %v", bucket, object, err)
+			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
 			// Don't return error - the versions are already deleted, this is just cleanup
 		}
 	}
