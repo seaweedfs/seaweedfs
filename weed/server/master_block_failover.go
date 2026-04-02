@@ -1,10 +1,12 @@
 package weed_server
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
@@ -18,18 +20,139 @@ type pendingRebuild struct {
 	ReplicaCtrlAddr string // CP13-8: saved from before death for catch-up-first recovery
 }
 
+// deferredPromotion tracks a deferred promotion timer with its volume context.
+type deferredPromotion struct {
+	Timer          *time.Timer
+	VolumeName     string
+	CurrentPrimary string // current (stale) primary that will be replaced
+	AffectedServer string // dead server addr
+}
+
 // blockFailoverState holds failover and rebuild state on the master.
 type blockFailoverState struct {
 	mu              sync.Mutex
-	pendingRebuilds map[string][]pendingRebuild // dead server addr -> pending rebuilds
-	// R2-F2: Track deferred promotion timers so they can be cancelled on reconnect.
-	deferredTimers map[string][]*time.Timer // dead server addr -> pending timers
+	pendingRebuilds map[string][]pendingRebuild       // dead server addr -> pending rebuilds
+	deferredTimers  map[string][]deferredPromotion     // dead server addr -> pending deferred promotions
+}
+
+// FailoverVolumeState is one volume's failover diagnosis entry.
+type FailoverVolumeState struct {
+	VolumeName       string
+	CurrentPrimary   string
+	AffectedServer   string // dead server that triggered the failover/rebuild
+	DeferredPromotion bool  // true if a deferred promotion timer is pending
+	PendingRebuild   bool  // true if a rebuild is pending for this volume
+	Reason           string // "lease_wait", "rebuild_pending", or ""
+}
+
+// FailoverDiagnostic is a bounded read-only snapshot of failover state
+// for operator-visible diagnosis. P3 diagnosability surface.
+//
+// Volume-oriented: each entry describes one volume's failover state.
+// Aggregate counts are derived from the volume list.
+type FailoverDiagnostic struct {
+	Volumes              []FailoverVolumeState
+	PendingRebuildCount  map[string]int // dead server → count of pending rebuilds
+	DeferredPromotionCount map[string]int // dead server → count of deferred promotion timers
+}
+
+func (fs *blockFailoverState) DiagnosticSnapshot() FailoverDiagnostic {
+	fs.mu.Lock()
+	defer fs.mu.Unlock()
+	diag := FailoverDiagnostic{
+		PendingRebuildCount:    make(map[string]int),
+		DeferredPromotionCount: make(map[string]int),
+	}
+	for server, rebuilds := range fs.pendingRebuilds {
+		diag.PendingRebuildCount[server] = len(rebuilds)
+		for _, rb := range rebuilds {
+			diag.Volumes = append(diag.Volumes, FailoverVolumeState{
+				VolumeName:     rb.VolumeName,
+				CurrentPrimary: rb.NewPrimary,
+				AffectedServer: server,
+				PendingRebuild: true,
+				Reason:         "rebuild_pending",
+			})
+		}
+	}
+	for server, promos := range fs.deferredTimers {
+		diag.DeferredPromotionCount[server] = len(promos)
+		for _, dp := range promos {
+			diag.Volumes = append(diag.Volumes, FailoverVolumeState{
+				VolumeName:        dp.VolumeName,
+				CurrentPrimary:    dp.CurrentPrimary,
+				AffectedServer:    dp.AffectedServer,
+				DeferredPromotion: true,
+				Reason:            "lease_wait",
+			})
+		}
+	}
+	return diag
+}
+
+// PublicationDiagnostic is a bounded read-only snapshot comparing the
+// operator-visible publication (LookupBlockVolume response) against the
+// registry authority for one volume. P3 diagnosability surface for S2.
+type PublicationDiagnostic struct {
+	VolumeName           string
+	LookupVolumeServer   string // what LookupBlockVolume returns
+	LookupIscsiAddr      string
+	AuthorityVolumeServer string // registry entry (source of truth)
+	AuthorityIscsiAddr   string
+	Coherent             bool   // true if lookup == authority
+	Reason               string // "" if coherent, otherwise why they diverge
+}
+
+// PublicationDiagnosticFor returns a PublicationDiagnostic for the named volume.
+// It performs two independent reads:
+//   - Lookup side: calls LookupBlockVolume (the actual gRPC method)
+//   - Authority side: reads the registry directly
+//
+// Then compares the two. If they diverge, Coherent=false with a Reason.
+func (ms *MasterServer) PublicationDiagnosticFor(volumeName string) (PublicationDiagnostic, bool) {
+	if ms.blockRegistry == nil {
+		return PublicationDiagnostic{}, false
+	}
+
+	// Read 1: the operator-visible publication surface.
+	lookupResp, err := ms.LookupBlockVolume(context.Background(), &master_pb.LookupBlockVolumeRequest{Name: volumeName})
+	if err != nil {
+		return PublicationDiagnostic{}, false
+	}
+
+	// Read 2: the registry authority (separate read).
+	entry, ok := ms.blockRegistry.Lookup(volumeName)
+	if !ok {
+		return PublicationDiagnostic{}, false
+	}
+
+	diag := PublicationDiagnostic{
+		VolumeName:            volumeName,
+		LookupVolumeServer:    lookupResp.VolumeServer,
+		LookupIscsiAddr:       lookupResp.IscsiAddr,
+		AuthorityVolumeServer: entry.VolumeServer,
+		AuthorityIscsiAddr:    entry.ISCSIAddr,
+	}
+
+	// Compare the two reads.
+	vsMatch := diag.LookupVolumeServer == diag.AuthorityVolumeServer
+	iscsiMatch := diag.LookupIscsiAddr == diag.AuthorityIscsiAddr
+	diag.Coherent = vsMatch && iscsiMatch
+	if !diag.Coherent {
+		if !vsMatch {
+			diag.Reason = "volume_server_mismatch"
+		} else {
+			diag.Reason = "iscsi_addr_mismatch"
+		}
+	}
+
+	return diag, true
 }
 
 func newBlockFailoverState() *blockFailoverState {
 	return &blockFailoverState{
 		pendingRebuilds: make(map[string][]pendingRebuild),
-		deferredTimers:  make(map[string][]*time.Timer),
+		deferredTimers:  make(map[string][]deferredPromotion),
 	}
 }
 
@@ -60,7 +183,11 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 				glog.V(0).Infof("failover: %q lease expires in %v, deferring promotion", entry.Name, delay)
 				volumeName := entry.Name
 				capturedEpoch := entry.Epoch // T3: capture epoch for stale-timer validation
+				capturedDeadServer := deadServer // capture for closure
 				timer := time.AfterFunc(delay, func() {
+					// Clean up the deferred entry regardless of outcome.
+					ms.removeFiredDeferredPromotion(capturedDeadServer, volumeName)
+
 					// T3: Re-validate before acting — prevent stale timer on recreated/changed volume.
 					current, ok := ms.blockRegistry.Lookup(volumeName)
 					if !ok {
@@ -76,7 +203,12 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 				})
 				ms.blockFailover.mu.Lock()
 				ms.blockFailover.deferredTimers[deadServer] = append(
-					ms.blockFailover.deferredTimers[deadServer], timer)
+					ms.blockFailover.deferredTimers[deadServer], deferredPromotion{
+						Timer:          timer,
+						VolumeName:     volumeName,
+						CurrentPrimary: entry.VolumeServer,
+						AffectedServer: deadServer,
+					})
 				ms.blockFailover.mu.Unlock()
 				continue
 			}
@@ -159,12 +291,14 @@ func (ms *MasterServer) finalizePromotion(volumeName, oldPrimary, oldPath string
 		assignment.ReplicaAddrs = append(assignment.ReplicaAddrs, blockvol.ReplicaAddr{
 			DataAddr: ri.DataAddr,
 			CtrlAddr: ri.CtrlAddr,
+			ServerID: ri.Server, // V2: stable identity
 		})
 	}
 	// Backward compat: also set scalar fields if exactly 1 replica.
 	if len(entry.Replicas) == 1 {
 		assignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
 		assignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+		assignment.ReplicaServerID = entry.Replicas[0].Server // V2: stable identity
 	}
 	ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, assignment)
 
@@ -210,14 +344,36 @@ func (ms *MasterServer) cancelDeferredTimers(server string) {
 		return
 	}
 	ms.blockFailover.mu.Lock()
-	timers := ms.blockFailover.deferredTimers[server]
+	promos := ms.blockFailover.deferredTimers[server]
 	delete(ms.blockFailover.deferredTimers, server)
 	ms.blockFailover.mu.Unlock()
-	for _, t := range timers {
-		t.Stop()
+	for _, dp := range promos {
+		dp.Timer.Stop()
 	}
-	if len(timers) > 0 {
-		glog.V(0).Infof("failover: cancelled %d deferred promotion timers for reconnected %s", len(timers), server)
+	if len(promos) > 0 {
+		glog.V(0).Infof("failover: cancelled %d deferred promotion timers for reconnected %s", len(promos), server)
+	}
+}
+
+// removeFiredDeferredPromotion removes a single deferred promotion entry after
+// its timer has fired (whether it promoted or was skipped). This keeps
+// FailoverDiagnostic accurate: once the timer fires, the volume is no longer
+// in lease-wait state.
+func (ms *MasterServer) removeFiredDeferredPromotion(server, volumeName string) {
+	if ms.blockFailover == nil {
+		return
+	}
+	ms.blockFailover.mu.Lock()
+	defer ms.blockFailover.mu.Unlock()
+	promos := ms.blockFailover.deferredTimers[server]
+	for i, dp := range promos {
+		if dp.VolumeName == volumeName {
+			ms.blockFailover.deferredTimers[server] = append(promos[:i], promos[i+1:]...)
+			if len(ms.blockFailover.deferredTimers[server]) == 0 {
+				delete(ms.blockFailover.deferredTimers, server)
+			}
+			return
+		}
 	}
 }
 
@@ -286,16 +442,18 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 				Role:       blockvol.RoleToWire(blockvol.RolePrimary),
 				LeaseTtlMs: leaseTTLMs,
 			}
-			// Include all replica addresses.
+			// Include all replica addresses with stable identity.
 			for _, ri := range entry.Replicas {
 				primaryAssignment.ReplicaAddrs = append(primaryAssignment.ReplicaAddrs, blockvol.ReplicaAddr{
 					DataAddr: ri.DataAddr,
 					CtrlAddr: ri.CtrlAddr,
+					ServerID: ri.Server, // V2: stable identity
 				})
 			}
 			if len(entry.Replicas) == 1 {
 				primaryAssignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
 				primaryAssignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+				primaryAssignment.ReplicaServerID = entry.Replicas[0].Server // V2
 			}
 			ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, primaryAssignment)
 
@@ -346,11 +504,13 @@ func (ms *MasterServer) refreshPrimaryForAddrChange(ac ReplicaAddrChange) {
 		assignment.ReplicaAddrs = append(assignment.ReplicaAddrs, blockvol.ReplicaAddr{
 			DataAddr: ri.DataAddr,
 			CtrlAddr: ri.CtrlAddr,
+			ServerID: ri.Server, // V2: stable identity
 		})
 	}
 	if len(entry.Replicas) == 1 {
 		assignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
 		assignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+		assignment.ReplicaServerID = entry.Replicas[0].Server // V2
 	}
 	// Use current registry primary (not stale ac.PrimaryServer) in case
 	// failover happened between address-change detection and this refresh.
@@ -384,6 +544,9 @@ func (ms *MasterServer) reevaluateOrphanedPrimaries(server string) {
 			capturedEpoch := entry.Epoch
 			deadPrimary := entry.VolumeServer
 			timer := time.AfterFunc(delay, func() {
+				// Clean up the deferred entry regardless of outcome.
+				ms.removeFiredDeferredPromotion(deadPrimary, volumeName)
+
 				current, ok := ms.blockRegistry.Lookup(volumeName)
 				if !ok {
 					return
@@ -397,7 +560,12 @@ func (ms *MasterServer) reevaluateOrphanedPrimaries(server string) {
 			})
 			ms.blockFailover.mu.Lock()
 			ms.blockFailover.deferredTimers[deadPrimary] = append(
-				ms.blockFailover.deferredTimers[deadPrimary], timer)
+				ms.blockFailover.deferredTimers[deadPrimary], deferredPromotion{
+					Timer:          timer,
+					VolumeName:     volumeName,
+					CurrentPrimary: deadPrimary,
+					AffectedServer: deadPrimary,
+				})
 			ms.blockFailover.mu.Unlock()
 			continue
 		}
