@@ -642,29 +642,39 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 		WithSessionName(name).
 		WithRoleInfo(identity.PrincipalArn, federatedUserId, federatedUserArn)
 
-	// Embed the caller's attached policies into the token
-	if len(identity.PolicyNames) > 0 {
-		claims.WithPolicies(identity.PolicyNames)
-	} else {
-		// Fall back to looking up policies from IAM manager
-		var policyManager *integration.IAMManager
-		if h.iam.iamIntegration != nil {
-			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
-				policyManager = provider.GetIAMManager()
-			}
+	// Embed the caller's effective policies into the token.
+	// Merge identity.PolicyNames (from SigV4 identity) with policies resolved
+	// from the IAM manager (which may include group-attached policies).
+	policySet := make(map[string]struct{})
+	for _, p := range identity.PolicyNames {
+		policySet[p] = struct{}{}
+	}
+
+	var policyManager *integration.IAMManager
+	if h.iam.iamIntegration != nil {
+		if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+			policyManager = provider.GetIAMManager()
 		}
-		if policyManager != nil {
-			userPolicies, err := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
-			if err != nil {
-				glog.V(2).Infof("GetFederationToken: failed to resolve policies for %s: %v", identity.Name, err)
-				h.writeSTSErrorResponse(w, r, STSErrInternalError,
-					fmt.Errorf("failed to resolve caller policies"))
-				return
-			}
-			if len(userPolicies) > 0 {
-				claims.WithPolicies(userPolicies)
-			}
+	}
+	if policyManager != nil {
+		userPolicies, err := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
+		if err != nil {
+			glog.V(2).Infof("GetFederationToken: failed to resolve policies for %s: %v", identity.Name, err)
+			h.writeSTSErrorResponse(w, r, STSErrInternalError,
+				fmt.Errorf("failed to resolve caller policies"))
+			return
 		}
+		for _, p := range userPolicies {
+			policySet[p] = struct{}{}
+		}
+	}
+
+	if len(policySet) > 0 {
+		merged := make([]string, 0, len(policySet))
+		for p := range policySet {
+			merged = append(merged, p)
+		}
+		claims.WithPolicies(merged)
 	}
 
 	if sessionPolicyJSON != "" {
