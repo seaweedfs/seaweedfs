@@ -725,6 +725,20 @@ func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken s
 	return m.stsService.ExpireSessionForTesting(ctx, sessionToken)
 }
 
+// GetPoliciesForUser returns the policy names attached to an IAM user.
+// It looks up the user via the UserStore. Returns nil if the user is not found
+// or the store is not configured.
+func (m *IAMManager) GetPoliciesForUser(ctx context.Context, username string) []string {
+	if m.userStore == nil {
+		return nil
+	}
+	user, err := m.userStore.GetUser(ctx, username)
+	if err != nil || user == nil {
+		return nil
+	}
+	return user.PolicyNames
+}
+
 // GetSTSService returns the STS service instance
 func (m *IAMManager) GetSTSService() *sts.STSService {
 	return m.stsService

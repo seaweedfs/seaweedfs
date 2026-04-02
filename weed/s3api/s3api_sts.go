@@ -37,6 +37,10 @@ const (
 	actionAssumeRoleWithWebIdentity  = "AssumeRoleWithWebIdentity"
 	actionAssumeRoleWithLDAPIdentity = "AssumeRoleWithLDAPIdentity"
 	actionGetCallerIdentity          = "GetCallerIdentity"
+	actionGetFederationToken         = "GetFederationToken"
+
+	// GetFederationToken-specific parameters
+	stsFederationName = "Name"
 
 	// LDAP parameter names
 	stsLDAPUsername     = "LDAPUsername"
@@ -46,8 +50,10 @@ const (
 
 // STS duration constants (AWS specification)
 const (
-	minDurationSeconds = int64(900)   // 15 minutes
-	maxDurationSeconds = int64(43200) // 12 hours
+	minDurationSeconds = int64(900)    // 15 minutes
+	maxDurationSeconds = int64(43200)  // 12 hours (AssumeRole)
+	defaultFederationDurationSeconds = int64(43200)  // 12 hours (GetFederationToken default)
+	maxFederationDurationSeconds     = int64(129600) // 36 hours (GetFederationToken max)
 )
 
 // parseDurationSeconds parses and validates the DurationSeconds parameter
@@ -124,6 +130,8 @@ func (h *STSHandlers) HandleSTSRequest(w http.ResponseWriter, r *http.Request) {
 		h.handleAssumeRoleWithLDAPIdentity(w, r)
 	case actionGetCallerIdentity:
 		h.handleGetCallerIdentity(w, r)
+	case actionGetFederationToken:
+		h.handleGetFederationToken(w, r)
 	default:
 		h.writeSTSErrorResponse(w, r, STSErrInvalidAction,
 			fmt.Errorf("unsupported action: %s", action))
@@ -505,6 +513,183 @@ func (h *STSHandlers) handleAssumeRoleWithLDAPIdentity(w http.ResponseWriter, r 
 	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
 }
 
+// handleGetFederationToken handles the GetFederationToken API action.
+// This allows long-term IAM users to obtain temporary credentials scoped down
+// by an optional inline session policy. Temporary credentials cannot call this action.
+func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Request) {
+	// Extract parameters
+	name := r.FormValue(stsFederationName)
+
+	// Validate required parameters
+	if name == "" {
+		h.writeSTSErrorResponse(w, r, STSErrMissingParameter,
+			fmt.Errorf("Name is required"))
+		return
+	}
+
+	// AWS requires Name to be 2-64 characters matching [\w+=,.@-]+
+	if len(name) < 2 || len(name) > 64 {
+		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+			fmt.Errorf("Name must be between 2 and 64 characters"))
+		return
+	}
+
+	// Parse and validate DurationSeconds (GetFederationToken allows up to 36 hours)
+	dsStr := r.FormValue("DurationSeconds")
+	var durationSeconds *int64
+	if dsStr != "" {
+		ds, err := strconv.ParseInt(dsStr, 10, 64)
+		if err != nil {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("invalid DurationSeconds: %w", err))
+			return
+		}
+		if ds < minDurationSeconds || ds > maxFederationDurationSeconds {
+			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxFederationDurationSeconds))
+			return
+		}
+		durationSeconds = &ds
+	}
+
+	// Check if STS service is initialized
+	if h.stsService == nil || !h.stsService.IsInitialized() {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("STS service not initialized"))
+		return
+	}
+
+	// Check if IAM is available for SigV4 verification
+	if h.iam == nil {
+		h.writeSTSErrorResponse(w, r, STSErrSTSNotReady,
+			fmt.Errorf("IAM not configured for STS"))
+		return
+	}
+
+	// Validate AWS SigV4 authentication
+	identity, _, _, _, sigErrCode := h.iam.verifyV4Signature(r, false)
+	if sigErrCode != s3err.ErrNone {
+		glog.V(2).Infof("GetFederationToken SigV4 verification failed: %v", sigErrCode)
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("invalid AWS signature: %v", sigErrCode))
+		return
+	}
+
+	if identity == nil {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("unable to identify caller"))
+		return
+	}
+
+	// Reject calls from temporary credentials (session tokens)
+	// GetFederationToken can only be called by long-term IAM users
+	securityToken := r.Header.Get("X-Amz-Security-Token")
+	if securityToken == "" {
+		securityToken = r.URL.Query().Get("X-Amz-Security-Token")
+	}
+	if securityToken != "" {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("GetFederationToken cannot be called with temporary credentials"))
+		return
+	}
+
+	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
+
+	// Validate session policy if provided
+	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrMalformedPolicyDocument,
+			fmt.Errorf("invalid Policy document: %w", err))
+		return
+	}
+
+	// Calculate duration (default 12 hours for GetFederationToken)
+	duration := time.Duration(defaultFederationDurationSeconds) * time.Second
+	if durationSeconds != nil {
+		duration = time.Duration(*durationSeconds) * time.Second
+	}
+
+	// Generate session ID
+	sessionId, err := sts.GenerateSessionId()
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrInternalError,
+			fmt.Errorf("failed to generate session ID: %w", err))
+		return
+	}
+
+	expiration := time.Now().Add(duration)
+	accountID := h.getAccountID()
+
+	// Build federated user ARN: arn:aws:sts::<account>:federated-user/<Name>
+	federatedUserArn := fmt.Sprintf("arn:aws:sts::%s:federated-user/%s", accountID, name)
+	federatedUserId := fmt.Sprintf("%s:%s", accountID, name)
+
+	// Create session claims — use the caller's principal ARN as the RoleArn
+	// so that policy evaluation resolves the caller's attached policies
+	claims := sts.NewSTSSessionClaims(sessionId, h.stsService.Config.Issuer, expiration).
+		WithSessionName(name).
+		WithRoleInfo(identity.PrincipalArn, federatedUserId, federatedUserArn)
+
+	// Embed the caller's attached policies into the token
+	if len(identity.PolicyNames) > 0 {
+		claims.WithPolicies(identity.PolicyNames)
+	} else {
+		// Fall back to looking up policies from IAM manager
+		var policyManager *integration.IAMManager
+		if h.iam.iamIntegration != nil {
+			if provider, ok := h.iam.iamIntegration.(IAMManagerProvider); ok {
+				policyManager = provider.GetIAMManager()
+			}
+		}
+		if policyManager != nil {
+			userPolicies := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
+			if len(userPolicies) > 0 {
+				claims.WithPolicies(userPolicies)
+			}
+		}
+	}
+
+	if sessionPolicyJSON != "" {
+		claims.WithSessionPolicy(sessionPolicyJSON)
+	}
+
+	// Generate JWT session token
+	sessionToken, err := h.stsService.GetTokenGenerator().GenerateJWTWithClaims(claims)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrInternalError,
+			fmt.Errorf("failed to generate session token: %w", err))
+		return
+	}
+
+	// Generate temporary credentials
+	stsCredGen := sts.NewCredentialGenerator()
+	stsCredsDet, err := stsCredGen.GenerateTemporaryCredentials(sessionId, expiration)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, STSErrInternalError,
+			fmt.Errorf("failed to generate temporary credentials: %w", err))
+		return
+	}
+
+	// Build and return response
+	xmlResponse := &GetFederationTokenResponse{
+		Result: GetFederationTokenResult{
+			Credentials: STSCredentials{
+				AccessKeyId:     stsCredsDet.AccessKeyId,
+				SecretAccessKey: stsCredsDet.SecretAccessKey,
+				SessionToken:    sessionToken,
+				Expiration:      expiration.Format(time.RFC3339),
+			},
+			FederatedUser: FederatedUser{
+				FederatedUserId: federatedUserId,
+				Arn:             federatedUserArn,
+			},
+		},
+	}
+	xmlResponse.ResponseMetadata.RequestId = request_id.GetFromRequest(r)
+
+	s3err.WriteXMLResponse(w, r, http.StatusOK, xmlResponse)
+}
+
 // prepareSTSCredentials extracts common shared logic for credential generation
 func (h *STSHandlers) prepareSTSCredentials(ctx context.Context, roleArn, roleSessionName string,
 	durationSeconds *int64, sessionPolicy string, modifyClaims func(*sts.STSSessionClaims)) (STSCredentials, *AssumedRoleUser, error) {
@@ -741,6 +926,27 @@ type GetCallerIdentityResult struct {
 	Arn     string `xml:"Arn"`
 	UserId  string `xml:"UserId"`
 	Account string `xml:"Account"`
+}
+
+// GetFederationTokenResponse is the response for GetFederationToken
+type GetFederationTokenResponse struct {
+	XMLName          xml.Name                   `xml:"https://sts.amazonaws.com/doc/2011-06-15/ GetFederationTokenResponse"`
+	Result           GetFederationTokenResult   `xml:"GetFederationTokenResult"`
+	ResponseMetadata struct {
+		RequestId string `xml:"RequestId,omitempty"`
+	} `xml:"ResponseMetadata,omitempty"`
+}
+
+// GetFederationTokenResult contains the result of GetFederationToken
+type GetFederationTokenResult struct {
+	Credentials   STSCredentials `xml:"Credentials"`
+	FederatedUser FederatedUser  `xml:"FederatedUser"`
+}
+
+// FederatedUser contains information about the federated user
+type FederatedUser struct {
+	FederatedUserId string `xml:"FederatedUserId"`
+	Arn             string `xml:"Arn"`
 }
 
 // STS Error types
