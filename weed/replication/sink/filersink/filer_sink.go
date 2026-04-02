@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -20,6 +21,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// ChunkTransferStatus tracks the progress of a single chunk being replicated.
+type ChunkTransferStatus struct {
+	ChunkFileId   string
+	Path          string
+	BytesReceived int64
+	Status        string // "downloading", "uploading", or "waiting 10s" etc.
+}
+
 type FilerSink struct {
 	filerSource       *source.FilerSource
 	grpcAddress       string
@@ -35,6 +44,7 @@ type FilerSink struct {
 	isIncremental     bool
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
+	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 }
 
 func init() {
@@ -99,6 +109,16 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 	if concurrency > 0 {
 		fs.executor = util.NewLimitedConcurrentExecutor(concurrency)
 	}
+}
+
+// ActiveTransfers returns a snapshot of all in-progress chunk transfers.
+func (fs *FilerSink) ActiveTransfers() []*ChunkTransferStatus {
+	var transfers []*ChunkTransferStatus
+	fs.activeTransfers.Range(func(key, value any) bool {
+		transfers = append(transfers, value.(*ChunkTransferStatus))
+		return true
+	})
+	return transfers
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {

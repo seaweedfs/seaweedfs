@@ -241,6 +241,14 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		return "", fmt.Errorf("upload data: %w", err)
 	}
 
+	transferStatus := &ChunkTransferStatus{
+		ChunkFileId: sourceChunk.GetFileIdString(),
+		Path:        path,
+		Status:      "downloading",
+	}
+	fs.activeTransfers.Store(sourceChunk.GetFileIdString(), transferStatus)
+	defer fs.activeTransfers.Delete(sourceChunk.GetFileIdString())
+
 	eofBackoff := time.Duration(0)
 	var partialData []byte
 	var savedFilename string
@@ -281,6 +289,9 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		} else {
 			fullData = data
 		}
+
+		transferStatus.BytesReceived = int64(len(fullData))
+		transferStatus.Status = "uploading"
 
 		currentFileId, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
 			fs,
@@ -326,9 +337,12 @@ func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string,
 		}
 		if isEofError(retryErr) {
 			eofBackoff = nextEofBackoff(eofBackoff)
+			transferStatus.BytesReceived = int64(len(partialData))
+			transferStatus.Status = fmt.Sprintf("waiting %v", eofBackoff)
 			glog.V(0).Infof("source connection interrupted while replicating %s for %s (%d bytes received so far), backing off %v: %v",
 				sourceChunk.GetFileIdString(), path, len(partialData), eofBackoff, retryErr)
 			time.Sleep(eofBackoff)
+			transferStatus.Status = "downloading"
 		} else {
 			glog.V(0).Infof("replicate %s for %s: %v", sourceChunk.GetFileIdString(), path, retryErr)
 		}
