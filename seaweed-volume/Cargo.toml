@@ -65,8 +65,6 @@ reed-solomon-erasure = "6"
 # Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-pprof = { version = "0.15", features = ["prost-codec"] }
-
 # Config
 toml = "0.8"
 serde = { version = "1", features = ["derive"] }
@@ -126,6 +124,10 @@ aws-config = { version = "1", features = ["behavior-version-latest"] }
 aws-sdk-s3 = { version = "1.125.0", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
 aws-credential-types = "1"
 aws-types = "1"
+
+# pprof is Unix-only (requires libc/nix APIs not available on Windows)
+[target.'cfg(unix)'.dependencies]
+pprof = { version = "0.15", features = ["prost-codec"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -10,9 +10,11 @@ use seaweed_volume::security::tls::{
     GrpcClientAuthPolicy, TlsPolicy,
 };
 use seaweed_volume::security::{Guard, SigningKey};
+#[cfg(unix)]
 use seaweed_volume::server::debug::build_debug_router;
 use seaweed_volume::server::grpc_client::load_outgoing_grpc_tls;
 use seaweed_volume::server::grpc_server::VolumeGrpcService;
+#[cfg(unix)]
 use seaweed_volume::server::profiling::CpuProfileSession;
 use seaweed_volume::server::request_id::GrpcRequestIdLayer;
 use seaweed_volume::server::volume_server::{
@@ -23,6 +25,11 @@ use seaweed_volume::storage::store::Store;
 use seaweed_volume::storage::types::DiskType;
 
 use tokio_rustls::TlsAcceptor;
+
+#[cfg(unix)]
+type CpuProfileParam = Option<CpuProfileSession>;
+#[cfg(not(unix))]
+type CpuProfileParam = Option<()>;
 
 const GRPC_MAX_MESSAGE_SIZE: usize = 1 << 30;
 const GRPC_KEEPALIVE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
@@ -42,6 +49,7 @@ fn main() {
 
     let config = config::parse_cli();
     seaweed_volume::server::server_stats::init_process_start();
+    #[cfg(unix)]
     let cpu_profile = match CpuProfileSession::start(&config) {
         Ok(session) => session,
         Err(e) => {
@@ -49,6 +57,8 @@ fn main() {
             std::process::exit(1);
         }
     };
+    #[cfg(not(unix))]
+    let cpu_profile: Option<()> = None;
     info!(
         "SeaweedFS Volume Server (Rust) v{}",
         seaweed_volume::version::full_version()
@@ -257,7 +267,7 @@ where
 
 async fn run(
     config: VolumeServerConfig,
-    cpu_profile: Option<CpuProfileSession>,
+    #[allow(unused_variables)] cpu_profile: CpuProfileParam,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the store
     let mut store = Store::new(config.index_type);
@@ -435,6 +445,7 @@ async fn run(
         state.clone(),
         config.ui_enabled,
     );
+    #[cfg(unix)]
     if config.pprof {
         admin_router = admin_router.merge(build_debug_router());
     }
@@ -721,6 +732,7 @@ async fn run(
         None
     };
 
+    #[cfg(unix)]
     let debug_handle = if config.debug {
         let debug_addr = format!("0.0.0.0:{}", config.debug_port);
         info!("Debug pprof server listening on {}", debug_addr);
@@ -742,6 +754,8 @@ async fn run(
     } else {
         None
     };
+    #[cfg(not(unix))]
+    let debug_handle: Option<tokio::task::JoinHandle<()>> = None;
 
     let metrics_push_handle = {
         let push_state = state.clone();
@@ -774,6 +788,7 @@ async fn run(
     // Close all volumes (flush and release file handles) matching Go's Shutdown()
     state.store.write().unwrap().close();
 
+    #[cfg(unix)]
     if let Some(cpu_profile) = cpu_profile {
         cpu_profile.finish().map_err(std::io::Error::other)?;
     }
