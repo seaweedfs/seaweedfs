@@ -80,6 +80,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -87,6 +88,15 @@ jobs:
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-${{ matrix.asset_suffix }}
+          path: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
 
   build-rust-volume-darwin:
     permissions:
@@ -147,6 +157,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -154,6 +165,15 @@ jobs:
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-${{ matrix.asset_suffix }}
+          path: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
 
   build-rust-volume-windows:
     permissions:
@@ -206,6 +226,7 @@ jobs:
           rm weed-volume-normal.exe
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -213,3 +234,12 @@ jobs:
             weed-volume_windows_amd64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-windows_amd64
+          path: |
+            weed-volume_large_disk_windows_amd64.zip
+            weed-volume_windows_amd64.zip
