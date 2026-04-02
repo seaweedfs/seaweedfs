@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -417,20 +418,60 @@ func (c *distributedLockCluster) waitForFilerCount(expected int, timeout time.Du
 // lock ring by acquiring the same lock through each filer and checking mutual exclusion.
 // This guards against the window between master seeing both filers and the filers
 // actually receiving the LockRingUpdate broadcast (delayed by the stabilization timer).
+//
+// A single arbitrary key could false-pass: if the key's real primary is filer0 and
+// filer0 has a stale ring (only sees itself), it still grants correctly because it IS
+// the primary. To catch the stale ring we must also test a key whose real primary is
+// filer1. So we generate one test key per primary filer using the same consistent-hash
+// ring as production, and require mutual exclusion for all of them.
 func (c *distributedLockCluster) waitForLockRingConverged(timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	testKey := fmt.Sprintf("lock-ring-convergence-%d", time.Now().UnixNano())
 
+	owners := make([]pb.ServerAddress, 0, len(c.filerPorts))
+	for i := range c.filerPorts {
+		owners = append(owners, c.filerServerAddress(i))
+	}
+	ring := lock_manager.NewHashRing(lock_manager.DefaultVnodeCount)
+	ring.SetServers(owners)
+
+	attempt := 0
 	for time.Now().Before(deadline) {
-		converged, err := c.checkLockMutualExclusion(testKey)
-		if err == nil && converged {
+		// Generate one unique test key per primary filer
+		testKeys := c.convergenceKeysPerPrimary(ring, owners, attempt)
+		attempt++
+
+		allConverged := true
+		for _, key := range testKeys {
+			converged, _ := c.checkLockMutualExclusion(key)
+			if !converged {
+				allConverged = false
+				break
+			}
+		}
+		if allConverged {
 			return nil
 		}
-		// Use a fresh key each attempt to avoid stale lock state
-		testKey = fmt.Sprintf("lock-ring-convergence-%d", time.Now().UnixNano())
 		time.Sleep(500 * time.Millisecond)
 	}
 	return fmt.Errorf("lock ring did not converge: both filers independently grant the same lock")
+}
+
+// convergenceKeysPerPrimary returns one lock key per distinct primary filer,
+// using the same consistent-hash ring as production routing.
+func (c *distributedLockCluster) convergenceKeysPerPrimary(ring *lock_manager.HashRing, owners []pb.ServerAddress, attempt int) []string {
+	keysByOwner := make(map[pb.ServerAddress]string, len(owners))
+	for i := 0; len(keysByOwner) < len(owners) && i < 1024; i++ {
+		candidate := fmt.Sprintf("convergence-%d-%d", attempt, i)
+		primary := ring.GetPrimary(candidate)
+		if _, exists := keysByOwner[primary]; !exists {
+			keysByOwner[primary] = candidate
+		}
+	}
+	keys := make([]string, 0, len(keysByOwner))
+	for _, k := range keysByOwner {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // checkLockMutualExclusion acquires a lock via filer0, then tries the same lock via filer1.
