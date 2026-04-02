@@ -489,7 +489,11 @@ func (c *distributedLockCluster) checkLockMutualExclusion(testKey string) (bool,
 		})
 		return false, nil
 	}
-	// Second attempt was denied - mutual exclusion holds
+	// Verify the denial is specifically because the lock is already held,
+	// not due to a transient error that might give a false positive.
+	if !strings.Contains(resp1.Error, "lock already owned") {
+		return false, nil
+	}
 	return true, nil
 }
 
