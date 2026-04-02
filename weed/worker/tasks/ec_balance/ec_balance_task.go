@@ -209,10 +209,10 @@ func (t *ECBalanceTask) GetProgress() float64 {
 	return t.progress
 }
 
-// reportProgress updates the stored progress and reports it via the callback
+// reportProgress updates the stored progress and logs the stage
 func (t *ECBalanceTask) reportProgress(progress float64, stage string) {
 	t.progress = progress
-	t.reportProgress(progress, stage)
+	glog.Infof("EC balance: [%.2f] %s", progress, stage)
 }
 
 // isDedupPhase checks if this is a dedup-phase task (source and target are the same node)
