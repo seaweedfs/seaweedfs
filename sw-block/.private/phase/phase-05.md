@@ -34,8 +34,8 @@ Start the real V2 engine line under `sw-block/` with:
 
 `Phase 05` is built on:
 
-- `sw-block/design/v2-engine-readiness-review.md`
-- `sw-block/design/v2-engine-slicing-plan.md`
+- `sw-block/docs/archive/design/v2-engine-readiness-review.md`
+- `sw-block/docs/archive/design/v2-engine-slicing-plan.md`
 - `sw-block/.private/phase/phase-04.md`
 - `sw-block/.private/phase/phase-4.5.md`
 

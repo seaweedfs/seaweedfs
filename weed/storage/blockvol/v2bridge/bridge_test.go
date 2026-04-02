@@ -167,7 +167,7 @@ func TestExecutor_RealBlockVol_StreamWALEntries(t *testing.T) {
 		t.Fatalf("HeadLSN=%d, want >= 3", headLSN)
 	}
 
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 
 	// Stream from start to head.
 	transferred, err := executor.StreamWALEntries(0, headLSN)
@@ -192,7 +192,7 @@ func TestExecutor_RealBlockVol_StreamPartialRange(t *testing.T) {
 	reader := NewReader(vol)
 	state := reader.ReadState()
 
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 
 	// Stream only entries 2-4 (partial range).
 	startLSN := uint64(1) // exclusive: start after LSN 1
@@ -211,21 +211,22 @@ func TestExecutor_RealBlockVol_StreamPartialRange(t *testing.T) {
 	t.Logf("partial stream: %d→%d, transferred to %d", startLSN, endLSN, transferred)
 }
 
-// --- Stubs remain stubs ---
+// --- Error paths ---
 
-func TestExecutor_Stubs_ReturnError(t *testing.T) {
+func TestExecutor_ErrorPaths(t *testing.T) {
 	vol := createTestVol(t)
 	defer vol.Close()
 
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 
 	if err := executor.TransferSnapshot(50); err == nil {
-		t.Fatal("TransferSnapshot should be stub")
+		t.Fatal("TransferSnapshot should fail on missing checkpoint")
 	}
-	if err := executor.TransferFullBase(100); err == nil {
-		t.Fatal("TransferFullBase should be stub")
+	if _, err := executor.TransferFullBase(100); err == nil {
+		t.Fatal("TransferFullBase should fail without rebuild address")
 	}
-	if err := executor.TruncateWAL(50); err == nil {
-		t.Fatal("TruncateWAL should be stub")
+	// TruncateWAL is now real (P3). Verify it works on a fresh vol.
+	if err := executor.TruncateWAL(0); err != nil {
+		t.Fatalf("TruncateWAL(0) on fresh vol: %v", err)
 	}
 }

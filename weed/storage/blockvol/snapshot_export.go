@@ -42,6 +42,11 @@ type SnapshotArtifactManifest struct {
 	SHA256            string `json:"sha256"`
 	Compression       string `json:"compression"`
 	ExportToolVersion string `json:"export_tool_version"`
+	// BaseLSN is the exact snapshot boundary — the highest LSN whose effects
+	// are included in the exported image. Added for V2 rebuild execution
+	// so the receiver can verify the imported base equals the planned target.
+	// Zero for manifests created before this field was added.
+	BaseLSN uint64 `json:"base_lsn,omitempty"`
 }
 
 var (
@@ -147,6 +152,14 @@ func (v *BlockVol) ExportSnapshot(ctx context.Context, w io.Writer, opts ExportO
 		}
 	}
 
+	// Read snapshot BaseLSN for the manifest.
+	var baseLSN uint64
+	v.snapMu.RLock()
+	if snap, ok := v.snapshots[snapID]; ok {
+		baseLSN = snap.header.BaseLSN
+	}
+	v.snapMu.RUnlock()
+
 	h := sha256.New()
 	mw := io.MultiWriter(w, h)
 
@@ -192,6 +205,7 @@ func (v *BlockVol) ExportSnapshot(ctx context.Context, w io.Writer, opts ExportO
 		SHA256:            hex.EncodeToString(h.Sum(nil)),
 		Compression:       "none",
 		ExportToolVersion: ExportToolVersion,
+		BaseLSN:           baseLSN,
 	}
 
 	return manifest, nil
@@ -321,6 +335,68 @@ func (v *BlockVol) ImportSnapshot(ctx context.Context, manifest *SnapshotArtifac
 	v.super.Flags |= FlagImported
 	if err := v.persistSuperblock(); err != nil {
 		return fmt.Errorf("blockvol: import persist superblock: %w", err)
+	}
+
+	return nil
+}
+
+// ImportSnapshotForRebuild imports a snapshot artifact and converges all
+// local runtime state to the exact snapshot boundary (baseLSN). This is
+// the rebuild-oriented import primitive for V2 snapshot_tail execution.
+//
+// Unlike generic ImportSnapshot, this method:
+//   - requires manifest.BaseLSN > 0 (exact boundary must be explicit)
+//   - verifies the imported base equals the requested snapshotLSN
+//   - converges WALCheckpointLSN, nextLSN, flusher, and receiver to baseLSN
+//
+// After this call, the volume is at exactly snapshotLSN. The caller can
+// then replay WAL tail entries from snapshotLSN+1 to targetLSN.
+func (v *BlockVol) ImportSnapshotForRebuild(ctx context.Context, manifest *SnapshotArtifactManifest, r io.Reader, snapshotLSN uint64) error {
+	// Validate: manifest must carry explicit BaseLSN matching the requested boundary.
+	if manifest.BaseLSN == 0 {
+		return fmt.Errorf("blockvol: rebuild import requires explicit BaseLSN in manifest")
+	}
+	if manifest.BaseLSN != snapshotLSN {
+		return fmt.Errorf("blockvol: rebuild import boundary mismatch: manifest BaseLSN=%d != requested snapshotLSN=%d",
+			manifest.BaseLSN, snapshotLSN)
+	}
+
+	// Use generic import with AllowOverwrite (rebuild target may have stale data).
+	if err := v.ImportSnapshot(ctx, manifest, r, ImportOptions{AllowOverwrite: true}); err != nil {
+		return err
+	}
+
+	// Converge all runtime state to the exact snapshot boundary.
+	// This is the same state handoff as RebuildInstaller.Commit but
+	// for the snapshot_tail path, where the boundary is exact.
+	v.mu.Lock()
+	v.super.WALCheckpointLSN = snapshotLSN
+	if _, err := v.fd.Seek(0, 0); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: rebuild import seek superblock: %w", err)
+	}
+	if _, err := v.super.WriteTo(v.fd); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: rebuild import write superblock: %w", err)
+	}
+	if err := v.fd.Sync(); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: rebuild import sync superblock: %w", err)
+	}
+	v.mu.Unlock()
+
+	if v.flusher != nil {
+		v.flusher.SetCheckpointLSN(snapshotLSN)
+	}
+
+	// Set nextLSN (unconditional, not monotonic — rebuild replaces truth).
+	v.nextLSN.Store(snapshotLSN + 1)
+
+	// Align receiver progress.
+	if v.replRecv != nil {
+		v.replRecv.mu.Lock()
+		v.replRecv.receivedLSN = snapshotLSN
+		v.replRecv.mu.Unlock()
 	}
 
 	return nil

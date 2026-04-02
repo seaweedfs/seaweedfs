@@ -1,6 +1,7 @@
 package blockvol
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -111,6 +112,8 @@ func (s *RebuildServer) handleConn(conn net.Conn) {
 		s.handleWALCatchUp(conn, req)
 	case RebuildFullExtent:
 		s.handleFullExtent(conn)
+	case RebuildSnapshot:
+		s.handleSnapshotExport(conn, req)
 	default:
 		WriteFrame(conn, MsgRebuildError, []byte("UNKNOWN_TYPE"))
 	}
@@ -146,8 +149,18 @@ func (s *RebuildServer) handleWALCatchUp(conn net.Conn, req RebuildRequest) {
 }
 
 func (s *RebuildServer) handleFullExtent(conn net.Conn) {
-	// Capture snapshot LSN before streaming -- client will use this
-	// for a second catch-up scan to capture writes during copy.
+	// Flush outstanding WAL entries to extent before streaming.
+	// Without this, entries in the WAL but not yet flushed to extent
+	// would be missing from the copied image AND from the second catch-up
+	// range (which starts at snapshotLSN, past these entries).
+	if err := s.vol.ForceFlush(); err != nil {
+		WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("FLUSH_FAILED: %v", err)))
+		return
+	}
+
+	// Capture snapshot LSN after flush — all entries up to snapshotLSN-1
+	// are now in the extent. The client uses snapshotLSN as the second
+	// catch-up start to capture writes that arrive during the copy.
 	snapshotLSN := s.vol.nextLSN.Load()
 
 	extentStart := s.vol.super.WALOffset + s.vol.super.WALSize
@@ -175,6 +188,116 @@ func (s *RebuildServer) handleFullExtent(conn net.Conn) {
 	lsnBuf := make([]byte, 8)
 	binary.BigEndian.PutUint64(lsnBuf, snapshotLSN)
 	WriteFrame(conn, MsgRebuildDone, lsnBuf)
+}
+
+// handleSnapshotExport creates a temporary snapshot at the current checkpoint,
+// verifies it matches the requested BaseLSN (FromLSN in the request), and
+// streams the snapshot image with an explicit manifest carrying the BaseLSN.
+//
+// Protocol:
+//   1. Client sends RebuildRequest{Type: RebuildSnapshot, FromLSN: requestedBaseLSN}
+//   2. Server creates temp snapshot, verifies BaseLSN == requestedBaseLSN
+//   3. Server sends MsgRebuildEntry with JSON manifest
+//   4. Server sends MsgRebuildExtent chunks (snapshot image data)
+//   5. Server sends MsgRebuildDone with BaseLSN
+//   6. Server deletes temp snapshot
+func (s *RebuildServer) handleSnapshotExport(conn net.Conn, req RebuildRequest) {
+	requestedLSN := req.FromLSN
+
+	// Flush to ensure checkpoint is current.
+	if err := s.vol.ForceFlush(); err != nil {
+		WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("FLUSH_FAILED: %v", err)))
+		return
+	}
+
+	// Verify current checkpoint matches the requested boundary.
+	checkpointLSN := s.vol.flusher.CheckpointLSN()
+	if checkpointLSN != requestedLSN {
+		WriteFrame(conn, MsgRebuildError,
+			[]byte(fmt.Sprintf("SNAPSHOT_BOUNDARY_MISMATCH: have checkpoint %d, requested %d",
+				checkpointLSN, requestedLSN)))
+		return
+	}
+
+	// Create temp snapshot at the current checkpoint.
+	tempSnapID := exportTempSnapBase + exportTempSnapSeq.Add(1)
+	if err := s.vol.CreateSnapshot(tempSnapID); err != nil {
+		WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("SNAPSHOT_CREATE_FAILED: %v", err)))
+		return
+	}
+	defer s.vol.DeleteSnapshot(tempSnapID)
+
+	// Verify the snapshot's BaseLSN is exactly what was requested.
+	s.vol.snapMu.RLock()
+	snap, ok := s.vol.snapshots[tempSnapID]
+	s.vol.snapMu.RUnlock()
+	if !ok {
+		WriteFrame(conn, MsgRebuildError, []byte("SNAPSHOT_LOST"))
+		return
+	}
+	if snap.header.BaseLSN != requestedLSN {
+		WriteFrame(conn, MsgRebuildError,
+			[]byte(fmt.Sprintf("SNAPSHOT_BASELNS_MISMATCH: snap %d, requested %d",
+				snap.header.BaseLSN, requestedLSN)))
+		return
+	}
+
+	// Export: stream snapshot image through conn, compute SHA-256.
+	// Use a pipe to connect ExportSnapshot's io.Writer to frame-based sending.
+	pr, pw := io.Pipe()
+
+	exportDone := make(chan exportResult, 1)
+	go func() {
+		manifest, err := s.vol.ExportSnapshot(context.Background(), pw, ExportOptions{
+			SnapshotID: tempSnapID,
+		})
+		pw.CloseWithError(err)
+		exportDone <- exportResult{manifest, err}
+	}()
+
+	// Stream export data as MsgRebuildExtent frames.
+	buf := make([]byte, rebuildExtentChunkSize)
+	for {
+		n, err := pr.Read(buf)
+		if n > 0 {
+			if werr := WriteFrame(conn, MsgRebuildExtent, buf[:n]); werr != nil {
+				pr.CloseWithError(werr)
+				<-exportDone
+				return
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("EXPORT_READ: %v", err)))
+			<-exportDone
+			return
+		}
+	}
+
+	result := <-exportDone
+	if result.err != nil {
+		WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("EXPORT_FAILED: %v", result.err)))
+		return
+	}
+
+	// Send manifest as MsgRebuildEntry (JSON), then MsgRebuildDone with BaseLSN.
+	manifestJSON, err := MarshalManifest(result.manifest)
+	if err != nil {
+		WriteFrame(conn, MsgRebuildError, []byte(fmt.Sprintf("MANIFEST_MARSHAL: %v", err)))
+		return
+	}
+	WriteFrame(conn, MsgRebuildEntry, manifestJSON)
+
+	lsnBuf := make([]byte, 8)
+	binary.BigEndian.PutUint64(lsnBuf, requestedLSN)
+	WriteFrame(conn, MsgRebuildDone, lsnBuf)
+}
+
+type exportResult struct {
+	manifest *SnapshotArtifactManifest
+	err      error
 }
 
 // ---------------------------------------------------------------------------

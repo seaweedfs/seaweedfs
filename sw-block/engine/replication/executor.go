@@ -1,23 +1,42 @@
 package replication
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
+
+// ErrTruncationUnsafe is returned by CatchUpIO.TruncateWAL when the
+// replica's ahead entries have already been flushed to extent. The
+// CatchUpExecutor detects this and escalates the sender to NeedsRebuild
+// instead of failing with a generic error.
+var ErrTruncationUnsafe = errors.New("truncation unsafe: ahead entries flushed to extent")
 
 // === Phase 06 P2 / Phase 08 P2: Stepwise Executor ===
 
 // CatchUpIO is the I/O interface that the catch-up executor calls to
-// perform real WAL streaming. Implemented by the v2bridge executor.
+// perform real WAL streaming and truncation. Implemented by v2bridge executor.
 // The engine defines this interface; it does NOT import weed/.
 type CatchUpIO interface {
 	// StreamWALEntries reads WAL entries from startExclusive+1 to endInclusive.
 	// Returns the highest LSN successfully transferred.
 	StreamWALEntries(startExclusive, endInclusive uint64) (transferredTo uint64, err error)
+
+	// TruncateWAL performs real local correction for replica-ahead recovery.
+	// After completion, the replica's local runtime (WALHeadLSN, nextLSN,
+	// receiver progress) must be at exactly truncateLSN — not above.
+	TruncateWAL(truncateLSN uint64) error
 }
 
 // RebuildIO is the I/O interface that the rebuild executor calls to
 // perform real data transfer. Implemented by the v2bridge executor.
 type RebuildIO interface {
-	// TransferFullBase transfers the full extent image at committedLSN.
-	TransferFullBase(committedLSN uint64) error
+	// TransferFullBase transfers the full extent image. committedLSN is
+	// the engine's frozen minimum target — the transfer must cover at
+	// least this boundary. Returns achievedLSN: the actual boundary
+	// reached after install + any second catch-up. achievedLSN >= committedLSN.
+	// The engine uses achievedLSN for progress recording so local runtime
+	// state and engine-visible completion converge to the same boundary.
+	TransferFullBase(committedLSN uint64) (achievedLSN uint64, err error)
 	// TransferSnapshot transfers a checkpoint/snapshot at snapshotLSN.
 	TransferSnapshot(snapshotLSN uint64) error
 	// StreamWALEntries for tail replay after snapshot transfer.
@@ -77,57 +96,78 @@ func (e *CatchUpExecutor) Execute(progressLSNs []uint64, startTick uint64) error
 	e.driver.Orchestrator.Log.Record(e.replicaID, e.sessID, "exec_catchup_started",
 		fmt.Sprintf("target=%d tick=%d io=%v", e.plan.CatchUpTarget, startTick, e.IO != nil))
 
-	// Step 2: progress — either via real IO bridge or caller-supplied LSNs.
-	if e.IO != nil {
-		// Real I/O path: stream WAL entries through the bridge.
-		transferred, err := e.IO.StreamWALEntries(e.plan.CatchUpStartLSN, e.plan.CatchUpTarget)
-		if err != nil {
-			e.release(fmt.Sprintf("io_stream_failed: %s", err))
-			return err
-		}
-		tick := startTick + 1
-		if err := s.RecordCatchUpProgress(e.sessID, transferred, tick); err != nil {
-			e.release(fmt.Sprintf("progress_after_io: %s", err))
-			return err
-		}
-	} else {
-		// Test path: caller-supplied progress LSNs.
-		for i, lsn := range progressLSNs {
-			if !s.HasActiveSession() || s.SessionID() != e.sessID {
-				e.release("session_invalidated_mid_execution")
-				return fmt.Errorf("session invalidated during catch-up step %d", i)
-			}
+	// Step 2: progress — skip for truncation-only plans (replica ahead,
+	// no WAL replay needed). Detect by: TruncateLSN > 0 and start > target.
+	isTruncationOnly := e.plan.TruncateLSN > 0 && e.plan.CatchUpStartLSN >= e.plan.CatchUpTarget
 
-			tick := startTick + uint64(i+1)
-			if err := s.RecordCatchUpProgress(e.sessID, lsn, tick); err != nil {
-				e.release(fmt.Sprintf("progress_failed_step_%d: %s", i, err))
-				return err
-			}
-
-			if e.OnStep != nil {
-				e.OnStep(i)
-			}
-
-			v, err := s.CheckBudget(e.sessID, tick)
+	if !isTruncationOnly {
+		if e.IO != nil {
+			// Real I/O path: stream WAL entries through the bridge.
+			transferred, err := e.IO.StreamWALEntries(e.plan.CatchUpStartLSN, e.plan.CatchUpTarget)
 			if err != nil {
-				e.release(fmt.Sprintf("budget_check_failed: %s", err))
+				e.release(fmt.Sprintf("io_stream_failed: %s", err))
 				return err
 			}
-			if v != BudgetOK {
-				e.release(fmt.Sprintf("budget_escalated: %s", v))
-				return fmt.Errorf("budget violation at step %d: %s", i, v)
+			tick := startTick + 1
+			if err := s.RecordCatchUpProgress(e.sessID, transferred, tick); err != nil {
+				e.release(fmt.Sprintf("progress_after_io: %s", err))
+				return err
+			}
+		} else {
+			// Test path: caller-supplied progress LSNs.
+			for i, lsn := range progressLSNs {
+				if !s.HasActiveSession() || s.SessionID() != e.sessID {
+					e.release("session_invalidated_mid_execution")
+					return fmt.Errorf("session invalidated during catch-up step %d", i)
+				}
+
+				tick := startTick + uint64(i+1)
+				if err := s.RecordCatchUpProgress(e.sessID, lsn, tick); err != nil {
+					e.release(fmt.Sprintf("progress_failed_step_%d: %s", i, err))
+					return err
+				}
+
+				if e.OnStep != nil {
+					e.OnStep(i)
+				}
+
+				v, err := s.CheckBudget(e.sessID, tick)
+				if err != nil {
+					e.release(fmt.Sprintf("budget_check_failed: %s", err))
+					return err
+				}
+				if v != BudgetOK {
+					e.release(fmt.Sprintf("budget_escalated: %s", v))
+					return fmt.Errorf("budget violation at step %d: %s", i, v)
+				}
 			}
 		}
 	}
 
 	// Step 3: truncation (if required).
 	if e.plan.TruncateLSN > 0 {
+		// Real I/O: perform physical local correction before recording.
+		if e.IO != nil {
+			if err := e.IO.TruncateWAL(e.plan.TruncateLSN); err != nil {
+				// Escalation: if truncation is unsafe (flushed-ahead),
+				// transition sender to NeedsRebuild instead of generic failure.
+				if errors.Is(err, ErrTruncationUnsafe) {
+					s.InvalidateSession("flushed_ahead_needs_rebuild", StateNeedsRebuild)
+					e.release(fmt.Sprintf("truncation_escalated_to_rebuild: %s", err))
+					e.driver.Orchestrator.Log.Record(e.replicaID, e.sessID, "truncation_escalated",
+						fmt.Sprintf("truncate_to=%d err=%s", e.plan.TruncateLSN, err))
+					return fmt.Errorf("truncation escalated to rebuild: %w", err)
+				}
+				e.release(fmt.Sprintf("truncation_io_failed: %s", err))
+				return err
+			}
+		}
 		if err := s.RecordTruncation(e.sessID, e.plan.TruncateLSN); err != nil {
 			e.release(fmt.Sprintf("truncation_failed: %s", err))
 			return err
 		}
 		e.driver.Orchestrator.Log.Record(e.replicaID, e.sessID, "exec_truncation",
-			fmt.Sprintf("truncated_to=%d", e.plan.TruncateLSN))
+			fmt.Sprintf("truncated_to=%d io=%v", e.plan.TruncateLSN, e.IO != nil))
 	}
 
 	// Step 4: complete.
@@ -263,14 +303,20 @@ func (e *RebuildExecutor) Execute() error {
 			return err
 		}
 	} else {
-		// Real I/O: transfer full base through bridge.
+		// Full-base rebuild: transfer extent and use the achieved boundary.
+		// The IO returns achievedLSN >= plan.RebuildTargetLSN.
+		// Engine records progress at achievedLSN so local runtime state
+		// and engine-visible completion converge to the same boundary.
+		achieved := plan.RebuildTargetLSN // default: test mode (no IO)
 		if e.IO != nil {
-			if err := e.IO.TransferFullBase(plan.RebuildTargetLSN); err != nil {
-				e.release(fmt.Sprintf("io_full_base_failed: %s", err))
-				return err
+			var ioErr error
+			achieved, ioErr = e.IO.TransferFullBase(plan.RebuildTargetLSN)
+			if ioErr != nil {
+				e.release(fmt.Sprintf("io_full_base_failed: %s", ioErr))
+				return ioErr
 			}
 		}
-		if err := s.RecordRebuildTransferProgress(e.sessID, plan.RebuildTargetLSN); err != nil {
+		if err := s.RecordRebuildTransferProgress(e.sessID, achieved); err != nil {
 			e.release(fmt.Sprintf("transfer_progress_failed: %s", err))
 			return err
 		}

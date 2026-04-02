@@ -42,14 +42,14 @@ This note is for the dev manager to decide implementation sequencing.
 This proposal is grounded in the following current documents:
 
 - `sw-block/.private/phase/phase-04.md`
-- `sw-block/design/v2-prototype-roadmap-and-gates.md`
+- `sw-block/docs/archive/design/v2-prototype-roadmap-and-gates.md`
 - `sw-block/design/v2-acceptance-criteria.md`
 - `sw-block/design/v2-detailed-algorithm.zh.md`
 
 In particular:
 
 - `phase-04.md` shows that Phase 04 is correctly centered on sender/session ownership and recovery execution authority
-- `v2-prototype-roadmap-and-gates.md` shows that design proof is high, but data/recovery proof and prototype end-to-end proof are still low
+- `docs/archive/design/v2-prototype-roadmap-and-gates.md` shows that design proof is high, but data/recovery proof and prototype end-to-end proof are still low
 - `v2-acceptance-criteria.md` already requires stronger proof for:
   - `A5` non-convergent catch-up escalation
   - `A6` explicit recoverability boundary

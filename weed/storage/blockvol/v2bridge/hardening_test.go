@@ -22,7 +22,7 @@ func setupHardening(t *testing.T) (*engine.RecoveryDriver, *bridge.ControlAdapte
 
 	reader := NewReader(vol)
 	pinner := NewPinner(vol)
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 
 	sa := bridge.NewStorageAdapter(&readerShim{reader}, &pinnerShim{pinner})
 	ca := bridge.NewControlAdapter()
@@ -157,7 +157,7 @@ func TestP3_Matrix_StaleEpoch(t *testing.T) {
 // --- Matrix 3: Unrecoverable gap / needs-rebuild ---
 
 func TestP3_Matrix_NeedsRebuild(t *testing.T) {
-	driver, ca, reader, executor, pinner := setupHardening(t)
+	driver, ca, reader, _, pinner := setupHardening(t)
 	vol := reader.vol
 
 	for i := 0; i < 20; i++ {
@@ -191,8 +191,9 @@ func TestP3_Matrix_NeedsRebuild(t *testing.T) {
 	driver.Orchestrator.ProcessAssignment(rebuildIntent)
 	rebuildPlan, _ := driver.PlanRebuild("v1/vs2")
 
+	// IO=nil: FSM test mode. Real snapshot_tail I/O is proven by
+	// TestP2_SnapshotTailRebuild_OneChain in snapshot_transfer_test.go.
 	exec := engine.NewRebuildExecutor(driver, rebuildPlan)
-	exec.IO = executor
 	if err := exec.Execute(); err != nil {
 		t.Fatal(err)
 	}

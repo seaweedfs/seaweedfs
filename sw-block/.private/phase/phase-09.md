@@ -1,7 +1,7 @@
 # Phase 09
 
 Date: 2026-03-31
-Status: active
+Status: complete
 Purpose: turn the accepted candidate-safe backend path into a production-grade execution path without reopening accepted V2 recovery semantics
 
 ## Why This Phase Exists
@@ -98,30 +98,153 @@ Reject if:
 3. the phase quietly expands into product surfaces or unrelated control-plane work
 4. the phase has no clear verification mechanism
 
+Status:
+
+- accepted
+
+### P1: Full-Base Execution Closure
+
+Goal:
+
+- make `TransferFullBase` a real production-grade execution path for the chosen `RF=2 sync_all` candidate path
+
+Accepted scope:
+
+1. real TCP full-base transfer
+2. explicit local install ownership in `blockvol`
+3. second catch-up after extent copy
+4. achieved-boundary reporting back to engine
+5. local runtime convergence to the achieved boundary
+6. fail-closed behavior for transfer/runtime errors
+
+Accepted evidence shape:
+
+1. component proof:
+   - TCP transfer
+   - local install
+2. one-chain proof:
+   - `engine plan -> RebuildExecutor -> v2bridge -> blockvol -> InSync`
+3. convergence proof:
+   - `achievedLSN >= targetLSN`
+   - no split truth between engine and local runtime
+4. fail-closed proof:
+   - connection refused
+   - epoch mismatch
+   - no address
+   - partial transfer
+5. runtime proof:
+   - stale non-empty replica state cleared
+   - active receiver progress converges
+
+Status:
+
+- accepted
+
+Carry-forward from `P1`:
+
+1. `TransferSnapshot` still not real
+2. `TruncateWAL` still not real
+3. stronger live runtime ownership still not closed
+
+### P2: Snapshot Execution Closure
+
+Goal:
+
+- make `TransferSnapshot` a real production-grade execution path for the chosen `RF=2 sync_all` candidate path
+
+Accepted scope:
+
+1. real TCP snapshot/base transfer
+2. exact snapshot-boundary verification
+3. explicit manifest boundary metadata
+4. local runtime convergence to the exact snapshot boundary before tail replay
+5. single-executor snapshot + tail replay execution chain
+6. bounded tail replay to the planned target
+
+Accepted evidence shape:
+
+1. component proof:
+   - real snapshot image transfer
+   - exact base-boundary install
+2. one-chain proof:
+   - `engine plan -> RebuildExecutor -> v2bridge -> blockvol -> tail replay -> InSync`
+3. exact-boundary proof:
+   - requested `snapshotLSN` is transferred exactly
+   - newer checkpoint is rejected rather than silently accepted
+4. convergence proof:
+   - post-install local runtime converges to `snapshotLSN`
+   - post-replay engine/runtime converge to `targetLSN`
+5. cleanup proof:
+   - temporary snapshot ownership released on success/failure
+
+Status:
+
+- accepted
+
+Carry-forward from `P2`:
+
+1. `TruncateWAL` still not real
+2. stronger live runtime ownership still not closed
+
+### P3: Truncation Execution Closure
+
+Goal:
+
+- make `TruncateWAL` a real production-grade execution path for the chosen `RF=2 sync_all` candidate path
+
+Required scope:
+
+1. real truncation execution closure for the truncation-safe replica-ahead case
+2. explicit rebuild escalation for replica-ahead cases that are not truncation-safe
+3. one-chain proof through the catch-up executor path
+4. fail-closed / no-overclaim behavior when local truncation is unsafe
+5. no overclaim of broader runtime-ownership closure
+
+Status:
+
+- accepted
+
+Carry-forward from `P3`:
+
+1. truncation-safe vs rebuild-required replica-ahead split still happens at execution time, not planning time
+2. stronger live runtime ownership still not closed
+
+### P4: Stronger Live Runtime Ownership
+
+Goal:
+
+- move the accepted execution logic from bounded test/adapter ownership into a stronger live runtime path on the chosen `RF=2 sync_all` volume-server path
+
+Required scope:
+
+1. stronger volume-server/runtime ownership of recovery execution
+2. explicit live start / cancel / replace / cleanup semantics
+3. real runtime wiring for current execution inputs and addresses
+4. one-chain proof on the live runtime path, not only bounded executor tests
+5. no overclaim of broader control-plane closure
+
+Status:
+
+- accepted
+
+Carry-forward from `P4`:
+
+1. repeated primary assignment still logs a low-severity rebuild-server double-start warning on the same volume
+2. broader control-plane closure remains out of scope for `Phase 09`
+
 ## Assignment For `sw`
 
 Current next tasks:
 
-1. define the concrete execution-closure package for `Phase 09`
-2. specify what "real" means for:
-   - `TransferFullBase`
-   - `TransferSnapshot`
-   - `TruncateWAL`
-3. specify how stronger live runtime execution ownership should work on the volume-server path
-4. keep the phase bounded to the chosen candidate path unless new evidence forces expansion
-5. hand the package to architect review before tester work begins
+1. `Phase 09` is complete
+2. no further `P4` implementation work is open in this phase
+3. any next work should open under the next phase, not extend `Phase 09` implicitly
 
 ## Assignment For `tester`
 
 Current next tasks:
 
-1. prepare the validation oracle for production execution closure
-2. require explicit validation targets for:
-   - real transfer behavior
-   - truncation execution
-   - cleanup on success/failure/cancel
-   - stronger live runtime ownership
-3. keep no-overclaim active around:
-   - validation-grade vs production-grade execution
-   - chosen path vs future paths/modes
-4. review only after architect pre-review passes
+1. `Phase 09` validation/bookkeeping is complete
+2. keep any residual notes bounded:
+   - low-severity rebuild-server double-start warning on repeated primary assignment
+   - broader control-plane closure still belongs to a later phase

@@ -24,7 +24,7 @@ func setupChainTest(t *testing.T) (*engine.RecoveryDriver, *bridge.ControlAdapte
 
 	reader := NewReader(vol)
 	pinner := NewPinner(vol)
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 
 	sa := bridge.NewStorageAdapter(
 		&readerShim{reader},
@@ -115,7 +115,7 @@ func TestP2_CatchUpClosure_OneChain(t *testing.T) {
 // --- ONE CHAIN: Full-base rebuild closure ---
 
 func TestP2_RebuildClosure_OneChain(t *testing.T) {
-	driver, ca, reader, executor, pinner := setupChainTest(t)
+	driver, ca, reader, _, pinner := setupChainTest(t)
 	vol := reader.vol
 
 	// Write + flush → force rebuild condition.
@@ -148,9 +148,9 @@ func TestP2_RebuildClosure_OneChain(t *testing.T) {
 		t.Fatalf("rebuild plan: %v", err)
 	}
 
-	// Step 4: engine RebuildExecutor — wired to real v2bridge I/O.
+	// Step 4: engine RebuildExecutor — test mode (IO=nil) for FSM proof.
+	// Real snapshot_tail I/O is proven by TestP2_SnapshotTailRebuild_OneChain.
 	exec := engine.NewRebuildExecutor(driver, rebuildPlan)
-	exec.IO = executor // v2bridge.Executor implements RebuildIO
 	if err := exec.Execute(); err != nil {
 		t.Fatalf("rebuild executor: %v", err)
 	}

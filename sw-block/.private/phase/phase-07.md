@@ -57,7 +57,7 @@ Status:
 
 - delivered
 - planning artifact:
-  - `sw-block/design/phase-07-service-slice-plan.md`
+  - `sw-block/docs/archive/design/phase-07-service-slice-plan.md`
 - implementation slice proposal:
   - engine core: `sw-block/engine/replication/`
   - bridge adapters: `sw-block/bridge/blockvol/`

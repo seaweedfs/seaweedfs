@@ -23,7 +23,7 @@ This document is the product-completion view.
 It complements:
 
 1. `v2-protocol-truths.md` for accepted semantics
-2. `v2-production-roadmap.md` for the older roadmap ladder
+2. `../docs/archive/design/v2-production-roadmap.md` for the older roadmap ladder
 3. `../.private/phase/phase-08.md` for current phase contract
 
 ## Current Position
@@ -55,13 +55,13 @@ These levels are rough engineering estimates, not exact percentages.
 | Simulator / prototype evidence | Strong | Main failure classes and protocol boundaries are already well-exercised. |
 | Engine recovery core | Strong | Sender/session/orchestrator/driver/executor are substantially implemented. |
 | Weed bridge integration | Strong | Reader / pinner / control / executor are real and tested on the chosen path. |
-| Integrated candidate path | Medium-strong | `P1` + `P2` + `P3` prove one bounded candidate path. |
-| Runtime ownership inside live server loop | Medium | Real intake exists, but full product-grade recovery ownership is not yet fully closed. |
-| Production-grade data transfer | Medium-weak | Validation-grade transfer exists; full production byte streaming is still incomplete. |
-| Truncation / replica-ahead execution | Weak | Detection exists; full execution path is still incomplete. |
-| End-to-end control-plane closure | Medium | `ProcessAssignments()` is real; full heartbeat/gRPC proof is still bounded. |
-| Product surfaces (`CSI`, `NVMe`, `iSCSI`, snapshot productization) | Partial | Mostly reuse candidates, but not the current core closure target. |
-| Production hardening / ops | Partial | Candidate-level evidence exists; production-grade hardening is still ahead. |
+| Integrated candidate path | Strong on chosen path | Backend, control-plane, and selected product surfaces are now accepted on one bounded chosen path. |
+| Runtime ownership inside live server loop | Strong on chosen path | Accepted chosen-path execution/control ownership exists; later work is restart/disturbance hardening, not first-closure rebinding. |
+| Production-grade data transfer | Strong on chosen path | `TransferFullBase` and `TransferSnapshot` execution closure are accepted on the chosen path; later work is hardening. |
+| Truncation / replica-ahead execution | Strong on chosen path | `TruncateWAL` narrow chosen-path closure is accepted; later work is hardening/planning improvement. |
+| End-to-end control-plane closure | Strong on chosen path | `Phase 10` accepted bounded end-to-end control-path closure on the chosen path. |
+| Product surfaces (`CSI`, `NVMe`, `iSCSI`, snapshot productization) | Strong on chosen path | `Phase 11` accepted bounded product-surface rebinding on the chosen path. |
+| Production hardening / ops | Partial | `Phase 12` is now the next active stage. |
 
 ## Reuse Strategy
 
@@ -103,14 +103,14 @@ These can reuse implementation, but their semantic placement must remain V2-owne
 
 | Module area | Current treatment | Near-term plan |
 |-------------|-------------------|----------------|
-| Recovery engine | V2-owned | Continue closing runtime/product path under accepted semantics. |
-| `v2bridge` | V2 boundary adapter | Keep expanding real I/O/runtime closure without leaking policy downward. |
+| Recovery engine | V2-owned | Keep semantics stable and focus next on restart/disturbance hardening. |
+| `v2bridge` | V2 boundary adapter | Chosen-path execution closure is accepted; later work is hardening without leaking policy downward. |
 | `blockvol` WAL/flusher/runtime | Reuse reality | Reuse implementation, but do not let V1 replication semantics redefine V2 truth. |
-| Snapshot capability | Reuse implementation, V2-owned semantics | Do not make this a main near-term phase goal until core execution/runtime closure is stronger. |
-| `CSI` | Later product surface | Rebind after the V2-backed candidate path is stable enough. |
-| `NVMe` / `iSCSI` | Later product surface | Reuse as front-end adapters once the backend candidate path is stronger. |
-| Rebuild server / transfer mechanisms | Reuse with redesign boundary | Good candidate for later production execution closure work. |
-| Control plane | Reuse existing path | Continue from `ProcessAssignments()` toward stronger end-to-end closure. |
+| Snapshot capability | Reuse implementation, V2-owned semantics | Rebinding is accepted on the chosen path; later work is hardening. |
+| `CSI` | Accepted product surface on chosen path | Keep the bounded contract stable and harden under disturbance. |
+| `NVMe` / `iSCSI` | Accepted front-end adapters on chosen path | Keep publication/address truth stable and harden runtime behavior. |
+| Rebuild server / transfer mechanisms | Reuse with redesign boundary | Chosen-path execution closure is accepted; later work is disturbance hardening. |
+| Control plane | Reuse existing path | Bounded chosen-path closure is accepted; later work is restart/disturbance hardening. |
 
 ## What The Candidate Path Already Proves
 
@@ -120,8 +120,8 @@ For the chosen `RF=2 sync_all` path, the project can already claim:
 2. stale epoch/session fencing through the integrated path
 3. real catch-up one-chain closure on the chosen path
 4. rebuild control/execution chain proven on the chosen path
-   - validation-grade execution closure
-   - not yet production-grade block/image streaming
+   - chosen-path execution closure accepted in `Phase 09`
+   - later work is restart/disturbance/perf hardening rather than first-path closure
 5. replay of accepted failure classes on the unified live path
 6. one real failover / reassignment cycle
 7. one true simultaneous-overlap retention safety proof
@@ -131,25 +131,16 @@ For the chosen `RF=2 sync_all` path, the project can already claim:
 
 ## What Is Still Missing For Product Completion
 
-The biggest remaining product-completion gaps are:
+The biggest remaining product-completion gaps are now production-hardening gaps:
 
-1. production-grade rebuild data transfer
-   - `TransferFullBase` must become real streaming, not only accessibility validation
-   - `TransferSnapshot` must become real image streaming, not only checkpoint validation
-2. replica-ahead physical correction
-   - `TruncateWAL` must stop being a stub
-3. stronger live runtime ownership
-   - the V2 recovery driver/executors should become a more complete live runtime path, not only a bounded hardening path
-4. stronger control-plane closure
-   - current proof reaches `ProcessAssignments()`
-   - full heartbeat/gRPC-level closure is still bounded
-5. product-surface rebinding
-   - `CSI`
-   - `NVMe`
-   - `iSCSI`
-   - snapshot product path
-6. production hardening
-   - restart / soak / repeated disturbance / diagnosis quality
+1. restart / recovery disturbance hardening
+   - accepted chosen-path behavior must remain correct under restart, rejoin, and repeated failover
+2. long-run / soak stability
+   - accepted behavior must remain stable across repeated cycles and longer-running operation
+3. operational diagnosability
+   - blockers, symptoms, and operator-visible diagnosis quality must be explicit
+4. performance floor and rollout gates
+   - production claims need bounded floor numbers and explicit rollout criteria
 
 ## Recommended Completion Roadmap
 
@@ -186,6 +177,10 @@ Target:
 
 1. strengthen from accepted assignment-entry closure to fuller end-to-end control-path closure
 
+Status:
+
+1. accepted and closed on the chosen path
+
 Main work:
 
 1. heartbeat/gRPC-level proof
@@ -198,12 +193,28 @@ Target:
 
 1. connect product-facing surfaces to the V2-backed block path
 
+Status:
+
+1. accepted and closed on the chosen path
+
 Candidate areas:
 
 1. snapshot product path
 2. `CSI`
 3. `NVMe`
 4. `iSCSI`
+
+Recommended first cut:
+
+1. snapshot product path first
+2. `CSI` and `NVMe` / `iSCSI` after one bounded product-visible surface is already accepted
+
+Suggested order inside `Phase 11`:
+
+1. `P1` snapshot product path
+2. `P2` `CSI`
+3. `P3` `NVMe` / `iSCSI`
+4. `P4` broader residual workflow closure if still required
 
 Rule:
 
@@ -214,6 +225,10 @@ Do this after the backend engine/runtime path is strong enough, not before.
 Target:
 
 1. move from candidate-safe to production-safe
+
+Status:
+
+1. next active stage
 
 Main work:
 
@@ -255,13 +270,12 @@ In short:
 ## Short Summary
 
 The V2 line is already beyond "algorithm only".
-It has a real bounded candidate path.
+It has an accepted bounded chosen path through backend, control-plane, and selected product surfaces.
 
 But the remaining work is still substantial, and it is mostly engineering work:
 
-1. production-grade execution
-2. stronger runtime/control closure
-3. product-surface rebinding
-4. production hardening
+1. production hardening under restart / disturbance
+2. long-run stability and diagnosability
+3. performance floor and rollout gating
 
 That is the practical path from the current candidate-safe engine to a production-ready block product.

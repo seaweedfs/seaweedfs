@@ -372,6 +372,57 @@ Evidence anchor:
 - strong in Phase 07/08 direction
 - should remain active in later implementation phases
 
+### T16. Full-base rebuild completes against an explicit achieved boundary
+
+Short form:
+
+- `full_base` rebuild requires `AchievedLSN >= TargetLSN`
+- engine and local runtime must converge to the same achieved boundary
+
+Meaning:
+
+- the engine plans a frozen minimum target `TargetLSN`
+- the backend may produce an actual rebuilt boundary `AchievedLSN`
+- exact-target extent equality is not required on a mutable-extent backend
+- after install, `checkpoint`, `nextLSN`, receiver progress, flusher checkpoint, and engine-visible rebuild completion must all align to the same `AchievedLSN`
+
+Prevents:
+
+- local runtime truth advancing beyond engine/accounting truth
+- rebuild completion at one boundary while storage/runtime state reflects another
+- treating "at least target" as safe without making the newer achieved boundary explicit
+
+Evidence anchor:
+
+- strengthened by `Phase 09` backend execution closure work
+- phase-level decision exists
+- real-system proof still depends on executor/runtime alignment
+
+### T17. Extent/WAL recovery split must be fixed before replay begins
+
+Short form:
+
+- `extent copy + WAL replay` is only correct if the split boundary is explicit and gap-free
+
+Meaning:
+
+- extent data must represent a known recovery boundary
+- WAL replay must start from the matching next boundary
+- if unflushed writes could otherwise fall between extent and replay, the backend must first fix the split boundary
+- snapshot/CoW/bitmap export paths follow the same rule: transport must read from a stable recovery view, not a mutating mixed state
+
+Prevents:
+
+- missing writes between extent copy and replay
+- point-in-time export that mixes two different recovery views
+- rebuild correctness depending on timing accidents instead of an explicit boundary contract
+
+Evidence anchor:
+
+- present in rebuild correctness reasoning from V1
+- strengthened by `Phase 09` full-base execution work
+- future snapshot/bitmap-based paths must preserve it explicitly
+
 ## Current Strongest Evidence By Layer
 
 | Layer | Main value |
@@ -434,6 +485,8 @@ Later phases must not regress these:
 6. trusted-base choice must remain explicit and causal
 7. service glue must not silently re-decide recovery policy
 8. reuse reality, but do not inherit old semantics as V2 truth
+9. full-base rebuild must converge to one explicit achieved boundary
+10. extent/WAL recovery split must be fixed before replay
 
 ## Review Rule
 
@@ -517,6 +570,8 @@ Primary alignment focus:
 - T10 real storage truth into engine decisions
 - T11 trusted-base proof remains explicit through service glue
 - T14 `blockvol` executes I/O but does not own recovery policy
+- T16 full-base rebuild converges to one explicit achieved boundary
+- T17 extent/WAL split boundary remains explicit and gap-free
 
 Main strengthening:
 

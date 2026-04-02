@@ -78,7 +78,7 @@ Status:
 
 Reference:
 
-- `sw-block/design/phase-08-engine-skeleton-map.md` is the implementation-side skeleton map for this phase
+- `sw-block/docs/archive/design/phase-08-engine-skeleton-map.md` is the implementation-side skeleton map for this phase
 - it is subordinate to `sw-block/design/v2-protocol-truths.md` and this `phase-08.md`; use it for module layout, execution order, interim fields, hard gates, and reuse guidance
 
 ### P1: Real Control Delivery

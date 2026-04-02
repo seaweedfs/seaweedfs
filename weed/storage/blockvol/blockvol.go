@@ -954,6 +954,272 @@ func (v *BlockVol) SetV2RetentionFloor(fn func() (uint64, bool)) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// RebuildInstaller — named local install primitive for V2 rebuild
+// ---------------------------------------------------------------------------
+
+// RebuildInstaller writes received extent data to the blockvol's extent
+// region during a rebuild transfer. This is the authoritative local install
+// primitive: it owns the write path and the durable state handoff.
+//
+// Commit performs the full state handoff: fsync extent, clear dirty map,
+// reset WAL, update superblock with checkpoint boundary, sync superblock,
+// and advance nextLSN. After Commit, the volume's local state is
+// authoritative at the given snapshot boundary.
+//
+// Usage:
+//
+//	installer := vol.NewRebuildInstaller()
+//	for each chunk received over TCP:
+//	    installer.WriteChunk(data)
+//	installer.Commit(snapshotLSN)  // full state handoff
+type RebuildInstaller struct {
+	vol         *BlockVol
+	fd          *os.File
+	extentStart uint64
+	volumeSize  uint64
+	offset      uint64
+	committed   bool
+}
+
+// NewRebuildInstaller creates an installer that writes to this volume's
+// extent region. The caller feeds chunks and calls Commit when done.
+func (v *BlockVol) NewRebuildInstaller() *RebuildInstaller {
+	return &RebuildInstaller{
+		vol:         v,
+		fd:          v.fd,
+		extentStart: v.super.WALOffset + v.super.WALSize,
+		volumeSize:  v.super.VolumeSize,
+	}
+}
+
+// WriteChunk writes a chunk of extent data at the current offset.
+// Chunks must arrive in order (sequential append to the extent region).
+func (ri *RebuildInstaller) WriteChunk(data []byte) error {
+	if ri.committed {
+		return fmt.Errorf("rebuild install: already committed")
+	}
+	if ri.offset+uint64(len(data)) > ri.volumeSize {
+		return fmt.Errorf("rebuild install: extent overflow at %d+%d > %d",
+			ri.offset, len(data), ri.volumeSize)
+	}
+	_, err := ri.fd.WriteAt(data, int64(ri.extentStart+ri.offset))
+	if err != nil {
+		return fmt.Errorf("rebuild install: write at offset %d: %w", ri.offset, err)
+	}
+	ri.offset += uint64(len(data))
+	return nil
+}
+
+// Commit performs the full local state handoff after extent data is written.
+// snapshotLSN is the primary's nextLSN at the time the extent copy started
+// (returned in MsgRebuildDone). After Commit:
+//   - extent data is fsynced
+//   - dirty map is cleared (stale WAL references invalidated)
+//   - WAL is reset (no valid entries for old data)
+//   - superblock records the new checkpoint boundary
+//   - flusher checkpoint is synced
+//   - nextLSN is advanced to snapshotLSN
+//
+// This matches the state handoff in rebuild.go:rebuildFullExtent and
+// blockvol.go:RestoreFromSnapshot — any path that replaces the local base
+// must do the same state clearing.
+func (ri *RebuildInstaller) Commit(snapshotLSN uint64) error {
+	if ri.committed {
+		return fmt.Errorf("rebuild install: already committed")
+	}
+	ri.committed = true
+	v := ri.vol
+
+	// 1. Fsync extent data.
+	if err := v.fd.Sync(); err != nil {
+		return fmt.Errorf("rebuild install: fsync extent: %w", err)
+	}
+
+	// 2. Clear dirty map — all data now in extent, stale WAL refs invalid.
+	v.dirtyMap.Clear()
+
+	// 3. Reset WAL — no valid entries for old data.
+	v.wal.Reset()
+
+	// 4. Persist clean superblock state so crash recovery doesn't replay stale WAL.
+	checkpointLSN := uint64(0)
+	if snapshotLSN > 0 {
+		checkpointLSN = snapshotLSN - 1
+	}
+	v.mu.Lock()
+	v.super.WALHead = 0
+	v.super.WALTail = 0
+	v.super.WALCheckpointLSN = checkpointLSN
+	if _, err := v.fd.Seek(0, 0); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("rebuild install: seek superblock: %w", err)
+	}
+	if _, err := v.super.WriteTo(v.fd); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("rebuild install: write superblock: %w", err)
+	}
+	if err := v.fd.Sync(); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("rebuild install: sync superblock: %w", err)
+	}
+	v.mu.Unlock()
+
+	// 5. Sync flusher's internal checkpoint with the rebuilt superblock state.
+	if v.flusher != nil {
+		v.flusher.SetCheckpointLSN(checkpointLSN)
+	}
+
+	// 6. Set nextLSN to the rebuilt boundary. Unconditional store, not
+	// monotonic-advance: a stale replica may have a higher nextLSN than
+	// the rebuilt boundary, and that stale value must be overwritten.
+	v.nextLSN.Store(snapshotLSN)
+
+	// 7. Set receiver progress to the rebuilt boundary so subsequent WAL
+	// shipping from the primary starts from the correct point. Unconditional
+	// set, not monotonic-advance, for the same reason as nextLSN.
+	if v.replRecv != nil {
+		v.replRecv.mu.Lock()
+		target := snapshotLSN - 1
+		v.replRecv.receivedLSN = target
+		v.replRecv.mu.Unlock()
+	}
+
+	return nil
+}
+
+// BytesWritten returns how many bytes have been written so far.
+func (ri *RebuildInstaller) BytesWritten() uint64 {
+	return ri.offset
+}
+
+// SyncReceiverProgress sets the replica receiver's receivedLSN to
+// achievedLSN so that subsequent WAL shipping from the primary does not
+// hit contiguous-LSN rejection. Called after the full rebuild completes
+// (extent install + optional second catch-up). Unconditional set, not
+// monotonic-advance: after rebuild, the achieved boundary IS the truth.
+func (v *BlockVol) SyncReceiverProgress(achievedLSN uint64) {
+	if v.replRecv != nil {
+		v.replRecv.mu.Lock()
+		v.replRecv.receivedLSN = achievedLSN
+		v.replRecv.mu.Unlock()
+	}
+}
+
+// ReceivedLSN returns the replica receiver's current receivedLSN, or 0
+// if no receiver is active. Used for convergence verification.
+func (v *BlockVol) ReceivedLSN() uint64 {
+	if v.replRecv == nil {
+		return 0
+	}
+	v.replRecv.mu.Lock()
+	defer v.replRecv.mu.Unlock()
+	return v.replRecv.receivedLSN
+}
+
+// ApplyRebuildEntry decodes and applies a WAL entry during rebuild.
+// Used by the V2 executor for second catch-up after extent install.
+// Unlike ReplicaReceiver.applyEntry, no contiguous LSN enforcement
+// (catch-up entries arrive in order but may have gaps from flushed entries).
+func (v *BlockVol) ApplyRebuildEntry(payload []byte) error {
+	return applyRebuildEntry(v, payload)
+}
+
+// ErrTruncationUnsafe is returned by TruncateToLSN when the replica's
+// ahead entries have already been flushed to extent. The caller should
+// escalate to a full rebuild instead.
+var ErrTruncationUnsafe = errors.New("blockvol: truncation unsafe, ahead entries flushed to extent")
+
+// TruncateToLSN performs local correction for replica-ahead recovery.
+// After completion, the volume's runtime state is at exactly truncateLSN:
+//   - dirtyMap cleared (stale WAL references from ahead entries invalidated)
+//   - WAL reset (ahead entries discarded without flushing them to extent)
+//   - superblock updated (WALCheckpointLSN = truncateLSN)
+//   - flusher checkpoint synced
+//   - nextLSN = truncateLSN + 1
+//   - receiver progress = truncateLSN
+//
+// IMPORTANT: This does NOT flush before reset. Ahead entries in the WAL
+// are discarded without being written to extent, so the extent retains
+// only data that was flushed BEFORE the ahead entries arrived. For the
+// typical replica-ahead scenario (a few unflushed entries after failover),
+// this is correct: the extent has the primary's data, and discarding the
+// WAL removes the ahead entries.
+//
+// If ahead entries were already flushed to extent by the background flusher,
+// those blocks remain in the extent. The primary will overwrite them during
+// subsequent WAL shipping. If immediate data consistency is required for
+// already-flushed ahead blocks, a full rebuild should be used instead.
+func (v *BlockVol) TruncateToLSN(truncateLSN uint64) error {
+	// Pause flusher WITHOUT flushing — we must clear the dirty map BEFORE
+	// any flush runs, so ahead entries are never written to extent.
+	if v.flusher != nil {
+		v.flusher.Pause()
+		defer v.flusher.Resume()
+	}
+
+	// Exclusive I/O lock: drain all concurrent WriteLBA / receiver apply
+	// before mutating WAL/dirty map/superblock. Same pattern as
+	// RestoreSnapshot and ImportSnapshot.
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
+
+	// Safety check AFTER flusher is paused and I/O is drained.
+	// Truncation is safe ONLY when checkpointLSN == truncateLSN:
+	//   checkpoint > truncateLSN: ahead entries already flushed to extent
+	//   checkpoint < truncateLSN: kept entries (checkpoint, truncateLSN]
+	//     may still be in WAL only — truncate would discard them
+	//   checkpoint == truncateLSN: extent has exactly the kept state,
+	//     ahead entries are WAL-only and can be safely discarded
+	if v.super.WALCheckpointLSN != truncateLSN {
+		return fmt.Errorf("%w: checkpoint %d != truncateLSN %d",
+			ErrTruncationUnsafe, v.super.WALCheckpointLSN, truncateLSN)
+	}
+
+	// Clear dirty map — stale WAL references from ahead entries are invalidated.
+	// After this, reads fall through to extent (which has pre-ahead data).
+	v.dirtyMap.Clear()
+
+	// Reset WAL — ahead entries are discarded WITHOUT flushing to extent.
+	v.wal.Reset()
+
+	// Persist truncated state in superblock.
+	v.mu.Lock()
+	v.super.WALHead = 0
+	v.super.WALTail = 0
+	v.super.WALCheckpointLSN = truncateLSN
+	if _, err := v.fd.Seek(0, 0); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: truncate seek superblock: %w", err)
+	}
+	if _, err := v.super.WriteTo(v.fd); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: truncate write superblock: %w", err)
+	}
+	if err := v.fd.Sync(); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: truncate sync superblock: %w", err)
+	}
+	v.mu.Unlock()
+
+	// Sync flusher checkpoint.
+	if v.flusher != nil {
+		v.flusher.SetCheckpointLSN(truncateLSN)
+	}
+
+	// Set nextLSN (unconditional — truncation replaces truth).
+	v.nextLSN.Store(truncateLSN + 1)
+
+	// Align receiver progress.
+	if v.replRecv != nil {
+		v.replRecv.mu.Lock()
+		v.replRecv.receivedLSN = truncateLSN
+		v.replRecv.mu.Unlock()
+	}
+
+	return nil
+}
+
 // ScanWALEntries reads WAL entries from fromLSN using the real ScanFrom mechanism.
 // This is the entry point for the V2 bridge executor's catch-up path.
 //

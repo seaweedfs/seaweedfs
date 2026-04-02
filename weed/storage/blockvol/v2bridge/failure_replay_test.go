@@ -175,7 +175,7 @@ func TestP2_FC3_RealCatchUp_Forced(t *testing.T) {
 
 	// Even though engine classifies as ZeroGap (committed=0),
 	// we can verify the real WAL scan works by directly streaming.
-	executor := NewExecutor(vol)
+	executor := NewExecutor(vol, "")
 	transferred, err := executor.StreamWALEntries(0, state.WALHeadLSN)
 	if err != nil {
 		t.Fatalf("FC3: real WAL scan failed: %v", err)

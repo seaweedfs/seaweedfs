@@ -36,7 +36,7 @@ That is the highest-value validation gap to close before trusting V2 too much.
 ## Source Of Truth
 
 Design:
-- `sw-block/design/v2-first-slice-session-ownership.md`
+- `sw-block/docs/archive/design/v2-first-slice-session-ownership.md`
 - `sw-block/design/v2-acceptance-criteria.md`
 - `sw-block/design/v2-open-questions.md`
 - `sw-block/design/protocol-development-process.md`

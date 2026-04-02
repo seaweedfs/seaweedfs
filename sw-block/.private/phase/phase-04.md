@@ -30,7 +30,7 @@ We should start with the ownership problem that most clearly separates V2 from V
 ## Source Of Truth
 
 Design:
-- `sw-block/design/v2-first-slice-session-ownership.md`
+- `sw-block/docs/archive/design/v2-first-slice-session-ownership.md`
 - `sw-block/design/v2-acceptance-criteria.md`
 - `sw-block/design/v2-open-questions.md`
 
