@@ -726,17 +726,20 @@ func (m *IAMManager) ExpireSessionForTesting(ctx context.Context, sessionToken s
 }
 
 // GetPoliciesForUser returns the policy names attached to an IAM user.
-// It looks up the user via the UserStore. Returns nil if the user is not found
-// or the store is not configured.
-func (m *IAMManager) GetPoliciesForUser(ctx context.Context, username string) []string {
+// Returns an error if the user store is not configured or the lookup fails,
+// so callers can fail closed on policy-resolution failures.
+func (m *IAMManager) GetPoliciesForUser(ctx context.Context, username string) ([]string, error) {
 	if m.userStore == nil {
-		return nil
+		return nil, fmt.Errorf("user store not configured")
 	}
 	user, err := m.userStore.GetUser(ctx, username)
-	if err != nil || user == nil {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to look up user %q: %w", username, err)
 	}
-	return user.PolicyNames
+	if user == nil {
+		return nil, nil
+	}
+	return user.PolicyNames, nil
 }
 
 // GetSTSService returns the STS service instance

@@ -165,10 +165,10 @@ func TestGetFederationToken_RejectTemporaryCredentials(t *testing.T) {
 			rr := httptest.NewRecorder()
 			stsHandlers.HandleSTSRequest(rr, req)
 
-			// The handler should reject before SigV4 check or after it,
-			// but either way return 403 AccessDenied
+			// The handler rejects temporary credentials before SigV4 verification
 			assert.Equal(t, http.StatusForbidden, rr.Code, tt.description)
 			assert.Contains(t, rr.Body.String(), "AccessDenied")
+			assert.Contains(t, rr.Body.String(), "cannot be called with temporary credentials")
 		})
 	}
 }
@@ -210,13 +210,13 @@ func TestGetFederationToken_NameValidation(t *testing.T) {
 			name:        "TooShort",
 			federName:   "A",
 			expectError: true,
-			errContains: "between 2 and 64",
+			errContains: "between 2 and 32",
 		},
 		{
 			name:        "TooLong",
-			federName:   strings.Repeat("A", 65),
+			federName:   strings.Repeat("A", 33),
 			expectError: true,
-			errContains: "between 2 and 64",
+			errContains: "between 2 and 32",
 		},
 		{
 			name:        "MinLength",
@@ -225,8 +225,25 @@ func TestGetFederationToken_NameValidation(t *testing.T) {
 		},
 		{
 			name:        "MaxLength",
-			federName:   strings.Repeat("A", 64),
+			federName:   strings.Repeat("A", 32),
 			expectError: false,
+		},
+		{
+			name:        "ValidSpecialChars",
+			federName:   "user+=,.@-test",
+			expectError: false,
+		},
+		{
+			name:        "InvalidChars_Space",
+			federName:   "bad name",
+			expectError: true,
+			errContains: "invalid characters",
+		},
+		{
+			name:        "InvalidChars_Slash",
+			federName:   "bad/name",
+			expectError: true,
+			errContains: "invalid characters",
 		},
 	}
 

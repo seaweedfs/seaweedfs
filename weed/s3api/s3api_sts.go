@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -48,6 +49,9 @@ const (
 	stsLDAPProviderName = "LDAPProviderName"
 )
 
+// federationNameRegex validates the Name parameter for GetFederationToken per AWS spec
+var federationNameRegex = regexp.MustCompile(`^[\w+=,.@-]+$`)
+
 // STS duration constants (AWS specification)
 const (
 	minDurationSeconds = int64(900)    // 15 minutes
@@ -56,9 +60,9 @@ const (
 	maxFederationDurationSeconds     = int64(129600) // 36 hours (GetFederationToken max)
 )
 
-// parseDurationSeconds parses and validates the DurationSeconds parameter
-// Returns nil if the parameter is not provided, or a pointer to the parsed value
-func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
+// parseDurationSecondsWithBounds parses and validates the DurationSeconds parameter
+// against the given min and max bounds. Returns nil if the parameter is not provided.
+func parseDurationSecondsWithBounds(r *http.Request, minSec, maxSec int64) (*int64, STSErrorCode, error) {
 	dsStr := r.FormValue("DurationSeconds")
 	if dsStr == "" {
 		return nil, "", nil
@@ -69,12 +73,17 @@ func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
 		return nil, STSErrInvalidParameterValue, fmt.Errorf("invalid DurationSeconds: %w", err)
 	}
 
-	if ds < minDurationSeconds || ds > maxDurationSeconds {
+	if ds < minSec || ds > maxSec {
 		return nil, STSErrInvalidParameterValue,
-			fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxDurationSeconds)
+			fmt.Errorf("DurationSeconds must be between %d and %d seconds", minSec, maxSec)
 	}
 
 	return &ds, "", nil
+}
+
+// parseDurationSeconds parses DurationSeconds for AssumeRole (15 min to 12 hours)
+func parseDurationSeconds(r *http.Request) (*int64, STSErrorCode, error) {
+	return parseDurationSecondsWithBounds(r, minDurationSeconds, maxDurationSeconds)
 }
 
 // Removed generateSecureCredentials - now using STS service's JWT token generation
@@ -527,29 +536,36 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// AWS requires Name to be 2-64 characters matching [\w+=,.@-]+
-	if len(name) < 2 || len(name) > 64 {
+	// AWS requires Name to be 2-32 characters matching [\w+=,.@-]+
+	if len(name) < 2 || len(name) > 32 {
 		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-			fmt.Errorf("Name must be between 2 and 64 characters"))
+			fmt.Errorf("Name must be between 2 and 32 characters"))
+		return
+	}
+	if !federationNameRegex.MatchString(name) {
+		h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
+			fmt.Errorf("Name contains invalid characters, must match [\\w+=,.@-]+"))
 		return
 	}
 
 	// Parse and validate DurationSeconds (GetFederationToken allows up to 36 hours)
-	dsStr := r.FormValue("DurationSeconds")
-	var durationSeconds *int64
-	if dsStr != "" {
-		ds, err := strconv.ParseInt(dsStr, 10, 64)
-		if err != nil {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("invalid DurationSeconds: %w", err))
-			return
-		}
-		if ds < minDurationSeconds || ds > maxFederationDurationSeconds {
-			h.writeSTSErrorResponse(w, r, STSErrInvalidParameterValue,
-				fmt.Errorf("DurationSeconds must be between %d and %d seconds", minDurationSeconds, maxFederationDurationSeconds))
-			return
-		}
-		durationSeconds = &ds
+	durationSeconds, errCode, err := parseDurationSecondsWithBounds(r, minDurationSeconds, maxFederationDurationSeconds)
+	if err != nil {
+		h.writeSTSErrorResponse(w, r, errCode, err)
+		return
+	}
+
+	// Reject calls from temporary credentials (session tokens) early,
+	// before SigV4 verification — no need to authenticate first.
+	// GetFederationToken can only be called by long-term IAM users.
+	securityToken := r.Header.Get("X-Amz-Security-Token")
+	if securityToken == "" {
+		securityToken = r.URL.Query().Get("X-Amz-Security-Token")
+	}
+	if securityToken != "" {
+		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
+			fmt.Errorf("GetFederationToken cannot be called with temporary credentials"))
+		return
 	}
 
 	// Check if STS service is initialized
@@ -581,19 +597,15 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	// Reject calls from temporary credentials (session tokens)
-	// GetFederationToken can only be called by long-term IAM users
-	securityToken := r.Header.Get("X-Amz-Security-Token")
-	if securityToken == "" {
-		securityToken = r.URL.Query().Get("X-Amz-Security-Token")
-	}
-	if securityToken != "" {
+	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
+
+	// Check if the caller is authorized to call GetFederationToken
+	if authErr := h.iam.VerifyActionPermission(r, identity, Action("sts:GetFederationToken"), "", ""); authErr != s3err.ErrNone {
+		glog.V(2).Infof("GetFederationToken: caller %s is not authorized to call GetFederationToken", identity.Name)
 		h.writeSTSErrorResponse(w, r, STSErrAccessDenied,
-			fmt.Errorf("GetFederationToken cannot be called with temporary credentials"))
+			fmt.Errorf("user %s is not authorized to call GetFederationToken", identity.Name))
 		return
 	}
-
-	glog.V(2).Infof("GetFederationToken: caller identity=%s, name=%s", identity.Name, name)
 
 	// Validate session policy if provided
 	sessionPolicyJSON, err := sts.NormalizeSessionPolicy(r.FormValue("Policy"))
@@ -642,7 +654,13 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 			}
 		}
 		if policyManager != nil {
-			userPolicies := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
+			userPolicies, err := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
+			if err != nil {
+				glog.V(2).Infof("GetFederationToken: failed to resolve policies for %s: %v", identity.Name, err)
+				h.writeSTSErrorResponse(w, r, STSErrInternalError,
+					fmt.Errorf("failed to resolve caller policies"))
+				return
+			}
 			if len(userPolicies) > 0 {
 				claims.WithPolicies(userPolicies)
 			}
