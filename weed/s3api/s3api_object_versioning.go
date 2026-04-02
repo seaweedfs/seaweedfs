@@ -427,6 +427,34 @@ func (vc *versionCollector) matchesPrefixFilter(entryPath string, isDirectory bo
 	return isMatch || canDescend
 }
 
+// computeStartFrom extracts the first path component from keyMarker that applies
+// to the given directory level (relativePath), allowing the directory listing to
+// skip directly to the marker position instead of scanning from the beginning.
+// Returns ("", false) when no optimization is possible.
+func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom string, inclusive bool) {
+	if vc.keyMarker == "" {
+		return "", false
+	}
+
+	var remainder string
+	if relativePath == "" {
+		remainder = vc.keyMarker
+	} else if strings.HasPrefix(vc.keyMarker, relativePath+"/") {
+		remainder = vc.keyMarker[len(relativePath)+1:]
+	} else {
+		return "", false
+	}
+
+	if remainder == "" {
+		return "", false
+	}
+
+	if idx := strings.Index(remainder, "/"); idx >= 0 {
+		return remainder[:idx], true
+	}
+	return remainder, true
+}
+
 // shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
 func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 	if vc.keyMarker == "" {
@@ -639,12 +667,21 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 // collectVersions recursively collects versions from the given path
 func (vc *versionCollector) collectVersions(currentPath, relativePath string) error {
 	startFrom := ""
+	inclusive := false
+	// On the first iteration, skip ahead to the marker position to avoid
+	// re-scanning all entries before the marker on every paginated request.
+	if markerStart, ok := vc.computeStartFrom(relativePath); ok && markerStart != "" {
+		startFrom = markerStart
+		inclusive = true
+	}
 	for {
 		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
+		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, inclusive, filer.PaginationSize)
+		// After the first batch, use exclusive mode for standard pagination
+		inclusive = false
 		if err != nil {
 			return err
 		}
@@ -729,6 +766,14 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	// Handle explicit S3 directory object
 	if entry.Attributes.Mime == s3_constants.FolderMimeType {
 		vc.processExplicitDirectory(entryPath, entry)
+	}
+
+	// Skip entire subdirectory if all keys within it are before the keyMarker.
+	// All object keys under this directory start with entryPath+"/". If the marker
+	// doesn't descend into this directory and entryPath+"/" sorts before the marker,
+	// then every key in this subtree was already returned in a previous page.
+	if vc.keyMarker != "" && !strings.HasPrefix(vc.keyMarker, entryPath+"/") && entryPath+"/" < vc.keyMarker {
+		return nil
 	}
 
 	// Recursively search subdirectory
