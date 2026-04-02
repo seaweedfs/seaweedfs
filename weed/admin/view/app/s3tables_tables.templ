@@ -24,7 +24,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 	<div class="mb-3">
 		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
 		if parseErr == nil {
-			<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class="btn btn-sm btn-outline-secondary">
+			<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", url.PathEscape(bucketName))) } class="btn btn-sm btn-outline-secondary">
 				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
 			</a>
 		} else {
