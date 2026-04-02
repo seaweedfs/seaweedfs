@@ -24,7 +24,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 	<div class="mb-3">
 		{{ bucketName, parseErr := s3tables.ParseBucketNameFromARN(data.BucketARN) }}
 		if parseErr == nil {
-			<a href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class="btn btn-sm btn-outline-secondary">
+			<a href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces", bucketName)) } class="btn btn-sm btn-outline-secondary">
 				<i class="fas fa-arrow-left me-1"></i>Back to Namespaces
 			</a>
 		} else {
@@ -126,7 +126,7 @@ templ S3TablesTables(data dash.S3TablesTablesData) {
 											<td>
 												<div class="btn-group btn-group-sm" role="group">
 													if parseErr == nil {
-														<a class="btn btn-outline-primary btn-sm" href={ templ.SafeURL(fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(bucketName), url.PathEscape(data.Namespace), url.PathEscape(tableName))) } title="View Iceberg Details">
+														<a class="btn btn-outline-primary btn-sm" href={ dash.PUrl(ctx, fmt.Sprintf("/object-store/s3tables/buckets/%s/namespaces/%s/tables/%s", url.PathEscape(bucketName), url.PathEscape(data.Namespace), url.PathEscape(tableName))) } title="View Iceberg Details">
 															<i class="fas fa-eye"></i>
 														</a>
 													} else {

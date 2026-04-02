@@ -163,7 +163,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                     for _, bucket := range data.Buckets {
                                         <tr>
                                             <td>
-                                                <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                    class="text-decoration-none">
                                                     <i class="fas fa-cube me-2"></i>
                                                     {bucket.Name}
@@ -236,7 +236,7 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <a href={templ.SafeURL(fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
+                                                    <a href={dash.PUrl(ctx, fmt.Sprintf("/files?path=/buckets/%s", bucket.Name))}
                                                        class="btn btn-outline-success btn-sm"
                                                        title="Browse Files">
                                                         <i class="fas fa-folder-open"></i>
