@@ -85,6 +85,13 @@ func testGitCloneAndPull(t *testing.T, mountPoint, localDir string) {
 	branch := gitOutput(t, localClone, "rev-parse", "--abbrev-ref", "HEAD")
 	gitRun(t, localClone, "push", "origin", branch)
 
+	// Wait for pushed objects to become visible through the FUSE mount.
+	// After git push, pack objects may not be immediately consistent on
+	// the FUSE layer, causing clone to fail with "nonexistent object".
+	waitForBareRepoEventually(t, bareRepo, 10*time.Second)
+	refreshDirEntry(t, bareRepo)
+	time.Sleep(1 * time.Second)
+
 	// ---- Phase 3: Clone from mount bare repo into on-mount working dir ----
 	t.Log("Phase 3: clone from mount bare repo to on-mount working dir")
 	gitRun(t, "", "clone", bareRepo, mountClone)
