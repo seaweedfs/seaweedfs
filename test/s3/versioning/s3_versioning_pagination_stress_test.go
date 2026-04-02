@@ -289,6 +289,167 @@ func TestVersioningPaginationMultipleObjectsManyVersions(t *testing.T) {
 	})
 }
 
+// TestVersioningPaginationDeepDirectoryHierarchy tests that paginated ListObjectVersions
+// correctly skips directory subtrees before the key-marker. This reproduces the
+// real-world scenario where Veeam backup objects are spread across many subdirectories
+// (e.g., Mailboxes/<uuid>/ItemsData/<file>) and pagination becomes exponentially
+// slower as the marker advances through the tree.
+//
+// Run with: ENABLE_STRESS_TESTS=true go test -v -run TestVersioningPaginationDeepDirectoryHierarchy -timeout 10m
+func TestVersioningPaginationDeepDirectoryHierarchy(t *testing.T) {
+	if os.Getenv("ENABLE_STRESS_TESTS") != "true" {
+		t.Skip("Skipping stress test. Set ENABLE_STRESS_TESTS=true to run.")
+	}
+
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+	checkVersioningStatus(t, client, bucketName, types.BucketVersioningStatusEnabled)
+
+	// Create a deep directory structure mimicking Veeam 365 backup layout:
+	// Backup/Organizations/<org>/Mailboxes/<mailbox>/ItemsData/<file>
+	numMailboxes := 20
+	filesPerMailbox := 5
+	totalObjects := numMailboxes * filesPerMailbox
+	orgPrefix := "Backup/Organizations/org-001/Mailboxes"
+
+	t.Logf("Creating %d objects across %d subdirectories (depth=6)...", totalObjects, numMailboxes)
+	startTime := time.Now()
+
+	allKeys := make([]string, 0, totalObjects)
+	for i := 0; i < numMailboxes; i++ {
+		mailboxId := fmt.Sprintf("mbx-%03d", i)
+		for j := 0; j < filesPerMailbox; j++ {
+			key := fmt.Sprintf("%s/%s/ItemsData/file-%03d.dat", orgPrefix, mailboxId, j)
+			_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(key),
+				Body:   strings.NewReader(fmt.Sprintf("content-%d-%d", i, j)),
+			})
+			require.NoError(t, err)
+			allKeys = append(allKeys, key)
+		}
+	}
+	t.Logf("Created %d objects in %v", totalObjects, time.Since(startTime))
+
+	// Test 1: Paginate through all versions with a broad prefix and small maxKeys.
+	// This forces multiple pages that must skip earlier subdirectory trees.
+	t.Run("PaginateAcrossSubdirectories", func(t *testing.T) {
+		maxKeys := int32(10) // Force many pages to exercise marker skipping
+		var allVersions []types.ObjectVersion
+		var keyMarker, versionIdMarker *string
+		pageCount := 0
+		pageStartTimes := make([]time.Duration, 0)
+
+		for {
+			pageStart := time.Now()
+			resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+				Bucket:          aws.String(bucketName),
+				Prefix:          aws.String(orgPrefix + "/"),
+				MaxKeys:         aws.Int32(maxKeys),
+				KeyMarker:       keyMarker,
+				VersionIdMarker: versionIdMarker,
+			})
+			pageDuration := time.Since(pageStart)
+			require.NoError(t, err)
+			pageCount++
+			pageStartTimes = append(pageStartTimes, pageDuration)
+
+			allVersions = append(allVersions, resp.Versions...)
+			t.Logf("Page %d: %d versions in %v (marker: %v)",
+				pageCount, len(resp.Versions), pageDuration,
+				keyMarker)
+
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
+				break
+			}
+			keyMarker = resp.NextKeyMarker
+			versionIdMarker = resp.NextVersionIdMarker
+		}
+
+		assert.Len(t, allVersions, totalObjects, "Should list all %d objects", totalObjects)
+		assert.Greater(t, pageCount, 1, "Should require multiple pages")
+
+		// Verify no duplicates
+		seen := make(map[string]bool)
+		for _, v := range allVersions {
+			assert.False(t, seen[*v.Key], "Duplicate key: %s", *v.Key)
+			seen[*v.Key] = true
+		}
+
+		// Verify keys are in sorted order
+		for i := 1; i < len(allVersions); i++ {
+			assert.True(t, *allVersions[i-1].Key <= *allVersions[i].Key,
+				"Keys should be sorted: %s > %s", *allVersions[i-1].Key, *allVersions[i].Key)
+		}
+
+		// Check that later pages don't take dramatically longer than earlier ones.
+		// Before the fix, later pages were exponentially slower because they
+		// re-traversed the entire tree. With the fix, all pages should be similar.
+		if len(pageStartTimes) >= 4 {
+			firstQuarter := pageStartTimes[0]
+			lastQuarter := pageStartTimes[len(pageStartTimes)-1]
+			t.Logf("First page: %v, Last page: %v, Ratio: %.1fx",
+				firstQuarter, lastQuarter,
+				float64(lastQuarter)/float64(firstQuarter))
+			// Allow generous 10x ratio to avoid flakiness; before the fix
+			// the ratio was 100x+ on large datasets
+			if lastQuarter > firstQuarter*10 && lastQuarter > 500*time.Millisecond {
+				t.Logf("WARNING: Last page took %.1fx longer than first page — possible pagination regression",
+					float64(lastQuarter)/float64(firstQuarter))
+			}
+		}
+	})
+
+	// Test 2: Paginate with delimiter to verify CommonPrefixes interaction
+	t.Run("PaginateWithDelimiterAcrossSubdirs", func(t *testing.T) {
+		maxKeys := int32(5)
+		var allPrefixes []string
+		var keyMarker *string
+		pageCount := 0
+
+		for {
+			resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+				Bucket:    aws.String(bucketName),
+				Prefix:    aws.String(orgPrefix + "/"),
+				Delimiter: aws.String("/"),
+				MaxKeys:   aws.Int32(maxKeys),
+				KeyMarker: keyMarker,
+			})
+			require.NoError(t, err)
+			pageCount++
+
+			for _, cp := range resp.CommonPrefixes {
+				allPrefixes = append(allPrefixes, *cp.Prefix)
+			}
+
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
+				break
+			}
+			keyMarker = resp.NextKeyMarker
+		}
+
+		assert.Len(t, allPrefixes, numMailboxes,
+			"Should have %d mailbox CommonPrefixes", numMailboxes)
+		assert.Greater(t, pageCount, 1, "Should require multiple pages with maxKeys=%d", maxKeys)
+
+		// Verify prefixes are unique and sorted
+		seen := make(map[string]bool)
+		for i, p := range allPrefixes {
+			assert.False(t, seen[p], "Duplicate prefix: %s", p)
+			seen[p] = true
+			if i > 0 {
+				assert.True(t, allPrefixes[i-1] < allPrefixes[i],
+					"Prefixes should be sorted: %s >= %s", allPrefixes[i-1], allPrefixes[i])
+			}
+		}
+	})
+}
+
 // listAllVersions is a helper to list all versions of a specific object using pagination
 func listAllVersions(t *testing.T, client *s3.Client, bucketName, objectKey string) []types.ObjectVersion {
 	var allVersions []types.ObjectVersion
