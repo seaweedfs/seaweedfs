@@ -60,6 +60,7 @@ type S3ApiServerOption struct {
 	BindIp                    string
 	GrpcPort                  int
 	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
+	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
 }
 
 type S3ApiServer struct {

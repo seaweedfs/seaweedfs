@@ -603,13 +603,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Create entry
+	fileMode := s3a.resolveFileMode(r)
 	entry := &filer_pb.Entry{
 		Name:        path.Base(filePath),
 		IsDirectory: false,
 		Attributes: &filer_pb.FuseAttributes{
 			Crtime:   now.Unix(),
 			Mtime:    now.Unix(),
-			FileMode: 0660,
+			FileMode: fileMode,
 			Uid:      0,
 			Gid:      0,
 			Mime:     mimeType,
@@ -813,6 +814,26 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// resolveFileMode determines the file permission mode for an S3 upload.
+// Priority: per-object X-Amz-Acl header > server default > 0660.
+func (s3a *S3ApiServer) resolveFileMode(r *http.Request) uint32 {
+	if cannedAcl := r.Header.Get(s3_constants.AmzCannedAcl); cannedAcl != "" {
+		switch cannedAcl {
+		case s3_constants.CannedAclPublicRead, s3_constants.CannedAclAuthenticatedRead,
+			s3_constants.CannedAclBucketOwnerRead:
+			return 0644
+		case s3_constants.CannedAclPublicReadWrite:
+			return 0666
+		case s3_constants.CannedAclPrivate, s3_constants.CannedAclBucketOwnerFullControl:
+			return 0660
+		}
+	}
+	if s3a.option.DefaultFileMode != 0 {
+		return s3a.option.DefaultFileMode
+	}
+	return 0660
 }
 
 func setEtag(w http.ResponseWriter, etag string) {

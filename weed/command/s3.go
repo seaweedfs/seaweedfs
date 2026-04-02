@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,6 +69,7 @@ type S3Options struct {
 	debugPort                 *int
 	cipher                    *bool
 	externalUrl               *string
+	defaultFileMode           *string
 }
 
 func init() {
@@ -103,6 +105,7 @@ func init() {
 	s3StandaloneOptions.debugPort = cmdS3.Flag.Int("debug.port", 6060, "http port for debugging")
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
+	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
 }
 
 var cmdS3 = &Command{
@@ -232,6 +235,17 @@ func (s3opt *S3Options) resolveExternalUrl() string {
 	return os.Getenv("S3_EXTERNAL_URL")
 }
 
+func (s3opt *S3Options) parseDefaultFileMode() uint32 {
+	if s3opt.defaultFileMode == nil || *s3opt.defaultFileMode == "" {
+		return 0
+	}
+	mode, err := strconv.ParseUint(*s3opt.defaultFileMode, 8, 32)
+	if err != nil {
+		glog.Fatalf("invalid defaultFileMode %q: %v", *s3opt.defaultFileMode, err)
+	}
+	return uint32(mode)
+}
+
 func (s3opt *S3Options) startS3Server() bool {
 
 	filerAddresses := pb.ServerAddresses(*s3opt.filer).ToAddresses()
@@ -320,6 +334,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		BindIp:                    *s3opt.bindIp,
 		GrpcPort:                  *s3opt.portGrpc,
 		ExternalUrl:               s3opt.resolveExternalUrl(),
+		DefaultFileMode:           s3opt.parseDefaultFileMode(),
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
