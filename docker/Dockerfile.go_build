@@ -51,7 +51,7 @@ COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh 
 
 # Install dependencies and create non-root user
 RUN apk upgrade --no-cache zlib && \
-    apk add --no-cache fuse curl su-exec && \
+    apk add --no-cache fuse curl su-exec libgcc && \
     addgroup -g 1000 seaweed && \
     adduser -D -u 1000 -G seaweed seaweed
 
