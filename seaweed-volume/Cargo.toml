@@ -127,6 +127,9 @@ aws-sdk-s3 = { version = "1.125.0", default-features = false, features = ["sigv4
 aws-credential-types = "1"
 aws-types = "1"
 
+# Vendored OpenSSL for cross-compilation (transitive dep from AWS SDK)
+openssl = { version = "0.10", features = ["vendored"] }
+
 [dev-dependencies]
 tempfile = "3"
 
