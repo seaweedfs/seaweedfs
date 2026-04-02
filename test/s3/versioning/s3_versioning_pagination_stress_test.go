@@ -399,8 +399,8 @@ func TestVersioningPaginationDeepDirectoryHierarchy(t *testing.T) {
 			// Allow generous 10x ratio to avoid flakiness; before the fix
 			// the ratio was 100x+ on large datasets
 			if lastQuarter > firstQuarter*10 && lastQuarter > 500*time.Millisecond {
-				t.Logf("WARNING: Last page took %.1fx longer than first page — possible pagination regression",
-					float64(lastQuarter)/float64(firstQuarter))
+				t.Errorf("Last page took %.1fx longer than first page (%v vs %v) — possible pagination regression",
+					float64(lastQuarter)/float64(firstQuarter), lastQuarter, firstQuarter)
 			}
 		}
 	})
@@ -433,20 +433,16 @@ func TestVersioningPaginationDeepDirectoryHierarchy(t *testing.T) {
 			keyMarker = resp.NextKeyMarker
 		}
 
-		assert.Len(t, allPrefixes, numMailboxes,
-			"Should have %d mailbox CommonPrefixes", numMailboxes)
 		assert.Greater(t, pageCount, 1, "Should require multiple pages with maxKeys=%d", maxKeys)
 
-		// Verify prefixes are unique and sorted
-		seen := make(map[string]bool)
-		for i, p := range allPrefixes {
-			assert.False(t, seen[p], "Duplicate prefix: %s", p)
-			seen[p] = true
-			if i > 0 {
-				assert.True(t, allPrefixes[i-1] < allPrefixes[i],
-					"Prefixes should be sorted: %s >= %s", allPrefixes[i-1], allPrefixes[i])
-			}
+		// Build the exact expected prefixes
+		expectedPrefixes := make([]string, 0, numMailboxes)
+		for i := 0; i < numMailboxes; i++ {
+			expectedPrefixes = append(expectedPrefixes,
+				fmt.Sprintf("%s/mbx-%03d/", orgPrefix, i))
 		}
+		assert.Equal(t, expectedPrefixes, allPrefixes,
+			"CommonPrefixes should exactly match expected mailbox prefixes")
 	})
 }
 
