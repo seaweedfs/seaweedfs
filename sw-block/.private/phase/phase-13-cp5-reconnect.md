@@ -52,7 +52,7 @@ SyncCache → groupCommit.Submit → Barrier(lsnMax)
 
 | Test | Was | Now | Why |
 |------|-----|-----|-----|
-| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | FAIL | PASS | Seeded hasFlushedProgress + observable CatchingUp state transition proves handshake path used |
+| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | FAIL | PASS | 3 observable signals: seeded hasFlushedProgress, receivedLSN advance, non-zero replicaFlushedLSN |
 | `TestAdversarial_CatchupMultipleDisconnects` | FAIL | PASS | Repeated SetReplicaAddrs preserves progress seed |
 | `TestAdversarial_CatchupDoesNotOverwriteNewerData` | FAIL | PASS | Catch-up now completes, safety invariant exercised |
 
