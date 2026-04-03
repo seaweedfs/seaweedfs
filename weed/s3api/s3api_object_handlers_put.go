@@ -367,7 +367,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	var checksumHash hash.Hash
 	if checksumAlgo != ChecksumAlgorithmNone {
 		checksumHash = getCheckSumWriter(checksumAlgo)
-		dataReader = io.TeeReader(dataReader, checksumHash)
+		if checksumHash != nil {
+			dataReader = io.TeeReader(dataReader, checksumHash)
+		}
 	}
 
 	// Handle all SSE encryption types in a unified manner
@@ -650,6 +652,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	checksumBase64 := ""
 	if checksumHash != nil && checksumHeaderName != "" {
 		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
+		// Verify against client-provided checksum if present in request headers
+		// (non-chunked uploads send the value directly; chunked uploads validate in the reader)
+		if expectedChecksum := r.Header.Get(checksumHeaderName); expectedChecksum != "" {
+			if expectedChecksum != checksumBase64 {
+				glog.Warningf("putToFiler: checksum mismatch for %s: expected %s, got %s", checksumHeaderName, expectedChecksum, checksumBase64)
+				s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+				return "", s3err.ErrBadDigest, SSEResponseMetadata{}
+			}
+		}
 		entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
 		entry.Extended[s3_constants.ExtChecksumValue] = []byte(checksumBase64)
 		glog.V(3).Infof("putToFiler: stored checksum %s=%s for %s", checksumHeaderName, checksumBase64, filePath)
@@ -839,72 +850,78 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	return etag, s3err.ErrNone, responseMetadata
 }
 
+// checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
+var checksumAlgorithmMapping = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"CRC32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"CRC32C":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"CRC64NVME": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"SHA1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"SHA256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// trailerToChecksumAlgorithm maps trailer header names to their algorithm and canonical header name.
+var trailerToChecksumAlgorithm = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"x-amz-checksum-crc32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"x-amz-checksum-crc32c":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"x-amz-checksum-crc64nvme": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"x-amz-checksum-sha1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"x-amz-checksum-sha256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// checksumHeaders is the ordered list of individual checksum headers to check.
+// Using a slice ensures deterministic selection order.
+var checksumHeaders = []struct {
+	header string
+	alg    ChecksumAlgorithm
+	name   string
+}{
+	{s3_constants.AmzChecksumCRC32, ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	{s3_constants.AmzChecksumCRC32C, ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	{s3_constants.AmzChecksumCRC64NVME, ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	{s3_constants.AmzChecksumSHA1, ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
 // detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
-// It checks the x-amz-sdk-checksum-algorithm header, x-amz-trailer header, and
-// individual x-amz-checksum-* headers. Returns the algorithm enum and the canonical
-// HTTP header name for the checksum (e.g. "X-Amz-Checksum-Sha256").
+// It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
+// x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
+// headers. Returns the algorithm enum and the canonical HTTP header name for the checksum.
 func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string) {
 	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs)
 	if algo := r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
-		switch strings.ToUpper(algo) {
-		case "CRC32":
-			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
-		case "CRC32C":
-			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
-		case "CRC64NVME":
-			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
-		case "SHA1":
-			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
-		case "SHA256":
-			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name
 		}
 	}
 
 	// Check x-amz-checksum-algorithm header
 	if algo := r.Header.Get(s3_constants.AmzChecksumAlgorithm); algo != "" {
-		switch strings.ToUpper(algo) {
-		case "CRC32":
-			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
-		case "CRC32C":
-			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
-		case "CRC64NVME":
-			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
-		case "SHA1":
-			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
-		case "SHA256":
-			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name
 		}
 	}
 
-	// Check x-amz-trailer header (used by chunked uploads)
+	// Check x-amz-trailer header (used by chunked uploads, may be comma-separated)
 	if trailer := r.Header.Get(s3_constants.AmzTrailer); trailer != "" {
-		switch strings.ToLower(trailer) {
-		case "x-amz-checksum-crc32":
-			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
-		case "x-amz-checksum-crc32c":
-			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
-		case "x-amz-checksum-crc64nvme":
-			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
-		case "x-amz-checksum-sha1":
-			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
-		case "x-amz-checksum-sha256":
-			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		for _, part := range strings.Split(trailer, ",") {
+			part = strings.TrimSpace(strings.ToLower(part))
+			if m, ok := trailerToChecksumAlgorithm[part]; ok {
+				return m.alg, m.name
+			}
 		}
 	}
 
 	// Check individual checksum headers (non-chunked uploads send the value directly)
-	for header, algo := range map[string]struct {
-		alg  ChecksumAlgorithm
-		name string
-	}{
-		s3_constants.AmzChecksumCRC32:    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
-		s3_constants.AmzChecksumCRC32C:   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
-		s3_constants.AmzChecksumCRC64NVME: {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
-		s3_constants.AmzChecksumSHA1:     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
-		s3_constants.AmzChecksumSHA256:   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
-	} {
-		if r.Header.Get(header) != "" {
-			return algo.alg, algo.name
+	// Uses ordered slice for deterministic selection
+	for _, entry := range checksumHeaders {
+		if r.Header.Get(entry.header) != "" {
+			return entry.alg, entry.name
 		}
 	}
 
