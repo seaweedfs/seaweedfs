@@ -2,6 +2,7 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TestSSES3EncryptionDecryption tests basic SSE-S3 encryption and decryption
@@ -678,6 +680,125 @@ func TestSSES3InvalidMetadataDeserialization(t *testing.T) {
 				t.Errorf("Unexpected error: %v", err)
 			}
 		})
+	}
+}
+
+// setViperKey is a test helper that sets a config key via its WEED_ env var.
+func setViperKey(t *testing.T, key, value string) {
+	t.Helper()
+	util.GetViper().SetDefault(key, "")
+	t.Setenv("WEED_"+strings.ReplaceAll(strings.ToUpper(key), ".", "_"), value)
+}
+
+// TestSSES3KEKConfig tests that sse_s3.kek (hex format) is used as KEK
+func TestSSES3KEKConfig(t *testing.T) {
+	testKey := make([]byte, 32)
+	for i := range testKey {
+		testKey[i] = byte(i + 50)
+	}
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(testKey))
+
+	km := NewSSES3KeyManager()
+	err := km.InitializeWithFiler(nil)
+	if err != nil {
+		t.Fatalf("InitializeWithFiler failed: %v", err)
+	}
+
+	if !bytes.Equal(km.superKey, testKey) {
+		t.Errorf("superKey mismatch: expected %x, got %x", testKey, km.superKey)
+	}
+
+	// Round-trip DEK encryption
+	dek := make([]byte, 32)
+	for i := range dek {
+		dek[i] = byte(i)
+	}
+	encrypted, nonce, err := km.encryptKeyWithSuperKey(dek)
+	if err != nil {
+		t.Fatalf("encryptKeyWithSuperKey failed: %v", err)
+	}
+	decrypted, err := km.decryptKeyWithSuperKey(encrypted, nonce)
+	if err != nil {
+		t.Fatalf("decryptKeyWithSuperKey failed: %v", err)
+	}
+	if !bytes.Equal(decrypted, dek) {
+		t.Error("round-trip DEK mismatch")
+	}
+}
+
+// TestSSES3KEKConfigInvalidHex tests rejection of bad hex
+func TestSSES3KEKConfigInvalidHex(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, "not-valid-hex")
+
+	km := NewSSES3KeyManager()
+	err := km.InitializeWithFiler(nil)
+	if err == nil {
+		t.Fatal("expected error for invalid hex, got nil")
+	}
+	if !strings.Contains(err.Error(), "hex-encoded") {
+		t.Errorf("expected hex error, got: %v", err)
+	}
+}
+
+// TestSSES3KEKConfigWrongSize tests rejection of wrong-size hex key
+func TestSSES3KEKConfigWrongSize(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(make([]byte, 16)))
+
+	km := NewSSES3KeyManager()
+	err := km.InitializeWithFiler(nil)
+	if err == nil {
+		t.Fatal("expected error for wrong key size, got nil")
+	}
+	if !strings.Contains(err.Error(), "32 bytes") {
+		t.Errorf("expected size error, got: %v", err)
+	}
+}
+
+// TestSSES3KeyConfig tests that sse_s3.key (any string, HKDF) works
+func TestSSES3KeyConfig(t *testing.T) {
+	setViperKey(t, sseS3KeyConfigKey, "my-secret-passphrase")
+
+	km := NewSSES3KeyManager()
+	err := km.InitializeWithFiler(nil)
+	if err != nil {
+		t.Fatalf("InitializeWithFiler failed: %v", err)
+	}
+
+	if len(km.superKey) != SSES3KeySize {
+		t.Fatalf("expected %d-byte superKey, got %d", SSES3KeySize, len(km.superKey))
+	}
+
+	// Deterministic: same input → same output
+	expected, err := deriveKeyFromSecret("my-secret-passphrase")
+	if err != nil {
+		t.Fatalf("deriveKeyFromSecret failed: %v", err)
+	}
+	if !bytes.Equal(km.superKey, expected) {
+		t.Errorf("superKey mismatch: expected %x, got %x", expected, km.superKey)
+	}
+}
+
+// TestSSES3KeyConfigDifferentSecrets tests different strings produce different keys
+func TestSSES3KeyConfigDifferentSecrets(t *testing.T) {
+	k1, _ := deriveKeyFromSecret("secret-one")
+	k2, _ := deriveKeyFromSecret("secret-two")
+	if bytes.Equal(k1, k2) {
+		t.Error("different secrets should produce different keys")
+	}
+}
+
+// TestSSES3BothConfigsReject tests that setting both config keys is rejected
+func TestSSES3BothConfigsReject(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(make([]byte, 32)))
+	setViperKey(t, sseS3KeyConfigKey, "some-passphrase")
+
+	km := NewSSES3KeyManager()
+	err := km.InitializeWithFiler(nil)
+	if err == nil {
+		t.Fatal("expected error when both configs set, got nil")
+	}
+	if !strings.Contains(err.Error(), "only one") {
+		t.Errorf("expected 'only one' error, got: %v", err)
 	}
 }
 
