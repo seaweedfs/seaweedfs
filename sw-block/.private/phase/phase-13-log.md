@@ -128,70 +128,14 @@ Reject if:
 
 ###### Task 1: Baseline Inventory Freeze
 
-Collect the existing test inventory and classify each test. The inventory below is the frozen starting point — `sw` validates it against current code, fixes classification errors, and adds missing entries only.
-
-**Category 1: Address Truth**
-
-| Test | File | Status | Classification |
-|------|------|--------|----------------|
-| `TestCanonicalizeAddr_WildcardIPv4_UsesAdvertised` | `net_util_test.go` | PASS | existing, reusable |
-| `TestCanonicalizeAddr_WildcardIPv6_UsesAdvertised` | `net_util_test.go` | PASS | existing, reusable |
-| `TestCanonicalizeAddr_NilIP_UsesAdvertised` | `net_util_test.go` | PASS | existing, reusable |
-| `TestCanonicalizeAddr_AlreadyCanonical_Unchanged` | `net_util_test.go` | PASS | existing, reusable |
-| `TestCanonicalizeAddr_Loopback_Unchanged` | `net_util_test.go` | PASS | existing, reusable |
-| `TestCanonicalizeAddr_NoAdvertised_FallsBackToOutbound` | `net_util_test.go` | PASS | existing, reusable |
-| `TestBug3_ReplicaAddr_MustBeIPPort_WildcardBind` | `sync_all_bug_test.go` | PASS* | documents gap: ReplicaReceiver may return `:port` not `ip:port` |
-
-**Category 2: Durable Progress Truth**
-
-| Test | File | Status | Classification |
-|------|------|--------|----------------|
-| `TestReplicaProgress_BarrierUsesFlushedLSN` | `sync_all_protocol_test.go` | FAIL expected | gap: barrier doesn't gate on replicaFlushedLSN |
-| `TestReplicaProgress_FlushedLSNMonotonicWithinEpoch` | `sync_all_protocol_test.go` | FAIL expected | gap: replicaFlushedLSN API missing |
-| `TestBarrier_EpochMismatchRejected` | `sync_all_protocol_test.go` | FAIL expected | gap: barrier doesn't check epoch on replica |
-| `TestBarrier_ReplicaSlowFsync_Timeout` | `sync_all_protocol_test.go` | FAIL expected | gap: barrier timeout is hardcoded |
-| `TestBarrier_RejectsReplicaNotInSync` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestBarrierResp_FlushedLSN_Roundtrip` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestBarrierResp_BackwardCompat_1Byte` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestReplica_FlushedLSN_OnlyAfterSync` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestReplica_FlushedLSN_NotOnReceive` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestShipper_ReplicaFlushedLSN_UpdatedOnBarrier` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestShipper_ReplicaFlushedLSN_Monotonic` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestShipperGroup_MinReplicaFlushedLSN` | `sync_all_protocol_test.go` | verify | existing, needs verification |
-| `TestDistSync_SyncAll_NilGroup_Succeeds` | `dist_group_commit_test.go` | PASS | existing, reusable |
-| `TestDistSync_SyncAll_AllDegraded_Fails` | `dist_group_commit_test.go` | PASS | existing, reusable |
-| `TestBug2_SyncAll_SyncCache_AfterDegradedShipperRecovers` | `sync_all_bug_test.go` | FAIL expected | gap: catch-up not implemented, barrier hangs after recovery |
-
-**Category 3: Reconnect / Catch-up**
-
-| Test | File | Status | Classification |
-|------|------|--------|----------------|
-| `TestReconnect_CatchupFromRetainedWal` | `sync_all_protocol_test.go` | FAIL expected | gap: no reconnect handshake or WAL catch-up |
-| `TestReconnect_GapBeyondRetainedWal_NeedsRebuild` | `sync_all_protocol_test.go` | FAIL expected | gap: no retention tracking, no NeedsRebuild transition |
-| `TestReconnect_EpochChangeDuringCatchup_Aborts` | `sync_all_protocol_test.go` | FAIL expected | gap: no CatchingUp state, no epoch-aware abort |
-| `TestReconnect_CatchupTimeout_TransitionsDegraded` | `sync_all_protocol_test.go` | FAIL expected | gap: no catch-up timeout |
-| `TestBarrier_DuringCatchup_Rejected` | `sync_all_protocol_test.go` | FAIL expected | gap: no CatchingUp state |
-| `TestAdversarial_FreshShipperUsesBootstrapNotReconnect` | `sync_all_adversarial_test.go` | verify | existing, needs verification |
-| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | `sync_all_adversarial_test.go` | FAIL expected | gap: handshake protocol missing |
-| `TestAdversarial_ReplicaRejectsDuplicateLSN` | `sync_all_adversarial_test.go` | verify | existing, needs verification |
-| `TestAdversarial_ReplicaRejectsGapLSN` | `sync_all_adversarial_test.go` | verify | existing, needs verification |
-| `TestAdversarial_CatchupMultipleDisconnects` | `sync_all_adversarial_test.go` | FAIL expected | gap: no catch-up protocol |
-| `TestAdversarial_ConcurrentBarrierDoesNotCorruptCatchupFailures` | `sync_all_adversarial_test.go` | verify | existing, needs verification |
-
-**Category 4: Retention / Rebuild Boundary**
-
-| Test | File | Status | Classification |
-|------|------|--------|----------------|
-| `TestWalRetention_RequiredReplicaBlocksReclaim` | `sync_all_protocol_test.go` | FAIL expected | gap: WAL reclaim not replica-aware |
-| `TestWalRetention_TimeoutTriggersNeedsRebuild` | `sync_all_protocol_test.go` | FAIL expected | gap: no retention timeout |
-| `TestWalRetention_MaxBytesTriggersNeedsRebuild` | `sync_all_protocol_test.go` | FAIL expected | gap: no max-bytes retention |
-| `TestAdversarial_NeedsRebuildBlocksAllPaths` | `sync_all_adversarial_test.go` | FAIL expected | gap: NeedsRebuild state incomplete |
-| `TestAdversarial_CatchupDoesNotOverwriteNewerData` | `sync_all_adversarial_test.go` | verify | existing, needs verification |
-| `TestHeartbeat_ReportsPerReplicaState` | `rebuild_v1_test.go` | verify | existing, needs verification |
-| `TestHeartbeat_ReportsNeedsRebuild` | `rebuild_v1_test.go` | verify | existing, needs verification |
-| `TestReplicaState_RebuildComplete_ReentersInSync` | `rebuild_v1_test.go` | verify | existing, needs verification |
-| `TestRebuild_AbortOnEpochChange` | `rebuild_v1_test.go` | verify | existing, needs verification |
-| `TestRebuild_PostRebuild_FlushedLSN_IsCheckpoint` | `rebuild_v1_test.go` | verify | existing, needs verification |
+> **Note:** This section was the initial expected inventory written before the baseline run.
+> It has been **superseded** by the actual frozen baseline in `phase-13-cp1-baseline.md`.
+> See that file for the real PASS / FAIL / PASS* results from running on current code.
+>
+> Key corrections from the actual run:
+> - Many tests labeled `FAIL expected` here actually **PASS** on current code (CP13-3/4/5/6 behavior already implemented in earlier phases)
+> - Many tests labeled `verify` turned out to be **PASS** (real proof, not just witness)
+> - Only **4 tests actually FAIL** and **3 are PASS*** — see `phase-13-cp1-baseline.md` for the authoritative list
 
 ###### Task 2: Runnable Baseline Harness
 
