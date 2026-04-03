@@ -201,7 +201,12 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		},
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
-				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout, walRetentionMaxBytes, v.nextLSN.Load()-1)
+				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
+					Timeout:        walRetentionTimeout,
+					MaxBytes:       walRetentionMaxBytes,
+					PrimaryHeadLSN: v.nextLSN.Load() - 1,
+					BlockSize:      v.super.BlockSize,
+				})
 			}
 		},
 	})
@@ -324,7 +329,12 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		},
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
-				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout, walRetentionMaxBytes, v.nextLSN.Load()-1)
+				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
+					Timeout:        walRetentionTimeout,
+					MaxBytes:       walRetentionMaxBytes,
+					PrimaryHeadLSN: v.nextLSN.Load() - 1,
+					BlockSize:      v.super.BlockSize,
+				})
 			}
 		},
 	})

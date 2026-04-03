@@ -175,15 +175,29 @@ func (sg *ShipperGroup) MinRecoverableFlushedLSN() (uint64, bool) {
 	return min, found
 }
 
+// RetentionBudgetParams holds the inputs for retention budget evaluation.
+type RetentionBudgetParams struct {
+	Timeout       time.Duration
+	MaxBytes      uint64
+	PrimaryHeadLSN uint64
+	BlockSize     uint32 // from volume config, for lag byte estimation
+}
+
 // EvaluateRetentionBudgets checks each recoverable replica against timeout
 // and max-bytes budgets. Replicas that exceed either budget are transitioned
 // to NeedsRebuild, releasing their WAL hold. Must be called before
 // MinRecoverableFlushedLSN to ensure stale replicas are escalated first.
 //
 // CP13-6: both timeout and max-bytes budgets have real state effects.
-func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration, maxBytes uint64, primaryHeadLSN uint64) {
+func (sg *ShipperGroup) EvaluateRetentionBudgets(params RetentionBudgetParams) {
 	sg.mu.RLock()
 	defer sg.mu.RUnlock()
+
+	blockSize := uint64(params.BlockSize)
+	if blockSize == 0 {
+		blockSize = 4096 // safe default
+	}
+
 	for _, s := range sg.shippers {
 		if !s.HasFlushedProgress() {
 			continue // bootstrap shippers — not retention candidates
@@ -194,7 +208,7 @@ func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration, maxBytes
 
 		// Timeout budget: replica hasn't been heard from in too long.
 		ct := s.LastContactTime()
-		if !ct.IsZero() && time.Since(ct) > timeout {
+		if !ct.IsZero() && time.Since(ct) > params.Timeout {
 			s.state.Store(uint32(ReplicaNeedsRebuild))
 			log.Printf("shipper_group: retention timeout for %s (last contact %v ago), transitioning to NeedsRebuild",
 				s.dataAddr, time.Since(ct).Round(time.Second))
@@ -202,20 +216,15 @@ func (sg *ShipperGroup) EvaluateRetentionBudgets(timeout time.Duration, maxBytes
 		}
 
 		// Max-bytes budget: replica lag exceeds configured maximum.
-		// Lag is measured as (primaryHeadLSN - replicaFlushedLSN) entries.
-		// Each entry is roughly one block write, so lag * blockSize ≈ byte lag.
-		// We use entry count directly since WAL entry sizes vary.
-		if maxBytes > 0 && primaryHeadLSN > 0 {
+		if params.MaxBytes > 0 && params.PrimaryHeadLSN > 0 {
 			replicaLSN := s.ReplicaFlushedLSN()
-			if primaryHeadLSN > replicaLSN {
-				lag := primaryHeadLSN - replicaLSN
-				// Conservative: treat each LSN as one 4KB entry for byte estimation.
-				// This is a rough upper bound — actual WAL entries include headers.
-				lagBytes := lag * 4096
-				if lagBytes > maxBytes {
+			if params.PrimaryHeadLSN > replicaLSN {
+				lag := params.PrimaryHeadLSN - replicaLSN
+				lagBytes := lag * blockSize
+				if lagBytes > params.MaxBytes {
 					s.state.Store(uint32(ReplicaNeedsRebuild))
 					log.Printf("shipper_group: retention max-bytes exceeded for %s (lag=%d entries, ~%dKB > %dKB), transitioning to NeedsRebuild",
-						s.dataAddr, lag, lagBytes/1024, maxBytes/1024)
+						s.dataAddr, lag, lagBytes/1024, params.MaxBytes/1024)
 				}
 			}
 		}

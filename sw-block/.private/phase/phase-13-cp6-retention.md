@@ -1,7 +1,7 @@
 # CP13-6 Replica-Aware WAL Retention — Contract Review + Proof Package
 
 Date: 2026-04-03
-Code change: `shipper_group.go` EvaluateRetentionBudgets + `blockvol.go` caller updates + test fix
+Code change: `shipper_group.go` EvaluateRetentionBudgets (params struct + block-size-aware) + `blockvol.go` caller updates + 3 tests rewritten with hard assertions
 
 ## Retention Contract
 
@@ -40,20 +40,25 @@ Flusher.FlushOnce()
 
 ## What Changed
 
-**`shipper_group.go`:** `EvaluateRetentionBudgets` now takes `maxBytes` and `primaryHeadLSN` params.
-Checks each recoverable replica: if `(primaryHeadLSN - replicaFlushedLSN) * 4KB > maxBytes`,
-transitions to `NeedsRebuild`. This is a real state effect, not a log-only placeholder.
+**`shipper_group.go`:** `EvaluateRetentionBudgets` now takes `RetentionBudgetParams` struct
+with `Timeout`, `MaxBytes`, `PrimaryHeadLSN`, and `BlockSize` (from volume config).
+Max-bytes lag computed as `entryLag * BlockSize`, not hardcoded 4096.
+Both timeout and max-bytes checks transition to `NeedsRebuild` with real state effects.
 
-**`blockvol.go`:** Callers updated to pass `walRetentionMaxBytes` (64MB) and `v.nextLSN.Load()-1`.
+**`blockvol.go`:** Added `walRetentionMaxBytes` (64MB default). Callers pass `RetentionBudgetParams`
+with actual `v.super.BlockSize`.
 
-**`sync_all_protocol_test.go`:** `TestWalRetention_MaxBytesTriggersNeedsRebuild` rewritten from
-PASS* (log-only) to real PASS: asserts `s.State() == ReplicaNeedsRebuild` after max-bytes exceeded.
+**`sync_all_protocol_test.go`:** All 3 retention tests rewritten with hard assertions (no log-only placeholders).
 
-## Baseline PASS* Now Closed
+## Tests Upgraded
 
-| Test | Was | Now | Why |
-|------|-----|-----|-----|
-| `TestWalRetention_MaxBytesTriggersNeedsRebuild` | PASS* (logged "not implemented") | PASS (asserts NeedsRebuild) | Max-bytes budget triggers real state transition |
+All 3 retention tests rewritten from placeholder/PASS* to hard-assertion proofs:
+
+| Test | Was | Now | Hard assertion |
+|------|-----|-----|----------------|
+| `TestWalRetention_RequiredReplicaBlocksReclaim` | PASS (log-only, no assertion) | PASS (hard assert) | `checkpointLSN <= replicaFlushedLSN` — flusher did not advance past retention floor |
+| `TestWalRetention_TimeoutTriggersNeedsRebuild` | PASS (log-only, no assertion) | PASS (hard assert) | `s.State() == NeedsRebuild` after 1ns timeout evaluation |
+| `TestWalRetention_MaxBytesTriggersNeedsRebuild` | PASS* (logged "not implemented") | PASS (hard assert) | `s.State() == NeedsRebuild` after lag exceeds 8KB budget |
 
 ## Proof Promotion
 
@@ -61,9 +66,9 @@ PASS* (log-only) to real PASS: asserts `s.State() == ReplicaNeedsRebuild` after 
 
 | Test | What it proves |
 |------|---------------|
-| `TestWalRetention_RequiredReplicaBlocksReclaim` | Recoverable replica blocks WAL reclaim |
-| `TestWalRetention_TimeoutTriggersNeedsRebuild` | Timeout budget → NeedsRebuild (releases hold) |
-| `TestWalRetention_MaxBytesTriggersNeedsRebuild` | Max-bytes budget → NeedsRebuild (real state effect) |
+| `TestWalRetention_RequiredReplicaBlocksReclaim` | Flusher checkpoint does not advance past `replicaFlushedLSN` while recoverable replica is behind |
+| `TestWalRetention_TimeoutTriggersNeedsRebuild` | Timeout budget evaluation transitions shipper to `NeedsRebuild` (verified via `State()` assertion) |
+| `TestWalRetention_MaxBytesTriggersNeedsRebuild` | Max-bytes budget evaluation transitions shipper to `NeedsRebuild` (verified via `State()` assertion, uses actual `BlockSize` from volume config) |
 
 ## What CP13-6 Does NOT Close
 

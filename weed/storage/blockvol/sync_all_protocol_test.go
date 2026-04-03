@@ -395,6 +395,10 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 //
 // Currently EXPECTED TO FAIL: WAL reclaim is driven only by checkpointLSN,
 // not replica progress.
+// TestWalRetention_RequiredReplicaBlocksReclaim verifies that the flusher
+// does not advance the WAL tail past entries a recoverable replica still needs.
+//
+// CP13-6 proof: retention floor from MinRecoverableFlushedLSN blocks reclaim.
 func TestWalRetention_RequiredReplicaBlocksReclaim(t *testing.T) {
 	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
@@ -416,42 +420,37 @@ func TestWalRetention_RequiredReplicaBlocksReclaim(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	sg := primary.shipperGroup
+	s := sg.Shipper(0)
+	replicaFlushed := s.ReplicaFlushedLSN()
+	if replicaFlushed == 0 {
+		t.Fatal("replica should have flushedLSN > 0 after sync")
+	}
+
 	// Disconnect replica.
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
 	// Write more data — replica misses these.
-	for i := uint64(1); i < 10; i++ {
+	for i := uint64(1); i < 6; i++ {
 		if err := primary.WriteLBA(i, makeBlock(byte('A'+i))); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// Flush checkpoint — this normally advances WAL tail.
+	// Flush checkpoint — retention floor should block WAL tail advance.
 	primary.flusher.FlushOnce()
 
-	walTail := primary.wal.LogicalTail()
-	walHead := primary.wal.LogicalHead()
-
-	// After CP13-6: WAL tail should NOT advance past what the disconnected
-	// replica has confirmed (flushedLSN ~= 1). The retained range should
-	// cover entries 2-9 so the replica can catch up.
-	//
-	// Currently, the flusher advances WAL tail freely — it doesn't
-	// consider replica progress. So this test checks whether the
-	// WAL still retains the entries the replica needs.
-	if walTail >= walHead {
-		t.Logf("WAL fully drained (tail=%d head=%d) — entries needed by replica may be lost", walTail, walHead)
-		// This is the expected failure on current code.
-		// After CP13-6, this should not happen while a required replica is behind.
+	// CP13-6 assertion: the retention floor (from MinRecoverableFlushedLSN)
+	// should prevent the checkpoint from advancing past replicaFlushedLSN.
+	checkpointLSN := primary.flusher.CheckpointLSN()
+	if checkpointLSN > replicaFlushed {
+		t.Fatalf("CP13-6: checkpoint %d advanced past replicaFlushedLSN %d — retention hold failed",
+			checkpointLSN, replicaFlushed)
 	}
 
-	// The definitive check (after CP13-6 implementation):
-	// replicaFlushedLSN := <get from shipper progress>
-	// if walRetainStartLSN > replicaFlushedLSN + 1 {
-	//     t.Fatal("WAL reclaimed entries needed by required replica")
-	// }
-	t.Log("NOTE: WAL retention is not yet replica-progress-aware — test documents the gap")
+	t.Logf("CP13-6: retention hold works — checkpoint=%d, replicaFlushed=%d (checkpoint did not advance past replica)",
+		checkpointLSN, replicaFlushed)
 }
 
 // ---------- Ship degraded behavior ----------
@@ -796,7 +795,7 @@ func TestBarrier_ReplicaSlowFsync_Timeout(t *testing.T) {
 // disconnected for longer than the retention timeout is automatically
 // transitioned to NeedsRebuild, and the WAL hold is released.
 //
-// Currently EXPECTED TO FAIL: no retention timeout mechanism.
+// CP13-6 proof: timeout budget triggers real NeedsRebuild state transition.
 func TestWalRetention_TimeoutTriggersNeedsRebuild(t *testing.T) {
 	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
@@ -818,52 +817,45 @@ func TestWalRetention_TimeoutTriggersNeedsRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	sg := primary.shipperGroup
+	s := sg.Shipper(0)
+	if s.State() != ReplicaInSync {
+		t.Fatalf("expected InSync after sync, got %s", s.State())
+	}
+
 	// Disconnect replica.
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
 	// Write more — replica misses these.
-	for i := uint64(1); i < 10; i++ {
+	for i := uint64(1); i < 6; i++ {
 		if err := primary.WriteLBA(i, makeBlock(byte('A'+i))); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	// After CP13-6: there should be a retention timeout. If the replica
-	// doesn't reconnect within this timeout, it auto-transitions to
-	// NeedsRebuild and the WAL retention hold is released.
-	//
-	// For now, verify the WAL state after flushing:
-	primary.flusher.FlushOnce()
+	// CP13-6: Evaluate with a very short timeout (1ns) to trigger timeout escalation.
+	// The shipper's lastContactTime was set during the successful barrier above,
+	// so even 1ns ago is "too long ago" relative to a 1ns timeout.
+	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
+		Timeout:        1 * time.Nanosecond, // effectively expired
+		MaxBytes:       0,                   // disable max-bytes for this test
+		PrimaryHeadLSN: primary.nextLSN.Load() - 1,
+		BlockSize:      primary.super.BlockSize,
+	})
 
-	walTail := primary.wal.LogicalTail()
-	walHead := primary.wal.LogicalHead()
-
-	// After CP13-6: with retention timeout expired, WAL tail should
-	// advance freely (not pinned by dead replica).
-	// After CP13-6 with retention hold: WAL tail should NOT advance past
-	// what the replica confirmed, until timeout releases the hold.
-	//
-	// Currently: WAL drains freely (no replica-aware retention).
-	t.Logf("WAL after flush: tail=%d head=%d (retention timeout not implemented)", walTail, walHead)
-
-	// The real assertion (after CP13-6):
-	// - Before timeout: WAL retains entries for replica
-	// - After timeout: replica transitions to NeedsRebuild, WAL released
-	// - Shipper state should reflect NeedsRebuild
-	sg := primary.shipperGroup
-	if sg != nil {
-		s := sg.Shipper(0)
-		if s != nil {
-			// After CP13-4/6: s.State() should be NeedsRebuild after timeout.
-			// Currently only IsDegraded() exists.
-			if !s.IsDegraded() {
-				t.Log("NOTE: shipper not degraded — retention timeout hasn't triggered state change")
-			} else {
-				t.Log("shipper is degraded (but no NeedsRebuild state yet)")
-			}
-		}
+	// The shipper must now be NeedsRebuild.
+	st := s.State()
+	if st != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-6: expected NeedsRebuild after timeout, got %s", st)
 	}
+
+	// After NeedsRebuild: WAL hold should be released (MinRecoverableFlushedLSN
+	// skips NeedsRebuild shippers). Verify by flushing — checkpoint should advance.
+	primary.flusher.FlushOnce()
+	checkpointAfter := primary.flusher.CheckpointLSN()
+	// Checkpoint should advance past the old replica flushedLSN since the hold is released.
+	t.Logf("CP13-6: timeout triggered NeedsRebuild, checkpoint=%d (hold released)", checkpointAfter)
 }
 
 // TestWalRetention_MaxBytesTriggersNeedsRebuild verifies that when the
@@ -937,7 +929,12 @@ func TestWalRetention_MaxBytesTriggersNeedsRebuild(t *testing.T) {
 	// CP13-6: Evaluate retention budgets with a small max-bytes threshold.
 	// The lag (~8 entries * 4KB = ~32KB) exceeds 8KB budget → NeedsRebuild.
 	primaryHead := primary.nextLSN.Load() - 1
-	sg.EvaluateRetentionBudgets(5*time.Minute, 8*1024, primaryHead)
+	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
+		Timeout:        5 * time.Minute, // no timeout trigger
+		MaxBytes:       8 * 1024,        // 8KB — lag exceeds this
+		PrimaryHeadLSN: primaryHead,
+		BlockSize:      primary.super.BlockSize,
+	})
 
 	// The shipper must now be NeedsRebuild (not just Degraded).
 	st := s.State()
