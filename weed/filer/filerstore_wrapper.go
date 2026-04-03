@@ -127,19 +127,24 @@ func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefi
 	return fsw.getDefaultStore().Initialize(configuration, prefix)
 }
 
-// checkContextCancelled returns the context error if the context is already
-// cancelled or expired. This is checked before calling context.WithoutCancel
-// on write paths to prevent orphaned metadata when the originating request
-// (e.g. S3 CopyObject, CompleteMultipartUpload) has already been abandoned.
-func checkContextCancelled(ctx context.Context) error {
-	return ctx.Err()
+// withoutCancelIfAlive detaches ctx from its parent's cancellation signal so
+// that filer-store operations can finish even after the originating HTTP request
+// is done.  It returns an error if the context is *already* cancelled or expired
+// at the time of the call — this prevents writing orphaned metadata for
+// requests that have already been abandoned (e.g. S3 CopyObject,
+// CompleteMultipartUpload).
+func withoutCancelIfAlive(ctx context.Context) (context.Context, error) {
+	if err := ctx.Err(); err != nil {
+		return ctx, err
+	}
+	return context.WithoutCancel(ctx), nil
 }
 
 func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) error {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err := withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
 	start := time.Now()
@@ -166,10 +171,10 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 // InsertEntryKnownAbsent skips the pre-insert FindEntry path when the caller has
 // already established that the target path does not exist.
 func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry *Entry) error {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err := withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
 	start := time.Now()
@@ -192,10 +197,10 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 }
 
 func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) error {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err := withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "update").Inc()
 	start := time.Now()
@@ -253,10 +258,10 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 }
 
 func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err = withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(fp)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
 	start := time.Now()
@@ -284,10 +289,10 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err = withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(existingEntry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
 	start := time.Now()
@@ -311,10 +316,10 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err = withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(fp + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Inc()
 	start := time.Now()
@@ -420,18 +425,18 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err := withoutCancelIfAlive(ctx)
+	if err != nil {
 		return nil, err
 	}
-	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().BeginTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err := withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().CommitTransaction(ctx)
 }
 
@@ -445,10 +450,10 @@ func (fsw *FilerStoreWrapper) Shutdown() {
 }
 
 func (fsw *FilerStoreWrapper) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err = withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().KvPut(ctx, key, value)
 }
 func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []byte, err error) {
@@ -456,10 +461,10 @@ func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []by
 	return fsw.getDefaultStore().KvGet(ctx, key)
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
-	if err := checkContextCancelled(ctx); err != nil {
+	ctx, err = withoutCancelIfAlive(ctx)
+	if err != nil {
 		return err
 	}
-	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().KvDelete(ctx, key)
 }
 
