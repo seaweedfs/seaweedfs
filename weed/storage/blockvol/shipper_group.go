@@ -72,6 +72,19 @@ func (sg *ShipperGroup) AllDegraded() bool {
 	return true
 }
 
+// AnyHasFlushedProgress returns true if any shipper has ever had durable
+// progress (CP13-5: used to seed replacement shippers on SetReplicaAddrs).
+func (sg *ShipperGroup) AnyHasFlushedProgress() bool {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		if s.HasFlushedProgress() {
+			return true
+		}
+	}
+	return false
+}
+
 // AnyDegraded returns true if at least one shipper is degraded.
 func (sg *ShipperGroup) AnyDegraded() bool {
 	sg.mu.RLock()

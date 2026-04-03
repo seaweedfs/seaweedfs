@@ -848,13 +848,31 @@ func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
 
 // SetReplicaAddrs configures N replica endpoints and creates a ShipperGroup
 // with distributed group commit. Creates fresh shippers (old group is GC'd).
+//
+// CP13-5: If the old shipper group had durable progress (any shipper was
+// previously InSync), new shippers are seeded with hasFlushedProgress=true
+// so they use the reconnect handshake + catch-up path instead of bare
+// bootstrap. This is correct because the primary's WAL may contain entries
+// the replica hasn't received yet (written during disconnect), and the
+// handshake determines the exact gap to replay.
 func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
+	// CP13-5: Check if old group had durable progress before replacing.
+	hadPriorProgress := false
+	if v.shipperGroup != nil {
+		hadPriorProgress = v.shipperGroup.AnyHasFlushedProgress()
+	}
+
 	wa := &walAccess{vol: v}
 	shippers := make([]*WALShipper, len(addrs))
 	for i, a := range addrs {
 		shippers[i] = NewWALShipper(a.DataAddr, a.CtrlAddr, func() uint64 {
 			return v.epoch.Load()
 		}, wa, v.Metrics)
+		// CP13-5: Seed new shippers with prior progress so reconnect
+		// path is used instead of bootstrap.
+		if hadPriorProgress {
+			shippers[i].hasFlushedProgress.Store(true)
+		}
 	}
 	v.shipperGroup = NewShipperGroup(shippers)
 
