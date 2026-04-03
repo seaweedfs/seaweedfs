@@ -1304,6 +1304,13 @@ func (v *BlockVol) ReplicaReceiverAddr() *ReplicaReceiverAddrInfo {
 // advertisedHost:port instead of relying on outbound-IP fallback. On multi-NIC
 // hosts, always provide advertisedHost to ensure cross-machine reachability.
 func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string, advertisedHost ...string) error {
+	// Idempotency: skip if receiver is already running on this volume.
+	// Assignments are re-delivered on every heartbeat cycle; the receiver
+	// only needs to start once. Without this guard, the second Listen()
+	// fails with "bind: address already in use" and the volume stays degraded.
+	if v.replRecv != nil {
+		return nil
+	}
 	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr, advertisedHost...)
 	if err != nil {
 		return err
