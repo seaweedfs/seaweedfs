@@ -463,6 +463,42 @@ func TestBlockAssign_NilSource(t *testing.T) {
 	}
 }
 
+// TestBlockAssign_CollectorUsesAuthoritativeLifecycle verifies the heartbeat
+// collector now drives the full BlockService assignment path, not the store-only
+// role path. A replica assignment must start the receiver and close publish
+// readiness.
+func TestBlockAssign_CollectorUsesAuthoritativeLifecycle(t *testing.T) {
+	bs := newTestBlockService(t)
+	path := testBlockVolPath(t, bs)
+
+	collector := NewBlockVolumeHeartbeatCollector(bs, 5*time.Millisecond)
+	collector.SetAssignmentSource(func() []blockvol.BlockVolumeAssignment {
+		return []blockvol.BlockVolumeAssignment{{
+			Path:            path,
+			Epoch:           1,
+			Role:            uint32(blockvol.RoleReplica),
+			ReplicaDataAddr: ":0",
+			ReplicaCtrlAddr: ":0",
+		}}
+	})
+	go collector.Run()
+	defer collector.Stop()
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		dataAddr, ctrlAddr := bs.GetReplState(path)
+		readiness := bs.ReadinessSnapshot(path)
+		if dataAddr != "" && ctrlAddr != "" && readiness.ReceiverReady && readiness.PublishHealthy {
+			return
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("collector did not start replica receiver: data=%q ctrl=%q readiness=%+v", dataAddr, ctrlAddr, readiness)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
 // TestBlockAssign_MixedBatch verifies a batch with 1 success, 1 unknown volume,
 // and 1 invalid transition returns parallel errors correctly.
 func TestBlockAssign_MixedBatch(t *testing.T) {

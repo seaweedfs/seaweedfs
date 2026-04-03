@@ -394,6 +394,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 		ReplicaDataAddr:  e.ReplicaDataAddr,
 		ReplicaCtrlAddr:  e.ReplicaCtrlAddr,
 		ReplicaFactor:    rf,
+		ReplicaReady:     e.ReplicaReady,
 		HealthScore:      e.HealthScore,
 		ReplicaDegraded:  e.ReplicaDegraded,
 		DurabilityMode:   durMode,
@@ -407,6 +408,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 			Server:      ri.Server,
 			ISCSIAddr:   ri.ISCSIAddr,
 			IQN:         ri.IQN,
+			Ready:       ri.Ready,
 			HealthScore: ri.HealthScore,
 			WALLag:      ri.WALLag,
 		})

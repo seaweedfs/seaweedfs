@@ -118,10 +118,14 @@ func (bs *BlockVolumeStore) WithVolume(path string, fn func(*blockvol.BlockVol) 
 	return fn(vol)
 }
 
-// ProcessBlockVolumeAssignments applies a batch of assignments from master.
-// Returns a slice of errors parallel to the input (nil = success).
-// Unknown volumes and invalid transitions are logged and returned as errors,
-// but do not stop processing of remaining assignments.
+// ProcessBlockVolumeAssignments applies only the local role/epoch/lease part of
+// a batch of assignments. It does NOT wire replica receivers, shippers, or
+// publication readiness. The authoritative runtime lifecycle lives in
+// BlockService.ApplyAssignments.
+//
+// Returns a slice of errors parallel to the input (nil = success). Unknown
+// volumes and invalid transitions are logged and returned as errors, but do not
+// stop processing of remaining assignments.
 func (bs *BlockVolumeStore) ProcessBlockVolumeAssignments(
 	assignments []blockvol.BlockVolumeAssignment,
 ) []error {

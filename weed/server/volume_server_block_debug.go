@@ -17,13 +17,19 @@ type ShipperDebugInfo struct {
 
 // BlockVolumeDebugInfo is the real-time block volume state.
 type BlockVolumeDebugInfo struct {
-	Path      string             `json:"path"`
-	Role      string             `json:"role"`
-	Epoch     uint64             `json:"epoch"`
-	HeadLSN   uint64             `json:"head_lsn"`
-	Degraded  bool               `json:"degraded"`
-	Shippers  []ShipperDebugInfo `json:"shippers,omitempty"`
-	Timestamp string             `json:"timestamp"`
+	Path              string             `json:"path"`
+	Role              string             `json:"role"`
+	Epoch             uint64             `json:"epoch"`
+	HeadLSN           uint64             `json:"head_lsn"`
+	Degraded          bool               `json:"degraded"`
+	RoleApplied       bool               `json:"role_applied"`
+	ReceiverReady     bool               `json:"receiver_ready"`
+	ShipperConfigured bool               `json:"shipper_configured"`
+	ShipperConnected  bool               `json:"shipper_connected"`
+	ReplicaEligible   bool               `json:"replica_eligible"`
+	PublishHealthy    bool               `json:"publish_healthy"`
+	Shippers          []ShipperDebugInfo `json:"shippers,omitempty"`
+	Timestamp         string             `json:"timestamp"`
 }
 
 // debugBlockShipperHandler returns real-time shipper state for all block volumes.
@@ -48,13 +54,20 @@ func (vs *VolumeServer) debugBlockShipperHandler(w http.ResponseWriter, r *http.
 	var infos []BlockVolumeDebugInfo
 	store.IterateBlockVolumes(func(path string, vol *blockvol.BlockVol) {
 		status := vol.Status()
+		readiness := vs.blockService.ReadinessSnapshot(path)
 		info := BlockVolumeDebugInfo{
-			Path:      path,
-			Role:      status.Role.String(),
-			Epoch:     status.Epoch,
-			HeadLSN:   status.WALHeadLSN,
-			Degraded:  status.ReplicaDegraded,
-			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			Path:              path,
+			Role:              status.Role.String(),
+			Epoch:             status.Epoch,
+			HeadLSN:           status.WALHeadLSN,
+			Degraded:          status.ReplicaDegraded,
+			RoleApplied:       readiness.RoleApplied,
+			ReceiverReady:     readiness.ReceiverReady,
+			ShipperConfigured: readiness.ShipperConfigured,
+			ShipperConnected:  readiness.ShipperConnected,
+			ReplicaEligible:   readiness.ReplicaEligible,
+			PublishHealthy:    readiness.PublishHealthy,
+			Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
 		}
 
 		// Get per-shipper state from ShipperGroup if available.

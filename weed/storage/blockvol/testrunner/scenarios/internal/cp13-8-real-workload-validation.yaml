@@ -1,240 +1,368 @@
 name: cp13-8-real-workload-validation
-timeout: 20m
+timeout: 15m
 
 # CP13-8: Bounded real-workload validation for RF=2 sync_all.
 #
-# Workload envelope:
-#   Topology:  RF=2 sync_all, cross-machine replication (m01 ↔ M02)
-#   Transport: iSCSI (primary frontend)
+# Envelope:
+#   Topology:  RF=2 sync_all, cross-machine (m01 ↔ M02)
+#   Transport: iSCSI
 #   Workloads: ext4 (filesystem) + PostgreSQL pgbench (application)
-#   Disturbance: one bounded failover (kill primary, promote replica)
-#   Exclusions: NVMe-TCP, RF>2, hours/days soak, degraded-mode perf
+#   Disturbance: one bounded failover (kill primary, auto-promote replica)
+#   Exclusions: NVMe-TCP, RF>2, soak, degraded-mode, mode normalization
 #
-# What this validates:
-#   The accepted CP13-1..7 replication contract survives contact with
-#   real filesystem and database consumers. Specifically:
-#   - Replicated writes are durable on both nodes (ext4 file integrity)
-#   - Post-failover data is consistent (fsck + file count)
-#   - Database transactions are durable under sync_all (pgbench TPC-B)
-#
-# What this does NOT validate:
-#   - Production rollout readiness
-#   - Performance floor (see Phase 12 P4)
-#   - Degraded mode behavior
-#   - NVMe-TCP transport path
-#   - Mode normalization (CP13-9)
+# Flow:
+#   1. Create RF=2 sync_all — NO promote (use initial primary as-is)
+#   2. Wait for replication healthy (shipper connected, not degraded)
+#   3. Write ext4 + 200 files on primary
+#   4. Kill primary → auto-failover promotes replica
+#   5. Verify ext4 on promoted replica (fsck + files + checksums)
+#   6. pgbench on promoted replica
 
 env:
-  repo_dir: "C:/work/seaweedfs"
+  master_url: "http://10.0.0.3:9433"
+  volume_name: cp13-8-val
+  # 512MB: enough for ext4 + pgbench, small enough for mkfs + sync_all.
+  vol_size: "536870912"
 
 topology:
   nodes:
-    target_node:
-      host: "192.168.1.184"
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
       user: testdev
-      key: "C:/work/dev_server/testdev_key"
-    client_node:
-      host: "192.168.1.181"
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
       user: testdev
-      key: "C:/work/dev_server/testdev_key"
-
-targets:
-  primary:
-    node: target_node
-    vol_size: 100M
-    iscsi_port: 3280
-    admin_port: 8095
-    replica_data_port: 9040
-    replica_ctrl_port: 9041
-    rebuild_port: 9042
-    iqn_suffix: cp13-8-primary
-  replica:
-    node: client_node
-    vol_size: 100M
-    iscsi_port: 3281
-    admin_port: 8096
-    replica_data_port: 9043
-    replica_ctrl_port: 9044
-    rebuild_port: 9045
-    iqn_suffix: cp13-8-replica
+      key: "/opt/work/testdev_key"
 
 phases:
-  # --- Phase 1: Setup RF=2 sync_all pair ---
   - name: setup
     actions:
-      - action: kill_stale
-        node: target_node
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-cp138-master /tmp/sw-cp138-vs1; mkdir -p /tmp/sw-cp138-master /tmp/sw-cp138-vs1/blocks"
+        root: "true"
         ignore_error: true
-      - action: kill_stale
-        node: client_node
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-cp138-vs2; mkdir -p /tmp/sw-cp138-vs2/blocks"
+        root: "true"
         ignore_error: true
-      - action: iscsi_cleanup
-        node: client_node
-        ignore_error: true
-      - action: build_deploy
-      - action: start_target
-        target: primary
-        create: "true"
-        durability_mode: sync_all
-      - action: start_target
-        target: replica
-        create: "true"
-        durability_mode: sync_all
-      - action: assign
-        target: replica
-        epoch: "1"
-        role: replica
-        lease_ttl: 60s
-      - action: assign
-        target: primary
-        epoch: "1"
-        role: primary
-        lease_ttl: 60s
-      - action: set_replica
-        target: primary
-        replica: replica
-      - action: sleep
-        duration: 2s
 
-  # --- Phase 2: ext4 filesystem workload ---
-  - name: ext4-write
-    actions:
-      - action: iscsi_login
-        target: primary
-        node: client_node
-        save_as: device
-      - action: mkfs
-        node: client_node
-        device: "{{ device }}"
-        fstype: ext4
-      - action: mount
-        node: client_node
-        device: "{{ device }}"
-        mountpoint: /mnt/cp13-8
-      # Write 200 files with known content.
-      - action: exec
-        node: client_node
-        root: "true"
-        cmd: "bash -c 'for i in $(seq 1 200); do dd if=/dev/urandom of=/mnt/cp13-8/file_$i bs=4k count=1 2>/dev/null; done && sync'"
-      # Compute checksums for later verification.
-      - action: exec
-        node: client_node
-        root: "true"
-        cmd: "md5sum /mnt/cp13-8/file_* | sort > /tmp/cp13-8-checksums.txt && cat /tmp/cp13-8-checksums.txt | wc -l"
-        save_as: checksum_count
-      - action: assert_equal
-        actual: "{{ checksum_count }}"
-        expected: "200"
-      - action: umount
-        node: client_node
-        mountpoint: /mnt/cp13-8
-      - action: iscsi_cleanup
-        node: client_node
-        ignore_error: true
-      # Wait for replication to catch up.
-      - action: wait_lsn
-        target: replica
-        min_lsn: "1"
-        timeout: 30s
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-cp138-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
       - action: sleep
         duration: 3s
 
-  # --- Phase 3: Failover (kill primary, promote replica) ---
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-cp138-vs1
+        extra_args: "-block.dir=/tmp/sw-cp138-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-cp138-vs2
+        extra_args: "-block.dir=/tmp/sw-cp138-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+      # Wait for assignment delivery (heartbeat cycle).
+      - action: sleep
+        duration: 15s
+
+      # Bootstrap write: triggers shipper connect + first barrier.
+      # Without this, the shipper stays degraded because barrier-triggered
+      # recovery needs a write to fire the barrier.
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: boot_vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ boot_vol_iscsi_host }}"
+        port: "{{ boot_vol_iscsi_port }}"
+        iqn: "{{ boot_vol_iqn }}"
+        save_as: boot_device
+        ignore_error: true
+
+      - action: exec
+        node: m01
+        root: "true"
+        cmd: "dd if=/dev/urandom of={{ boot_device }} bs=4k count=1 seek=100000 oflag=direct,sync 2>/dev/null; true"
+        ignore_error: true
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: sleep
+        duration: 5s
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: pri
+
+      - action: print
+        msg: "CP13-8 setup: primary={{ pri }} ({{ pri_server }}), replica={{ pri_replica_node }}"
+
+  # --- Phase 2: ext4 filesystem workload on initial primary ---
+  - name: ext4-write
+    actions:
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      - action: exec
+        node: m01
+        cmd: "mkfs.ext4 -F {{ device }} 2>&1 | tail -2"
+        root: "true"
+
+      - action: exec
+        node: m01
+        cmd: "mkdir -p /mnt/cp13-8 && mount {{ device }} /mnt/cp13-8"
+        root: "true"
+
+      - action: exec
+        node: m01
+        root: "true"
+        cmd: "for i in $(seq 1 200); do dd if=/dev/urandom of=/mnt/cp13-8/file_$i bs=4k count=1 2>/dev/null; done && sync && echo WRITE_DONE"
+        save_as: write_result
+
+      - action: assert_contains
+        value: "{{ write_result }}"
+        contains: "WRITE_DONE"
+
+      - action: exec
+        node: m01
+        root: "true"
+        cmd: "md5sum /mnt/cp13-8/file_* | sort > /tmp/cp13-8-pre.md5 && wc -l < /tmp/cp13-8-pre.md5"
+        save_as: pre_checksum_count
+
+      - action: assert_equal
+        actual: "{{ pre_checksum_count }}"
+        expected: "200"
+
+      - action: exec
+        node: m01
+        cmd: "umount /mnt/cp13-8"
+        root: "true"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+      - action: print
+        msg: "ext4-write: 200 files written, checksums captured"
+
+      # Verify replication is healthy after all writes.
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 30s
+
+  # --- Phase 3: Failover ---
+  # Kill ONLY the primary's VS, keep the replica alive for auto-promote.
+  # Master allocates primary to m01 first (by server registration order).
+  # Kill m01 VS (primary), m02 VS (replica) stays alive for promotion.
   - name: failover
     actions:
-      - action: kill_target
-        target: primary
-      - action: assign
-        target: replica
-        epoch: "2"
-        role: primary
-        lease_ttl: 60s
-      - action: wait_role
-        target: replica
-        role: primary
-        timeout: 10s
+      - action: print
+        msg: "=== Killing primary VS on m01 ==="
+
+      - action: exec
+        node: m01
+        cmd: "kill -9 {{ vs2_pid }}"
+        root: "true"
+        ignore_error: true
+
+      # Wait for lease expiry (30s TTL) + auto-failover.
+      - action: sleep
+        duration: 50s
+
+      # Wait for primary to change from m01 to m02.
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "{{ pri_server }}"
+        timeout: 60s
+        save_as: new_pri
+
+      - action: print
+        msg: "Failover: {{ pri_server }} → {{ new_pri }}"
+
+      - action: sleep
+        duration: 5s
 
   # --- Phase 4: ext4 verification on promoted replica ---
   - name: ext4-verify
     actions:
-      - action: iscsi_login
-        target: replica
-        node: client_node
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: new
+
+      - action: print
+        msg: "Verifying ext4 on promoted node {{ new }} ({{ new_server }})"
+
+      # Connect to the new primary's iSCSI.
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ new_host }}"
+        port: "3295"
+        iqn: "{{ vol_iqn }}"
         save_as: device2
-      # fsck: filesystem integrity.
+
       - action: fsck_ext4
-        node: client_node
+        node: m01
         device: "{{ device2 }}"
         save_as: fsck_result
-      # Mount and verify file count.
-      - action: mount
-        node: client_node
-        device: "{{ device2 }}"
-        mountpoint: /mnt/cp13-8
+
+      - action: print
+        msg: "fsck: {{ fsck_result }}"
+
       - action: exec
-        node: client_node
+        node: m01
+        cmd: "mkdir -p /mnt/cp13-8 && mount {{ device2 }} /mnt/cp13-8"
+        root: "true"
+
+      - action: exec
+        node: m01
         root: "true"
         cmd: "ls /mnt/cp13-8/file_* | wc -l"
-        save_as: post_failover_count
+        save_as: post_count
+
       - action: assert_equal
-        actual: "{{ post_failover_count }}"
+        actual: "{{ post_count }}"
         expected: "200"
-      # Verify checksums match pre-failover.
+
       - action: exec
-        node: client_node
+        node: m01
         root: "true"
-        cmd: "md5sum /mnt/cp13-8/file_* | sort > /tmp/cp13-8-checksums-post.txt && diff /tmp/cp13-8-checksums.txt /tmp/cp13-8-checksums-post.txt && echo MATCH"
-        save_as: checksum_match
+        cmd: "md5sum /mnt/cp13-8/file_* | sort > /tmp/cp13-8-post.md5 && diff /tmp/cp13-8-pre.md5 /tmp/cp13-8-post.md5 && echo CHECKSUM_MATCH"
+        save_as: checksum_diff
+
       - action: assert_contains
-        value: "{{ checksum_match }}"
-        contains: "MATCH"
-      - action: umount
-        node: client_node
-        mountpoint: /mnt/cp13-8
+        value: "{{ checksum_diff }}"
+        contains: "CHECKSUM_MATCH"
+
+      - action: exec
+        node: m01
+        cmd: "umount /mnt/cp13-8"
+        root: "true"
+
       - action: iscsi_cleanup
-        node: client_node
+        node: m01
         ignore_error: true
 
-  # --- Phase 5: pgbench on promoted replica (application workload) ---
-  - name: pgbench-on-replica
+      - action: print
+        msg: "ext4-verify: fsck CLEAN, 200 files, checksums MATCH"
+
+  # --- Phase 5: pgbench on promoted replica ---
+  - name: pgbench
     actions:
-      - action: iscsi_login
-        target: replica
-        node: client_node
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ new_host }}"
+        port: "3295"
+        iqn: "{{ vol_iqn }}"
         save_as: device3
+
+      - action: sleep
+        duration: 3s
+
       - action: pgbench_init
-        node: client_node
+        node: m01
         device: "{{ device3 }}"
         mount: "/mnt/cp13-8-pg"
-        port: "5440"
+        port: "5441"
         scale: "1"
         fstype: ext4
+
       - action: pgbench_run
-        node: client_node
+        node: m01
         clients: "1"
         duration: "10"
-        save_as: tps_post_failover
+        save_as: tps
+
       - action: print
-        msg: "CP13-8: pgbench TPC-B post-failover: {{ tps_post_failover }} TPS"
+        msg: "CP13-8 pgbench TPS: {{ tps }}"
+
       - action: assert_greater
-        value: "{{ tps_post_failover }}"
+        actual: "{{ tps }}"
         threshold: "0"
-      # pgbench succeeded with TPS > 0 = database transactions are durable on the promoted replica.
+
       - action: pgbench_cleanup
-        node: client_node
-        mount: "/mnt/cp13-8-pg"
-        port: "5440"
+        node: m01
         ignore_error: true
+
       - action: iscsi_cleanup
-        node: client_node
+        node: m01
         ignore_error: true
 
   # --- Phase 6: Cleanup ---
   - name: cleanup
     always: true
     actions:
-      - action: iscsi_cleanup
-        node: client_node
+      - action: exec
+        node: m01
+        cmd: "umount /mnt/cp13-8 /mnt/cp13-8-pg 2>/dev/null; true"
+        root: "true"
         ignore_error: true
-      - action: stop_all_targets
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_new_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_new_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
         ignore_error: true

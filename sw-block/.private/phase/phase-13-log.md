@@ -1284,3 +1284,360 @@ Review checklist:
 3. is rebuild handoff bounded and epoch-safe?
 4. is post-rebuild progress initialized from checkpoint truth?
 5. is the checkpoint still bounded to rebuild fallback?
+
+---
+
+### `CP13-8` Technical Pack
+
+Date: 2026-04-03
+Goal: validate the accepted `RF=2 sync_all` replication contract on one bounded set of real workloads so the engineering proof is demonstrated on named real block-device consumers rather than only protocol-level tests
+
+#### Layer 1: Semantic Core
+
+##### Problem statement
+
+`CP13-1..7` have progressively closed replication correctness: address truth, durable progress, state eligibility, reconnect/catch-up, retention, and rebuild fallback.
+What remains is not more replication semantics. It is proving that the accepted contract survives contact with bounded real workloads.
+
+`CP13-8` therefore accepts only one bounded thing:
+
+1. one bounded real-workload validation package for the accepted `RF=2 sync_all` path
+
+It does not accept:
+
+1. broad launch approval
+2. broad benchmark positioning
+3. mode normalization or general product-policy closure
+
+##### State / contract
+
+`CP13-8` must make these truths explicit:
+
+1. the workload envelope is named and bounded:
+   - topology
+   - transport/frontend
+   - filesystem/application consumer
+   - disturbance shapes included
+   - exclusions
+2. the accepted `CP13-1..7` replication contract is the thing being validated, not redefined
+3. real-workload evidence must be replayable and attributable
+4. passing one named workload package does not imply generic production readiness outside the stated envelope
+
+##### Reject shapes
+
+Reject before implementation or review if the checkpoint:
+
+1. presents ad hoc manual runs without a named envelope
+2. treats synthetic benchmarks as substitutes for real workload validation
+3. mixes workload validation with mode normalization or rollout-approval claims
+4. reopens already-accepted replication semantics instead of validating them
+
+#### Layer 2: Execution Core
+
+##### Current gap `CP13-8` must close
+
+1. accepted replication semantics are still primarily validated by protocol/unit/adversarial evidence
+2. one bounded real workload package is still needed to show the contract survives real filesystem/application behavior
+3. the project still needs a replayable workload-evidence object before talking about final mode normalization or broader launch shaping
+
+##### Suggested file targets
+
+1. `weed/storage/blockvol/testrunner/*`
+2. bounded component/real-device validation under `weed/storage/blockvol/test/`
+3. workload docs or result artifacts under `sw-block/.private/phase/`
+4. `weed/server/*` or `blockvol` only if a real workload exposes a concrete bug
+
+##### Validation focus
+
+Required proofs:
+
+1. filesystem proof
+   - one named real filesystem workload completes correctly on the accepted path
+2. application proof
+   - one named database/application workload completes correctly on the accepted path
+3. disturbance proof
+   - only if explicitly included in the envelope, one bounded disturbance case remains correct
+4. envelope proof
+   - topology/frontend/workload/exclusions are explicit and replayable
+5. boundedness proof
+   - checkpoint remains about workload validation, not `CP13-9+`
+
+Reject if:
+
+1. a claimed proof is only a harness smoke test without real workload semantics
+2. failures cannot be attributed because the environment is underspecified
+3. delivery wording implies broad launch readiness from one bounded package
+
+##### Suggested first cut
+
+1. freeze one explicit workload matrix first, before chasing more scenarios
+2. use one filesystem workload and one application/database workload
+3. keep disturbances narrow and named if included at all
+4. produce one result artifact that ties outcomes back to accepted `CP13-1..7` semantics
+
+##### Assignment For `sw`
+
+1. Goal
+   - deliver bounded real-workload validation on the accepted `RF=2 sync_all` path
+2. Required outputs
+   - one explicit workload-envelope summary
+   - one focused code/harness package only where needed to make the bounded workloads replayable
+   - one delivery note explaining:
+     - files updated in place
+     - workload matrix
+     - proof shape
+     - what later checkpoints remain untouched
+3. Hard rules
+   - do not broaden into generic benchmark marketing
+   - do not claim launch approval from one workload package
+   - do not reopen accepted `CP13-1..7` semantics unless the workload exposes a concrete bug
+
+##### Assignment For `tester`
+
+1. Goal
+   - validate that `CP13-8` closes bounded real-workload validation and nothing broader
+2. Validate
+   - a named filesystem workload completes correctly
+   - a named application/database workload completes correctly
+   - the environment and exclusions are explicit
+   - evidence is replayable and attributable
+   - no-overclaim around `CP13-9+`
+3. Reject if
+   - workload evidence is underspecified or non-replayable
+   - the validation object quietly broadens into mode/rollout policy
+   - failures are explained away without a bounded root cause
+
+#### Short judgment
+
+`CP13-8` is acceptable when:
+
+1. one bounded real-workload matrix is explicit
+2. the accepted replication contract is demonstrated on named real consumers
+3. the resulting evidence is replayable and bounded
+4. the checkpoint stays clearly separate from `CP13-9+`
+
+---
+
+### `CP13-8` Delivery Pack
+
+Bounded contract:
+
+1. `CP13-8` accepts real-workload validation only
+2. it does not accept mode normalization, rollout approval, or broad performance positioning
+
+What `sw` should deliver:
+
+1. one focused contract review of the workload envelope and its relation to accepted `CP13-1..7` semantics
+2. one bounded harness/evidence package only where needed to run the chosen workloads replayably
+3. one delivery note with:
+   - changed files
+   - workload matrix
+   - proof shape
+   - no-overclaim statement
+
+Recommended delivery shape:
+
+1. contract:
+   - define the named workload envelope and exclusions
+2. code/tests/harness:
+   - keep updates local to real-workload validation surfaces
+   - make workload pass/fail conditions directly observable
+3. note:
+   - distinguish primary proof from support evidence
+   - explain why `CP13-9+` remains untouched
+
+Review checklist:
+
+1. is the workload envelope explicit and bounded?
+2. are the workloads real consumers, not just synthetic microbenchmarks?
+3. is evidence replayable and attributable?
+4. does the package validate accepted semantics rather than redefining them?
+5. is the checkpoint still bounded to real-workload validation?
+
+---
+
+### `CP13-8A` Technical Pack
+
+Date: 2026-04-03
+Goal: close the assignment-to-publication contradiction exposed by `CP13-8` so the accepted `RF=2 sync_all` path no longer publishes replica readiness from allocation or assignment presence alone
+
+#### Layer 1: Semantic Core
+
+##### Problem statement
+
+`CP13-8` exposed a live contradiction:
+
+1. control truth says the replica exists and has assignment/addresses
+2. runtime truth may still be between:
+   - role applied
+   - receiver startup
+   - shipper attachment
+   - publish-ready closure
+3. external surfaces can therefore overstate readiness before the replica is actually safe to publish as a real block-device peer
+
+`CP13-8A` therefore accepts only one bounded thing:
+
+1. one bounded assignment-to-publication closure slice for the accepted `RF=2 sync_all` path
+
+It does not accept:
+
+1. broad mode normalization
+2. launch approval
+3. backend replacement by implication
+4. timing-based “wait longer” fixes that leave readiness semantics implicit
+
+##### State / contract
+
+`CP13-8A` must make these truths explicit:
+
+1. assignment delivered is not the same as receiver ready
+2. receiver ready is not the same as publish healthy
+3. lookup / heartbeat / tester health must consume the same bounded readiness truth
+4. the closure remains inside the current chosen path:
+   - `RF=2`
+   - `sync_all`
+   - current master / volume-server heartbeat path
+   - `blockvol` backend
+
+##### Reject shapes
+
+Reject before implementation or review if the slice:
+
+1. leaves two semantic assignment paths alive (`store`-only vs service/runtime path)
+2. treats allocation completion or precomputed ports as equivalent to publication readiness
+3. relies on sleeps, retries, or ad hoc timing instead of explicit readiness state
+4. broadens into `CP13-9` mode policy or generic backend redesign
+
+#### Layer 2: Execution Core
+
+##### Current gap `CP13-8A` must close
+
+1. assignment application and replication/publication setup are still too easy to split semantically
+2. readiness truth is not yet a fully explicit first-class product surface across heartbeat / lookup / tester
+3. real-workload reruns cannot cleanly distinguish:
+   - backend data-visibility bug
+   - adapter timing/publication bug
+   - true core-rule gap
+
+##### Suggested file targets
+
+1. `weed/server/volume_server_block.go`
+2. `weed/server/block_heartbeat_loop.go`
+3. `weed/server/master_block_registry.go`
+4. `weed/server/master_grpc_server_block.go`
+5. `weed/server/master_server_handlers_block.go`
+6. `weed/storage/blockvol/testrunner/actions/devops.go`
+7. bounded tests under `weed/server/*`
+
+##### Validation focus
+
+Required proofs:
+
+1. lifecycle proof
+   - assignment processing uses one authoritative path from role apply through runtime wiring
+2. readiness proof
+   - replica-ready is explicit and not inferred from existence/allocation alone
+3. publication proof
+   - lookup / heartbeat / tester surfaces do not publish the replica before readiness closure
+4. rerun proof
+   - a bounded `CP13-8` rerun moves the remaining contradiction into an attributable bug class rather than mixed-state ambiguity
+5. boundedness proof
+   - the slice remains about closure, not `CP13-9`
+
+Reject if:
+
+1. a claimed proof still depends on manual interpretation of timing
+2. different surfaces use different meanings of “healthy” or “ready”
+3. the rerun still fails but the failure cannot be classified beyond “timing”
+
+##### Suggested first cut
+
+1. make `BlockService` the single assignment/readiness owner on the VS side
+2. define one explicit readiness surface and project it into lookup/REST/tester gates
+3. rerun the bounded `CP13-8` workload package only after closure lands
+4. classify any remaining failure as:
+   - backend data bug
+   - adapter/publication bug
+   - core-rule gap
+
+##### Assignment For `sw`
+
+1. Goal
+   - deliver bounded assignment-to-publication closure on the accepted `RF=2 sync_all` path
+2. Required outputs
+   - one focused code package closing the assignment/readiness/publication split
+   - one delivery note explaining:
+     - files updated in place
+     - named readiness states
+     - proof shape
+     - `CP13-8` rerun outcome or remaining attributable contradiction
+     - what later checkpoints remain untouched
+3. Hard rules
+   - do not use timing sleeps as semantic fixes
+   - do not broaden into `CP13-9` mode normalization
+   - do not replace `blockvol` backend in this slice
+   - do not reopen accepted `CP13-1..7` semantics unless a live contradiction is found
+
+##### Assignment For `tester`
+
+1. Goal
+   - validate that `CP13-8A` closes assignment-to-publication truth and nothing broader
+2. Validate
+   - one authoritative assignment path exists
+   - readiness is explicit and externally consistent
+   - lookup / heartbeat / tester health no longer overpublish readiness
+   - the bounded `CP13-8` rerun is attributable
+   - no-overclaim around `CP13-9`
+3. Reject if
+   - old mixed-state behavior still leaks through one surface
+   - the slice depends on timing luck
+   - the rerun still fails but the team cannot say whether it is backend, adapter, or core
+
+#### Short judgment
+
+`CP13-8A` is acceptable when:
+
+1. assignment-to-publication closure is explicit on the chosen path
+2. readiness is no longer inferred from allocation or assignment presence
+3. all product/tester surfaces consume the same bounded readiness truth
+4. the rerun result is attributable and the slice stays separate from `CP13-9`
+
+---
+
+### `CP13-8A` Delivery Pack
+
+Bounded contract:
+
+1. `CP13-8A` accepts assignment-to-publication closure only
+2. it does not accept mode normalization, broad launch approval, or backend replacement
+
+What `sw` should deliver:
+
+1. one focused closure package across VS assignment, heartbeat, lookup, and tester health surfaces
+2. one bounded rerun or equivalent evidence showing whether the remaining contradiction is backend, adapter, or core
+3. one delivery note with:
+   - changed files
+   - named readiness states
+   - proof shape
+   - rerun outcome / remaining attributable contradiction
+   - no-overclaim statement
+
+Recommended delivery shape:
+
+1. contract:
+   - define explicit readiness/publication truth for the chosen path
+2. code/tests:
+   - unify assignment lifecycle
+   - gate publication on readiness closure
+   - prove lookup / heartbeat / tester consistency
+3. note:
+   - distinguish closure proof from any later pure-core redesign
+   - explain why `CP13-9` remains untouched
+
+Review checklist:
+
+1. is assignment processing semantically unified?
+2. is readiness explicit rather than inferred?
+3. do lookup / heartbeat / tester surfaces agree on publication truth?
+4. does the bounded rerun become attributable?
+5. is the slice still bounded to closure rather than mode policy or backend replacement?

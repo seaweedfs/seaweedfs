@@ -24,6 +24,23 @@ type volReplState struct {
 	replicaCtrlAddr string
 	// allReplicas stores the full replica set for multi-replica idempotence.
 	allReplicas []blockvol.ReplicaAddr
+	roleApplied      bool
+	receiverReady    bool
+	shipperConfigured bool
+	replicaEligible  bool
+	publishHealthy   bool
+}
+
+// BlockReadinessSnapshot names the assignment-to-publication closure at the
+// BlockService boundary. These flags are owned by the service/adapter layer,
+// not by blockvol's local storage mechanics.
+type BlockReadinessSnapshot struct {
+	RoleApplied       bool
+	ReceiverReady     bool
+	ShipperConfigured bool
+	ShipperConnected  bool
+	ReplicaEligible   bool
+	PublishHealthy    bool
 }
 
 // NVMeConfig holds NVMe/TCP target configuration passed from CLI flags.
@@ -373,6 +390,15 @@ func (bs *BlockService) DeleteBlockVol(name string) error {
 // ProcessAssignments applies assignments from master, including replication setup.
 // V2 bridge: also delivers each assignment to the V2 engine for recovery ownership.
 func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAssignment) {
+	_ = bs.ApplyAssignments(assignments)
+}
+
+// ApplyAssignments applies assignments through the single authoritative
+// BlockService lifecycle: role apply, replication wiring, and publication
+// readiness bookkeeping. Returns per-assignment errors parallel to the input.
+func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssignment) []error {
+	errs := make([]error, len(assignments))
+
 	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
 	// P3: skip V2 processing for repeated unchanged assignments.
 	// P4: RecoveryManager starts/cancels recovery goroutines based on results.
@@ -400,9 +426,9 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 
 	// V1 processing (requires blockStore).
 	if bs.blockStore == nil {
-		return
+		return errs
 	}
-	for _, a := range assignments {
+	for i, a := range assignments {
 		role := blockvol.RoleFromWire(a.Role)
 		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
 
@@ -410,22 +436,30 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 		if err := bs.blockStore.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
 			return vol.HandleAssignment(a.Epoch, role, ttl)
 		}); err != nil {
+			errs[i] = err
 			glog.Warningf("block service: assignment %s epoch=%d role=%s: %v", a.Path, a.Epoch, role, err)
 			continue
 		}
+		bs.noteRoleApplied(a.Path, role)
 
 		// 2. Replication setup based on role + addresses.
 		switch role {
 		case blockvol.RolePrimary:
 			// CP8-2: ReplicaAddrs (multi-replica) takes precedence over scalar fields.
 			if len(a.ReplicaAddrs) > 0 {
-				bs.setupPrimaryReplicationMulti(a.Path, a.ReplicaAddrs)
+				if err := bs.setupPrimaryReplicationMulti(a.Path, a.ReplicaAddrs); err != nil {
+					errs[i] = err
+				}
 			} else if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
-				bs.setupPrimaryReplication(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr)
+				if err := bs.setupPrimaryReplication(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr); err != nil {
+					errs[i] = err
+				}
 			}
 		case blockvol.RoleReplica:
 			if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
-				bs.setupReplicaReceiver(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr)
+				if err := bs.setupReplicaReceiver(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr); err != nil {
+					errs[i] = err
+				}
 			}
 		case blockvol.RoleRebuilding:
 			if a.RebuildAddr != "" {
@@ -433,18 +467,23 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 			}
 		}
 	}
+	return errs
 }
 
 // setupPrimaryReplication configures WAL shipping from primary to replica
 // and starts the rebuild server (R1-2).
-func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCtrlAddr string) {
+func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCtrlAddr string) error {
 	// P3 idempotence: skip if replica state is unchanged.
 	bs.replMu.RLock()
 	existing := bs.replStates[path]
 	bs.replMu.RUnlock()
 	if existing != nil && existing.replicaDataAddr == replicaDataAddr && existing.replicaCtrlAddr == replicaCtrlAddr {
 		// Unchanged repeated assignment — idempotent, no side effects.
-		return
+		bs.markPrimaryTransportConfigured(path, []blockvol.ReplicaAddr{{
+			DataAddr: replicaDataAddr,
+			CtrlAddr: replicaCtrlAddr,
+		}})
+		return nil
 	}
 
 	// Compute deterministic rebuild listen address.
@@ -465,27 +504,19 @@ func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCt
 		return nil
 	}); err != nil {
 		glog.Warningf("block service: setup primary replication %s: %v", path, err)
-		return
+		return err
 	}
-	// Track replication state for heartbeat reporting (R1-4).
-	// These addresses are what the primary ships to — they come from the
-	// master's assignment. They should already be canonical (from
-	// AllocateBlockVolumeResponse), but if not, they'll be reported as-is.
-	bs.replMu.Lock()
-	if bs.replStates == nil {
-		bs.replStates = make(map[string]*volReplState)
-	}
-	bs.replStates[path] = &volReplState{
-		replicaDataAddr: replicaDataAddr,
-		replicaCtrlAddr: replicaCtrlAddr,
-	}
-	bs.replMu.Unlock()
+	bs.markPrimaryTransportConfigured(path, []blockvol.ReplicaAddr{{
+		DataAddr: replicaDataAddr,
+		CtrlAddr: replicaCtrlAddr,
+	}})
 	glog.V(0).Infof("block service: primary %s shipping WAL to %s/%s (rebuild=%s)", path, replicaDataAddr, replicaCtrlAddr, rebuildAddr)
+	return nil
 }
 
 // setupPrimaryReplicationMulti configures WAL shipping from primary to N replicas
 // using SetReplicaAddrs (CP8-2: multi-replica support).
-func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockvol.ReplicaAddr) {
+func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockvol.ReplicaAddr) error {
 	// P3 idempotence: skip if ALL replica addresses unchanged.
 	// Compare full replica set, not just the first entry.
 	if len(addrs) > 0 {
@@ -493,7 +524,8 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 		existing := bs.replStates[path]
 		bs.replMu.RUnlock()
 		if existing != nil && bs.multiReplicaUnchanged(path, addrs) {
-			return
+			bs.markPrimaryTransportConfigured(path, addrs)
+			return nil
 		}
 	}
 
@@ -513,30 +545,15 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 		return nil
 	}); err != nil {
 		glog.Warningf("block service: setup primary replication (multi) %s: %v", path, err)
-		return
+		return err
 	}
-	// Track replication state for heartbeat reporting.
-	bs.replMu.Lock()
-	if bs.replStates == nil {
-		bs.replStates = make(map[string]*volReplState)
-	}
-	// Store full replica set + first replica for backward compat heartbeat.
-	if len(addrs) > 0 {
-		// Copy the addrs slice to avoid aliasing.
-		copied := make([]blockvol.ReplicaAddr, len(addrs))
-		copy(copied, addrs)
-		bs.replStates[path] = &volReplState{
-			replicaDataAddr: addrs[0].DataAddr,
-			replicaCtrlAddr: addrs[0].CtrlAddr,
-			allReplicas:     copied,
-		}
-	}
-	bs.replMu.Unlock()
+	bs.markPrimaryTransportConfigured(path, addrs)
 	glog.V(0).Infof("block service: primary %s shipping WAL to %d replicas (rebuild=%s)", path, len(addrs), rebuildAddr)
+	return nil
 }
 
 // setupReplicaReceiver starts the replica WAL receiver.
-func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
+func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) error {
 	// CP13-2: Pass the routable advertisedIP (from -ip flag, NOT from -id/serverID)
 	// so wildcard-bind listeners resolve to a real IP, not an opaque identity string.
 	var canonDataAddr, canonCtrlAddr string
@@ -559,7 +576,7 @@ func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
 		return nil
 	}); err != nil {
 		glog.Warningf("block service: setup replica receiver %s: %v", path, err)
-		return
+		return err
 	}
 	// Fallback to assignment addresses if receiver didn't report.
 	if canonDataAddr == "" {
@@ -568,16 +585,9 @@ func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
 	if canonCtrlAddr == "" {
 		canonCtrlAddr = ctrlAddr
 	}
-	bs.replMu.Lock()
-	if bs.replStates == nil {
-		bs.replStates = make(map[string]*volReplState)
-	}
-	bs.replStates[path] = &volReplState{
-		replicaDataAddr: canonDataAddr,
-		replicaCtrlAddr: canonCtrlAddr,
-	}
-	bs.replMu.Unlock()
+	bs.markReceiverReady(path, canonDataAddr, canonCtrlAddr)
 	glog.V(0).Infof("block service: replica %s receiving on %s/%s", path, canonDataAddr, canonCtrlAddr)
+	return nil
 }
 
 // startRebuild starts a rebuild in the background.
@@ -722,8 +732,10 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 	defer bs.replMu.RUnlock()
 	for i := range msgs {
 		if s, ok := bs.replStates[msgs[i].Path]; ok {
-			msgs[i].ReplicaDataAddr = s.replicaDataAddr
-			msgs[i].ReplicaCtrlAddr = s.replicaCtrlAddr
+			if s.publishHealthy {
+				msgs[i].ReplicaDataAddr = s.replicaDataAddr
+				msgs[i].ReplicaCtrlAddr = s.replicaCtrlAddr
+			}
 		}
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
 		if bs.nvmeListenAddr != "" {
@@ -756,6 +768,108 @@ func (bs *BlockService) multiReplicaUnchanged(path string, addrs []blockvol.Repl
 		}
 	}
 	return true
+}
+
+func (bs *BlockService) ensureReplStateLocked(path string) *volReplState {
+	if bs.replStates == nil {
+		bs.replStates = make(map[string]*volReplState)
+	}
+	state := bs.replStates[path]
+	if state == nil {
+		state = &volReplState{}
+		bs.replStates[path] = state
+	}
+	return state
+}
+
+func (bs *BlockService) noteRoleApplied(path string, role blockvol.Role) {
+	bs.replMu.Lock()
+	defer bs.replMu.Unlock()
+	state := bs.ensureReplStateLocked(path)
+	state.roleApplied = true
+	switch role {
+	case blockvol.RoleReplica:
+		state.receiverReady = false
+		state.shipperConfigured = false
+		state.replicaEligible = false
+		state.publishHealthy = false
+	case blockvol.RolePrimary:
+		state.receiverReady = false
+		state.shipperConfigured = false
+		state.replicaEligible = false
+		state.publishHealthy = true
+	case blockvol.RoleRebuilding:
+		state.receiverReady = false
+		state.shipperConfigured = false
+		state.replicaEligible = false
+		state.publishHealthy = false
+	default:
+		state.receiverReady = false
+		state.shipperConfigured = false
+		state.replicaEligible = false
+		state.publishHealthy = false
+		state.replicaDataAddr = ""
+		state.replicaCtrlAddr = ""
+		state.allReplicas = nil
+	}
+}
+
+func (bs *BlockService) markPrimaryTransportConfigured(path string, addrs []blockvol.ReplicaAddr) {
+	bs.replMu.Lock()
+	defer bs.replMu.Unlock()
+	state := bs.ensureReplStateLocked(path)
+	state.shipperConfigured = len(addrs) > 0
+	state.publishHealthy = true
+	state.replicaEligible = false
+	state.receiverReady = false
+	if len(addrs) == 0 {
+		state.replicaDataAddr = ""
+		state.replicaCtrlAddr = ""
+		state.allReplicas = nil
+		return
+	}
+	copied := make([]blockvol.ReplicaAddr, len(addrs))
+	copy(copied, addrs)
+	state.allReplicas = copied
+	state.replicaDataAddr = addrs[0].DataAddr
+	state.replicaCtrlAddr = addrs[0].CtrlAddr
+}
+
+func (bs *BlockService) markReceiverReady(path, dataAddr, ctrlAddr string) {
+	bs.replMu.Lock()
+	defer bs.replMu.Unlock()
+	state := bs.ensureReplStateLocked(path)
+	state.receiverReady = true
+	state.replicaEligible = true
+	state.publishHealthy = true
+	state.shipperConfigured = false
+	state.replicaDataAddr = dataAddr
+	state.replicaCtrlAddr = ctrlAddr
+	state.allReplicas = nil
+}
+
+// ReadinessSnapshot reports the service-owned assignment/readiness closure for
+// one volume. It keeps v2 publication truth above blockvol's local mechanics.
+func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
+	snap := BlockReadinessSnapshot{}
+	bs.replMu.RLock()
+	state := bs.replStates[path]
+	if state != nil {
+		snap.RoleApplied = state.roleApplied
+		snap.ReceiverReady = state.receiverReady
+		snap.ShipperConfigured = state.shipperConfigured
+		snap.ReplicaEligible = state.replicaEligible
+		snap.PublishHealthy = state.publishHealthy
+	}
+	bs.replMu.RUnlock()
+	if !snap.ShipperConfigured || bs.blockStore == nil {
+		return snap
+	}
+	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		snap.ShipperConnected = len(vol.ReplicaShipperStates()) > 0 && !vol.Status().ReplicaDegraded
+		return nil
+	})
+	return snap
 }
 
 // --- P3: Assignment idempotence ---

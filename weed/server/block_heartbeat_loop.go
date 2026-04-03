@@ -93,7 +93,7 @@ func (c *BlockVolumeHeartbeatCollector) Run() {
 		select {
 		case <-ticker.C:
 			// Outbound: collect and report status.
-			msgs := c.blockService.Store().CollectBlockVolumeHeartbeat()
+			msgs := c.blockService.CollectBlockVolumeHeartbeat()
 			c.safeCallback(msgs)
 			// Inbound: process any pending assignments.
 			c.processAssignments()
@@ -115,7 +115,7 @@ func (c *BlockVolumeHeartbeatCollector) processAssignments() {
 	if len(assignments) == 0 {
 		return
 	}
-	errs := c.blockService.Store().ProcessBlockVolumeAssignments(assignments)
+	errs := c.blockService.ApplyAssignments(assignments)
 	c.cbMu.Lock()
 	cb := c.assignmentCallback
 	c.cbMu.Unlock()

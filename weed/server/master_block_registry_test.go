@@ -1965,3 +1965,45 @@ func TestRegistry_InflightBlocksAutoRegister(t *testing.T) {
 		t.Fatalf("replica health not updated after inflight released: %f", entry.Replicas[0].HealthScore)
 	}
 }
+
+func TestRegistry_ReplicaReadyRequiresReplicaHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:         "vol-ready",
+		VolumeServer: "primary-server:8080",
+		Path:         "/blocks/vol-ready.blk",
+		Status:       StatusActive,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-ready.blk",
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	entry, _ := r.Lookup("vol-ready")
+	if entry.ReplicaReady {
+		t.Fatal("replica should not be ready before replica heartbeat confirms publication")
+	}
+	if !entry.ReplicaDegraded {
+		t.Fatal("volume should remain degraded until replica readiness closes")
+	}
+
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-ready.blk",
+		Epoch:           1,
+		Role:            uint32(blockvol.RoleReplica),
+		VolumeSize:      1 << 30,
+		HealthScore:     0.9,
+		ReplicaDataAddr: "10.0.0.2:14260",
+		ReplicaCtrlAddr: "10.0.0.2:14261",
+	}}, "")
+
+	entry, _ = r.Lookup("vol-ready")
+	if !entry.Replicas[0].Ready {
+		t.Fatal("replica heartbeat with published receiver addresses should mark replica ready")
+	}
+	if !entry.ReplicaReady {
+		t.Fatal("aggregate replica readiness should become true after replica heartbeat")
+	}
+}

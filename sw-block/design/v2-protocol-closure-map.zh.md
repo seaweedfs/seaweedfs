@@ -21,6 +21,10 @@
 - `V2` 不是一组散乱 patch
 - 而是在明确边界内逐步建立的协议闭环
 
+当前 chosen path 下哪些 claim 可以成立、对应 evidence 在哪里、哪些 evidence
+被收紧或失效，不在本文维护；统一见
+`v2-protocol-claim-and-evidence.md`。
+
 这里的“闭环”是有范围的。
 
 当前默认边界仍然是：

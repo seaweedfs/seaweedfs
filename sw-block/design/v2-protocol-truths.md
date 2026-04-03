@@ -18,6 +18,10 @@ So the most important output to carry forward is not only code, but:
 
 This document is the compact truth table for the V2 line.
 
+Current chosen-envelope claims, accepted baselines, evidence mappings, and
+evidence invalidations are tracked separately in
+`v2-protocol-claim-and-evidence.md`.
+
 ## How To Use It
 
 For each later phase or slice, ask:

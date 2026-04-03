@@ -148,7 +148,8 @@ func TestClusterHealthSummary(t *testing.T) {
 		Path:          "/data/healthy.blk",
 		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
 		ReplicaFactor: 2,
-		Replicas:      []ReplicaInfo{{Server: "vs2:9333", Role: blockvol.RoleToWire(blockvol.RoleReplica)}},
+		ReplicaReady:  true,
+		Replicas:      []ReplicaInfo{{Server: "vs2:9333", Role: blockvol.RoleToWire(blockvol.RoleReplica), Ready: true}},
 		Status:        StatusActive,
 	})
 
@@ -188,7 +189,8 @@ func TestBlockStatusHandler_IncludesHealthCounts(t *testing.T) {
 		Path:          "/data/status.blk",
 		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
 		ReplicaFactor: 2,
-		Replicas:      []ReplicaInfo{{Server: "vs2:9333", Role: blockvol.RoleToWire(blockvol.RoleReplica)}},
+		ReplicaReady:  true,
+		Replicas:      []ReplicaInfo{{Server: "vs2:9333", Role: blockvol.RoleToWire(blockvol.RoleReplica), Ready: true}},
 		Status:        StatusActive,
 	})
 

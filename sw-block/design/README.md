@@ -7,6 +7,7 @@ Historical planning/review documents were moved to `../docs/archive/design/` to 
 ## Read First
 
 - `v2-protocol-truths.md`
+- `v2-protocol-claim-and-evidence.md`
 - `v2-product-completion-overview.md`
 - `v2-phase-development-plan.md`
 - `v2-semantic-methodology.zh.md`
@@ -27,6 +28,7 @@ Historical planning/review documents were moved to `../docs/archive/design/` to 
 - `v2_scenarios.md`
 - `v2-scenario-sources-from-v1.md`
 - `v1-v15-v2-comparison.md`
+- `v2-reuse-replacement-boundary.md`
 - `wal-replication-v2.md`
 - `wal-replication-v2-state-machine.md`
 - `wal-replication-v2-orchestrator.md`

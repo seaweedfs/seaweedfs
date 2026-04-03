@@ -787,6 +787,11 @@ func waitVolumeHealthy(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 				continue
 			}
 
+			if info.ReplicaFactor > 1 && !info.ReplicaReady {
+				actx.Log("  poll %d: replica assigned but not publish-ready yet", poll)
+				continue
+			}
+
 			// Check not degraded.
 			if info.ReplicaDegraded {
 				actx.Log("  poll %d: replica degraded, waiting...", poll)

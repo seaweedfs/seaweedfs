@@ -36,6 +36,7 @@ type VolumeInfo struct {
 	// CP8-2: Multi-replica fields.
 	ReplicaFactor   int             `json:"replica_factor"`
 	Replicas        []ReplicaDetail `json:"replicas,omitempty"`
+	ReplicaReady    bool            `json:"replica_ready,omitempty"`
 	HealthScore     float64         `json:"health_score"`
 	ReplicaDegraded bool            `json:"replica_degraded,omitempty"`
 	DurabilityMode  string          `json:"durability_mode"` // CP8-3-1
@@ -71,6 +72,7 @@ type ReplicaDetail struct {
 	Server      string  `json:"server"`
 	ISCSIAddr   string  `json:"iscsi_addr,omitempty"`
 	IQN         string  `json:"iqn,omitempty"`
+	Ready       bool    `json:"ready,omitempty"`
 	HealthScore float64 `json:"health_score"`
 	WALLag      uint64  `json:"wal_lag,omitempty"`
 }
