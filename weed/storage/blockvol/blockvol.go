@@ -35,8 +35,14 @@ var ErrVolumeClosed = errors.New("blockvol: volume closed")
 // BlockVol is the core block volume engine.
 // walRetentionTimeout is the maximum time a recoverable replica can hold
 // WAL entries. After this, the replica is escalated to NeedsRebuild and
-// its WAL hold is released. CP13-6: timeout-only budget (max-bytes deferred).
+// its WAL hold is released.
 const walRetentionTimeout = 5 * time.Minute
+
+// walRetentionMaxBytes is the maximum WAL bytes a recoverable replica can
+// hold before being escalated to NeedsRebuild. When primaryHeadLSN -
+// replicaFlushedLSN exceeds this (measured in WAL byte lag), the replica's
+// hold is released. CP13-6: bounded max-bytes retention budget.
+const walRetentionMaxBytes uint64 = 64 * 1024 * 1024 // 64MB default
 
 type BlockVol struct {
 	mu             sync.RWMutex
@@ -195,7 +201,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		},
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
-				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout)
+				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout, walRetentionMaxBytes, v.nextLSN.Load()-1)
 			}
 		},
 	})
@@ -318,7 +324,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		},
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
-				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout)
+				v.shipperGroup.EvaluateRetentionBudgets(walRetentionTimeout, walRetentionMaxBytes, v.nextLSN.Load()-1)
 			}
 		},
 	})

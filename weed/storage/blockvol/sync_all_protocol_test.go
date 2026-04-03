@@ -870,7 +870,7 @@ func TestWalRetention_TimeoutTriggersNeedsRebuild(t *testing.T) {
 // replica lag exceeds the configured maximum retention bytes, the replica
 // is transitioned to NeedsRebuild and the WAL hold is released.
 //
-// Currently EXPECTED TO FAIL: no retention max-bytes mechanism.
+// CP13-6: max-bytes budget now has a real state effect.
 func TestWalRetention_MaxBytesTriggersNeedsRebuild(t *testing.T) {
 	dir := t.TempDir()
 	opts := CreateOptions{
@@ -888,7 +888,7 @@ func TestWalRetention_MaxBytesTriggersNeedsRebuild(t *testing.T) {
 	primary.SetRole(RolePrimary)
 	primary.SetEpoch(1)
 	primary.SetMasterEpoch(1)
-	primary.lease.Grant(30 * time.Second)
+	primary.lease.Grant(60 * time.Second) // long lease to avoid expiry during test
 
 	replica, err := CreateBlockVol(filepath.Join(dir, "replica.blk"), opts)
 	if err != nil {
@@ -915,39 +915,44 @@ func TestWalRetention_MaxBytesTriggersNeedsRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	sg := primary.shipperGroup
+	s := sg.Shipper(0)
+	if s.State() != ReplicaInSync {
+		t.Fatalf("expected InSync after initial sync, got %s", s.State())
+	}
+	replicaFlushedBefore := s.ReplicaFlushedLSN()
+
 	// Disconnect replica.
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	// Write enough to far exceed any reasonable retention budget.
-	// 64KB WAL ≈ 15 entries at 4KB each. Write 100 entries to overflow.
-	for i := uint64(0); i < 100; i++ {
-		_ = primary.WriteLBA(i%16, makeBlock(byte('0'+i%10)))
-	}
-
-	// Flush to reclaim WAL space.
-	primary.flusher.FlushOnce()
-	primary.flusher.FlushOnce()
-
-	// After CP13-6: the lag (primaryHeadLSN - replicaFlushedLSN) exceeds
-	// maxRetentionBytes. The shipper should auto-transition to NeedsRebuild.
-	sg := primary.shipperGroup
-	if sg != nil {
-		s := sg.Shipper(0)
-		if s != nil {
-			if s.IsDegraded() {
-				// Good — at least degraded. After CP13-4/6, should be NeedsRebuild.
-				t.Log("shipper is degraded (expected NeedsRebuild after CP13-6)")
-			} else {
-				t.Log("NOTE: shipper not even degraded despite massive lag")
-			}
+	// Write a few entries — enough to create meaningful lag but not overflow the tiny WAL.
+	// 64KB WAL fits ~12 entries. Write 8 to stay within capacity.
+	for i := uint64(0); i < 8; i++ {
+		if err := primary.WriteLBA(i%8, makeBlock(byte('0'+i%10))); err != nil {
+			t.Fatalf("write %d: %v", i, err)
 		}
 	}
 
-	// The real assertion (after CP13-6):
-	// s.State() == ReplicaStateNeedsRebuild
-	// And WAL tail has advanced freely (not pinned).
-	t.Log("NOTE: max-bytes retention trigger not implemented yet — test documents the gap")
+	// CP13-6: Evaluate retention budgets with a small max-bytes threshold.
+	// The lag (~8 entries * 4KB = ~32KB) exceeds 8KB budget → NeedsRebuild.
+	primaryHead := primary.nextLSN.Load() - 1
+	sg.EvaluateRetentionBudgets(5*time.Minute, 8*1024, primaryHead)
+
+	// The shipper must now be NeedsRebuild (not just Degraded).
+	st := s.State()
+	if st != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-6: expected NeedsRebuild after max-bytes exceeded, got %s", st)
+	}
+
+	// The replica's flushedLSN should not have advanced (it was disconnected).
+	if s.ReplicaFlushedLSN() != replicaFlushedBefore {
+		t.Fatalf("replicaFlushedLSN should not change while disconnected: was %d, now %d",
+			replicaFlushedBefore, s.ReplicaFlushedLSN())
+	}
+
+	t.Logf("CP13-6: max-bytes budget triggered NeedsRebuild (lag=%d entries, replicaFlushed=%d, primaryHead=%d)",
+		primaryHead-replicaFlushedBefore, replicaFlushedBefore, primaryHead)
 }
 
 // ---------- Data integrity ----------
@@ -1527,20 +1532,49 @@ func TestBarrier_NonEligibleStates_FailClosed(t *testing.T) {
 		}
 	})
 
-	// Positive case: InSync shipper would proceed to barrier (but dead address = fail at TCP level).
-	// This proves InSync is the only state that enters the barrier request path.
-	t.Run("InSync_proceeds_to_barrier", func(t *testing.T) {
-		shipper.state.Store(uint32(ReplicaInSync))
-		err := shipper.Barrier(1)
-		// Will fail at TCP level (dead address), but the error should NOT be ErrReplicaDegraded
-		// from the state gate — it should be from the TCP path (ensureCtrlConn or write).
-		if err == nil {
-			t.Fatal("Barrier() should fail on dead address, but returned nil")
+	// Positive case: InSync enters the barrier request path.
+	// Use a fake control server to observe MsgBarrierReq receipt — this
+	// distinguishes "passed state gate and attempted barrier" from "rejected early".
+	t.Run("InSync_enters_barrier_path", func(t *testing.T) {
+		// Start a fake control server that records received messages.
+		ctrlLn, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
 		}
-		// The error proves InSync entered the barrier path (not rejected at state gate).
+		defer ctrlLn.Close()
+
+		barrierReceived := make(chan struct{}, 1)
+		go func() {
+			conn, err := ctrlLn.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			msgType, _, err := ReadFrame(conn)
+			if err == nil && msgType == MsgBarrierReq {
+				barrierReceived <- struct{}{}
+			}
+		}()
+
+		// Create a shipper pointing at the fake control server.
+		inSyncShipper := NewWALShipper("127.0.0.1:1", ctrlLn.Addr().String(), func() uint64 { return 1 }, nil)
+		defer inSyncShipper.Stop()
+		inSyncShipper.state.Store(uint32(ReplicaInSync))
+
+		// Barrier will connect, send MsgBarrierReq, then fail (server doesn't respond).
+		// The important thing: MsgBarrierReq was sent.
+		_ = inSyncShipper.Barrier(1)
+
+		select {
+		case <-barrierReceived:
+			t.Log("InSync: MsgBarrierReq received by server — barrier path entered")
+		case <-time.After(3 * time.Second):
+			t.Fatal("InSync should have sent MsgBarrierReq but server received nothing")
+		}
 	})
 
-	t.Log("CP13-4: all non-eligible states fail closed; only InSync proceeds to barrier")
+	t.Log("CP13-4: 5 sub-cases — 3 immediate reject, 1 Disconnected fail, 1 InSync barrier-path verified")
 }
 
 func TestReplica_FlushedLSN_OnlyAfterSync(t *testing.T) {
