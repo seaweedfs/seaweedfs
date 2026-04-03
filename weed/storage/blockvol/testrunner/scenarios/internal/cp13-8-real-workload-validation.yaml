@@ -186,8 +186,8 @@ phases:
         cmd: "md5sum /mnt/cp13-8/file_* | sort > /tmp/cp13-8-checksums-post.txt && diff /tmp/cp13-8-checksums.txt /tmp/cp13-8-checksums-post.txt && echo MATCH"
         save_as: checksum_match
       - action: assert_contains
-        actual: "{{ checksum_match }}"
-        expected: "MATCH"
+        value: "{{ checksum_match }}"
+        contains: "MATCH"
       - action: umount
         node: client_node
         mountpoint: /mnt/cp13-8
@@ -216,7 +216,10 @@ phases:
         save_as: tps_post_failover
       - action: print
         msg: "CP13-8: pgbench TPC-B post-failover: {{ tps_post_failover }} TPS"
-      # pgbench succeeded = database transactions are durable on the promoted replica.
+      - action: assert_greater
+        value: "{{ tps_post_failover }}"
+        threshold: "0"
+      # pgbench succeeded with TPS > 0 = database transactions are durable on the promoted replica.
       - action: pgbench_cleanup
         node: client_node
         mount: "/mnt/cp13-8-pg"
