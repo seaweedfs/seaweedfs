@@ -3,13 +3,13 @@ package dash
 import (
 	"context"
 	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/iam"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
 
@@ -435,10 +435,13 @@ func generateAccessKey() string {
 }
 
 func generateSecretKey() string {
-	// Generate 40-character secret key (AWS standard)
-	b := make([]byte, 30) // 30 bytes = 40 characters in base64
-	rand.Read(b)
-	return base64.StdEncoding.EncodeToString(b)
+	// Use the IAM helper to generate URL-safe secret keys (no +, / characters)
+	// that won't break S3 signature authentication
+	key, err := iam.GenerateSecretAccessKey()
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate secret key: %v", err))
+	}
+	return key
 }
 
 func generateAccountId() string {
