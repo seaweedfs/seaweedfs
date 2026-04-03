@@ -301,6 +301,60 @@ After `Phase 12`:
 3. run a limited internal pilot with incident-driven hardening
 4. perform controlled rollout only after explicit launch-gate review
 
+### Post-`Phase 12`: Productionization Program
+
+Goal:
+
+1. turn the accepted `Phase 12` chosen path into a bounded first-launch product envelope without reopening protocol discovery
+
+Program slices:
+
+1. Program `P0`: launch-envelope freeze
+   - freeze the first supported launch envelope from accepted `P1`-`P4` evidence
+   - lock:
+     - supported topology / transport matrix
+     - explicit exclusions
+     - launch-blocking vs post-launch blockers
+   - reject if any launch claim outruns the measured matrix or accepted blockers/gates
+2. Program `P1`: internal pilot pack
+   - convert the frozen launch envelope into a limited internal pilot package
+   - define:
+     - pilot environment and topology
+     - preflight checklist
+     - success criteria
+     - stop / rollback conditions
+     - incident intake template tied to accepted diagnosability surfaces
+   - reject if pilot success depends on tribal knowledge or undefined operator judgment
+3. Program `P2`: incident-driven hardening loop
+   - route pilot findings into explicit buckets:
+     - config / environment issue
+     - known exclusion
+     - true product bug
+   - keep one bounded incident ledger and one bounded fix queue
+   - reject if incidents accumulate as vague notes or exclusions are silently redefined
+4. Program `P3`: controlled rollout review
+   - decide whether to:
+     - stay in pilot
+     - widen within the same launch envelope
+     - block expansion
+   - require explicit mapping from any expansion decision back to:
+     - accepted `Phase 12` evidence
+     - pilot outcomes
+     - incident dispositions
+   - reject if rollout broadens beyond the named envelope or reuses pilot success as generic production proof
+
+Cross-cutting rules:
+
+1. do not invent a `Phase 12 P5`; this is a separate productionization program
+2. keep the accepted chosen path fixed unless incidents expose a real bug
+3. treat known missing evidence as explicit constraints until cleared, especially:
+   - failover-under-load performance
+   - hours/days soak under load
+   - `RF>2`
+   - broad transport matrix
+   - full gRPC-stream integration evidence
+4. keep V2 post-`Phase 12` direction aligned with the learn-tree close/gate work so the roadmap does not split into contradictory stories
+
 ## Module Status Map
 
 
@@ -347,18 +401,26 @@ If the goal is to maximize product completion efficiently, the recommended order
 2. keep `Phase 10` closed and do not reopen accepted bounded control-plane closure casually
 3. move next to `Phase 11` product surface rebinding
 4. then `Phase 12` production hardening
+5. then the post-`Phase 12` productionization program:
+   - freeze launch envelope
+   - run limited internal pilot
+   - harden from incidents
+   - review controlled rollout
 
-The most important near-term engineering weight should now go to `Phase 12`.
+The most important near-term engineering weight should now go to:
+
+1. finishing `Phase 12`
+2. then the bounded productionization program immediately after it
 
 ## Short Summary
 
 The V2 line now has accepted execution closure on one bounded chosen path.
-The next development plan should treat later work as control/product completion phases, not more protocol discovery.
+The next development plan should treat later work as bounded hardening plus productionization, not more protocol discovery.
 
 The main heavy engineering work still ahead is:
 
 1. stronger end-to-end control-plane closure
 2. later product-surface rebinding
 3. production hardening
-4. bounded cleanup of residual operational rough edges without reopening accepted semantics
+4. post-`Phase 12` launch-envelope freeze, internal pilot, and controlled rollout review
 

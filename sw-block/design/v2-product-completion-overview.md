@@ -228,7 +228,7 @@ Target:
 
 Status:
 
-1. next active stage
+1. accepted and closed on the bounded chosen path
 
 Main work:
 
@@ -236,6 +236,37 @@ Main work:
 2. operational diagnosis quality
 3. performance floor and cost characterization
 4. explicit production blockers / rollout gates
+
+### Stage 6: Post-`Phase 12` Productionization Program
+
+Target:
+
+1. turn the accepted `Phase 12` chosen path into a bounded first-launch product envelope without reopening protocol discovery
+
+Status:
+
+1. next active stage after `Phase 12`
+
+Main work:
+
+1. freeze the first supported launch envelope from accepted `P1`-`P4` evidence
+2. define a limited internal pilot package with explicit preflight, success, and stop conditions
+3. run incident-driven hardening with explicit classification:
+   - config / environment issue
+   - known exclusion
+   - true product bug
+4. perform controlled rollout review only within the named supported envelope
+
+Rules:
+
+1. this is not `Phase 12 P5`
+2. pilot success is not generic production proof
+3. missing evidence remains an explicit launch constraint until cleared, especially:
+   - failover-under-load performance
+   - hours/days soak under load
+   - `RF>2`
+   - broad transport matrix
+   - full gRPC-stream integration evidence
 
 ## Completion Gates
 
@@ -251,31 +282,35 @@ The most important gates from here are:
    - front-end surfaces should only rebind after backend correctness is strong enough
 5. production-hardening gate
    - restart, soak, diagnosis, and repeated disturbance must be acceptable
+6. productionization gate
+   - first launch envelope, pilot discipline, incident routing, and controlled rollout review must be explicit
 
 ## Near-Term Planning Guidance
 
 If the goal is to maximize product completion efficiently:
 
-1. do not make `CSI`, `NVMe`, or broad snapshot productization the immediate next heavy phase
-2. first close production execution gaps in the backend path
-3. then strengthen control-plane closure
-4. then rebind product surfaces
+1. do not reopen accepted execution, control-plane, or product-surface semantics casually
+2. finish `Phase 12` hardening cleanly
+3. then freeze the first supported launch envelope
+4. then run a limited internal pilot
+5. then widen only through explicit incident review and rollout-gate review
 
 In short:
 
-1. backend truth and execution first
-2. product surfaces second
-3. production hardening last
+1. chosen-path closure first
+2. production hardening second
+3. bounded productionization third
 
 ## Short Summary
 
 The V2 line is already beyond "algorithm only".
-It has an accepted bounded chosen path through backend, control-plane, and selected product surfaces.
+It has an accepted bounded chosen path through backend, control-plane, selected product surfaces, and `Phase 12` hardening.
 
 But the remaining work is still substantial, and it is mostly engineering work:
 
-1. production hardening under restart / disturbance
-2. long-run stability and diagnosability
-3. performance floor and rollout gating
+1. freeze the first supported launch envelope from accepted evidence
+2. run a limited internal pilot with explicit stop conditions
+3. harden from incidents without silently broadening scope
+4. perform controlled rollout review inside a bounded launch envelope
 
-That is the practical path from the current candidate-safe engine to a production-ready block product.
+That is the practical path from the current production-safe chosen path to a bounded first-launch block product.

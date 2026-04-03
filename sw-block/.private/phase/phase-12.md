@@ -1,7 +1,7 @@
 # Phase 12
 
 Date: 2026-04-02
-Status: active
+Status: accepted
 Purpose: move the accepted chosen-path implementation from candidate-safe product closure toward production-safe behavior under restart, disturbance, and operational reality
 
 ## Why This Phase Exists
@@ -423,7 +423,7 @@ Reject if:
 
 Status:
 
-- active
+- accepted
 
 Carry-forward from `P3`:
 
@@ -431,23 +431,13 @@ Carry-forward from `P3`:
 2. `P4` now asks whether that accepted path has an explicit measured floor and an explicit first-launch envelope
 3. later work after `Phase 12` should be a productionization program, not another hidden hardening slice
 
-## Assignment For `sw`
+## Phase Close-Out Note
 
-Current next tasks:
+`Phase 12` is now accepted as bounded production hardening on the chosen path:
 
-1. deliver `Phase 12 P4` as bounded performance-floor / rollout-gate hardening
-2. keep the acceptance object fixed on one measured workload envelope plus one explicit launch-envelope / gate artifact
-3. keep earlier accepted `Phase 09` / `Phase 10` / `Phase 11` / `Phase 12 P1` / `Phase 12 P2` / `Phase 12 P3` semantics stable unless `P4` exposes a real bug or measurement-surface gap
-4. do not let `P4` turn into broad optimization, topology expansion, or generic launch marketing
+1. `P1` accepted disturbance correctness
+2. `P2` accepted bounded soak / long-run stability
+3. `P3` accepted diagnosability / blocker accounting / runbook hardening
+4. `P4` accepted bounded performance floor / rollout-gate hardening
 
-## Assignment For `tester`
-
-Current next tasks:
-
-1. validate `P4` as real bounded performance-floor / rollout-gate hardening rather than “benchmark numbers exist” prose
-2. require explicit validation targets for:
-   - one named workload envelope with measured floor values
-   - one explicit launch-envelope / rollout-gate artifact
-   - no-overclaim around broad production readiness beyond the named envelope
-3. keep no-overclaim active around accepted `Phase 09` / `Phase 10` / `Phase 11` / `Phase 12 P1` / `Phase 12 P2` / `Phase 12 P3` closure
-4. keep `P4` bounded rather than letting it absorb post-Phase-12 productionization work
+Next work should open a new phase or program rather than silently continuing inside `Phase 12`.

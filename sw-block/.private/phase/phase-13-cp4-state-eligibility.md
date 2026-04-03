@@ -7,14 +7,14 @@ Code change: one new test (`TestBarrier_NonEligibleStates_FailClosed`)
 
 The replication path uses a bounded 6-state set (`wal_shipper.go:25-30`):
 
-| State | Value | Meaning | Barrier eligible? |
-|-------|-------|---------|-------------------|
-| `Disconnected` | 0 | No session (initial state) | No — attempts bootstrap/reconnect, fails if no progress |
-| `Connecting` | 1 | Socket open, handshake pending | No — immediate `ErrReplicaDegraded` |
-| `CatchingUp` | 2 | Connected, replaying missed WAL | No — immediate `ErrReplicaDegraded` |
-| `InSync` | 3 | Eligible for sync_all barriers | **Yes** — only state that proceeds to barrier request |
-| `Degraded` | 4 | Transient failure, retry allowed | No — attempts reconnect, fails if reconnect fails |
-| `NeedsRebuild` | 5 | WAL gap too large, rebuild required | No — immediate `ErrReplicaDegraded` |
+| State | Value | Meaning | Barrier behavior |
+|-------|-------|---------|-----------------|
+| `Disconnected` | 0 | No session (initial state) | Attempts bootstrap/reconnect inside Barrier(); fails if no progress or reconnect fails |
+| `Connecting` | 1 | Socket open, handshake pending | Immediate `ErrReplicaDegraded` |
+| `CatchingUp` | 2 | Connected, replaying missed WAL | Immediate `ErrReplicaDegraded` |
+| `InSync` | 3 | Eligible for sync_all barriers | **Proceeds to barrier request** — only state that can complete barrier successfully |
+| `Degraded` | 4 | Transient failure, retry allowed | Attempts reconnect inside Barrier(); fails if reconnect fails |
+| `NeedsRebuild` | 5 | WAL gap too large, rebuild required | Immediate `ErrReplicaDegraded` |
 
 ## Barrier State Gate
 
@@ -33,16 +33,28 @@ default:
 }
 ```
 
-**Only `InSync` enters the barrier request path.** All other states either fail immediately or attempt reconnect (which must succeed and transition to `InSync` before reaching the barrier).
+**Contract (precise):**
+
+- **Only `InSync` can complete barrier successfully.** It is the only state that proceeds
+  directly to the barrier request (ensureCtrlConn → MsgBarrierReq → wait for BarrierOK).
+- **`Disconnected` and `Degraded` use Barrier() as a recovery entry point.** They attempt
+  bootstrap/reconnect inside the Barrier() call. If recovery succeeds and transitions to
+  InSync, the barrier request proceeds. If recovery fails, the barrier fails.
+- **`Connecting`, `CatchingUp`, `NeedsRebuild` are rejected immediately** with `ErrReplicaDegraded`.
+
+The key distinction: Barrier() can be *invoked* from Disconnected/Degraded (as a recovery
+trigger), but only InSync can *satisfy* barrier success. The Disconnected/Degraded paths
+are recovery attempts, not barrier eligibility.
 
 ## sync_all Gate
 
 `dist_group_commit.go:59-66`: sync_all counts barrier failures. Any shipper that returns an error from `Barrier()` increments `failCount`. If `failCount > 0`, sync_all returns `ErrDurabilityBarrierFailed`.
 
 Combined with the CP13-3 fix (FlushedLSN=0 rejected), the full chain is:
-1. Only `InSync` shippers reach the barrier request
-2. Only `BarrierOK` with `FlushedLSN > 0` counts as success
-3. sync_all fails if any barrier fails
+1. Only `InSync` shippers proceed to the barrier request
+2. Disconnected/Degraded may recover inside Barrier(), transitioning to InSync before requesting
+3. Only `BarrierOK` with `FlushedLSN > 0` counts as success
+4. sync_all fails if any barrier fails
 
 ## Proof Promotion
 
@@ -50,7 +62,7 @@ Combined with the CP13-3 fix (FlushedLSN=0 rejected), the full chain is:
 
 | Test | What it proves for CP13-4 |
 |------|--------------------------|
-| `TestBarrier_NonEligibleStates_FailClosed` | Connecting, CatchingUp, NeedsRebuild all rejected immediately; Disconnected fails on dead address; only InSync enters barrier path |
+| `TestBarrier_NonEligibleStates_FailClosed` | 5 sub-cases: Connecting/CatchingUp/NeedsRebuild rejected immediately; Disconnected fails (no recovery on dead addr); InSync enters barrier path (verified by MsgBarrierReq receipt on fake server) |
 | `TestBarrier_RejectsReplicaNotInSync` | SyncCache fails when replica is not InSync (end-to-end) |
 | `TestBarrier_DuringCatchup_Rejected` | Barrier rejected while replica is CatchingUp |
 | `TestDistSync_SyncAll_AllDegraded_Fails` | sync_all fails when all replicas degraded |
