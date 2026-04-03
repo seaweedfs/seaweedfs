@@ -1,6 +1,7 @@
 package s3api
 
 import (
+	"bytes"
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
@@ -267,12 +268,15 @@ const (
 	// Full KEK path in filer
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 
-	// Environment variable for providing KEK without storing it on the filer.
-	// The value can be any non-empty string; a 256-bit key is derived from it
-	// using HKDF-SHA256. When set, the filer-stored KEK at /etc/s3/sse_kek is
-	// not created for new deployments. Existing filer KEKs are still loaded as
-	// a fallback for backward compatibility.
-	SSES3KEKEnvVar = "WEED_S3_SSE_KEY"
+	// WEED_S3_SSE_KEK: hex-encoded 256-bit key, same format as /etc/s3/sse_kek.
+	// Drop-in replacement for the filer-stored KEK. If /etc/s3/sse_kek also
+	// exists, the values must match or the server refuses to start.
+	SSES3KEKEnvVar = "WEED_S3_SSE_KEK"
+
+	// WEED_S3_SSE_KEY: any secret string; a 256-bit key is derived via
+	// HKDF-SHA256. Cannot be used while /etc/s3/sse_kek exists — the filer
+	// file must be deleted first (to avoid silently orphaning old data).
+	SSES3KeyEnvVar = "WEED_S3_SSE_KEY"
 )
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption
@@ -294,50 +298,119 @@ func deriveKeyFromSecret(secret string) []byte {
 	return key
 }
 
+// loadFilerKEK tries to load the KEK from /etc/s3/sse_kek on the filer.
+// Returns the key bytes on success, nil if the file does not exist or filer
+// is not configured, or an error on transient failures (retries internally).
+func (km *SSES3KeyManager) loadFilerKEK() ([]byte, error) {
+	if km.filerClient == nil {
+		return nil, nil // no filer configured
+	}
+	var lastErr error
+	for i := 0; i < 10; i++ {
+		err := km.loadSuperKeyFromFiler()
+		if err == nil {
+			// loadSuperKeyFromFiler sets km.superKey; grab a copy
+			key := make([]byte, len(km.superKey))
+			copy(key, km.superKey)
+			km.superKey = nil // will be set by caller
+			return key, nil
+		}
+		if errors.Is(err, filer_pb.ErrNotFound) {
+			return nil, nil // file does not exist
+		}
+		lastErr = err
+		glog.Warningf("SSE-S3 KeyManager: failed to load KEK (attempt %d/10): %v", i+1, err)
+		time.Sleep(2 * time.Second)
+	}
+	return nil, fmt.Errorf("failed to load KEK from %s after 10 attempts: %w", km.kekPath, lastErr)
+}
+
 // InitializeWithFiler initializes the key manager with a filer client.
 //
 // Key source priority:
-//  1. WEED_S3_SSE_KEY environment variable (any string; 256-bit key derived via HKDF)
-//  2. Existing KEK stored on the filer at /etc/s3/sse_kek (backward compat)
-//  3. Auto-generate and save to filer (only when env var is NOT set)
+//  1. WEED_S3_SSE_KEK env var (hex-encoded, same format as /etc/s3/sse_kek).
+//     If the filer file also exists, they must match.
+//  2. WEED_S3_SSE_KEY env var (any string; 256-bit key derived via HKDF).
+//     Refused if /etc/s3/sse_kek exists — delete the filer file first.
+//  3. Existing /etc/s3/sse_kek on the filer (backward compat).
+//  4. Auto-generate and save to filer (deprecated for new deployments).
 func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
 	km.filerClient = filerClient
 
-	// 1. Check environment variable first
-	if envKey := os.Getenv(SSES3KEKEnvVar); envKey != "" {
-		km.superKey = deriveKeyFromSecret(envKey)
-		glog.V(0).Infof("SSE-S3 KeyManager: Derived KEK from %s environment variable", SSES3KEKEnvVar)
+	envKEK := os.Getenv(SSES3KEKEnvVar) // hex-encoded, drop-in for filer file
+	envKey := os.Getenv(SSES3KeyEnvVar)  // any string, HKDF-derived
+
+	if envKEK != "" && envKey != "" {
+		return fmt.Errorf("only one of %s and %s may be set, not both", SSES3KEKEnvVar, SSES3KeyEnvVar)
+	}
+
+	// --- Case 1: WEED_S3_SSE_KEK (hex, same format as filer file) ---
+	if envKEK != "" {
+		key, err := hex.DecodeString(envKEK)
+		if err != nil {
+			return fmt.Errorf("invalid %s: must be hex-encoded: %w", SSES3KEKEnvVar, err)
+		}
+		if len(key) != SSES3KeySize {
+			return fmt.Errorf("invalid %s: must be %d bytes (%d hex chars), got %d bytes",
+				SSES3KEKEnvVar, SSES3KeySize, SSES3KeySize*2, len(key))
+		}
+
+		// If filer file exists, verify it matches
+		filerKey, err := km.loadFilerKEK()
+		if err != nil {
+			return err
+		}
+		if filerKey != nil && !bytes.Equal(filerKey, key) {
+			return fmt.Errorf("%s does not match existing %s — they must be identical or remove the filer file first",
+				SSES3KEKEnvVar, km.kekPath)
+		}
+
+		km.superKey = key
+		glog.V(0).Infof("SSE-S3 KeyManager: Loaded KEK from %s environment variable", SSES3KEKEnvVar)
 		return nil
 	}
 
-	// 2. Try to load existing KEK from filer (backward compatibility)
-	var err error
-	for i := 0; i < 10; i++ {
-		err = km.loadSuperKeyFromFiler()
-		if err == nil {
-			glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
-			glog.V(0).Infof("SSE-S3 KeyManager: Consider setting %s environment variable instead of storing KEK on filer", SSES3KEKEnvVar)
-			return nil
+	// --- Case 2: WEED_S3_SSE_KEY (any string, HKDF-derived) ---
+	if envKey != "" {
+		// Refuse if filer file exists — user must delete it first
+		filerKey, err := km.loadFilerKEK()
+		if err != nil {
+			return err
 		}
-		if errors.Is(err, filer_pb.ErrNotFound) {
-			// 3. No env var and no filer KEK — auto-generate (legacy behavior)
-			glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK (load from filer %s: %v)", km.kekPath, err)
-			glog.Warningf("SSE-S3 KeyManager: Auto-generating KEK and storing on filer is deprecated. "+
-				"Set %s environment variable instead.", SSES3KEKEnvVar)
-			if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
-				return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
-			}
-			return nil
+		if filerKey != nil {
+			return fmt.Errorf("%s cannot be used while %s exists on the filer — "+
+				"delete the filer file first (weed shell: fs.rm %s) to avoid orphaning data encrypted with the old KEK",
+				SSES3KeyEnvVar, km.kekPath, km.kekPath)
 		}
-		glog.Warningf("SSE-S3 KeyManager: failed to load KEK (attempt %d/10): %v", i+1, err)
-		time.Sleep(2 * time.Second)
+
+		km.superKey = deriveKeyFromSecret(envKey)
+		glog.V(0).Infof("SSE-S3 KeyManager: Derived KEK from %s environment variable", SSES3KeyEnvVar)
+		return nil
 	}
 
-	// If we're here, all retries failed
-	return fmt.Errorf("failed to load SSE-S3 super key from %s after 10 attempts: %w", km.kekPath, err)
+	// --- Case 3: Load existing filer KEK (backward compatibility) ---
+	filerKey, err := km.loadFilerKEK()
+	if err != nil {
+		return err
+	}
+	if filerKey != nil {
+		km.superKey = filerKey
+		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+		glog.V(0).Infof("SSE-S3 KeyManager: Consider setting %s environment variable instead of storing KEK on filer", SSES3KEKEnvVar)
+		return nil
+	}
+
+	// --- Case 4: No env var, no filer file — auto-generate (deprecated) ---
+	glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK")
+	glog.Warningf("SSE-S3 KeyManager: Auto-generating KEK and storing on filer is deprecated. "+
+		"Set %s or %s environment variable instead.", SSES3KEKEnvVar, SSES3KeyEnvVar)
+	if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
+		return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
+	}
+	return nil
 }
 
 // loadSuperKeyFromFiler loads the KEK from the filer
