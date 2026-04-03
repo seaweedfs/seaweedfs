@@ -437,7 +437,10 @@ func generateAccessKey() string {
 func generateSecretKey() string {
 	// Use the IAM helper to generate URL-safe secret keys (no +, / characters)
 	// that won't break S3 signature authentication
-	key, _ := iam.GenerateSecretAccessKey()
+	key, err := iam.GenerateSecretAccessKey()
+	if err != nil {
+		panic(fmt.Sprintf("failed to generate secret key: %v", err))
+	}
 	return key
 }
 
