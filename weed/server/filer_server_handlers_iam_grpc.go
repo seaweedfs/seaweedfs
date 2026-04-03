@@ -166,6 +166,20 @@ func (s *IamGrpcServer) ListUsers(ctx context.Context, req *iam_pb.ListUsersRequ
 		return nil, err
 	}
 
+	// Merge static identities (from -s3.config file) into the result
+	staticNames := s.credentialManager.GetStaticUsernames()
+	if len(staticNames) > 0 {
+		dynamicSet := make(map[string]bool, len(usernames))
+		for _, name := range usernames {
+			dynamicSet[name] = true
+		}
+		for _, name := range staticNames {
+			if !dynamicSet[name] {
+				usernames = append(usernames, name)
+			}
+		}
+	}
+
 	return &iam_pb.ListUsersResponse{
 		Usernames: usernames,
 	}, nil

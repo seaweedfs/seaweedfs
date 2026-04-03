@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
@@ -21,8 +22,12 @@ type FilerAddressSetter interface {
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
 	Store CredentialStore
+	// staticMu protects staticIdentities and staticNames, which are written
+	// by SetStaticIdentities (startup + config reload) and read concurrently
+	// by LoadConfiguration, SaveConfiguration, GetStaticUsernames, and IsStaticIdentity.
+	staticMu sync.RWMutex
 	// staticIdentities holds identities loaded from a static config file (-s3.config).
-	// These are included in LoadConfiguration/ListUsers so that listing operations
+	// These are included in LoadConfiguration so that listing operations
 	// return all configured identities, not just dynamic ones from the store.
 	staticIdentities []*iam_pb.Identity
 	staticNames      map[string]bool
@@ -91,13 +96,28 @@ func (cm *CredentialManager) SetStaticIdentities(identities []*iam_pb.Identity) 
 			names[ident.Name] = true
 		}
 	}
+	cm.staticMu.Lock()
 	cm.staticIdentities = filtered
 	cm.staticNames = names
+	cm.staticMu.Unlock()
 }
 
 // IsStaticIdentity returns true if the named identity was loaded from static config.
 func (cm *CredentialManager) IsStaticIdentity(name string) bool {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
 	return cm.staticNames[name]
+}
+
+// GetStaticUsernames returns the names of all static identities.
+func (cm *CredentialManager) GetStaticUsernames() []string {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
+	names := make([]string, 0, len(cm.staticIdentities))
+	for _, ident := range cm.staticIdentities {
+		names = append(names, ident.Name)
+	}
+	return names
 }
 
 // LoadConfiguration loads the S3 API configuration from the store and merges
@@ -108,12 +128,15 @@ func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3A
 		return config, err
 	}
 	// Merge static identities that are not already in the dynamic config
-	if len(cm.staticIdentities) > 0 {
+	cm.staticMu.RLock()
+	staticIdents := cm.staticIdentities
+	cm.staticMu.RUnlock()
+	if len(staticIdents) > 0 {
 		dynamicNames := make(map[string]bool, len(config.Identities))
 		for _, ident := range config.Identities {
 			dynamicNames[ident.Name] = true
 		}
-		for _, si := range cm.staticIdentities {
+		for _, si := range staticIdents {
 			if !dynamicNames[si.Name] {
 				config.Identities = append(config.Identities, si)
 			}
@@ -126,10 +149,13 @@ func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3A
 // Static identities are filtered out before saving to the store.
 // The caller's config is not mutated.
 func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
-	if len(cm.staticNames) > 0 {
+	cm.staticMu.RLock()
+	staticNames := cm.staticNames
+	cm.staticMu.RUnlock()
+	if len(staticNames) > 0 {
 		var dynamicOnly []*iam_pb.Identity
 		for _, ident := range config.Identities {
-			if !cm.staticNames[ident.Name] {
+			if !staticNames[ident.Name] {
 				dynamicOnly = append(dynamicOnly, ident)
 			}
 		}
@@ -160,24 +186,14 @@ func (cm *CredentialManager) DeleteUser(ctx context.Context, username string) er
 	return cm.Store.DeleteUser(ctx, username)
 }
 
-// ListUsers returns all usernames, including static identities.
+// ListUsers returns usernames from the dynamic store via cm.Store.ListUsers.
+// On store error the error is returned directly without merging static entries.
+// Static identities (cm.staticIdentities) are NOT included here because
+// internal callers (e.g. DeletePolicy) look up each user in the store and
+// would fail on non-existent static entries. External callers that need the
+// full list should merge GetStaticUsernames separately.
 func (cm *CredentialManager) ListUsers(ctx context.Context) ([]string, error) {
-	usernames, err := cm.Store.ListUsers(ctx)
-	if err != nil {
-		return usernames, err
-	}
-	if len(cm.staticIdentities) > 0 {
-		dynamicNames := make(map[string]bool, len(usernames))
-		for _, name := range usernames {
-			dynamicNames[name] = true
-		}
-		for _, si := range cm.staticIdentities {
-			if !dynamicNames[si.Name] {
-				usernames = append(usernames, si.Name)
-			}
-		}
-	}
-	return usernames, nil
+	return cm.Store.ListUsers(ctx)
 }
 
 // GetUserByAccessKey retrieves a user by access key
