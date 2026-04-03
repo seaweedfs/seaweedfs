@@ -319,6 +319,73 @@ projection 是给外部世界看的，不是内部原始状态 dump。
   - receiver ready
   - publish healthy
 
+### 6.5 由五个小自动机构成的大自动机
+
+`V2 core` 不应该被实现成一个“所有语义揉在一起”的大状态机。
+更稳的方式是把它拆成五个 core-owned automata，再由 `CoreEngine` 组合：
+
+1. `AssignmentAutomaton`
+   - volume intent
+   - role intent
+   - stable replica identity
+   - epoch
+   - desired replica set
+2. `RecoveryAutomaton`
+   - session ownership
+   - catch-up vs rebuild selection
+   - per-replica recovery state
+3. `BoundaryAutomaton`
+   - committed truth
+   - checkpoint truth
+   - durable barrier truth
+   - rebuild/catch-up target truth
+4. `ModeAutomaton`
+   - `allocated_only`
+   - `bootstrap_pending`
+   - `replica_ready`
+   - `publish_healthy`
+   - `degraded`
+   - `needs_rebuild`
+5. `PublicationAutomaton`
+   - readiness closure
+   - publication closure
+   - outward healthy vs non-healthy truth
+
+组合关系应该是：
+
+```mermaid
+flowchart TD
+    assignmentState[AssignmentAutomaton]
+    recoveryState[RecoveryAutomaton]
+    boundaryState[BoundaryAutomaton]
+    modeState[ModeAutomaton]
+    publicationState[PublicationAutomaton]
+    coreEngine[CoreEngine]
+    projections[ProjectionContracts]
+    adapters[AdapterBoundary]
+    runtime[V1BackendMechanics]
+
+    assignmentState --> coreEngine
+    recoveryState --> coreEngine
+    boundaryState --> coreEngine
+    modeState --> coreEngine
+    coreEngine --> publicationState
+    publicationState --> projections
+    coreEngine --> adapters
+    adapters --> runtime
+    runtime -->|"observations/events"| adapters
+    adapters --> coreEngine
+```
+
+这里最关键的工程规则是：
+
+1. 先定义 core-owned state / transitions
+2. 再定义 command-emission rules
+3. 再定义 projection contracts
+4. 最后才接 adapter
+
+如果顺序反过来，`V1` mixed runtime state 会重新夺回语义 authority。
+
 ---
 
 ## 7. 直接映射到仓库路径
@@ -530,6 +597,20 @@ type FrontendBackend interface {
 - 为了抽接口，暂时模糊 readiness
 - 为了分层，暂时把 publish truth 放宽
 
+### 10.5 未来算法和状态转换的审查规则
+从 `Phase 14+` 开始，任何新的 transition rule / command rule / projection
+rule，都应该在 code review 或 delivery note 里回答三件事：
+
+1. semantic constraint satisfied
+   - 它满足的是哪条 `claim / truth / accepted checkpoint`
+2. overclaim avoided
+   - 它防止了哪种 false healthy / false ready / false durable / false recoverable
+3. proof preserved
+   - 它保持了哪个已接受 proof 仍然成立
+
+这不是文书要求，而是防止 `V2 core` 重新退化成“runtime convenience +
+事后解释”的最低工程 bar。
+
 ---
 
 ## 11. V2 如何从已接受 claim 变得可靠
@@ -732,7 +813,419 @@ type FrontendBackend interface {
 
 ---
 
-## 14. 推荐的实施顺序
+## 14. `V2 core` 的 Go package 目录建议
+
+下面不是要求一次性重排仓库，而是给出一个与当前代码现实相容的目标布局。
+
+建议把长期 `V2` 资产继续收敛在 `sw-block/engine/replication/` 之下，并按职责细分：
+
+```text
+sw-block/engine/replication/
+  core/
+    types.go
+    state.go
+    event.go
+    command.go
+    projection.go
+    engine.go
+  session/
+    session.go
+    ownership.go
+  boundary/
+    lsn.go
+    retention.go
+    rebuild.go
+  adapter/
+    contract.go
+    observe.go
+  projection/
+    heartbeat.go
+    lookup.go
+    diagnostic.go
+```
+
+如果短期不想新建这么多子目录，也可以先保持现有目录平铺，但按相同职责收敛文件：
+
+1. `types.go`: 基础 types
+2. `state.go`: state/ownership structs
+3. `event.go`: incoming events
+4. `command.go`: emitted commands
+5. `projection.go`: outward projections
+6. `engine.go`: `ApplyEvent() -> Decide()`
+7. `session.go` / `sender.go` / `registry.go`: 继续作为现有核心实现承载
+
+### 14.1 与现有代码的最小映射
+
+当前已经存在的可直接承接 `V2 core` 的文件：
+
+- `sw-block/engine/replication/types.go`
+- `sw-block/engine/replication/session.go`
+- `sw-block/engine/replication/sender.go`
+- `sw-block/engine/replication/registry.go`
+- `sw-block/engine/replication/orchestrator.go`
+- `sw-block/engine/replication/outcome.go`
+- `sw-block/engine/replication/rebuild.go`
+- `sw-block/engine/replication/observe.go`
+
+这些文件已经说明：
+
+- `V2 core` 不是概念草图
+- 它已经有 sender/session/ownership/orchestrator 的真实雏形
+- 后续更工程化的工作主要是把这些对象的职责再显式化，而不是重新发明
+
+### 14.2 `weed/` 中的对应位置
+
+`weed/` 中长期应当只保留：
+
+- backend primitive
+- adapter boundary
+- projection surface
+
+不应该让 `weed/` 成为长期语义 authority。
+
+当前可暂时对应为：
+
+- adapter boundary:
+  - `weed/storage/blockvol/v2bridge/control.go`
+  - `weed/server/volume_server_block.go`
+  - `weed/server/block_heartbeat_loop.go`
+- projection surface:
+  - `weed/server/master_block_registry.go`
+  - `weed/server/master_grpc_server_block.go`
+  - `weed/server/master_server_handlers_block.go`
+  - `weed/server/volume_server_block_debug.go`
+- backend primitive:
+  - `weed/storage/blockvol/*`
+
+---
+
+## 15. `struct / event / command / projection` 推荐文件落点
+
+### 15.1 Struct
+
+建议放置：
+
+- `types.go`
+  - `Endpoint`
+  - `ReplicaID`
+  - `VolumeID`
+  - `SessionKind`
+  - `ReplicaState`
+- `state.go`
+  - `VolumeIntent`
+  - `AssignmentView`
+  - `ReplicaSession`
+  - `RecoveryOwner`
+  - `BoundaryView`
+  - `ReadinessView`
+
+规则：
+
+- 基础标识和 enum 放 `types.go`
+- 可变的 core state 放 `state.go`
+
+### 15.2 Event
+
+建议放 `event.go`：
+
+- `AssignmentDelivered`
+- `EpochBumped`
+- `RepeatedAssignmentDelivered`
+- `RoleApplied`
+- `ReceiverReadyObserved`
+- `ShipperConfiguredObserved`
+- `ShipperConnectedObserved`
+- `BarrierAccepted`
+- `BarrierRejected`
+- `CommittedLSNAdvanced`
+- `CheckpointLSNAdvanced`
+- `RebuildCommitted`
+- `HeartbeatCollected`
+
+规则：
+
+- event 只描述 observation 或 intent
+- event 不直接携带“成功解释”
+
+### 15.3 Command
+
+建议放 `command.go`：
+
+- `ApplyRoleCommand`
+- `StartReceiverCommand`
+- `ConfigureShipperCommand`
+- `StartCatchUpCommand`
+- `StartRebuildCommand`
+- `InvalidateSessionCommand`
+- `PublishProjectionCommand`
+
+规则：
+
+- command 只表达“core 决定要做什么”
+- backend 如何完成，不在 command 内定义
+
+### 15.4 Projection
+
+建议放 `projection.go`，再按需要拆出：
+
+- `projection_lookup.go`
+- `projection_heartbeat.go`
+- `projection_diagnostic.go`
+
+至少包括：
+
+- `LookupProjection`
+- `HeartbeatProjection`
+- `DiagnosticProjection`
+- `TesterProjection`
+
+规则：
+
+- projection 是外部可见 truth
+- 不是内部 state dump
+
+### 15.5 当前仓库里的最小过渡落点
+
+在不大改目录的前提下，可以先这样放：
+
+- `sw-block/engine/replication/types.go`
+  - 基础 type / enum
+- `sw-block/engine/replication/session.go`
+  - session ownership
+- `sw-block/engine/replication/registry.go`
+  - assignment reconcile
+- `sw-block/engine/replication/orchestrator.go`
+  - engine entrypoint / event handling 骨架
+- 新增：
+  - `sw-block/engine/replication/event.go`
+  - `sw-block/engine/replication/command.go`
+  - `sw-block/engine/replication/projection.go`
+
+这样不会一开始就做大规模 package 重排，但可以先把抽象边界立起来。
+
+---
+
+## 16. 最小 `ApplyEvent() -> Decide() -> EmitCommands()` 伪代码骨架
+
+下面给一个最小核心骨架，说明 `V2 core` 如何工作。
+
+```go
+type Core struct {
+    volumes map[string]*VolumeState
+}
+
+type VolumeState struct {
+    Intent      VolumeIntent
+    Assignment  AssignmentView
+    Session     map[string]*ReplicaSession
+    Ownership   map[string]*RecoveryOwner
+    Boundary    BoundaryView
+    Readiness   ReadinessView
+}
+
+func (c *Core) ApplyEvent(ev Event) []Command {
+    st := c.mustVolumeState(ev.VolumeID())
+
+    switch e := ev.(type) {
+    case AssignmentDelivered:
+        st.Intent = mergeIntent(st.Intent, e.Intent)
+        st.Assignment = buildAssignmentView(e)
+        return c.decideFromAssignment(st)
+
+    case RoleApplied:
+        st.Readiness.RoleApplied = true
+        return c.decidePublication(st)
+
+    case ReceiverReadyObserved:
+        st.Readiness.ReceiverReady = true
+        st.Readiness.ReplicaEligible = true
+        return c.decidePublication(st)
+
+    case ShipperConfiguredObserved:
+        st.Readiness.ShipperConfigured = true
+        return nil
+
+    case ShipperConnectedObserved:
+        st.Readiness.ShipperConnected = true
+        return c.decidePublication(st)
+
+    case BarrierAccepted:
+        st.Boundary.CommittedLSN = e.FlushedLSN
+        return c.decideDurability(st)
+
+    case CheckpointLSNAdvanced:
+        st.Boundary.CheckpointLSN = e.CheckpointLSN
+        return nil
+
+    case RebuildCommitted:
+        st.Boundary.AchievedLSN = e.AchievedLSN
+        st.Readiness.ReplicaEligible = true
+        return c.decidePublication(st)
+
+    default:
+        return nil
+    }
+}
+
+func (c *Core) decideFromAssignment(st *VolumeState) []Command {
+    var cmds []Command
+
+    cmds = append(cmds, ApplyRoleCommand{
+        VolumeID: st.Assignment.VolumeID,
+        Epoch:    st.Assignment.Epoch,
+        Role:     st.Assignment.Role,
+    })
+
+    if st.Assignment.Role == RoleReplica {
+        cmds = append(cmds, StartReceiverCommand{
+            VolumeID: st.Assignment.VolumeID,
+            DataAddr: st.Assignment.ReplicaDataAddr(),
+            CtrlAddr: st.Assignment.ReplicaCtrlAddr(),
+        })
+    }
+
+    if st.Assignment.Role == RolePrimary && len(st.Assignment.ReplicaEndpoints) > 0 {
+        cmds = append(cmds, ConfigureShipperCommand{
+            VolumeID: st.Assignment.VolumeID,
+            Replicas: st.Assignment.ReplicaEndpoints.All(),
+        })
+    }
+
+    return cmds
+}
+
+func (c *Core) decidePublication(st *VolumeState) []Command {
+    st.Readiness.PublishHealthy =
+        st.Readiness.RoleApplied &&
+        ((st.Assignment.Role == RolePrimary) ||
+         (st.Readiness.ReceiverReady && st.Readiness.ReplicaEligible))
+
+    return []Command{
+        PublishProjectionCommand{
+            VolumeID:  st.Assignment.VolumeID,
+            Readiness: st.Readiness,
+        },
+    }
+}
+```
+
+这个骨架的重点不是代码细节，而是三件事：
+
+1. `event` 先进入 core
+2. core 决定 state transition
+3. command 由 core 发出，adapter 去执行
+
+这样就不会再出现：
+
+- runtime 自己偷偷解释语义
+- workload 自己顺便把系统推到 healthy
+- publication 在 readiness 闭环前提前放行
+
+---
+
+## 17. `V2 prototype` 与 `mini core design` 的关系
+
+这份 `mini core design` 不是脱离 prototype 重新发明的。
+它和 `V2 prototype` 是继承关系，不是替代关系。
+
+### 17.1 prototype 提供了什么
+
+prototype / FSM / simulator 已经证明了：
+
+1. 哪些状态对象必须存在
+2. 哪些事件必须显式
+3. 哪些 failure class 必须 fail-closed
+4. 哪些 boundary 不能靠实现便利重新解释
+
+也就是说，prototype 提供的是：
+
+- 语义骨架
+- 状态机对象
+- failure-class closure 直觉
+- ownership / session / boundary 的必要性
+
+### 17.2 mini core design 补的是什么
+
+`mini core design` 解决的不是“语义是否存在”，而是：
+
+1. 这些语义对象在当前仓库里应该落在哪些 package / file
+2. 谁拥有这些对象
+3. 哪些通过 adapter 进入 `weed/`
+4. 哪些 `V1` 行为可以复用
+5. 哪些当前 `weed/` 改动只是现实验证资产
+
+所以：
+
+- prototype 负责回答 “应该是什么”
+- mini core design 负责回答 “在当前代码库里怎么做”
+
+### 17.3 为什么不能直接把 prototype 当 production 目录
+
+因为 production 还必须处理：
+
+- heartbeat / master registry
+- frontend projection
+- diagnostics
+- current backend reuse
+- bounded envelope / claim / evidence integration
+
+所以不能简单把 prototype 原样搬进 `weed/` 或 production path。
+
+更合理的关系是：
+
+1. prototype 提供语义模板
+2. `sw-block/engine/replication/` 承接 core semantics
+3. adapter 把这些 semantics 翻译到当前 runtime
+4. backend 继续执行 I/O / transport primitives
+
+### 17.4 一个总规则
+
+> `mini core design` 的任务不是重新设计 prototype 已经证明必要的语义对象。
+> 它的任务是把这些对象放到当前代码库中可落地、可维护、可验证的位置，并明确它们与 `V1 backend` 的边界。
+
+### 17.5 在 `V2 core` 建立前如何解释当前测试
+
+在 `V2 core` 还没有以明确 package / file / event-command loop 形式落地之前，
+当前大多数 integrated tests 都应该这样解释：
+
+1. 不是在验证一个已经完成的 `V2 runtime`
+2. 而是在用 `V2` 的 truth / constraint / acceptance bar 去检查当前 `V1` runtime 的表现
+
+更准确地说：
+
+- 现在已经存在的是：
+  - `V2` 的 truth
+  - `V2` 的 claim boundary
+  - `V2` 的 failure-class discipline
+  - `V2` 的 prototype / FSM / mini-core design
+- 现在还没有完全存在的是：
+  - 明确拥有 runtime 语义 authority 的 `V2 core`
+  - 真实 live path 上的 `ApplyEvent() -> Decide() -> EmitCommands()` 闭环
+  - 被正式降级成 adapter / backend reality 的 `weed/` 运行结构
+
+因此，像 `CP13-8` 这样的结果，当前最准确的解释不是：
+
+- `V2 runtime` 已验证
+
+而是：
+
+- 当前 `V1` 运行现实在 `V2` 约束下，通过了一个 bounded envelope 的真实 workload 检查
+
+这类检查点的价值依然很高，因为它证明：
+
+1. 当前复用路径不是完全错误的
+2. `V2` 约束能够识别和纠正真实 bug
+3. 当前运行现实值得继续被抽象、剥离，并最终收敛成真正的 `V2 core`
+
+所以在后续 phase 中，应当默认区分三种东西：
+
+1. `V2` 语义证明
+2. `V1-under-V2-constraints` 的运行验证
+3. 后续真正的 `V2 core` 提取与 runtime closure
+
+---
+
+## 18. 推荐的实施顺序
 
 ### 近期
 1. 继续收紧 assignment -> readiness -> publication closure
@@ -751,7 +1244,7 @@ type FrontendBackend interface {
 
 ---
 
-## 15. 最短结论
+## 19. 最短结论
 
 你要的“更工程化”版本可以归纳为一句话：
 

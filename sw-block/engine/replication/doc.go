@@ -15,13 +15,23 @@
 // File layout:
 //
 // Slice 1 core (ownership/fencing):
-//   types.go     — Endpoint, ReplicaState, SessionKind, SessionPhase
-//   sender.go    — Sender: per-replica owner with execution APIs
-//   session.go   — Session: recovery lifecycle with FSM phases
-//   registry.go  — Registry: sender group with reconcile + assignment intent
+//
+//	types.go     — Endpoint, ReplicaState, SessionKind, SessionPhase
+//	sender.go    — Sender: per-replica owner with execution APIs
+//	session.go   — Session: recovery lifecycle with FSM phases
+//	registry.go  — Registry: sender group with reconcile + assignment intent
+//
+// Phase 14 explicit core shell:
+//
+//	state.go      — VolumeState, readiness, boundary, normalized mode
+//	event.go      — bounded event vocabulary
+//	command.go    — side-effect-free command decisions
+//	projection.go — bounded outward publication projection
+//	engine.go     — ApplyEvent() -> state update -> emit commands/projection
 //
 // Carried forward from prototype (accepted in Phase 4.5):
-//   budget.go    — CatchUpBudget: bounded catch-up enforcement
-//   rebuild.go   — RebuildState: rebuild execution FSM
-//   outcome.go   — HandshakeResult, RecoveryOutcome classification
+//
+//	budget.go    — CatchUpBudget: bounded catch-up enforcement
+//	rebuild.go   — RebuildState: rebuild execution FSM
+//	outcome.go   — HandshakeResult, RecoveryOutcome classification
 package replication
