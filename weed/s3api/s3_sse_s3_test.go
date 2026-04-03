@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -688,9 +687,7 @@ func TestSSES3InvalidMetadataDeserialization(t *testing.T) {
 func setViperKey(t *testing.T, key, value string) {
 	t.Helper()
 	util.GetViper().SetDefault(key, "")
-	envName := "WEED_" + strings.ReplaceAll(strings.ToUpper(key), ".", "_")
-	os.Setenv(envName, value)
-	t.Cleanup(func() { os.Unsetenv(envName) })
+	t.Setenv("WEED_"+strings.ReplaceAll(strings.ToUpper(key), ".", "_"), value)
 }
 
 // TestSSES3KEKConfig tests that sse_s3.kek (hex format) is used as KEK
@@ -772,7 +769,10 @@ func TestSSES3KeyConfig(t *testing.T) {
 	}
 
 	// Deterministic: same input → same output
-	expected := deriveKeyFromSecret("my-secret-passphrase")
+	expected, err := deriveKeyFromSecret("my-secret-passphrase")
+	if err != nil {
+		t.Fatalf("deriveKeyFromSecret failed: %v", err)
+	}
 	if !bytes.Equal(km.superKey, expected) {
 		t.Errorf("superKey mismatch: expected %x, got %x", expected, km.superKey)
 	}
@@ -780,8 +780,8 @@ func TestSSES3KeyConfig(t *testing.T) {
 
 // TestSSES3KeyConfigDifferentSecrets tests different strings produce different keys
 func TestSSES3KeyConfigDifferentSecrets(t *testing.T) {
-	k1 := deriveKeyFromSecret("secret-one")
-	k2 := deriveKeyFromSecret("secret-two")
+	k1, _ := deriveKeyFromSecret("secret-one")
+	k2, _ := deriveKeyFromSecret("secret-two")
 	if bytes.Equal(k1, k2) {
 		t.Error("different secrets should produce different keys")
 	}

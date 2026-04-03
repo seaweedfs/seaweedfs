@@ -15,7 +15,6 @@ import (
 	"io"
 	mathrand "math/rand"
 	"net/http"
-	"os"
 	"sync"
 	"time"
 
@@ -259,14 +258,8 @@ type SSES3KeyManager struct {
 }
 
 const (
-	// KEK storage directory and file name in filer
-	SSES3KEKDirectory = "/etc/s3"
-	SSES3KEKParentDir = "/etc"
-	SSES3KEKDirName   = "s3"
-	SSES3KEKFileName  = "sse_kek"
-
-	// Full KEK path in filer
-	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
+	// Legacy KEK path on the filer (backward compatibility)
+	defaultKEKPath = "/etc/s3/sse_kek"
 
 	// security.toml keys (also settable via env vars WEED_S3_SSE_KEK / WEED_S3_SSE_KEY):
 	//
@@ -292,12 +285,13 @@ func NewSSES3KeyManager() *SSES3KeyManager {
 // deriveKeyFromSecret derives a 256-bit key from an arbitrary secret string
 // using HKDF-SHA256. The derivation is deterministic: the same secret always
 // produces the same key.
-func deriveKeyFromSecret(secret string) []byte {
+func deriveKeyFromSecret(secret string) ([]byte, error) {
 	hkdfReader := hkdf.New(sha256.New, []byte(secret), nil, []byte("seaweedfs-sse-s3-kek"))
 	key := make([]byte, SSES3KeySize)
-	// hkdf.New with SHA-256 and 32-byte output never fails
-	io.ReadFull(hkdfReader, key)
-	return key
+	if _, err := io.ReadFull(hkdfReader, key); err != nil {
+		return nil, fmt.Errorf("failed to derive key: %w", err)
+	}
+	return key, nil
 }
 
 // loadFilerKEK tries to load the KEK from /etc/s3/sse_kek on the filer.
@@ -330,17 +324,18 @@ func (km *SSES3KeyManager) loadFilerKEK() ([]byte, error) {
 // InitializeWithFiler initializes the key manager with a filer client.
 //
 // Key source priority (via security.toml or WEED_ env vars):
-//  1. sse_s3.kek (env: WEED_SSE_S3_KEK) — hex-encoded, same format as /etc/s3/sse_kek.
+//  1. s3.sse.kek (env: WEED_S3_SSE_KEK) — hex-encoded, same format as /etc/s3/sse_kek.
 //     If the filer file also exists, they must match.
-//  2. sse_s3.key (env: WEED_SSE_S3_KEY) — any string; 256-bit key derived via HKDF.
+//  2. s3.sse.key (env: WEED_S3_SSE_KEY) — any string; 256-bit key derived via HKDF.
 //     Refused if /etc/s3/sse_kek exists — delete the filer file first.
 //  3. Existing /etc/s3/sse_kek on the filer (backward compat).
-//  4. SSE-S3 disabled (fail on use, not on startup).
+//  4. SSE-S3 disabled (fail on first encrypt/decrypt attempt).
 func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient) error {
+	// Set filerClient under lock, then release — the rest may do slow I/O
+	// (filer retries with sleep) and must not block encrypt/decrypt callers.
 	km.mu.Lock()
-	defer km.mu.Unlock()
-
 	km.filerClient = filerClient
+	km.mu.Unlock()
 
 	v := util.GetViper()
 	cfgKEK := v.GetString(sseS3KEKConfigKey) // hex-encoded, drop-in for filer file
@@ -350,8 +345,11 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 		return fmt.Errorf("only one of %s and %s may be set, not both", sseS3KEKConfigKey, sseS3KeyConfigKey)
 	}
 
-	// --- Case 1: sse_s3.kek (hex, same format as filer file) ---
-	if cfgKEK != "" {
+	var resolvedKey []byte
+
+	switch {
+	// --- Case 1: s3.sse.kek (hex, same format as filer file) ---
+	case cfgKEK != "":
 		key, err := hex.DecodeString(cfgKEK)
 		if err != nil {
 			return fmt.Errorf("invalid %s: must be hex-encoded: %w", sseS3KEKConfigKey, err)
@@ -371,13 +369,11 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 				sseS3KEKConfigKey, km.kekPath)
 		}
 
-		km.superKey = key
+		resolvedKey = key
 		glog.V(0).Infof("SSE-S3 KeyManager: Loaded KEK from %s config", sseS3KEKConfigKey)
-		return nil
-	}
 
-	// --- Case 2: sse_s3.key (any string, HKDF-derived) ---
-	if cfgKey != "" {
+	// --- Case 2: s3.sse.key (any string, HKDF-derived) ---
+	case cfgKey != "":
 		// Refuse if filer file exists — user must delete it first
 		filerKey, err := km.loadFilerKEK()
 		if err != nil {
@@ -389,26 +385,34 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 				sseS3KeyConfigKey, km.kekPath, km.kekPath)
 		}
 
-		km.superKey = deriveKeyFromSecret(cfgKey)
+		derived, err := deriveKeyFromSecret(cfgKey)
+		if err != nil {
+			return err
+		}
+		resolvedKey = derived
 		glog.V(0).Infof("SSE-S3 KeyManager: Derived KEK from %s config", sseS3KeyConfigKey)
-		return nil
-	}
 
 	// --- Case 3: Load existing filer KEK (backward compatibility) ---
-	filerKey, err := km.loadFilerKEK()
-	if err != nil {
-		return err
-	}
-	if filerKey != nil {
-		km.superKey = filerKey
-		glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
-		glog.V(0).Infof("SSE-S3 KeyManager: Consider setting %s in security.toml (or WEED_SSE_S3_KEK env var) instead of storing KEK on filer", sseS3KEKConfigKey)
-		return nil
+	default:
+		filerKey, err := km.loadFilerKEK()
+		if err != nil {
+			return err
+		}
+		if filerKey != nil {
+			resolvedKey = filerKey
+			glog.V(1).Infof("SSE-S3 KeyManager: Loaded KEK from filer %s", km.kekPath)
+			glog.V(0).Infof("SSE-S3 KeyManager: Consider setting %s in security.toml instead of storing KEK on filer", sseS3KEKConfigKey)
+		} else {
+			// --- Case 4: Nothing configured — SSE-S3 disabled ---
+			glog.V(0).Infof("SSE-S3 KeyManager: No KEK configured. SSE-S3 encryption is disabled. "+
+				"Set %s or %s in security.toml to enable it.", sseS3KEKConfigKey, sseS3KeyConfigKey)
+		}
 	}
 
-	// --- Case 4: No env var, no filer file — SSE-S3 disabled ---
-	glog.V(0).Infof("SSE-S3 KeyManager: No KEK configured. SSE-S3 encryption is disabled. "+
-		"Set %s or %s in security.toml to enable it.", sseS3KEKConfigKey, sseS3KeyConfigKey)
+	// Only hold the lock to write the final state.
+	km.mu.Lock()
+	km.superKey = resolvedKey
+	km.mu.Unlock()
 	return nil
 }
 
@@ -443,47 +447,6 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	return nil
 }
 
-// generateAndSaveSuperKeyToFiler generates a new KEK and saves it to the filer
-func (km *SSES3KeyManager) generateAndSaveSuperKeyToFiler() error {
-	if km.filerClient == nil {
-		return fmt.Errorf("filer client not initialized")
-	}
-
-	// Generate a random 256-bit super key (KEK)
-	superKey := make([]byte, SSES3KeySize)
-	if _, err := io.ReadFull(rand.Reader, superKey); err != nil {
-		return fmt.Errorf("failed to generate KEK: %w", err)
-	}
-
-	// Encode as hex for storage
-	encodedKey := []byte(hex.EncodeToString(superKey))
-
-	// Create the entry in filer
-	// First ensure the parent directory exists
-	if err := filer_pb.Mkdir(context.Background(), km.filerClient, SSES3KEKParentDir, SSES3KEKDirName, func(entry *filer_pb.Entry) {
-		// Set appropriate permissions for the directory
-		entry.Attributes.FileMode = uint32(0700 | os.ModeDir)
-	}); err != nil {
-		// Only ignore "already exists" errors.
-		if !errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
-			return fmt.Errorf("failed to create KEK directory %s: %w", SSES3KEKDirectory, err)
-		}
-		glog.V(3).Infof("Parent directory %s already exists, continuing.", SSES3KEKDirectory)
-	}
-
-	// Create the KEK file
-	if err := filer_pb.MkFile(context.Background(), km.filerClient, SSES3KEKDirectory, SSES3KEKFileName, nil, func(entry *filer_pb.Entry) {
-		entry.Content = encodedKey
-		entry.Attributes.FileMode = 0600 // Read/write for owner only
-		entry.Attributes.FileSize = uint64(len(encodedKey))
-	}); err != nil {
-		return fmt.Errorf("failed to create KEK file in filer: %w", err)
-	}
-
-	km.superKey = superKey
-	glog.Infof("SSE-S3 KeyManager: Generated and saved new KEK to filer %s", km.kekPath)
-	return nil
-}
 
 // GetOrCreateKey gets an existing key or creates a new one
 // With envelope encryption, we always generate a new DEK since we don't store them
