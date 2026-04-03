@@ -943,7 +943,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 			leaderCount++
 		}
 
-		masterMap[master.Address] = masterInfo
+		masterMap[masterInfo.Address] = masterInfo
 	}
 
 	// Then, get additional master information from Raft cluster
@@ -955,11 +955,11 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 
 		// Process each raft server
 		for _, server := range resp.ClusterServers {
-			address := server.Address
-			httpAddress := pb.ServerAddress(address).ToHttpAddress()
+			// Raft stores gRPC addresses, convert to HTTP address
+			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
 
 			// Update existing master info or create new one
-			if masterInfo, exists := masterMap[address]; exists {
+			if masterInfo, exists := masterMap[httpAddress]; exists {
 				// Update existing master with raft data
 				masterInfo.IsLeader = server.IsLeader
 				masterInfo.Suffrage = server.Suffrage
@@ -970,7 +970,7 @@ func (s *AdminServer) GetClusterMasters() (*ClusterMastersData, error) {
 					IsLeader: server.IsLeader,
 					Suffrage: server.Suffrage,
 				}
-				masterMap[address] = masterInfo
+				masterMap[httpAddress] = masterInfo
 			}
 
 			if server.IsLeader {
@@ -1644,159 +1644,6 @@ func extractVersioningFromEntry(entry *filer_pb.Entry) string {
 // GetConfigPersistence returns the config persistence manager
 func (as *AdminServer) GetConfigPersistence() *ConfigPersistence {
 	return as.configPersistence
-}
-
-// convertJSONToMaintenanceConfig converts JSON map to protobuf MaintenanceConfig
-func convertJSONToMaintenanceConfig(jsonConfig map[string]interface{}) (*maintenance.MaintenanceConfig, error) {
-	config := &maintenance.MaintenanceConfig{}
-
-	// Helper function to get int32 from interface{}
-	getInt32 := func(key string) (int32, error) {
-		if val, ok := jsonConfig[key]; ok {
-			switch v := val.(type) {
-			case int:
-				return int32(v), nil
-			case int32:
-				return v, nil
-			case int64:
-				return int32(v), nil
-			case float64:
-				return int32(v), nil
-			default:
-				return 0, fmt.Errorf("invalid type for %s: expected number, got %T", key, v)
-			}
-		}
-		return 0, nil
-	}
-
-	// Helper function to get bool from interface{}
-	getBool := func(key string) bool {
-		if val, ok := jsonConfig[key]; ok {
-			if b, ok := val.(bool); ok {
-				return b
-			}
-		}
-		return false
-	}
-
-	var err error
-
-	// Convert basic fields
-	config.Enabled = getBool("enabled")
-
-	if config.ScanIntervalSeconds, err = getInt32("scan_interval_seconds"); err != nil {
-		return nil, err
-	}
-	if config.WorkerTimeoutSeconds, err = getInt32("worker_timeout_seconds"); err != nil {
-		return nil, err
-	}
-	if config.TaskTimeoutSeconds, err = getInt32("task_timeout_seconds"); err != nil {
-		return nil, err
-	}
-	if config.RetryDelaySeconds, err = getInt32("retry_delay_seconds"); err != nil {
-		return nil, err
-	}
-	if config.MaxRetries, err = getInt32("max_retries"); err != nil {
-		return nil, err
-	}
-	if config.CleanupIntervalSeconds, err = getInt32("cleanup_interval_seconds"); err != nil {
-		return nil, err
-	}
-	if config.TaskRetentionSeconds, err = getInt32("task_retention_seconds"); err != nil {
-		return nil, err
-	}
-
-	// Convert policy if present
-	if policyData, ok := jsonConfig["policy"]; ok {
-		if policyMap, ok := policyData.(map[string]interface{}); ok {
-			policy := &maintenance.MaintenancePolicy{}
-
-			if globalMaxConcurrent, err := getInt32FromMap(policyMap, "global_max_concurrent"); err != nil {
-				return nil, err
-			} else {
-				policy.GlobalMaxConcurrent = globalMaxConcurrent
-			}
-
-			if defaultRepeatIntervalSeconds, err := getInt32FromMap(policyMap, "default_repeat_interval_seconds"); err != nil {
-				return nil, err
-			} else {
-				policy.DefaultRepeatIntervalSeconds = defaultRepeatIntervalSeconds
-			}
-
-			if defaultCheckIntervalSeconds, err := getInt32FromMap(policyMap, "default_check_interval_seconds"); err != nil {
-				return nil, err
-			} else {
-				policy.DefaultCheckIntervalSeconds = defaultCheckIntervalSeconds
-			}
-
-			// Convert task policies if present
-			if taskPoliciesData, ok := policyMap["task_policies"]; ok {
-				if taskPoliciesMap, ok := taskPoliciesData.(map[string]interface{}); ok {
-					policy.TaskPolicies = make(map[string]*maintenance.TaskPolicy)
-
-					for taskType, taskPolicyData := range taskPoliciesMap {
-						if taskPolicyMap, ok := taskPolicyData.(map[string]interface{}); ok {
-							taskPolicy := &maintenance.TaskPolicy{}
-
-							taskPolicy.Enabled = getBoolFromMap(taskPolicyMap, "enabled")
-
-							if maxConcurrent, err := getInt32FromMap(taskPolicyMap, "max_concurrent"); err != nil {
-								return nil, err
-							} else {
-								taskPolicy.MaxConcurrent = maxConcurrent
-							}
-
-							if repeatIntervalSeconds, err := getInt32FromMap(taskPolicyMap, "repeat_interval_seconds"); err != nil {
-								return nil, err
-							} else {
-								taskPolicy.RepeatIntervalSeconds = repeatIntervalSeconds
-							}
-
-							if checkIntervalSeconds, err := getInt32FromMap(taskPolicyMap, "check_interval_seconds"); err != nil {
-								return nil, err
-							} else {
-								taskPolicy.CheckIntervalSeconds = checkIntervalSeconds
-							}
-
-							policy.TaskPolicies[taskType] = taskPolicy
-						}
-					}
-				}
-			}
-
-			config.Policy = policy
-		}
-	}
-
-	return config, nil
-}
-
-// Helper functions for map conversion
-func getInt32FromMap(m map[string]interface{}, key string) (int32, error) {
-	if val, ok := m[key]; ok {
-		switch v := val.(type) {
-		case int:
-			return int32(v), nil
-		case int32:
-			return v, nil
-		case int64:
-			return int32(v), nil
-		case float64:
-			return int32(v), nil
-		default:
-			return 0, fmt.Errorf("invalid type for %s: expected number, got %T", key, v)
-		}
-	}
-	return 0, nil
-}
-
-func getBoolFromMap(m map[string]interface{}, key string) bool {
-	if val, ok := m[key]; ok {
-		if b, ok := val.(bool); ok {
-			return b
-		}
-	}
-	return false
 }
 
 type collectionStats struct {

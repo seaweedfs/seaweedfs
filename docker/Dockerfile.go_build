@@ -16,15 +16,21 @@ RUN cd /go/src/github.com/seaweedfs/seaweedfs/weed \
   && export LDFLAGS="-X github.com/seaweedfs/seaweedfs/weed/util/version.COMMIT=$(git rev-parse --short HEAD)" \
   && CGO_ENABLED=0 go install -tags "$TAGS" -ldflags "-extldflags -static ${LDFLAGS}"
 
-# Rust volume server builder. Alpine packages avoid depending on the
-# upstream rust:alpine manifest list, which no longer includes linux/386.
+# Rust volume server: use pre-built binary from CI when available (placed in
+# weed-volume-prebuilt/ by the build-rust-binaries job), otherwise compile
+# from source.  Pre-building avoids a multi-hour QEMU-emulated cargo build
+# for non-native architectures.
 FROM alpine:3.23 as rust_builder
 ARG TARGETARCH
+ARG TAGS
+COPY weed-volume-prebuilt/ /prebuilt/
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/seaweed-volume /build/seaweed-volume
 COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/weed /build/weed
 WORKDIR /build/seaweed-volume
-ARG TAGS
-RUN if [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
+RUN if [ -f "/prebuilt/weed-volume-${TARGETARCH}" ]; then \
+      echo "Using pre-built Rust binary for ${TARGETARCH}" && \
+      cp "/prebuilt/weed-volume-${TARGETARCH}" /weed-volume; \
+    elif [ "$TARGETARCH" = "amd64" ] || [ "$TARGETARCH" = "arm64" ]; then \
       apk add --no-cache musl-dev openssl-dev protobuf-dev git rust cargo; \
       if [ "$TAGS" = "5BytesOffset" ]; then \
         cargo build --release; \
@@ -51,7 +57,7 @@ COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh 
 
 # Install dependencies and create non-root user
 RUN apk upgrade --no-cache zlib && \
-    apk add --no-cache fuse curl su-exec && \
+    apk add --no-cache fuse curl su-exec libgcc && \
     addgroup -g 1000 seaweed && \
     adduser -D -u 1000 -G seaweed seaweed
 

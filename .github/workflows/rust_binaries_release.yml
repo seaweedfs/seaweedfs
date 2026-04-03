@@ -39,8 +39,16 @@ jobs:
       - name: Install cross-compilation tools
         if: matrix.cross
         run: |
-          sudo apt-get install -y gcc-aarch64-linux-gnu
+          sudo dpkg --add-architecture arm64
+          sudo sed -i 's/^deb /deb [arch=amd64] /' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/arm64.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ jammy-updates main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list.d/arm64.list
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu libssl-dev:arm64
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          echo "OPENSSL_DIR=/usr" >> "$GITHUB_ENV"
+          echo "OPENSSL_INCLUDE_DIR=/usr/include" >> "$GITHUB_ENV"
+          echo "OPENSSL_LIB_DIR=/usr/lib/aarch64-linux-gnu" >> "$GITHUB_ENV"
 
       - name: Cache cargo registry and target
         uses: actions/cache@v5
@@ -80,6 +88,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -87,6 +96,15 @@ jobs:
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-${{ matrix.asset_suffix }}
+          path: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
 
   build-rust-volume-darwin:
     permissions:
@@ -147,6 +165,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -154,6 +173,15 @@ jobs:
             weed-volume_${{ matrix.asset_suffix }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-${{ matrix.asset_suffix }}
+          path: |
+            weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
+            weed-volume_${{ matrix.asset_suffix }}.tar.gz
 
   build-rust-volume-windows:
     permissions:
@@ -206,6 +234,7 @@ jobs:
           rm weed-volume-normal.exe
 
       - name: Upload release assets
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: |
@@ -213,3 +242,12 @@ jobs:
             weed-volume_windows_amd64.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-volume-windows_amd64
+          path: |
+            weed-volume_large_disk_windows_amd64.zip
+            weed-volume_windows_amd64.zip

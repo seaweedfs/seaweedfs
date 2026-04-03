@@ -50,6 +50,10 @@ func (fs *FilerSource) DoInitialize(address, grpcAddress string, dir string, rea
 	return nil
 }
 
+func (fs *FilerSource) SetGrpcDialOption(option grpc.DialOption) {
+	fs.grpcDialOption = option
+}
+
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
 
 	vid2Locations := make(map[string]*filer_pb.Locations)

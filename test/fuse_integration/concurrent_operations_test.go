@@ -249,11 +249,18 @@ func testConcurrentDirectoryOperations(t *testing.T, framework *FuseTestFramewor
 					return
 				}
 
-				// Create file in subdirectory
+				// Create file in subdirectory with retry for transient FUSE errors
 				testFile := filepath.Join(subDir, "test.txt")
 				content := []byte(fmt.Sprintf("Worker %d, Subdir %d", workerID, i))
-				if err := os.WriteFile(testFile, content, 0644); err != nil {
-					addError(fmt.Errorf("worker %d file %d: %v", workerID, i, err))
+				var writeErr error
+				for attempt := 0; attempt < 3; attempt++ {
+					if writeErr = os.WriteFile(testFile, content, 0644); writeErr == nil {
+						break
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				if writeErr != nil {
+					addError(fmt.Errorf("worker %d file %d: %v", workerID, i, writeErr))
 					return
 				}
 			}

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -137,6 +140,23 @@ func LoadServerTLS(config *util.ViperProxy, component string) (grpc.ServerOption
 		return nil, nil
 	}
 	return grpc.Creds(ta), nil
+}
+
+func LoadClientTLSFromFile(configFile string, component string) (grpc.DialOption, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+	// Resolve relative PEM paths against the config file's directory.
+	configDir := filepath.Dir(configFile)
+	for _, key := range []string{"grpc.ca", component + ".cert", component + ".key"} {
+		p := v.GetString(key)
+		if p != "" && !filepath.IsAbs(p) {
+			v.Set(key, filepath.Join(configDir, p))
+		}
+	}
+	return LoadClientTLS(&util.ViperProxy{Viper: v}, component), nil
 }
 
 func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
