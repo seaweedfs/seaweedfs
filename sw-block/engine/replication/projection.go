@@ -9,9 +9,9 @@ type PublicationProjection struct {
 
 	Mode        ModeView
 	Publication PublicationView
+	Recovery    RecoveryView
 	Readiness   ReadinessView
 	Boundary    BoundaryView
 
-	ReplicaIDs     []string
-	PublishHealthy bool
+	ReplicaIDs []string
 }

@@ -27,6 +27,20 @@ type ConfigureShipperCommand struct {
 
 func (ConfigureShipperCommand) commandName() string { return "configure_shipper" }
 
+type StartCatchUpCommand struct {
+	VolumeID  string
+	TargetLSN uint64
+}
+
+func (StartCatchUpCommand) commandName() string { return "start_catchup" }
+
+type StartRebuildCommand struct {
+	VolumeID  string
+	TargetLSN uint64
+}
+
+func (StartRebuildCommand) commandName() string { return "start_rebuild" }
+
 type InvalidateSessionCommand struct {
 	VolumeID string
 	Reason   string

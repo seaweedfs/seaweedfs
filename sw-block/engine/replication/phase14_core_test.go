@@ -64,7 +64,7 @@ func TestPhase14_CorePublishHealthyRequiresBarrierDurability(t *testing.T) {
 	if result.Projection.Publication.Reason != "awaiting_role_apply" {
 		t.Fatalf("publication_reason=%q", result.Projection.Publication.Reason)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("fresh assignment must not publish healthy")
 	}
 
@@ -77,7 +77,7 @@ func TestPhase14_CorePublishHealthyRequiresBarrierDurability(t *testing.T) {
 		t.Fatalf("publication_reason=%q", result.Projection.Publication.Reason)
 	}
 	result = core.ApplyEvent(ShipperConnectedObserved{ID: "vol-a"})
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("connected shipper without barrier durability must stay non-healthy")
 	}
 	if result.Projection.Mode.Name != ModeBootstrapPending {
@@ -88,7 +88,7 @@ func TestPhase14_CorePublishHealthyRequiresBarrierDurability(t *testing.T) {
 	}
 
 	result = core.ApplyEvent(BarrierAccepted{ID: "vol-a", FlushedLSN: 12})
-	if !result.Projection.PublishHealthy {
+	if !result.Projection.Publication.Healthy {
 		t.Fatal("barrier durability should enable publish healthy on eligible primary path")
 	}
 	if result.Projection.Mode.Name != ModePublishHealthy {
@@ -122,7 +122,7 @@ func TestPhase14_CoreDiagnosticShippedDoesNotCreateDurableTruth(t *testing.T) {
 	if result.Projection.Boundary.DiagnosticShippedLSN != 99 {
 		t.Fatalf("diagnostic_shipped=%d", result.Projection.Boundary.DiagnosticShippedLSN)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("diagnostic shipped progress must not establish durable healthy publication")
 	}
 	if result.Projection.Mode.Name != ModeBootstrapPending {
@@ -148,7 +148,7 @@ func TestPhase14_CoreFailClosedModesStayDistinct(t *testing.T) {
 	if result.Projection.Mode.Name != ModeDegraded {
 		t.Fatalf("mode=%s", result.Projection.Mode.Name)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("degraded mode must fail closed")
 	}
 
@@ -156,7 +156,7 @@ func TestPhase14_CoreFailClosedModesStayDistinct(t *testing.T) {
 	if result.Projection.Mode.Name != ModeNeedsRebuild {
 		t.Fatalf("mode=%s", result.Projection.Mode.Name)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("needs_rebuild must fail closed")
 	}
 	if result.Projection.Mode.Reason != "gap_too_large" {
@@ -188,7 +188,7 @@ func TestPhase14_CoreProjectionMarksConstrainedRuntimeAuthority(t *testing.T) {
 	if result.Projection.Mode.Name != ModeReplicaReady {
 		t.Fatalf("mode=%s", result.Projection.Mode.Name)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("replica-ready is not the same as publish-healthy")
 	}
 	if result.Projection.Publication.Reason != "replica_not_primary" {
@@ -208,7 +208,7 @@ func TestPhase14_CoreAllocatedOnlyWithoutReplicas(t *testing.T) {
 	if result.Projection.Mode.Name != ModeAllocatedOnly {
 		t.Fatalf("mode=%s", result.Projection.Mode.Name)
 	}
-	if result.Projection.PublishHealthy {
+	if result.Projection.Publication.Healthy {
 		t.Fatal("allocated-only volume must not publish healthy")
 	}
 	if result.Projection.Publication.Reason != "allocated_only" {

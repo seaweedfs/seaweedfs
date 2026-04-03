@@ -1,5 +1,7 @@
 package replication
 
+import "reflect"
+
 // CoreEngine is the first explicit Phase 14 V2 core shell.
 // It is deterministic and side-effect free: one event in, updated state and
 // commands/projection out.
@@ -21,6 +23,7 @@ func NewCoreEngine() *CoreEngine {
 
 // ApplyEvent mutates the bounded core state and emits commands/projection.
 func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
+	prevProjection, hadPrevProjection := e.Projection(ev.VolumeID())
 	st := e.mustState(ev.VolumeID())
 	var cmds []Command
 
@@ -43,6 +46,11 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 	case DiagnosticShippedAdvanced:
 		if v.ShippedLSN > st.Boundary.DiagnosticShippedLSN {
 			st.Boundary.DiagnosticShippedLSN = v.ShippedLSN
+		}
+
+	case CommittedLSNAdvanced:
+		if v.CommittedLSN > st.Boundary.CommittedLSN {
+			st.Boundary.CommittedLSN = v.CommittedLSN
 		}
 
 	case BarrierAccepted:
@@ -73,11 +81,53 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 			st.Boundary.CheckpointLSN = v.CheckpointLSN
 		}
 
+	case CatchUpPlanned:
+		st.Recovery.Phase = RecoveryCatchingUp
+		st.Recovery.AchievedLSN = 0
+		if v.TargetLSN > st.Recovery.TargetLSN {
+			st.Recovery.TargetLSN = v.TargetLSN
+		}
+		if v.TargetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = v.TargetLSN
+		}
+		st.Recovery.Reason = ""
+		if st.shouldStartCatchUp(v.TargetLSN) {
+			cmds = append(cmds, StartCatchUpCommand{
+				VolumeID:  st.VolumeID,
+				TargetLSN: v.TargetLSN,
+			})
+			st.commands.CatchUpTargetLSN = v.TargetLSN
+		}
+
+	case RecoveryProgressObserved:
+		if v.AchievedLSN > st.Recovery.AchievedLSN {
+			st.Recovery.AchievedLSN = v.AchievedLSN
+		}
+		if v.AchievedLSN > st.Boundary.AchievedLSN {
+			st.Boundary.AchievedLSN = v.AchievedLSN
+		}
+
+	case CatchUpCompleted:
+		if v.AchievedLSN > st.Recovery.AchievedLSN {
+			st.Recovery.AchievedLSN = v.AchievedLSN
+		}
+		if v.AchievedLSN > st.Boundary.AchievedLSN {
+			st.Boundary.AchievedLSN = v.AchievedLSN
+		}
+		if v.AchievedLSN > st.Boundary.DurableLSN {
+			st.Boundary.DurableLSN = v.AchievedLSN
+		}
+		st.Recovery.Phase = RecoveryIdle
+		st.Recovery.Reason = ""
+		st.commands.CatchUpTargetLSN = 0
+
 	case NeedsRebuildObserved:
 		st.needsRebuild = true
 		st.rebuildReason = v.Reason
 		st.degraded = false
 		st.degradeReason = ""
+		st.Recovery.Phase = RecoveryNeedsRebuild
+		st.Recovery.Reason = v.Reason
 		if st.shouldInvalidate(v.Reason) {
 			cmds = append(cmds, InvalidateSessionCommand{
 				VolumeID: st.VolumeID,
@@ -87,26 +137,60 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 			st.commands.InvalidationReason = v.Reason
 		}
 
+	case RebuildStarted:
+		st.needsRebuild = true
+		st.Recovery.Phase = RecoveryRebuilding
+		st.Recovery.Reason = st.rebuildReason
+		st.Recovery.AchievedLSN = 0
+		if v.TargetLSN > st.Recovery.TargetLSN {
+			st.Recovery.TargetLSN = v.TargetLSN
+		}
+		if v.TargetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = v.TargetLSN
+		}
+		if st.shouldStartRebuild(v.TargetLSN) {
+			cmds = append(cmds, StartRebuildCommand{
+				VolumeID:  st.VolumeID,
+				TargetLSN: v.TargetLSN,
+			})
+			st.commands.RebuildTargetLSN = v.TargetLSN
+		}
+
 	case RebuildCommitted:
 		st.needsRebuild = false
 		st.rebuildReason = ""
 		st.degraded = false
 		st.degradeReason = ""
 		st.resetInvalidation()
+		st.Recovery.Phase = RecoveryIdle
+		st.Recovery.Reason = ""
 		if v.FlushedLSN > st.Boundary.DurableLSN {
 			st.Boundary.DurableLSN = v.FlushedLSN
 		}
 		if v.CheckpointLSN > st.Boundary.CheckpointLSN {
 			st.Boundary.CheckpointLSN = v.CheckpointLSN
 		}
+		achievedLSN := v.AchievedLSN
+		if achievedLSN == 0 {
+			achievedLSN = maxUint64(v.FlushedLSN, v.CheckpointLSN)
+		}
+		if achievedLSN > st.Recovery.AchievedLSN {
+			st.Recovery.AchievedLSN = achievedLSN
+		}
+		if achievedLSN > st.Boundary.AchievedLSN {
+			st.Boundary.AchievedLSN = achievedLSN
+		}
+		st.commands.RebuildTargetLSN = 0
 	}
 
 	e.recompute(st)
 	proj := e.projectionFor(st)
-	cmds = append(cmds, PublishProjectionCommand{
-		VolumeID:   st.VolumeID,
-		Projection: proj,
-	})
+	if !hadPrevProjection || !reflect.DeepEqual(prevProjection, proj) {
+		cmds = append(cmds, PublishProjectionCommand{
+			VolumeID:   st.VolumeID,
+			Projection: proj,
+		})
+	}
 
 	return ApplyResult{
 		Commands:   cmds,
@@ -146,7 +230,6 @@ func (e *CoreEngine) recompute(st *VolumeState) {
 	st.Readiness.ReplicaReady = st.Role == RoleReplica &&
 		st.Readiness.RoleApplied &&
 		st.Readiness.ReceiverReady
-	st.Readiness.PublishHealthy = false
 	st.Mode.Authority = RuntimeAuthorityConstrainedV1
 	st.Mode.Reason = ""
 	st.Publication = PublicationView{}
@@ -160,6 +243,10 @@ func (e *CoreEngine) recompute(st *VolumeState) {
 		st.Publication.Reason = defaultReason(st.degradeReason, "degraded")
 		st.Mode.Name = ModeDegraded
 		st.Mode.Reason = st.Publication.Reason
+	case st.recoveryActive():
+		st.Publication.Reason = "recovery_in_progress"
+		st.Mode.Name = ModeBootstrapPending
+		st.Mode.Reason = st.Publication.Reason
 	case !st.hasReplicas():
 		st.Publication.Reason = "allocated_only"
 		st.Mode.Name = ModeAllocatedOnly
@@ -169,7 +256,6 @@ func (e *CoreEngine) recompute(st *VolumeState) {
 	case st.Role == RolePrimary && st.primaryEligibleForPublish():
 		st.Publication.Healthy = true
 		st.Mode.Name = ModePublishHealthy
-		st.Readiness.PublishHealthy = true
 	case st.Readiness.Assigned || st.Readiness.RoleApplied:
 		st.Publication.Reason = st.bootstrapReason()
 		st.Mode.Name = ModeBootstrapPending
@@ -218,6 +304,11 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.degraded = false
 		st.degradeReason = ""
 		st.resetInvalidation()
+		st.Recovery = RecoveryView{Phase: RecoveryIdle}
+		st.Boundary.TargetLSN = 0
+		st.Boundary.AchievedLSN = 0
+		st.commands.CatchUpTargetLSN = 0
+		st.commands.RebuildTargetLSN = 0
 	}
 
 	var cmds []Command
@@ -251,15 +342,15 @@ func (e *CoreEngine) projectionFor(st *VolumeState) PublicationProjection {
 		replicaIDs = append(replicaIDs, replica.ReplicaID)
 	}
 	return PublicationProjection{
-		VolumeID:       st.VolumeID,
-		Epoch:          st.Epoch,
-		Role:           st.Role,
-		Mode:           st.Mode,
-		Publication:    st.Publication,
-		Readiness:      st.Readiness,
-		Boundary:       st.Boundary,
-		ReplicaIDs:     replicaIDs,
-		PublishHealthy: st.Publication.Healthy,
+		VolumeID:    st.VolumeID,
+		Epoch:       st.Epoch,
+		Role:        st.Role,
+		Mode:        st.Mode,
+		Publication: st.Publication,
+		Recovery:    st.Recovery,
+		Readiness:   st.Readiness,
+		Boundary:    st.Boundary,
+		ReplicaIDs:  replicaIDs,
 	}
 }
 
@@ -293,6 +384,14 @@ func (st *VolumeState) shouldInvalidate(reason string) bool {
 	return !st.commands.InvalidationIssued || st.commands.InvalidationReason != reason
 }
 
+func (st *VolumeState) shouldStartCatchUp(targetLSN uint64) bool {
+	return targetLSN > 0 && st.commands.CatchUpTargetLSN != targetLSN
+}
+
+func (st *VolumeState) shouldStartRebuild(targetLSN uint64) bool {
+	return targetLSN > 0 && st.commands.RebuildTargetLSN != targetLSN
+}
+
 func (st *VolumeState) resetInvalidation() {
 	st.commands.InvalidationIssued = false
 	st.commands.InvalidationReason = ""
@@ -319,6 +418,10 @@ func (st *VolumeState) bootstrapReason() string {
 	}
 }
 
+func (st *VolumeState) recoveryActive() bool {
+	return st.Recovery.Phase == RecoveryCatchingUp || st.Recovery.Phase == RecoveryRebuilding
+}
+
 func defaultReason(reason, fallback string) string {
 	if reason != "" {
 		return reason
@@ -339,4 +442,11 @@ func sameReplicaAssignments(left, right []ReplicaAssignment) bool {
 		}
 	}
 	return true
+}
+
+func maxUint64(left, right uint64) uint64 {
+	if left > right {
+		return left
+	}
+	return right
 }

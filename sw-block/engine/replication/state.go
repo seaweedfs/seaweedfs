@@ -39,14 +39,16 @@ type ReadinessView struct {
 	ShipperConfigured bool
 	ShipperConnected  bool
 	ReplicaReady      bool
-	PublishHealthy    bool
 }
 
 // BoundaryView captures durable/publication boundary truth. DurableLSN is the
 // authority for replicated durability; diagnostic shipped progress is separate.
 type BoundaryView struct {
+	CommittedLSN         uint64
 	DurableLSN           uint64
 	CheckpointLSN        uint64
+	TargetLSN            uint64
+	AchievedLSN          uint64
 	DiagnosticShippedLSN uint64
 	LastBarrierOK        bool
 	LastBarrierReason    string
@@ -59,12 +61,29 @@ type ModeView struct {
 	Authority RuntimeAuthority
 }
 
-// PublicationView is the outward publication truth derived from the same core
-// state. It is kept separate from readiness so the publication automaton stays
-// explicit in Phase 14A.
+// PublicationView is the semantic owner for outward publication truth. Other
+// projections may derive convenience fields from it, but they must not become
+// parallel authorities.
 type PublicationView struct {
 	Healthy bool
 	Reason  string
+}
+
+type RecoveryPhase string
+
+const (
+	RecoveryIdle         RecoveryPhase = "idle"
+	RecoveryCatchingUp   RecoveryPhase = "catching_up"
+	RecoveryNeedsRebuild RecoveryPhase = "needs_rebuild"
+	RecoveryRebuilding   RecoveryPhase = "rebuilding"
+)
+
+// RecoveryView captures the bounded recovery truth the core owns directly.
+type RecoveryView struct {
+	Phase       RecoveryPhase
+	TargetLSN   uint64
+	AchievedLSN uint64
+	Reason      string
 }
 
 type commandState struct {
@@ -73,6 +92,8 @@ type commandState struct {
 	ReceiverStartEpoch    uint64
 	ShipperConfigEpoch    uint64
 	ShipperConfigReplicas []ReplicaAssignment
+	CatchUpTargetLSN      uint64
+	RebuildTargetLSN      uint64
 	InvalidationIssued    bool
 	InvalidationReason    string
 }
@@ -89,6 +110,7 @@ type VolumeState struct {
 	Boundary        BoundaryView
 	Mode            ModeView
 	Publication     PublicationView
+	Recovery        RecoveryView
 
 	degraded      bool
 	degradeReason string
@@ -104,6 +126,9 @@ func newVolumeState(volumeID string) *VolumeState {
 		Mode: ModeView{
 			Name:      ModeAllocatedOnly,
 			Authority: RuntimeAuthorityConstrainedV1,
+		},
+		Recovery: RecoveryView{
+			Phase: RecoveryIdle,
 		},
 	}
 }

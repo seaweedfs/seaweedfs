@@ -1,7 +1,7 @@
 # Phase 14
 
 Date: 2026-04-03
-Status: active
+Status: delivered
 Purpose: make the `V2 core` explicit inside `sw-block/engine/replication` so
 accepted semantic constraints become executable ownership, rather than staying
 only as design and constrained-`V1` interpretation
@@ -101,8 +101,8 @@ Goal:
 
 Acceptance object:
 
-1. `VolumeState`, event vocabulary, command vocabulary, projection vocabulary,
-   and deterministic engine loop exist in `sw-block/engine/replication`
+1. `VolumeState`, normalized mode/readiness/publication state, and bounded
+   outward projection exist in `sw-block/engine/replication`
 2. `publish_healthy` is derived from named semantic state rather than runtime
    convenience
 3. fail-closed mode distinctions stay explicit:
@@ -113,12 +113,22 @@ Acceptance object:
    - `degraded`
    - `needs_rebuild`
 4. the structural acceptance tests prove:
-   - stable identity ownership is preserved
-   - diagnostic shipped progress does not establish durable truth
-   - `publish_healthy` requires durable boundary truth
+   - `replica_ready` and `publish_healthy` stay distinct
+   - no-replica path stays `allocated_only`
    - `degraded` and `needs_rebuild` remain distinct fail-closed meanings
    - the current integrated interpretation remains `constrained_v1`, not live
      `v2_core` cutover
+
+Ownership boundary:
+
+1. `14A` owns semantic shell closure for:
+   - mode
+   - readiness
+   - publication
+2. `14A` does not own:
+   - command-sequence closure
+   - durable-boundary closure
+   - recovery closure
 
 Status:
 
@@ -138,9 +148,15 @@ Acceptance object:
 2. one bounded event sequence produces one bounded command sequence
 3. command emission does not depend on `weed/` internals
 
+Ownership boundary:
+
+1. `14B` owns command-sequence closure
+2. `14B` does not redefine mode/publication ownership from `14A`
+3. `14B` does not absorb durable-boundary or recovery closure from `14C`
+
 Status:
 
-1. active
+1. delivered
 
 ### `14C`: Boundary / Recovery Semantic Closure
 
@@ -156,9 +172,17 @@ Acceptance object:
    fail-closed degradation, and rebuild escalation
 3. structural tests stay bounded and do not claim live path migration yet
 
+Ownership boundary:
+
+1. `14C` owns durable-boundary and recovery closure
+2. `14C` may affect mode/publication only through explicit boundary/recovery
+   truth
+3. `14C` does not reopen `14A` shell ownership or `14B` command-sequence
+   closure
+
 Status:
 
-1. planned
+1. delivered
 
 ## Manager Review Gate
 
@@ -173,8 +197,10 @@ intuition.
 
 ## Immediate Next Step
 
-Continue with `14B`.
+Phase 14's first bounded core shell is now in place.
 
-Use the explicit shell from `14A` as the semantic substrate, then freeze
-gap-driven command emission so repeated assignments and repeated failures do not
-silently turn back into runtime-convenience command spam.
+The best next step is `Phase 15A`:
+
+1. connect one narrow adapter ingress into the explicit core
+2. connect one bounded command path back out
+3. prove the live path does not split semantic truth from the new core owner

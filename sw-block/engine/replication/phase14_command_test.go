@@ -24,9 +24,7 @@ func TestPhase14_CommandSequence_PrimaryAssignmentIsBounded(t *testing.T) {
 	})
 
 	result = core.ApplyEvent(ev)
-	assertCommandNames(t, result.Commands, []string{
-		"publish_projection",
-	})
+	assertCommandNames(t, result.Commands, nil)
 }
 
 func TestPhase14_CommandSequence_ReplicaAssignmentIsBounded(t *testing.T) {
@@ -48,9 +46,7 @@ func TestPhase14_CommandSequence_ReplicaAssignmentIsBounded(t *testing.T) {
 	})
 
 	result = core.ApplyEvent(ev)
-	assertCommandNames(t, result.Commands, []string{
-		"publish_projection",
-	})
+	assertCommandNames(t, result.Commands, nil)
 }
 
 func TestPhase14_CommandSequence_AssignmentChangeReissuesNeededCommand(t *testing.T) {
@@ -107,7 +103,111 @@ func TestPhase14_CommandSequence_InvalidateOnlyOnNewFailureTransition(t *testing
 	})
 
 	result = core.ApplyEvent(BarrierRejected{ID: "vol-cmd-failure", Reason: "timeout"})
+	assertCommandNames(t, result.Commands, nil)
+}
+
+func TestPhase14_CommandSequence_PublishOnlyWhenProjectionChanges(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:    "vol-cmd-publish",
+		Epoch: 2,
+		Role:  RolePrimary,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.15:9333", CtrlAddr: "10.0.0.15:9334", Version: 1}},
+		},
+	})
+
+	result := core.ApplyEvent(RoleApplied{ID: "vol-cmd-publish"})
 	assertCommandNames(t, result.Commands, []string{
+		"publish_projection",
+	})
+
+	result = core.ApplyEvent(RoleApplied{ID: "vol-cmd-publish"})
+	assertCommandNames(t, result.Commands, nil)
+}
+
+func TestPhase14_CommandSequence_CatchUpStartIsBounded(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:    "vol-cmd-catchup",
+		Epoch: 6,
+		Role:  RoleReplica,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.16:9333", CtrlAddr: "10.0.0.16:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(RoleApplied{ID: "vol-cmd-catchup"})
+	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-catchup"})
+
+	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", TargetLSN: 55})
+	assertCommandNames(t, result.Commands, []string{
+		"start_catchup",
+		"publish_projection",
+	})
+
+	result = core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", TargetLSN: 55})
+	assertCommandNames(t, result.Commands, nil)
+}
+
+func TestPhase14_CommandSequence_RebuildStartIsBounded(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:    "vol-cmd-rebuild",
+		Epoch: 7,
+		Role:  RoleReplica,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.17:9333", CtrlAddr: "10.0.0.17:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(RoleApplied{ID: "vol-cmd-rebuild"})
+	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-rebuild"})
+	core.ApplyEvent(NeedsRebuildObserved{ID: "vol-cmd-rebuild", Reason: "gap_too_large"})
+
+	result := core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", TargetLSN: 80})
+	assertCommandNames(t, result.Commands, []string{
+		"start_rebuild",
+		"publish_projection",
+	})
+
+	result = core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", TargetLSN: 80})
+	assertCommandNames(t, result.Commands, nil)
+}
+
+func TestPhase14_CommandSequence_AssignmentChangeAllowsFreshRecoveryStart(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:    "vol-cmd-reassign",
+		Epoch: 1,
+		Role:  RoleReplica,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.18:9333", CtrlAddr: "10.0.0.18:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(RoleApplied{ID: "vol-cmd-reassign"})
+	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-reassign"})
+
+	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-reassign", TargetLSN: 90})
+	assertCommandNames(t, result.Commands, []string{
+		"start_catchup",
+		"publish_projection",
+	})
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:    "vol-cmd-reassign",
+		Epoch: 2,
+		Role:  RoleReplica,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.19:9333", CtrlAddr: "10.0.0.19:9334", Version: 2}},
+		},
+	})
+
+	result = core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-reassign", TargetLSN: 90})
+	assertCommandNames(t, result.Commands, []string{
+		"start_catchup",
 		"publish_projection",
 	})
 }
@@ -117,6 +217,9 @@ func assertCommandNames(t *testing.T, cmds []Command, want []string) {
 	got := make([]string, 0, len(cmds))
 	for _, cmd := range cmds {
 		got = append(got, cmd.commandName())
+	}
+	if want == nil {
+		want = []string{}
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands=%v, want %v", got, want)

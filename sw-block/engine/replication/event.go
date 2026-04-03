@@ -52,6 +52,15 @@ type DiagnosticShippedAdvanced struct {
 
 func (e DiagnosticShippedAdvanced) VolumeID() string { return e.ID }
 
+// CommittedLSNAdvanced updates the committed boundary truth without implying
+// replica durability or checkpoint advancement.
+type CommittedLSNAdvanced struct {
+	ID           string
+	CommittedLSN uint64
+}
+
+func (e CommittedLSNAdvanced) VolumeID() string { return e.ID }
+
 // BarrierAccepted advances authoritative durable progress.
 type BarrierAccepted struct {
 	ID         string
@@ -76,6 +85,32 @@ type CheckpointAdvanced struct {
 
 func (e CheckpointAdvanced) VolumeID() string { return e.ID }
 
+// CatchUpPlanned freezes the current replay target as bounded recovery truth.
+type CatchUpPlanned struct {
+	ID        string
+	TargetLSN uint64
+}
+
+func (e CatchUpPlanned) VolumeID() string { return e.ID }
+
+// RecoveryProgressObserved updates achieved replay/rebuild progress without
+// implying publication or durability closure by itself.
+type RecoveryProgressObserved struct {
+	ID          string
+	AchievedLSN uint64
+}
+
+func (e RecoveryProgressObserved) VolumeID() string { return e.ID }
+
+// CatchUpCompleted closes a previously planned catch-up path at an explicit
+// achieved boundary.
+type CatchUpCompleted struct {
+	ID          string
+	AchievedLSN uint64
+}
+
+func (e CatchUpCompleted) VolumeID() string { return e.ID }
+
 // NeedsRebuildObserved is a fail-closed rebuild escalation.
 type NeedsRebuildObserved struct {
 	ID     string
@@ -84,9 +119,19 @@ type NeedsRebuildObserved struct {
 
 func (e NeedsRebuildObserved) VolumeID() string { return e.ID }
 
+// RebuildStarted moves the recovery truth from blocked-needs-rebuild into an
+// explicit rebuilding path with a frozen target.
+type RebuildStarted struct {
+	ID        string
+	TargetLSN uint64
+}
+
+func (e RebuildStarted) VolumeID() string { return e.ID }
+
 // RebuildCommitted clears the rebuild condition with bounded durable truth.
 type RebuildCommitted struct {
 	ID            string
+	AchievedLSN   uint64
 	FlushedLSN    uint64
 	CheckpointLSN uint64
 }
