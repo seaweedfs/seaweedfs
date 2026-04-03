@@ -82,7 +82,7 @@ func cancelledCtx() context.Context {
 // expiredCtx returns a context whose deadline has already passed.
 func expiredCtx() context.Context {
 	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
-	_ = cancel // already expired, but keep the cancel func from leaking
+	cancel() // release resources immediately as it's already expired
 	return ctx
 }
 
@@ -198,9 +198,10 @@ func TestFilerStoreWrapperReadOpsSucceedWithCancelledContext(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-// RollbackTransaction must succeed even when the context is cancelled,
-// because it is a cleanup operation called after failures.
+// RollbackTransaction must succeed even when the context is cancelled or
+// expired, because it is a cleanup operation called after failures.
 func TestFilerStoreWrapperRollbackSucceedsWithCancelledContext(t *testing.T) {
 	wrapper := NewFilerStoreWrapper(newStubFilerStore())
 	assert.NoError(t, wrapper.RollbackTransaction(cancelledCtx()))
+	assert.NoError(t, wrapper.RollbackTransaction(expiredCtx()))
 }
