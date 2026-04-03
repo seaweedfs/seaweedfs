@@ -104,6 +104,29 @@ func TestBug3_ReplicaAddr_MustBeIPPort_WildcardBind(t *testing.T) {
 			t.Fatalf("CtrlAddr %q does not use advertisedHost 10.0.0.99", info.CtrlAddr)
 		}
 	})
+
+	// Case 4: opaque non-IP advertisedHost must NOT produce a usable routable address.
+	// CP13-2: this proves that passing an opaque server identity (e.g., from -id flag)
+	// as the advertised host would produce a non-routable address. The production path
+	// uses advertisedIP (from -ip flag), not localServerID, to prevent this.
+	t.Run("opaque_identity_not_routable", func(t *testing.T) {
+		vol3 := createTestVol(t)
+		defer vol3.Close()
+		// Pass an opaque identity string — NOT an IP address.
+		if err := vol3.StartReplicaReceiver(":0", ":0", "my-custom-server-id"); err != nil {
+			t.Fatal(err)
+		}
+		info := vol3.ReplicaReceiverAddr()
+		if info == nil {
+			t.Fatal("ReplicaReceiverAddr() returned nil")
+		}
+		// The address will be "my-custom-server-id:port" — NOT parseable as a routable IP.
+		ip := net.ParseIP(strings.Split(info.DataAddr, ":")[0])
+		if ip != nil {
+			t.Fatalf("opaque identity should NOT produce a parseable IP, got %s", info.DataAddr)
+		}
+		t.Logf("correctly non-routable: %s (production uses advertisedIP, not serverID)", info.DataAddr)
+	})
 }
 
 // --- Bug 2: LSN gap after shipper degradation ---

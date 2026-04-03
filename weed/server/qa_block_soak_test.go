@@ -84,6 +84,7 @@ func newSoakSetup(t *testing.T) *soakSetup {
 		blockDir:       filepath.Join(dir, "vs1_9333"),
 		listenAddr:     "127.0.0.1:3260",
 		localServerID:  "vs1:9333",
+		advertisedIP:   "127.0.0.1",
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
 		replStates:     make(map[string]*volReplState),
