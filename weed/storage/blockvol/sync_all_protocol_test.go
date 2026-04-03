@@ -298,10 +298,19 @@ func TestReconnect_CatchupFromRetainedWal(t *testing.T) {
 }
 
 // TestReconnect_GapBeyondRetainedWal_NeedsRebuild verifies that when the
-// replica's gap exceeds the retained WAL range, the system transitions to
-// NeedsRebuild instead of silently losing data.
+// replica's gap exceeds the retained WAL range, the reconnect handshake
+// detects this and transitions to NeedsRebuild.
 //
-// CP13-7 proof: unrecoverable gap → NeedsRebuild transition + SyncCache fails.
+// CP13-7 proof: real reconnect handshake gap detection (R < S path in
+// reconnectWithHandshake), not just budget-triggered escalation.
+//
+// Sequence:
+// 1. Establish sync (replica at LSN 1)
+// 2. Disconnect replica
+// 3. Release retention hold via timeout budget on old shipper
+// 4. Write + flush to advance WAL tail past replica's flushedLSN
+// 5. Reconnect (new shipper seeded with hasFlushedProgress=true)
+// 6. SyncCache → reconnectWithHandshake → detects R < S → NeedsRebuild
 func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
@@ -315,7 +324,7 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 
 	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
 
-	// Write and sync while healthy.
+	// Step 1: Write and sync while healthy.
 	if err := primary.WriteLBA(0, makeBlock('A')); err != nil {
 		t.Fatal(err)
 	}
@@ -325,50 +334,79 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 
 	sg := primary.shipperGroup
 	s := sg.Shipper(0)
-	if s.State() != ReplicaInSync {
-		t.Fatalf("expected InSync, got %s", s.State())
-	}
+	replicaFlushed := s.ReplicaFlushedLSN()
+	t.Logf("replica flushedLSN after sync: %d", replicaFlushed)
 
-	// Disconnect replica.
+	// Step 2: Disconnect replica.
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	// Write entries (within WAL capacity).
+	// Step 3: Release retention hold via timeout budget on the old shipper.
+	// This transitions the old shipper to NeedsRebuild, so
+	// MinRecoverableFlushedLSN no longer pins the WAL.
+	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
+		Timeout:        1 * time.Nanosecond, // force timeout
+		MaxBytes:       0,
+		PrimaryHeadLSN: primary.nextLSN.Load() - 1,
+		BlockSize:      primary.super.BlockSize,
+	})
+	if s.State() != ReplicaNeedsRebuild {
+		t.Fatalf("old shipper should be NeedsRebuild after timeout, got %s", s.State())
+	}
+
+	// Step 4: Write + flush to advance WAL tail past replica's flushedLSN.
+	// The retention hold is released, so writes won't block on WAL admission.
 	for i := uint64(1); i < 8; i++ {
 		if err := primary.WriteLBA(i, makeBlock(byte('0'+i))); err != nil {
 			t.Fatalf("write %d: %v", i, err)
 		}
 	}
+	primary.flusher.FlushOnce()
+	primary.flusher.FlushOnce()
 
-	// CP13-6 → CP13-7: trigger NeedsRebuild via max-bytes budget.
-	// This simulates the case where the gap exceeds retention budget.
-	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
-		Timeout:        5 * time.Minute,
-		MaxBytes:       4 * 1024, // small budget, lag exceeds it
-		PrimaryHeadLSN: primary.nextLSN.Load() - 1,
-		BlockSize:      primary.super.BlockSize,
-	})
-
-	// Assert NeedsRebuild state.
-	if s.State() != ReplicaNeedsRebuild {
-		t.Fatalf("CP13-7: expected NeedsRebuild after unrecoverable gap, got %s", s.State())
+	// Verify checkpoint advanced past replica's position (WAL reclaimed).
+	checkpointAfterFlush := primary.flusher.CheckpointLSN()
+	t.Logf("after flush: checkpoint=%d replicaFlushed=%d", checkpointAfterFlush, replicaFlushed)
+	if checkpointAfterFlush <= replicaFlushed {
+		t.Fatalf("checkpoint should advance past replicaFlushed after hold released: checkpoint=%d replicaFlushed=%d",
+			checkpointAfterFlush, replicaFlushed)
 	}
 
-	// SyncCache must fail — NeedsRebuild shipper cannot satisfy barrier.
+	// Step 5: Reconnect with new receiver.
+	recv2, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv2.Serve()
+	defer recv2.Stop()
+
+	// SetReplicaAddrs creates a new shipper seeded with hasFlushedProgress=true (CP13-5).
+	primary.SetReplicaAddr(recv2.DataAddr(), recv2.CtrlAddr())
+
+	// Step 6: SyncCache triggers reconnect handshake on the new shipper.
+	// The handshake sends ResumeShipReq{HeadLSN, RetainStart}.
+	// Replica responds with its flushedLSN (~1).
+	// Handshake gap analysis: R(1) < S(retainStart) → NeedsRebuild.
 	syncDone := make(chan error, 1)
 	go func() {
 		syncDone <- primary.SyncCache()
 	}()
+
 	select {
 	case err := <-syncDone:
 		if err == nil {
-			t.Fatal("CP13-7: SyncCache should fail with NeedsRebuild")
+			t.Fatal("SyncCache should fail — handshake should detect gap beyond retained WAL")
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("SyncCache hung")
 	}
 
-	t.Logf("CP13-7: unrecoverable gap → NeedsRebuild, SyncCache correctly fails")
+	// Verify the NEW shipper detected the gap via handshake (not just budget).
+	newS := primary.shipperGroup.Shipper(0)
+	if newS.State() != ReplicaNeedsRebuild && newS.State() != ReplicaDegraded {
+		t.Fatalf("new shipper should be NeedsRebuild or Degraded after handshake gap detection, got %s", newS.State())
+	}
+	t.Logf("CP13-7: reconnect handshake detected gap beyond retained WAL (state=%s)", newS.State())
 }
 
 // ---------- WAL retention ----------

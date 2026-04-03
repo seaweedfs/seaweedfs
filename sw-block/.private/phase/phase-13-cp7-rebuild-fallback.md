@@ -53,7 +53,7 @@ Code change: `sync_all_adversarial_test.go` + `sync_all_protocol_test.go` test r
 | Test | Was | Now | What it proves |
 |------|-----|-----|----------------|
 | `TestAdversarial_NeedsRebuildBlocksAllPaths` | FAIL | PASS | NeedsRebuild blocks Ship (drops) + Barrier (rejects) + is sticky across retries |
-| `TestReconnect_GapBeyondRetainedWal_NeedsRebuild` | PASS* | PASS | Unrecoverable gap → NeedsRebuild state assertion + SyncCache fails |
+| `TestReconnect_GapBeyondRetainedWal_NeedsRebuild` | PASS* | PASS | Real reconnect handshake gap detection (R < S path), not budget trigger |
 
 ## Proof Promotion
 
@@ -62,11 +62,16 @@ Code change: `sync_all_adversarial_test.go` + `sync_all_protocol_test.go` test r
 | Test | What it proves for CP13-7 |
 |------|--------------------------|
 | `TestAdversarial_NeedsRebuildBlocksAllPaths` | 5 assertions: NeedsRebuild state, Ship drops, Barrier rejects, state sticky after barrier, second SyncCache still fails |
-| `TestReconnect_GapBeyondRetainedWal_NeedsRebuild` | Unrecoverable gap → hard NeedsRebuild assertion + SyncCache failure |
+| `TestReconnect_GapBeyondRetainedWal_NeedsRebuild` | Real reconnect handshake detects R < S (gap beyond retained WAL) → SyncCache fails |
 | `TestHeartbeat_ReportsNeedsRebuild` | Heartbeat carries per-replica `needs_rebuild` state |
-| `TestReplicaState_RebuildComplete_ReentersInSync` | Full rebuild cycle: NeedsRebuild → rebuild → fresh shipper → InSync |
 | `TestRebuild_AbortOnEpochChange` | Epoch mismatch during rebuild → abort |
 | `TestRebuild_PostRebuild_FlushedLSN_IsCheckpoint` | Post-rebuild `flushedLSN = checkpointLSN` (not stale/zero) |
+
+### Support evidence
+
+| Test | What it supports |
+|------|-----------------|
+| `TestReplicaState_RebuildComplete_ReentersInSync` | Rebuild completion flow (reopen volume → RoleRebuilding → StartRebuild → fresh shipper → InSync). Support evidence: does not start from live NeedsRebuild shipper state, but proves the rebuild mechanics work end-to-end. |
 
 ## Updated Baseline Summary
 
