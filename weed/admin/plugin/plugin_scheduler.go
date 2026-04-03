@@ -95,16 +95,6 @@ func (r *Plugin) laneSchedulerLoop(ls *schedulerLaneState) {
 	}
 }
 
-// schedulerLoop is kept for backward compatibility; it delegates to
-// laneSchedulerLoop with the default lane. New code should not call this.
-func (r *Plugin) schedulerLoop() {
-	ls := r.lanes[LaneDefault]
-	if ls == nil {
-		ls = newLaneState(LaneDefault)
-	}
-	r.laneSchedulerLoop(ls)
-}
-
 // runLaneSchedulerIteration runs one scheduling pass for a single lane,
 // processing only the job types assigned to that lane.
 //
@@ -227,82 +217,6 @@ func (r *Plugin) runLaneSchedulerIterationConcurrent(ls *schedulerLaneState, job
 	r.pruneDetectorLeases(active)
 	r.setLaneLoopState(ls, "", "idle")
 	return hadJobs.Load()
-}
-
-// runSchedulerIteration is kept for backward compatibility. It runs a
-// single iteration across ALL job types (equivalent to the old single-loop
-// behavior). It is only used by the legacy schedulerLoop() fallback.
-func (r *Plugin) runSchedulerIteration() bool {
-	ls := r.lanes[LaneDefault]
-	if ls == nil {
-		ls = newLaneState(LaneDefault)
-	}
-	// For backward compat, the old function processes all job types.
-	r.expireStaleJobs(time.Now().UTC())
-
-	jobTypes := r.registry.DetectableJobTypes()
-	if len(jobTypes) == 0 {
-		r.setSchedulerLoopState("", "idle")
-		return false
-	}
-
-	r.setSchedulerLoopState("", "waiting_for_lock")
-	releaseLock, err := r.acquireAdminLock("plugin scheduler iteration")
-	if err != nil {
-		glog.Warningf("Plugin scheduler failed to acquire lock: %v", err)
-		r.setSchedulerLoopState("", "idle")
-		return false
-	}
-	if releaseLock != nil {
-		defer releaseLock()
-	}
-
-	active := make(map[string]struct{}, len(jobTypes))
-	hadJobs := false
-
-	for _, jobType := range jobTypes {
-		active[jobType] = struct{}{}
-
-		policy, enabled, err := r.loadSchedulerPolicy(jobType)
-		if err != nil {
-			glog.Warningf("Plugin scheduler failed to load policy for %s: %v", jobType, err)
-			continue
-		}
-		if !enabled {
-			r.clearSchedulerJobType(jobType)
-			continue
-		}
-		initialDelay := time.Duration(0)
-		if runInfo := r.snapshotSchedulerRun(jobType); runInfo.lastRunStartedAt.IsZero() {
-			initialDelay = 5 * time.Second
-		}
-		if !r.markDetectionDue(jobType, policy.DetectionInterval, initialDelay) {
-			continue
-		}
-
-		detected := r.runJobTypeIteration(jobType, policy)
-		if detected {
-			hadJobs = true
-		}
-	}
-
-	r.pruneSchedulerState(active)
-	r.pruneDetectorLeases(active)
-	r.setSchedulerLoopState("", "idle")
-	return hadJobs
-}
-
-// wakeLane wakes the scheduler goroutine for a specific lane.
-func (r *Plugin) wakeLane(lane SchedulerLane) {
-	if r == nil {
-		return
-	}
-	if ls, ok := r.lanes[lane]; ok {
-		select {
-		case ls.wakeCh <- struct{}{}:
-		default:
-		}
-	}
 }
 
 // wakeAllLanes wakes all lane scheduler goroutines.

@@ -210,16 +210,6 @@ func (r *Plugin) setSchedulerLoopStateForJobType(jobType, phase string) {
 	}
 }
 
-func (r *Plugin) recordSchedulerIterationComplete(hadJobs bool) {
-	if r == nil {
-		return
-	}
-	r.schedulerLoopMu.Lock()
-	r.schedulerLoopState.lastIterationHadJobs = hadJobs
-	r.schedulerLoopState.lastIterationCompleted = time.Now().UTC()
-	r.schedulerLoopMu.Unlock()
-}
-
 func (r *Plugin) snapshotSchedulerLoopState() schedulerLoopState {
 	if r == nil {
 		return schedulerLoopState{}
