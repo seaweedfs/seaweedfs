@@ -52,7 +52,7 @@ SyncCache → groupCommit.Submit → Barrier(lsnMax)
 
 | Test | Was | Now | Why |
 |------|-----|-----|-----|
-| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | FAIL | PASS | Seeded hasFlushedProgress → reconnect path used |
+| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | FAIL | PASS | Seeded hasFlushedProgress + observable CatchingUp state transition proves handshake path used |
 | `TestAdversarial_CatchupMultipleDisconnects` | FAIL | PASS | Repeated SetReplicaAddrs preserves progress seed |
 | `TestAdversarial_CatchupDoesNotOverwriteNewerData` | FAIL | PASS | Catch-up now completes, safety invariant exercised |
 
@@ -62,7 +62,7 @@ SyncCache → groupCommit.Submit → Barrier(lsnMax)
 
 | Test | What it proves |
 |------|---------------|
-| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | Degraded shipper with prior progress reconnects via handshake + catch-up |
+| `TestAdversarial_ReconnectUsesHandshakeNotBootstrap` | 3 observable proofs: (1) new shipper seeded with `hasFlushedProgress=true`, (2) replica `receivedLSN` advances during SyncCache (catch-up delivered entries), (3) shipper `replicaFlushedLSN > 0` after barrier |
 | `TestAdversarial_CatchupMultipleDisconnects` | Repeated disconnect/reconnect cycles recover cleanly |
 | `TestAdversarial_CatchupDoesNotOverwriteNewerData` | Catch-up replays missing entries without overwriting newer replica data |
 | `TestReconnect_CatchupFromRetainedWal` | Retained-WAL gap replays and returns to InSync |

@@ -164,13 +164,22 @@ func TestAdversarial_ReconnectUsesHandshakeNotBootstrap(t *testing.T) {
 	recv2.Serve()
 	defer recv2.Stop()
 
-	// Reconfigure shipper to new address (preserving shipper identity).
+	// Reconfigure shipper to new address.
+	// CP13-5: SetReplicaAddrs creates fresh shippers but seeds them with
+	// hasFlushedProgress=true from the old group, so the new shipper uses
+	// the reconnect handshake (ResumeShipReq) path, not bare bootstrap.
 	primary.SetReplicaAddr(recv2.DataAddr(), recv2.CtrlAddr())
 
-	// The shipper still has hasFlushedProgress=true (identity preserved in
-	// SetReplicaAddr? depends on implementation). If SetReplicaAddr creates
-	// new shippers, this test validates the bootstrap path again.
-	// Either way, SyncCache must succeed.
+	// CP13-5 observable evidence 1: new shipper seeded with prior progress.
+	newSg := primary.shipperGroup
+	newS := newSg.Shipper(0)
+	if !newS.HasFlushedProgress() {
+		t.Fatal("CP13-5: new shipper should be seeded with hasFlushedProgress=true from old group")
+	}
+
+	// Record replica's receivedLSN before SyncCache to prove catch-up delivers entries.
+	preRecvLSN := recv2.ReceivedLSN()
+
 	syncDone := make(chan error, 1)
 	go func() {
 		syncDone <- primary.SyncCache()
@@ -183,6 +192,21 @@ func TestAdversarial_ReconnectUsesHandshakeNotBootstrap(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("SyncCache hung after reconnect")
+	}
+
+	// CP13-5 observable evidence 2: replica received entries via catch-up.
+	// Block 'B' (LSN 2) was written during disconnect. If the handshake +
+	// catch-up path was used, the replica's receivedLSN must have advanced.
+	// Bootstrap alone would not deliver block 'B' — it only sends the barrier.
+	postRecvLSN := recv2.ReceivedLSN()
+	if postRecvLSN <= preRecvLSN {
+		t.Fatalf("CP13-5: replica receivedLSN did not advance (%d → %d) — catch-up did not deliver entries",
+			preRecvLSN, postRecvLSN)
+	}
+
+	// CP13-5 observable evidence 3: shipper now has updated flushedLSN from barrier.
+	if newS.ReplicaFlushedLSN() == 0 {
+		t.Fatal("CP13-5: shipper should have replicaFlushedLSN > 0 after successful barrier")
 	}
 }
 

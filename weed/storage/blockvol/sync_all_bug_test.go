@@ -173,15 +173,15 @@ func TestBug2_SyncAll_SyncCache_AfterDegradedShipperRecovers(t *testing.T) {
 		t.Fatalf("write 3 (degraded): %v", err)
 	}
 
-	// Phase 3: Restart the replica receiver on the SAME addresses.
-	// We must NOT call SetReplicaAddr again — that creates a fresh shipper
-	// and loses the flushed progress needed for reconnect handshake.
+	// Phase 3: Restart the replica receiver.
+	// CP13-5: SetReplicaAddr now preserves hasFlushedProgress across shipper
+	// replacement, so calling it with new addresses is safe — the new shipper
+	// will use the reconnect handshake + catch-up path.
 	savedDataAddr := recv.DataAddr()
 	savedCtrlAddr := recv.CtrlAddr()
 	recv2, err := NewReplicaReceiver(replica, savedDataAddr, savedCtrlAddr)
 	if err != nil {
 		// Address reuse failed (port still held) — use new ports and reconfigure.
-		// This loses shipper state, so initialize the new receiver's receivedLSN.
 		recv2, err = NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
 		if err != nil {
 			t.Fatalf("restart receiver: %v", err)
