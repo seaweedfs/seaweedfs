@@ -2,7 +2,6 @@ package s3api
 
 import (
 	"bytes"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
@@ -685,15 +684,7 @@ func TestSSES3InvalidMetadataDeserialization(t *testing.T) {
 
 // TestSSES3KeyManagerEnvVar tests that WEED_S3_SSE_KEY env var is used as KEK
 func TestSSES3KeyManagerEnvVar(t *testing.T) {
-	// Generate a known 256-bit key
-	testKey := make([]byte, 32)
-	for i := range testKey {
-		testKey[i] = byte(i + 50)
-	}
-	hexKey := hex.EncodeToString(testKey)
-
-	// Set env var
-	os.Setenv(SSES3KEKEnvVar, hexKey)
+	os.Setenv(SSES3KEKEnvVar, "my-secret-passphrase")
 	defer os.Unsetenv(SSES3KEKEnvVar)
 
 	km := NewSSES3KeyManager()
@@ -703,8 +694,15 @@ func TestSSES3KeyManagerEnvVar(t *testing.T) {
 		t.Fatalf("InitializeWithFiler failed with env var set: %v", err)
 	}
 
-	if !bytes.Equal(km.superKey, testKey) {
-		t.Errorf("superKey mismatch: expected %x, got %x", testKey, km.superKey)
+	// Key should be 32 bytes derived via HKDF
+	if len(km.superKey) != SSES3KeySize {
+		t.Fatalf("expected %d-byte superKey, got %d", SSES3KeySize, len(km.superKey))
+	}
+
+	// Same secret must produce the same derived key (deterministic)
+	expected := deriveKeyFromSecret("my-secret-passphrase")
+	if !bytes.Equal(km.superKey, expected) {
+		t.Errorf("superKey mismatch: expected %x, got %x", expected, km.superKey)
 	}
 
 	// Verify encryption round-trip works with the env-sourced key
@@ -725,34 +723,24 @@ func TestSSES3KeyManagerEnvVar(t *testing.T) {
 	}
 }
 
-// TestSSES3KeyManagerEnvVarInvalidHex tests rejection of bad hex in env var
-func TestSSES3KeyManagerEnvVarInvalidHex(t *testing.T) {
-	os.Setenv(SSES3KEKEnvVar, "not-valid-hex")
+// TestSSES3KeyManagerEnvVarDifferentSecrets tests that different secrets produce different keys
+func TestSSES3KeyManagerEnvVarDifferentSecrets(t *testing.T) {
+	os.Setenv(SSES3KEKEnvVar, "secret-one")
 	defer os.Unsetenv(SSES3KEKEnvVar)
 
-	km := NewSSES3KeyManager()
-	err := km.InitializeWithFiler(nil)
-	if err == nil {
-		t.Fatal("expected error for invalid hex, got nil")
+	km1 := NewSSES3KeyManager()
+	if err := km1.InitializeWithFiler(nil); err != nil {
+		t.Fatalf("InitializeWithFiler failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "hex-encoded") {
-		t.Errorf("expected hex error, got: %v", err)
-	}
-}
 
-// TestSSES3KeyManagerEnvVarWrongSize tests rejection of wrong-size key in env var
-func TestSSES3KeyManagerEnvVarWrongSize(t *testing.T) {
-	// 16 bytes = 32 hex chars, but we need 32 bytes = 64 hex chars
-	os.Setenv(SSES3KEKEnvVar, hex.EncodeToString(make([]byte, 16)))
-	defer os.Unsetenv(SSES3KEKEnvVar)
-
-	km := NewSSES3KeyManager()
-	err := km.InitializeWithFiler(nil)
-	if err == nil {
-		t.Fatal("expected error for wrong key size, got nil")
+	os.Setenv(SSES3KEKEnvVar, "secret-two")
+	km2 := NewSSES3KeyManager()
+	if err := km2.InitializeWithFiler(nil); err != nil {
+		t.Fatalf("InitializeWithFiler failed: %v", err)
 	}
-	if !strings.Contains(err.Error(), "32 bytes") {
-		t.Errorf("expected size error, got: %v", err)
+
+	if bytes.Equal(km1.superKey, km2.superKey) {
+		t.Error("different secrets should produce different keys")
 	}
 }
 

@@ -268,10 +268,10 @@ const (
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 
 	// Environment variable for providing KEK without storing it on the filer.
-	// The value must be a 64-character hex-encoded 256-bit key.
-	// When set, the filer-stored KEK at /etc/s3/sse_kek is not created for new
-	// deployments. Existing filer KEKs are still loaded as a fallback for
-	// backward compatibility.
+	// The value can be any non-empty string; a 256-bit key is derived from it
+	// using HKDF-SHA256. When set, the filer-stored KEK at /etc/s3/sse_kek is
+	// not created for new deployments. Existing filer KEKs are still loaded as
+	// a fallback for backward compatibility.
 	SSES3KEKEnvVar = "WEED_S3_SSE_KEY"
 )
 
@@ -283,10 +283,21 @@ func NewSSES3KeyManager() *SSES3KeyManager {
 	}
 }
 
+// deriveKeyFromSecret derives a 256-bit key from an arbitrary secret string
+// using HKDF-SHA256. The derivation is deterministic: the same secret always
+// produces the same key.
+func deriveKeyFromSecret(secret string) []byte {
+	hkdfReader := hkdf.New(sha256.New, []byte(secret), nil, []byte("seaweedfs-sse-s3-kek"))
+	key := make([]byte, SSES3KeySize)
+	// hkdf.New with SHA-256 and 32-byte output never fails
+	io.ReadFull(hkdfReader, key)
+	return key
+}
+
 // InitializeWithFiler initializes the key manager with a filer client.
 //
 // Key source priority:
-//  1. WEED_S3_SSE_KEY environment variable (hex-encoded 256-bit key)
+//  1. WEED_S3_SSE_KEY environment variable (any string; 256-bit key derived via HKDF)
 //  2. Existing KEK stored on the filer at /etc/s3/sse_kek (backward compat)
 //  3. Auto-generate and save to filer (only when env var is NOT set)
 func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient) error {
@@ -297,16 +308,8 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	// 1. Check environment variable first
 	if envKey := os.Getenv(SSES3KEKEnvVar); envKey != "" {
-		key, err := hex.DecodeString(envKey)
-		if err != nil {
-			return fmt.Errorf("invalid %s: must be hex-encoded: %w", SSES3KEKEnvVar, err)
-		}
-		if len(key) != SSES3KeySize {
-			return fmt.Errorf("invalid %s: must be %d bytes (%d hex chars), got %d bytes",
-				SSES3KEKEnvVar, SSES3KeySize, SSES3KeySize*2, len(key))
-		}
-		km.superKey = key
-		glog.V(0).Infof("SSE-S3 KeyManager: Loaded KEK from %s environment variable", SSES3KEKEnvVar)
+		km.superKey = deriveKeyFromSecret(envKey)
+		glog.V(0).Infof("SSE-S3 KeyManager: Derived KEK from %s environment variable", SSES3KEKEnvVar)
 		return nil
 	}
 
@@ -323,7 +326,7 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 			// 3. No env var and no filer KEK — auto-generate (legacy behavior)
 			glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK (load from filer %s: %v)", km.kekPath, err)
 			glog.Warningf("SSE-S3 KeyManager: Auto-generating KEK and storing on filer is deprecated. "+
-				"Set %s environment variable with a hex-encoded 256-bit key instead.", SSES3KEKEnvVar)
+				"Set %s environment variable instead.", SSES3KEKEnvVar)
 			if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
 				return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
 			}
