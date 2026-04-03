@@ -124,6 +124,7 @@ const (
 	ActionAssumeRole                = "sts:AssumeRole"
 	ActionAssumeRoleWithWebIdentity = "sts:AssumeRoleWithWebIdentity"
 	ActionAssumeRoleWithCredentials = "sts:AssumeRoleWithCredentials"
+	ActionGetFederationToken        = "sts:GetFederationToken"
 	ActionValidateSession           = "sts:ValidateSession"
 )
 
