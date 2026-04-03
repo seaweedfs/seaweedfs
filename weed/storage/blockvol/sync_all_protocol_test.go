@@ -12,7 +12,9 @@ package blockvol
 
 import (
 	"bytes"
+	"net"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1420,40 +1422,68 @@ func TestBarrierResp_BackwardCompat_1Byte(t *testing.T) {
 // with FlushedLSN == 0 (legacy 1-byte format) is NOT accepted as successful
 // sync_all durability. CP13-3: sync_all must require explicit durable progress
 // authority, not just a status-OK byte.
+//
+// This test exercises the real shipper.Barrier() code path by running a fake
+// control-path TCP server that responds with a legacy 1-byte BarrierOK.
 func TestBarrier_LegacyResponseRejectedBySyncAll(t *testing.T) {
-	primary, replica := createReplicaVolPair(t)
-	defer primary.Close()
-	defer replica.Close()
-
-	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	// Start a fake control-path TCP server that reads a barrier request
+	// and responds with a legacy 1-byte BarrierOK (no FlushedLSN).
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	recv.Serve()
-	defer recv.Stop()
+	defer ln.Close()
 
-	// Wire: decode proves legacy 1-byte = FlushedLSN 0.
-	legacy := []byte{BarrierOK}
-	decoded := DecodeBarrierResponse(legacy)
-	if decoded.FlushedLSN != 0 {
-		t.Fatalf("legacy response should have FlushedLSN=0, got %d", decoded.FlushedLSN)
-	}
+	legacyServerDone := make(chan struct{})
+	go func() {
+		defer close(legacyServerDone)
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
 
-	// Create a shipper and verify the contract: FlushedLSN==0 barrier must fail.
-	shipper := NewWALShipper(recv.DataAddr(), recv.CtrlAddr(), func() uint64 { return 1 }, nil)
+		// Read the barrier request frame (we don't need to parse it).
+		_, _, readErr := ReadFrame(conn)
+		if readErr != nil {
+			return
+		}
+
+		// Respond with legacy 1-byte BarrierOK (no FlushedLSN field).
+		WriteFrame(conn, MsgBarrierResp, []byte{BarrierOK})
+	}()
+
+	// Create a shipper pointing at the fake control server.
+	// dataAddr doesn't matter — we only test the control/barrier path.
+	shipper := NewWALShipper("127.0.0.1:1", ln.Addr().String(), func() uint64 { return 1 }, nil)
 	defer shipper.Stop()
 
-	// The real barrier path goes through the replica which does return FlushedLSN.
-	// To test the legacy rejection path directly, we check HasFlushedProgress:
-	// a shipper that has never received FlushedLSN > 0 has no durable authority.
-	if shipper.HasFlushedProgress() {
-		t.Fatal("fresh shipper should not have flushed progress")
-	}
-	if shipper.ReplicaFlushedLSN() != 0 {
-		t.Fatalf("fresh shipper replicaFlushedLSN should be 0, got %d", shipper.ReplicaFlushedLSN())
+	// Force the shipper to InSync so Barrier() doesn't try reconnect.
+	shipper.state.Store(uint32(ReplicaInSync))
+
+	// Call Barrier — this hits the real code path in wal_shipper.go:224-231.
+	// The fake server returns BarrierOK with FlushedLSN=0.
+	// CP13-3 fix: this must return an error, not nil.
+	err = shipper.Barrier(5)
+	if err == nil {
+		t.Fatal("Barrier() should fail on legacy BarrierOK with FlushedLSN=0, but returned nil")
 	}
 
-	t.Log("CP13-3: legacy BarrierOK with FlushedLSN=0 does not establish durable authority")
+	// The error message should mention the legacy response.
+	if !strings.Contains(err.Error(), "no FlushedLSN") {
+		t.Fatalf("expected error about missing FlushedLSN, got: %v", err)
+	}
+
+	// Shipper should NOT have gained flushed progress.
+	if shipper.HasFlushedProgress() {
+		t.Fatal("shipper should not have flushed progress after legacy response")
+	}
+	if shipper.ReplicaFlushedLSN() != 0 {
+		t.Fatalf("replicaFlushedLSN should be 0 after legacy response, got %d", shipper.ReplicaFlushedLSN())
+	}
+
+	<-legacyServerDone
+	t.Log("CP13-3: legacy BarrierOK with FlushedLSN=0 rejected by shipper.Barrier()")
 }
 
 func TestReplica_FlushedLSN_OnlyAfterSync(t *testing.T) {
