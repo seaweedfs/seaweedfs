@@ -24,19 +24,20 @@ const (
 
 // ReplicaInfo tracks one replica of a block volume (CP8-2).
 type ReplicaInfo struct {
-	Server      string    // replica VS address
-	Path        string    // file path on replica VS
-	ISCSIAddr   string    // iSCSI target address
-	IQN         string    // iSCSI qualified name
-	NvmeAddr    string    // NVMe/TCP target address (ip:port), empty if NVMe disabled
-	NQN         string    // NVMe subsystem NQN, empty if NVMe disabled
-	DataAddr    string    // WAL receiver data listen addr
-	CtrlAddr    string    // WAL receiver ctrl listen addr
-	HealthScore float64   // from heartbeat (0.0-1.0)
-	WALHeadLSN  uint64    // from heartbeat
-	WALLag      uint64    // computed: primary.WALHeadLSN - replica.WALHeadLSN
+	Server        string    // replica VS address
+	Path          string    // file path on replica VS
+	ISCSIAddr     string    // iSCSI target address
+	IQN           string    // iSCSI qualified name
+	NvmeAddr      string    // NVMe/TCP target address (ip:port), empty if NVMe disabled
+	NQN           string    // NVMe subsystem NQN, empty if NVMe disabled
+	DataAddr      string    // WAL receiver data listen addr
+	CtrlAddr      string    // WAL receiver ctrl listen addr
+	Ready         bool      // receiver/publish readiness confirmed by replica heartbeat
+	HealthScore   float64   // from heartbeat (0.0-1.0)
+	WALHeadLSN    uint64    // from heartbeat
+	WALLag        uint64    // computed: primary.WALHeadLSN - replica.WALHeadLSN
 	LastHeartbeat time.Time // last heartbeat received from this replica
-	Role        uint32    // replica role (RoleReplica, RoleRebuilding, etc.)
+	Role          uint32    // replica role (RoleReplica, RoleRebuilding, etc.)
 }
 
 const (
@@ -73,7 +74,9 @@ type BlockVolumeEntry struct {
 	ReplicaFactor   int           // 2 or 3 (default 2)
 	Replicas        []ReplicaInfo // one per replica (RF-1 entries)
 	HealthScore     float64       // primary health score from heartbeat
-	ReplicaDegraded bool          // primary reports degraded replicas
+	ReplicaReady    bool          // all configured replicas are ready for publication
+	ReplicaDegraded bool          // aggregate: transport degraded OR not ready
+	TransportDegraded bool        // primary reports degraded replicas
 	WALHeadLSN      uint64        // primary WAL head LSN from heartbeat
 
 	// CP8-3-1: Durability mode.
@@ -91,11 +94,30 @@ type BlockVolumeEntry struct {
 	ExpandFailed      bool   // true = primary committed but replica(s) failed; size suppressed
 	PendingExpandSize uint64
 	ExpandEpoch       uint64
+
+	// CP13-8A: Set by reconcileOnRestart/upsertServerAsReplica when a replica
+	// is added after promote. The heartbeat handler uses this to enqueue an
+	// updated Primary assignment with the new replica's addresses.
+	NeedsPrimaryRefresh bool
 }
 
 // HasReplica returns true if this volume has any replica (checks both new and deprecated fields).
 func (e *BlockVolumeEntry) HasReplica() bool {
 	return len(e.Replicas) > 0 || e.ReplicaServer != ""
+}
+
+// AllReplicasReady returns true when every configured replica has reported
+// publish readiness via heartbeat. Volumes without replicas are vacuously ready.
+func (e *BlockVolumeEntry) AllReplicasReady() bool {
+	if len(e.Replicas) == 0 {
+		return true
+	}
+	for _, ri := range e.Replicas {
+		if !ri.Ready {
+			return false
+		}
+	}
+	return true
 }
 
 // FirstReplica returns the first replica info, or nil if none.
@@ -114,6 +136,15 @@ func (e *BlockVolumeEntry) ReplicaByServer(server string) *ReplicaInfo {
 		}
 	}
 	return nil
+}
+
+func (e *BlockVolumeEntry) recomputeReplicaState() {
+	e.ReplicaReady = e.AllReplicasReady()
+	if !e.HasReplica() {
+		e.ReplicaDegraded = e.TransportDegraded
+		return
+	}
+	e.ReplicaDegraded = e.TransportDegraded || !e.ReplicaReady
 }
 
 // BestReplicaForPromotion returns the best replica for promotion, or nil if none eligible.
@@ -193,6 +224,7 @@ func (r *BlockVolumeRegistry) Register(entry *BlockVolumeEntry) error {
 	if _, ok := r.volumes[entry.Name]; ok {
 		return fmt.Errorf("block volume %q already registered", entry.Name)
 	}
+	entry.recomputeReplicaState()
 	r.volumes[entry.Name] = entry
 	r.addToServer(entry.VolumeServer, entry.Name)
 	// Also index replica servers so ListByServer finds them.
@@ -366,8 +398,15 @@ type ReplicaAddrChange struct {
 	NewCtrlAddr   string
 }
 
-func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage, nvmeAddr string) []ReplicaAddrChange {
-	var addrChanges []ReplicaAddrChange
+// HeartbeatResult holds the side effects from UpdateFullHeartbeat that the
+// caller (heartbeat handler) must process.
+type HeartbeatResult struct {
+	AddrChanges     []ReplicaAddrChange
+	PrimaryRefreshNeeded []BlockVolumeEntry // CP13-8A: entries needing primary assignment refresh
+}
+
+func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master_pb.BlockVolumeInfoMessage, nvmeAddr string) HeartbeatResult {
+	var result HeartbeatResult
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -471,7 +510,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				existing.Status = StatusActive
 				existing.LastLeaseGrant = time.Now()
 				existing.HealthScore = info.HealthScore
-				existing.ReplicaDegraded = info.ReplicaDegraded
+				existing.TransportDegraded = info.ReplicaDegraded
 				existing.WALHeadLSN = info.WalHeadLsn
 				// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
 				if info.DurabilityMode != "" {
@@ -493,6 +532,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 					existing.Replicas[0].DataAddr = info.ReplicaDataAddr
 					existing.Replicas[0].CtrlAddr = info.ReplicaCtrlAddr
 				}
+				existing.recomputeReplicaState()
 			} else if isReplica {
 				// Replica heartbeat: update ReplicaInfo fields.
 				for i := range existing.Replicas {
@@ -507,6 +547,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 						existing.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
 						existing.Replicas[i].NvmeAddr = info.NvmeAddr
 						existing.Replicas[i].NQN = info.Nqn
+						existing.Replicas[i].Ready = info.ReplicaDataAddr != "" && info.ReplicaCtrlAddr != ""
 						if existing.WALHeadLSN > info.WalHeadLsn {
 							existing.Replicas[i].WALLag = existing.WALHeadLSN - info.WalHeadLsn
 						} else {
@@ -521,7 +562,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 							dataChanged := info.ReplicaDataAddr != "" && oldData != "" && oldData != info.ReplicaDataAddr
 							ctrlChanged := info.ReplicaCtrlAddr != "" && oldCtrl != "" && oldCtrl != info.ReplicaCtrlAddr
 							if dataChanged || ctrlChanged {
-								addrChanges = append(addrChanges, ReplicaAddrChange{
+								result.AddrChanges = append(result.AddrChanges, ReplicaAddrChange{
 									VolumeName:    existingName,
 									PrimaryServer: existing.VolumeServer,
 									OldDataAddr:   oldData,
@@ -540,6 +581,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 						break
 					}
 				}
+				existing.recomputeReplicaState()
 			} else {
 				// Server reports a volume that exists but has no record of this server.
 				// This happens after master restart. Use epoch-based reconciliation
@@ -574,6 +616,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 					LastLeaseGrant: time.Now(),
 					LeaseTTL:       30 * time.Second,
 					HealthScore:    info.HealthScore,
+					TransportDegraded: info.ReplicaDegraded,
 					WALHeadLSN:     info.WalHeadLsn,
 					DurabilityMode: info.DurabilityMode,
 				}
@@ -585,6 +628,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 				}
 				entry.NvmeAddr = info.NvmeAddr
 				entry.NQN = info.Nqn
+				entry.recomputeReplicaState()
 				r.volumes[name] = entry
 				r.addToServer(server, name)
 				glog.V(0).Infof("block registry: auto-registered %q from heartbeat (server=%s, path=%s, size=%d)",
@@ -595,7 +639,14 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			}
 		}
 	}
-	return addrChanges
+	// CP13-8A: collect entries that need primary refresh and clear the flag.
+	for _, e := range r.volumes {
+		if e.NeedsPrimaryRefresh {
+			e.NeedsPrimaryRefresh = false
+			result.PrimaryRefreshNeeded = append(result.PrimaryRefreshNeeded, e.clone())
+		}
+	}
+	return result
 }
 
 // reconcileOnRestart handles the case where a second server reports a volume
@@ -744,9 +795,13 @@ func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *Block
 		}
 	}
 	// New replica — append with forced RoleReplica.
+	// CP13-8A: populate DataAddr/CtrlAddr from heartbeat so the master can
+	// enqueue a Primary assignment with replica addresses for the shipper.
 	ri := ReplicaInfo{
 		Server:        newServer,
 		Path:          info.Path,
+		DataAddr:      info.ReplicaDataAddr,
+		CtrlAddr:      info.ReplicaCtrlAddr,
 		HealthScore:   info.HealthScore,
 		WALHeadLSN:    info.WalHeadLsn,
 		LastHeartbeat: time.Now(),
@@ -760,6 +815,25 @@ func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *Block
 		existing.ReplicaServer = ri.Server
 		existing.ReplicaPath = ri.Path
 	}
+	// CP13-8A: mark that a primary refresh is needed so the caller
+	// can enqueue an updated Primary assignment with replica addresses.
+	existing.NeedsPrimaryRefresh = true
+}
+
+// DrainPrimaryRefreshNeeded returns entries that need a primary assignment
+// refresh (e.g., after a replica re-registers post-promote) and clears the flag.
+// Caller must hold no lock (this acquires the write lock).
+func (r *BlockVolumeRegistry) DrainPrimaryRefreshNeeded() []BlockVolumeEntry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var result []BlockVolumeEntry
+	for _, e := range r.volumes {
+		if e.NeedsPrimaryRefresh {
+			e.NeedsPrimaryRefresh = false
+			result = append(result, e.clone())
+		}
+	}
+	return result
 }
 
 // UpdateDeltaHeartbeat processes incremental new/deleted block volumes.
@@ -888,6 +962,7 @@ func (r *BlockVolumeRegistry) removeReplicaLocked(entry *BlockVolumeEntry, serve
 		entry.ReplicaDataAddr = ""
 		entry.ReplicaCtrlAddr = ""
 	}
+	entry.recomputeReplicaState()
 }
 
 // SetReplica sets replica info for a registered volume.
@@ -919,6 +994,7 @@ func (r *BlockVolumeRegistry) SetReplica(name, server, path, iscsiAddr, iqn stri
 			info.WALHeadLSN = entry.Replicas[i].WALHeadLSN
 			info.DataAddr = entry.Replicas[i].DataAddr
 			info.CtrlAddr = entry.Replicas[i].CtrlAddr
+			info.Ready = entry.Replicas[i].Ready
 			entry.Replicas[i] = info
 			replaced = true
 			break
@@ -927,6 +1003,7 @@ func (r *BlockVolumeRegistry) SetReplica(name, server, path, iscsiAddr, iqn stri
 	if !replaced {
 		entry.Replicas = append(entry.Replicas, info)
 	}
+	entry.recomputeReplicaState()
 	return nil
 }
 
@@ -955,6 +1032,7 @@ func (r *BlockVolumeRegistry) ClearReplica(name string) error {
 	entry.ReplicaDataAddr = ""
 	entry.ReplicaCtrlAddr = ""
 	entry.Replicas = nil
+	entry.recomputeReplicaState()
 	return nil
 }
 
@@ -1000,9 +1078,13 @@ func (r *BlockVolumeRegistry) SwapPrimaryReplica(name string) (uint64, error) {
 	entry.ReplicaISCSIAddr = oldPrimaryISCSI
 	entry.ReplicaDataAddr = ""
 	entry.ReplicaCtrlAddr = ""
+	entry.ReplicaReady = false
+	entry.ReplicaDegraded = true
+	entry.TransportDegraded = false
 
 	// Update byServer index: new primary server now hosts this volume.
 	r.addToServer(entry.VolumeServer, name)
+	entry.recomputeReplicaState()
 	return newEpoch, nil
 }
 
@@ -1039,6 +1121,7 @@ func (r *BlockVolumeRegistry) AddReplica(name string, info ReplicaInfo) error {
 		entry.ReplicaDataAddr = r0.DataAddr
 		entry.ReplicaCtrlAddr = r0.CtrlAddr
 	}
+	entry.recomputeReplicaState()
 	return nil
 }
 
@@ -1082,6 +1165,7 @@ func (r *BlockVolumeRegistry) RemoveReplica(name, server string) error {
 		entry.ReplicaDataAddr = ""
 		entry.ReplicaCtrlAddr = ""
 	}
+	entry.recomputeReplicaState()
 	return nil
 }
 

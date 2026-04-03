@@ -520,6 +520,34 @@ func (ms *MasterServer) refreshPrimaryForAddrChange(ac ReplicaAddrChange) {
 		ac.VolumeName, ac.OldDataAddr, ac.NewDataAddr, ac.OldCtrlAddr, ac.NewCtrlAddr, currentPrimary)
 }
 
+// enqueuePrimaryRefresh sends a fresh Primary assignment with replica addresses.
+// CP13-8A: called when a replica re-registers after promote so the new primary
+// gets shipper configuration for the re-registered replica.
+func (ms *MasterServer) enqueuePrimaryRefresh(entry BlockVolumeEntry) {
+	leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
+	assignment := blockvol.BlockVolumeAssignment{
+		Path:       entry.Path,
+		Epoch:      entry.Epoch,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: leaseTTLMs,
+	}
+	for _, ri := range entry.Replicas {
+		assignment.ReplicaAddrs = append(assignment.ReplicaAddrs, blockvol.ReplicaAddr{
+			DataAddr: ri.DataAddr,
+			CtrlAddr: ri.CtrlAddr,
+			ServerID: ri.Server,
+		})
+	}
+	if len(entry.Replicas) == 1 {
+		assignment.ReplicaDataAddr = entry.Replicas[0].DataAddr
+		assignment.ReplicaCtrlAddr = entry.Replicas[0].CtrlAddr
+		assignment.ReplicaServerID = entry.Replicas[0].Server
+	}
+	ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, assignment)
+	glog.V(0).Infof("CP13-8A: enqueued Primary refresh for %q on %s with %d replica(s)",
+		entry.Name, entry.VolumeServer, len(entry.Replicas))
+}
+
 // maintain the same split-brain protection as failoverBlockVolumes().
 // This fixes B-06 (orphaned primary after replica re-register)
 // and partially B-08 (fast reconnect skips failover window).
