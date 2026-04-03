@@ -403,13 +403,9 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 		return nil
 	}
 
-	// --- Case 4: No env var, no filer file — auto-generate (deprecated) ---
-	glog.V(1).Infof("SSE-S3 KeyManager: KEK not found, generating new KEK")
-	glog.Warningf("SSE-S3 KeyManager: Auto-generating KEK and storing on filer is deprecated. "+
-		"Set %s or %s environment variable instead.", SSES3KEKEnvVar, SSES3KeyEnvVar)
-	if genErr := km.generateAndSaveSuperKeyToFiler(); genErr != nil {
-		return fmt.Errorf("failed to generate and save SSE-S3 super key: %w", genErr)
-	}
+	// --- Case 4: No env var, no filer file — SSE-S3 disabled ---
+	glog.V(0).Infof("SSE-S3 KeyManager: No KEK configured. SSE-S3 encryption is disabled. "+
+		"Set %s or %s environment variable to enable it.", SSES3KEKEnvVar, SSES3KeyEnvVar)
 	return nil
 }
 
@@ -498,6 +494,10 @@ func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, e
 	km.mu.RLock()
 	defer km.mu.RUnlock()
 
+	if len(km.superKey) == 0 {
+		return nil, nil, fmt.Errorf("SSE-S3 encryption is not configured — set %s or %s environment variable", SSES3KEKEnvVar, SSES3KeyEnvVar)
+	}
+
 	block, err := aes.NewCipher(km.superKey)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create cipher: %w", err)
@@ -524,6 +524,10 @@ func (km *SSES3KeyManager) encryptKeyWithSuperKey(dek []byte) ([]byte, []byte, e
 func (km *SSES3KeyManager) decryptKeyWithSuperKey(encryptedDEK, nonce []byte) ([]byte, error) {
 	km.mu.RLock()
 	defer km.mu.RUnlock()
+
+	if len(km.superKey) == 0 {
+		return nil, fmt.Errorf("SSE-S3 decryption is not configured — set %s or %s environment variable", SSES3KEKEnvVar, SSES3KeyEnvVar)
+	}
 
 	block, err := aes.NewCipher(km.superKey)
 	if err != nil {
