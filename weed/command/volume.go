@@ -347,7 +347,7 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		// volume server. One identity truth across VS, block service, control
 		// bridge, and runtime ownership.
 		blockService.SetServerID(volumeServerId)
-		blockService.SetAdvertisedIP(*v.ip) // CP13-2: routable IP, not opaque ID
+		blockService.SetAdvertisedHost(*v.ip) // CP13-2: routable host (-ip flag), not opaque ID (-id flag)
 		volumeServer.SetBlockService(blockService)
 	}
 

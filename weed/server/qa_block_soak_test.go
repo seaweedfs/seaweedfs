@@ -84,7 +84,7 @@ func newSoakSetup(t *testing.T) *soakSetup {
 		blockDir:       filepath.Join(dir, "vs1_9333"),
 		listenAddr:     "127.0.0.1:3260",
 		localServerID:  "vs1:9333",
-		advertisedIP:   "127.0.0.1",
+		advertisedHost: "127.0.0.1",
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
 		replStates:     make(map[string]*volReplState),
@@ -108,6 +108,79 @@ func (s *soakSetup) deliver(server string) int {
 	goAssignments := blockvol.AssignmentsFromProto(protoAssignments)
 	s.bs.ProcessAssignments(goAssignments)
 	return len(goAssignments)
+}
+
+// --- CP13-2: BlockService-level advertisedHost wiring test ---
+
+func TestCP13_2_BlockService_AdvertisedHost_NotOpaqueID(t *testing.T) {
+	// Prove that the production wiring uses advertisedHost (routable),
+	// not localServerID (potentially opaque), for replica canonicalization.
+	//
+	// This test creates a BlockService with:
+	//   localServerID = "my-opaque-id"  (opaque, NOT routable)
+	//   advertisedHost = "10.0.0.42"    (routable)
+	// Then calls setupReplicaReceiver and verifies the exported addresses
+	// use the routable host, not the opaque ID.
+
+	dir := t.TempDir()
+	store := storage.NewBlockVolumeStore()
+
+	volPath := filepath.Join(dir, "cp13-2-test.blk")
+	vol, err := blockvol.CreateBlockVol(volPath, blockvol.CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vol.Close()
+	if _, err := store.AddBlockVolume(volPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	bs := &BlockService{
+		blockStore:     store,
+		blockDir:       dir,
+		listenAddr:     "127.0.0.1:3260",
+		localServerID:  "my-opaque-id",   // NOT routable
+		advertisedHost: "10.0.0.42",      // routable
+		v2Bridge:       v2bridge.NewControlBridge(),
+		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		replStates:     make(map[string]*volReplState),
+	}
+
+	// Call the production wiring path.
+	bs.setupReplicaReceiver(volPath, ":0", ":0")
+
+	// Check that exported addresses use advertisedHost, not localServerID.
+	bs.replMu.Lock()
+	state := bs.replStates[volPath]
+	bs.replMu.Unlock()
+
+	if state == nil {
+		t.Fatal("replStates entry missing after setupReplicaReceiver")
+	}
+
+	// Must contain the routable host.
+	if !strings.HasPrefix(state.replicaDataAddr, "10.0.0.42:") {
+		t.Fatalf("replicaDataAddr %q does not use advertisedHost 10.0.0.42", state.replicaDataAddr)
+	}
+	if !strings.HasPrefix(state.replicaCtrlAddr, "10.0.0.42:") {
+		t.Fatalf("replicaCtrlAddr %q does not use advertisedHost 10.0.0.42", state.replicaCtrlAddr)
+	}
+
+	// Must NOT contain the opaque server ID.
+	if strings.Contains(state.replicaDataAddr, "my-opaque-id") {
+		t.Fatalf("replicaDataAddr %q leaked opaque localServerID", state.replicaDataAddr)
+	}
+	if strings.Contains(state.replicaCtrlAddr, "my-opaque-id") {
+		t.Fatalf("replicaCtrlAddr %q leaked opaque localServerID", state.replicaCtrlAddr)
+	}
+
+	t.Logf("CP13-2: advertisedHost=10.0.0.42, exported data=%s ctrl=%s (opaque ID not leaked)",
+		state.replicaDataAddr, state.replicaCtrlAddr)
 }
 
 // --- Repeated create/failover/recover cycles with end-of-cycle truth checks ---

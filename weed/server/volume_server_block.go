@@ -63,10 +63,11 @@ type BlockService struct {
 	// NOT guaranteed to be a routable address — do not use for transport endpoints.
 	localServerID string
 
-	// advertisedIP: routable IP for this volume server (from -ip flag or auto-detected).
+	// advertisedHost: routable host for this volume server (from -ip flag or auto-detected).
 	// Used by CP13-2 to canonicalize wildcard-bind replica listener addresses to
-	// routable ip:port. This is always a real IP, never an opaque identity string.
-	advertisedIP string
+	// routable host:port. This is the -ip value (IP or resolvable hostname),
+	// never an opaque server identity from -id.
+	advertisedHost string
 }
 
 // V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
@@ -80,11 +81,11 @@ func (bs *BlockService) SetServerID(id string) {
 	bs.localServerID = id
 }
 
-// SetAdvertisedIP sets the routable IP for replica endpoint canonicalization.
-// This must be a real IP address (from -ip flag or auto-detected), never an
-// opaque server identity. Called at startup from volume.go.
-func (bs *BlockService) SetAdvertisedIP(ip string) {
-	bs.advertisedIP = ip
+// SetAdvertisedHost sets the routable host for replica endpoint canonicalization.
+// This is the -ip flag value (IP address or resolvable hostname), never an
+// opaque server identity from -id. Called at startup from volume.go.
+func (bs *BlockService) SetAdvertisedHost(host string) {
+	bs.advertisedHost = host
 }
 
 // WireStateChangeNotify sets up shipper state change callbacks on all
@@ -539,10 +540,10 @@ func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
 	// CP13-2: Pass the routable advertisedIP (from -ip flag, NOT from -id/serverID)
 	// so wildcard-bind listeners resolve to a real IP, not an opaque identity string.
 	var canonDataAddr, canonCtrlAddr string
-	advIP := bs.advertisedIP
+	advHost := bs.advertisedHost
 	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		if advIP != "" {
-			if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr, advIP); err != nil {
+		if advHost != "" {
+			if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr, advHost); err != nil {
 				return err
 			}
 		} else {
