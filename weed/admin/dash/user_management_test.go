@@ -74,9 +74,16 @@ func TestGenerateSecretKey(t *testing.T) {
 	key1 := generateSecretKey()
 	key2 := generateSecretKey()
 
-	// Check length (base64 encoding of 30 bytes = 40 characters)
-	if len(key1) != 40 {
-		t.Errorf("Expected secret key length 40, got %d", len(key1))
+	// Check length (IAM standard secret key length)
+	if len(key1) != 42 {
+		t.Errorf("Expected secret key length 42, got %d", len(key1))
+	}
+
+	// Check that key contains only URL-safe characters (no +, /)
+	for _, c := range key1 {
+		if c == '+' || c == '/' || c == '=' {
+			t.Errorf("Secret key contains non-URL-safe character: %c", c)
+		}
 	}
 
 	// Check uniqueness
