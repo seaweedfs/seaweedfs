@@ -630,3 +630,57 @@ func TestListObjectVersions_PrefixWithLeadingSlash(t *testing.T) {
 		})
 	}
 }
+
+func TestComputeStartFrom(t *testing.T) {
+	tests := []struct {
+		name          string
+		keyMarker     string
+		relativePath  string
+		wantStart     string
+		wantInclusive bool
+	}{
+		{"empty marker", "", "", "", false},
+		{"empty marker with path", "", "dir", "", false},
+		{"root level file", "file1.txt", "", "file1.txt", true},
+		{"root level with subpath", "Mailboxes/5ac/file1", "", "Mailboxes", true},
+		{"matching subdir", "Mailboxes/5ac/file1", "Mailboxes", "5ac", true},
+		{"deeper subdir", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac", "ItemsData", true},
+		{"at leaf level", "Mailboxes/5ac/ItemsData/file1", "Mailboxes/5ac/ItemsData", "file1", true},
+		{"unrelated directory", "other/path", "Mailboxes", "", false},
+		{"marker equals relativePath", "Mailboxes", "Mailboxes", "", false},
+		{"marker before directory", "aaa/file", "zzz", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			vc := &versionCollector{keyMarker: tt.keyMarker}
+			startFrom, inclusive := vc.computeStartFrom(tt.relativePath)
+			assert.Equal(t, tt.wantStart, startFrom)
+			assert.Equal(t, tt.wantInclusive, inclusive)
+		})
+	}
+}
+
+func TestProcessDirectorySkipsBeforeMarker(t *testing.T) {
+	tests := []struct {
+		name       string
+		keyMarker  string
+		entryPath  string
+		shouldSkip bool
+	}{
+		{"no marker", "", "dir_a", false},
+		{"dir before marker", "dir_b/file", "dir_a", true},
+		{"marker descends into dir", "dir_a/file", "dir_a", false},
+		{"dir after marker", "dir_a/file", "dir_b", false},
+		{"same prefix different suffix", "dir_a0/file", "dir_a", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			skip := tt.keyMarker != "" &&
+				!strings.HasPrefix(tt.keyMarker, tt.entryPath+"/") &&
+				tt.entryPath+"/" < tt.keyMarker
+			assert.Equal(t, tt.shouldSkip, skip)
+		})
+	}
+}

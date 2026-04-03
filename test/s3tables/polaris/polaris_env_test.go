@@ -89,11 +89,14 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 	bindIP := testutil.FindBindIP()
 
-	masterPort, masterGrpcPort := testutil.MustFreePortPair(t, "Master")
-	volumePort, volumeGrpcPort := testutil.MustFreePortPair(t, "Volume")
-	filerPort, filerGrpcPort := testutil.MustFreePortPair(t, "Filer")
-	s3Port, s3GrpcPort := testutil.MustFreePortPair(t, "S3")
-	polarisPort, polarisAdminPort := testutil.MustFreePortPair(t, "Polaris")
+	// Allocate all ports in a single batch to prevent the OS from recycling
+	// a released port, which can cause two services to get the same port.
+	ports := testutil.MustAllocatePorts(t, 10)
+	masterPort, masterGrpcPort := ports[0], ports[1]
+	volumePort, volumeGrpcPort := ports[2], ports[3]
+	filerPort, filerGrpcPort := ports[4], ports[5]
+	s3Port, s3GrpcPort := ports[6], ports[7]
+	polarisPort, polarisAdminPort := ports[8], ports[9]
 
 	return &TestEnvironment{
 		seaweedDir:       seaweedDir,

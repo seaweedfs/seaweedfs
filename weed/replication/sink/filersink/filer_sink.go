@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -20,6 +21,19 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+// ChunkTransferStatus tracks the progress of a single chunk being replicated.
+// Fields are guarded by mu: ChunkFileId and Path are immutable after creation,
+// while BytesReceived, Status, and LastErr are updated by fetchAndWrite and
+// read by ActiveTransfers.
+type ChunkTransferStatus struct {
+	mu            sync.RWMutex
+	ChunkFileId   string
+	Path          string
+	BytesReceived int64
+	Status        string // "downloading", "uploading", or "waiting 10s" etc.
+	LastErr       string
+}
+
 type FilerSink struct {
 	filerSource       *source.FilerSource
 	grpcAddress       string
@@ -35,6 +49,7 @@ type FilerSink struct {
 	isIncremental     bool
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
+	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
 }
 
 func init() {
@@ -99,6 +114,25 @@ func (fs *FilerSink) SetChunkConcurrency(concurrency int) {
 	if concurrency > 0 {
 		fs.executor = util.NewLimitedConcurrentExecutor(concurrency)
 	}
+}
+
+// ActiveTransfers returns an immutable snapshot of all in-progress chunk transfers.
+func (fs *FilerSink) ActiveTransfers() []ChunkTransferStatus {
+	var transfers []ChunkTransferStatus
+	fs.activeTransfers.Range(func(key, value any) bool {
+		t := value.(*ChunkTransferStatus)
+		t.mu.RLock()
+		transfers = append(transfers, ChunkTransferStatus{
+			ChunkFileId:   t.ChunkFileId,
+			Path:          t.Path,
+			BytesReceived: t.BytesReceived,
+			Status:        t.Status,
+			LastErr:       t.LastErr,
+		})
+		t.mu.RUnlock()
+		return true
+	})
+	return transfers
 }
 
 func (fs *FilerSink) DeleteEntry(key string, isDirectory, deleteIncludeChunks bool, signatures []int32) error {

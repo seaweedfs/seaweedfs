@@ -15,33 +15,44 @@ func HasDocker() bool {
 	return cmd.Run() == nil
 }
 
+// MustFreePortPair is a convenience wrapper for tests that only need a single pair.
+// Prefer MustAllocatePorts when allocating multiple pairs to guarantee uniqueness.
 func MustFreePortPair(t *testing.T, name string) (int, int) {
-	httpPort, grpcPort, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	return httpPort, grpcPort
+	ports := MustAllocatePorts(t, 2)
+	return ports[0], ports[1]
 }
 
-func findAvailablePortPair() (int, int, error) {
-	httpPort, err := GetFreePort()
+// MustAllocatePorts allocates count unique free ports atomically.
+// All listeners are held open until every port is obtained, preventing
+// the OS from recycling a port between successive allocations.
+func MustAllocatePorts(t *testing.T, count int) []int {
+	t.Helper()
+	ports, err := AllocatePorts(count)
 	if err != nil {
-		return 0, 0, err
+		t.Fatalf("Failed to allocate %d free ports: %v", count, err)
 	}
-	grpcPort, err := GetFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	return httpPort, grpcPort, nil
+	return ports
 }
 
-func GetFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		return 0, err
+// AllocatePorts allocates count unique free ports atomically.
+func AllocatePorts(count int) ([]int, error) {
+	listeners := make([]net.Listener, 0, count)
+	ports := make([]int, 0, count)
+	for i := 0; i < count; i++ {
+		l, err := net.Listen("tcp", "0.0.0.0:0")
+		if err != nil {
+			for _, ll := range listeners {
+				_ = ll.Close()
+			}
+			return nil, err
+		}
+		listeners = append(listeners, l)
+		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
 	}
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port, nil
+	for _, l := range listeners {
+		_ = l.Close()
+	}
+	return ports, nil
 }
 
 func WaitForService(url string, timeout time.Duration) bool {

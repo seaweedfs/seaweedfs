@@ -173,14 +173,16 @@ func (store *UniversalRedisStore) ListDirectoryEntries(ctx context.Context, dirP
 		members = members[:limit]
 	}
 
+	var entry *filer.Entry
 	// fetch entry meta
 	for _, fileName := range members {
 		path := util.NewFullPath(string(dirPath), fileName)
-		entry, err := store.FindEntry(ctx, path)
+		entry, err = store.FindEntry(ctx, path)
 		lastFileName = fileName
 		if err != nil {
 			glog.V(0).InfofCtx(ctx, "list %s : %v", path, err)
 			if err == filer_pb.ErrNotFound {
+				err = nil
 				continue
 			}
 		} else {

@@ -427,6 +427,34 @@ func (vc *versionCollector) matchesPrefixFilter(entryPath string, isDirectory bo
 	return isMatch || canDescend
 }
 
+// computeStartFrom extracts the first path component from keyMarker that applies
+// to the given directory level (relativePath), allowing the directory listing to
+// skip directly to the marker position instead of scanning from the beginning.
+// Returns ("", false) when no optimization is possible.
+func (vc *versionCollector) computeStartFrom(relativePath string) (startFrom string, inclusive bool) {
+	if vc.keyMarker == "" {
+		return "", false
+	}
+
+	var remainder string
+	if relativePath == "" {
+		remainder = vc.keyMarker
+	} else if strings.HasPrefix(vc.keyMarker, relativePath+"/") {
+		remainder = vc.keyMarker[len(relativePath)+1:]
+	} else {
+		return "", false
+	}
+
+	if remainder == "" {
+		return "", false
+	}
+
+	if idx := strings.Index(remainder, "/"); idx >= 0 {
+		return remainder[:idx], true
+	}
+	return remainder, true
+}
+
 // shouldSkipObjectForMarker returns true if the object should be skipped based on keyMarker
 func (vc *versionCollector) shouldSkipObjectForMarker(objectKey string) bool {
 	if vc.keyMarker == "" {
@@ -639,12 +667,21 @@ func (s3a *S3ApiServer) findVersionsRecursively(currentPath, relativePath string
 // collectVersions recursively collects versions from the given path
 func (vc *versionCollector) collectVersions(currentPath, relativePath string) error {
 	startFrom := ""
+	inclusive := false
+	// On the first iteration, skip ahead to the marker position to avoid
+	// re-scanning all entries before the marker on every paginated request.
+	if markerStart, ok := vc.computeStartFrom(relativePath); ok && markerStart != "" {
+		startFrom = markerStart
+		inclusive = true
+	}
 	for {
 		if vc.isFull() {
 			return nil
 		}
 
-		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, false, filer.PaginationSize)
+		entries, isLast, err := vc.s3a.list(currentPath, "", startFrom, inclusive, filer.PaginationSize)
+		// After the first batch, use exclusive mode for standard pagination
+		inclusive = false
 		if err != nil {
 			return err
 		}
@@ -729,6 +766,14 @@ func (vc *versionCollector) processDirectory(currentPath, entryPath string, entr
 	// Handle explicit S3 directory object
 	if entry.Attributes.Mime == s3_constants.FolderMimeType {
 		vc.processExplicitDirectory(entryPath, entry)
+	}
+
+	// Skip entire subdirectory if all keys within it are before the keyMarker.
+	// All object keys under this directory start with entryPath+"/". If the marker
+	// doesn't descend into this directory and entryPath+"/" sorts before the marker,
+	// then every key in this subtree was already returned in a previous page.
+	if vc.keyMarker != "" && !strings.HasPrefix(vc.keyMarker, entryPath+"/") && entryPath+"/" < vc.keyMarker {
+		return nil
 	}
 
 	// Recursively search subdirectory
@@ -999,7 +1044,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
 	// List all remaining version files in the .versions directory
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	entries, isLast, err := s3a.list(versionsDir, "", "", false, 1000)
 	if err != nil {
 		glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
 		return fmt.Errorf("failed to list versions: %v", err)
@@ -1011,6 +1056,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 	var latestVersionId string
 	var latestVersionFileName string
 	var latestVersionEntry *filer_pb.Entry
+	hasDeleteMarkers := false
 
 	for _, entry := range entries {
 		if entry.Extended == nil {
@@ -1027,6 +1073,7 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		// Skip delete markers when finding latest content version
 		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
 		if string(isDeleteMarkerBytes) == "true" {
+			hasDeleteMarkers = true
 			continue
 		}
 
@@ -1070,14 +1117,18 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
+	} else if hasDeleteMarkers || !isLast {
+		// Delete markers still exist in the .versions directory, or the listing was
+		// truncated so there may be more entries. Either way, keep the directory.
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no content versions found for %s/%s but .versions directory still has entries (deleteMarkers=%v, isLast=%v), keeping directory",
+			bucket, object, hasDeleteMarkers, isLast)
 	} else {
-		// No versions left - delete the .versions metadata file entirely
-		// This prevents clients from seeing an empty .versions file
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions metadata file", bucket, object)
+		// No entries at all - delete the .versions directory entirely
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
 		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
 		if err != nil {
-			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions metadata file for %s/%s: %v", bucket, object, err)
+			glog.Warningf("updateLatestVersionAfterDeletion: failed to delete .versions directory for %s/%s: %v", bucket, object, err)
 			// Don't return error - the versions are already deleted, this is just cleanup
 		}
 	}
