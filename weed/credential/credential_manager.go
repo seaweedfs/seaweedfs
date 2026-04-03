@@ -86,7 +86,9 @@ func (cm *CredentialManager) SetStaticIdentities(identities []*iam_pb.Identity) 
 	cm.staticIdentities = identities
 	cm.staticNames = make(map[string]bool, len(identities))
 	for _, ident := range identities {
-		cm.staticNames[ident.Name] = true
+		if ident != nil {
+			cm.staticNames[ident.Name] = true
+		}
 	}
 }
 
@@ -119,6 +121,7 @@ func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3A
 
 // SaveConfiguration saves the S3 API configuration.
 // Static identities are filtered out before saving to the store.
+// The caller's config is not mutated.
 func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
 	if len(cm.staticNames) > 0 {
 		var dynamicOnly []*iam_pb.Identity
@@ -127,7 +130,9 @@ func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_
 				dynamicOnly = append(dynamicOnly, ident)
 			}
 		}
-		config.Identities = dynamicOnly
+		configCopy := *config
+		configCopy.Identities = dynamicOnly
+		return cm.Store.SaveConfiguration(ctx, &configCopy)
 	}
 	return cm.Store.SaveConfiguration(ctx, config)
 }

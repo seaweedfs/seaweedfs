@@ -1086,10 +1086,15 @@ func (iam *IdentityAccessManagement) GetStaticIdentities() []*iam_pb.Identity {
 		if !ident.IsStatic {
 			continue
 		}
+		var policyNames []string
+		if len(ident.PolicyNames) > 0 {
+			policyNames = make([]string, len(ident.PolicyNames))
+			copy(policyNames, ident.PolicyNames)
+		}
 		pbIdent := &iam_pb.Identity{
 			Name:        ident.Name,
 			Disabled:    ident.Disabled,
-			PolicyNames: ident.PolicyNames,
+			PolicyNames: policyNames,
 		}
 		for _, action := range ident.Actions {
 			pbIdent.Actions = append(pbIdent.Actions, string(action))
