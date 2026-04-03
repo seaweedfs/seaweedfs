@@ -606,7 +606,11 @@ async fn run(
         let grpc_tls_acceptor = grpc_tls_acceptor.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
         tokio::spawn(async move {
-            let addr = grpc_addr.parse().expect("Invalid gRPC address");
+            let addr = tokio::net::lookup_host(&grpc_addr)
+                .await
+                .expect("Failed to resolve gRPC address")
+                .next()
+                .expect("No addresses found for gRPC bind address");
             let grpc_service = VolumeGrpcService {
                 state: grpc_state.clone(),
             };
