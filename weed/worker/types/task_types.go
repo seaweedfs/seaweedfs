@@ -16,6 +16,10 @@ const (
 	TaskTypeBalance       TaskType = "balance"
 	TaskTypeReplication   TaskType = "replication"
 	TaskTypeECBalance     TaskType = "ec_balance"
+	TaskTypeCompaction    TaskType = "compaction"
+
+	// TaskTypeDeleteEmpty is deprecated: use TaskTypeCompaction instead.
+	TaskTypeDeleteEmpty = TaskTypeCompaction
 )
 
 // TaskStatus represents the status of a maintenance task

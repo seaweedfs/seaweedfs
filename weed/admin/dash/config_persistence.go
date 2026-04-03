@@ -14,6 +14,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/delete_empty"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -25,11 +26,13 @@ const (
 	ConfigSubdir = "conf"
 
 	// Configuration file names (protobuf binary)
-	MaintenanceConfigFile     = "maintenance.pb"
-	VacuumTaskConfigFile      = "task_vacuum.pb"
-	ECTaskConfigFile          = "task_erasure_coding.pb"
-	BalanceTaskConfigFile     = "task_balance.pb"
-	ReplicationTaskConfigFile = "task_replication.pb"
+	MaintenanceConfigFile        = "maintenance.pb"
+	VacuumTaskConfigFile         = "task_vacuum.pb"
+	ECTaskConfigFile             = "task_erasure_coding.pb"
+	BalanceTaskConfigFile        = "task_balance.pb"
+	ReplicationTaskConfigFile    = "task_replication.pb"
+	CompactionTaskConfigFile     = "task_compaction.pb"
+	CompactionTaskFullConfigFile = "task_compaction_full.json" // carries all fields
 
 	// JSON reference files
 	MaintenanceConfigJSONFile     = "maintenance.json"
@@ -37,6 +40,7 @@ const (
 	ECTaskConfigJSONFile          = "task_erasure_coding.json"
 	BalanceTaskConfigJSONFile     = "task_balance.json"
 	ReplicationTaskConfigJSONFile = "task_replication.json"
+	CompactionTaskConfigJSONFile  = "task_compaction.json"
 
 	// Task persistence subdirectories and settings
 	TasksSubdir       = "tasks"
@@ -156,7 +160,7 @@ func (cp *ConfigPersistence) LoadMaintenanceConfig() (*MaintenanceConfig, error)
 		var config MaintenanceConfig
 		if err := proto.Unmarshal(configData, &config); err == nil {
 			// Always populate policy from separate task configuration files
-			config.Policy = buildPolicyFromTaskConfigs()
+			config.Policy = cp.buildPolicyFromTaskConfigs()
 			return &config, nil
 		}
 	}
@@ -623,6 +627,95 @@ func (cp *ConfigPersistence) loadTaskConfig(filename string, config proto.Messag
 	return nil
 }
 
+// SaveCompactionTaskPolicy saves the compaction task policy to a protobuf file
+// and also updates the full JSON config so that DeleteEmptyEnabled and
+// QuietForSeconds survive the round-trip.
+func (cp *ConfigPersistence) SaveCompactionTaskPolicy(policy *worker_pb.TaskPolicy) error {
+	if err := cp.saveTaskConfig(CompactionTaskConfigFile, policy); err != nil {
+		return err
+	}
+	// Merge base policy fields into the full JSON config.
+	existing := delete_empty.NewDefaultConfig()
+	if full, err := cp.LoadCompactionConfig(); err == nil && full != nil {
+		existing = full
+	}
+	existing.Enabled = policy.Enabled
+	existing.MaxConcurrent = int(policy.MaxConcurrent)
+	existing.ScanIntervalSeconds = int(policy.RepeatIntervalSeconds)
+	if policy.CheckIntervalSeconds > 0 {
+		existing.QuietForSeconds = int(policy.CheckIntervalSeconds)
+	}
+	_ = cp.SaveCompactionConfig(existing) // best-effort
+	return nil
+}
+
+// SaveCompactionConfig saves the full compaction config (all fields) as JSON.
+func (cp *ConfigPersistence) SaveCompactionConfig(cfg *delete_empty.Config) error {
+	if cp.dataDir == "" {
+		return fmt.Errorf("no data directory specified, cannot save compaction config")
+	}
+	confDir := filepath.Join(cp.dataDir, ConfigSubdir)
+	if err := os.MkdirAll(confDir, ConfigDirPermissions); err != nil {
+		return fmt.Errorf("failed to create config directory: %w", err)
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal compaction config: %w", err)
+	}
+	return os.WriteFile(filepath.Join(confDir, CompactionTaskFullConfigFile), data, ConfigFilePermissions)
+}
+
+// LoadCompactionConfig loads the full compaction config (all fields) from JSON.
+func (cp *ConfigPersistence) LoadCompactionConfig() (*delete_empty.Config, error) {
+	if cp.dataDir == "" {
+		return nil, os.ErrNotExist
+	}
+	path := filepath.Join(cp.dataDir, ConfigSubdir, CompactionTaskFullConfigFile)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var cfg delete_empty.Config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal compaction full config: %w", err)
+	}
+	return &cfg, nil
+}
+
+// LoadCompactionTaskPolicy loads the compaction task policy from disk.
+// Since compaction config is not yet a typed oneof in TaskPolicy proto,
+// we persist only the base policy fields (enabled, concurrency, interval).
+func (cp *ConfigPersistence) LoadCompactionTaskPolicy() (*worker_pb.TaskPolicy, error) {
+	defaultPolicy := &worker_pb.TaskPolicy{
+		Enabled:               true,
+		MaxConcurrent:         1,
+		RepeatIntervalSeconds: 6 * 3600,
+		CheckIntervalSeconds:  6 * 3600,
+	}
+
+	if cp.dataDir == "" {
+		return defaultPolicy, nil
+	}
+
+	configPath := filepath.Join(cp.dataDir, ConfigSubdir, CompactionTaskConfigFile)
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		return defaultPolicy, nil
+	}
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read compaction task config file: %w", err)
+	}
+
+	var policy worker_pb.TaskPolicy
+	if err := proto.Unmarshal(configData, &policy); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal compaction task configuration: %w", err)
+	}
+
+	glog.V(1).Infof("Loaded compaction task policy from %s", configPath)
+	return &policy, nil
+}
+
 // SaveTaskPolicy generic dispatcher for task persistence
 func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.TaskPolicy) error {
 	switch taskType {
@@ -634,6 +727,8 @@ func (cp *ConfigPersistence) SaveTaskPolicy(taskType string, policy *worker_pb.T
 		return cp.SaveBalanceTaskPolicy(policy)
 	case "replication":
 		return cp.SaveReplicationTaskPolicy(policy)
+	case "compaction", "delete_empty": // delete_empty is a deprecated alias
+		return cp.SaveCompactionTaskPolicy(policy)
 	}
 	return fmt.Errorf("unknown task type: %s", taskType)
 }
@@ -688,7 +783,7 @@ func (cp *ConfigPersistence) GetConfigInfo() map[string]interface{} {
 }
 
 // buildPolicyFromTaskConfigs loads task configurations from separate files and builds a MaintenancePolicy
-func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
+func (cp *ConfigPersistence) buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 	policy := &worker_pb.MaintenancePolicy{
 		GlobalMaxConcurrent:          4,
 		DefaultRepeatIntervalSeconds: 6 * 3600,  // 6 hours in seconds
@@ -744,6 +839,13 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 				},
 			},
 		}
+	}
+
+	// Load compaction task configuration (pass cp so LoadCompactionConfig is used).
+	// Use ToTaskPolicy() so the CheckIntervalSeconds → QuietForSeconds contract
+	// is honoured without duplicating the field mapping here.
+	if deConfig := delete_empty.LoadConfigFromPersistence(cp); deConfig != nil {
+		policy.TaskPolicies["compaction"] = deConfig.ToTaskPolicy()
 	}
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))
@@ -1090,6 +1192,9 @@ func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.Ma
 
 	// Convert protobuf to maintenance task
 	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
+	if task == nil {
+		return nil, fmt.Errorf("task state file %s has no task data", taskID)
+	}
 
 	glog.V(2).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
 	return task, nil
@@ -1220,6 +1325,9 @@ func (cp *ConfigPersistence) maintenanceTaskToProtobuf(task *maintenance.Mainten
 
 // protobufToMaintenanceTask converts protobuf format to MaintenanceTask
 func (cp *ConfigPersistence) protobufToMaintenanceTask(pbTask *worker_pb.MaintenanceTaskData) *maintenance.MaintenanceTask {
+	if pbTask == nil {
+		return nil
+	}
 	task := &maintenance.MaintenanceTask{
 		ID:              pbTask.Id,
 		Type:            maintenance.MaintenanceTaskType(pbTask.Type),

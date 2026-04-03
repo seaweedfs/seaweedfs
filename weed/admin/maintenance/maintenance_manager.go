@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/balance"
+	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/delete_empty"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/worker/tasks/vacuum"
 )
@@ -70,6 +71,13 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 				},
 			},
 		}
+	}
+
+	// Load compaction task configuration (task type: "compaction").
+	// Use ToTaskPolicy() so the CheckIntervalSeconds → QuietForSeconds
+	// contract is honoured without duplicating the mapping here.
+	if deConfig := delete_empty.LoadConfigFromPersistence(nil); deConfig != nil {
+		policy.TaskPolicies["compaction"] = deConfig.ToTaskPolicy()
 	}
 
 	glog.V(1).Infof("Built maintenance policy from separate task configs - %d task policies loaded", len(policy.TaskPolicies))

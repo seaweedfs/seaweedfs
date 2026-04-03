@@ -112,6 +112,7 @@ message TaskParams {
     BalanceTaskParams balance_params = 11;
     ReplicationTaskParams replication_params = 12;
     EcBalanceTaskParams ec_balance_params = 13;
+    DeleteEmptyTaskParams delete_empty_params = 14;
   }
 }
 
@@ -179,6 +180,11 @@ message BalanceTaskParams {
 message ReplicationTaskParams {
   int32 replica_count = 1;                // Target replica count
   bool verify_consistency = 2;            // Verify replica consistency after creation
+}
+
+// DeleteEmptyTaskParams carries runtime parameters for a single compaction task.
+message DeleteEmptyTaskParams {
+  int32 quiet_for_seconds = 1;            // Minimum quiet time before deletion (default: 86400)
 }
 
 // TaskUpdate reports task progress
@@ -309,7 +315,17 @@ message TaskPolicy {
     BalanceTaskConfig balance_config = 7;
     ReplicationTaskConfig replication_config = 8;
     EcBalanceTaskConfig ec_balance_config = 9;
+    DeleteEmptyTaskConfig compaction_config = 10;
   }
+}
+
+// DeleteEmptyTaskConfig contains compaction-specific policy configuration.
+// TODO: regenerate worker_pb/worker.pb.go after this proto change so that
+// TaskPolicy.GetCompactionConfig() and full binary marshaling work.
+message DeleteEmptyTaskConfig {
+  bool delete_empty_enabled = 1;  // Whether to delete zero-byte volumes
+  int32 quiet_for_seconds = 2;    // Minimum idle time before deletion (default: 86400)
+
 }
 
 // Task-specific configuration messages
