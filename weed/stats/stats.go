@@ -62,12 +62,6 @@ func ConnectionOpen() {
 func ConnectionClose() {
 	Chan.Connections <- NewTimedValue(time.Now(), -1)
 }
-func RequestOpen() {
-	Chan.Requests <- NewTimedValue(time.Now(), 1)
-}
-func RequestClose() {
-	Chan.Requests <- NewTimedValue(time.Now(), -1)
-}
 func AssignRequest() {
 	Chan.AssignRequests <- NewTimedValue(time.Now(), 1)
 }

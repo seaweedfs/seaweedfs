@@ -312,29 +312,6 @@ func (h *ClusterHandlers) ShowClusterFilers(w http.ResponseWriter, r *http.Reque
 	}
 }
 
-// ShowClusterBrokers renders the cluster message brokers page
-func (h *ClusterHandlers) ShowClusterBrokers(w http.ResponseWriter, r *http.Request) {
-	// Get cluster brokers data
-	brokersData, err := h.adminServer.GetClusterBrokers()
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to get cluster brokers: "+err.Error())
-		return
-	}
-
-	username := usernameOrDefault(r)
-	brokersData.Username = username
-
-	// Render HTML template
-	w.Header().Set("Content-Type", "text/html")
-	brokersComponent := app.ClusterBrokers(*brokersData)
-	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
-	layoutComponent := layout.Layout(viewCtx, brokersComponent)
-	if err := layoutComponent.Render(r.Context(), w); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
-		return
-	}
-}
-
 // GetClusterTopology returns the cluster topology as JSON
 func (h *ClusterHandlers) GetClusterTopology(w http.ResponseWriter, r *http.Request) {
 	topology, err := h.adminServer.GetClusterTopology()

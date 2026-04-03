@@ -53,19 +53,6 @@ func NewShardsInfo() *ShardsInfo {
 	}
 }
 
-// Initializes a ShardsInfo from a ECVolume.
-func ShardsInfoFromVolume(ev *EcVolume) *ShardsInfo {
-	res := &ShardsInfo{
-		shards: make([]ShardInfo, len(ev.Shards)),
-	}
-	// Build shards directly to avoid locking in Set() since res is not yet shared
-	for i, s := range ev.Shards {
-		res.shards[i] = NewShardInfo(s.ShardId, ShardSize(s.Size()))
-		res.shardBits = res.shardBits.Set(s.ShardId)
-	}
-	return res
-}
-
 // Initializes a ShardsInfo from a VolumeEcShardInformationMessage proto.
 func ShardsInfoFromVolumeEcShardInformationMessage(vi *master_pb.VolumeEcShardInformationMessage) *ShardsInfo {
 	res := NewShardsInfo()

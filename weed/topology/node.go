@@ -40,13 +40,6 @@ func newCapacityReservations() *CapacityReservations {
 	}
 }
 
-func (cr *CapacityReservations) addReservation(diskType types.DiskType, count int64) string {
-	cr.Lock()
-	defer cr.Unlock()
-
-	return cr.doAddReservation(diskType, count)
-}
-
 func (cr *CapacityReservations) removeReservation(reservationId string) bool {
 	cr.Lock()
 	defer cr.Unlock()

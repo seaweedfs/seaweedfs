@@ -120,10 +120,6 @@ func Base64Encode(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)
 }
 
-func Base64Md5(data []byte) string {
-	return Base64Encode(Md5(data))
-}
-
 func Md5(data []byte) []byte {
 	hash := md5.New()
 	hash.Write(data)

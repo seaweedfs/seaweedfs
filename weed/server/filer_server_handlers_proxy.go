@@ -5,7 +5,6 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/security"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
@@ -24,26 +23,6 @@ const proxyReadConcurrencyPerVolumeServer = 16
 var (
 	proxySemaphores sync.Map // host -> chan struct{}
 )
-
-func (fs *FilerServer) maybeAddVolumeJwtAuthorization(r *http.Request, fileId string, isWrite bool) {
-	encodedJwt := fs.maybeGetVolumeJwtAuthorizationToken(fileId, isWrite)
-
-	if encodedJwt == "" {
-		return
-	}
-
-	r.Header.Set("Authorization", "BEARER "+string(encodedJwt))
-}
-
-func (fs *FilerServer) maybeGetVolumeJwtAuthorizationToken(fileId string, isWrite bool) string {
-	var encodedJwt security.EncodedJwt
-	if isWrite {
-		encodedJwt = security.GenJwtForVolumeServer(fs.volumeGuard.SigningKey, fs.volumeGuard.ExpiresAfterSec, fileId)
-	} else {
-		encodedJwt = security.GenJwtForVolumeServer(fs.volumeGuard.ReadSigningKey, fs.volumeGuard.ReadExpiresAfterSec, fileId)
-	}
-	return string(encodedJwt)
-}
 
 func acquireProxySemaphore(ctx context.Context, host string) error {
 	v, _ := proxySemaphores.LoadOrStore(host, make(chan struct{}, proxyReadConcurrencyPerVolumeServer))

@@ -74,11 +74,6 @@ func (opt *FastPathOptimizer) DetermineStrategy(aggregations []AggregationSpec) 
 	return strategy
 }
 
-// CollectDataSources gathers information about available data sources for a topic
-func (opt *FastPathOptimizer) CollectDataSources(ctx context.Context, hybridScanner *HybridMessageScanner) (*TopicDataSources, error) {
-	return opt.CollectDataSourcesWithTimeFilter(ctx, hybridScanner, 0, 0)
-}
-
 // CollectDataSourcesWithTimeFilter gathers information about available data sources for a topic
 // with optional time filtering to skip irrelevant parquet files
 func (opt *FastPathOptimizer) CollectDataSourcesWithTimeFilter(ctx context.Context, hybridScanner *HybridMessageScanner, startTimeNs, stopTimeNs int64) (*TopicDataSources, error) {

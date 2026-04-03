@@ -120,17 +120,6 @@ func GetAllRemoteStorageNames() string {
 	return strings.Join(storageNames, "|")
 }
 
-func GetRemoteStorageNamesHasBucket() string {
-	var storageNames []string
-	for k, m := range RemoteStorageClientMakers {
-		if m.HasBucket() {
-			storageNames = append(storageNames, k)
-		}
-	}
-	sort.Strings(storageNames)
-	return strings.Join(storageNames, "|")
-}
-
 func ParseRemoteLocation(remoteConfType string, remote string) (remoteStorageLocation *remote_pb.RemoteStorageLocation, err error) {
 	maker, found := RemoteStorageClientMakers[remoteConfType]
 	if !found {

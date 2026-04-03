@@ -119,13 +119,6 @@ func (c *RDMAMountClient) lookupVolumeLocationByFileID(ctx context.Context, file
 	return bestAddress, nil
 }
 
-// lookupVolumeLocation finds the best volume server for a given volume ID (legacy method)
-func (c *RDMAMountClient) lookupVolumeLocation(ctx context.Context, volumeID uint32, needleID uint64, cookie uint32) (string, error) {
-	// Create a file ID for lookup (format: volumeId,needleId,cookie)
-	fileID := fmt.Sprintf("%d,%x,%d", volumeID, needleID, cookie)
-	return c.lookupVolumeLocationByFileID(ctx, fileID)
-}
-
 // healthCheck verifies that the RDMA sidecar is available and functioning
 func (c *RDMAMountClient) healthCheck() error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)

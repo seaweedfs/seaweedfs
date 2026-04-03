@@ -58,14 +58,6 @@ func ValidateSSEKMSKey(sseKey *SSEKMSKey) error {
 	return nil
 }
 
-// ValidateSSECKey validates that an SSE-C key is not nil
-func ValidateSSECKey(customerKey *SSECustomerKey) error {
-	if customerKey == nil {
-		return fmt.Errorf("SSE-C customer key cannot be nil")
-	}
-	return nil
-}
-
 // ValidateSSES3Key validates that an SSE-S3 key has valid structure and contents
 func ValidateSSES3Key(sseKey *SSES3Key) error {
 	if sseKey == nil {

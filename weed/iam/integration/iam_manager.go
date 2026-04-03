@@ -202,32 +202,6 @@ func (m *IAMManager) getFilerAddress() string {
 	return "" // Fallback to empty string if no provider is set
 }
 
-// createRoleStore creates a role store based on configuration
-func (m *IAMManager) createRoleStore(config *RoleStoreConfig) (RoleStore, error) {
-	if config == nil {
-		// Default to generic cached filer role store when no config provided
-		return NewGenericCachedRoleStore(nil, nil)
-	}
-
-	switch config.StoreType {
-	case "", "filer":
-		// Check if caching is explicitly disabled
-		if config.StoreConfig != nil {
-			if noCache, ok := config.StoreConfig["noCache"].(bool); ok && noCache {
-				return NewFilerRoleStore(config.StoreConfig, nil)
-			}
-		}
-		// Default to generic cached filer store for better performance
-		return NewGenericCachedRoleStore(config.StoreConfig, nil)
-	case "cached-filer", "generic-cached":
-		return NewGenericCachedRoleStore(config.StoreConfig, nil)
-	case "memory":
-		return NewMemoryRoleStore(), nil
-	default:
-		return nil, fmt.Errorf("unsupported role store type: %s", config.StoreType)
-	}
-}
-
 // createRoleStoreWithProvider creates a role store with a filer address provider function
 func (m *IAMManager) createRoleStoreWithProvider(config *RoleStoreConfig, filerAddressProvider func() string) (RoleStore, error) {
 	if config == nil {

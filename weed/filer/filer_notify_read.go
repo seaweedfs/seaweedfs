@@ -246,10 +246,6 @@ func NewLogFileEntryCollector(f *Filer, startPosition log_buffer.MessagePosition
 	}
 }
 
-func (c *LogFileEntryCollector) hasMore() bool {
-	return c.dayEntryQueue.Len() > 0
-}
-
 func (c *LogFileEntryCollector) collectMore(v *OrderedLogVisitor) (err error) {
 	dayEntry := c.dayEntryQueue.Dequeue()
 	if dayEntry == nil {

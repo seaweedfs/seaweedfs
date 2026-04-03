@@ -196,17 +196,9 @@ func help(args []string) {
 
 var atexitFuncs []func()
 
-func atexit(f func()) {
-	atexitFuncs = append(atexitFuncs, f)
-}
-
 func exit() {
 	for _, f := range atexitFuncs {
 		f()
 	}
 	os.Exit(exitStatus)
-}
-
-func debug(params ...interface{}) {
-	glog.V(4).Infoln(params...)
 }

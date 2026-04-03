@@ -137,26 +137,6 @@ func mergePlanningIndexSections(index, existing *planningIndex) *planningIndex {
 	return index
 }
 
-func buildPlanningIndex(
-	ctx context.Context,
-	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
-	meta table.Metadata,
-	config Config,
-	ops []string,
-) (*planningIndex, error) {
-	currentSnap := meta.CurrentSnapshot()
-	if currentSnap == nil || currentSnap.ManifestList == "" {
-		return nil, nil
-	}
-
-	manifests, err := loadCurrentManifests(ctx, filerClient, bucketName, tablePath, meta)
-	if err != nil {
-		return nil, err
-	}
-	return buildPlanningIndexFromManifests(ctx, filerClient, bucketName, tablePath, meta, config, ops, manifests)
-}
-
 func buildPlanningIndexFromManifests(
 	ctx context.Context,
 	filerClient filer_pb.SeaweedFilerClient,

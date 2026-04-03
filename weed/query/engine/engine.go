@@ -539,20 +539,6 @@ func NewSQLEngine(masterAddress string) *SQLEngine {
 	}
 }
 
-// NewSQLEngineWithCatalog creates a new SQL execution engine with a custom catalog
-// Used for testing or when you want to provide a pre-configured catalog
-func NewSQLEngineWithCatalog(catalog *SchemaCatalog) *SQLEngine {
-	// Initialize global HTTP client if not already done
-	// This is needed for reading partition data from the filer
-	if util_http.GetGlobalHttpClient() == nil {
-		util_http.InitGlobalHttpClient()
-	}
-
-	return &SQLEngine{
-		catalog: catalog,
-	}
-}
-
 // GetCatalog returns the schema catalog for external access
 func (e *SQLEngine) GetCatalog() *SchemaCatalog {
 	return e.catalog
@@ -3680,11 +3666,6 @@ func (e *SQLEngine) createTable(ctx context.Context, stmt *DDLStatement) (*Query
 // ExecutionPlanBuilder handles building execution plans for queries
 type ExecutionPlanBuilder struct {
 	engine *SQLEngine
-}
-
-// NewExecutionPlanBuilder creates a new execution plan builder
-func NewExecutionPlanBuilder(engine *SQLEngine) *ExecutionPlanBuilder {
-	return &ExecutionPlanBuilder{engine: engine}
 }
 
 // BuildAggregationPlan builds an execution plan for aggregation queries

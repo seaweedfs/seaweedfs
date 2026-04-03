@@ -157,34 +157,12 @@ func (sa ServerAddresses) ToAddressMap() (addresses map[string]ServerAddress) {
 	return
 }
 
-func (sa ServerAddresses) ToAddressStrings() (addresses []string) {
-	parts := strings.Split(string(sa), ",")
-	for _, address := range parts {
-		addresses = append(addresses, address)
-	}
-	return
-}
-
 func ToAddressStrings(addresses []ServerAddress) []string {
 	var strings []string
 	for _, addr := range addresses {
 		strings = append(strings, string(addr))
 	}
 	return strings
-}
-func ToAddressStringsFromMap(addresses map[string]ServerAddress) []string {
-	var strings []string
-	for _, addr := range addresses {
-		strings = append(strings, string(addr))
-	}
-	return strings
-}
-func FromAddressStrings(strings []string) []ServerAddress {
-	var addresses []ServerAddress
-	for _, addr := range strings {
-		addresses = append(addresses, ServerAddress(addr))
-	}
-	return addresses
 }
 
 func ParseUrl(input string) (address ServerAddress, path string, err error) {

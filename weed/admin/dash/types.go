@@ -447,11 +447,6 @@ type QueueStats = maintenance.QueueStats
 type WorkerDetailsData = maintenance.WorkerDetailsData
 type WorkerPerformance = maintenance.WorkerPerformance
 
-// GetTaskIcon returns the icon CSS class for a task type from its UI provider
-func GetTaskIcon(taskType MaintenanceTaskType) string {
-	return maintenance.GetTaskIcon(taskType)
-}
-
 // Status constants (these are still static)
 const (
 	TaskStatusPending    = maintenance.TaskStatusPending

@@ -118,16 +118,6 @@ func (a *DiskUsageCounts) FreeSpace() int64 {
 	return freeVolumeSlotCount
 }
 
-func (a *DiskUsageCounts) minus(b *DiskUsageCounts) *DiskUsageCounts {
-	return &DiskUsageCounts{
-		volumeCount:       a.volumeCount - b.volumeCount,
-		remoteVolumeCount: a.remoteVolumeCount - b.remoteVolumeCount,
-		activeVolumeCount: a.activeVolumeCount - b.activeVolumeCount,
-		ecShardCount:      a.ecShardCount - b.ecShardCount,
-		maxVolumeCount:    a.maxVolumeCount - b.maxVolumeCount,
-	}
-}
-
 func (du *DiskUsages) getOrCreateDisk(diskType types.DiskType) *DiskUsageCounts {
 	du.Lock()
 	defer du.Unlock()

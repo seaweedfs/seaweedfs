@@ -78,34 +78,6 @@ func (h *MessageQueueHandlers) ShowTopics(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// ShowSubscribers renders the message queue subscribers page
-func (h *MessageQueueHandlers) ShowSubscribers(w http.ResponseWriter, r *http.Request) {
-	// Get subscribers data
-	subscribersData, err := h.adminServer.GetSubscribers()
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to get subscribers: "+err.Error())
-		return
-	}
-
-	// Set username
-	username := dash.UsernameFromContext(r.Context())
-	if username == "" {
-		username = "admin"
-	}
-	subscribersData.Username = username
-
-	// Render HTML template
-	w.Header().Set("Content-Type", "text/html")
-	subscribersComponent := app.Subscribers(*subscribersData)
-	viewCtx := layout.NewViewContext(r, username, dash.CSRFTokenFromContext(r.Context()))
-	layoutComponent := layout.Layout(viewCtx, subscribersComponent)
-	err = layoutComponent.Render(r.Context(), w)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "Failed to render template: "+err.Error())
-		return
-	}
-}
-
 // ShowTopicDetails renders the topic details page
 func (h *MessageQueueHandlers) ShowTopicDetails(w http.ResponseWriter, r *http.Request) {
 	// Get topic parameters from URL
