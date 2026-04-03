@@ -2,6 +2,8 @@
 
 Date: 2026-04-03
 
+Status: accepted
+
 ## Current Interpretation Rule
 
 Before an explicit `V2 core` exists as a real code structure and live
@@ -85,6 +87,27 @@ Exact mode names may change, but the distinctions should remain explicit.
 | Bootstrap proof | fresh volume before first replicated write is surfaced as bootstrap-pending or equivalent bounded non-healthy mode |
 | Surface-consistency proof | lookup / heartbeat / tester / debug surfaces use one bounded mode meaning |
 | Fail-closed proof | `publish_healthy`, `degraded`, and `needs_rebuild` remain distinct and do not overclaim health |
+
+## Accepted Validation Summary
+
+Tester verdict: `ACCEPT`
+
+| Proof | Claim | Evidence |
+|------|-------|----------|
+| `AllocatedOnly` | `RF=1` maps to `allocated_only` | focused mode test |
+| `BootstrapPending` (`Replicas` empty) | `RF=2` before replica set closure maps to `bootstrap_pending` | focused mode test |
+| `BootstrapPending` (replica not ready) | `RF=2` with replica not ready maps to `bootstrap_pending` | focused mode test |
+| `PublishHealthy` | ready + not transport degraded maps to `publish_healthy` | focused mode test |
+| `Degraded` | transport degraded maps to `degraded` | focused mode test |
+| `NeedsRebuild` | rebuilding role maps to `needs_rebuild` | focused mode test |
+| `SurfaceConsistency` | mode / ready / degraded meaning stays aligned across transitions | focused transition checks |
+| `InterpretationRule` | current integrated tests are constrained `V1` under `V2` constraints | explicit wording in contract + design docs |
+| `NoOverclaim` | checkpoint does not claim pure `V2 core`, launch, or broad transport expansion | explicit boundedness wording |
+
+Minor note kept bounded:
+
+1. `assert_block_field` in the testrunner does not yet expose `volume_mode` as a first-class assert case
+2. this does not block checkpoint acceptance because the bounded unit and API-surface proofs are already direct
 
 ## Relation to Earlier Checkpoints
 

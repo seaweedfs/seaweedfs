@@ -1641,3 +1641,216 @@ Review checklist:
 3. do lookup / heartbeat / tester surfaces agree on publication truth?
 4. does the bounded rerun become attributable?
 5. is the slice still bounded to closure rather than mode policy or backend replacement?
+
+---
+
+### `CP13-9` Technical Pack
+
+Date: 2026-04-03
+Goal: freeze one bounded mode-normalization package for the accepted `RF=2 sync_all` path so current external health/publication meaning is explicit, fail-closed, and clearly understood as constrained `V1` runtime behavior under `V2` constraints
+
+#### Layer 1: Semantic Core
+
+##### Problem statement
+
+`CP13-8` and `CP13-8A` now give one important result:
+
+1. the bounded real-workload package passes on the chosen path
+2. assignment/readiness/publication closure is explicit enough for that path
+
+What they do **not** yet give is a normalized external mode policy.
+
+There is still a semantic gap between:
+
+1. what current `V1` runtime behavior happens to do
+2. what the system is allowed to claim externally under `V2` constraints
+
+The most visible remaining example is the fresh-volume bootstrap behavior:
+
+1. a newly created `RF=2 sync_all` volume may need the first real replicated write to establish the first true sync/connect proof
+2. until that happens, the system must not overclaim fully replicated-healthy state
+
+`CP13-9` therefore accepts only one bounded thing:
+
+1. explicit mode/publication normalization for the current constrained path
+
+It does not accept:
+
+1. pure `V2 core` extraction
+2. launch approval
+3. broad transport/product expansion
+4. retroactive rewriting of `CP13-8` as if it had already validated a completed `V2 runtime`
+
+##### State / contract
+
+`CP13-9` must make these truths explicit:
+
+1. current integrated evidence is about `V1` runtime under `V2` constraints, not about an already-complete `V2 runtime`
+2. external surfaces must use one bounded mode vocabulary for the chosen path
+3. a fresh volume before first replicated durability proof is not the same as:
+   - replica-ready
+   - publish-healthy
+   - replication-healthy
+4. degraded and `NeedsRebuild` remain distinct fail-closed meanings
+
+Recommended first-cut mode set:
+
+1. `allocated_only`
+2. `bootstrap_pending`
+3. `replica_ready`
+4. `publish_healthy`
+5. `degraded`
+6. `needs_rebuild`
+
+Exact names may change, but the semantic split must not.
+
+##### Reject shapes
+
+Reject before implementation or review if the slice:
+
+1. keeps one meaning of “healthy” in lookup and another in tester/debug/operator surfaces
+2. treats first-write bootstrap as incidental timing rather than an explicit mode policy
+3. quietly upgrades the current path from constrained `V1` to completed `V2 runtime`
+4. broadens into `Phase 14` pure-core extraction
+
+#### Layer 2: Execution Core
+
+##### Current gap `CP13-9` must close
+
+1. current chosen-path semantics are stronger than before, but the external mode contract is still partly implicit
+2. bootstrap-pending behavior is still too easy to describe informally rather than as an explicit allowed state
+3. future claims can still drift if the team does not freeze how current constrained-runtime evidence should be interpreted
+
+##### Suggested file targets
+
+1. `sw-block/.private/phase/phase-13.md`
+2. `sw-block/.private/phase/phase-13-cp9-mode-normalization.md`
+3. `sw-block/design/v2-protocol-claim-and-evidence.md`
+4. `sw-block/design/v2_mini_core_design.md`
+5. `weed/server/*` and tester surfaces only if current mode semantics require explicit surface normalization in code/tests
+
+##### Validation focus
+
+Required proofs:
+
+1. interpretation proof
+   - current integrated evidence is explicitly described as constrained `V1` under `V2` constraints
+2. bootstrap proof
+   - a fresh `RF=2 sync_all` volume before first replicated write is surfaced as bootstrap-pending or equivalent bounded non-healthy mode
+3. surface-consistency proof
+   - heartbeat / lookup / tester / debug surfaces use one bounded mode meaning
+4. boundedness proof
+   - the checkpoint remains about mode normalization, not pure-core extraction or launch approval
+
+Reject if:
+
+1. different surfaces still disagree on whether a fresh or degraded volume is “healthy”
+2. a claimed proof still depends on human timing interpretation rather than explicit state/mode meaning
+3. the slice has no clear story for how `bootstrap_pending`, `degraded`, and `needs_rebuild` differ
+
+##### Suggested first cut
+
+1. freeze one explicit interpretation rule in design/ledger docs
+2. freeze one explicit current-path mode contract in a dedicated `CP13-9` doc
+3. if needed, add the smallest surface/test changes that make bootstrap-pending and publish-healthy externally distinguishable
+4. keep the slice bounded to the accepted chosen path and current runtime
+
+##### Assignment For `sw`
+
+1. Goal
+   - deliver one bounded mode-normalization package for the accepted chosen path
+2. Required outputs
+   - one dedicated `CP13-9` mode contract doc
+   - one delivery note explaining:
+     - the normalized mode set
+     - the interpretation rule for current integrated tests
+     - any surface/test changes required
+     - proof shape
+     - what later phases remain untouched
+3. Hard rules
+   - do not claim a completed `V2 runtime`
+   - do not broaden into `Phase 14` package extraction
+   - do not turn this into launch approval or broad product policy
+
+##### Assignment For `tester`
+
+1. Goal
+   - validate that `CP13-9` closes bounded mode-policy meaning and nothing broader
+2. Validate
+   - current integrated evidence is interpreted correctly as constrained `V1`
+   - fresh-volume bootstrap is not overclaimed as replicated-healthy
+   - heartbeat / lookup / tester / debug surfaces use one bounded meaning
+   - no-overclaim around `Phase 14`
+3. Reject if
+   - current evidence is still described as if pure `V2 runtime` already exists
+   - bootstrap behavior remains informal or timing-based only
+   - the slice broadens into pure-core extraction or launch claims
+
+#### Short judgment
+
+`CP13-9` is acceptable when:
+
+1. current integrated tests are explicitly interpreted as constrained `V1` under `V2` constraints
+2. the chosen path has one bounded external mode contract
+3. first-write bootstrap no longer hides inside ambiguous health claims
+4. the slice stays clearly separate from `Phase 14`
+
+---
+
+### `CP13-9` Delivery Pack
+
+Bounded contract:
+
+1. `CP13-9` accepts mode normalization for the current constrained chosen path only
+2. it does not accept pure `V2 core` extraction, launch approval, or broad transport/product expansion
+
+What `sw` should deliver:
+
+1. one explicit current-path mode contract
+2. one explicit interpretation rule stating that current integrated checks are evaluating `V1` runtime under `V2` constraints
+3. one bounded proof package showing:
+   - bootstrap-pending or equivalent first-write state is explicit
+   - publish-healthy remains fail-closed
+   - degraded / `NeedsRebuild` remain distinguishable
+4. one delivery note with:
+   - changed files
+   - normalized mode names or semantic equivalents
+   - proof shape
+   - no-overclaim statement
+
+Recommended delivery shape:
+
+1. contract:
+   - define current-path mode meanings explicitly
+   - distinguish bootstrap-pending from replica-ready / publish-healthy
+2. code/tests:
+   - make the smallest changes needed so surfaces reflect the normalized meaning
+3. note:
+   - explain why this is still constrained-current-runtime work
+   - explain why `Phase 14` remains untouched
+
+Review checklist:
+
+1. does the slice clearly say current integrated evidence is constrained `V1`, not completed `V2 runtime`?
+2. is first-write bootstrap explicit rather than implicit?
+3. do heartbeat / lookup / tester / debug surfaces share one bounded meaning?
+4. does publish-healthy remain fail-closed?
+5. is the slice still bounded to mode normalization rather than pure-core extraction?
+
+Accepted validation summary:
+
+1. verdict:
+   - `ACCEPT`
+2. direct bounded proofs verified:
+   - `allocated_only`
+   - `bootstrap_pending` with no replicas
+   - `bootstrap_pending` with replica not ready
+   - `publish_healthy`
+   - `degraded`
+   - `needs_rebuild`
+   - surface consistency across transitions
+   - interpretation rule
+   - no-overclaim
+3. bounded follow-up note:
+   - `assert_block_field` does not yet expose `volume_mode` as a first-class testrunner assert case
+   - low priority; unit/API proofs already close the checkpoint

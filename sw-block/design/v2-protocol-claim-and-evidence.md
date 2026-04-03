@@ -30,6 +30,23 @@ When reviewing any new slice, bug fix, workload run, or delivery note, ask:
 
 If the answer changes the current state of the product, update this ledger in the same change.
 
+## Interpretation Rule For Current Integrated Evidence
+
+Until an explicit `V2 core` exists as a real code structure and live event/command owner,
+current integrated evidence should be interpreted as:
+
+1. validation of current `V1` runtime behavior under `V2` constraints
+2. not proof that a completed `V2 runtime` already exists
+
+This means:
+
+1. protocol truths and claim boundaries may already be `V2`-owned
+2. workload and integration passes may still be about the constrained current runtime
+3. later phases must keep separating:
+   - semantic authority
+   - constrained current-runtime validation
+   - future pure-core extraction
+
 ## Current Chosen Envelope
 
 This is the bounded envelope currently allowed for active V2 claims:
@@ -46,7 +63,7 @@ This is the bounded envelope currently allowed for active V2 claims:
 Current explicit exclusions:
 
 1. `RF>2` as a general accepted product claim
-2. broad mode normalization before `CP13-9`
+2. broad mode normalization outside the accepted bounded `CP13-9` contract
 3. broad rollout / launch approval
 4. broad transport matrix claims outside explicitly named evidence
 5. treating synthetic benchmarks as substitutes for real workload validation
@@ -68,6 +85,7 @@ These are the currently binding constraints that later work must preserve.
 | `CP13-6` | retention must fail closed for lagging replicas | `Phase 13` | active |
 | `CP13-7` | unrecoverable gap must escalate to `NeedsRebuild` and block normal paths | `Phase 13` | active |
 | `CP13-8A` | assignment delivered != receiver ready != publish healthy | `Phase 13` | active |
+| `CP13-9` | bounded external mode meaning must stay explicit and surface-consistent on the constrained current path | `Phase 13` | active |
 
 ## Accepted Baselines
 
@@ -75,7 +93,8 @@ These are the currently binding constraints that later work must preserve.
 |----------|---------------------------|-------------------|------------------|
 | `CP13-1` replication baseline inventory | which tests originally passed/failed/`PASS*` before `CP13-2..7` closure | `sw-block/.private/phase/phase-13-cp1-baseline.md` | valid as baseline inventory, not as final product claim |
 | `Phase 12 P4` bounded floor | one bounded performance floor and rollout-gate package on the accepted chosen path | `sw-block/.private/phase/phase-12-p4-floor.md`, `phase-12-p4-rollout-gates.md` | valid inside its named envelope |
-| real-workload envelope draft | one bounded `ext4 + pgbench` package for `CP13-8` | `sw-block/.private/phase/phase-13-cp8-workload-validation.md` | active draft; full claim pending rerun after blockers close |
+| `CP13-8` bounded real-workload pass | one bounded `ext4 + pgbench` package passes on the accepted chosen path | `sw-block/.private/phase/phase-13-cp8-workload-validation.md` | valid inside its named envelope and current constrained-`V1` interpretation |
+| `CP13-9` bounded mode contract | one bounded external mode set is explicit on the constrained current path | `sw-block/.private/phase/phase-13-cp9-mode-normalization.md` | valid inside its named envelope and constrained-`V1` interpretation |
 
 ## Allowed Claims
 
@@ -85,9 +104,10 @@ These are the claims that may currently be made without overreach.
 |----------|---------------|----------------|-----------------|--------|
 | `C-RF2-SYNCALL-CONTRACT` | the accepted `RF=2 sync_all` replication contract is closed at protocol/unit/adversarial level through `CP13-1..7` | protocol/unit/adversarial evidence only | `Phase 13` docs and tests | allowed |
 | `C-WORKLOAD-DRAFT` | one bounded real-workload validation package is defined for `CP13-8` | package definition only, not final pass claim | `phase-13-cp8-workload-validation.md`, YAML scenario | allowed |
-| `C-WORKLOAD-PASS` | the bounded real-workload package passes on the chosen path | only after rerun succeeds on corrected path | `CP13-8` rerun artifact | not yet allowed |
-| `C-ADAPTER-CLOSURE` | assignment / readiness / publication closure is explicit on the chosen path | only after `CP13-8A` acceptance | `CP13-8A` proof package | in progress |
-| `C-MODE-NORMALIZATION` | mode policy / normalization is closed | only in `CP13-9` or later | future | not allowed |
+| `C-WORKLOAD-PASS` | the bounded real-workload package passes on the chosen path | bounded chosen path only; interpreted as current `V1` runtime under `V2` constraints | `CP13-8` rerun artifact | allowed |
+| `C-ADAPTER-CLOSURE` | assignment / readiness / publication closure is explicit on the chosen path | bounded chosen path only; does not imply mode normalization or pure-core extraction | `CP13-8A` proof package | allowed |
+| `C-CONSTRAINED-V1-RUNTIME` | current integrated checks are evaluating `V1` runtime behavior under `V2` constraints rather than validating a completed `V2 runtime` | current chosen path only, until explicit `V2 core` extraction | `v2_mini_core_design.md`, `Phase 13` docs | allowed |
+| `C-MODE-NORMALIZATION` | one bounded mode-policy / normalization package is closed on the current constrained chosen path | bounded chosen path only; does not imply pure `V2 core` extraction or broad product policy | `CP13-9` docs/tests | allowed |
 | `C-LAUNCH-APPROVAL` | broad product launch readiness | outside current phase | future | not allowed |
 
 ## Evidence Map
@@ -101,8 +121,9 @@ These are the claims that may currently be made without overreach.
 | Retention | lagging replica retains WAL or escalates fail closed | `CP13-6` tests and docs | retention protocol tests |
 | Rebuild fallback | unrecoverable gap escalates to `NeedsRebuild` and blocks normal paths | `CP13-7` tests and docs | rebuild tests |
 | Performance floor | one bounded measured floor and rollout-gate package | `Phase 12 P4` docs/tests | cited baseline artifact |
-| Real-workload package | one bounded workload matrix exists | `CP13-8` scenario/doc | tester validation reports |
-| Assignment/publication closure | assignment does not imply readiness/publication | `CP13-8A` code/tests/debug evidence | tester investigation, bug docs |
+| Real-workload package | one bounded workload matrix passes on the corrected chosen path | `CP13-8` scenario/doc | tester validation reports |
+| Assignment/publication closure | assignment does not imply readiness/publication and corrected wiring refreshes replication truth explicitly | `CP13-8A` code/tests/debug evidence | tester investigation, bug docs |
+| Mode normalization | one bounded mode set is explicit and surface-consistent on the constrained current path | `CP13-9` contract/doc/tests | tester validation report |
 
 ## Invalidated Or Narrowed Evidence
 
@@ -110,8 +131,7 @@ This section records evidence that cannot currently be used at full strength.
 
 | ID | Affected claim/evidence | Narrowing reason | Scope | Action required |
 |----|-------------------------|------------------|-------|-----------------|
-| `INV-CP13-8A-01` | any weed-VS scenario claim that `block_promote` preserved replication automatically | promote path could leave new primary without replica shipper wiring; barrier then became vacuous with `0` shippers | recent weed-VS testrunner scenarios using `block_promote` | rerun after fix |
-| `INV-CP13-8A-02` | bounded real-workload `CP13-8` pass claim | blocked by assignment/publication contradiction and then by promote/shipper closure issue | `CP13-8` only | rerun after `CP13-8A` blocker fixes |
+| `INV-CP13-8A-01` | any historical weed-VS scenario claim that `block_promote` preserved replication automatically before the promote/refresh fix | old promote path could leave new primary without replica shipper wiring; barrier then became vacuous with `0` shippers | historical weed-VS testrunner scenarios using old `block_promote` behavior | rerun or reclassify historical evidence as needed |
 | `INV-CLAIM-SPREAD-01` | claims embedded only in phase delivery notes | phase docs are not a reliable centralized current-state ledger | all scattered phase notes | migrate ongoing claim state here |
 
 Unaffected evidence currently believed to remain valid:
@@ -122,20 +142,14 @@ Unaffected evidence currently believed to remain valid:
 
 ## Open Contradictions And Blockers
 
-| ID | Blocker | Current classification | Impact |
-|----|---------|------------------------|--------|
-| `BUG-CP13-8A-ADDR` | malformed/mock replica addresses in some QA allocators | test/adapter bug | narrows affected QA evidence; does not by itself close real workload |
-| `BUG-CP13-8A-RECV-IDEMP` | repeated assignment delivery restarted replica receiver and hit bind conflict | adapter/runtime bug | blocks weed-VS replica from leaving degraded state until fixed |
-| `BUG-CP13-8A-PROMOTE-SHIPPER` | post-promote assignment could leave new primary with no replica shipper configured | master/adapter bug | invalidates weed-VS `block_promote` replication claims until rerun |
-| `CP13-8` | real bounded workload package still needs corrected rerun | blocked by `CP13-8A` issues | blocks real-workload pass claim |
+No active `Phase 13` blocker currently remains inside the accepted bounded chosen path.
 
 ## Rerun Queue
 
 | Priority | Item | Why rerun is needed | Exit condition |
 |----------|------|---------------------|----------------|
-| `P0` | `CP13-8` bounded real-workload scenario | current pass claim is not yet allowed after `CP13-8A` blockers | bounded rerun passes or fails with attributable remaining cause |
-| `P0` | weed-VS scenarios using `block_promote` from the recent testrunner enhancement work | prior replication interpretation may have been vacuous (`0` shippers) | affected scenarios are reclassified or rerun |
-| `P1` | any recent degraded/perf interpretation derived from broken weed-VS promote path | performance interpretation may be based on RF=1 semantics | audit updated and affected numbers rerun or narrowed |
+| `P0` | historical weed-VS scenarios using old `block_promote` semantics from the recent testrunner enhancement work | prior replication interpretation may have been vacuous (`0` shippers) before the refresh fix | affected scenarios are reclassified or rerun |
+| `P1` | any recent degraded/perf interpretation derived from broken historical weed-VS promote path | performance interpretation may have been based on RF=1 semantics | audit updated and affected numbers rerun or narrowed |
 
 ## Maintenance Rules
 

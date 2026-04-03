@@ -1,7 +1,7 @@
 # Phase 13
 
 Date: 2026-04-02
-Status: active
+Status: accepted
 Purpose: carry one explicit engineering gap beyond accepted `Phase 12` hardening into a bounded implementation phase so `RF=2 sync_all` becomes a correct, test-backed replicated durability mode under real reconnect, catch-up, retention, and rebuild conditions
 
 ## Why This Phase Exists
@@ -672,7 +672,19 @@ Reject if:
 
 Status:
 
-- active
+- accepted
+
+Carry-forward:
+
+1. one bounded real-workload package now passes on the chosen path:
+   - `RF=2`
+   - `sync_all`
+   - iSCSI
+   - `ext4 + pgbench`
+   - one failover
+2. this checkpoint validates current runtime behavior under accepted `V2` constraints
+3. it does not by itself mean a pure `V2 runtime` already exists
+4. `CP13-8A` and `CP13-9` must keep that interpretation explicit
 
 ### `CP13-8A`: Assignment-to-Publication Closure
 
@@ -750,11 +762,111 @@ Reject if:
 
 Status:
 
-- active
+- accepted
 
-### Later checkpoints inside `Phase 13`
+Carry-forward:
 
-1. `CP13-9`: mode normalization (only after `CP13-8A` closes the assignment/publication contradiction)
+1. assignment/readiness/publication closure is now explicit enough for the bounded chosen path
+2. the corrected path no longer treats replica allocation or assignment presence as equivalent to replica publication readiness
+3. the remaining next step is mode-policy normalization on top of this closed assignment/publication path
+
+### `CP13-9`: Mode Normalization Under `V2` Constraints
+
+Goal:
+
+- freeze one bounded mode-policy contract for the current chosen path so external health/publication meaning no longer drifts between implicit `V1` runtime behavior and `V2` constraint language
+
+Acceptance object:
+
+1. `CP13-9` accepts one bounded mode-normalization package for the accepted `RF=2 sync_all` path
+2. it accepts mode/publication semantics for the current runtime only under explicit `V2` constraints
+3. it does not accept pure `V2 core` extraction, launch approval, or broad transport/product expansion by implication
+
+Execution steps:
+
+1. Step 1: interpretation rule freeze
+   - make explicit that current integrated tests are evaluating `V1` runtime behavior under `V2` constraints
+   - define `CP13-9` as policy/meaning closure for the constrained current path, not proof that a completed `V2 runtime` already exists
+2. Step 2: mode contract freeze
+   - define one bounded external mode set for the chosen path
+   - at minimum distinguish:
+     - allocated / assigned
+     - bootstrap-pending
+     - replica-ready
+     - publish-healthy
+     - degraded
+     - `NeedsRebuild`
+   - define what each surface is allowed to claim for each mode:
+     - heartbeat
+     - lookup / REST / tester surfaces
+     - operator/debug surfaces
+3. Step 3: bootstrap-policy closure
+   - make the first-write / first-connect bootstrap behavior explicit
+   - ensure a freshly created `RF=2 sync_all` volume is not overclaimed as replicated-healthy before the first real replicated durability proof exists
+4. Step 4: proof package
+   - prove all relevant surfaces agree on the bounded mode meanings
+   - prove no-overclaim around future pure-core extraction or broad launch claims
+
+Required scope:
+
+1. chosen path only: `RF=2 sync_all`
+2. current master / volume-server heartbeat path only
+3. `blockvol` remains the execution backend
+4. current integrated runtime is interpreted as constrained `V1`, not yet as a completed `V2 runtime`
+
+Must prove:
+
+1. health/publication meaning is explicit and consistent across product/tester/operator surfaces
+2. `bootstrap-pending` or equivalent first-write state is explicit rather than hidden inside ambiguous degraded/healthy output
+3. publish/ready semantics remain fail-closed under the accepted replication contract
+4. acceptance wording stays bounded to mode normalization for the constrained current path rather than `V2 core` extraction
+
+Reuse discipline:
+
+1. prefer surfaced policy/diagnostic/projection work first because this checkpoint is about external mode meaning
+2. update `weed/storage/blockvol/*` only if mode normalization exposes a concrete backend leak rather than a surface-meaning gap
+3. keep `CP13-1..8A` semantics fixed unless a live contradiction is exposed
+4. no checkpoint work may silently broaden into `Phase 14` pure-core extraction or broad rollout claims
+
+Verification mechanism:
+
+1. one focused proof set around mode/publication semantics across heartbeat / lookup / tester / debug surfaces
+2. explicit tests or bounded evidence that a fresh volume before first replicated write is not overpublished as replicated-healthy
+3. explicit checks that degraded / rebuild-required surfaces remain distinguishable and bounded
+4. no-overclaim review so `CP13-9` does not absorb `Phase 14`
+
+Hard indicators:
+
+1. one accepted interpretation proof:
+   - current integrated evidence is explicitly described as constrained `V1` under `V2` constraints
+2. one accepted bootstrap proof:
+   - a fresh `RF=2 sync_all` volume before first replicated write is surfaced as bootstrap-pending or equivalent bounded non-healthy mode
+3. one accepted surface-consistency proof:
+   - heartbeat / lookup / tester / debug surfaces agree on the same bounded mode meanings
+4. one accepted boundedness proof:
+   - `CP13-9` claims mode normalization only and leaves pure-core extraction to later phases
+
+Reject if:
+
+1. the slice still uses one meaning of “healthy” for lookup and a different one for tester/debug/operator surfaces
+2. a fresh volume can still appear fully replicated-healthy before first real replicated durability proof exists
+3. the checkpoint quietly claims a completed `V2 runtime` already exists
+4. delivery wording broadens into launch approval, broad productization, or `Phase 14` pure-core extraction
+
+Status:
+
+- accepted
+
+Carry-forward:
+
+1. one bounded mode set is now explicit for the current constrained chosen path:
+   - `allocated_only`
+   - `bootstrap_pending`
+   - `publish_healthy`
+   - `degraded`
+   - `needs_rebuild`
+2. current integrated tests remain explicitly interpreted as constrained `V1` under `V2` constraints
+3. `CP13-9` does not claim pure `V2 core` extraction, launch approval, or broad transport expansion
 
 ## Reuse Discipline
 
@@ -766,8 +878,9 @@ Status:
 
 ## Expected Outcome
 
-If `Phase 13` succeeds:
+`Phase 13` now succeeds with the following closure:
 
 1. reconnect / catch-up / rebuild semantics become explicit and test-backed
 2. `sync_all` correctness no longer depends on partial or implicit sender-state assumptions
 3. later feature work can reuse a clearer replication contract instead of re-deriving durability semantics each time
+4. one bounded real-workload package and one bounded mode-normalization package are both accepted on the current constrained path
