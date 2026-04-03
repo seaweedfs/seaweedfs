@@ -21,6 +21,11 @@ type FilerAddressSetter interface {
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
 	Store CredentialStore
+	// staticIdentities holds identities loaded from a static config file (-s3.config).
+	// These are included in LoadConfiguration/ListUsers so that listing operations
+	// return all configured identities, not just dynamic ones from the store.
+	staticIdentities []*iam_pb.Identity
+	staticNames      map[string]bool
 }
 
 // NewCredentialManager creates a new credential manager with the specified store
@@ -74,13 +79,56 @@ func (cm *CredentialManager) GetStoreName() string {
 	return ""
 }
 
-// LoadConfiguration loads the S3 API configuration
-func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
-	return cm.Store.LoadConfiguration(ctx)
+// SetStaticIdentities registers identities loaded from a static config file.
+// These identities are included in LoadConfiguration and ListUsers results
+// but are never persisted to the dynamic store.
+func (cm *CredentialManager) SetStaticIdentities(identities []*iam_pb.Identity) {
+	cm.staticIdentities = identities
+	cm.staticNames = make(map[string]bool, len(identities))
+	for _, ident := range identities {
+		cm.staticNames[ident.Name] = true
+	}
 }
 
-// SaveConfiguration saves the S3 API configuration
+// IsStaticIdentity returns true if the named identity was loaded from static config.
+func (cm *CredentialManager) IsStaticIdentity(name string) bool {
+	return cm.staticNames[name]
+}
+
+// LoadConfiguration loads the S3 API configuration from the store and merges
+// in any static identities so that listing operations show all users.
+func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	config, err := cm.Store.LoadConfiguration(ctx)
+	if err != nil {
+		return config, err
+	}
+	// Merge static identities that are not already in the dynamic config
+	if len(cm.staticIdentities) > 0 {
+		dynamicNames := make(map[string]bool, len(config.Identities))
+		for _, ident := range config.Identities {
+			dynamicNames[ident.Name] = true
+		}
+		for _, si := range cm.staticIdentities {
+			if !dynamicNames[si.Name] {
+				config.Identities = append(config.Identities, si)
+			}
+		}
+	}
+	return config, nil
+}
+
+// SaveConfiguration saves the S3 API configuration.
+// Static identities are filtered out before saving to the store.
 func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	if len(cm.staticNames) > 0 {
+		var dynamicOnly []*iam_pb.Identity
+		for _, ident := range config.Identities {
+			if !cm.staticNames[ident.Name] {
+				dynamicOnly = append(dynamicOnly, ident)
+			}
+		}
+		config.Identities = dynamicOnly
+	}
 	return cm.Store.SaveConfiguration(ctx, config)
 }
 
@@ -104,9 +152,24 @@ func (cm *CredentialManager) DeleteUser(ctx context.Context, username string) er
 	return cm.Store.DeleteUser(ctx, username)
 }
 
-// ListUsers returns all usernames
+// ListUsers returns all usernames, including static identities.
 func (cm *CredentialManager) ListUsers(ctx context.Context) ([]string, error) {
-	return cm.Store.ListUsers(ctx)
+	usernames, err := cm.Store.ListUsers(ctx)
+	if err != nil {
+		return usernames, err
+	}
+	if len(cm.staticIdentities) > 0 {
+		dynamicNames := make(map[string]bool, len(usernames))
+		for _, name := range usernames {
+			dynamicNames[name] = true
+		}
+		for _, si := range cm.staticIdentities {
+			if !dynamicNames[si.Name] {
+				usernames = append(usernames, si.Name)
+			}
+		}
+	}
+	return usernames, nil
 }
 
 // GetUserByAccessKey retrieves a user by access key
