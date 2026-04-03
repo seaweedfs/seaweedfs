@@ -142,4 +142,3 @@ func (rb *RingBuffer) AckTimestamp(timestamp int64) {
 func (rb *RingBuffer) OldestAckedTimestamp() int64 {
 	return rb.maxAllAckedTs
 }
-

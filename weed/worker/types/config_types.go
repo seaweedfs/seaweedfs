@@ -133,4 +133,3 @@ func DefaultWorkerConfig() *WorkerConfig {
 		Capabilities:        capabilities,
 	}
 }
-

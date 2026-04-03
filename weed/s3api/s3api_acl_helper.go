@@ -346,4 +346,3 @@ func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grant
 
 	return s3err.ErrNone
 }
-

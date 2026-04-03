@@ -19,4 +19,3 @@ func DefaultMaintenanceConfigProto() *worker_pb.MaintenanceConfig {
 		Policy: nil,
 	}
 }
-

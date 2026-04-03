@@ -16,4 +16,3 @@ type Registry struct {
 // Default global registry instance
 var defaultRegistry *Registry
 var registryOnce sync.Once
-

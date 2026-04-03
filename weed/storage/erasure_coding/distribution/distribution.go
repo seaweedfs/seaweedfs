@@ -1,6 +1,5 @@
 package distribution
 
-
 // ECDistribution represents the target distribution of EC shards
 // based on EC configuration and replication policy.
 type ECDistribution struct {
@@ -21,4 +20,3 @@ type ECDistribution struct {
 	MaxShardsPerRack int
 	MaxShardsPerNode int
 }
-

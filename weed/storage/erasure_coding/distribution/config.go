@@ -1,7 +1,6 @@
 // Package distribution provides EC shard distribution algorithms with configurable EC ratios.
 package distribution
 
-
 // ECConfig holds erasure coding configuration parameters.
 // This replaces hard-coded constants like DataShardsCount=10, ParityShardsCount=4.
 type ECConfig struct {
@@ -18,4 +17,3 @@ type ReplicationConfig struct {
 	// Original replication string (for logging/debugging)
 	Original string
 }
-

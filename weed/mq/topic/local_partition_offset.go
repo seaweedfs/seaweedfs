@@ -90,4 +90,3 @@ type OffsetAwarePublisher struct {
 	partition      *LocalPartition
 	assignOffsetFn OffsetAssignmentFunc
 }
-

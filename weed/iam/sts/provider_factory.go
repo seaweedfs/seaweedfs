@@ -274,4 +274,3 @@ func (f *ProviderFactory) convertToRoleMapping(value interface{}) (*providers.Ro
 
 	return roleMapping, nil
 }
-

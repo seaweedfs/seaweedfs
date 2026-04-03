@@ -278,4 +278,3 @@ func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
 
 	return exists
 }
-

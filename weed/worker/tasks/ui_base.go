@@ -84,4 +84,3 @@ type CommonConfigGetter[T any] struct {
 
 // RegisterUIFunc provides a common registration function signature
 type RegisterUIFunc[D, S any] func(uiRegistry *types.UIRegistry, detector D, scheduler S)
-

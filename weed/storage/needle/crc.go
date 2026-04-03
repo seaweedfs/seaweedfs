@@ -36,4 +36,3 @@ type CRCwriter struct {
 	crc CRC
 	w   io.Writer
 }
-

@@ -223,4 +223,3 @@ func (h *TaskLogHandler) readTaskLogEntries(logDir string, request *worker_pb.Ta
 
 	return pbEntries, nil
 }
-

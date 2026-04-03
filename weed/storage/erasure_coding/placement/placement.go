@@ -372,4 +372,3 @@ func addDiskToResult(result *PlacementResult, disk *DiskCandidate,
 	result.ShardsPerRack[rackKey]++
 	result.ShardsPerDC[disk.DataCenter]++
 }
-

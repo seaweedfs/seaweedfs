@@ -1,7 +1,6 @@
 package pub_balancer
 
-import (
-)
+import ()
 
 func (balancer *PubBalancer) RepairTopics() []BalanceAction {
 	action := BalanceTopicPartitionOnBrokers(balancer.Brokers)
@@ -11,4 +10,3 @@ func (balancer *PubBalancer) RepairTopics() []BalanceAction {
 type TopicPartitionInfo struct {
 	Broker string
 }
-

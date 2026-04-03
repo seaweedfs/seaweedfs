@@ -58,9 +58,9 @@ var (
 
 // SSECustomerKey represents a customer-provided encryption key for SSE-C
 type SSECustomerKey struct {
-	Algorithm     string
-	Key           []byte
-	KeyMD5        string
+	Algorithm string
+	Key       []byte
+	KeyMD5    string
 }
 
 // IsSSECRequest checks if the request contains SSE-C headers

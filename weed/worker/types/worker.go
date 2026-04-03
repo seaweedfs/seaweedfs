@@ -30,4 +30,3 @@ type BaseWorker struct {
 	currentTasks  map[string]Task
 	logger        Logger
 }
-

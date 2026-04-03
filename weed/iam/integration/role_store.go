@@ -388,4 +388,3 @@ type CachedFilerRoleStoreConfig struct {
 	ListTTL      string `json:"listTtl,omitempty"`      // e.g., "1m", "30s"
 	MaxCacheSize int    `json:"maxCacheSize,omitempty"` // Maximum number of cached roles
 }
-

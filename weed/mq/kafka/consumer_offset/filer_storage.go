@@ -306,4 +306,3 @@ func (f *FilerStorage) deleteDirectory(path string) error {
 		return err
 	})
 }
-

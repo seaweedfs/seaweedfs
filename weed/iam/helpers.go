@@ -174,4 +174,3 @@ func MapToIdentitiesAction(action string) string {
 		return ""
 	}
 }
-

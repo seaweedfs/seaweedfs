@@ -82,4 +82,3 @@ func WriteNeedleBlob(w backend.BackendStorageFile, dataSlice []byte, size Size, 
 	return
 
 }
-

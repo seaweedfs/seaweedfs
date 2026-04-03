@@ -302,4 +302,3 @@ func (v *TableBucketFileValidator) ValidateTableBucketUpload(fullPath string) er
 
 	return v.layoutValidator.ValidateFilePath(tableRelativePath)
 }
-

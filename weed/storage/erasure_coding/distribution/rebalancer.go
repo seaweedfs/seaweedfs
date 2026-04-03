@@ -1,6 +1,5 @@
 package distribution
 
-
 // ShardMove represents a planned shard move
 type ShardMove struct {
 	ShardID    int
@@ -27,4 +26,3 @@ type Rebalancer struct {
 	ecConfig  ECConfig
 	repConfig ReplicationConfig
 }
-

@@ -697,4 +697,3 @@ func (s *PostgreSQLServer) cleanupIdleSessions() {
 		}
 	}
 }
-

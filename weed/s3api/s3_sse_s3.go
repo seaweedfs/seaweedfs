@@ -332,7 +332,7 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	v := util.GetViper()
 	cfgKEK := v.GetString(sseS3KEKConfigKey) // hex-encoded, drop-in for filer file
-	cfgKey := v.GetString(sseS3KeyConfigKey)  // any string, HKDF-derived
+	cfgKey := v.GetString(sseS3KeyConfigKey) // any string, HKDF-derived
 
 	if cfgKEK != "" && cfgKey != "" {
 		return fmt.Errorf("only one of %s and %s may be set, not both", sseS3KEKConfigKey, sseS3KeyConfigKey)
@@ -446,7 +446,6 @@ func (km *SSES3KeyManager) loadSuperKeyFromFiler() error {
 	km.superKey = key
 	return nil
 }
-
 
 // GetOrCreateKey gets an existing key or creates a new one
 // With envelope encryption, we always generate a new DEK since we don't store them

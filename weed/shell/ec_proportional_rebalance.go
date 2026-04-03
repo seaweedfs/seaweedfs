@@ -36,4 +36,3 @@ type ProportionalECRebalancer struct {
 	diskType         types.DiskType
 	ecConfig         distribution.ECConfig
 }
-

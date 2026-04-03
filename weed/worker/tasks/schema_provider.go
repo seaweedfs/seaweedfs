@@ -36,4 +36,3 @@ func RegisterTaskConfigSchema(taskType string, provider TaskConfigSchemaProvider
 	defer globalSchemaRegistry.mutex.Unlock()
 	globalSchemaRegistry.providers[taskType] = provider
 }
-

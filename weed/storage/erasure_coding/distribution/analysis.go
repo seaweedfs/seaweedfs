@@ -1,6 +1,5 @@
 package distribution
 
-
 // ShardLocation represents where a shard is located in the topology
 type ShardLocation struct {
 	ShardID    int
@@ -51,4 +50,3 @@ type TopologyExcess struct {
 	Shards []int           // Shard IDs at this level
 	Nodes  []*TopologyNode // Nodes at this level (for finding sources)
 }
-

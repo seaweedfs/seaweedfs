@@ -324,4 +324,3 @@ func DoRemoveWithResponse(ctx context.Context, client SeaweedFilerClient, parent
 		return resp, nil
 	}
 }
-

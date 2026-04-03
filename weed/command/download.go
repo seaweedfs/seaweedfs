@@ -132,4 +132,3 @@ func fetchContent(masterFn operation.GetMasterFn, grpcDialOption grpc.DialOption
 	content, e = io.ReadAll(rc.Body)
 	return
 }
-

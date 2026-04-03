@@ -288,4 +288,3 @@ func (s3a *S3ApiServer) GetDefaultEncryptionHeaders(bucket string) map[string]st
 
 	return headers
 }
-

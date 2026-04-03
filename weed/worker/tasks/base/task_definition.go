@@ -103,4 +103,3 @@ func (c *BaseConfig) ApplySchemaDefaults(schema *config.Schema) error {
 	// Use reflection-based approach for BaseConfig since it needs to handle embedded structs
 	return schema.ApplyDefaultsToProtobuf(c)
 }
-

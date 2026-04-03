@@ -93,4 +93,3 @@ func (f *FilerOffsetStorage) getPartitionDir(namespace, topicName string, partit
 
 	return fmt.Sprintf("%s/%s/%s/%s/%s", filer.TopicsDir, namespace, topicName, version, partitionRange)
 }
-

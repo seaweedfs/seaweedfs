@@ -4,4 +4,3 @@ type PartitionConsumerMapping struct {
 	currentMapping *PartitionSlotToConsumerInstanceList
 	prevMappings   []*PartitionSlotToConsumerInstanceList
 }
-

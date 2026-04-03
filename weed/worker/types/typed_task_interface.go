@@ -97,4 +97,3 @@ var globalTypedTaskRegistry = NewTypedTaskRegistry()
 func RegisterGlobalTypedTask(taskType TaskType, creator TypedTaskCreator) {
 	globalTypedTaskRegistry.RegisterTypedTask(taskType, creator)
 }
-

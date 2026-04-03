@@ -160,4 +160,3 @@ func SetEtag(w http.ResponseWriter, etag string) {
 		}
 	}
 }
-

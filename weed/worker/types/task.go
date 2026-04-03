@@ -129,4 +129,3 @@ type UnifiedBaseTask struct {
 	currentStage     string
 	workingDir       string
 }
-

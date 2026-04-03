@@ -50,4 +50,3 @@ func (vs *VolumeServer) statusHandler(w http.ResponseWriter, r *http.Request) {
 	m["Volumes"] = vs.store.VolumeInfos()
 	writeJsonQuiet(w, r, http.StatusOK, m)
 }
-

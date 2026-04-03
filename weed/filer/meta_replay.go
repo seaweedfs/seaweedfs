@@ -35,4 +35,3 @@ func Replay(filerStore FilerStore, resp *filer_pb.SubscribeMetadataResponse) err
 
 	return nil
 }
-

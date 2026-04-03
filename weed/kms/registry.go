@@ -70,4 +70,3 @@ func (r *ProviderRegistry) GetProvider(name string, config util.Configuration) (
 	r.instances[name] = instance
 	return instance, nil
 }
-

@@ -14,4 +14,3 @@ type PartitionSlotToConsumerInstanceList struct {
 	RingSize       int32
 	Version        int64
 }
-
