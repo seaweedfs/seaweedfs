@@ -128,6 +128,11 @@ func (fsw *FilerStoreWrapper) Initialize(configuration util.Configuration, prefi
 }
 
 func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) error {
+	// Check if context was already cancelled before ignoring cancellation
+	// This prevents writing metadata for operations that have already failed
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
@@ -155,6 +160,10 @@ func (fsw *FilerStoreWrapper) InsertEntry(ctx context.Context, entry *Entry) err
 // InsertEntryKnownAbsent skips the pre-insert FindEntry path when the caller has
 // already established that the target path does not exist.
 func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry *Entry) error {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "insert").Inc()
@@ -178,6 +187,10 @@ func (fsw *FilerStoreWrapper) InsertEntryKnownAbsent(ctx context.Context, entry 
 }
 
 func (fsw *FilerStoreWrapper) UpdateEntry(ctx context.Context, entry *Entry) error {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(entry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "update").Inc()
@@ -236,6 +249,10 @@ func (fsw *FilerStoreWrapper) FindEntry(ctx context.Context, fp util.FullPath) (
 }
 
 func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath) (err error) {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(fp)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
@@ -264,6 +281,10 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(existingEntry.FullPath)
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "delete").Inc()
@@ -288,6 +309,10 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	actualStore := fsw.getActualStore(fp + "/")
 	stats.FilerStoreCounter.WithLabelValues(actualStore.GetName(), "deleteFolderChildren").Inc()
@@ -394,16 +419,28 @@ func (fsw *FilerStoreWrapper) prefixFilterEntries(ctx context.Context, dirPath u
 }
 
 func (fsw *FilerStoreWrapper) BeginTransaction(ctx context.Context) (context.Context, error) {
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().BeginTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) CommitTransaction(ctx context.Context) error {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().CommitTransaction(ctx)
 }
 
 func (fsw *FilerStoreWrapper) RollbackTransaction(ctx context.Context) error {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().RollbackTransaction(ctx)
 }
@@ -413,6 +450,10 @@ func (fsw *FilerStoreWrapper) Shutdown() {
 }
 
 func (fsw *FilerStoreWrapper) KvPut(ctx context.Context, key []byte, value []byte) (err error) {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().KvPut(ctx, key, value)
 }
@@ -421,6 +462,10 @@ func (fsw *FilerStoreWrapper) KvGet(ctx context.Context, key []byte) (value []by
 	return fsw.getDefaultStore().KvGet(ctx, key)
 }
 func (fsw *FilerStoreWrapper) KvDelete(ctx context.Context, key []byte) (err error) {
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
 	ctx = context.WithoutCancel(ctx)
 	return fsw.getDefaultStore().KvDelete(ctx, key)
 }
