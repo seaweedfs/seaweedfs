@@ -391,12 +391,8 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 // ---------- WAL retention ----------
 
 // TestWalRetention_RequiredReplicaBlocksReclaim verifies that the flusher
-// does not reclaim WAL entries that a required replica still needs for catch-up.
-//
-// Currently EXPECTED TO FAIL: WAL reclaim is driven only by checkpointLSN,
-// not replica progress.
-// TestWalRetention_RequiredReplicaBlocksReclaim verifies that the flusher
-// does not advance the WAL tail past entries a recoverable replica still needs.
+// does not advance the WAL checkpoint past entries a recoverable replica
+// still needs for catch-up.
 //
 // CP13-6 proof: retention floor from MinRecoverableFlushedLSN blocks reclaim.
 func TestWalRetention_RequiredReplicaBlocksReclaim(t *testing.T) {
@@ -850,12 +846,18 @@ func TestWalRetention_TimeoutTriggersNeedsRebuild(t *testing.T) {
 		t.Fatalf("CP13-6: expected NeedsRebuild after timeout, got %s", st)
 	}
 
-	// After NeedsRebuild: WAL hold should be released (MinRecoverableFlushedLSN
-	// skips NeedsRebuild shippers). Verify by flushing — checkpoint should advance.
+	// Hard assertion: WAL hold released after NeedsRebuild.
+	// Record checkpoint before flush, flush, assert it advances past the old floor.
+	replicaFlushed := s.ReplicaFlushedLSN()
+	checkpointBefore := primary.flusher.CheckpointLSN()
 	primary.flusher.FlushOnce()
 	checkpointAfter := primary.flusher.CheckpointLSN()
-	// Checkpoint should advance past the old replica flushedLSN since the hold is released.
-	t.Logf("CP13-6: timeout triggered NeedsRebuild, checkpoint=%d (hold released)", checkpointAfter)
+	if checkpointAfter <= replicaFlushed {
+		t.Fatalf("CP13-6: checkpoint should advance past replicaFlushedLSN %d after hold released, got %d",
+			replicaFlushed, checkpointAfter)
+	}
+	t.Logf("CP13-6: hold released — checkpoint %d→%d (past replicaFlushed=%d)",
+		checkpointBefore, checkpointAfter, replicaFlushed)
 }
 
 // TestWalRetention_MaxBytesTriggersNeedsRebuild verifies that when the

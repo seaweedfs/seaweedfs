@@ -57,7 +57,7 @@ All 3 retention tests rewritten from placeholder/PASS* to hard-assertion proofs:
 | Test | Was | Now | Hard assertion |
 |------|-----|-----|----------------|
 | `TestWalRetention_RequiredReplicaBlocksReclaim` | PASS (log-only, no assertion) | PASS (hard assert) | `checkpointLSN <= replicaFlushedLSN` — flusher did not advance past retention floor |
-| `TestWalRetention_TimeoutTriggersNeedsRebuild` | PASS (log-only, no assertion) | PASS (hard assert) | `s.State() == NeedsRebuild` after 1ns timeout evaluation |
+| `TestWalRetention_TimeoutTriggersNeedsRebuild` | PASS (log-only, no assertion) | PASS (hard assert) | `s.State() == NeedsRebuild` + `checkpointAfter > replicaFlushedLSN` (hold released) |
 | `TestWalRetention_MaxBytesTriggersNeedsRebuild` | PASS* (logged "not implemented") | PASS (hard assert) | `s.State() == NeedsRebuild` after lag exceeds 8KB budget |
 
 ## Proof Promotion
@@ -67,7 +67,7 @@ All 3 retention tests rewritten from placeholder/PASS* to hard-assertion proofs:
 | Test | What it proves |
 |------|---------------|
 | `TestWalRetention_RequiredReplicaBlocksReclaim` | Flusher checkpoint does not advance past `replicaFlushedLSN` while recoverable replica is behind |
-| `TestWalRetention_TimeoutTriggersNeedsRebuild` | Timeout budget evaluation transitions shipper to `NeedsRebuild` (verified via `State()` assertion) |
+| `TestWalRetention_TimeoutTriggersNeedsRebuild` | Timeout budget → `NeedsRebuild` (State assertion) + checkpoint advances past replicaFlushedLSN after flush (hold-release assertion) |
 | `TestWalRetention_MaxBytesTriggersNeedsRebuild` | Max-bytes budget evaluation transitions shipper to `NeedsRebuild` (verified via `State()` assertion, uses actual `BlockSize` from volume config) |
 
 ## What CP13-6 Does NOT Close
