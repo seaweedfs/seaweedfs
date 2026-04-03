@@ -268,17 +268,17 @@ const (
 	// Full KEK path in filer
 	defaultKEKPath = SSES3KEKDirectory + "/" + SSES3KEKFileName
 
-	// security.toml keys (also settable via env vars WEED_SSE_S3_KEK / WEED_SSE_S3_KEY):
+	// security.toml keys (also settable via env vars WEED_S3_SSE_KEK / WEED_S3_SSE_KEY):
 	//
-	// sse_s3.kek: hex-encoded 256-bit key, same format as /etc/s3/sse_kek.
+	// s3.sse.kek: hex-encoded 256-bit key, same format as /etc/s3/sse_kek.
 	//   Drop-in replacement for the filer-stored KEK. If /etc/s3/sse_kek also
 	//   exists, the values must match or the server refuses to start.
 	//
-	// sse_s3.key: any secret string; a 256-bit key is derived via HKDF-SHA256.
+	// s3.sse.key: any secret string; a 256-bit key is derived via HKDF-SHA256.
 	//   Cannot be used while /etc/s3/sse_kek exists — the filer file must be
 	//   deleted first (to avoid silently orphaning old data).
-	sseS3KEKConfigKey = "sse_s3.kek"
-	sseS3KeyConfigKey = "sse_s3.key"
+	sseS3KEKConfigKey = "s3.sse.kek"
+	sseS3KeyConfigKey = "s3.sse.key"
 )
 
 // NewSSES3KeyManager creates a new SSE-S3 key manager with envelope encryption

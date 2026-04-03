@@ -684,15 +684,13 @@ func TestSSES3InvalidMetadataDeserialization(t *testing.T) {
 	}
 }
 
-// setViperKey is a test helper that sets a viper key and returns a cleanup function.
+// setViperKey is a test helper that sets a config key via its WEED_ env var.
 func setViperKey(t *testing.T, key, value string) {
 	t.Helper()
-	v := util.GetViper()
-	v.SetDefault(key, "")
-	os.Setenv("WEED_"+strings.ReplaceAll(strings.ToUpper(key), ".", "_"), value)
-	t.Cleanup(func() {
-		os.Unsetenv("WEED_" + strings.ReplaceAll(strings.ToUpper(key), ".", "_"))
-	})
+	util.GetViper().SetDefault(key, "")
+	envName := "WEED_" + strings.ReplaceAll(strings.ToUpper(key), ".", "_")
+	os.Setenv(envName, value)
+	t.Cleanup(func() { os.Unsetenv(envName) })
 }
 
 // TestSSES3KEKConfig tests that sse_s3.kek (hex format) is used as KEK

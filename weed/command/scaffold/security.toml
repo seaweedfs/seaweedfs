@@ -182,8 +182,8 @@ password = ""
 # SSE-S3 server-side encryption key management
 # These settings configure the Key Encryption Key (KEK) for S3 SSE-S3 encryption.
 # Set exactly one of kek or key. If neither is set, SSE-S3 is disabled.
-# Can also be set via env vars: WEED_SSE_S3_KEK, WEED_SSE_S3_KEY
-[sse_s3]
+# Can also be set via env vars: WEED_S3_SSE_KEK, WEED_S3_SSE_KEY
+[s3.sse]
 # hex-encoded 256-bit key, same format as the legacy /etc/s3/sse_kek filer file.
 # Use this to migrate from a filer-stored KEK: copy the value from /etc/s3/sse_kek.
 # Generate a new one with: openssl rand -hex 32
