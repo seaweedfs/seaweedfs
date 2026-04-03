@@ -45,6 +45,8 @@ type VolumeInfo struct {
 	NQN             string          `json:"nqn,omitempty"`
 	// CP11B-4: Operator-facing health state.
 	HealthState     string          `json:"health_state"` // "healthy", "degraded", "rebuilding", "unsafe"
+	// CP13-9: Normalized volume mode for constrained-runtime surfaces.
+	VolumeMode      string          `json:"volume_mode,omitempty"` // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
 }
 
 // ResolvedPolicyResponse is the response for POST /block/volume/resolve.

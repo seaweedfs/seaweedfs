@@ -39,6 +39,7 @@ type VolumeInfo struct {
 	Preset           string          `json:"preset,omitempty"`
 	NvmeAddr         string          `json:"nvme_addr,omitempty"`
 	NQN              string          `json:"nqn,omitempty"`
+	VolumeMode       string          `json:"volume_mode,omitempty"` // CP13-9
 }
 
 // ReplicaDetail describes one replica in the API response.

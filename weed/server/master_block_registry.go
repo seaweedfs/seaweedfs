@@ -77,6 +77,10 @@ type BlockVolumeEntry struct {
 	ReplicaReady    bool          // all configured replicas are ready for publication
 	ReplicaDegraded bool          // aggregate: transport degraded OR not ready
 	TransportDegraded bool        // primary reports degraded replicas
+
+	// CP13-9: Normalized volume mode for external surfaces.
+	// Computed by recomputeReplicaState from the current entry state.
+	VolumeMode      string        // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
 	WALHeadLSN      uint64        // primary WAL head LSN from heartbeat
 
 	// CP8-3-1: Durability mode.
@@ -142,9 +146,56 @@ func (e *BlockVolumeEntry) recomputeReplicaState() {
 	e.ReplicaReady = e.AllReplicasReady()
 	if !e.HasReplica() {
 		e.ReplicaDegraded = e.TransportDegraded
-		return
+	} else {
+		e.ReplicaDegraded = e.TransportDegraded || !e.ReplicaReady
 	}
-	e.ReplicaDegraded = e.TransportDegraded || !e.ReplicaReady
+
+	// CP13-9: compute normalized VolumeMode for external surfaces.
+	e.VolumeMode = e.computeVolumeMode()
+}
+
+// computeVolumeMode returns the normalized mode string for CP13-9.
+//
+// Mode meanings:
+//   - "allocated_only": volume exists but has no replicas configured (RF=1 or pre-assignment)
+//   - "bootstrap_pending": replicas configured but not yet confirmed ready (first-write bootstrap)
+//   - "publish_healthy": all replicas ready, no transport degradation
+//   - "degraded": replication was healthy but is now impaired (transient)
+//   - "needs_rebuild": one or more replicas have unrecoverable gap
+func (e *BlockVolumeEntry) computeVolumeMode() string {
+	rf := e.ReplicaFactor
+	if rf == 0 {
+		rf = 1
+	}
+
+	// RF=1: no replication — "allocated_only" if standalone.
+	if rf <= 1 && !e.HasReplica() {
+		return "allocated_only"
+	}
+
+	// Has replica config but no replicas registered yet.
+	if rf > 1 && len(e.Replicas) == 0 {
+		return "bootstrap_pending"
+	}
+
+	// Check for NeedsRebuild state on any replica.
+	for _, ri := range e.Replicas {
+		if blockvol.RoleFromWire(ri.Role) == blockvol.RoleRebuilding {
+			return "needs_rebuild"
+		}
+	}
+
+	// Replicas exist but not all ready.
+	if !e.ReplicaReady {
+		return "bootstrap_pending"
+	}
+
+	// All ready but transport degraded.
+	if e.TransportDegraded {
+		return "degraded"
+	}
+
+	return "publish_healthy"
 }
 
 // BestReplicaForPromotion returns the best replica for promotion, or nil if none eligible.
