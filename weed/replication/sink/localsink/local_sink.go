@@ -93,6 +93,9 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	}
 
 	mode := os.FileMode(entry.Attributes.FileMode)
+	if _, statErr := os.Stat(util.ToShortFileName(key)); statErr == nil {
+		os.Remove(util.ToShortFileName(key))
+	}
 	dstFile, err := os.OpenFile(util.ToShortFileName(key), os.O_RDWR|os.O_CREATE|os.O_TRUNC, mode)
 	if err != nil {
 		return err
