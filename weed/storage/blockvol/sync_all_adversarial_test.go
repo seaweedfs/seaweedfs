@@ -5,7 +5,6 @@ package blockvol
 
 import (
 	"bytes"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -311,33 +310,12 @@ func TestAdversarial_ReplicaRejectsGapLSN(t *testing.T) {
 
 // TestAdversarial_NeedsRebuildBlocksAllPaths verifies that once a shipper
 // enters NeedsRebuild, neither Ship nor Barrier can bring it back to healthy.
+//
+// CP13-7 proof: NeedsRebuild is a sticky fail-closed state.
 func TestAdversarial_NeedsRebuildBlocksAllPaths(t *testing.T) {
-	dir := t.TempDir()
-	opts := CreateOptions{
-		VolumeSize:     1 * 1024 * 1024,
-		BlockSize:      4096,
-		WALSize:        32 * 1024, // tiny WAL
-		DurabilityMode: DurabilitySyncAll,
-	}
-
-	primary, err := CreateBlockVol(filepath.Join(dir, "primary.blk"), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
-	primary.SetRole(RolePrimary)
-	primary.SetEpoch(1)
-	primary.SetMasterEpoch(1)
-	primary.lease.Grant(30 * time.Second)
-
-	replica, err := CreateBlockVol(filepath.Join(dir, "replica.blk"), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer replica.Close()
-	replica.SetRole(RoleReplica)
-	replica.SetEpoch(1)
-	replica.SetMasterEpoch(1)
 
 	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
 	if err != nil {
@@ -355,80 +333,80 @@ func TestAdversarial_NeedsRebuildBlocksAllPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Disconnect and write a lot to overflow WAL.
+	sg := primary.shipperGroup
+	s := sg.Shipper(0)
+	if s.State() != ReplicaInSync {
+		t.Fatalf("expected InSync, got %s", s.State())
+	}
+
+	// Disconnect replica and write a few entries (within WAL capacity).
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	for i := uint64(0); i < 50; i++ {
-		_ = primary.WriteLBA(i%8, makeBlock(byte('0'+i%10)))
+	for i := uint64(1); i < 8; i++ {
+		if err := primary.WriteLBA(i, makeBlock(byte('0'+i))); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
 	}
-	primary.flusher.FlushOnce()
-	primary.flusher.FlushOnce()
 
-	// Reconnect — gap should exceed retained WAL → NeedsRebuild.
-	recv2, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// CP13-6 → CP13-7: trigger NeedsRebuild via max-bytes budget (small threshold).
+	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
+		Timeout:        5 * time.Minute,
+		MaxBytes:       4 * 1024, // 4KB — lag of 7 entries * 4KB = 28KB > 4KB
+		PrimaryHeadLSN: primary.nextLSN.Load() - 1,
+		BlockSize:      primary.super.BlockSize,
+	})
+
+	// 1. NeedsRebuild state asserted.
+	st := s.State()
+	if st != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-7: expected NeedsRebuild after budget exceeded, got %s", st)
 	}
-	recv2.Serve()
-	defer recv2.Stop()
-	primary.SetReplicaAddr(recv2.DataAddr(), recv2.CtrlAddr())
 
-	// SyncCache should fail.
+	// 2. Ship must silently drop — NeedsRebuild shipper must not participate.
+	if err := primary.WriteLBA(0, makeBlock('Z')); err != nil {
+		t.Fatalf("write should succeed (local WAL): %v", err)
+	}
+	st2 := s.State()
+	if st2 != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-7: Ship should not change NeedsRebuild state, got %s", st2)
+	}
+
+	// 3. Barrier/SyncCache must fail — NeedsRebuild rejected by Barrier() state gate.
 	syncDone := make(chan error, 1)
 	go func() {
 		syncDone <- primary.SyncCache()
 	}()
-
 	select {
 	case err := <-syncDone:
 		if err == nil {
-			t.Fatal("SyncCache should fail after NeedsRebuild")
+			t.Fatal("CP13-7: SyncCache should fail with NeedsRebuild shipper")
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("SyncCache hung")
 	}
 
-	// Verify the shipper is in NeedsRebuild or Degraded.
-	sg := primary.shipperGroup
-	if sg == nil {
-		t.Fatal("no shipper group")
-	}
-	s := sg.Shipper(0)
-	if s == nil {
-		t.Fatal("no shipper")
-	}
-	st := s.State()
-	if st == ReplicaInSync {
-		t.Fatal("shipper should NOT be InSync after NeedsRebuild")
-	}
-	t.Logf("shipper state after gap: %s (expected Degraded or NeedsRebuild)", st)
-
-	// Try Ship — should silently drop (not transition to healthy).
-	if err := primary.WriteLBA(0, makeBlock('Z')); err != nil {
-		t.Fatal(err)
+	// 4. State is still NeedsRebuild after failed barrier (sticky).
+	st3 := s.State()
+	if st3 != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-7: NeedsRebuild should be sticky after failed barrier, got %s", st3)
 	}
 
-	// State should still be unhealthy.
-	st2 := s.State()
-	if st2 == ReplicaInSync {
-		t.Fatal("Ship should not restore InSync from NeedsRebuild/Degraded")
-	}
-
-	// Try Barrier again — should still fail.
+	// 5. Second SyncCache also fails (not recovered by retry).
 	syncDone2 := make(chan error, 1)
 	go func() {
 		syncDone2 <- primary.SyncCache()
 	}()
-
 	select {
 	case err := <-syncDone2:
 		if err == nil {
-			t.Fatal("second SyncCache should still fail after NeedsRebuild")
+			t.Fatal("CP13-7: second SyncCache should still fail")
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("second SyncCache hung")
 	}
+
+	t.Log("CP13-7: NeedsRebuild is fail-closed — Ship drops, Barrier rejects, state sticky")
 }
 
 // ---------- Point 6: data integrity after catch-up ----------

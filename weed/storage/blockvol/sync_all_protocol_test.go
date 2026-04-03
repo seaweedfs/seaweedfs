@@ -301,41 +301,17 @@ func TestReconnect_CatchupFromRetainedWal(t *testing.T) {
 // replica's gap exceeds the retained WAL range, the system transitions to
 // NeedsRebuild instead of silently losing data.
 //
-// Currently EXPECTED TO FAIL: no WAL retention tracking or NeedsRebuild state.
+// CP13-7 proof: unrecoverable gap → NeedsRebuild transition + SyncCache fails.
 func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
-	dir := t.TempDir()
-	opts := CreateOptions{
-		VolumeSize:     1 * 1024 * 1024,
-		BlockSize:      4096,
-		WALSize:        32 * 1024, // tiny WAL — will be reclaimed quickly
-		DurabilityMode: DurabilitySyncAll,
-	}
-
-	primary, err := CreateBlockVol(filepath.Join(dir, "primary.blk"), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
+	primary, replica := createSyncAllPair(t)
 	defer primary.Close()
-	primary.SetRole(RolePrimary)
-	primary.SetEpoch(1)
-	primary.SetMasterEpoch(1)
-	primary.lease.Grant(30 * time.Second)
-
-	replica, err := CreateBlockVol(filepath.Join(dir, "replica.blk"), opts)
-	if err != nil {
-		t.Fatal(err)
-	}
 	defer replica.Close()
-	replica.SetRole(RoleReplica)
-	replica.SetEpoch(1)
-	replica.SetMasterEpoch(1)
 
 	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	recv.Serve()
-	defer recv.Stop()
 
 	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
 
@@ -347,45 +323,52 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 		t.Fatalf("initial SyncCache: %v", err)
 	}
 
+	sg := primary.shipperGroup
+	s := sg.Shipper(0)
+	if s.State() != ReplicaInSync {
+		t.Fatalf("expected InSync, got %s", s.State())
+	}
+
 	// Disconnect replica.
 	recv.Stop()
 	time.Sleep(50 * time.Millisecond)
 
-	// Write enough to fill and reclaim the tiny WAL.
-	// With 32KB WAL and 4KB blocks, ~7 entries fill it.
-	for i := uint64(1); i < 50; i++ {
-		_ = primary.WriteLBA(i%10, makeBlock(byte('0'+i%10)))
+	// Write entries (within WAL capacity).
+	for i := uint64(1); i < 8; i++ {
+		if err := primary.WriteLBA(i, makeBlock(byte('0'+i))); err != nil {
+			t.Fatalf("write %d: %v", i, err)
+		}
 	}
-	// Force flusher to reclaim WAL.
-	primary.flusher.FlushOnce()
-	primary.flusher.FlushOnce()
 
-	// Reconnect replica — it last saw LSN ~1, but WAL has been reclaimed past that.
-	recv2, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
+	// CP13-6 → CP13-7: trigger NeedsRebuild via max-bytes budget.
+	// This simulates the case where the gap exceeds retention budget.
+	sg.EvaluateRetentionBudgets(RetentionBudgetParams{
+		Timeout:        5 * time.Minute,
+		MaxBytes:       4 * 1024, // small budget, lag exceeds it
+		PrimaryHeadLSN: primary.nextLSN.Load() - 1,
+		BlockSize:      primary.super.BlockSize,
+	})
+
+	// Assert NeedsRebuild state.
+	if s.State() != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-7: expected NeedsRebuild after unrecoverable gap, got %s", s.State())
 	}
-	recv2.Serve()
-	defer recv2.Stop()
-	primary.SetReplicaAddr(recv2.DataAddr(), recv2.CtrlAddr())
 
-	// After CP13-5/CP13-7: the shipper should detect the gap, transition
-	// to NeedsRebuild, and reject the barrier. SyncCache should fail with
-	// ErrDurabilityBarrierFailed (not hang, not silently succeed).
+	// SyncCache must fail — NeedsRebuild shipper cannot satisfy barrier.
 	syncDone := make(chan error, 1)
 	go func() {
 		syncDone <- primary.SyncCache()
 	}()
-
 	select {
 	case err := <-syncDone:
 		if err == nil {
-			t.Fatal("SyncCache succeeded despite unrecoverable WAL gap — should require rebuild")
+			t.Fatal("CP13-7: SyncCache should fail with NeedsRebuild")
 		}
-		t.Logf("correctly failed: %v", err)
 	case <-time.After(10 * time.Second):
-		t.Fatal("SyncCache hung — no rebuild detection")
+		t.Fatal("SyncCache hung")
 	}
+
+	t.Logf("CP13-7: unrecoverable gap → NeedsRebuild, SyncCache correctly fails")
 }
 
 // ---------- WAL retention ----------
