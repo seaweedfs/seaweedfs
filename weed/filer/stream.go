@@ -102,10 +102,6 @@ func PrepareStreamContent(masterClient wdclient.HasLookupFileIdFunction, jwtFunc
 
 type VolumeServerJwtFunction func(fileId string) string
 
-func noJwtFunc(string) string {
-	return ""
-}
-
 type CacheInvalidator interface {
 	InvalidateCache(fileId string)
 }
@@ -274,33 +270,6 @@ func writeZero(w io.Writer, size int64) (err error) {
 		}
 	}
 	return
-}
-
-func ReadAll(ctx context.Context, buffer []byte, masterClient *wdclient.MasterClient, chunks []*filer_pb.FileChunk) error {
-
-	lookupFileIdFn := func(ctx context.Context, fileId string) (targetUrls []string, err error) {
-		return masterClient.LookupFileId(ctx, fileId)
-	}
-
-	chunkViews := ViewFromChunks(ctx, lookupFileIdFn, chunks, 0, int64(len(buffer)))
-
-	idx := 0
-
-	for x := chunkViews.Front(); x != nil; x = x.Next {
-		chunkView := x.Value
-		urlStrings, err := lookupFileIdFn(ctx, chunkView.FileId)
-		if err != nil {
-			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
-			return err
-		}
-
-		n, err := util_http.RetriedFetchChunkData(ctx, buffer[idx:idx+int(chunkView.ViewSize)], urlStrings, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, chunkView.FileId)
-		if err != nil {
-			return err
-		}
-		idx += n
-	}
-	return nil
 }
 
 // ----------------  ChunkStreamReader ----------------------------------

@@ -128,13 +128,6 @@ func getOperation(object string, r *http.Request) string {
 	return operation
 }
 
-func GetAccessHttpLog(r *http.Request, statusCode int, s3errCode ErrorCode) AccessLogHTTP {
-	return AccessLogHTTP{
-		RequestURI: r.RequestURI,
-		Referer:    r.Header.Get("Referer"),
-	}
-}
-
 func GetAccessLog(r *http.Request, HTTPStatusCode int, s3errCode ErrorCode) *AccessLog {
 	bucket, key := s3_constants.GetBucketAndObject(r)
 	var errorCode string

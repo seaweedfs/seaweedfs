@@ -53,14 +53,6 @@ type Logger interface {
 // NoOpLogger is a logger that does nothing (silent)
 type NoOpLogger struct{}
 
-func (l *NoOpLogger) Info(msg string, args ...interface{})    {}
-func (l *NoOpLogger) Warning(msg string, args ...interface{}) {}
-func (l *NoOpLogger) Error(msg string, args ...interface{})   {}
-func (l *NoOpLogger) Debug(msg string, args ...interface{})   {}
-func (l *NoOpLogger) WithFields(fields map[string]interface{}) Logger {
-	return l // Return self since we're doing nothing anyway
-}
-
 // GlogFallbackLogger is a logger that falls back to glog
 type GlogFallbackLogger struct{}
 
@@ -138,86 +130,3 @@ type UnifiedBaseTask struct {
 	workingDir       string
 }
 
-// NewBaseTask creates a new base task
-func NewUnifiedBaseTask(id string, taskType TaskType) *UnifiedBaseTask {
-	return &UnifiedBaseTask{
-		id:       id,
-		taskType: taskType,
-	}
-}
-
-// ID returns the task ID
-func (t *UnifiedBaseTask) ID() string {
-	return t.id
-}
-
-// Type returns the task type
-func (t *UnifiedBaseTask) Type() TaskType {
-	return t.taskType
-}
-
-// SetProgressCallback sets the progress callback
-func (t *UnifiedBaseTask) SetProgressCallback(callback func(float64, string)) {
-	t.progressCallback = callback
-}
-
-// ReportProgress reports current progress through the callback
-func (t *UnifiedBaseTask) ReportProgress(progress float64) {
-	if t.progressCallback != nil {
-		t.progressCallback(progress, t.currentStage)
-	}
-}
-
-// ReportProgressWithStage reports current progress with a specific stage description
-func (t *UnifiedBaseTask) ReportProgressWithStage(progress float64, stage string) {
-	t.currentStage = stage
-	if t.progressCallback != nil {
-		t.progressCallback(progress, stage)
-	}
-}
-
-// SetCurrentStage sets the current stage description
-func (t *UnifiedBaseTask) SetCurrentStage(stage string) {
-	t.currentStage = stage
-}
-
-// GetCurrentStage returns the current stage description
-func (t *UnifiedBaseTask) GetCurrentStage() string {
-	return t.currentStage
-}
-
-// Cancel marks the task as cancelled
-func (t *UnifiedBaseTask) Cancel() error {
-	t.cancelled = true
-	return nil
-}
-
-// IsCancellable returns true if the task can be cancelled
-func (t *UnifiedBaseTask) IsCancellable() bool {
-	return true
-}
-
-// IsCancelled returns true if the task has been cancelled
-func (t *UnifiedBaseTask) IsCancelled() bool {
-	return t.cancelled
-}
-
-// SetLogger sets the task logger
-func (t *UnifiedBaseTask) SetLogger(logger Logger) {
-	t.logger = logger
-}
-
-// GetLogger returns the task logger
-func (t *UnifiedBaseTask) GetLogger() Logger {
-	return t.logger
-}
-
-// SetWorkingDir sets the task working directory
-func (t *UnifiedBaseTask) SetWorkingDir(workingDir string) {
-	t.workingDir = workingDir
-}
-
-// GetWorkingDir returns the task working directory
-func (t *UnifiedBaseTask) GetWorkingDir() string {
-	return t.workingDir
-}

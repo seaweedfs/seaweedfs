@@ -14,7 +14,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -95,13 +94,6 @@ func isSOSAPIObject(object string) bool {
 	default:
 		return false
 	}
-}
-
-// isSOSAPIClient checks if the request comes from a SOSAPI-compatible client
-// by examining the User-Agent header.
-func isSOSAPIClient(r *http.Request) bool {
-	userAgent := r.Header.Get("User-Agent")
-	return strings.Contains(userAgent, sosAPIClientUserAgent)
 }
 
 // generateSystemXML creates the system.xml response containing storage system

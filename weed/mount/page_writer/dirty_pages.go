@@ -21,9 +21,3 @@ func min(x, y int64) int64 {
 	}
 	return y
 }
-func minInt(x, y int) int {
-	if x < y {
-		return x
-	}
-	return y
-}

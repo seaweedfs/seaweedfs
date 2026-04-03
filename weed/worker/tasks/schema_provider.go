@@ -37,15 +37,3 @@ func RegisterTaskConfigSchema(taskType string, provider TaskConfigSchemaProvider
 	globalSchemaRegistry.providers[taskType] = provider
 }
 
-// GetTaskConfigSchema returns the schema for the specified task type
-func GetTaskConfigSchema(taskType string) *TaskConfigSchema {
-	globalSchemaRegistry.mutex.RLock()
-	provider, exists := globalSchemaRegistry.providers[taskType]
-	globalSchemaRegistry.mutex.RUnlock()
-
-	if !exists {
-		return nil
-	}
-
-	return provider.GetConfigSchema()
-}

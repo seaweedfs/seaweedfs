@@ -698,7 +698,3 @@ func (s *PostgreSQLServer) cleanupIdleSessions() {
 	}
 }
 
-// GetAddress returns the server address
-func (s *PostgreSQLServer) GetAddress() string {
-	return fmt.Sprintf("%s:%d", s.config.Host, s.config.Port)
-}

@@ -91,21 +91,3 @@ type OffsetAwarePublisher struct {
 	assignOffsetFn OffsetAssignmentFunc
 }
 
-// NewOffsetAwarePublisher creates a new offset-aware publisher
-func NewOffsetAwarePublisher(partition *LocalPartition, assignOffsetFn OffsetAssignmentFunc) *OffsetAwarePublisher {
-	return &OffsetAwarePublisher{
-		partition:      partition,
-		assignOffsetFn: assignOffsetFn,
-	}
-}
-
-// Publish publishes a message with automatic offset assignment
-func (oap *OffsetAwarePublisher) Publish(message *mq_pb.DataMessage) error {
-	_, err := oap.partition.PublishWithOffset(message, oap.assignOffsetFn)
-	return err
-}
-
-// GetPartition returns the underlying partition
-func (oap *OffsetAwarePublisher) GetPartition() *LocalPartition {
-	return oap.partition
-}

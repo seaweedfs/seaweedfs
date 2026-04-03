@@ -19,7 +19,6 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util/request_id"
-	"github.com/seaweedfs/seaweedfs/weed/util/version"
 	"google.golang.org/grpc/metadata"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -235,25 +234,6 @@ func parseURLPath(path string) (vid, fid, filename, ext string, isVolumeIdOnly b
 		}
 	}
 	return
-}
-
-func statsHealthHandler(w http.ResponseWriter, r *http.Request) {
-	m := make(map[string]interface{})
-	m["Version"] = version.Version()
-	writeJsonQuiet(w, r, http.StatusOK, m)
-}
-func statsCounterHandler(w http.ResponseWriter, r *http.Request) {
-	m := make(map[string]interface{})
-	m["Version"] = version.Version()
-	m["Counters"] = serverStats
-	writeJsonQuiet(w, r, http.StatusOK, m)
-}
-
-func statsMemoryHandler(w http.ResponseWriter, r *http.Request) {
-	m := make(map[string]interface{})
-	m["Version"] = version.Version()
-	m["Memory"] = stats.MemStat()
-	writeJsonQuiet(w, r, http.StatusOK, m)
 }
 
 var StaticFS fs.FS

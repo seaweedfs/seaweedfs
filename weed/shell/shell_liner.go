@@ -126,17 +126,6 @@ func processEachCmd(cmd string, commandEnv *CommandEnv) bool {
 	return false
 }
 
-func stripQuotes(s string) string {
-	tokens, unbalanced := parseShellInput(s, false)
-	if unbalanced {
-		return s
-	}
-	if len(tokens) > 0 {
-		return tokens[0]
-	}
-	return ""
-}
-
 func splitCommandLine(line string) []string {
 	tokens, _ := parseShellInput(line, true)
 	return tokens

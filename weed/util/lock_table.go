@@ -176,6 +176,3 @@ func (lt *LockTable[T]) ReleaseLock(key T, lock *ActiveLock) {
 	entry.cond.Broadcast()
 }
 
-func main() {
-
-}

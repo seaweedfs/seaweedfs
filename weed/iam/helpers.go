@@ -37,11 +37,6 @@ func GenerateRandomString(length int, charset string) (string, error) {
 	return string(b), nil
 }
 
-// GenerateAccessKeyId generates a new access key ID.
-func GenerateAccessKeyId() (string, error) {
-	return GenerateRandomString(AccessKeyIdLength, CharsetUpper)
-}
-
 // GenerateSecretAccessKey generates a new secret access key.
 func GenerateSecretAccessKey() (string, error) {
 	return GenerateRandomString(SecretAccessKeyLength, Charset)
@@ -180,10 +175,3 @@ func MapToIdentitiesAction(action string) string {
 	}
 }
 
-// MaskAccessKey masks an access key for logging, showing only the first 4 characters.
-func MaskAccessKey(accessKeyId string) string {
-	if len(accessKeyId) > 4 {
-		return accessKeyId[:4] + "***"
-	}
-	return accessKeyId
-}

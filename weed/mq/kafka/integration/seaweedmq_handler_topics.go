@@ -279,37 +279,3 @@ func (h *SeaweedMQHandler) checkTopicInFiler(topicName string) bool {
 	return exists
 }
 
-// listTopicsFromFiler lists all topics from the filer
-func (h *SeaweedMQHandler) listTopicsFromFiler() []string {
-	if h.filerClientAccessor == nil {
-		return []string{}
-	}
-
-	var topics []string
-
-	h.filerClientAccessor.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		request := &filer_pb.ListEntriesRequest{
-			Directory: "/topics/kafka",
-		}
-
-		stream, err := client.ListEntries(context.Background(), request)
-		if err != nil {
-			return nil // Don't propagate error, just return empty list
-		}
-
-		for {
-			resp, err := stream.Recv()
-			if err != nil {
-				break // End of stream or error
-			}
-
-			if resp.Entry != nil && resp.Entry.IsDirectory {
-				topics = append(topics, resp.Entry.Name)
-			} else if resp.Entry != nil {
-			}
-		}
-		return nil
-	})
-
-	return topics
-}

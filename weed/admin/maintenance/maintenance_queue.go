@@ -1055,28 +1055,6 @@ func (mq *MaintenanceQueue) getMaxConcurrentForTaskType(taskType MaintenanceTask
 	return 1
 }
 
-// getRunningTasks returns all currently running tasks
-func (mq *MaintenanceQueue) getRunningTasks() []*MaintenanceTask {
-	var runningTasks []*MaintenanceTask
-	for _, task := range mq.tasks {
-		if task.Status == TaskStatusAssigned || task.Status == TaskStatusInProgress {
-			runningTasks = append(runningTasks, task)
-		}
-	}
-	return runningTasks
-}
-
-// getAvailableWorkers returns all workers that can take more work
-func (mq *MaintenanceQueue) getAvailableWorkers() []*MaintenanceWorker {
-	var availableWorkers []*MaintenanceWorker
-	for _, worker := range mq.workers {
-		if worker.Status == "active" && worker.CurrentLoad < worker.MaxConcurrent {
-			availableWorkers = append(availableWorkers, worker)
-		}
-	}
-	return availableWorkers
-}
-
 // trackPendingOperation adds a task to the pending operations tracker
 func (mq *MaintenanceQueue) trackPendingOperation(task *MaintenanceTask) {
 	if mq.integration == nil {

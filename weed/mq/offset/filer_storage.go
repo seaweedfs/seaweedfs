@@ -94,8 +94,3 @@ func (f *FilerOffsetStorage) getPartitionDir(namespace, topicName string, partit
 	return fmt.Sprintf("%s/%s/%s/%s/%s", filer.TopicsDir, namespace, topicName, version, partitionRange)
 }
 
-// getPartitionKey generates a unique key for a partition
-func (f *FilerOffsetStorage) getPartitionKey(partition *schema_pb.Partition) string {
-	return fmt.Sprintf("ring:%d:range:%d-%d:time:%d",
-		partition.RingSize, partition.RangeStart, partition.RangeStop, partition.UnixTimeNs)
-}

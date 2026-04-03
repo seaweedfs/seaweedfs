@@ -137,13 +137,6 @@ func CreateSSES3DecryptedReader(reader io.Reader, key *SSES3Key, iv []byte) (io.
 	return decryptReader, nil
 }
 
-// GetSSES3Headers returns the headers for SSE-S3 encrypted objects
-func GetSSES3Headers() map[string]string {
-	return map[string]string{
-		s3_constants.AmzServerSideEncryption: SSES3Algorithm,
-	}
-}
-
 // SerializeSSES3Metadata serializes SSE-S3 metadata for storage using envelope encryption
 func SerializeSSES3Metadata(key *SSES3Key) ([]byte, error) {
 	if err := ValidateSSES3Key(key); err != nil {
@@ -532,14 +525,6 @@ func (km *SSES3KeyManager) StoreKey(key *SSES3Key) {
 	// The DEK is encrypted with the super key and stored in object metadata
 }
 
-// GetKey is now a no-op since we don't cache keys
-// Keys are retrieved by decrypting the encrypted DEK from object metadata
-func (km *SSES3KeyManager) GetKey(keyID string) (*SSES3Key, bool) {
-	// No-op: With envelope encryption, keys are not cached
-	// Each object's metadata contains the encrypted DEK
-	return nil, false
-}
-
 // GetMasterKey returns a derived key from the master KEK for STS signing
 // This uses HKDF to isolate the STS security domain from the SSE-S3 domain
 func (km *SSES3KeyManager) GetMasterKey() []byte {
@@ -594,47 +579,6 @@ func InitializeGlobalSSES3KeyManager(filerClient *wdclient.FilerClient, grpcDial
 		grpcDialOption: grpcDialOption,
 	}
 	return globalSSES3KeyManager.InitializeWithFiler(wrapper)
-}
-
-// ProcessSSES3Request processes an SSE-S3 request and returns encryption metadata
-func ProcessSSES3Request(r *http.Request) (map[string][]byte, error) {
-	if !IsSSES3RequestInternal(r) {
-		return nil, nil
-	}
-
-	// Generate or retrieve encryption key
-	keyManager := GetSSES3KeyManager()
-	key, err := keyManager.GetOrCreateKey("")
-	if err != nil {
-		return nil, fmt.Errorf("get SSE-S3 key: %w", err)
-	}
-
-	// Serialize key metadata
-	keyData, err := SerializeSSES3Metadata(key)
-	if err != nil {
-		return nil, fmt.Errorf("serialize SSE-S3 metadata: %w", err)
-	}
-
-	// Store key in manager
-	keyManager.StoreKey(key)
-
-	// Return metadata
-	metadata := map[string][]byte{
-		s3_constants.AmzServerSideEncryption: []byte(SSES3Algorithm),
-		s3_constants.SeaweedFSSSES3Key:       keyData,
-	}
-
-	return metadata, nil
-}
-
-// GetSSES3KeyFromMetadata extracts SSE-S3 key from object metadata
-func GetSSES3KeyFromMetadata(metadata map[string][]byte, keyManager *SSES3KeyManager) (*SSES3Key, error) {
-	keyData, exists := metadata[s3_constants.SeaweedFSSSES3Key]
-	if !exists {
-		return nil, fmt.Errorf("SSE-S3 key not found in metadata")
-	}
-
-	return DeserializeSSES3Metadata(keyData, keyManager)
 }
 
 // GetSSES3IV extracts the IV for single-part SSE-S3 objects

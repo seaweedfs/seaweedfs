@@ -6,20 +6,6 @@ import (
 	"strings"
 )
 
-// getStatusColor returns Bootstrap color class for status
-func getStatusColor(status string) string {
-	switch status {
-	case "active", "healthy":
-		return "success"
-	case "warning":
-		return "warning"
-	case "critical", "unreachable":
-		return "danger"
-	default:
-		return "secondary"
-	}
-}
-
 // formatBytes converts bytes to human readable format
 func formatBytes(bytes int64) string {
 	if bytes == 0 {

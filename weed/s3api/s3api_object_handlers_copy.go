@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"modernc.org/strutil"
-
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -795,58 +793,6 @@ func (s3a *S3ApiServer) CopyObjectPartHandler(w http.ResponseWriter, r *http.Req
 
 func replaceDirective(reqHeader http.Header) (replaceMeta, replaceTagging bool) {
 	return reqHeader.Get(s3_constants.AmzUserMetaDirective) == DirectiveReplace, reqHeader.Get(s3_constants.AmzObjectTaggingDirective) == DirectiveReplace
-}
-
-func processMetadata(reqHeader, existing http.Header, replaceMeta, replaceTagging bool, getTags func(parentDirectoryPath string, entryName string) (tags map[string]string, err error), dir, name string) (err error) {
-	if sc := reqHeader.Get(s3_constants.AmzStorageClass); len(sc) == 0 {
-		if sc := existing.Get(s3_constants.AmzStorageClass); len(sc) > 0 {
-			reqHeader.Set(s3_constants.AmzStorageClass, sc)
-		}
-	}
-
-	if !replaceMeta {
-		for header := range reqHeader {
-			if strings.HasPrefix(header, s3_constants.AmzUserMetaPrefix) {
-				delete(reqHeader, header)
-			}
-		}
-		for k, v := range existing {
-			if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-				reqHeader[k] = v
-			}
-		}
-	}
-
-	if !replaceTagging {
-		for header, _ := range reqHeader {
-			if strings.HasPrefix(header, s3_constants.AmzObjectTagging) {
-				delete(reqHeader, header)
-			}
-		}
-
-		found := false
-		for k, _ := range existing {
-			if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
-				found = true
-				break
-			}
-		}
-
-		if found {
-			tags, err := getTags(dir, name)
-			if err != nil {
-				return err
-			}
-
-			var tagArr []string
-			for k, v := range tags {
-				tagArr = append(tagArr, fmt.Sprintf("%s=%s", k, v))
-			}
-			tagStr := strutil.JoinFields(tagArr, "&")
-			reqHeader.Set(s3_constants.AmzObjectTagging, tagStr)
-		}
-	}
-	return
 }
 
 func processMetadataBytes(reqHeader http.Header, existing map[string][]byte, replaceMeta, replaceTagging bool) (metadata map[string][]byte, err error) {
@@ -2630,13 +2576,6 @@ func cleanupVersioningMetadata(metadata map[string][]byte) {
 	delete(metadata, s3_constants.ExtDeleteMarkerKey)
 	delete(metadata, s3_constants.ExtIsLatestKey)
 	delete(metadata, s3_constants.ExtETagKey)
-}
-
-// shouldCreateVersionForCopy determines whether a version should be created during a copy operation
-// based on the destination bucket's versioning state.
-// Returns true only if versioning is explicitly "Enabled", not "Suspended" or unconfigured.
-func shouldCreateVersionForCopy(versioningState string) bool {
-	return versioningState == s3_constants.VersioningEnabled
 }
 
 // isOrphanedSSES3Header checks if a header is an orphaned SSE-S3 encryption header.

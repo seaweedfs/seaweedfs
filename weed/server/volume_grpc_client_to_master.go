@@ -106,10 +106,6 @@ func (vs *VolumeServer) StopHeartbeat() (isAlreadyStopping bool) {
 	return false
 }
 
-func (vs *VolumeServer) doHeartbeat(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration) (newLeader pb.ServerAddress, err error) {
-	return vs.doHeartbeatWithRetry(masterAddress, grpcDialOption, sleepInterval, 0)
-}
-
 func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grpcDialOption grpc.DialOption, sleepInterval time.Duration, duplicateRetryCount int) (newLeader pb.ServerAddress, err error) {
 
 	ctx, cancel := context.WithCancel(context.Background())

@@ -150,14 +150,6 @@ func isBucketOwnedByIdentity(entry *filer_pb.Entry, identity *Identity) bool {
 	return true
 }
 
-// isBucketVisibleToIdentity is kept for backward compatibility with tests.
-// It checks if a bucket should be visible based on ownership only.
-// Deprecated: Use isBucketOwnedByIdentity instead. The ListBucketsHandler
-// now uses OR logic: a bucket is visible if user owns it OR has List permission.
-func isBucketVisibleToIdentity(entry *filer_pb.Entry, identity *Identity) bool {
-	return isBucketOwnedByIdentity(entry, identity)
-}
-
 func (s3a *S3ApiServer) PutBucketHandler(w http.ResponseWriter, r *http.Request) {
 
 	// collect parameters

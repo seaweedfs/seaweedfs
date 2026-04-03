@@ -490,11 +490,6 @@ func GetBucketFromResource(resource string) string {
 	return ""
 }
 
-// IsObjectResource checks if resource refers to objects
-func IsObjectResource(resource string) bool {
-	return strings.Contains(resource, "/")
-}
-
 // MatchesAction checks if an action matches any of the compiled action matchers.
 // It also implicitly grants multipart upload actions if s3:PutObject is allowed,
 // since multipart upload is an implementation detail of putting objects.

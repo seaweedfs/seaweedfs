@@ -40,10 +40,6 @@ func ExistCopies() stateIndicator {
 	return func(state copyState) bool { return state != noCopies }
 }
 
-func NoCopies() stateIndicator {
-	return func(state copyState) bool { return state == noCopies }
-}
-
 type volumesBinaryState struct {
 	rp        *super_block.ReplicaPlacement
 	name      volumeState    // the name for volume state (eg. "Readonly", "Oversized")
@@ -262,12 +258,6 @@ func (vl *VolumeLayout) isOversized(v *storage.VolumeInfo) bool {
 
 func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 	return float64(v.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold
-}
-
-func (vl *VolumeLayout) isWritable(v *storage.VolumeInfo) bool {
-	return !vl.isOversized(v) &&
-		v.Version == needle.GetCurrentVersion() &&
-		!v.ReadOnly
 }
 
 func (vl *VolumeLayout) isEmpty() bool {

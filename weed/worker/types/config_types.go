@@ -109,15 +109,6 @@ type MaintenanceWorkersData struct {
 var defaultCapabilities []TaskType
 var defaultCapabilitiesMutex sync.RWMutex
 
-// SetDefaultCapabilities sets the default capabilities for workers
-// This should be called after task registration is complete
-func SetDefaultCapabilities(capabilities []TaskType) {
-	defaultCapabilitiesMutex.Lock()
-	defer defaultCapabilitiesMutex.Unlock()
-	defaultCapabilities = make([]TaskType, len(capabilities))
-	copy(defaultCapabilities, capabilities)
-}
-
 // GetDefaultCapabilities returns the default capabilities for workers
 func GetDefaultCapabilities() []TaskType {
 	defaultCapabilitiesMutex.RLock()
@@ -127,18 +118,6 @@ func GetDefaultCapabilities() []TaskType {
 	result := make([]TaskType, len(defaultCapabilities))
 	copy(result, defaultCapabilities)
 	return result
-}
-
-// DefaultMaintenanceConfig returns default maintenance configuration
-func DefaultMaintenanceConfig() *MaintenanceConfig {
-	return &MaintenanceConfig{
-		Enabled:       true,
-		ScanInterval:  30 * time.Minute,
-		CleanInterval: 6 * time.Hour,
-		TaskRetention: 7 * 24 * time.Hour, // 7 days
-		WorkerTimeout: 5 * time.Minute,
-		Policy:        NewMaintenancePolicy(),
-	}
 }
 
 // DefaultWorkerConfig returns default worker configuration
@@ -155,118 +134,3 @@ func DefaultWorkerConfig() *WorkerConfig {
 	}
 }
 
-// NewMaintenancePolicy creates a new dynamic maintenance policy
-func NewMaintenancePolicy() *MaintenancePolicy {
-	return &MaintenancePolicy{
-		TaskConfigs: make(map[TaskType]interface{}),
-		GlobalSettings: &GlobalMaintenanceSettings{
-			DefaultMaxConcurrent:    2,
-			MaintenanceEnabled:      true,
-			DefaultScanInterval:     30 * time.Minute,
-			DefaultTaskTimeout:      5 * time.Minute,
-			DefaultRetryCount:       3,
-			DefaultRetryInterval:    5 * time.Minute,
-			DefaultPriorityBoostAge: 24 * time.Hour,
-			GlobalConcurrentLimit:   5,
-		},
-	}
-}
-
-// SetTaskConfig sets the configuration for a specific task type
-func (p *MaintenancePolicy) SetTaskConfig(taskType TaskType, config interface{}) {
-	if p.TaskConfigs == nil {
-		p.TaskConfigs = make(map[TaskType]interface{})
-	}
-	p.TaskConfigs[taskType] = config
-}
-
-// GetTaskConfig returns the configuration for a specific task type
-func (p *MaintenancePolicy) GetTaskConfig(taskType TaskType) interface{} {
-	if p.TaskConfigs == nil {
-		return nil
-	}
-	return p.TaskConfigs[taskType]
-}
-
-// IsTaskEnabled returns whether a task type is enabled (generic helper)
-func (p *MaintenancePolicy) IsTaskEnabled(taskType TaskType) bool {
-	if !p.GlobalSettings.MaintenanceEnabled {
-		return false
-	}
-
-	config := p.GetTaskConfig(taskType)
-	if config == nil {
-		return false
-	}
-
-	// Try to get enabled field from config using type assertion
-	if configMap, ok := config.(map[string]interface{}); ok {
-		if enabled, exists := configMap["enabled"]; exists {
-			if enabledBool, ok := enabled.(bool); ok {
-				return enabledBool
-			}
-		}
-	}
-
-	// If we can't determine from config, default to global setting
-	return p.GlobalSettings.MaintenanceEnabled
-}
-
-// GetMaxConcurrent returns the max concurrent setting for a task type
-func (p *MaintenancePolicy) GetMaxConcurrent(taskType TaskType) int {
-	config := p.GetTaskConfig(taskType)
-	if config == nil {
-		return p.GlobalSettings.DefaultMaxConcurrent
-	}
-
-	// Try to get max_concurrent field from config
-	if configMap, ok := config.(map[string]interface{}); ok {
-		if maxConcurrent, exists := configMap["max_concurrent"]; exists {
-			if maxConcurrentInt, ok := maxConcurrent.(int); ok {
-				return maxConcurrentInt
-			}
-			if maxConcurrentFloat, ok := maxConcurrent.(float64); ok {
-				return int(maxConcurrentFloat)
-			}
-		}
-	}
-
-	return p.GlobalSettings.DefaultMaxConcurrent
-}
-
-// GetScanInterval returns the scan interval for a task type
-func (p *MaintenancePolicy) GetScanInterval(taskType TaskType) time.Duration {
-	config := p.GetTaskConfig(taskType)
-	if config == nil {
-		return p.GlobalSettings.DefaultScanInterval
-	}
-
-	// Try to get scan_interval field from config
-	if configMap, ok := config.(map[string]interface{}); ok {
-		if scanInterval, exists := configMap["scan_interval"]; exists {
-			if scanIntervalDuration, ok := scanInterval.(time.Duration); ok {
-				return scanIntervalDuration
-			}
-			if scanIntervalString, ok := scanInterval.(string); ok {
-				if duration, err := time.ParseDuration(scanIntervalString); err == nil {
-					return duration
-				}
-			}
-		}
-	}
-
-	return p.GlobalSettings.DefaultScanInterval
-}
-
-// GetAllTaskTypes returns all configured task types
-func (p *MaintenancePolicy) GetAllTaskTypes() []TaskType {
-	if p.TaskConfigs == nil {
-		return []TaskType{}
-	}
-
-	taskTypes := make([]TaskType, 0, len(p.TaskConfigs))
-	for taskType := range p.TaskConfigs {
-		taskTypes = append(taskTypes, taskType)
-	}
-	return taskTypes
-}

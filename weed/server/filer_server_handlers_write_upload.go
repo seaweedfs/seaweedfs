@@ -196,10 +196,6 @@ func (fs *FilerServer) doUpload(ctx context.Context, urlLocation string, limited
 	return uploadResult, err, data
 }
 
-func (fs *FilerServer) dataToChunk(ctx context.Context, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
-	return fs.dataToChunkWithSSE(ctx, nil, fileName, contentType, data, chunkOffset, so)
-}
-
 func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, fileName, contentType string, data []byte, chunkOffset int64, so *operation.StorageOption) ([]*filer_pb.FileChunk, error) {
 	dataReader := util.NewBytesReader(data)
 

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
-	"strconv"
 	"strings"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -136,25 +134,6 @@ func (ce *CommandEnv) AdjustedUrl(location *filer_pb.Location) string {
 
 func (ce *CommandEnv) GetDataCenter() string {
 	return ce.MasterClient.GetDataCenter()
-}
-
-func parseFilerUrl(entryPath string) (filerServer string, filerPort int64, path string, err error) {
-	if strings.HasPrefix(entryPath, "http") {
-		var u *url.URL
-		u, err = url.Parse(entryPath)
-		if err != nil {
-			return
-		}
-		filerServer = u.Hostname()
-		portString := u.Port()
-		if portString != "" {
-			filerPort, err = strconv.ParseInt(portString, 10, 32)
-		}
-		path = u.Path
-	} else {
-		err = fmt.Errorf("path should have full url /path/to/dirOrFile : %s", entryPath)
-	}
-	return
 }
 
 func findInputDirectory(args []string) (input string) {

@@ -147,13 +147,6 @@ func (fh *FileHandle) ReleaseHandle() {
 	}
 }
 
-func lessThan(a, b *filer_pb.FileChunk) bool {
-	if a.ModifiedTsNs == b.ModifiedTsNs {
-		return a.Fid.FileKey < b.Fid.FileKey
-	}
-	return a.ModifiedTsNs < b.ModifiedTsNs
-}
-
 // getCumulativeOffsets returns cached cumulative offsets for chunks, computing them if necessary
 func (fh *FileHandle) getCumulativeOffsets(chunks []*filer_pb.FileChunk) []int64 {
 	fh.chunkCacheLock.RLock()

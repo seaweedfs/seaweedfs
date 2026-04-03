@@ -207,32 +207,6 @@ func (store *FilerEtcStore) loadPoliciesFromMultiFile(ctx context.Context, polic
 	})
 }
 
-func (store *FilerEtcStore) migratePoliciesToMultiFile(ctx context.Context, policies map[string]policy_engine.PolicyDocument) error {
-	glog.Infof("Migrating IAM policies to multi-file layout...")
-
-	// 1. Save all policies to individual files
-	for name, policy := range policies {
-		if err := store.savePolicy(ctx, name, policy); err != nil {
-			return err
-		}
-	}
-
-	// 2. Rename legacy file
-	return store.withFilerClient(func(client filer_pb.SeaweedFilerClient) error {
-		_, err := client.AtomicRenameEntry(ctx, &filer_pb.AtomicRenameEntryRequest{
-			OldDirectory: filer.IamConfigDirectory,
-			OldName:      filer.IamPoliciesFile,
-			NewDirectory: filer.IamConfigDirectory,
-			NewName:      IamLegacyPoliciesOldFile,
-		})
-		if err != nil {
-			glog.Errorf("Failed to rename legacy IAM policies file %s/%s to %s: %v",
-				filer.IamConfigDirectory, filer.IamPoliciesFile, IamLegacyPoliciesOldFile, err)
-		}
-		return err
-	})
-}
-
 func (store *FilerEtcStore) savePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if err := validatePolicyName(name); err != nil {
 		return err

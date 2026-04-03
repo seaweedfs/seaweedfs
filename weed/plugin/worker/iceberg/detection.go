@@ -449,58 +449,6 @@ func hasEligibleCompaction(
 	return len(bins) > 0, nil
 }
 
-func countDataManifestsForRewrite(
-	ctx context.Context,
-	filerClient filer_pb.SeaweedFilerClient,
-	bucketName, tablePath string,
-	manifests []iceberg.ManifestFile,
-	meta table.Metadata,
-	predicate *partitionPredicate,
-) (int64, error) {
-	if predicate == nil {
-		return countDataManifests(manifests), nil
-	}
-
-	specsByID := specByID(meta)
-
-	var count int64
-	for _, mf := range manifests {
-		if mf.ManifestContent() != iceberg.ManifestContentData {
-			continue
-		}
-		manifestData, err := loadFileByIcebergPath(ctx, filerClient, bucketName, tablePath, mf.FilePath())
-		if err != nil {
-			return 0, fmt.Errorf("read manifest %s: %w", mf.FilePath(), err)
-		}
-		entries, err := iceberg.ReadManifest(mf, bytes.NewReader(manifestData), true)
-		if err != nil {
-			return 0, fmt.Errorf("parse manifest %s: %w", mf.FilePath(), err)
-		}
-		if len(entries) == 0 {
-			continue
-		}
-		spec, ok := specsByID[int(mf.PartitionSpecID())]
-		if !ok {
-			continue
-		}
-		allMatch := len(entries) > 0
-		for _, entry := range entries {
-			match, err := predicate.Matches(spec, entry.DataFile().Partition())
-			if err != nil {
-				return 0, err
-			}
-			if !match {
-				allMatch = false
-				break
-			}
-		}
-		if allMatch {
-			count++
-		}
-	}
-	return count, nil
-}
-
 func compactionMinInputFiles(minInputFiles int64) (int, error) {
 	// Ensure the configured value is positive and fits into the platform's int type
 	if minInputFiles <= 0 {

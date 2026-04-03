@@ -95,18 +95,6 @@ func NewCluster() *Cluster {
 	}
 }
 
-func (cluster *Cluster) getGroupMembers(filerGroup FilerGroupName, nodeType string, createIfNotFound bool) *GroupMembers {
-	switch nodeType {
-	case FilerType:
-		return cluster.filerGroups.getGroupMembers(filerGroup, createIfNotFound)
-	case BrokerType:
-		return cluster.brokerGroups.getGroupMembers(filerGroup, createIfNotFound)
-	case S3Type:
-		return cluster.s3Groups.getGroupMembers(filerGroup, createIfNotFound)
-	}
-	return nil
-}
-
 func (cluster *Cluster) AddClusterNode(ns, nodeType string, dataCenter DataCenter, rack Rack, address pb.ServerAddress, version string) []*master_pb.KeepConnectedResponse {
 	filerGroup := FilerGroupName(ns)
 	switch nodeType {
