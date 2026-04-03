@@ -144,6 +144,10 @@ func (c *Credential) isCredentialExpired() bool {
 }
 
 // NewIdentityAccessManagement creates a new IAM manager
+func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
+	return NewIdentityAccessManagementWithStore(option, filerClient, "")
+}
+
 // SetFilerClient updates the filer client and its associated credential store
 func (iam *IdentityAccessManagement) SetFilerClient(filerClient *wdclient.FilerClient) {
 	iam.m.Lock()
@@ -194,10 +198,6 @@ func parseExternalUrlToHost(externalUrl string) (string, error) {
 		return host, nil
 	}
 	return net.JoinHostPort(host, port), nil
-}
-
-func NewIdentityAccessManagement(option *S3ApiServerOption, filerClient *wdclient.FilerClient) *IdentityAccessManagement {
-	return NewIdentityAccessManagementWithStore(option, filerClient, "")
 }
 
 func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient *wdclient.FilerClient, explicitStore string) *IdentityAccessManagement {

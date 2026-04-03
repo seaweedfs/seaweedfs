@@ -200,11 +200,6 @@ func validateBucketName(name string) error {
 	return nil
 }
 
-// ValidateBucketName validates bucket name and returns an error if invalid.
-func ValidateBucketName(name string) error {
-	return validateBucketName(name)
-}
-
 // BuildBucketARN builds a bucket ARN with the provided region and account ID.
 // If region is empty, the ARN will omit the region field.
 func BuildBucketARN(region, accountID, bucketName string) (string, error) {
@@ -365,11 +360,6 @@ func validateNamespace(namespace []string) (string, error) {
 		return "", err
 	}
 	return flattenNamespace(parts), nil
-}
-
-// ValidateNamespace is a wrapper to validate namespace for other packages.
-func ValidateNamespace(namespace []string) (string, error) {
-	return validateNamespace(namespace)
 }
 
 // ParseNamespace parses a namespace string into namespace parts.

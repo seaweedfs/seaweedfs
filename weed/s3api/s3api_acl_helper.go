@@ -20,16 +20,6 @@ type AccountManager interface {
 	GetAccountIdByEmail(email string) string
 }
 
-// GetAccountId get AccountId from request headers, AccountAnonymousId will be return if not presen
-func GetAccountId(r *http.Request) string {
-	id := r.Header.Get(s3_constants.AmzAccountId)
-	if len(id) == 0 {
-		return s3_constants.AccountAnonymousId
-	} else {
-		return id
-	}
-}
-
 // ExtractAcl extracts the acl from the request body, or from the header if request body is empty
 func ExtractAcl(r *http.Request, accountManager AccountManager, ownership, bucketOwnerId, ownerId, accountId string) (grants []*s3.Grant, errCode s3err.ErrorCode) {
 	if r.Body != nil && r.Body != http.NoBody {
@@ -318,83 +308,6 @@ func ValidateAndTransferGrants(accountManager AccountManager, grants []*s3.Grant
 	return result, s3err.ErrNone
 }
 
-// DetermineReqGrants generates the grant set (Grants) according to accountId and reqPermission.
-func DetermineReqGrants(accountId, aclAction string) (grants []*s3.Grant) {
-	// group grantee (AllUsers)
-	grants = append(grants, &s3.Grant{
-		Grantee: &s3.Grantee{
-			Type: &s3_constants.GrantTypeGroup,
-			URI:  &s3_constants.GranteeGroupAllUsers,
-		},
-		Permission: &aclAction,
-	})
-	grants = append(grants, &s3.Grant{
-		Grantee: &s3.Grantee{
-			Type: &s3_constants.GrantTypeGroup,
-			URI:  &s3_constants.GranteeGroupAllUsers,
-		},
-		Permission: &s3_constants.PermissionFullControl,
-	})
-
-	// canonical grantee (accountId)
-	grants = append(grants, &s3.Grant{
-		Grantee: &s3.Grantee{
-			Type: &s3_constants.GrantTypeCanonicalUser,
-			ID:   &accountId,
-		},
-		Permission: &aclAction,
-	})
-	grants = append(grants, &s3.Grant{
-		Grantee: &s3.Grantee{
-			Type: &s3_constants.GrantTypeCanonicalUser,
-			ID:   &accountId,
-		},
-		Permission: &s3_constants.PermissionFullControl,
-	})
-
-	// group grantee (AuthenticateUsers)
-	if accountId != s3_constants.AccountAnonymousId {
-		grants = append(grants, &s3.Grant{
-			Grantee: &s3.Grantee{
-				Type: &s3_constants.GrantTypeGroup,
-				URI:  &s3_constants.GranteeGroupAuthenticatedUsers,
-			},
-			Permission: &aclAction,
-		})
-		grants = append(grants, &s3.Grant{
-			Grantee: &s3.Grantee{
-				Type: &s3_constants.GrantTypeGroup,
-				URI:  &s3_constants.GranteeGroupAuthenticatedUsers,
-			},
-			Permission: &s3_constants.PermissionFullControl,
-		})
-	}
-	return
-}
-
-func SetAcpOwnerHeader(r *http.Request, acpOwnerId string) {
-	r.Header.Set(s3_constants.ExtAmzOwnerKey, acpOwnerId)
-}
-
-func GetAcpOwner(entryExtended map[string][]byte, defaultOwner string) string {
-	ownerIdBytes, ok := entryExtended[s3_constants.ExtAmzOwnerKey]
-	if ok && len(ownerIdBytes) > 0 {
-		return string(ownerIdBytes)
-	}
-	return defaultOwner
-}
-
-func SetAcpGrantsHeader(r *http.Request, acpGrants []*s3.Grant) {
-	if len(acpGrants) > 0 {
-		a, err := json.Marshal(acpGrants)
-		if err == nil {
-			r.Header.Set(s3_constants.ExtAmzAclKey, string(a))
-		} else {
-			glog.Warning("Marshal acp grants err", err)
-		}
-	}
-}
-
 // GetAcpGrants return grants parsed from entry
 func GetAcpGrants(entryExtended map[string][]byte) []*s3.Grant {
 	acpBytes, ok := entryExtended[s3_constants.ExtAmzAclKey]
@@ -432,83 +345,4 @@ func AssembleEntryWithAcp(objectEntry *filer_pb.Entry, objectOwner string, grant
 	}
 
 	return s3err.ErrNone
-}
-
-// GrantEquals Compare whether two Grants are equal in meaning, not completely
-// equal (compare Grantee.Type and the corresponding Value for equality, other
-// fields of Grantee are ignored)
-func GrantEquals(a, b *s3.Grant) bool {
-	// grant
-	if a == b {
-		return true
-	}
-
-	if a == nil || b == nil {
-		return false
-	}
-
-	// grant.Permission
-	if a.Permission != b.Permission {
-		if a.Permission == nil || b.Permission == nil {
-			return false
-		}
-
-		if *a.Permission != *b.Permission {
-			return false
-		}
-	}
-
-	// grant.Grantee
-	ag := a.Grantee
-	bg := b.Grantee
-	if ag != bg {
-		if ag == nil || bg == nil {
-			return false
-		}
-		// grantee.Type
-		if ag.Type != bg.Type {
-			if ag.Type == nil || bg.Type == nil {
-				return false
-			}
-			if *ag.Type != *bg.Type {
-				return false
-			}
-		}
-		// value corresponding to granteeType
-		if ag.Type != nil {
-			switch *ag.Type {
-			case s3_constants.GrantTypeGroup:
-				if ag.URI != bg.URI {
-					if ag.URI == nil || bg.URI == nil {
-						return false
-					}
-
-					if *ag.URI != *bg.URI {
-						return false
-					}
-				}
-			case s3_constants.GrantTypeCanonicalUser:
-				if ag.ID != bg.ID {
-					if ag.ID == nil || bg.ID == nil {
-						return false
-					}
-
-					if *ag.ID != *bg.ID {
-						return false
-					}
-				}
-			case s3_constants.GrantTypeAmazonCustomerByEmail:
-				if ag.EmailAddress != bg.EmailAddress {
-					if ag.EmailAddress == nil || bg.EmailAddress == nil {
-						return false
-					}
-
-					if *ag.EmailAddress != *bg.EmailAddress {
-						return false
-					}
-				}
-			}
-		}
-	}
-	return true
 }

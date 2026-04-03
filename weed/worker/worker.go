@@ -383,31 +383,6 @@ func (w *Worker) setReqTick(tick *time.Ticker) *time.Ticker {
 	return w.getReqTick()
 }
 
-func (w *Worker) getStartTime() time.Time {
-	respCh := make(chan time.Time, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStartTime,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getCompletedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetCompletedTasks,
-		data:   respCh,
-	}
-	return <-respCh
-}
-func (w *Worker) getFailedTasks() int {
-	respCh := make(chan int, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetFailedTasks,
-		data:   respCh,
-	}
-	return <-respCh
-}
-
 // getTaskLoggerConfig returns the task logger configuration with worker's log directory
 func (w *Worker) getTaskLoggerConfig() tasks.TaskLoggerConfig {
 	config := tasks.DefaultTaskLoggerConfig()
@@ -543,27 +518,6 @@ func (w *Worker) handleStop(cmd workerCommand) {
 	cmd.resp <- nil
 }
 
-// RegisterTask registers a task factory
-func (w *Worker) RegisterTask(taskType types.TaskType, factory types.TaskFactory) {
-	w.registry.Register(taskType, factory)
-}
-
-// GetCapabilities returns the worker capabilities
-func (w *Worker) GetCapabilities() []types.TaskType {
-	return w.config.Capabilities
-}
-
-// GetStatus returns the current worker status
-func (w *Worker) GetStatus() types.WorkerStatus {
-	respCh := make(statusResponse, 1)
-	w.cmds <- workerCommand{
-		action: ActionGetStatus,
-		data:   respCh,
-		resp:   nil,
-	}
-	return <-respCh
-}
-
 // HandleTask handles a task execution
 func (w *Worker) HandleTask(task *types.TaskInput) error {
 	glog.V(1).Infof("Worker %s received task %s (type: %s, volume: %d)",
@@ -577,26 +531,6 @@ func (w *Worker) HandleTask(task *types.TaskInput) error {
 	go w.executeTask(task)
 
 	return nil
-}
-
-// SetCapabilities sets the worker capabilities
-func (w *Worker) SetCapabilities(capabilities []types.TaskType) {
-	w.config.Capabilities = capabilities
-}
-
-// SetMaxConcurrent sets the maximum concurrent tasks
-func (w *Worker) SetMaxConcurrent(max int) {
-	w.config.MaxConcurrent = max
-}
-
-// SetHeartbeatInterval sets the heartbeat interval
-func (w *Worker) SetHeartbeatInterval(interval time.Duration) {
-	w.config.HeartbeatInterval = interval
-}
-
-// SetTaskRequestInterval sets the task request interval
-func (w *Worker) SetTaskRequestInterval(interval time.Duration) {
-	w.config.TaskRequestInterval = interval
 }
 
 // SetAdminClient sets the admin client
@@ -828,11 +762,6 @@ func (w *Worker) requestTasks() {
 	}
 }
 
-// GetTaskRegistry returns the task registry
-func (w *Worker) GetTaskRegistry() *tasks.TaskRegistry {
-	return w.registry
-}
-
 // connectionMonitorLoop monitors connection status
 func (w *Worker) connectionMonitorLoop() {
 	ticker := time.NewTicker(30 * time.Second) // Check every 30 seconds
@@ -865,34 +794,6 @@ func (w *Worker) connectionMonitorLoop() {
 			}
 		}
 	}
-}
-
-// GetConfig returns the worker configuration
-func (w *Worker) GetConfig() *types.WorkerConfig {
-	return w.config
-}
-
-// GetPerformanceMetrics returns performance metrics
-func (w *Worker) GetPerformanceMetrics() *types.WorkerPerformance {
-
-	uptime := time.Since(w.getStartTime())
-	var successRate float64
-	totalTasks := w.getCompletedTasks() + w.getFailedTasks()
-	if totalTasks > 0 {
-		successRate = float64(w.getCompletedTasks()) / float64(totalTasks) * 100
-	}
-
-	return &types.WorkerPerformance{
-		TasksCompleted:  w.getCompletedTasks(),
-		TasksFailed:     w.getFailedTasks(),
-		AverageTaskTime: 0, // Would need to track this
-		Uptime:          uptime,
-		SuccessRate:     successRate,
-	}
-}
-
-func (w *Worker) GetAdmin() AdminClient {
-	return w.getAdmin()
 }
 
 // messageProcessingLoop processes incoming admin messages

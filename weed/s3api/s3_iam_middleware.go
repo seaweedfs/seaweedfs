@@ -13,7 +13,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/providers"
 	"github.com/seaweedfs/seaweedfs/weed/iam/sts"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 )
 
@@ -381,52 +380,6 @@ func buildS3ResourceArn(bucket string, objectKey string) string {
 	return "arn:aws:s3:::" + bucket + "/" + objectKey
 }
 
-// mapLegacyActionToIAM provides fallback mapping for legacy actions
-// This ensures backward compatibility while the system transitions to granular actions
-func mapLegacyActionToIAM(legacyAction Action) string {
-	switch legacyAction {
-	case s3_constants.ACTION_READ:
-		return "s3:GetObject" // Fallback for unmapped read operations
-	case s3_constants.ACTION_WRITE:
-		return "s3:PutObject" // Fallback for unmapped write operations
-	case s3_constants.ACTION_LIST:
-		return "s3:ListBucket" // Fallback for unmapped list operations
-	case s3_constants.ACTION_TAGGING:
-		return "s3:GetObjectTagging" // Fallback for unmapped tagging operations
-	case s3_constants.ACTION_READ_ACP:
-		return "s3:GetObjectAcl" // Fallback for unmapped ACL read operations
-	case s3_constants.ACTION_WRITE_ACP:
-		return "s3:PutObjectAcl" // Fallback for unmapped ACL write operations
-	case s3_constants.ACTION_DELETE_BUCKET:
-		return "s3:DeleteBucket" // Fallback for unmapped bucket delete operations
-	case s3_constants.ACTION_ADMIN:
-		return "s3:*" // Fallback for unmapped admin operations
-
-	// Handle granular multipart actions (already correctly mapped)
-	case s3_constants.S3_ACTION_CREATE_MULTIPART:
-		return s3_constants.S3_ACTION_CREATE_MULTIPART
-	case s3_constants.S3_ACTION_UPLOAD_PART:
-		return s3_constants.S3_ACTION_UPLOAD_PART
-	case s3_constants.S3_ACTION_COMPLETE_MULTIPART:
-		return s3_constants.S3_ACTION_COMPLETE_MULTIPART
-	case s3_constants.S3_ACTION_ABORT_MULTIPART:
-		return s3_constants.S3_ACTION_ABORT_MULTIPART
-	case s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS:
-		return s3_constants.S3_ACTION_LIST_MULTIPART_UPLOADS
-	case s3_constants.S3_ACTION_LIST_PARTS:
-		return s3_constants.S3_ACTION_LIST_PARTS
-
-	default:
-		// If it's already a properly formatted S3 action, return as-is
-		actionStr := string(legacyAction)
-		if strings.HasPrefix(actionStr, "s3:") {
-			return actionStr
-		}
-		// Fallback: convert to S3 action format
-		return "s3:" + actionStr
-	}
-}
-
 // extractRequestContext extracts request context for policy conditions
 func extractRequestContext(r *http.Request) map[string]interface{} {
 	context := make(map[string]interface{})
@@ -551,79 +504,6 @@ func (s3a *S3ApiServer) SetIAMIntegration(iamManager *integration.IAMManager) {
 type EnhancedS3ApiServer struct {
 	*S3ApiServer
 	iamIntegration IAMIntegration
-}
-
-// NewEnhancedS3ApiServer creates an S3 API server with IAM integration
-func NewEnhancedS3ApiServer(baseServer *S3ApiServer, iamManager *integration.IAMManager) *EnhancedS3ApiServer {
-	// Set the IAM integration on the base server
-	baseServer.SetIAMIntegration(iamManager)
-
-	return &EnhancedS3ApiServer{
-		S3ApiServer:    baseServer,
-		iamIntegration: NewS3IAMIntegration(iamManager, "localhost:8888"),
-	}
-}
-
-// AuthenticateJWTRequest handles JWT authentication for S3 requests
-func (enhanced *EnhancedS3ApiServer) AuthenticateJWTRequest(r *http.Request) (*Identity, s3err.ErrorCode) {
-	ctx := r.Context()
-
-	// Use our IAM integration for JWT authentication
-	iamIdentity, errCode := enhanced.iamIntegration.AuthenticateJWT(ctx, r)
-	if errCode != s3err.ErrNone {
-		return nil, errCode
-	}
-
-	// Convert IAMIdentity to the existing Identity structure
-	identity := &Identity{
-		Name:    iamIdentity.Name,
-		Account: iamIdentity.Account,
-		// Note: Actions will be determined by policy evaluation
-		Actions:     []Action{}, // Empty - authorization handled by policy engine
-		PolicyNames: iamIdentity.PolicyNames,
-	}
-
-	// Store session token for later authorization
-	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
-	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
-
-	return identity, s3err.ErrNone
-}
-
-// AuthorizeRequest handles authorization for S3 requests using policy engine
-func (enhanced *EnhancedS3ApiServer) AuthorizeRequest(r *http.Request, identity *Identity, action Action) s3err.ErrorCode {
-	ctx := r.Context()
-
-	// Get session info from request headers (set during authentication)
-	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-	principal := r.Header.Get("X-SeaweedFS-Principal")
-
-	if sessionToken == "" || principal == "" {
-		glog.V(3).Info("No session information available for authorization")
-		return s3err.ErrAccessDenied
-	}
-
-	// Extract bucket and object from request
-	bucket, object := s3_constants.GetBucketAndObject(r)
-	prefix := s3_constants.GetPrefix(r)
-
-	// For List operations, use prefix for permission checking if available
-	if action == s3_constants.ACTION_LIST && object == "" && prefix != "" {
-		object = prefix
-	} else if (object == "/" || object == "") && prefix != "" {
-		object = prefix
-	}
-
-	// Create IAM identity for authorization
-	iamIdentity := &IAMIdentity{
-		Name:         identity.Name,
-		Principal:    principal,
-		SessionToken: sessionToken,
-		Account:      identity.Account,
-	}
-
-	// Use our IAM integration for authorization
-	return enhanced.iamIntegration.AuthorizeAction(ctx, iamIdentity, action, bucket, object, r)
 }
 
 // OIDCIdentity represents an identity validated through OIDC

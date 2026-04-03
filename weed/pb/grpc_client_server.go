@@ -28,7 +28,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mq_pb"
-	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 )
 
 const (
@@ -318,18 +317,6 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 
 }
 
-func ParseServerAddress(server string, deltaPort int) (newServerAddress string, err error) {
-
-	host, port, parseErr := hostAndPort(server)
-	if parseErr != nil {
-		return "", fmt.Errorf("server port parse error: %w", parseErr)
-	}
-
-	newPort := int(port) + deltaPort
-
-	return util.JoinHostPort(host, newPort), nil
-}
-
 func hostAndPort(address string) (host string, port uint64, err error) {
 	colonIndex := strings.LastIndex(address, ":")
 	if colonIndex < 0 {
@@ -456,11 +443,4 @@ func WithOneOfGrpcFilerClients(streamingMode bool, filerAddresses []ServerAddres
 	}
 
 	return err
-}
-
-func WithWorkerClient(streamingMode bool, workerAddress string, grpcDialOption grpc.DialOption, fn func(client worker_pb.WorkerServiceClient) error) error {
-	return WithGrpcClient(streamingMode, 0, func(grpcConnection *grpc.ClientConn) error {
-		client := worker_pb.NewWorkerServiceClient(grpcConnection)
-		return fn(client)
-	}, workerAddress, false, grpcDialOption)
 }

@@ -22,7 +22,7 @@ func TestRunDetectionIncludesLatestSuccessfulRun(t *testing.T) {
 			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1)}
+	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	oldSuccess := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -80,7 +80,7 @@ func TestRunDetectionOmitsLastSuccessfulRunWhenNoSuccessHistory(t *testing.T) {
 			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1)}
+	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	if err := pluginSvc.store.AppendRunRecord(jobType, &JobRunRecord{
@@ -130,7 +130,7 @@ func TestRunDetectionWithReportCapturesDetectionActivities(t *testing.T) {
 			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1)}
+	session := &streamSession{workerID: "worker-a", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	reportCh := make(chan *DetectionReport, 1)
@@ -210,7 +210,7 @@ func TestRunDetectionAdminScriptUsesLastCompletedRun(t *testing.T) {
 			{JobType: jobType, CanDetect: true, MaxDetectionConcurrency: 1},
 		},
 	})
-	session := &streamSession{workerID: "worker-admin-script", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1)}
+	session := &streamSession{workerID: "worker-admin-script", outgoing: make(chan *plugin_pb.AdminToWorkerMessage, 1), done: make(chan struct{})}
 	pluginSvc.putSession(session)
 
 	successCompleted := time.Date(2026, 2, 1, 10, 0, 0, 0, time.UTC)

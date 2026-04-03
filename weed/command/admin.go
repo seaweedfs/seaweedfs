@@ -511,11 +511,6 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// GetAdminOptions returns the admin command options for testing
-func GetAdminOptions() *AdminOptions {
-	return &AdminOptions{}
-}
-
 // loadOrGenerateSessionKeys loads or creates authentication/encryption keys for session cookies.
 func loadOrGenerateSessionKeys(dataDir string) ([]byte, []byte, error) {
 	const keyLen = 32

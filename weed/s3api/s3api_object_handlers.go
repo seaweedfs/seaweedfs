@@ -268,15 +268,6 @@ func mimeDetect(r *http.Request, dataReader io.Reader) io.ReadCloser {
 	return io.NopCloser(dataReader)
 }
 
-func urlEscapeObject(object string) string {
-	normalized := s3_constants.NormalizeObjectKey(object)
-	// Ensure leading slash for filer paths
-	if normalized != "" && !strings.HasPrefix(normalized, "/") {
-		normalized = "/" + normalized
-	}
-	return urlPathEscape(normalized)
-}
-
 func entryUrlEncode(dir string, entry string, encodingTypeUrl bool) (dirName string, entryName string, prefix string) {
 	if !encodingTypeUrl {
 		return dir, entry, entry
@@ -2893,59 +2884,6 @@ func (m *MultipartSSEReader) Close() error {
 		}
 	}
 	return lastErr
-}
-
-// Read implements the io.Reader interface for SSERangeReader
-func (r *SSERangeReader) Read(p []byte) (n int, err error) {
-	// Skip bytes iteratively (no recursion) until we reach the offset
-	for r.skipped < r.offset {
-		skipNeeded := r.offset - r.skipped
-
-		// Lazily allocate skip buffer on first use, reuse thereafter
-		if r.skipBuf == nil {
-			// Use a fixed 32KB buffer for skipping (avoids per-call allocation)
-			r.skipBuf = make([]byte, 32*1024)
-		}
-
-		// Determine how much to skip in this iteration
-		bufSize := int64(len(r.skipBuf))
-		if skipNeeded < bufSize {
-			bufSize = skipNeeded
-		}
-
-		skipRead, skipErr := r.reader.Read(r.skipBuf[:bufSize])
-		r.skipped += int64(skipRead)
-
-		if skipErr != nil {
-			return 0, skipErr
-		}
-
-		// Guard against infinite loop: io.Reader may return (0, nil)
-		// which is permitted by the interface contract for non-empty buffers.
-		// If we get zero bytes without an error, treat it as an unexpected EOF.
-		if skipRead == 0 {
-			return 0, io.ErrUnexpectedEOF
-		}
-	}
-
-	// If we have a remaining limit and it's reached
-	if r.remaining == 0 {
-		return 0, io.EOF
-	}
-
-	// Calculate how much to read
-	readSize := len(p)
-	if r.remaining > 0 && int64(readSize) > r.remaining {
-		readSize = int(r.remaining)
-	}
-
-	// Read the data
-	n, err = r.reader.Read(p[:readSize])
-	if r.remaining > 0 {
-		r.remaining -= int64(n)
-	}
-
-	return n, err
 }
 
 // PartBoundaryInfo holds information about a part's chunk boundaries

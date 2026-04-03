@@ -117,11 +117,6 @@ func GetBrokerErrorInfo(code int32) BrokerErrorInfo {
 	}
 }
 
-// GetKafkaErrorCode returns the corresponding Kafka protocol error code for a broker error
-func GetKafkaErrorCode(brokerErrorCode int32) int16 {
-	return GetBrokerErrorInfo(brokerErrorCode).KafkaCode
-}
-
 // CreateBrokerError creates a structured broker error with both error code and message
 func CreateBrokerError(code int32, message string) (int32, string) {
 	info := GetBrokerErrorInfo(code)

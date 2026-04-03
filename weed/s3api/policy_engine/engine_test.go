@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
@@ -223,47 +222,6 @@ func TestConditionEvaluators(t *testing.T) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
-	}
-}
-
-func TestConvertIdentityToPolicy(t *testing.T) {
-	identityActions := []string{
-		"Read:bucket1/*",
-		"Write:bucket1/*",
-		"Admin:bucket2",
-	}
-
-	policy, err := ConvertIdentityToPolicy(identityActions)
-	if err != nil {
-		t.Fatalf("Failed to convert identity to policy: %v", err)
-	}
-
-	if policy.Version != "2012-10-17" {
-		t.Errorf("Expected version 2012-10-17, got %s", policy.Version)
-	}
-
-	if len(policy.Statement) != 3 {
-		t.Errorf("Expected 3 statements, got %d", len(policy.Statement))
-	}
-
-	// Check first statement (Read)
-	stmt := policy.Statement[0]
-	if stmt.Effect != PolicyEffectAllow {
-		t.Errorf("Expected Allow effect, got %s", stmt.Effect)
-	}
-
-	actions := normalizeToStringSlice(stmt.Action)
-	// Read action now includes: GetObject, GetObjectVersion, ListBucket, ListBucketVersions,
-	// GetObjectAcl, GetObjectVersionAcl, GetObjectTagging, GetObjectVersionTagging,
-	// GetBucketLocation, GetBucketVersioning, GetBucketAcl, GetBucketCors, GetBucketTagging, GetBucketNotification
-	if len(actions) != 14 {
-		t.Errorf("Expected 14 read actions, got %d: %v", len(actions), actions)
-	}
-
-	resources := normalizeToStringSlice(stmt.Resource)
-	// Read action now includes both bucket ARN (for ListBucket*) and object ARN (for GetObject*)
-	if len(resources) != 2 {
-		t.Errorf("Expected 2 resources (bucket and bucket/*), got %d: %v", len(resources), resources)
 	}
 }
 
@@ -792,41 +750,6 @@ func TestCompilePolicy(t *testing.T) {
 	if len(stmt.ResourcePatterns) != 1 {
 		t.Errorf("Expected 1 resource pattern, got %d", len(stmt.ResourcePatterns))
 	}
-}
-
-// TestNewPolicyBackedIAMWithLegacy tests the constructor overload
-func TestNewPolicyBackedIAMWithLegacy(t *testing.T) {
-	// Mock legacy IAM
-	mockLegacyIAM := &MockLegacyIAM{}
-
-	// Test the new constructor
-	policyBackedIAM := NewPolicyBackedIAMWithLegacy(mockLegacyIAM)
-
-	// Verify that the legacy IAM is set
-	if policyBackedIAM.legacyIAM != mockLegacyIAM {
-		t.Errorf("Expected legacy IAM to be set, but it wasn't")
-	}
-
-	// Verify that the policy engine is initialized
-	if policyBackedIAM.policyEngine == nil {
-		t.Errorf("Expected policy engine to be initialized, but it wasn't")
-	}
-
-	// Compare with the traditional approach
-	traditionalIAM := NewPolicyBackedIAM()
-	traditionalIAM.SetLegacyIAM(mockLegacyIAM)
-
-	// Both should behave the same
-	if policyBackedIAM.legacyIAM != traditionalIAM.legacyIAM {
-		t.Errorf("Expected both approaches to result in the same legacy IAM")
-	}
-}
-
-// MockLegacyIAM implements the LegacyIAM interface for testing
-type MockLegacyIAM struct{}
-
-func (m *MockLegacyIAM) authRequest(r *http.Request, action Action) (Identity, s3err.ErrorCode) {
-	return nil, s3err.ErrNone
 }
 
 // TestExistingObjectTagCondition tests s3:ExistingObjectTag/<tag-key> condition support

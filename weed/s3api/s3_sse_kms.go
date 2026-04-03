@@ -59,11 +59,6 @@ const (
 // Bucket key cache TTL (moved to be used with per-bucket cache)
 const BucketKeyCacheTTL = time.Hour
 
-// CreateSSEKMSEncryptedReader creates an encrypted reader using KMS envelope encryption
-func CreateSSEKMSEncryptedReader(r io.Reader, keyID string, encryptionContext map[string]string) (io.Reader, *SSEKMSKey, error) {
-	return CreateSSEKMSEncryptedReaderWithBucketKey(r, keyID, encryptionContext, false)
-}
-
 // CreateSSEKMSEncryptedReaderWithBucketKey creates an encrypted reader with optional S3 Bucket Keys optimization
 func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool) (io.Reader, *SSEKMSKey, error) {
 	if bucketKeyEnabled {
@@ -106,42 +101,6 @@ func CreateSSEKMSEncryptedReaderWithBucketKey(r io.Reader, keyID string, encrypt
 	encryptedReader := &cipher.StreamReader{S: stream, R: r}
 
 	// Store IV in the SSE key for metadata storage
-	sseKey.IV = iv
-
-	return encryptedReader, sseKey, nil
-}
-
-// CreateSSEKMSEncryptedReaderWithBaseIV creates an SSE-KMS encrypted reader using a provided base IV
-// This is used for multipart uploads where all chunks need to use the same base IV
-func CreateSSEKMSEncryptedReaderWithBaseIV(r io.Reader, keyID string, encryptionContext map[string]string, bucketKeyEnabled bool, baseIV []byte) (io.Reader, *SSEKMSKey, error) {
-	if err := ValidateIV(baseIV, "base IV"); err != nil {
-		return nil, nil, err
-	}
-
-	// Generate data key using common utility
-	dataKeyResult, err := generateKMSDataKey(keyID, encryptionContext)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	// Ensure we clear the plaintext data key from memory when done
-	defer clearKMSDataKey(dataKeyResult)
-
-	// Use the provided base IV instead of generating a new one
-	iv := make([]byte, s3_constants.AESBlockSize)
-	copy(iv, baseIV)
-
-	// Create CTR mode cipher stream
-	stream := cipher.NewCTR(dataKeyResult.Block, iv)
-
-	// Create the SSE-KMS metadata using utility function
-	sseKey := createSSEKMSKey(dataKeyResult, encryptionContext, bucketKeyEnabled, iv, 0)
-
-	// The IV is stored in SSE key metadata, so the encrypted stream does not need to prepend the IV
-	// This ensures correct Content-Length for clients
-	encryptedReader := &cipher.StreamReader{S: stream, R: r}
-
-	// Store the base IV in the SSE key for metadata storage
 	sseKey.IV = iv
 
 	return encryptedReader, sseKey, nil
@@ -453,67 +412,6 @@ func CreateSSEKMSDecryptedReader(r io.Reader, sseKey *SSEKMSKey) (io.Reader, err
 	return decryptReader, nil
 }
 
-// ParseSSEKMSHeaders parses SSE-KMS headers from an HTTP request
-func ParseSSEKMSHeaders(r *http.Request) (*SSEKMSKey, error) {
-	sseAlgorithm := r.Header.Get(s3_constants.AmzServerSideEncryption)
-
-	// Check if SSE-KMS is requested
-	if sseAlgorithm == "" {
-		return nil, nil // No SSE headers present
-	}
-	if sseAlgorithm != s3_constants.SSEAlgorithmKMS {
-		return nil, fmt.Errorf("invalid SSE algorithm: %s", sseAlgorithm)
-	}
-
-	keyID := r.Header.Get(s3_constants.AmzServerSideEncryptionAwsKmsKeyId)
-	encryptionContextHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionContext)
-	bucketKeyEnabledHeader := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled)
-
-	// Parse encryption context if provided
-	var encryptionContext map[string]string
-	if encryptionContextHeader != "" {
-		// Decode base64-encoded JSON encryption context
-		contextBytes, err := base64.StdEncoding.DecodeString(encryptionContextHeader)
-		if err != nil {
-			return nil, fmt.Errorf("invalid encryption context format: %v", err)
-		}
-
-		if err := json.Unmarshal(contextBytes, &encryptionContext); err != nil {
-			return nil, fmt.Errorf("invalid encryption context JSON: %v", err)
-		}
-	}
-
-	// Parse bucket key enabled flag
-	bucketKeyEnabled := strings.ToLower(bucketKeyEnabledHeader) == "true"
-
-	sseKey := &SSEKMSKey{
-		KeyID:             keyID,
-		EncryptionContext: encryptionContext,
-		BucketKeyEnabled:  bucketKeyEnabled,
-	}
-
-	// Validate the parsed key including key ID format
-	if err := ValidateSSEKMSKeyInternal(sseKey); err != nil {
-		return nil, err
-	}
-
-	return sseKey, nil
-}
-
-// ValidateSSEKMSKey validates an SSE-KMS key configuration
-func ValidateSSEKMSKeyInternal(sseKey *SSEKMSKey) error {
-	if err := ValidateSSEKMSKey(sseKey); err != nil {
-		return err
-	}
-
-	// An empty key ID is valid and means the default KMS key should be used.
-	if sseKey.KeyID != "" && !isValidKMSKeyID(sseKey.KeyID) {
-		return fmt.Errorf("invalid KMS key ID format: %s", sseKey.KeyID)
-	}
-
-	return nil
-}
-
 // BuildEncryptionContext creates the encryption context for S3 objects
 func BuildEncryptionContext(bucketName, objectKey string, useBucketKey bool) map[string]string {
 	return kms.BuildS3EncryptionContext(bucketName, objectKey, useBucketKey)
@@ -727,28 +625,6 @@ func IsSSEKMSEncrypted(metadata map[string][]byte) bool {
 	// The canonical way to identify an SSE-KMS encrypted object is by this header.
 	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
 		return string(sseAlgorithm) == s3_constants.SSEAlgorithmKMS
-	}
-
-	return false
-}
-
-// IsAnySSEEncrypted checks if metadata indicates any type of SSE encryption
-func IsAnySSEEncrypted(metadata map[string][]byte) bool {
-	if metadata == nil {
-		return false
-	}
-
-	// Check for any SSE type
-	if IsSSECEncrypted(metadata) {
-		return true
-	}
-	if IsSSEKMSEncrypted(metadata) {
-		return true
-	}
-
-	// Check for SSE-S3
-	if sseAlgorithm, exists := metadata[s3_constants.AmzServerSideEncryption]; exists {
-		return string(sseAlgorithm) == s3_constants.SSEAlgorithmAES256
 	}
 
 	return false
@@ -988,21 +864,6 @@ func DetermineUnifiedCopyStrategy(state *EncryptionState, srcMetadata map[string
 	}
 
 	return CopyStrategyDirect, nil
-}
-
-// DetectEncryptionState analyzes the source metadata and request headers to determine encryption state
-func DetectEncryptionState(srcMetadata map[string][]byte, r *http.Request, srcPath, dstPath string) *EncryptionState {
-	state := &EncryptionState{
-		SrcSSEC:    IsSSECEncrypted(srcMetadata),
-		SrcSSEKMS:  IsSSEKMSEncrypted(srcMetadata),
-		SrcSSES3:   IsSSES3EncryptedInternal(srcMetadata),
-		DstSSEC:    IsSSECRequest(r),
-		DstSSEKMS:  IsSSEKMSRequest(r),
-		DstSSES3:   IsSSES3RequestInternal(r),
-		SameObject: srcPath == dstPath,
-	}
-
-	return state
 }
 
 // DetectEncryptionStateWithEntry analyzes the source entry and request headers to determine encryption state

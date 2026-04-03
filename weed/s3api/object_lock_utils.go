@@ -2,8 +2,6 @@ package s3api
 
 import (
 	"context"
-	"encoding/xml"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -33,21 +31,6 @@ func StoreVersioningInExtended(entry *filer_pb.Entry, enabled bool) error {
 	}
 
 	return nil
-}
-
-// LoadVersioningFromExtended loads versioning configuration from entry extended attributes
-func LoadVersioningFromExtended(entry *filer_pb.Entry) (bool, bool) {
-	if entry == nil || entry.Extended == nil {
-		return false, false // not found, default to suspended
-	}
-
-	// Check for S3 API compatible key
-	if versioningBytes, exists := entry.Extended[s3_constants.ExtVersioningKey]; exists {
-		enabled := string(versioningBytes) == s3_constants.VersioningEnabled
-		return enabled, true
-	}
-
-	return false, false // not found
 }
 
 // GetVersioningStatus returns the versioning status as a string: "", "Enabled", or "Suspended"
@@ -88,15 +71,6 @@ func CreateObjectLockConfiguration(enabled bool, mode string, days int, years in
 	}
 
 	return config
-}
-
-// ObjectLockConfigurationToXML converts ObjectLockConfiguration to XML bytes
-func ObjectLockConfigurationToXML(config *ObjectLockConfiguration) ([]byte, error) {
-	if config == nil {
-		return nil, fmt.Errorf("object lock configuration is nil")
-	}
-
-	return xml.Marshal(config)
 }
 
 // StoreObjectLockConfigurationInExtended stores Object Lock configuration in entry extended attributes
@@ -377,18 +351,6 @@ func validateDefaultRetention(retention *DefaultRetention) error {
 	}
 
 	return nil
-}
-
-// ====================================================================
-// SHARED OBJECT LOCK CHECKING FUNCTIONS
-// ====================================================================
-// These functions delegate to s3_objectlock package to avoid code duplication.
-// They are kept here for backward compatibility with existing callers.
-
-// EntryHasActiveLock checks if an entry has an active retention or legal hold
-// Delegates to s3_objectlock.EntryHasActiveLock
-func EntryHasActiveLock(entry *filer_pb.Entry, currentTime time.Time) bool {
-	return s3_objectlock.EntryHasActiveLock(entry, currentTime)
 }
 
 // HasObjectsWithActiveLocks checks if any objects in the bucket have active retention or legal hold

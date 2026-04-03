@@ -1155,11 +1155,6 @@ func ValidatePolicyDocumentWithType(policy *PolicyDocument, policyType string) e
 	return nil
 }
 
-// validateStatement validates a single statement (for backward compatibility)
-func validateStatement(statement *Statement) error {
-	return validateStatementWithType(statement, "resource")
-}
-
 // validateStatementWithType validates a single statement based on policy type
 func validateStatementWithType(statement *Statement, policyType string) error {
 	if statement.Effect != "Allow" && statement.Effect != "Deny" {
@@ -1196,29 +1191,6 @@ func validateStatementWithType(statement *Statement, policyType string) error {
 	}
 
 	return nil
-}
-
-// matchResource checks if a resource pattern matches a requested resource
-// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
-func matchResource(pattern, resource string) bool {
-	if pattern == resource {
-		return true
-	}
-
-	// Handle simple suffix wildcard (backward compatibility)
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(resource, prefix)
-	}
-
-	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
-	matched, err := filepath.Match(pattern, resource)
-	if err != nil {
-		// Fallback to exact match if pattern is malformed
-		return pattern == resource
-	}
-
-	return matched
 }
 
 // awsIAMMatch performs AWS IAM-compliant pattern matching with case-insensitivity and policy variable support
@@ -1274,16 +1246,6 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 	return result
 }
 
-// getContextValue safely gets a value from the evaluation context
-func getContextValue(evalCtx *EvaluationContext, key, defaultValue string) string {
-	if value, exists := evalCtx.RequestContext[key]; exists {
-		if str, ok := value.(string); ok {
-			return str
-		}
-	}
-	return defaultValue
-}
-
 // AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
 func AwsWildcardMatch(pattern, value string) bool {
 	// Create regex pattern key for caching
@@ -1320,29 +1282,6 @@ func AwsWildcardMatch(pattern, value string) bool {
 	}
 
 	return regex.MatchString(value)
-}
-
-// matchAction checks if an action pattern matches a requested action
-// Uses hybrid approach: simple suffix wildcards for compatibility, filepath.Match for complex patterns
-func matchAction(pattern, action string) bool {
-	if pattern == action {
-		return true
-	}
-
-	// Handle simple suffix wildcard (backward compatibility)
-	if strings.HasSuffix(pattern, "*") {
-		prefix := pattern[:len(pattern)-1]
-		return strings.HasPrefix(action, prefix)
-	}
-
-	// For complex patterns, use filepath.Match for advanced wildcard support (*, ?, [])
-	matched, err := filepath.Match(pattern, action)
-	if err != nil {
-		// Fallback to exact match if pattern is malformed
-		return pattern == action
-	}
-
-	return matched
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity

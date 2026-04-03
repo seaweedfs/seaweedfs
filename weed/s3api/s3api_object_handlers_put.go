@@ -1859,28 +1859,6 @@ func (s3a *S3ApiServer) validateConditionalHeaders(r *http.Request, headers cond
 	return s3err.ErrNone
 }
 
-// checkConditionalHeadersWithGetter is a testable method that accepts a simple EntryGetter
-// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
-func (s3a *S3ApiServer) checkConditionalHeadersWithGetter(getter EntryGetter, r *http.Request, bucket, object string) s3err.ErrorCode {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		return errCode
-	}
-	// Get object entry for conditional checks.
-	bucketDir := "/buckets/" + bucket
-	entry, entryErr := getter.getEntry(bucketDir, object)
-	if entryErr != nil {
-		if errors.Is(entryErr, filer_pb.ErrNotFound) {
-			entry = nil
-		} else {
-			glog.Errorf("checkConditionalHeadersWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
-			return s3err.ErrInternalError
-		}
-	}
-
-	return s3a.validateConditionalHeaders(r, headers, entry, bucket, object)
-}
-
 // checkConditionalHeaders is the production method that uses the S3ApiServer as EntryGetter
 func (s3a *S3ApiServer) checkConditionalHeaders(r *http.Request, bucket, object string) s3err.ErrorCode {
 	// Fast path: if no conditional headers are present, skip object resolution entirely.
@@ -2000,28 +1978,6 @@ func (s3a *S3ApiServer) validateConditionalHeadersForReads(r *http.Request, head
 
 	// Return success with the fetched entry for reuse
 	return ConditionalHeaderResult{ErrorCode: s3err.ErrNone, Entry: entry}
-}
-
-// checkConditionalHeadersForReadsWithGetter is a testable method for read operations
-// Uses the production getObjectETag and etagMatches methods to ensure testing of real logic
-func (s3a *S3ApiServer) checkConditionalHeadersForReadsWithGetter(getter EntryGetter, r *http.Request, bucket, object string) ConditionalHeaderResult {
-	headers, errCode := parseConditionalHeaders(r)
-	if errCode != s3err.ErrNone {
-		return ConditionalHeaderResult{ErrorCode: errCode}
-	}
-	// Get object entry for conditional checks.
-	bucketDir := "/buckets/" + bucket
-	entry, entryErr := getter.getEntry(bucketDir, object)
-	if entryErr != nil {
-		if errors.Is(entryErr, filer_pb.ErrNotFound) {
-			entry = nil
-		} else {
-			glog.Errorf("checkConditionalHeadersForReadsWithGetter: failed to get entry for %s/%s: %v", bucket, object, entryErr)
-			return ConditionalHeaderResult{ErrorCode: s3err.ErrInternalError}
-		}
-	}
-
-	return s3a.validateConditionalHeadersForReads(r, headers, entry, bucket, object)
 }
 
 // checkConditionalHeadersForReads is the production method that uses the S3ApiServer as EntryGetter

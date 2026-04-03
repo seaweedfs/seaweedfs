@@ -58,9 +58,9 @@ var (
 
 // SSECustomerKey represents a customer-provided encryption key for SSE-C
 type SSECustomerKey struct {
-	Algorithm     string
-	Key           []byte
-	KeyMD5        string
+	Algorithm string
+	Key       []byte
+	KeyMD5    string
 }
 
 // IsSSECRequest checks if the request contains SSE-C headers
@@ -132,16 +132,6 @@ func validateAndParseSSECHeaders(algorithm, key, keyMD5 string) (*SSECustomerKey
 		Key:       keyBytes,
 		KeyMD5:    keyMD5,
 	}, nil
-}
-
-// ValidateSSECHeaders validates SSE-C headers in the request
-func ValidateSSECHeaders(r *http.Request) error {
-	algorithm := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerAlgorithm)
-	key := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKey)
-	keyMD5 := r.Header.Get(s3_constants.AmzServerSideEncryptionCustomerKeyMD5)
-
-	_, err := validateAndParseSSECHeaders(algorithm, key, keyMD5)
-	return err
 }
 
 // ParseSSECHeaders parses and validates SSE-C headers from the request
