@@ -20,7 +20,7 @@ default = ["5bytes"]
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 tokio-io-timeout = "1"
 
 # gRPC + protobuf

@@ -93,7 +93,7 @@ jobs:
       - name: Build Go weed binary
         run: |
           cd weed
-          go build -o weed .
+          go build -tags 5BytesOffset -o weed .
           chmod +x weed
           ./weed version
 
@@ -169,7 +169,7 @@ jobs:
       - name: Build Go weed binary
         run: |
           cd weed
-          go build -o weed .
+          go build -tags 5BytesOffset -o weed .
           chmod +x weed
           ./weed version
 
