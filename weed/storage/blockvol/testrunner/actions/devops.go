@@ -103,6 +103,42 @@ func buildDeployWeed(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 	return nil, nil
 }
 
+// logBinaryVersion logs the weed binary's md5, mtime, and size on the given node.
+// Stores the md5 in __weed_md5_<node> var for cross-node consistency checks.
+func logBinaryVersion(ctx context.Context, actx *tr.ActionContext, node tr.NodeRunner, nodeName string) {
+	binPath := tr.UploadBasePath + "weed"
+	stdout, _, _, err := node.Run(ctx, fmt.Sprintf(
+		"md5sum %s 2>/dev/null | awk '{print $1}'; stat -c '%%Y %%s' %s 2>/dev/null",
+		binPath, binPath))
+	if err != nil {
+		actx.Log("  [binary] %s: %s not found or error", nodeName, binPath)
+		return
+	}
+	lines := strings.SplitN(strings.TrimSpace(stdout), "\n", 2)
+	md5 := ""
+	if len(lines) >= 1 {
+		md5 = strings.TrimSpace(lines[0])
+	}
+	meta := ""
+	if len(lines) >= 2 {
+		meta = strings.TrimSpace(lines[1])
+	}
+	actx.Log("  [binary] %s: %s md5=%s %s", nodeName, binPath, md5, meta)
+	if md5 != "" {
+		varKey := "__weed_md5_" + nodeName
+		if prev, ok := actx.Vars[varKey]; ok && prev != md5 {
+			actx.Log("  [binary] WARNING: %s md5 changed %s → %s", nodeName, prev, md5)
+		}
+		actx.Vars[varKey] = md5
+		// Cross-node check: if another node already set its md5, compare.
+		for k, v := range actx.Vars {
+			if strings.HasPrefix(k, "__weed_md5_") && k != varKey && v != md5 {
+				actx.Log("  [binary] WARNING: md5 mismatch %s=%s vs %s=%s", nodeName, md5, strings.TrimPrefix(k, "__weed_md5_"), v)
+			}
+		}
+	}
+}
+
 // startWeedMaster starts a weed master process on the given node.
 func startWeedMaster(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
 	node, err := GetNode(actx, act.Node)
@@ -119,6 +155,9 @@ func startWeedMaster(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 		dir = "/tmp/sw-weed-master"
 	}
 	extraArgs := act.Params["extra_args"]
+
+	// Log binary version for traceability.
+	logBinaryVersion(ctx, actx, node, act.Node)
 
 	// Ensure directory exists.
 	node.RunRoot(ctx, fmt.Sprintf("mkdir -p %s", dir))
@@ -155,6 +194,9 @@ func startWeedVolume(ctx context.Context, actx *tr.ActionContext, act tr.Action)
 		dir = "/tmp/sw-weed-volume"
 	}
 	extraArgs := act.Params["extra_args"]
+
+	// Log binary version for traceability.
+	logBinaryVersion(ctx, actx, node, act.Node)
 
 	node.RunRoot(ctx, fmt.Sprintf("mkdir -p %s", dir))
 

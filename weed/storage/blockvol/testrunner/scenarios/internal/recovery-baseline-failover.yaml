@@ -189,16 +189,13 @@ phases:
 
   - name: verify-io-after
     actions:
-      # Reconnect iSCSI to the new primary and verify I/O.
-      - action: lookup_block_volume
-        name: "{{ volume_name }}"
-        save_as: vol2
-
+      # Reconnect iSCSI to the new primary (m01, which is local).
+      # Use the original lookup vars — iSCSI addr is on the VS, not from registry.
       - action: iscsi_login_direct
         node: m01
-        host: "{{ vol2_iscsi_host }}"
-        port: "{{ vol2_iscsi_port }}"
-        iqn: "{{ vol2_iqn }}"
+        host: "10.0.0.1"
+        port: "3295"
+        iqn: "{{ vol_iqn }}"
         save_as: device2
 
       - action: fio_json

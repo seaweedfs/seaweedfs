@@ -501,7 +501,10 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 						existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
 						existing.Replicas[i].HealthScore = info.HealthScore
 						existing.Replicas[i].LastHeartbeat = time.Now()
-						existing.Replicas[i].Role = info.Role
+						// Keep role as RoleReplica — the VS may report a stale
+						// primary role if it hasn't received its demotion assignment yet.
+						// The registry's decision (lower epoch = replica) is authoritative.
+						existing.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
 						existing.Replicas[i].NvmeAddr = info.NvmeAddr
 						existing.Replicas[i].NQN = info.Nqn
 						if existing.WALHeadLSN > info.WalHeadLsn {
@@ -715,30 +718,39 @@ func (r *BlockVolumeRegistry) demoteExistingToReplica(name string, existing *Blo
 // upsertServerAsReplica adds or updates the server as a replica for the existing entry.
 // If the server already exists in Replicas[], its fields are updated instead of appending
 // a duplicate. This prevents duplicate replica entries during restart/replay windows.
+//
+// The role is always set to RoleReplica regardless of what the heartbeat claims.
+// A server added here has a lower epoch than the current primary — it IS a replica
+// by definition. Without this override, a demoted primary that hasn't received its
+// new assignment yet reports Role=primary in its heartbeat, causing the promotion
+// gate (evaluatePromotionLocked Gate 3) to reject it with "wrong_role" and blocking
+// automatic failover.
 // Caller must hold r.mu.
 func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *BlockVolumeEntry, newServer string, info *master_pb.BlockVolumeInfoMessage) {
+	replicaRole := blockvol.RoleToWire(blockvol.RoleReplica)
+
 	// Check for existing replica entry for this server.
 	for i := range existing.Replicas {
 		if existing.Replicas[i].Server == newServer {
-			// Update in place.
+			// Update in place — force RoleReplica regardless of heartbeat claim.
 			existing.Replicas[i].Path = info.Path
 			existing.Replicas[i].HealthScore = info.HealthScore
 			existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
 			existing.Replicas[i].LastHeartbeat = time.Now()
-			existing.Replicas[i].Role = info.Role
+			existing.Replicas[i].Role = replicaRole
 			existing.Replicas[i].NvmeAddr = info.NvmeAddr
 			existing.Replicas[i].NQN = info.Nqn
 			return
 		}
 	}
-	// New replica — append.
+	// New replica — append with forced RoleReplica.
 	ri := ReplicaInfo{
 		Server:        newServer,
 		Path:          info.Path,
 		HealthScore:   info.HealthScore,
 		WALHeadLSN:    info.WalHeadLsn,
 		LastHeartbeat: time.Now(),
-		Role:          info.Role,
+		Role:          replicaRole,
 		NvmeAddr:      info.NvmeAddr,
 		NQN:           info.Nqn,
 	}
