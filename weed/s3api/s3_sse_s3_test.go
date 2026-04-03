@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // TestSSES3EncryptionDecryption tests basic SSE-S3 encryption and decryption
@@ -683,16 +684,24 @@ func TestSSES3InvalidMetadataDeserialization(t *testing.T) {
 	}
 }
 
-// TestSSES3KEKEnvVar tests that WEED_S3_SSE_KEK (hex format) is used as KEK
-func TestSSES3KEKEnvVar(t *testing.T) {
+// setViperKey is a test helper that sets a viper key and returns a cleanup function.
+func setViperKey(t *testing.T, key, value string) {
+	t.Helper()
+	v := util.GetViper()
+	v.SetDefault(key, "")
+	os.Setenv("WEED_"+strings.ReplaceAll(strings.ToUpper(key), ".", "_"), value)
+	t.Cleanup(func() {
+		os.Unsetenv("WEED_" + strings.ReplaceAll(strings.ToUpper(key), ".", "_"))
+	})
+}
+
+// TestSSES3KEKConfig tests that sse_s3.kek (hex format) is used as KEK
+func TestSSES3KEKConfig(t *testing.T) {
 	testKey := make([]byte, 32)
 	for i := range testKey {
 		testKey[i] = byte(i + 50)
 	}
-	hexKey := hex.EncodeToString(testKey)
-
-	os.Setenv(SSES3KEKEnvVar, hexKey)
-	defer os.Unsetenv(SSES3KEKEnvVar)
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(testKey))
 
 	km := NewSSES3KeyManager()
 	err := km.InitializeWithFiler(nil)
@@ -722,10 +731,9 @@ func TestSSES3KEKEnvVar(t *testing.T) {
 	}
 }
 
-// TestSSES3KEKEnvVarInvalidHex tests rejection of bad hex
-func TestSSES3KEKEnvVarInvalidHex(t *testing.T) {
-	os.Setenv(SSES3KEKEnvVar, "not-valid-hex")
-	defer os.Unsetenv(SSES3KEKEnvVar)
+// TestSSES3KEKConfigInvalidHex tests rejection of bad hex
+func TestSSES3KEKConfigInvalidHex(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, "not-valid-hex")
 
 	km := NewSSES3KeyManager()
 	err := km.InitializeWithFiler(nil)
@@ -737,10 +745,9 @@ func TestSSES3KEKEnvVarInvalidHex(t *testing.T) {
 	}
 }
 
-// TestSSES3KEKEnvVarWrongSize tests rejection of wrong-size hex key
-func TestSSES3KEKEnvVarWrongSize(t *testing.T) {
-	os.Setenv(SSES3KEKEnvVar, hex.EncodeToString(make([]byte, 16)))
-	defer os.Unsetenv(SSES3KEKEnvVar)
+// TestSSES3KEKConfigWrongSize tests rejection of wrong-size hex key
+func TestSSES3KEKConfigWrongSize(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(make([]byte, 16)))
 
 	km := NewSSES3KeyManager()
 	err := km.InitializeWithFiler(nil)
@@ -752,18 +759,15 @@ func TestSSES3KEKEnvVarWrongSize(t *testing.T) {
 	}
 }
 
-// TestSSES3KeyEnvVar tests that WEED_S3_SSE_KEY (any string, HKDF) works
-func TestSSES3KeyEnvVar(t *testing.T) {
-	os.Setenv(SSES3KeyEnvVar, "my-secret-passphrase")
-	defer os.Unsetenv(SSES3KeyEnvVar)
+// TestSSES3KeyConfig tests that sse_s3.key (any string, HKDF) works
+func TestSSES3KeyConfig(t *testing.T) {
+	setViperKey(t, sseS3KeyConfigKey, "my-secret-passphrase")
 
 	km := NewSSES3KeyManager()
-	// nil filerClient — loadFilerKEK will fail, which means "file not found"
-	// is indistinguishable from connection error. To test properly without a
-	// filer, we simulate no-filer by checking that the derive path works.
-	// The filer-existence check requires a real filer, so we test the derive
-	// logic directly.
-	km.superKey = deriveKeyFromSecret("my-secret-passphrase")
+	err := km.InitializeWithFiler(nil)
+	if err != nil {
+		t.Fatalf("InitializeWithFiler failed: %v", err)
+	}
 
 	if len(km.superKey) != SSES3KeySize {
 		t.Fatalf("expected %d-byte superKey, got %d", SSES3KeySize, len(km.superKey))
@@ -776,8 +780,8 @@ func TestSSES3KeyEnvVar(t *testing.T) {
 	}
 }
 
-// TestSSES3KeyEnvVarDifferentSecrets tests different strings produce different keys
-func TestSSES3KeyEnvVarDifferentSecrets(t *testing.T) {
+// TestSSES3KeyConfigDifferentSecrets tests different strings produce different keys
+func TestSSES3KeyConfigDifferentSecrets(t *testing.T) {
 	k1 := deriveKeyFromSecret("secret-one")
 	k2 := deriveKeyFromSecret("secret-two")
 	if bytes.Equal(k1, k2) {
@@ -785,17 +789,15 @@ func TestSSES3KeyEnvVarDifferentSecrets(t *testing.T) {
 	}
 }
 
-// TestSSES3BothEnvVarsReject tests that setting both env vars is rejected
-func TestSSES3BothEnvVarsReject(t *testing.T) {
-	os.Setenv(SSES3KEKEnvVar, hex.EncodeToString(make([]byte, 32)))
-	os.Setenv(SSES3KeyEnvVar, "some-passphrase")
-	defer os.Unsetenv(SSES3KEKEnvVar)
-	defer os.Unsetenv(SSES3KeyEnvVar)
+// TestSSES3BothConfigsReject tests that setting both config keys is rejected
+func TestSSES3BothConfigsReject(t *testing.T) {
+	setViperKey(t, sseS3KEKConfigKey, hex.EncodeToString(make([]byte, 32)))
+	setViperKey(t, sseS3KeyConfigKey, "some-passphrase")
 
 	km := NewSSES3KeyManager()
 	err := km.InitializeWithFiler(nil)
 	if err == nil {
-		t.Fatal("expected error when both env vars set, got nil")
+		t.Fatal("expected error when both configs set, got nil")
 	}
 	if !strings.Contains(err.Error(), "only one") {
 		t.Errorf("expected 'only one' error, got: %v", err)
