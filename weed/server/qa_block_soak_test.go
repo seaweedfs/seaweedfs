@@ -3,6 +3,7 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"strings"
@@ -68,13 +69,20 @@ func newSoakSetup(t *testing.T) *soakSetup {
 		if idx := strings.LastIndex(server, ":"); idx >= 0 {
 			host = server[:idx]
 		}
+		// Use deterministic ports for replication (matching production ReplicationPorts behavior).
+		h := fnv.New32a()
+		h.Write([]byte(volPath))
+		offset := int(h.Sum32()%500) * 3
+		dataPort := 14000 + offset
+		ctrlPort := dataPort + 1
+		rebuildPort := dataPort + 2
 		return &blockAllocResult{
 			Path:              volPath,
 			IQN:               fmt.Sprintf("iqn.2024.test:%s", name),
 			ISCSIAddr:         host + ":3260",
-			ReplicaDataAddr:   server + ":14260",
-			ReplicaCtrlAddr:   server + ":14261",
-			RebuildListenAddr: server + ":15000",
+			ReplicaDataAddr:   fmt.Sprintf("127.0.0.1:%d", dataPort),
+			ReplicaCtrlAddr:   fmt.Sprintf("127.0.0.1:%d", ctrlPort),
+			RebuildListenAddr: fmt.Sprintf("127.0.0.1:%d", rebuildPort),
 		}, nil
 	}
 	ms.blockVSDelete = func(ctx context.Context, server string, name string) error { return nil }
