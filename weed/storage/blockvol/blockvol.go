@@ -1265,8 +1265,12 @@ func (v *BlockVol) ReplicaReceiverAddr() *ReplicaReceiverAddrInfo {
 }
 
 // StartReplicaReceiver starts listening for replicated WAL entries from a primary.
-func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string) error {
-	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr)
+// advertisedHost is the canonical routable IP for this server (e.g., from VS
+// server ID). If provided, wildcard-bind listener addresses are resolved to
+// advertisedHost:port instead of relying on outbound-IP fallback. On multi-NIC
+// hosts, always provide advertisedHost to ensure cross-machine reachability.
+func (v *BlockVol) StartReplicaReceiver(dataAddr, ctrlAddr string, advertisedHost ...string) error {
+	recv, err := NewReplicaReceiver(v, dataAddr, ctrlAddr, advertisedHost...)
 	if err != nil {
 		return err
 	}

@@ -10,6 +10,7 @@ package blockvol
 import (
 	"bytes"
 	"fmt"
+	"net"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -18,47 +19,91 @@ import (
 
 // --- Bug 3: Address resolution ---
 
-// TestBug3_ReplicaAddr_MustBeIPPort verifies that ReplicaReceiver.DataAddr()
-// and CtrlAddr() return ip:port, not :port.
-// Current code returns ":port" from listener.Addr().String() which fails cross-machine.
 // TestBug3_ReplicaAddr_MustBeIPPort_WildcardBind verifies that when
 // ReplicaReceiver binds to ":0" (wildcard — the production default),
-// DataAddr()/CtrlAddr() still return ip:port, not ":port".
-// In production, the VS uses ":0" to let the OS pick a port.
-// The address is then sent to the primary via heartbeat/assignment.
-// If it's ":port", the primary dials localhost — fails cross-machine.
+// DataAddr()/CtrlAddr() return canonical ip:port, not ":port" or wildcard.
+//
+// CP13-2 proof: this is a real proof, not witness coverage.
+// The test verifies both the fallback path (no advertisedHost) and the
+// explicit advertisedHost path (production: host extracted from serverID).
 func TestBug3_ReplicaAddr_MustBeIPPort_WildcardBind(t *testing.T) {
 	vol := createTestVol(t)
 	defer vol.Close()
 
-	// Bind to ":0" — this is what production code does.
-	recv, err := NewReplicaReceiver(vol, ":0", ":0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer recv.Stop()
-
-	dataAddr := recv.DataAddr()
-	ctrlAddr := recv.CtrlAddr()
-
-	// Addresses MUST be dialable from a remote machine:
-	// - not ":port" (missing IP entirely)
-	// - not "0.0.0.0:port" (wildcard, not routable)
-	// - not "[::]:port" (IPv6 wildcard, not routable)
-	for _, addr := range []struct{ name, val string }{
-		{"DataAddr", dataAddr},
-		{"CtrlAddr", ctrlAddr},
-	} {
-		if strings.HasPrefix(addr.val, ":") {
-			t.Fatalf("%s() returned %q — missing IP", addr.name, addr.val)
+	assertCanonical := func(t *testing.T, name, addr string) {
+		t.Helper()
+		if strings.HasPrefix(addr, ":") {
+			t.Fatalf("%s returned %q — missing IP", name, addr)
 		}
-		if strings.HasPrefix(addr.val, "0.0.0.0:") {
-			t.Fatalf("%s() returned %q — wildcard, not routable cross-machine", addr.name, addr.val)
+		if strings.HasPrefix(addr, "0.0.0.0:") {
+			t.Fatalf("%s returned %q — wildcard, not routable cross-machine", name, addr)
 		}
-		if strings.HasPrefix(addr.val, "[::]:") {
-			t.Fatalf("%s() returned %q — IPv6 wildcard, not routable cross-machine", addr.name, addr.val)
+		if strings.HasPrefix(addr, "[::]:") {
+			t.Fatalf("%s returned %q — IPv6 wildcard, not routable cross-machine", name, addr)
+		}
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			t.Fatalf("%s returned %q — not valid host:port: %v", name, addr, err)
+		}
+		if host == "" {
+			t.Fatalf("%s returned %q — empty host", name, addr)
+		}
+		if port == "" || port == "0" {
+			t.Fatalf("%s returned %q — invalid port", name, addr)
 		}
 	}
+
+	// Case 1: wildcard bind with no advertisedHost (fallback to outbound IP).
+	t.Run("fallback", func(t *testing.T) {
+		recv, err := NewReplicaReceiver(vol, ":0", ":0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer recv.Stop()
+		assertCanonical(t, "DataAddr", recv.DataAddr())
+		assertCanonical(t, "CtrlAddr", recv.CtrlAddr())
+	})
+
+	// Case 2: wildcard bind with explicit advertisedHost (production path).
+	// CP13-2: this is the authoritative path — serverID host is forwarded
+	// through StartReplicaReceiver → NewReplicaReceiver → canonicalizeListenerAddr.
+	t.Run("advertisedHost", func(t *testing.T) {
+		recv, err := NewReplicaReceiver(vol, ":0", ":0", "10.0.0.42")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer recv.Stop()
+		assertCanonical(t, "DataAddr", recv.DataAddr())
+		assertCanonical(t, "CtrlAddr", recv.CtrlAddr())
+		// The advertised host must appear in the exported address.
+		if !strings.HasPrefix(recv.DataAddr(), "10.0.0.42:") {
+			t.Fatalf("DataAddr %q does not use advertisedHost 10.0.0.42", recv.DataAddr())
+		}
+		if !strings.HasPrefix(recv.CtrlAddr(), "10.0.0.42:") {
+			t.Fatalf("CtrlAddr %q does not use advertisedHost 10.0.0.42", recv.CtrlAddr())
+		}
+	})
+
+	// Case 3: StartReplicaReceiver (the public API) with advertisedHost.
+	t.Run("StartReplicaReceiver_API", func(t *testing.T) {
+		vol2 := createTestVol(t)
+		defer vol2.Close()
+		if err := vol2.StartReplicaReceiver(":0", ":0", "10.0.0.99"); err != nil {
+			t.Fatal(err)
+		}
+		info := vol2.ReplicaReceiverAddr()
+		if info == nil {
+			t.Fatal("ReplicaReceiverAddr() returned nil")
+		}
+		assertCanonical(t, "DataAddr", info.DataAddr)
+		assertCanonical(t, "CtrlAddr", info.CtrlAddr)
+		if !strings.HasPrefix(info.DataAddr, "10.0.0.99:") {
+			t.Fatalf("DataAddr %q does not use advertisedHost 10.0.0.99", info.DataAddr)
+		}
+		if !strings.HasPrefix(info.CtrlAddr, "10.0.0.99:") {
+			t.Fatalf("CtrlAddr %q does not use advertisedHost 10.0.0.99", info.CtrlAddr)
+		}
+	})
 }
 
 // --- Bug 2: LSN gap after shipper degradation ---

@@ -525,11 +525,15 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 
 // setupReplicaReceiver starts the replica WAL receiver.
 func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) {
-	// Store canonical addresses from the receiver (not raw assignment addresses).
-	// The receiver canonicalizes wildcard ":port" to "ip:port" via CP13-2.
+	// CP13-2: Pass the canonical host from localServerID so wildcard-bind
+	// listeners resolve to the authoritative routable IP, not outbound-IP fallback.
+	advertisedHost := bs.localServerID
+	if idx := strings.LastIndex(advertisedHost, ":"); idx >= 0 {
+		advertisedHost = advertisedHost[:idx]
+	}
 	var canonDataAddr, canonCtrlAddr string
 	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr); err != nil {
+		if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr, advertisedHost); err != nil {
 			return err
 		}
 		// Read back canonical addresses from the receiver.
