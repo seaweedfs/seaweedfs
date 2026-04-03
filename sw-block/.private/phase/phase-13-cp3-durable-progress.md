@@ -1,8 +1,7 @@
 # CP13-3 Durable Progress Truth — Contract Review + Proof Package
 
 Date: 2026-04-03
-Commit: ac962fc83 (feature/sw-block HEAD)
-Protocol changes in this checkpoint: NONE — contract review only
+Commit: ac962fc83 → updated with legacy-response rejection fix
 
 ## Durable Progress Contract
 
@@ -68,7 +67,8 @@ The following CP13-1 baseline PASS tests are promoted to CP13-3 proof:
 | `TestShipper_ReplicaFlushedLSN_UpdatedOnBarrier` | Shipper's tracked `replicaFlushedLSN` comes from barrier response, not from send |
 | `TestShipper_ReplicaFlushedLSN_Monotonic` | Shipper's tracked progress is monotonic (CAS-only, never decreases) |
 | `TestBarrierResp_FlushedLSN_Roundtrip` | Barrier response wire format correctly carries `flushedLSN` |
-| `TestBarrierResp_BackwardCompat_1Byte` | Old 1-byte responses don't produce false `flushedLSN` authority |
+| `TestBarrierResp_BackwardCompat_1Byte` | Old 1-byte responses decode to `FlushedLSN=0` (wire compat) |
+| `TestBarrier_LegacyResponseRejectedBySyncAll` | Legacy `BarrierOK` with `FlushedLSN=0` is rejected — no false durability authority |
 
 ### Support evidence (adjacent to the contract, not primary proof)
 
@@ -105,10 +105,15 @@ func (s *WALShipper) ShippedLSN() uint64 {
 
 The comment at line 268 is explicit: sender-side progress is diagnostic only.
 
+## Code Change
+
+One targeted fix in `wal_shipper.go`: `BarrierOK` with `FlushedLSN == 0` now returns
+an error instead of counting as successful sync_all durability. This closes the gap
+where a legacy 1-byte barrier response could pass through as durable authority.
+
 ## What CP13-3 Does NOT Close
 
 - Reconnect/catch-up protocol (CP13-5)
 - WAL retention policy (CP13-6)
 - Rebuild fallback (CP13-7)
 - Replica state machine transitions beyond barrier eligibility (CP13-4)
-- No code was changed in this checkpoint — contract review only

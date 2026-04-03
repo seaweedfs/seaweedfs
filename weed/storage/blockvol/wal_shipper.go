@@ -222,19 +222,25 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 
 	switch resp.Status {
 	case BarrierOK:
-		// Barrier success — transition to InSync (only barrier success grants this).
+		// CP13-3: BarrierOK with FlushedLSN == 0 means the replica confirmed
+		// receipt + fsync but did not report which LSN is durable (legacy 1-byte
+		// response). This must NOT count as successful sync_all durability because
+		// no authoritative durable progress was established.
+		if resp.FlushedLSN == 0 {
+			s.recordBarrierMetric(barrierStart, true)
+			return fmt.Errorf("wal_shipper: barrier OK but no FlushedLSN reported (legacy response)")
+		}
+		// Barrier success with durable progress — transition to InSync.
 		s.markInSync()
 		// Update authoritative durable progress (monotonic: only advance).
-		if resp.FlushedLSN > 0 {
-			s.hasFlushedProgress.Store(true)
-			for {
-				cur := s.replicaFlushedLSN.Load()
-				if resp.FlushedLSN <= cur {
-					break
-				}
-				if s.replicaFlushedLSN.CompareAndSwap(cur, resp.FlushedLSN) {
-					break
-				}
+		s.hasFlushedProgress.Store(true)
+		for {
+			cur := s.replicaFlushedLSN.Load()
+			if resp.FlushedLSN <= cur {
+				break
+			}
+			if s.replicaFlushedLSN.CompareAndSwap(cur, resp.FlushedLSN) {
+				break
 			}
 		}
 		s.recordBarrierMetric(barrierStart, false)
