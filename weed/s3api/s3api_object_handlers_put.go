@@ -363,7 +363,10 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
 	// Detect and set up additional checksum computation (S3 checksum algorithm support)
-	checksumAlgo, checksumHeaderName := detectRequestedChecksumAlgorithm(r)
+	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
+	if checksumErrCode != s3err.ErrNone {
+		return "", checksumErrCode, SSEResponseMetadata{}
+	}
 	var checksumHash hash.Hash
 	if checksumAlgo != ChecksumAlgorithmNone {
 		checksumHash = getCheckSumWriter(checksumAlgo)
@@ -891,29 +894,38 @@ var checksumHeaders = []struct {
 // detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
 // It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
 // x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
-// headers. Returns the algorithm enum and the canonical HTTP header name for the checksum.
-func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string) {
+// headers. Returns the algorithm enum, the canonical HTTP header name, and an error code
+// if an unsupported algorithm is specified.
+func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
 	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs)
 	if algo := r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
-			return m.alg, m.name
+			return m.alg, m.name, s3err.ErrNone
 		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzSdkChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
 	}
 
 	// Check x-amz-checksum-algorithm header
 	if algo := r.Header.Get(s3_constants.AmzChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
-			return m.alg, m.name
+			return m.alg, m.name, s3err.ErrNone
 		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
 	}
 
 	// Check x-amz-trailer header (used by chunked uploads, may be comma-separated)
 	if trailer := r.Header.Get(s3_constants.AmzTrailer); trailer != "" {
 		for _, part := range strings.Split(trailer, ",") {
 			part = strings.TrimSpace(strings.ToLower(part))
-			if m, ok := trailerToChecksumAlgorithm[part]; ok {
-				return m.alg, m.name
+			if part == "" {
+				continue
 			}
+			if m, ok := trailerToChecksumAlgorithm[part]; ok {
+				return m.alg, m.name, s3err.ErrNone
+			}
+			// Non-checksum trailers (e.g. x-amz-server-side-encryption) are fine — skip them
 		}
 	}
 
@@ -921,11 +933,11 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 	// Uses ordered slice for deterministic selection
 	for _, entry := range checksumHeaders {
 		if r.Header.Get(entry.header) != "" {
-			return entry.alg, entry.name
+			return entry.alg, entry.name, s3err.ErrNone
 		}
 	}
 
-	return ChecksumAlgorithmNone, ""
+	return ChecksumAlgorithmNone, "", s3err.ErrNone
 }
 
 const defaultFileMode = uint32(0660)
