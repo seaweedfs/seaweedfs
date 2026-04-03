@@ -359,13 +359,17 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 				sseS3KEKConfigKey, SSES3KeySize, SSES3KeySize*2, len(key))
 		}
 
-		// If filer file exists, verify it matches
+		// Best-effort consistency check: if the filer file exists, warn on
+		// mismatch. A temporarily unreachable filer must not block startup
+		// when the operator has explicitly provided a KEK.
 		filerKey, err := km.loadFilerKEK()
 		if err != nil {
-			return err
-		}
-		if filerKey != nil && !bytes.Equal(filerKey, key) {
-			return fmt.Errorf("%s does not match existing %s — they must be identical or remove the filer file first",
+			glog.Warningf("SSE-S3 KeyManager: could not reach filer to verify %s against %s: %v (proceeding with configured KEK)",
+				sseS3KEKConfigKey, km.kekPath, err)
+		} else if filerKey != nil && !bytes.Equal(filerKey, key) {
+			return fmt.Errorf("%s does not match existing %s — "+
+				"use the same key value as the filer file, or migrate existing data to the new key. "+
+				"See the Server-Side-Encryption wiki for migration steps",
 				sseS3KEKConfigKey, km.kekPath)
 		}
 
@@ -374,15 +378,18 @@ func (km *SSES3KeyManager) InitializeWithFiler(filerClient filer_pb.FilerClient)
 
 	// --- Case 2: s3.sse.key (any string, HKDF-derived) ---
 	case cfgKey != "":
-		// Refuse if filer file exists — user must delete it first
+		// If the filer still has a legacy KEK file, the operator must migrate
+		// existing data first — using a derived key would silently orphan
+		// objects encrypted with the old KEK.
 		filerKey, err := km.loadFilerKEK()
 		if err != nil {
-			return err
-		}
-		if filerKey != nil {
+			glog.Warningf("SSE-S3 KeyManager: could not reach filer to check for legacy %s: %v (proceeding with configured key)",
+				km.kekPath, err)
+		} else if filerKey != nil {
 			return fmt.Errorf("%s cannot be used while %s exists on the filer — "+
-				"delete the filer file first (weed shell: fs.rm %s) to avoid orphaning data encrypted with the old KEK",
-				sseS3KeyConfigKey, km.kekPath, km.kekPath)
+				"existing objects are encrypted with the filer KEK. "+
+				"Migrate to %s first (copy the filer KEK value) or follow the key-rotation steps in the Server-Side-Encryption wiki",
+				sseS3KeyConfigKey, km.kekPath, sseS3KEKConfigKey)
 		}
 
 		derived, err := deriveKeyFromSecret(cfgKey)
