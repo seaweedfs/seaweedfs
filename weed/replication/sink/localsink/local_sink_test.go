@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 )
 
 // TestCreateEntry_OverwriteReadOnlyFile reproduces a bug where
@@ -18,6 +19,7 @@ func TestCreateEntry_OverwriteReadOnlyFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	sink := &LocalSink{}
 	sink.initialize(tmpDir, false)
+	sink.SetSourceFiler(&source.FilerSource{})
 
 	key := filepath.Join(tmpDir, "objects", "5c", "9fb207")
 
