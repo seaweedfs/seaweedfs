@@ -133,8 +133,8 @@ Reject if:
 > See that file for the real PASS / FAIL / PASS* results from running on current code.
 >
 > Key corrections from the actual run:
-> - Many tests labeled `FAIL expected` here actually **PASS** on current code (CP13-3/4/5/6 behavior already implemented in earlier phases)
-> - Many tests labeled `verify` turned out to be **PASS** (real proof, not just witness)
+> - Many tests labeled `FAIL expected` here actually **PASS** on current code — current code already passes tests associated with later checkpoint themes
+> - Many tests labeled `verify` turned out to be **PASS** — whether that constitutes checkpoint closure requires dedicated review
 > - Only **4 tests actually FAIL** and **3 are PASS*** — see `phase-13-cp1-baseline.md` for the authoritative list
 
 ###### Task 2: Runnable Baseline Harness
