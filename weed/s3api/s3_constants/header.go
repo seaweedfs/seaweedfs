@@ -76,6 +76,16 @@ const (
 	AmzObjectLockRetainUntilDate = "X-Amz-Object-Lock-Retain-Until-Date"
 	AmzObjectLockLegalHold       = "X-Amz-Object-Lock-Legal-Hold"
 
+	// S3 checksum headers
+	AmzChecksumAlgorithm = "X-Amz-Checksum-Algorithm"
+	AmzChecksumCRC32     = "X-Amz-Checksum-Crc32"
+	AmzChecksumCRC32C    = "X-Amz-Checksum-Crc32c"
+	AmzChecksumCRC64NVME = "X-Amz-Checksum-Crc64nvme"
+	AmzChecksumSHA1      = "X-Amz-Checksum-Sha1"
+	AmzChecksumSHA256    = "X-Amz-Checksum-Sha256"
+	AmzTrailer           = "X-Amz-Trailer"
+	AmzSdkChecksumAlgorithm = "X-Amz-Sdk-Checksum-Algorithm"
+
 	// S3 conditional headers
 	IfMatch           = "If-Match"
 	IfNoneMatch       = "If-None-Match"

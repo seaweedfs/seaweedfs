@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -71,6 +72,9 @@ type SSEResponseMetadata struct {
 	SSEType          string
 	KMSKeyID         string
 	BucketKeyEnabled bool
+	// Checksum fields for S3 additional checksum support
+	ChecksumHeaderName string // e.g. "X-Amz-Checksum-Sha256"
+	ChecksumValue      string // base64-encoded checksum value
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +362,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	plaintextHash := md5.New()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
+	// Detect and set up additional checksum computation (S3 checksum algorithm support)
+	checksumAlgo, checksumHeaderName := detectRequestedChecksumAlgorithm(r)
+	var checksumHash hash.Hash
+	if checksumAlgo != ChecksumAlgorithmNone {
+		checksumHash = getCheckSumWriter(checksumAlgo)
+		dataReader = io.TeeReader(dataReader, checksumHash)
+	}
+
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
@@ -634,6 +646,15 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
 	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
+	// Store additional checksum if one was computed
+	checksumBase64 := ""
+	if checksumHash != nil && checksumHeaderName != "" {
+		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
+		entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
+		entry.Extended[s3_constants.ExtChecksumValue] = []byte(checksumBase64)
+		glog.V(3).Infof("putToFiler: stored checksum %s=%s for %s", checksumHeaderName, checksumBase64, filePath)
+	}
+
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
 
@@ -802,7 +823,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Build SSE response metadata with encryption details
 	responseMetadata := SSEResponseMetadata{
-		SSEType: sseType,
+		SSEType:            sseType,
+		ChecksumHeaderName: checksumHeaderName,
+		ChecksumValue:      checksumBase64,
 	}
 
 	// For SSE-KMS, include key ID and bucket-key-enabled flag from stored metadata
@@ -814,6 +837,78 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
+// It checks the x-amz-sdk-checksum-algorithm header, x-amz-trailer header, and
+// individual x-amz-checksum-* headers. Returns the algorithm enum and the canonical
+// HTTP header name for the checksum (e.g. "X-Amz-Checksum-Sha256").
+func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string) {
+	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs)
+	if algo := r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
+		switch strings.ToUpper(algo) {
+		case "CRC32":
+			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
+		case "CRC32C":
+			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
+		case "CRC64NVME":
+			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
+		case "SHA1":
+			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
+		case "SHA256":
+			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		}
+	}
+
+	// Check x-amz-checksum-algorithm header
+	if algo := r.Header.Get(s3_constants.AmzChecksumAlgorithm); algo != "" {
+		switch strings.ToUpper(algo) {
+		case "CRC32":
+			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
+		case "CRC32C":
+			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
+		case "CRC64NVME":
+			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
+		case "SHA1":
+			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
+		case "SHA256":
+			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		}
+	}
+
+	// Check x-amz-trailer header (used by chunked uploads)
+	if trailer := r.Header.Get(s3_constants.AmzTrailer); trailer != "" {
+		switch strings.ToLower(trailer) {
+		case "x-amz-checksum-crc32":
+			return ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32
+		case "x-amz-checksum-crc32c":
+			return ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C
+		case "x-amz-checksum-crc64nvme":
+			return ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME
+		case "x-amz-checksum-sha1":
+			return ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1
+		case "x-amz-checksum-sha256":
+			return ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256
+		}
+	}
+
+	// Check individual checksum headers (non-chunked uploads send the value directly)
+	for header, algo := range map[string]struct {
+		alg  ChecksumAlgorithm
+		name string
+	}{
+		s3_constants.AmzChecksumCRC32:    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+		s3_constants.AmzChecksumCRC32C:   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+		s3_constants.AmzChecksumCRC64NVME: {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+		s3_constants.AmzChecksumSHA1:     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+		s3_constants.AmzChecksumSHA256:   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+	} {
+		if r.Header.Get(header) != "" {
+			return algo.alg, algo.name
+		}
+	}
+
+	return ChecksumAlgorithmNone, ""
 }
 
 const defaultFileMode = uint32(0660)
@@ -882,6 +977,11 @@ func (s3a *S3ApiServer) setSSEResponseHeaders(w http.ResponseWriter, r *http.Req
 		} else if bucketKeyEnabled := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled == "true" {
 			w.Header().Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 		}
+	}
+
+	// Set checksum response header if a checksum was computed
+	if sseMetadata.ChecksumHeaderName != "" && sseMetadata.ChecksumValue != "" {
+		w.Header().Set(sseMetadata.ChecksumHeaderName, sseMetadata.ChecksumValue)
 	}
 }
 

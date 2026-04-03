@@ -2077,6 +2077,15 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Set checksum header if stored in metadata
+	if entry.Extended != nil {
+		if algoName, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
+			if checksumVal, ok := entry.Extended[s3_constants.ExtChecksumValue]; ok {
+				w.Header().Set(string(algoName), string(checksumVal))
+			}
+		}
+	}
+
 	// Apply S3 passthrough headers from query parameters
 	// AWS S3 supports overriding response headers via query parameters like:
 	// ?response-cache-control=no-cache&response-content-type=application/json
