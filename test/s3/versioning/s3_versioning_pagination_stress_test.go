@@ -289,6 +289,157 @@ func TestVersioningPaginationMultipleObjectsManyVersions(t *testing.T) {
 	})
 }
 
+// TestVersioningPaginationDeepDirectoryHierarchy tests that paginated ListObjectVersions
+// correctly skips directory subtrees before the key-marker. This reproduces the
+// real-world scenario where Veeam backup objects are spread across many subdirectories
+// (e.g., Mailboxes/<uuid>/ItemsData/<file>) and pagination becomes exponentially
+// slower as the marker advances through the tree.
+//
+// Run with: ENABLE_STRESS_TESTS=true go test -v -run TestVersioningPaginationDeepDirectoryHierarchy -timeout 10m
+func TestVersioningPaginationDeepDirectoryHierarchy(t *testing.T) {
+	if os.Getenv("ENABLE_STRESS_TESTS") != "true" {
+		t.Skip("Skipping stress test. Set ENABLE_STRESS_TESTS=true to run.")
+	}
+
+	client := getS3Client(t)
+	bucketName := getNewBucketName()
+
+	createBucket(t, client, bucketName)
+	defer deleteBucket(t, client, bucketName)
+
+	enableVersioning(t, client, bucketName)
+	checkVersioningStatus(t, client, bucketName, types.BucketVersioningStatusEnabled)
+
+	// Create a deep directory structure mimicking Veeam 365 backup layout:
+	// Backup/Organizations/<org>/Mailboxes/<mailbox>/ItemsData/<file>
+	numMailboxes := 20
+	filesPerMailbox := 5
+	totalObjects := numMailboxes * filesPerMailbox
+	orgPrefix := "Backup/Organizations/org-001/Mailboxes"
+
+	t.Logf("Creating %d objects across %d subdirectories (depth=6)...", totalObjects, numMailboxes)
+	startTime := time.Now()
+
+	allKeys := make([]string, 0, totalObjects)
+	for i := 0; i < numMailboxes; i++ {
+		mailboxId := fmt.Sprintf("mbx-%03d", i)
+		for j := 0; j < filesPerMailbox; j++ {
+			key := fmt.Sprintf("%s/%s/ItemsData/file-%03d.dat", orgPrefix, mailboxId, j)
+			_, err := client.PutObject(context.TODO(), &s3.PutObjectInput{
+				Bucket: aws.String(bucketName),
+				Key:    aws.String(key),
+				Body:   strings.NewReader(fmt.Sprintf("content-%d-%d", i, j)),
+			})
+			require.NoError(t, err)
+			allKeys = append(allKeys, key)
+		}
+	}
+	t.Logf("Created %d objects in %v", totalObjects, time.Since(startTime))
+
+	// Test 1: Paginate through all versions with a broad prefix and small maxKeys.
+	// This forces multiple pages that must skip earlier subdirectory trees.
+	t.Run("PaginateAcrossSubdirectories", func(t *testing.T) {
+		maxKeys := int32(10) // Force many pages to exercise marker skipping
+		var allVersions []types.ObjectVersion
+		var keyMarker, versionIdMarker *string
+		pageCount := 0
+		pageStartTimes := make([]time.Duration, 0)
+
+		for {
+			pageStart := time.Now()
+			resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+				Bucket:          aws.String(bucketName),
+				Prefix:          aws.String(orgPrefix + "/"),
+				MaxKeys:         aws.Int32(maxKeys),
+				KeyMarker:       keyMarker,
+				VersionIdMarker: versionIdMarker,
+			})
+			pageDuration := time.Since(pageStart)
+			require.NoError(t, err)
+			pageCount++
+			pageStartTimes = append(pageStartTimes, pageDuration)
+
+			allVersions = append(allVersions, resp.Versions...)
+			t.Logf("Page %d: %d versions in %v (marker: %v)",
+				pageCount, len(resp.Versions), pageDuration,
+				keyMarker)
+
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
+				break
+			}
+			keyMarker = resp.NextKeyMarker
+			versionIdMarker = resp.NextVersionIdMarker
+		}
+
+		assert.Greater(t, pageCount, 1, "Should require multiple pages")
+
+		// Verify listed keys exactly match the keys we created (same elements, same order)
+		listedKeys := make([]string, 0, len(allVersions))
+		for _, v := range allVersions {
+			listedKeys = append(listedKeys, *v.Key)
+		}
+		assert.Equal(t, allKeys, listedKeys,
+			"Listed version keys should exactly match created keys")
+
+		// Check that later pages don't take dramatically longer than earlier ones.
+		// Before the fix, later pages were exponentially slower because they
+		// re-traversed the entire tree. With the fix, all pages should be similar.
+		if len(pageStartTimes) >= 4 {
+			firstQuarter := pageStartTimes[0]
+			lastQuarter := pageStartTimes[len(pageStartTimes)-1]
+			t.Logf("First page: %v, Last page: %v, Ratio: %.1fx",
+				firstQuarter, lastQuarter,
+				float64(lastQuarter)/float64(firstQuarter))
+			// Allow generous 10x ratio to avoid flakiness; before the fix
+			// the ratio was 100x+ on large datasets
+			if lastQuarter > firstQuarter*10 && lastQuarter > 500*time.Millisecond {
+				t.Errorf("Last page took %.1fx longer than first page (%v vs %v) — possible pagination regression",
+					float64(lastQuarter)/float64(firstQuarter), lastQuarter, firstQuarter)
+			}
+		}
+	})
+
+	// Test 2: Paginate with delimiter to verify CommonPrefixes interaction
+	t.Run("PaginateWithDelimiterAcrossSubdirs", func(t *testing.T) {
+		maxKeys := int32(5)
+		var allPrefixes []string
+		var keyMarker *string
+		pageCount := 0
+
+		for {
+			resp, err := client.ListObjectVersions(context.TODO(), &s3.ListObjectVersionsInput{
+				Bucket:    aws.String(bucketName),
+				Prefix:    aws.String(orgPrefix + "/"),
+				Delimiter: aws.String("/"),
+				MaxKeys:   aws.Int32(maxKeys),
+				KeyMarker: keyMarker,
+			})
+			require.NoError(t, err)
+			pageCount++
+
+			for _, cp := range resp.CommonPrefixes {
+				allPrefixes = append(allPrefixes, *cp.Prefix)
+			}
+
+			if resp.IsTruncated == nil || !*resp.IsTruncated {
+				break
+			}
+			keyMarker = resp.NextKeyMarker
+		}
+
+		assert.Greater(t, pageCount, 1, "Should require multiple pages with maxKeys=%d", maxKeys)
+
+		// Build the exact expected prefixes
+		expectedPrefixes := make([]string, 0, numMailboxes)
+		for i := 0; i < numMailboxes; i++ {
+			expectedPrefixes = append(expectedPrefixes,
+				fmt.Sprintf("%s/mbx-%03d/", orgPrefix, i))
+		}
+		assert.Equal(t, expectedPrefixes, allPrefixes,
+			"CommonPrefixes should exactly match expected mailbox prefixes")
+	})
+}
+
 // listAllVersions is a helper to list all versions of a specific object using pagination
 func listAllVersions(t *testing.T, client *s3.Client, bucketName, objectKey string) []types.ObjectVersion {
 	var allVersions []types.ObjectVersion
