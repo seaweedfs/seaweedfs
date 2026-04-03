@@ -297,9 +297,7 @@ func NewIdentityAccessManagementWithStore(option *S3ApiServerOption, filerClient
 
 	// Update credential manager with all static identities (file + env vars)
 	// so that listing operations via filer gRPC also include them.
-	if credentialManager != nil && len(iam.staticIdentityNames) > 0 {
-		credentialManager.SetStaticIdentities(iam.GetStaticIdentities())
-	}
+	iam.updateCredentialManagerStaticIdentities()
 
 	// Determine whether to enable S3 authentication based on configuration
 	// For "weed mini" without any S3 config, default to allowing all access (isAuthEnabled = false)
@@ -1073,6 +1071,15 @@ func (iam *IdentityAccessManagement) IsStaticIdentity(identityName string) bool 
 	iam.m.RLock()
 	defer iam.m.RUnlock()
 	return iam.staticIdentityNames[identityName]
+}
+
+// updateCredentialManagerStaticIdentities syncs the current set of static
+// identities to the credential manager. Call this after any operation that
+// changes static identities (startup, config file reload, etc.).
+func (iam *IdentityAccessManagement) updateCredentialManagerStaticIdentities() {
+	if iam.credentialManager != nil {
+		iam.credentialManager.SetStaticIdentities(iam.GetStaticIdentities())
+	}
 }
 
 // GetStaticIdentities returns protobuf representations of all static identities.

@@ -83,13 +83,16 @@ func (cm *CredentialManager) GetStoreName() string {
 // These identities are included in LoadConfiguration and ListUsers results
 // but are never persisted to the dynamic store.
 func (cm *CredentialManager) SetStaticIdentities(identities []*iam_pb.Identity) {
-	cm.staticIdentities = identities
-	cm.staticNames = make(map[string]bool, len(identities))
+	filtered := make([]*iam_pb.Identity, 0, len(identities))
+	names := make(map[string]bool, len(identities))
 	for _, ident := range identities {
 		if ident != nil {
-			cm.staticNames[ident.Name] = true
+			filtered = append(filtered, ident)
+			names[ident.Name] = true
 		}
 	}
+	cm.staticIdentities = filtered
+	cm.staticNames = names
 }
 
 // IsStaticIdentity returns true if the named identity was loaded from static config.
