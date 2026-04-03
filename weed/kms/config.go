@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 // KMSManager manages KMS provider instances and configurations
@@ -111,11 +112,45 @@ var (
 	globalKMSProvider KMSProvider
 )
 
+// InitializeGlobalKMS initializes the global KMS provider
+func InitializeGlobalKMS(config *KMSConfig) error {
+	if config == nil || config.Provider == "" {
+		return fmt.Errorf("KMS configuration is required")
+	}
+
+	// Adapt the config to util.Configuration interface
+	var providerConfig util.Configuration
+	if config.Config != nil {
+		providerConfig = &configAdapter{config: config.Config}
+	}
+
+	provider, err := GetProvider(config.Provider, providerConfig)
+	if err != nil {
+		return err
+	}
+
+	globalKMSMutex.Lock()
+	defer globalKMSMutex.Unlock()
+
+	// Close existing provider if any
+	if globalKMSProvider != nil {
+		globalKMSProvider.Close()
+	}
+
+	globalKMSProvider = provider
+	return nil
+}
+
 // GetGlobalKMS returns the global KMS provider
 func GetGlobalKMS() KMSProvider {
 	globalKMSMutex.RLock()
 	defer globalKMSMutex.RUnlock()
 	return globalKMSProvider
+}
+
+// IsKMSEnabled returns true if KMS is enabled globally
+func IsKMSEnabled() bool {
+	return GetGlobalKMS() != nil
 }
 
 // SetGlobalKMSProvider sets the global KMS provider.
@@ -237,6 +272,31 @@ func (km *KMSManager) SetBucketKMSProvider(bucket, providerName string) error {
 	return nil
 }
 
+// GetKMSProvider returns the KMS provider for a bucket (or default if not configured)
+func (km *KMSManager) GetKMSProvider(bucket string) (KMSProvider, error) {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	// Try bucket-specific provider first
+	if bucket != "" {
+		if providerName, exists := km.bucketKMS[bucket]; exists {
+			if provider, exists := km.providers[providerName]; exists {
+				return provider, nil
+			}
+		}
+	}
+
+	// Fall back to default provider
+	if km.defaultKMS != "" {
+		if provider, exists := km.providers[km.defaultKMS]; exists {
+			return provider, nil
+		}
+	}
+
+	// No provider configured
+	return nil, fmt.Errorf("no KMS provider configured for bucket %s", bucket)
+}
+
 // GetKMSProviderByName returns a specific KMS provider by name
 func (km *KMSManager) GetKMSProviderByName(name string) (KMSProvider, error) {
 	km.mu.RLock()
@@ -261,6 +321,136 @@ func (km *KMSManager) ListKMSProviders() []string {
 	}
 
 	return names
+}
+
+// GetBucketKMSProvider returns the KMS provider name for a bucket
+func (km *KMSManager) GetBucketKMSProvider(bucket string) string {
+	km.mu.RLock()
+	defer km.mu.RUnlock()
+
+	if providerName, exists := km.bucketKMS[bucket]; exists {
+		return providerName
+	}
+
+	return km.defaultKMS
+}
+
+// RemoveKMSProvider removes a KMS provider
+func (km *KMSManager) RemoveKMSProvider(name string) error {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	provider, exists := km.providers[name]
+	if !exists {
+		return fmt.Errorf("KMS provider %s does not exist", name)
+	}
+
+	// Close the provider
+	if err := provider.Close(); err != nil {
+		glog.Errorf("Failed to close KMS provider %s: %v", name, err)
+	}
+
+	// Remove from maps
+	delete(km.providers, name)
+	delete(km.configs, name)
+
+	// Remove from bucket associations
+	for bucket, providerName := range km.bucketKMS {
+		if providerName == name {
+			delete(km.bucketKMS, bucket)
+		}
+	}
+
+	// Clear default if it was this provider
+	if km.defaultKMS == name {
+		km.defaultKMS = ""
+	}
+
+	glog.V(1).Infof("Removed KMS provider %s", name)
+	return nil
+}
+
+// Close closes all KMS providers and cleans up resources
+func (km *KMSManager) Close() error {
+	km.mu.Lock()
+	defer km.mu.Unlock()
+
+	var allErrors []error
+	for name, provider := range km.providers {
+		if err := provider.Close(); err != nil {
+			allErrors = append(allErrors, fmt.Errorf("failed to close KMS provider %s: %w", name, err))
+		}
+	}
+
+	// Clear all maps
+	km.providers = make(map[string]KMSProvider)
+	km.configs = make(map[string]*KMSConfig)
+	km.bucketKMS = make(map[string]string)
+	km.defaultKMS = ""
+
+	if len(allErrors) > 0 {
+		return fmt.Errorf("errors closing KMS providers: %v", allErrors)
+	}
+
+	glog.V(1).Infof("KMS Manager closed")
+	return nil
+}
+
+// GenerateDataKeyForBucket generates a data key using the appropriate KMS provider for a bucket
+func (km *KMSManager) GenerateDataKeyForBucket(ctx context.Context, bucket, keyID string, keySpec KeySpec, encryptionContext map[string]string) (*GenerateDataKeyResponse, error) {
+	provider, err := km.GetKMSProvider(bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get KMS provider for bucket %s: %w", bucket, err)
+	}
+
+	req := &GenerateDataKeyRequest{
+		KeyID:             keyID,
+		KeySpec:           keySpec,
+		EncryptionContext: encryptionContext,
+	}
+
+	return provider.GenerateDataKey(ctx, req)
+}
+
+// DecryptForBucket decrypts a data key using the appropriate KMS provider for a bucket
+func (km *KMSManager) DecryptForBucket(ctx context.Context, bucket string, ciphertextBlob []byte, encryptionContext map[string]string) (*DecryptResponse, error) {
+	provider, err := km.GetKMSProvider(bucket)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get KMS provider for bucket %s: %w", bucket, err)
+	}
+
+	req := &DecryptRequest{
+		CiphertextBlob:    ciphertextBlob,
+		EncryptionContext: encryptionContext,
+	}
+
+	return provider.Decrypt(ctx, req)
+}
+
+// ValidateKeyForBucket validates that a KMS key exists and is usable for a bucket
+func (km *KMSManager) ValidateKeyForBucket(ctx context.Context, bucket, keyID string) error {
+	provider, err := km.GetKMSProvider(bucket)
+	if err != nil {
+		return fmt.Errorf("failed to get KMS provider for bucket %s: %w", bucket, err)
+	}
+
+	req := &DescribeKeyRequest{KeyID: keyID}
+	resp, err := provider.DescribeKey(ctx, req)
+	if err != nil {
+		return fmt.Errorf("failed to validate key %s for bucket %s: %w", keyID, bucket, err)
+	}
+
+	// Check key state
+	if resp.KeyState != KeyStateEnabled {
+		return fmt.Errorf("key %s is not enabled (state: %s)", keyID, resp.KeyState)
+	}
+
+	// Check key usage
+	if resp.KeyUsage != KeyUsageEncryptDecrypt && resp.KeyUsage != KeyUsageGenerateDataKey {
+		return fmt.Errorf("key %s cannot be used for encryption (usage: %s)", keyID, resp.KeyUsage)
+	}
+
+	return nil
 }
 
 // GetKMSHealth returns health status of all KMS providers
