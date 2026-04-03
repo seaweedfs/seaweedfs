@@ -401,12 +401,12 @@ func TestReconnect_GapBeyondRetainedWal_NeedsRebuild(t *testing.T) {
 		t.Fatal("SyncCache hung")
 	}
 
-	// Verify the NEW shipper detected the gap via handshake (not just budget).
+	// Verify the NEW shipper reached NeedsRebuild via handshake R < S detection.
 	newS := primary.shipperGroup.Shipper(0)
-	if newS.State() != ReplicaNeedsRebuild && newS.State() != ReplicaDegraded {
-		t.Fatalf("new shipper should be NeedsRebuild or Degraded after handshake gap detection, got %s", newS.State())
+	if newS.State() != ReplicaNeedsRebuild {
+		t.Fatalf("CP13-7: expected NeedsRebuild after handshake gap detection (R < S), got %s", newS.State())
 	}
-	t.Logf("CP13-7: reconnect handshake detected gap beyond retained WAL (state=%s)", newS.State())
+	t.Log("CP13-7: reconnect handshake detected gap beyond retained WAL → NeedsRebuild")
 }
 
 // ---------- WAL retention ----------
