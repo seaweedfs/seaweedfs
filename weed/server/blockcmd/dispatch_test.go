@@ -189,11 +189,11 @@ type fakeRecoveryCoordinator struct {
 	startedReplica string
 	startedAssigns []blockvol.BlockVolumeAssignment
 	catchUpCalls   []struct {
-		volumeID string
+		volumeID  string
 		targetLSN uint64
 	}
 	rebuildCalls []struct {
-		volumeID string
+		volumeID  string
 		targetLSN uint64
 	}
 }
@@ -205,7 +205,7 @@ func (f *fakeRecoveryCoordinator) StartRecoveryTask(replicaID string, assignment
 
 func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
 	f.catchUpCalls = append(f.catchUpCalls, struct {
-		volumeID string
+		volumeID  string
 		targetLSN uint64
 	}{volumeID: volumeID, targetLSN: targetLSN})
 	return nil
@@ -213,7 +213,7 @@ func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(volumeID string, targetL
 
 func (f *fakeRecoveryCoordinator) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
 	f.rebuildCalls = append(f.rebuildCalls, struct {
-		volumeID string
+		volumeID  string
 		targetLSN uint64
 	}{volumeID: volumeID, targetLSN: targetLSN})
 	return nil
@@ -229,6 +229,17 @@ func (f fakeProjectionReader) Projection(volumeID string) (engine.PublicationPro
 		return engine.PublicationProjection{}, false
 	}
 	return f.proj, true
+}
+
+type fakeProjectionCache struct {
+	published map[string]engine.PublicationProjection
+}
+
+func (f *fakeProjectionCache) StoreProjection(volumeID string, projection engine.PublicationProjection) {
+	if f.published == nil {
+		f.published = make(map[string]engine.PublicationProjection)
+	}
+	f.published[volumeID] = projection
 }
 
 type fakeSessionInvalidator struct {
@@ -254,6 +265,56 @@ func TestServiceOps_StartRecoveryTaskUsesRecoveryCoordinator(t *testing.T) {
 	}
 	if rec.startedReplica != "vol1/vs2" || len(rec.startedAssigns) != 1 || rec.startedAssigns[0].Path != "vol1" {
 		t.Fatalf("started=%q assigns=%v", rec.startedReplica, rec.startedAssigns)
+	}
+}
+
+func TestHostEffects_PublishProjectionPrefersLatestCoreProjection(t *testing.T) {
+	cache := &fakeProjectionCache{}
+	effects := NewHostEffects(
+		nil,
+		nil,
+		fakeProjectionReader{
+			proj: engine.PublicationProjection{VolumeID: "vol1", Role: engine.RoleReplica},
+			ok:   true,
+		},
+		cache,
+	)
+	err := effects.PublishProjection("vol1", engine.PublicationProjection{VolumeID: "vol1", Role: engine.RolePrimary})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, ok := cache.published["vol1"]
+	if !ok {
+		t.Fatal("expected cached projection")
+	}
+	if got.Role != engine.RoleReplica {
+		t.Fatalf("role=%v", got.Role)
+	}
+}
+
+func TestHostEffects_RecordAndEmitUseCallbacks(t *testing.T) {
+	var recorded []string
+	var events []engine.Event
+	effects := NewHostEffects(
+		func(volumeID, name string) {
+			recorded = append(recorded, volumeID+":"+name)
+		},
+		func(ev engine.Event) {
+			events = append(events, ev)
+		},
+		nil,
+		nil,
+	)
+	effects.RecordCommand("vol1", "apply_role")
+	effects.EmitCoreEvent(engine.RoleApplied{ID: "vol1"})
+	if !reflect.DeepEqual(recorded, []string{"vol1:apply_role"}) {
+		t.Fatalf("recorded=%v", recorded)
+	}
+	if len(events) != 1 {
+		t.Fatalf("events=%d", len(events))
+	}
+	if _, ok := events[0].(engine.RoleApplied); !ok {
+		t.Fatalf("event=%T", events[0])
 	}
 }
 

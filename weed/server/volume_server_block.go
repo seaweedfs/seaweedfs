@@ -11,8 +11,8 @@ import (
 
 	bridgeblockvol "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
-	"github.com/seaweedfs/seaweedfs/weed/server/blockcmd"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/server/blockcmd"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
@@ -580,6 +580,14 @@ func (bs *BlockService) coreCommandDispatcher() *blockcmd.Dispatcher {
 	if bs != nil && bs.v2Core != nil {
 		projection = bs.v2Core
 	}
+	var recordCommand blockcmd.CommandRecorder
+	var emitCoreEvent blockcmd.CoreEventEmitter
+	var projectionCache blockcmd.ProjectionCacheWriter
+	if bs != nil {
+		recordCommand = bs.recordExecutedCoreCommand
+		emitCoreEvent = bs.applyCoreEvent
+		projectionCache = bs
+	}
 	return blockcmd.NewDispatcher(
 		blockcmd.NewServiceOps(
 			coreCommandBackend{bs: bs},
@@ -592,7 +600,7 @@ func (bs *BlockService) coreCommandDispatcher() *blockcmd.Dispatcher {
 				return bs.v2Orchestrator.Registry.Sender(replicaID)
 			},
 		),
-		coreCommandEffects{bs: bs},
+		blockcmd.NewHostEffects(recordCommand, emitCoreEvent, projection, projectionCache),
 	)
 }
 
@@ -658,43 +666,6 @@ func (ops coreCommandBackend) ConfigureShipper(volumeID string, replicas []engin
 		}
 	}
 	return true, ops.bs.isPrimaryShipperConnected(volumeID), nil
-}
-
-type coreCommandEffects struct {
-	bs *BlockService
-}
-
-func (effects coreCommandEffects) RecordCommand(volumeID, name string) {
-	if effects.bs == nil {
-		return
-	}
-	effects.bs.recordExecutedCoreCommand(volumeID, name)
-}
-
-func (effects coreCommandEffects) EmitCoreEvent(ev engine.Event) {
-	if effects.bs == nil {
-		return
-	}
-	effects.bs.applyCoreEvent(ev)
-}
-
-func (effects coreCommandEffects) PublishProjection(volumeID string, projection engine.PublicationProjection) error {
-	if effects.bs == nil {
-		return nil
-	}
-	proj := projection
-	if core := effects.bs.V2Core(); core != nil {
-		if latest, ok := core.Projection(volumeID); ok {
-			proj = latest
-		}
-	}
-	effects.bs.coreProjMu.Lock()
-	if effects.bs.coreProj == nil {
-		effects.bs.coreProj = make(map[string]engine.PublicationProjection)
-	}
-	effects.bs.coreProj[volumeID] = proj
-	effects.bs.coreProjMu.Unlock()
-	return nil
 }
 
 func (bs *BlockService) applyRoleAssignment(a blockvol.BlockVolumeAssignment) error {
