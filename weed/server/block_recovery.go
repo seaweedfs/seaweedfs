@@ -62,30 +62,37 @@ func NewRecoveryManager(bs *BlockService) *RecoveryManager {
 	}
 }
 
-// HandleAssignmentResult processes the engine's assignment result.
-//
-// Engine result semantics:
-//   - SessionsCreated: new session, start goroutine
-//   - SessionsSuperseded: old replaced by new — cancel+drain old, start new
-//   - Removed: sender gone — cancel+drain, invalidate session
+// HandleAssignmentResult preserves the pre-16D behavior for no-core paths and
+// older tests: session creation/supersede results directly start recovery
+// goroutines. Core-present paths should use StartRecoveryTask instead.
 func (rm *RecoveryManager) HandleAssignmentResult(result engine.AssignmentResult, assignments []blockvol.BlockVolumeAssignment) {
-	// Removed: cancel + invalidate + drain.
 	for _, replicaID := range result.Removed {
 		rm.cancelAndDrain(replicaID, true)
 	}
-
-	// Superseded: cancel + drain (no invalidate — engine has replacement session),
-	// then start new.
 	for _, replicaID := range result.SessionsSuperseded {
 		rm.cancelAndDrain(replicaID, false)
 		rm.startTask(replicaID, assignments)
 	}
-
-	// Created: start new (cancel stale defensively).
 	for _, replicaID := range result.SessionsCreated {
 		rm.cancelAndDrain(replicaID, false)
 		rm.startTask(replicaID, assignments)
 	}
+}
+
+// HandleRemovedAssignments drains tasks for senders removed by registry
+// reconciliation. Recovery task startup is handled separately by core command
+// execution on the bounded live path.
+func (rm *RecoveryManager) HandleRemovedAssignments(result engine.AssignmentResult) {
+	for _, replicaID := range result.Removed {
+		rm.cancelAndDrain(replicaID, true)
+	}
+}
+
+// StartRecoveryTask starts one bounded recovery goroutine from a core-emitted
+// command. Any stale task for the same replica is drained first.
+func (rm *RecoveryManager) StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment) {
+	rm.cancelAndDrain(replicaID, false)
+	rm.startTask(replicaID, assignments)
 }
 
 // cancelAndDrain cancels a running task and WAITS for it to exit.
@@ -244,7 +251,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		reader := v2bridge.NewReader(vol)
 		pinner := v2bridge.NewPinner(vol)
 		sa = bridge.NewStorageAdapter(
-			&readerShimForRecovery{reader},
+			reader,
 			&pinnerShimForRecovery{pinner},
 		)
 		if s := bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
@@ -324,7 +331,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		reader := v2bridge.NewReader(vol)
 		pinner := v2bridge.NewPinner(vol)
 		sa = bridge.NewStorageAdapter(
-			&readerShimForRecovery{reader},
+			reader,
 			&pinnerShimForRecovery{pinner},
 		)
 		executor = v2bridge.NewExecutor(vol, rebuildAddr)
@@ -513,19 +520,6 @@ func (rm *RecoveryManager) volumePathForReplica(replicaID string) string {
 }
 
 // --- Bridge shims ---
-
-type readerShimForRecovery struct{ r *v2bridge.Reader }
-
-func (s *readerShimForRecovery) ReadState() bridge.BlockVolState {
-	rs := s.r.ReadState()
-	return bridge.BlockVolState{
-		WALHeadLSN:        rs.WALHeadLSN,
-		WALTailLSN:        rs.WALTailLSN,
-		CommittedLSN:      rs.CommittedLSN,
-		CheckpointLSN:     rs.CheckpointLSN,
-		CheckpointTrusted: rs.CheckpointTrusted,
-	}
-}
 
 type pinnerShimForRecovery struct{ p *v2bridge.Pinner }
 
