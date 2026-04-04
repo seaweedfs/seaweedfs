@@ -121,8 +121,11 @@ func streamChunksPrefetched(
 			select {
 			case results <- result:
 			case <-localCtx.Done():
-				// Consumer gone; close the pipe so fetch goroutine unblocks
+				// Consumer gone; close the pipe and wait for the fetch goroutine
+				// to finish so we don't leak it (this result was never sent to
+				// the channel, so the drain loop won't handle it).
 				pr.Close()
+				<-result.done
 				return
 			}
 		}
@@ -153,7 +156,7 @@ func streamChunksPrefetched(
 
 		// Stream chunk data from pipe to response
 		start := time.Now()
-		copied, copyErr := io.CopyBuffer(writer, result.reader, copyBuf)
+		_, copyErr := io.CopyBuffer(writer, result.reader, copyBuf)
 		result.reader.Close()
 
 		// Wait for fetch goroutine to finish to get final error
@@ -161,12 +164,15 @@ func streamChunksPrefetched(
 
 		// Determine the effective error
 		err := copyErr
-		if err == nil && result.fetchErr != nil && copied == 0 {
+		if err == nil && result.fetchErr != nil && result.written == 0 {
 			err = result.fetchErr
 		}
 
-		// If read failed with no data, try cache invalidation + re-fetch (same as sequential path)
-		if err != nil && copied == 0 {
+		// If the fetcher itself failed before writing any data, try cache invalidation
+		// + re-fetch (same as sequential path stream.go:197). We check result.fetchErr
+		// and result.written (not copied) to avoid wrongly retrying when the fetch
+		// succeeded but the response writer failed on the first write.
+		if result.fetchErr != nil && result.written == 0 {
 			if err := localCtx.Err(); err != nil {
 				consumeErr = err
 				break
