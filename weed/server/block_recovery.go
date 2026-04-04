@@ -235,6 +235,34 @@ func (rm *RecoveryManager) runRecovery(ctx context.Context, task *recoveryTask, 
 	}
 }
 
+// recoveryBundle holds the concrete bindings built from a BlockVol instance
+// for one recovery execution. This is the thin host-side factory output.
+type recoveryBundle struct {
+	driver   *engine.RecoveryDriver
+	executor *v2bridge.Executor
+}
+
+// buildRecoveryBundle creates the StorageAdapter + Executor + RecoveryDriver
+// from a real BlockVol. This is the shared host-side setup for both catch-up
+// and rebuild paths.
+func (rm *RecoveryManager) buildRecoveryBundle(volPath, rebuildAddr string) (*recoveryBundle, error) {
+	var sa engine.StorageAdapter
+	var executor *v2bridge.Executor
+	if err := rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		reader := v2bridge.NewReader(vol)
+		pinner := v2bridge.NewPinner(vol)
+		sa = bridge.NewStorageAdapter(reader, pinner)
+		executor = v2bridge.NewExecutor(vol, rebuildAddr)
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	return &recoveryBundle{
+		driver:   &engine.RecoveryDriver{Orchestrator: rm.bs.v2Orchestrator, Storage: sa},
+		executor: executor,
+	}, nil
+}
+
 func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAddr string) {
 	bs := rm.bs
 	volPath := rm.volumePathForReplica(replicaID)
@@ -243,34 +271,25 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	var sa engine.StorageAdapter
-	var replicaFlushedLSN uint64
-	var executor *v2bridge.Executor
-
-	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
-		reader := v2bridge.NewReader(vol)
-		pinner := v2bridge.NewPinner(vol)
-		sa = bridge.NewStorageAdapter(
-			reader,
-			pinner,
-		)
-		if s := bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
-			if snap := s.SessionSnapshot(); snap != nil {
-				replicaFlushedLSN = snap.StartLSN
-			}
-		}
-		executor = v2bridge.NewExecutor(vol, rebuildAddr)
-		return nil
-	}); err != nil {
+	bundle, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	if err != nil {
 		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
 		return
+	}
+
+	// Look up replica's flushed progress for catch-up planning.
+	var replicaFlushedLSN uint64
+	if s := bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
+		if snap := s.SessionSnapshot(); snap != nil {
+			replicaFlushedLSN = snap.StartLSN
+		}
 	}
 
 	if ctx.Err() != nil {
 		return
 	}
 
-	driver := &engine.RecoveryDriver{Orchestrator: bs.v2Orchestrator, Storage: sa}
+	driver := bundle.driver
 
 	plan, err := driver.PlanRecovery(replicaID, replicaFlushedLSN)
 	if err != nil {
@@ -280,7 +299,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
 		if bs.v2Core == nil {
-			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, executor)
+			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, bundle.executor)
 			return
 		}
 		rm.coord.Store(volPath, &rt.PendingExecution{
@@ -289,7 +308,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 			CatchUpTarget: plan.CatchUpTarget,
 			Driver:        driver,
 			Plan:          plan,
-			CatchUpIO:     executor,
+			CatchUpIO:     bundle.executor,
 		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: volPath, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(volPath) {
@@ -319,19 +338,8 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	var sa engine.StorageAdapter
-	var executor *v2bridge.Executor
-
-	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
-		reader := v2bridge.NewReader(vol)
-		pinner := v2bridge.NewPinner(vol)
-		sa = bridge.NewStorageAdapter(
-			reader,
-			pinner,
-		)
-		executor = v2bridge.NewExecutor(vol, rebuildAddr)
-		return nil
-	}); err != nil {
+	bundle, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	if err != nil {
 		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
 		return
 	}
@@ -340,7 +348,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	driver := &engine.RecoveryDriver{Orchestrator: bs.v2Orchestrator, Storage: sa}
+	driver := bundle.driver
 
 	plan, err := driver.PlanRebuild(replicaID)
 	if err != nil {
@@ -348,7 +356,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 	if bs.v2Core == nil {
-		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, executor)
+		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, bundle.executor)
 		return
 	}
 	pe := &rt.PendingExecution{
@@ -357,7 +365,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		RebuildTargetLSN: plan.RebuildTargetLSN,
 		Driver:           driver,
 		Plan:             plan,
-		RebuildIO:        executor,
+		RebuildIO:        bundle.executor,
 	}
 	rm.coord.Store(volPath, pe)
 	if rm.OnPendingExecution != nil {
@@ -401,31 +409,24 @@ func (rm *RecoveryManager) OnRebuildCompleted(volumeID string, plan *engine.Reco
 	if rm.bs == nil || rm.bs.v2Core == nil {
 		return
 	}
-	var snap blockvol.V2StatusSnapshot
+	status := rm.readRebuildStatus(volumeID)
+	ev := rt.DeriveRebuildCommitted(volumeID, status, plan)
+	rm.bs.applyCoreEvent(ev)
+}
+
+// readRebuildStatus reads post-rebuild snapshot from the backend.
+// This is the thin host binding — it only fetches raw values.
+func (rm *RecoveryManager) readRebuildStatus(volumeID string) rt.RebuildCompletionStatus {
+	var status rt.RebuildCompletionStatus
 	if err := rm.bs.blockStore.WithVolume(volumeID, func(vol *blockvol.BlockVol) error {
-		snap = vol.StatusSnapshot()
+		snap := vol.StatusSnapshot()
+		status.CommittedLSN = snap.CommittedLSN
+		status.CheckpointLSN = snap.CheckpointLSN
 		return nil
 	}); err != nil {
 		glog.Warningf("recovery: cannot read status snapshot for %s after rebuild: %v", volumeID, err)
 	}
-	flushedLSN := snap.CommittedLSN
-	if flushedLSN == 0 {
-		flushedLSN = plan.RebuildTargetLSN
-	}
-	checkpointLSN := snap.CheckpointLSN
-	if checkpointLSN == 0 {
-		checkpointLSN = plan.RebuildTargetLSN
-	}
-	achievedLSN := flushedLSN
-	if checkpointLSN > achievedLSN {
-		achievedLSN = checkpointLSN
-	}
-	rm.bs.applyCoreEvent(engine.RebuildCommitted{
-		ID:            volumeID,
-		AchievedLSN:   achievedLSN,
-		FlushedLSN:    flushedLSN,
-		CheckpointLSN: checkpointLSN,
-	})
+	return status
 }
 
 // === LEGACY NO-CORE COMPATIBILITY ===
