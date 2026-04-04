@@ -1070,6 +1070,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryUsesCoreReadinessGate(t
 	if msg.VolumeMode != "bootstrap_pending" {
 		t.Fatalf("expected explicit bootstrap_pending volume_mode on heartbeat, msg=%+v", msg)
 	}
+	if msg.VolumeModeReason != "awaiting_shipper_connected" {
+		t.Fatalf("expected explicit bootstrap reason on heartbeat, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_ReplicaUsesCoreReadinessGate(t *testing.T) {
@@ -1317,6 +1320,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMod
 	if msg.VolumeMode != "needs_rebuild" {
 		t.Fatalf("expected explicit needs_rebuild volume_mode on heartbeat, msg=%+v", msg)
 	}
+	if msg.VolumeModeReason != "gap_too_large" {
+		t.Fatalf("expected explicit needs_rebuild reason on heartbeat, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreTruth(t *testing.T) {
@@ -1351,6 +1357,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreT
 	if msg.VolumeMode != "publish_healthy" {
 		t.Fatalf("expected explicit publish_healthy volume_mode on heartbeat, msg=%+v", msg)
 	}
+	if msg.VolumeModeReason != "" {
+		t.Fatalf("expected empty publish_healthy mode reason on heartbeat, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryDegradedUsesCoreModeTruth(t *testing.T) {
@@ -1380,6 +1389,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryDegradedUsesCoreModeTru
 	}
 	if msg.VolumeMode != "degraded" {
 		t.Fatalf("expected explicit degraded volume_mode on heartbeat, msg=%+v", msg)
+	}
+	if msg.VolumeModeReason != "barrier_timeout" {
+		t.Fatalf("expected explicit degraded reason on heartbeat, msg=%+v", msg)
 	}
 }
 

@@ -717,6 +717,58 @@ Evidence:
 
 1. focused working-tree change after `16O` closeout
 
+### `16Q`: VolumeModeReason Heartbeat Truth Rebinding
+
+Goal:
+
+1. close one bounded failover/publication seam by preserving explicit
+   `volume_mode_reason` truth across the heartbeat/master boundary instead of
+   dropping the reason behind outward mode transitions
+2. keep the slice limited to outward `VolumeModeReason` preservation on the
+   current heartbeat wire and master-registry/API path, not broader restart or
+   launch closure
+
+Acceptance object:
+
+1. `BlockVolumeInfoMessage` carries an additive explicit `volume_mode_reason`
+   field on the heartbeat wire
+2. `weed/server` heartbeat emission sets that field from the current core-owned
+   mode/publication reason on the core-present path
+3. `master_block_registry` and outward volume-info surfaces prefer explicit
+   heartbeat `volume_mode_reason` truth while retaining empty/default behavior as
+   backward-compatible fallback when the field is absent
+4. focused proofs show primary bootstrap/degraded/needs_rebuild reason survives
+   heartbeat/master consume as explicit outward reason truth
+5. this slice still does not yet claim broad restart/disturbance or launch
+   closure
+
+Current chosen path:
+
+1. widen `master.proto` / heartbeat conversion with an additive
+   `volume_mode_reason` field
+2. emit that field from `CollectBlockVolumeHeartbeat` using the bounded core
+   reason on the core-present path
+3. let master outward `VolumeModeReason` prefer explicit heartbeat reason truth
+   and keep empty/default behavior as backward-compatible fallback
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. heartbeat wire now carries additive explicit `volume_mode_reason` truth
+2. volume-server heartbeat emission now preserves bounded core mode/publication
+   reason on the core-present path
+3. master consume and outward volume-info/API surfaces now preserve explicit
+   `VolumeModeReason` truth instead of dropping the reason behind outward mode
+   transitions
+4. older heartbeats without the new field still keep empty/default behavior
+
+Evidence:
+
+1. focused working-tree change after `16P` closeout
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -805,11 +857,15 @@ boundary:
 17. `16P` delivered:
    - heartbeat/master consume now preserves explicit bounded `VolumeMode` truth
      with backward-compatible fallback for older heartbeats
+18. `16Q` delivered:
+   - heartbeat/master/API path now preserves explicit bounded
+     `VolumeModeReason` truth instead of dropping outward mode reasons at the
+     master boundary
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
-2. continue closing broader recovery-loop and publication seams one bounded step
-   at a time after `PublishHealthy` rebinding
+2. continue closing broader recovery-loop, publication, and disturbance seams
+   one bounded step at a time after outward reason preservation
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims

@@ -225,6 +225,9 @@ func TestBlockVolumeLookupHandler_ReflectsCoreInfluencedReadyConsume(t *testing.
 	if info.VolumeMode != "publish_healthy" {
 		t.Fatalf("expected outward VolumeMode=publish_healthy, got %q", info.VolumeMode)
 	}
+	if info.VolumeModeReason != "" {
+		t.Fatalf("expected empty outward VolumeModeReason for publish_healthy, got %q", info.VolumeModeReason)
+	}
 }
 
 func TestBlockVolumeDeleteHandler(t *testing.T) {
@@ -317,6 +320,9 @@ func TestBlockVolumeListHandler_ReflectsCoreInfluencedDegradedConsume(t *testing
 	}
 	if info.VolumeMode != "degraded" {
 		t.Fatalf("expected outward VolumeMode=degraded, got %q", info.VolumeMode)
+	}
+	if info.VolumeModeReason != "barrier_timeout" {
+		t.Fatalf("expected outward VolumeModeReason=barrier_timeout, got %q", info.VolumeModeReason)
 	}
 }
 

@@ -2,7 +2,7 @@
 // versions:
 // - protoc-gen-go-grpc v1.6.1
 // - protoc             v3.21.12
-// source: weed/pb/master.proto
+// source: master.proto
 
 package master_pb
 
@@ -1278,5 +1278,5 @@ var Seaweed_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 	},
-	Metadata: "weed/pb/master.proto",
+	Metadata: "master.proto",
 }

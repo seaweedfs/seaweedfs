@@ -320,6 +320,19 @@ func TestInfoMessage_VolumeModeRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_VolumeModeReasonRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:             "/data/vol.blk",
+		Epoch:            1,
+		VolumeModeReason: "awaiting_shipper_connected",
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.VolumeModeReason != "awaiting_shipper_connected" {
+		t.Fatalf("VolumeModeReason: got %q, want %q", back.VolumeModeReason, "awaiting_shipper_connected")
+	}
+}
+
 func TestAssignment_MultiReplicaRoundTrip(t *testing.T) {
 	orig := BlockVolumeAssignment{
 		Path:       "/data/vol.blk",

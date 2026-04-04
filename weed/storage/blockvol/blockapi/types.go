@@ -10,11 +10,11 @@ import (
 type CreateVolumeRequest struct {
 	Name             string `json:"name"`
 	SizeBytes        uint64 `json:"size_bytes"`
-	ReplicaPlacement string `json:"replica_placement"`          // SeaweedFS placement string: "000", "001", "010", "100"
-	DiskType         string `json:"disk_type"`                  // e.g. "ssd", "hdd"
-	DurabilityMode   string `json:"durability_mode,omitempty"`  // "best_effort", "sync_all", "sync_quorum"
-	ReplicaFactor    int    `json:"replica_factor,omitempty"`   // 1, 2, or 3 (default: 2)
-	Preset           string `json:"preset,omitempty"`           // "database", "general", "throughput", or ""
+	ReplicaPlacement string `json:"replica_placement"`         // SeaweedFS placement string: "000", "001", "010", "100"
+	DiskType         string `json:"disk_type"`                 // e.g. "ssd", "hdd"
+	DurabilityMode   string `json:"durability_mode,omitempty"` // "best_effort", "sync_all", "sync_quorum"
+	ReplicaFactor    int    `json:"replica_factor,omitempty"`  // 1, 2, or 3 (default: 2)
+	Preset           string `json:"preset,omitempty"`          // "database", "general", "throughput", or ""
 }
 
 // VolumeInfo describes a block volume.
@@ -39,14 +39,15 @@ type VolumeInfo struct {
 	ReplicaReady    bool            `json:"replica_ready,omitempty"`
 	HealthScore     float64         `json:"health_score"`
 	ReplicaDegraded bool            `json:"replica_degraded,omitempty"`
-	DurabilityMode  string          `json:"durability_mode"` // CP8-3-1
+	DurabilityMode  string          `json:"durability_mode"`  // CP8-3-1
 	Preset          string          `json:"preset,omitempty"` // CP11B-1: preset used at creation
 	NvmeAddr        string          `json:"nvme_addr,omitempty"`
 	NQN             string          `json:"nqn,omitempty"`
 	// CP11B-4: Operator-facing health state.
-	HealthState     string          `json:"health_state"` // "healthy", "degraded", "rebuilding", "unsafe"
+	HealthState string `json:"health_state"` // "healthy", "degraded", "rebuilding", "unsafe"
 	// CP13-9: Normalized volume mode for constrained-runtime surfaces.
-	VolumeMode      string          `json:"volume_mode,omitempty"` // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
+	VolumeMode       string `json:"volume_mode,omitempty"` // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
+	VolumeModeReason string `json:"volume_mode_reason,omitempty"`
 }
 
 // ResolvedPolicyResponse is the response for POST /block/volume/resolve.
@@ -115,26 +116,26 @@ type PromoteVolumeRequest struct {
 type PromoteVolumeResponse struct {
 	NewPrimary string               `json:"new_primary"`
 	Epoch      uint64               `json:"epoch"`
-	Reason     string               `json:"reason,omitempty"`      // rejection reason if failed
-	Rejections []PreflightRejection `json:"rejections,omitempty"`  // per-replica rejection details
+	Reason     string               `json:"reason,omitempty"`     // rejection reason if failed
+	Rejections []PreflightRejection `json:"rejections,omitempty"` // per-replica rejection details
 }
 
 // BlockStatusResponse is the response for GET /block/status.
 type BlockStatusResponse struct {
-	VolumeCount          int    `json:"volume_count"`
-	ServerCount          int    `json:"server_count"`
+	VolumeCount           int    `json:"volume_count"`
+	ServerCount           int    `json:"server_count"`
 	PromotionLSNTolerance uint64 `json:"promotion_lsn_tolerance"`
-	BarrierLagLSN        uint64 `json:"barrier_lag_lsn"`
-	PromotionsTotal      int64  `json:"promotions_total"`
-	FailoversTotal       int64  `json:"failovers_total"`
-	RebuildsTotal        int64  `json:"rebuilds_total"`
-	AssignmentQueueDepth int    `json:"assignment_queue_depth"`
+	BarrierLagLSN         uint64 `json:"barrier_lag_lsn"`
+	PromotionsTotal       int64  `json:"promotions_total"`
+	FailoversTotal        int64  `json:"failovers_total"`
+	RebuildsTotal         int64  `json:"rebuilds_total"`
+	AssignmentQueueDepth  int    `json:"assignment_queue_depth"`
 	// CP11B-4: Operator summary fields.
-	HealthyCount         int    `json:"healthy_count"`
-	DegradedCount        int    `json:"degraded_count"`
-	RebuildingCount      int    `json:"rebuilding_count"`
-	UnsafeCount          int    `json:"unsafe_count"`
-	NvmeCapableServers   int    `json:"nvme_capable_servers"`
+	HealthyCount       int `json:"healthy_count"`
+	DegradedCount      int `json:"degraded_count"`
+	RebuildingCount    int `json:"rebuilding_count"`
+	UnsafeCount        int `json:"unsafe_count"`
+	NvmeCapableServers int `json:"nvme_capable_servers"`
 }
 
 // PreflightRejection describes why a specific replica was rejected for promotion.
@@ -145,23 +146,23 @@ type PreflightRejection struct {
 
 // PreflightResponse is the response for GET /block/volume/{name}/preflight.
 type PreflightResponse struct {
-	VolumeName      string                `json:"volume_name"`
-	Promotable      bool                  `json:"promotable"`
-	Reason          string                `json:"reason,omitempty"`
-	CandidateServer string                `json:"candidate_server,omitempty"`
-	CandidateHealth float64               `json:"candidate_health,omitempty"`
-	CandidateWALLSN uint64                `json:"candidate_wal_lsn,omitempty"`
-	Rejections      []PreflightRejection  `json:"rejections,omitempty"`
-	PrimaryServer   string                `json:"primary_server"`
-	PrimaryAlive    bool                  `json:"primary_alive"`
+	VolumeName      string               `json:"volume_name"`
+	Promotable      bool                 `json:"promotable"`
+	Reason          string               `json:"reason,omitempty"`
+	CandidateServer string               `json:"candidate_server,omitempty"`
+	CandidateHealth float64              `json:"candidate_health,omitempty"`
+	CandidateWALLSN uint64               `json:"candidate_wal_lsn,omitempty"`
+	Rejections      []PreflightRejection `json:"rejections,omitempty"`
+	PrimaryServer   string               `json:"primary_server"`
+	PrimaryAlive    bool                 `json:"primary_alive"`
 }
 
 // VolumePlanResponse is the response for POST /block/volume/plan.
 type VolumePlanResponse struct {
-	ResolvedPolicy ResolvedPolicyView   `json:"resolved_policy"`
-	Plan           VolumePlanView       `json:"plan"`
-	Warnings       []string             `json:"warnings,omitempty"`
-	Errors         []string             `json:"errors,omitempty"`
+	ResolvedPolicy ResolvedPolicyView `json:"resolved_policy"`
+	Plan           VolumePlanView     `json:"plan"`
+	Warnings       []string           `json:"warnings,omitempty"`
+	Errors         []string           `json:"errors,omitempty"`
 }
 
 // VolumePlanView describes the placement plan.

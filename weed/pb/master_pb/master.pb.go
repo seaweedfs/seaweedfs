@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.11
 // 	protoc        v3.21.12
-// source: weed/pb/master.proto
+// source: master.proto
 
 package master_pb
 
@@ -62,7 +62,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_weed_pb_master_proto_msgTypes[0]
+	mi := &file_master_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -74,7 +74,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[0]
+	mi := &file_master_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -87,7 +87,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{0}
+	return file_master_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *Heartbeat) GetIp() string {
@@ -281,7 +281,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[1]
+	mi := &file_master_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -293,7 +293,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[1]
+	mi := &file_master_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -306,7 +306,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{1}
+	return file_master_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *HeartbeatResponse) GetVolumeSizeLimit() uint64 {
@@ -389,7 +389,7 @@ type VolumeInformationMessage struct {
 
 func (x *VolumeInformationMessage) Reset() {
 	*x = VolumeInformationMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[2]
+	mi := &file_master_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -401,7 +401,7 @@ func (x *VolumeInformationMessage) String() string {
 func (*VolumeInformationMessage) ProtoMessage() {}
 
 func (x *VolumeInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[2]
+	mi := &file_master_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -414,7 +414,7 @@ func (x *VolumeInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeInformationMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{2}
+	return file_master_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *VolumeInformationMessage) GetId() uint32 {
@@ -544,7 +544,7 @@ type VolumeShortInformationMessage struct {
 
 func (x *VolumeShortInformationMessage) Reset() {
 	*x = VolumeShortInformationMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[3]
+	mi := &file_master_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -556,7 +556,7 @@ func (x *VolumeShortInformationMessage) String() string {
 func (*VolumeShortInformationMessage) ProtoMessage() {}
 
 func (x *VolumeShortInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[3]
+	mi := &file_master_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -569,7 +569,7 @@ func (x *VolumeShortInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeShortInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeShortInformationMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{3}
+	return file_master_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *VolumeShortInformationMessage) GetId() uint32 {
@@ -636,7 +636,7 @@ type VolumeEcShardInformationMessage struct {
 
 func (x *VolumeEcShardInformationMessage) Reset() {
 	*x = VolumeEcShardInformationMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[4]
+	mi := &file_master_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -648,7 +648,7 @@ func (x *VolumeEcShardInformationMessage) String() string {
 func (*VolumeEcShardInformationMessage) ProtoMessage() {}
 
 func (x *VolumeEcShardInformationMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[4]
+	mi := &file_master_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -661,7 +661,7 @@ func (x *VolumeEcShardInformationMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeEcShardInformationMessage.ProtoReflect.Descriptor instead.
 func (*VolumeEcShardInformationMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{4}
+	return file_master_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *VolumeEcShardInformationMessage) GetId() uint32 {
@@ -724,7 +724,7 @@ type StorageBackend struct {
 
 func (x *StorageBackend) Reset() {
 	*x = StorageBackend{}
-	mi := &file_weed_pb_master_proto_msgTypes[5]
+	mi := &file_master_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -736,7 +736,7 @@ func (x *StorageBackend) String() string {
 func (*StorageBackend) ProtoMessage() {}
 
 func (x *StorageBackend) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[5]
+	mi := &file_master_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -749,7 +749,7 @@ func (x *StorageBackend) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StorageBackend.ProtoReflect.Descriptor instead.
 func (*StorageBackend) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{5}
+	return file_master_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StorageBackend) GetType() string {
@@ -781,7 +781,7 @@ type Empty struct {
 
 func (x *Empty) Reset() {
 	*x = Empty{}
-	mi := &file_weed_pb_master_proto_msgTypes[6]
+	mi := &file_master_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -793,7 +793,7 @@ func (x *Empty) String() string {
 func (*Empty) ProtoMessage() {}
 
 func (x *Empty) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[6]
+	mi := &file_master_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -806,7 +806,7 @@ func (x *Empty) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Empty.ProtoReflect.Descriptor instead.
 func (*Empty) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{6}
+	return file_master_proto_rawDescGZIP(), []int{6}
 }
 
 type SuperBlockExtra struct {
@@ -818,7 +818,7 @@ type SuperBlockExtra struct {
 
 func (x *SuperBlockExtra) Reset() {
 	*x = SuperBlockExtra{}
-	mi := &file_weed_pb_master_proto_msgTypes[7]
+	mi := &file_master_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -830,7 +830,7 @@ func (x *SuperBlockExtra) String() string {
 func (*SuperBlockExtra) ProtoMessage() {}
 
 func (x *SuperBlockExtra) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[7]
+	mi := &file_master_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -843,7 +843,7 @@ func (x *SuperBlockExtra) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuperBlockExtra.ProtoReflect.Descriptor instead.
 func (*SuperBlockExtra) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{7}
+	return file_master_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *SuperBlockExtra) GetErasureCoding() *SuperBlockExtra_ErasureCoding {
@@ -867,7 +867,7 @@ type KeepConnectedRequest struct {
 
 func (x *KeepConnectedRequest) Reset() {
 	*x = KeepConnectedRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[8]
+	mi := &file_master_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -879,7 +879,7 @@ func (x *KeepConnectedRequest) String() string {
 func (*KeepConnectedRequest) ProtoMessage() {}
 
 func (x *KeepConnectedRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[8]
+	mi := &file_master_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -892,7 +892,7 @@ func (x *KeepConnectedRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeepConnectedRequest.ProtoReflect.Descriptor instead.
 func (*KeepConnectedRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{8}
+	return file_master_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *KeepConnectedRequest) GetClientType() string {
@@ -954,7 +954,7 @@ type VolumeLocation struct {
 
 func (x *VolumeLocation) Reset() {
 	*x = VolumeLocation{}
-	mi := &file_weed_pb_master_proto_msgTypes[9]
+	mi := &file_master_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -966,7 +966,7 @@ func (x *VolumeLocation) String() string {
 func (*VolumeLocation) ProtoMessage() {}
 
 func (x *VolumeLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[9]
+	mi := &file_master_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -979,7 +979,7 @@ func (x *VolumeLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeLocation.ProtoReflect.Descriptor instead.
 func (*VolumeLocation) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{9}
+	return file_master_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *VolumeLocation) GetUrl() string {
@@ -1058,7 +1058,7 @@ type ClusterNodeUpdate struct {
 
 func (x *ClusterNodeUpdate) Reset() {
 	*x = ClusterNodeUpdate{}
-	mi := &file_weed_pb_master_proto_msgTypes[10]
+	mi := &file_master_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1070,7 +1070,7 @@ func (x *ClusterNodeUpdate) String() string {
 func (*ClusterNodeUpdate) ProtoMessage() {}
 
 func (x *ClusterNodeUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[10]
+	mi := &file_master_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1083,7 +1083,7 @@ func (x *ClusterNodeUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClusterNodeUpdate.ProtoReflect.Descriptor instead.
 func (*ClusterNodeUpdate) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{10}
+	return file_master_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ClusterNodeUpdate) GetNodeType() string {
@@ -1131,7 +1131,7 @@ type KeepConnectedResponse struct {
 
 func (x *KeepConnectedResponse) Reset() {
 	*x = KeepConnectedResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[11]
+	mi := &file_master_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1143,7 +1143,7 @@ func (x *KeepConnectedResponse) String() string {
 func (*KeepConnectedResponse) ProtoMessage() {}
 
 func (x *KeepConnectedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[11]
+	mi := &file_master_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1156,7 +1156,7 @@ func (x *KeepConnectedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use KeepConnectedResponse.ProtoReflect.Descriptor instead.
 func (*KeepConnectedResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{11}
+	return file_master_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *KeepConnectedResponse) GetVolumeLocation() *VolumeLocation {
@@ -1183,7 +1183,7 @@ type LookupVolumeRequest struct {
 
 func (x *LookupVolumeRequest) Reset() {
 	*x = LookupVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[12]
+	mi := &file_master_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1195,7 +1195,7 @@ func (x *LookupVolumeRequest) String() string {
 func (*LookupVolumeRequest) ProtoMessage() {}
 
 func (x *LookupVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[12]
+	mi := &file_master_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1208,7 +1208,7 @@ func (x *LookupVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupVolumeRequest.ProtoReflect.Descriptor instead.
 func (*LookupVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{12}
+	return file_master_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *LookupVolumeRequest) GetVolumeOrFileIds() []string {
@@ -1234,7 +1234,7 @@ type LookupVolumeResponse struct {
 
 func (x *LookupVolumeResponse) Reset() {
 	*x = LookupVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[13]
+	mi := &file_master_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1246,7 +1246,7 @@ func (x *LookupVolumeResponse) String() string {
 func (*LookupVolumeResponse) ProtoMessage() {}
 
 func (x *LookupVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[13]
+	mi := &file_master_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1259,7 +1259,7 @@ func (x *LookupVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupVolumeResponse.ProtoReflect.Descriptor instead.
 func (*LookupVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{13}
+	return file_master_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *LookupVolumeResponse) GetVolumeIdLocations() []*LookupVolumeResponse_VolumeIdLocation {
@@ -1281,7 +1281,7 @@ type Location struct {
 
 func (x *Location) Reset() {
 	*x = Location{}
-	mi := &file_weed_pb_master_proto_msgTypes[14]
+	mi := &file_master_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1293,7 +1293,7 @@ func (x *Location) String() string {
 func (*Location) ProtoMessage() {}
 
 func (x *Location) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[14]
+	mi := &file_master_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1306,7 +1306,7 @@ func (x *Location) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Location.ProtoReflect.Descriptor instead.
 func (*Location) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{14}
+	return file_master_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *Location) GetUrl() string {
@@ -1355,7 +1355,7 @@ type AssignRequest struct {
 
 func (x *AssignRequest) Reset() {
 	*x = AssignRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[15]
+	mi := &file_master_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1367,7 +1367,7 @@ func (x *AssignRequest) String() string {
 func (*AssignRequest) ProtoMessage() {}
 
 func (x *AssignRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[15]
+	mi := &file_master_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1380,7 +1380,7 @@ func (x *AssignRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignRequest.ProtoReflect.Descriptor instead.
 func (*AssignRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{15}
+	return file_master_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *AssignRequest) GetCount() uint64 {
@@ -1470,7 +1470,7 @@ type VolumeGrowRequest struct {
 
 func (x *VolumeGrowRequest) Reset() {
 	*x = VolumeGrowRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[16]
+	mi := &file_master_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1482,7 +1482,7 @@ func (x *VolumeGrowRequest) String() string {
 func (*VolumeGrowRequest) ProtoMessage() {}
 
 func (x *VolumeGrowRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[16]
+	mi := &file_master_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1495,7 +1495,7 @@ func (x *VolumeGrowRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeGrowRequest.ProtoReflect.Descriptor instead.
 func (*VolumeGrowRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{16}
+	return file_master_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *VolumeGrowRequest) GetWritableVolumeCount() uint32 {
@@ -1575,7 +1575,7 @@ type AssignResponse struct {
 
 func (x *AssignResponse) Reset() {
 	*x = AssignResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[17]
+	mi := &file_master_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1587,7 +1587,7 @@ func (x *AssignResponse) String() string {
 func (*AssignResponse) ProtoMessage() {}
 
 func (x *AssignResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[17]
+	mi := &file_master_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1600,7 +1600,7 @@ func (x *AssignResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignResponse.ProtoReflect.Descriptor instead.
 func (*AssignResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{17}
+	return file_master_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *AssignResponse) GetFid() string {
@@ -1657,7 +1657,7 @@ type StatisticsRequest struct {
 
 func (x *StatisticsRequest) Reset() {
 	*x = StatisticsRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[18]
+	mi := &file_master_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1669,7 +1669,7 @@ func (x *StatisticsRequest) String() string {
 func (*StatisticsRequest) ProtoMessage() {}
 
 func (x *StatisticsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[18]
+	mi := &file_master_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1682,7 +1682,7 @@ func (x *StatisticsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatisticsRequest.ProtoReflect.Descriptor instead.
 func (*StatisticsRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{18}
+	return file_master_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *StatisticsRequest) GetReplication() string {
@@ -1724,7 +1724,7 @@ type StatisticsResponse struct {
 
 func (x *StatisticsResponse) Reset() {
 	*x = StatisticsResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[19]
+	mi := &file_master_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1736,7 +1736,7 @@ func (x *StatisticsResponse) String() string {
 func (*StatisticsResponse) ProtoMessage() {}
 
 func (x *StatisticsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[19]
+	mi := &file_master_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1749,7 +1749,7 @@ func (x *StatisticsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatisticsResponse.ProtoReflect.Descriptor instead.
 func (*StatisticsResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{19}
+	return file_master_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *StatisticsResponse) GetTotalSize() uint64 {
@@ -1783,7 +1783,7 @@ type Collection struct {
 
 func (x *Collection) Reset() {
 	*x = Collection{}
-	mi := &file_weed_pb_master_proto_msgTypes[20]
+	mi := &file_master_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1795,7 +1795,7 @@ func (x *Collection) String() string {
 func (*Collection) ProtoMessage() {}
 
 func (x *Collection) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[20]
+	mi := &file_master_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1808,7 +1808,7 @@ func (x *Collection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Collection.ProtoReflect.Descriptor instead.
 func (*Collection) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{20}
+	return file_master_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *Collection) GetName() string {
@@ -1828,7 +1828,7 @@ type CollectionListRequest struct {
 
 func (x *CollectionListRequest) Reset() {
 	*x = CollectionListRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[21]
+	mi := &file_master_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1840,7 +1840,7 @@ func (x *CollectionListRequest) String() string {
 func (*CollectionListRequest) ProtoMessage() {}
 
 func (x *CollectionListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[21]
+	mi := &file_master_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1853,7 +1853,7 @@ func (x *CollectionListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionListRequest.ProtoReflect.Descriptor instead.
 func (*CollectionListRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{21}
+	return file_master_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *CollectionListRequest) GetIncludeNormalVolumes() bool {
@@ -1879,7 +1879,7 @@ type CollectionListResponse struct {
 
 func (x *CollectionListResponse) Reset() {
 	*x = CollectionListResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[22]
+	mi := &file_master_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1891,7 +1891,7 @@ func (x *CollectionListResponse) String() string {
 func (*CollectionListResponse) ProtoMessage() {}
 
 func (x *CollectionListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[22]
+	mi := &file_master_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1904,7 +1904,7 @@ func (x *CollectionListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionListResponse.ProtoReflect.Descriptor instead.
 func (*CollectionListResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{22}
+	return file_master_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CollectionListResponse) GetCollections() []*Collection {
@@ -1923,7 +1923,7 @@ type CollectionDeleteRequest struct {
 
 func (x *CollectionDeleteRequest) Reset() {
 	*x = CollectionDeleteRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[23]
+	mi := &file_master_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1935,7 +1935,7 @@ func (x *CollectionDeleteRequest) String() string {
 func (*CollectionDeleteRequest) ProtoMessage() {}
 
 func (x *CollectionDeleteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[23]
+	mi := &file_master_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1948,7 +1948,7 @@ func (x *CollectionDeleteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionDeleteRequest.ProtoReflect.Descriptor instead.
 func (*CollectionDeleteRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{23}
+	return file_master_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *CollectionDeleteRequest) GetName() string {
@@ -1966,7 +1966,7 @@ type CollectionDeleteResponse struct {
 
 func (x *CollectionDeleteResponse) Reset() {
 	*x = CollectionDeleteResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[24]
+	mi := &file_master_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1978,7 +1978,7 @@ func (x *CollectionDeleteResponse) String() string {
 func (*CollectionDeleteResponse) ProtoMessage() {}
 
 func (x *CollectionDeleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[24]
+	mi := &file_master_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1991,7 +1991,7 @@ func (x *CollectionDeleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CollectionDeleteResponse.ProtoReflect.Descriptor instead.
 func (*CollectionDeleteResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{24}
+	return file_master_proto_rawDescGZIP(), []int{24}
 }
 
 // volume related
@@ -2012,7 +2012,7 @@ type DiskInfo struct {
 
 func (x *DiskInfo) Reset() {
 	*x = DiskInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[25]
+	mi := &file_master_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2024,7 +2024,7 @@ func (x *DiskInfo) String() string {
 func (*DiskInfo) ProtoMessage() {}
 
 func (x *DiskInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[25]
+	mi := &file_master_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2037,7 +2037,7 @@ func (x *DiskInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiskInfo.ProtoReflect.Descriptor instead.
 func (*DiskInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{25}
+	return file_master_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DiskInfo) GetType() string {
@@ -2115,7 +2115,7 @@ type DataNodeInfo struct {
 
 func (x *DataNodeInfo) Reset() {
 	*x = DataNodeInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[26]
+	mi := &file_master_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2127,7 +2127,7 @@ func (x *DataNodeInfo) String() string {
 func (*DataNodeInfo) ProtoMessage() {}
 
 func (x *DataNodeInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[26]
+	mi := &file_master_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2140,7 +2140,7 @@ func (x *DataNodeInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataNodeInfo.ProtoReflect.Descriptor instead.
 func (*DataNodeInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{26}
+	return file_master_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DataNodeInfo) GetId() string {
@@ -2182,7 +2182,7 @@ type RackInfo struct {
 
 func (x *RackInfo) Reset() {
 	*x = RackInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[27]
+	mi := &file_master_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2194,7 +2194,7 @@ func (x *RackInfo) String() string {
 func (*RackInfo) ProtoMessage() {}
 
 func (x *RackInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[27]
+	mi := &file_master_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2207,7 +2207,7 @@ func (x *RackInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RackInfo.ProtoReflect.Descriptor instead.
 func (*RackInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{27}
+	return file_master_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *RackInfo) GetId() string {
@@ -2242,7 +2242,7 @@ type DataCenterInfo struct {
 
 func (x *DataCenterInfo) Reset() {
 	*x = DataCenterInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[28]
+	mi := &file_master_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2254,7 +2254,7 @@ func (x *DataCenterInfo) String() string {
 func (*DataCenterInfo) ProtoMessage() {}
 
 func (x *DataCenterInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[28]
+	mi := &file_master_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2267,7 +2267,7 @@ func (x *DataCenterInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DataCenterInfo.ProtoReflect.Descriptor instead.
 func (*DataCenterInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{28}
+	return file_master_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *DataCenterInfo) GetId() string {
@@ -2302,7 +2302,7 @@ type TopologyInfo struct {
 
 func (x *TopologyInfo) Reset() {
 	*x = TopologyInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[29]
+	mi := &file_master_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2314,7 +2314,7 @@ func (x *TopologyInfo) String() string {
 func (*TopologyInfo) ProtoMessage() {}
 
 func (x *TopologyInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[29]
+	mi := &file_master_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2327,7 +2327,7 @@ func (x *TopologyInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TopologyInfo.ProtoReflect.Descriptor instead.
 func (*TopologyInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{29}
+	return file_master_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *TopologyInfo) GetId() string {
@@ -2359,7 +2359,7 @@ type VolumeListRequest struct {
 
 func (x *VolumeListRequest) Reset() {
 	*x = VolumeListRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[30]
+	mi := &file_master_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2371,7 +2371,7 @@ func (x *VolumeListRequest) String() string {
 func (*VolumeListRequest) ProtoMessage() {}
 
 func (x *VolumeListRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[30]
+	mi := &file_master_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2384,7 +2384,7 @@ func (x *VolumeListRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeListRequest.ProtoReflect.Descriptor instead.
 func (*VolumeListRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{30}
+	return file_master_proto_rawDescGZIP(), []int{30}
 }
 
 type VolumeListResponse struct {
@@ -2397,7 +2397,7 @@ type VolumeListResponse struct {
 
 func (x *VolumeListResponse) Reset() {
 	*x = VolumeListResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[31]
+	mi := &file_master_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2409,7 +2409,7 @@ func (x *VolumeListResponse) String() string {
 func (*VolumeListResponse) ProtoMessage() {}
 
 func (x *VolumeListResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[31]
+	mi := &file_master_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2422,7 +2422,7 @@ func (x *VolumeListResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeListResponse.ProtoReflect.Descriptor instead.
 func (*VolumeListResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{31}
+	return file_master_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *VolumeListResponse) GetTopologyInfo() *TopologyInfo {
@@ -2448,7 +2448,7 @@ type LookupEcVolumeRequest struct {
 
 func (x *LookupEcVolumeRequest) Reset() {
 	*x = LookupEcVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[32]
+	mi := &file_master_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2460,7 +2460,7 @@ func (x *LookupEcVolumeRequest) String() string {
 func (*LookupEcVolumeRequest) ProtoMessage() {}
 
 func (x *LookupEcVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[32]
+	mi := &file_master_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2473,7 +2473,7 @@ func (x *LookupEcVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupEcVolumeRequest.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{32}
+	return file_master_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *LookupEcVolumeRequest) GetVolumeId() uint32 {
@@ -2493,7 +2493,7 @@ type LookupEcVolumeResponse struct {
 
 func (x *LookupEcVolumeResponse) Reset() {
 	*x = LookupEcVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[33]
+	mi := &file_master_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2505,7 +2505,7 @@ func (x *LookupEcVolumeResponse) String() string {
 func (*LookupEcVolumeResponse) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[33]
+	mi := &file_master_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2518,7 +2518,7 @@ func (x *LookupEcVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupEcVolumeResponse.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{33}
+	return file_master_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *LookupEcVolumeResponse) GetVolumeId() uint32 {
@@ -2546,7 +2546,7 @@ type VacuumVolumeRequest struct {
 
 func (x *VacuumVolumeRequest) Reset() {
 	*x = VacuumVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[34]
+	mi := &file_master_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2558,7 +2558,7 @@ func (x *VacuumVolumeRequest) String() string {
 func (*VacuumVolumeRequest) ProtoMessage() {}
 
 func (x *VacuumVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[34]
+	mi := &file_master_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2571,7 +2571,7 @@ func (x *VacuumVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumVolumeRequest.ProtoReflect.Descriptor instead.
 func (*VacuumVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{34}
+	return file_master_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *VacuumVolumeRequest) GetGarbageThreshold() float32 {
@@ -2603,7 +2603,7 @@ type VacuumVolumeResponse struct {
 
 func (x *VacuumVolumeResponse) Reset() {
 	*x = VacuumVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[35]
+	mi := &file_master_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2615,7 +2615,7 @@ func (x *VacuumVolumeResponse) String() string {
 func (*VacuumVolumeResponse) ProtoMessage() {}
 
 func (x *VacuumVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[35]
+	mi := &file_master_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2628,7 +2628,7 @@ func (x *VacuumVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VacuumVolumeResponse.ProtoReflect.Descriptor instead.
 func (*VacuumVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{35}
+	return file_master_proto_rawDescGZIP(), []int{35}
 }
 
 type DisableVacuumRequest struct {
@@ -2639,7 +2639,7 @@ type DisableVacuumRequest struct {
 
 func (x *DisableVacuumRequest) Reset() {
 	*x = DisableVacuumRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[36]
+	mi := &file_master_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2651,7 +2651,7 @@ func (x *DisableVacuumRequest) String() string {
 func (*DisableVacuumRequest) ProtoMessage() {}
 
 func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[36]
+	mi := &file_master_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2664,7 +2664,7 @@ func (x *DisableVacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*DisableVacuumRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{36}
+	return file_master_proto_rawDescGZIP(), []int{36}
 }
 
 type DisableVacuumResponse struct {
@@ -2675,7 +2675,7 @@ type DisableVacuumResponse struct {
 
 func (x *DisableVacuumResponse) Reset() {
 	*x = DisableVacuumResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[37]
+	mi := &file_master_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2687,7 +2687,7 @@ func (x *DisableVacuumResponse) String() string {
 func (*DisableVacuumResponse) ProtoMessage() {}
 
 func (x *DisableVacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[37]
+	mi := &file_master_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2700,7 +2700,7 @@ func (x *DisableVacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DisableVacuumResponse.ProtoReflect.Descriptor instead.
 func (*DisableVacuumResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{37}
+	return file_master_proto_rawDescGZIP(), []int{37}
 }
 
 type EnableVacuumRequest struct {
@@ -2711,7 +2711,7 @@ type EnableVacuumRequest struct {
 
 func (x *EnableVacuumRequest) Reset() {
 	*x = EnableVacuumRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[38]
+	mi := &file_master_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2723,7 +2723,7 @@ func (x *EnableVacuumRequest) String() string {
 func (*EnableVacuumRequest) ProtoMessage() {}
 
 func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[38]
+	mi := &file_master_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2736,7 +2736,7 @@ func (x *EnableVacuumRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableVacuumRequest.ProtoReflect.Descriptor instead.
 func (*EnableVacuumRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{38}
+	return file_master_proto_rawDescGZIP(), []int{38}
 }
 
 type EnableVacuumResponse struct {
@@ -2747,7 +2747,7 @@ type EnableVacuumResponse struct {
 
 func (x *EnableVacuumResponse) Reset() {
 	*x = EnableVacuumResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[39]
+	mi := &file_master_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2759,7 +2759,7 @@ func (x *EnableVacuumResponse) String() string {
 func (*EnableVacuumResponse) ProtoMessage() {}
 
 func (x *EnableVacuumResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[39]
+	mi := &file_master_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2772,7 +2772,7 @@ func (x *EnableVacuumResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EnableVacuumResponse.ProtoReflect.Descriptor instead.
 func (*EnableVacuumResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{39}
+	return file_master_proto_rawDescGZIP(), []int{39}
 }
 
 type VolumeMarkReadonlyRequest struct {
@@ -2792,7 +2792,7 @@ type VolumeMarkReadonlyRequest struct {
 
 func (x *VolumeMarkReadonlyRequest) Reset() {
 	*x = VolumeMarkReadonlyRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[40]
+	mi := &file_master_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2804,7 +2804,7 @@ func (x *VolumeMarkReadonlyRequest) String() string {
 func (*VolumeMarkReadonlyRequest) ProtoMessage() {}
 
 func (x *VolumeMarkReadonlyRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[40]
+	mi := &file_master_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2817,7 +2817,7 @@ func (x *VolumeMarkReadonlyRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeMarkReadonlyRequest.ProtoReflect.Descriptor instead.
 func (*VolumeMarkReadonlyRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{40}
+	return file_master_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *VolumeMarkReadonlyRequest) GetIp() string {
@@ -2891,7 +2891,7 @@ type VolumeMarkReadonlyResponse struct {
 
 func (x *VolumeMarkReadonlyResponse) Reset() {
 	*x = VolumeMarkReadonlyResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[41]
+	mi := &file_master_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2903,7 +2903,7 @@ func (x *VolumeMarkReadonlyResponse) String() string {
 func (*VolumeMarkReadonlyResponse) ProtoMessage() {}
 
 func (x *VolumeMarkReadonlyResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[41]
+	mi := &file_master_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2916,7 +2916,7 @@ func (x *VolumeMarkReadonlyResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeMarkReadonlyResponse.ProtoReflect.Descriptor instead.
 func (*VolumeMarkReadonlyResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{41}
+	return file_master_proto_rawDescGZIP(), []int{41}
 }
 
 type GetMasterConfigurationRequest struct {
@@ -2927,7 +2927,7 @@ type GetMasterConfigurationRequest struct {
 
 func (x *GetMasterConfigurationRequest) Reset() {
 	*x = GetMasterConfigurationRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[42]
+	mi := &file_master_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2939,7 +2939,7 @@ func (x *GetMasterConfigurationRequest) String() string {
 func (*GetMasterConfigurationRequest) ProtoMessage() {}
 
 func (x *GetMasterConfigurationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[42]
+	mi := &file_master_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2952,7 +2952,7 @@ func (x *GetMasterConfigurationRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMasterConfigurationRequest.ProtoReflect.Descriptor instead.
 func (*GetMasterConfigurationRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{42}
+	return file_master_proto_rawDescGZIP(), []int{42}
 }
 
 type GetMasterConfigurationResponse struct {
@@ -2970,7 +2970,7 @@ type GetMasterConfigurationResponse struct {
 
 func (x *GetMasterConfigurationResponse) Reset() {
 	*x = GetMasterConfigurationResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[43]
+	mi := &file_master_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2982,7 +2982,7 @@ func (x *GetMasterConfigurationResponse) String() string {
 func (*GetMasterConfigurationResponse) ProtoMessage() {}
 
 func (x *GetMasterConfigurationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[43]
+	mi := &file_master_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2995,7 +2995,7 @@ func (x *GetMasterConfigurationResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMasterConfigurationResponse.ProtoReflect.Descriptor instead.
 func (*GetMasterConfigurationResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{43}
+	return file_master_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *GetMasterConfigurationResponse) GetMetricsAddress() string {
@@ -3058,7 +3058,7 @@ type ListClusterNodesRequest struct {
 
 func (x *ListClusterNodesRequest) Reset() {
 	*x = ListClusterNodesRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[44]
+	mi := &file_master_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3070,7 +3070,7 @@ func (x *ListClusterNodesRequest) String() string {
 func (*ListClusterNodesRequest) ProtoMessage() {}
 
 func (x *ListClusterNodesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[44]
+	mi := &file_master_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3083,7 +3083,7 @@ func (x *ListClusterNodesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClusterNodesRequest.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{44}
+	return file_master_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *ListClusterNodesRequest) GetClientType() string {
@@ -3116,7 +3116,7 @@ type ListClusterNodesResponse struct {
 
 func (x *ListClusterNodesResponse) Reset() {
 	*x = ListClusterNodesResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[45]
+	mi := &file_master_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3128,7 +3128,7 @@ func (x *ListClusterNodesResponse) String() string {
 func (*ListClusterNodesResponse) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[45]
+	mi := &file_master_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3141,7 +3141,7 @@ func (x *ListClusterNodesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListClusterNodesResponse.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{45}
+	return file_master_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *ListClusterNodesResponse) GetClusterNodes() []*ListClusterNodesResponse_ClusterNode {
@@ -3164,7 +3164,7 @@ type LeaseAdminTokenRequest struct {
 
 func (x *LeaseAdminTokenRequest) Reset() {
 	*x = LeaseAdminTokenRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[46]
+	mi := &file_master_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3176,7 +3176,7 @@ func (x *LeaseAdminTokenRequest) String() string {
 func (*LeaseAdminTokenRequest) ProtoMessage() {}
 
 func (x *LeaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[46]
+	mi := &file_master_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3189,7 +3189,7 @@ func (x *LeaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseAdminTokenRequest.ProtoReflect.Descriptor instead.
 func (*LeaseAdminTokenRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{46}
+	return file_master_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *LeaseAdminTokenRequest) GetPreviousToken() int64 {
@@ -3237,7 +3237,7 @@ type LeaseAdminTokenResponse struct {
 
 func (x *LeaseAdminTokenResponse) Reset() {
 	*x = LeaseAdminTokenResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[47]
+	mi := &file_master_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3249,7 +3249,7 @@ func (x *LeaseAdminTokenResponse) String() string {
 func (*LeaseAdminTokenResponse) ProtoMessage() {}
 
 func (x *LeaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[47]
+	mi := &file_master_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3262,7 +3262,7 @@ func (x *LeaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaseAdminTokenResponse.ProtoReflect.Descriptor instead.
 func (*LeaseAdminTokenResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{47}
+	return file_master_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *LeaseAdminTokenResponse) GetToken() int64 {
@@ -3290,7 +3290,7 @@ type ReleaseAdminTokenRequest struct {
 
 func (x *ReleaseAdminTokenRequest) Reset() {
 	*x = ReleaseAdminTokenRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[48]
+	mi := &file_master_proto_msgTypes[48]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3302,7 +3302,7 @@ func (x *ReleaseAdminTokenRequest) String() string {
 func (*ReleaseAdminTokenRequest) ProtoMessage() {}
 
 func (x *ReleaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[48]
+	mi := &file_master_proto_msgTypes[48]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3315,7 +3315,7 @@ func (x *ReleaseAdminTokenRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseAdminTokenRequest.ProtoReflect.Descriptor instead.
 func (*ReleaseAdminTokenRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{48}
+	return file_master_proto_rawDescGZIP(), []int{48}
 }
 
 func (x *ReleaseAdminTokenRequest) GetPreviousToken() int64 {
@@ -3347,7 +3347,7 @@ type ReleaseAdminTokenResponse struct {
 
 func (x *ReleaseAdminTokenResponse) Reset() {
 	*x = ReleaseAdminTokenResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[49]
+	mi := &file_master_proto_msgTypes[49]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3359,7 +3359,7 @@ func (x *ReleaseAdminTokenResponse) String() string {
 func (*ReleaseAdminTokenResponse) ProtoMessage() {}
 
 func (x *ReleaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[49]
+	mi := &file_master_proto_msgTypes[49]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3372,7 +3372,7 @@ func (x *ReleaseAdminTokenResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReleaseAdminTokenResponse.ProtoReflect.Descriptor instead.
 func (*ReleaseAdminTokenResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{49}
+	return file_master_proto_rawDescGZIP(), []int{49}
 }
 
 type PingRequest struct {
@@ -3385,7 +3385,7 @@ type PingRequest struct {
 
 func (x *PingRequest) Reset() {
 	*x = PingRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[50]
+	mi := &file_master_proto_msgTypes[50]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3397,7 +3397,7 @@ func (x *PingRequest) String() string {
 func (*PingRequest) ProtoMessage() {}
 
 func (x *PingRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[50]
+	mi := &file_master_proto_msgTypes[50]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3410,7 +3410,7 @@ func (x *PingRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingRequest.ProtoReflect.Descriptor instead.
 func (*PingRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{50}
+	return file_master_proto_rawDescGZIP(), []int{50}
 }
 
 func (x *PingRequest) GetTarget() string {
@@ -3438,7 +3438,7 @@ type PingResponse struct {
 
 func (x *PingResponse) Reset() {
 	*x = PingResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[51]
+	mi := &file_master_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3450,7 +3450,7 @@ func (x *PingResponse) String() string {
 func (*PingResponse) ProtoMessage() {}
 
 func (x *PingResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[51]
+	mi := &file_master_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3463,7 +3463,7 @@ func (x *PingResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PingResponse.ProtoReflect.Descriptor instead.
 func (*PingResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{51}
+	return file_master_proto_rawDescGZIP(), []int{51}
 }
 
 func (x *PingResponse) GetStartTimeNs() int64 {
@@ -3498,7 +3498,7 @@ type RaftAddServerRequest struct {
 
 func (x *RaftAddServerRequest) Reset() {
 	*x = RaftAddServerRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[52]
+	mi := &file_master_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3510,7 +3510,7 @@ func (x *RaftAddServerRequest) String() string {
 func (*RaftAddServerRequest) ProtoMessage() {}
 
 func (x *RaftAddServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[52]
+	mi := &file_master_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3523,7 +3523,7 @@ func (x *RaftAddServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftAddServerRequest.ProtoReflect.Descriptor instead.
 func (*RaftAddServerRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{52}
+	return file_master_proto_rawDescGZIP(), []int{52}
 }
 
 func (x *RaftAddServerRequest) GetId() string {
@@ -3555,7 +3555,7 @@ type RaftAddServerResponse struct {
 
 func (x *RaftAddServerResponse) Reset() {
 	*x = RaftAddServerResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[53]
+	mi := &file_master_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3567,7 +3567,7 @@ func (x *RaftAddServerResponse) String() string {
 func (*RaftAddServerResponse) ProtoMessage() {}
 
 func (x *RaftAddServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[53]
+	mi := &file_master_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3580,7 +3580,7 @@ func (x *RaftAddServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftAddServerResponse.ProtoReflect.Descriptor instead.
 func (*RaftAddServerResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{53}
+	return file_master_proto_rawDescGZIP(), []int{53}
 }
 
 type RaftRemoveServerRequest struct {
@@ -3593,7 +3593,7 @@ type RaftRemoveServerRequest struct {
 
 func (x *RaftRemoveServerRequest) Reset() {
 	*x = RaftRemoveServerRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[54]
+	mi := &file_master_proto_msgTypes[54]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3605,7 +3605,7 @@ func (x *RaftRemoveServerRequest) String() string {
 func (*RaftRemoveServerRequest) ProtoMessage() {}
 
 func (x *RaftRemoveServerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[54]
+	mi := &file_master_proto_msgTypes[54]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3618,7 +3618,7 @@ func (x *RaftRemoveServerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftRemoveServerRequest.ProtoReflect.Descriptor instead.
 func (*RaftRemoveServerRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{54}
+	return file_master_proto_rawDescGZIP(), []int{54}
 }
 
 func (x *RaftRemoveServerRequest) GetId() string {
@@ -3643,7 +3643,7 @@ type RaftRemoveServerResponse struct {
 
 func (x *RaftRemoveServerResponse) Reset() {
 	*x = RaftRemoveServerResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[55]
+	mi := &file_master_proto_msgTypes[55]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3655,7 +3655,7 @@ func (x *RaftRemoveServerResponse) String() string {
 func (*RaftRemoveServerResponse) ProtoMessage() {}
 
 func (x *RaftRemoveServerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[55]
+	mi := &file_master_proto_msgTypes[55]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3668,7 +3668,7 @@ func (x *RaftRemoveServerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftRemoveServerResponse.ProtoReflect.Descriptor instead.
 func (*RaftRemoveServerResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{55}
+	return file_master_proto_rawDescGZIP(), []int{55}
 }
 
 type RaftListClusterServersRequest struct {
@@ -3679,7 +3679,7 @@ type RaftListClusterServersRequest struct {
 
 func (x *RaftListClusterServersRequest) Reset() {
 	*x = RaftListClusterServersRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[56]
+	mi := &file_master_proto_msgTypes[56]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3691,7 +3691,7 @@ func (x *RaftListClusterServersRequest) String() string {
 func (*RaftListClusterServersRequest) ProtoMessage() {}
 
 func (x *RaftListClusterServersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[56]
+	mi := &file_master_proto_msgTypes[56]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3704,7 +3704,7 @@ func (x *RaftListClusterServersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftListClusterServersRequest.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{56}
+	return file_master_proto_rawDescGZIP(), []int{56}
 }
 
 type RaftListClusterServersResponse struct {
@@ -3716,7 +3716,7 @@ type RaftListClusterServersResponse struct {
 
 func (x *RaftListClusterServersResponse) Reset() {
 	*x = RaftListClusterServersResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[57]
+	mi := &file_master_proto_msgTypes[57]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3728,7 +3728,7 @@ func (x *RaftListClusterServersResponse) String() string {
 func (*RaftListClusterServersResponse) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[57]
+	mi := &file_master_proto_msgTypes[57]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3741,7 +3741,7 @@ func (x *RaftListClusterServersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftListClusterServersResponse.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{57}
+	return file_master_proto_rawDescGZIP(), []int{57}
 }
 
 func (x *RaftListClusterServersResponse) GetClusterServers() []*RaftListClusterServersResponse_ClusterServers {
@@ -3761,7 +3761,7 @@ type RaftLeadershipTransferRequest struct {
 
 func (x *RaftLeadershipTransferRequest) Reset() {
 	*x = RaftLeadershipTransferRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[58]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3773,7 +3773,7 @@ func (x *RaftLeadershipTransferRequest) String() string {
 func (*RaftLeadershipTransferRequest) ProtoMessage() {}
 
 func (x *RaftLeadershipTransferRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[58]
+	mi := &file_master_proto_msgTypes[58]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3786,7 +3786,7 @@ func (x *RaftLeadershipTransferRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftLeadershipTransferRequest.ProtoReflect.Descriptor instead.
 func (*RaftLeadershipTransferRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{58}
+	return file_master_proto_rawDescGZIP(), []int{58}
 }
 
 func (x *RaftLeadershipTransferRequest) GetTargetId() string {
@@ -3813,7 +3813,7 @@ type RaftLeadershipTransferResponse struct {
 
 func (x *RaftLeadershipTransferResponse) Reset() {
 	*x = RaftLeadershipTransferResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[59]
+	mi := &file_master_proto_msgTypes[59]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3825,7 +3825,7 @@ func (x *RaftLeadershipTransferResponse) String() string {
 func (*RaftLeadershipTransferResponse) ProtoMessage() {}
 
 func (x *RaftLeadershipTransferResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[59]
+	mi := &file_master_proto_msgTypes[59]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3838,7 +3838,7 @@ func (x *RaftLeadershipTransferResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RaftLeadershipTransferResponse.ProtoReflect.Descriptor instead.
 func (*RaftLeadershipTransferResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{59}
+	return file_master_proto_rawDescGZIP(), []int{59}
 }
 
 func (x *RaftLeadershipTransferResponse) GetPreviousLeader() string {
@@ -3863,7 +3863,7 @@ type VolumeGrowResponse struct {
 
 func (x *VolumeGrowResponse) Reset() {
 	*x = VolumeGrowResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[60]
+	mi := &file_master_proto_msgTypes[60]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3875,7 +3875,7 @@ func (x *VolumeGrowResponse) String() string {
 func (*VolumeGrowResponse) ProtoMessage() {}
 
 func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[60]
+	mi := &file_master_proto_msgTypes[60]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3888,40 +3888,41 @@ func (x *VolumeGrowResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VolumeGrowResponse.ProtoReflect.Descriptor instead.
 func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{60}
+	return file_master_proto_rawDescGZIP(), []int{60}
 }
 
 type BlockVolumeInfoMessage struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Path            string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	VolumeSize      uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
-	BlockSize       uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
-	Epoch           uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Role            uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
-	WalHeadLsn      uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
-	CheckpointLsn   uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
-	HasLease        bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
-	DiskType        string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	ReplicaDataAddr string                 `protobuf:"bytes,10,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
-	ReplicaCtrlAddr string                 `protobuf:"bytes,11,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
-	HealthScore     float64                `protobuf:"fixed64,12,opt,name=health_score,json=healthScore,proto3" json:"health_score,omitempty"`
-	ScrubErrors     int64                  `protobuf:"varint,13,opt,name=scrub_errors,json=scrubErrors,proto3" json:"scrub_errors,omitempty"`
-	LastScrubTime   int64                  `protobuf:"varint,14,opt,name=last_scrub_time,json=lastScrubTime,proto3" json:"last_scrub_time,omitempty"`
-	ReplicaDegraded bool                   `protobuf:"varint,15,opt,name=replica_degraded,json=replicaDegraded,proto3" json:"replica_degraded,omitempty"`
-	DurabilityMode  string                 `protobuf:"bytes,16,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
-	NvmeAddr        string                 `protobuf:"bytes,17,opt,name=nvme_addr,json=nvmeAddr,proto3" json:"nvme_addr,omitempty"`
-	Nqn             string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
-	ReplicaReady    *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
-	NeedsRebuild    *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
-	PublishHealthy  *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
-	VolumeMode      *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Path             string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	VolumeSize       uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
+	BlockSize        uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
+	Epoch            uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Role             uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
+	WalHeadLsn       uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
+	CheckpointLsn    uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
+	HasLease         bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
+	DiskType         string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	ReplicaDataAddr  string                 `protobuf:"bytes,10,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
+	ReplicaCtrlAddr  string                 `protobuf:"bytes,11,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
+	HealthScore      float64                `protobuf:"fixed64,12,opt,name=health_score,json=healthScore,proto3" json:"health_score,omitempty"`
+	ScrubErrors      int64                  `protobuf:"varint,13,opt,name=scrub_errors,json=scrubErrors,proto3" json:"scrub_errors,omitempty"`
+	LastScrubTime    int64                  `protobuf:"varint,14,opt,name=last_scrub_time,json=lastScrubTime,proto3" json:"last_scrub_time,omitempty"`
+	ReplicaDegraded  bool                   `protobuf:"varint,15,opt,name=replica_degraded,json=replicaDegraded,proto3" json:"replica_degraded,omitempty"`
+	DurabilityMode   string                 `protobuf:"bytes,16,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	NvmeAddr         string                 `protobuf:"bytes,17,opt,name=nvme_addr,json=nvmeAddr,proto3" json:"nvme_addr,omitempty"`
+	Nqn              string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
+	ReplicaReady     *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
+	NeedsRebuild     *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
+	PublishHealthy   *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
+	VolumeMode       *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
+	VolumeModeReason *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *BlockVolumeInfoMessage) Reset() {
 	*x = BlockVolumeInfoMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[61]
+	mi := &file_master_proto_msgTypes[61]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3933,7 +3934,7 @@ func (x *BlockVolumeInfoMessage) String() string {
 func (*BlockVolumeInfoMessage) ProtoMessage() {}
 
 func (x *BlockVolumeInfoMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[61]
+	mi := &file_master_proto_msgTypes[61]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3946,7 +3947,7 @@ func (x *BlockVolumeInfoMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockVolumeInfoMessage.ProtoReflect.Descriptor instead.
 func (*BlockVolumeInfoMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{61}
+	return file_master_proto_rawDescGZIP(), []int{61}
 }
 
 func (x *BlockVolumeInfoMessage) GetPath() string {
@@ -4103,6 +4104,13 @@ func (x *BlockVolumeInfoMessage) GetVolumeMode() string {
 	return ""
 }
 
+func (x *BlockVolumeInfoMessage) GetVolumeModeReason() string {
+	if x != nil && x.VolumeModeReason != nil {
+		return *x.VolumeModeReason
+	}
+	return ""
+}
+
 type BlockVolumeShortInfoMessage struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
@@ -4115,7 +4123,7 @@ type BlockVolumeShortInfoMessage struct {
 
 func (x *BlockVolumeShortInfoMessage) Reset() {
 	*x = BlockVolumeShortInfoMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[62]
+	mi := &file_master_proto_msgTypes[62]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4127,7 +4135,7 @@ func (x *BlockVolumeShortInfoMessage) String() string {
 func (*BlockVolumeShortInfoMessage) ProtoMessage() {}
 
 func (x *BlockVolumeShortInfoMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[62]
+	mi := &file_master_proto_msgTypes[62]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4140,7 +4148,7 @@ func (x *BlockVolumeShortInfoMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockVolumeShortInfoMessage.ProtoReflect.Descriptor instead.
 func (*BlockVolumeShortInfoMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{62}
+	return file_master_proto_rawDescGZIP(), []int{62}
 }
 
 func (x *BlockVolumeShortInfoMessage) GetPath() string {
@@ -4188,7 +4196,7 @@ type BlockVolumeAssignment struct {
 
 func (x *BlockVolumeAssignment) Reset() {
 	*x = BlockVolumeAssignment{}
-	mi := &file_weed_pb_master_proto_msgTypes[63]
+	mi := &file_master_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4200,7 +4208,7 @@ func (x *BlockVolumeAssignment) String() string {
 func (*BlockVolumeAssignment) ProtoMessage() {}
 
 func (x *BlockVolumeAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[63]
+	mi := &file_master_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4213,7 +4221,7 @@ func (x *BlockVolumeAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockVolumeAssignment.ProtoReflect.Descriptor instead.
 func (*BlockVolumeAssignment) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{63}
+	return file_master_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *BlockVolumeAssignment) GetPath() string {
@@ -4290,7 +4298,7 @@ type ReplicaAddrMessage struct {
 
 func (x *ReplicaAddrMessage) Reset() {
 	*x = ReplicaAddrMessage{}
-	mi := &file_weed_pb_master_proto_msgTypes[64]
+	mi := &file_master_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4302,7 +4310,7 @@ func (x *ReplicaAddrMessage) String() string {
 func (*ReplicaAddrMessage) ProtoMessage() {}
 
 func (x *ReplicaAddrMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[64]
+	mi := &file_master_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4315,7 +4323,7 @@ func (x *ReplicaAddrMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicaAddrMessage.ProtoReflect.Descriptor instead.
 func (*ReplicaAddrMessage) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{64}
+	return file_master_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *ReplicaAddrMessage) GetDataAddr() string {
@@ -4352,7 +4360,7 @@ type CreateBlockVolumeRequest struct {
 
 func (x *CreateBlockVolumeRequest) Reset() {
 	*x = CreateBlockVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[65]
+	mi := &file_master_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4364,7 +4372,7 @@ func (x *CreateBlockVolumeRequest) String() string {
 func (*CreateBlockVolumeRequest) ProtoMessage() {}
 
 func (x *CreateBlockVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[65]
+	mi := &file_master_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4377,7 +4385,7 @@ func (x *CreateBlockVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBlockVolumeRequest.ProtoReflect.Descriptor instead.
 func (*CreateBlockVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{65}
+	return file_master_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *CreateBlockVolumeRequest) GetName() string {
@@ -4432,7 +4440,7 @@ type CreateBlockVolumeResponse struct {
 
 func (x *CreateBlockVolumeResponse) Reset() {
 	*x = CreateBlockVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[66]
+	mi := &file_master_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4444,7 +4452,7 @@ func (x *CreateBlockVolumeResponse) String() string {
 func (*CreateBlockVolumeResponse) ProtoMessage() {}
 
 func (x *CreateBlockVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[66]
+	mi := &file_master_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4457,7 +4465,7 @@ func (x *CreateBlockVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBlockVolumeResponse.ProtoReflect.Descriptor instead.
 func (*CreateBlockVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{66}
+	return file_master_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *CreateBlockVolumeResponse) GetVolumeId() string {
@@ -4532,7 +4540,7 @@ type DeleteBlockVolumeRequest struct {
 
 func (x *DeleteBlockVolumeRequest) Reset() {
 	*x = DeleteBlockVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[67]
+	mi := &file_master_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4544,7 +4552,7 @@ func (x *DeleteBlockVolumeRequest) String() string {
 func (*DeleteBlockVolumeRequest) ProtoMessage() {}
 
 func (x *DeleteBlockVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[67]
+	mi := &file_master_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4557,7 +4565,7 @@ func (x *DeleteBlockVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBlockVolumeRequest.ProtoReflect.Descriptor instead.
 func (*DeleteBlockVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{67}
+	return file_master_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *DeleteBlockVolumeRequest) GetName() string {
@@ -4575,7 +4583,7 @@ type DeleteBlockVolumeResponse struct {
 
 func (x *DeleteBlockVolumeResponse) Reset() {
 	*x = DeleteBlockVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[68]
+	mi := &file_master_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4587,7 +4595,7 @@ func (x *DeleteBlockVolumeResponse) String() string {
 func (*DeleteBlockVolumeResponse) ProtoMessage() {}
 
 func (x *DeleteBlockVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[68]
+	mi := &file_master_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4600,7 +4608,7 @@ func (x *DeleteBlockVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBlockVolumeResponse.ProtoReflect.Descriptor instead.
 func (*DeleteBlockVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{68}
+	return file_master_proto_rawDescGZIP(), []int{68}
 }
 
 type LookupBlockVolumeRequest struct {
@@ -4612,7 +4620,7 @@ type LookupBlockVolumeRequest struct {
 
 func (x *LookupBlockVolumeRequest) Reset() {
 	*x = LookupBlockVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4624,7 +4632,7 @@ func (x *LookupBlockVolumeRequest) String() string {
 func (*LookupBlockVolumeRequest) ProtoMessage() {}
 
 func (x *LookupBlockVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[69]
+	mi := &file_master_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4637,7 +4645,7 @@ func (x *LookupBlockVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupBlockVolumeRequest.ProtoReflect.Descriptor instead.
 func (*LookupBlockVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{69}
+	return file_master_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *LookupBlockVolumeRequest) GetName() string {
@@ -4665,7 +4673,7 @@ type LookupBlockVolumeResponse struct {
 
 func (x *LookupBlockVolumeResponse) Reset() {
 	*x = LookupBlockVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[70]
+	mi := &file_master_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4677,7 +4685,7 @@ func (x *LookupBlockVolumeResponse) String() string {
 func (*LookupBlockVolumeResponse) ProtoMessage() {}
 
 func (x *LookupBlockVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[70]
+	mi := &file_master_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4690,7 +4698,7 @@ func (x *LookupBlockVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LookupBlockVolumeResponse.ProtoReflect.Descriptor instead.
 func (*LookupBlockVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{70}
+	return file_master_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *LookupBlockVolumeResponse) GetVolumeServer() string {
@@ -4773,7 +4781,7 @@ type CreateBlockSnapshotRequest struct {
 
 func (x *CreateBlockSnapshotRequest) Reset() {
 	*x = CreateBlockSnapshotRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[71]
+	mi := &file_master_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4785,7 +4793,7 @@ func (x *CreateBlockSnapshotRequest) String() string {
 func (*CreateBlockSnapshotRequest) ProtoMessage() {}
 
 func (x *CreateBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[71]
+	mi := &file_master_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4798,7 +4806,7 @@ func (x *CreateBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBlockSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*CreateBlockSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{71}
+	return file_master_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *CreateBlockSnapshotRequest) GetVolumeName() string {
@@ -4826,7 +4834,7 @@ type CreateBlockSnapshotResponse struct {
 
 func (x *CreateBlockSnapshotResponse) Reset() {
 	*x = CreateBlockSnapshotResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[72]
+	mi := &file_master_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4838,7 +4846,7 @@ func (x *CreateBlockSnapshotResponse) String() string {
 func (*CreateBlockSnapshotResponse) ProtoMessage() {}
 
 func (x *CreateBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[72]
+	mi := &file_master_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4851,7 +4859,7 @@ func (x *CreateBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateBlockSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*CreateBlockSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{72}
+	return file_master_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *CreateBlockSnapshotResponse) GetSnapshotId() uint32 {
@@ -4885,7 +4893,7 @@ type DeleteBlockSnapshotRequest struct {
 
 func (x *DeleteBlockSnapshotRequest) Reset() {
 	*x = DeleteBlockSnapshotRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[73]
+	mi := &file_master_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4897,7 +4905,7 @@ func (x *DeleteBlockSnapshotRequest) String() string {
 func (*DeleteBlockSnapshotRequest) ProtoMessage() {}
 
 func (x *DeleteBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[73]
+	mi := &file_master_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4910,7 +4918,7 @@ func (x *DeleteBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBlockSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*DeleteBlockSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{73}
+	return file_master_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *DeleteBlockSnapshotRequest) GetVolumeName() string {
@@ -4935,7 +4943,7 @@ type DeleteBlockSnapshotResponse struct {
 
 func (x *DeleteBlockSnapshotResponse) Reset() {
 	*x = DeleteBlockSnapshotResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[74]
+	mi := &file_master_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4947,7 +4955,7 @@ func (x *DeleteBlockSnapshotResponse) String() string {
 func (*DeleteBlockSnapshotResponse) ProtoMessage() {}
 
 func (x *DeleteBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[74]
+	mi := &file_master_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4960,7 +4968,7 @@ func (x *DeleteBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteBlockSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*DeleteBlockSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{74}
+	return file_master_proto_rawDescGZIP(), []int{74}
 }
 
 type ListBlockSnapshotsRequest struct {
@@ -4972,7 +4980,7 @@ type ListBlockSnapshotsRequest struct {
 
 func (x *ListBlockSnapshotsRequest) Reset() {
 	*x = ListBlockSnapshotsRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[75]
+	mi := &file_master_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4984,7 +4992,7 @@ func (x *ListBlockSnapshotsRequest) String() string {
 func (*ListBlockSnapshotsRequest) ProtoMessage() {}
 
 func (x *ListBlockSnapshotsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[75]
+	mi := &file_master_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4997,7 +5005,7 @@ func (x *ListBlockSnapshotsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBlockSnapshotsRequest.ProtoReflect.Descriptor instead.
 func (*ListBlockSnapshotsRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{75}
+	return file_master_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *ListBlockSnapshotsRequest) GetVolumeName() string {
@@ -5016,7 +5024,7 @@ type ListBlockSnapshotsResponse struct {
 
 func (x *ListBlockSnapshotsResponse) Reset() {
 	*x = ListBlockSnapshotsResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[76]
+	mi := &file_master_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5028,7 +5036,7 @@ func (x *ListBlockSnapshotsResponse) String() string {
 func (*ListBlockSnapshotsResponse) ProtoMessage() {}
 
 func (x *ListBlockSnapshotsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[76]
+	mi := &file_master_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5041,7 +5049,7 @@ func (x *ListBlockSnapshotsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListBlockSnapshotsResponse.ProtoReflect.Descriptor instead.
 func (*ListBlockSnapshotsResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{76}
+	return file_master_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *ListBlockSnapshotsResponse) GetSnapshots() []*BlockSnapshotInfo {
@@ -5062,7 +5070,7 @@ type BlockSnapshotInfo struct {
 
 func (x *BlockSnapshotInfo) Reset() {
 	*x = BlockSnapshotInfo{}
-	mi := &file_weed_pb_master_proto_msgTypes[77]
+	mi := &file_master_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5074,7 +5082,7 @@ func (x *BlockSnapshotInfo) String() string {
 func (*BlockSnapshotInfo) ProtoMessage() {}
 
 func (x *BlockSnapshotInfo) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[77]
+	mi := &file_master_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5087,7 +5095,7 @@ func (x *BlockSnapshotInfo) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BlockSnapshotInfo.ProtoReflect.Descriptor instead.
 func (*BlockSnapshotInfo) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{77}
+	return file_master_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *BlockSnapshotInfo) GetSnapshotId() uint32 {
@@ -5121,7 +5129,7 @@ type RestoreBlockSnapshotRequest struct {
 
 func (x *RestoreBlockSnapshotRequest) Reset() {
 	*x = RestoreBlockSnapshotRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[78]
+	mi := &file_master_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5133,7 +5141,7 @@ func (x *RestoreBlockSnapshotRequest) String() string {
 func (*RestoreBlockSnapshotRequest) ProtoMessage() {}
 
 func (x *RestoreBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[78]
+	mi := &file_master_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5146,7 +5154,7 @@ func (x *RestoreBlockSnapshotRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBlockSnapshotRequest.ProtoReflect.Descriptor instead.
 func (*RestoreBlockSnapshotRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{78}
+	return file_master_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *RestoreBlockSnapshotRequest) GetVolumeName() string {
@@ -5171,7 +5179,7 @@ type RestoreBlockSnapshotResponse struct {
 
 func (x *RestoreBlockSnapshotResponse) Reset() {
 	*x = RestoreBlockSnapshotResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[79]
+	mi := &file_master_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5183,7 +5191,7 @@ func (x *RestoreBlockSnapshotResponse) String() string {
 func (*RestoreBlockSnapshotResponse) ProtoMessage() {}
 
 func (x *RestoreBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[79]
+	mi := &file_master_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5196,7 +5204,7 @@ func (x *RestoreBlockSnapshotResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBlockSnapshotResponse.ProtoReflect.Descriptor instead.
 func (*RestoreBlockSnapshotResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{79}
+	return file_master_proto_rawDescGZIP(), []int{79}
 }
 
 type ExpandBlockVolumeRequest struct {
@@ -5209,7 +5217,7 @@ type ExpandBlockVolumeRequest struct {
 
 func (x *ExpandBlockVolumeRequest) Reset() {
 	*x = ExpandBlockVolumeRequest{}
-	mi := &file_weed_pb_master_proto_msgTypes[80]
+	mi := &file_master_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5221,7 +5229,7 @@ func (x *ExpandBlockVolumeRequest) String() string {
 func (*ExpandBlockVolumeRequest) ProtoMessage() {}
 
 func (x *ExpandBlockVolumeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[80]
+	mi := &file_master_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5234,7 +5242,7 @@ func (x *ExpandBlockVolumeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExpandBlockVolumeRequest.ProtoReflect.Descriptor instead.
 func (*ExpandBlockVolumeRequest) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{80}
+	return file_master_proto_rawDescGZIP(), []int{80}
 }
 
 func (x *ExpandBlockVolumeRequest) GetName() string {
@@ -5260,7 +5268,7 @@ type ExpandBlockVolumeResponse struct {
 
 func (x *ExpandBlockVolumeResponse) Reset() {
 	*x = ExpandBlockVolumeResponse{}
-	mi := &file_weed_pb_master_proto_msgTypes[81]
+	mi := &file_master_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5272,7 +5280,7 @@ func (x *ExpandBlockVolumeResponse) String() string {
 func (*ExpandBlockVolumeResponse) ProtoMessage() {}
 
 func (x *ExpandBlockVolumeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[81]
+	mi := &file_master_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5285,7 +5293,7 @@ func (x *ExpandBlockVolumeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExpandBlockVolumeResponse.ProtoReflect.Descriptor instead.
 func (*ExpandBlockVolumeResponse) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{81}
+	return file_master_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *ExpandBlockVolumeResponse) GetCapacityBytes() uint64 {
@@ -5306,7 +5314,7 @@ type SuperBlockExtra_ErasureCoding struct {
 
 func (x *SuperBlockExtra_ErasureCoding) Reset() {
 	*x = SuperBlockExtra_ErasureCoding{}
-	mi := &file_weed_pb_master_proto_msgTypes[84]
+	mi := &file_master_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5318,7 +5326,7 @@ func (x *SuperBlockExtra_ErasureCoding) String() string {
 func (*SuperBlockExtra_ErasureCoding) ProtoMessage() {}
 
 func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[84]
+	mi := &file_master_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5331,7 +5339,7 @@ func (x *SuperBlockExtra_ErasureCoding) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SuperBlockExtra_ErasureCoding.ProtoReflect.Descriptor instead.
 func (*SuperBlockExtra_ErasureCoding) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{7, 0}
+	return file_master_proto_rawDescGZIP(), []int{7, 0}
 }
 
 func (x *SuperBlockExtra_ErasureCoding) GetData() uint32 {
@@ -5367,7 +5375,7 @@ type LookupVolumeResponse_VolumeIdLocation struct {
 
 func (x *LookupVolumeResponse_VolumeIdLocation) Reset() {
 	*x = LookupVolumeResponse_VolumeIdLocation{}
-	mi := &file_weed_pb_master_proto_msgTypes[85]
+	mi := &file_master_proto_msgTypes[85]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5379,7 +5387,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) String() string {
 func (*LookupVolumeResponse_VolumeIdLocation) ProtoMessage() {}
 
 func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[85]
+	mi := &file_master_proto_msgTypes[85]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5392,7 +5400,7 @@ func (x *LookupVolumeResponse_VolumeIdLocation) ProtoReflect() protoreflect.Mess
 
 // Deprecated: Use LookupVolumeResponse_VolumeIdLocation.ProtoReflect.Descriptor instead.
 func (*LookupVolumeResponse_VolumeIdLocation) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{13, 0}
+	return file_master_proto_rawDescGZIP(), []int{13, 0}
 }
 
 func (x *LookupVolumeResponse_VolumeIdLocation) GetVolumeOrFileId() string {
@@ -5433,7 +5441,7 @@ type LookupEcVolumeResponse_EcShardIdLocation struct {
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) Reset() {
 	*x = LookupEcVolumeResponse_EcShardIdLocation{}
-	mi := &file_weed_pb_master_proto_msgTypes[90]
+	mi := &file_master_proto_msgTypes[90]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5445,7 +5453,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) String() string {
 func (*LookupEcVolumeResponse_EcShardIdLocation) ProtoMessage() {}
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[90]
+	mi := &file_master_proto_msgTypes[90]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5458,7 +5466,7 @@ func (x *LookupEcVolumeResponse_EcShardIdLocation) ProtoReflect() protoreflect.M
 
 // Deprecated: Use LookupEcVolumeResponse_EcShardIdLocation.ProtoReflect.Descriptor instead.
 func (*LookupEcVolumeResponse_EcShardIdLocation) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{33, 0}
+	return file_master_proto_rawDescGZIP(), []int{33, 0}
 }
 
 func (x *LookupEcVolumeResponse_EcShardIdLocation) GetShardId() uint32 {
@@ -5488,7 +5496,7 @@ type ListClusterNodesResponse_ClusterNode struct {
 
 func (x *ListClusterNodesResponse_ClusterNode) Reset() {
 	*x = ListClusterNodesResponse_ClusterNode{}
-	mi := &file_weed_pb_master_proto_msgTypes[91]
+	mi := &file_master_proto_msgTypes[91]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5500,7 +5508,7 @@ func (x *ListClusterNodesResponse_ClusterNode) String() string {
 func (*ListClusterNodesResponse_ClusterNode) ProtoMessage() {}
 
 func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[91]
+	mi := &file_master_proto_msgTypes[91]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5513,7 +5521,7 @@ func (x *ListClusterNodesResponse_ClusterNode) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use ListClusterNodesResponse_ClusterNode.ProtoReflect.Descriptor instead.
 func (*ListClusterNodesResponse_ClusterNode) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{45, 0}
+	return file_master_proto_rawDescGZIP(), []int{45, 0}
 }
 
 func (x *ListClusterNodesResponse_ClusterNode) GetAddress() string {
@@ -5563,7 +5571,7 @@ type RaftListClusterServersResponse_ClusterServers struct {
 
 func (x *RaftListClusterServersResponse_ClusterServers) Reset() {
 	*x = RaftListClusterServersResponse_ClusterServers{}
-	mi := &file_weed_pb_master_proto_msgTypes[92]
+	mi := &file_master_proto_msgTypes[92]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5575,7 +5583,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) String() string {
 func (*RaftListClusterServersResponse_ClusterServers) ProtoMessage() {}
 
 func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protoreflect.Message {
-	mi := &file_weed_pb_master_proto_msgTypes[92]
+	mi := &file_master_proto_msgTypes[92]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5588,7 +5596,7 @@ func (x *RaftListClusterServersResponse_ClusterServers) ProtoReflect() protorefl
 
 // Deprecated: Use RaftListClusterServersResponse_ClusterServers.ProtoReflect.Descriptor instead.
 func (*RaftListClusterServersResponse_ClusterServers) Descriptor() ([]byte, []int) {
-	return file_weed_pb_master_proto_rawDescGZIP(), []int{57, 0}
+	return file_master_proto_rawDescGZIP(), []int{57, 0}
 }
 
 func (x *RaftListClusterServersResponse_ClusterServers) GetId() string {
@@ -5619,11 +5627,11 @@ func (x *RaftListClusterServersResponse_ClusterServers) GetIsLeader() bool {
 	return false
 }
 
-var File_weed_pb_master_proto protoreflect.FileDescriptor
+var File_master_proto protoreflect.FileDescriptor
 
-const file_weed_pb_master_proto_rawDesc = "" +
+const file_master_proto_rawDesc = "" +
 	"\n" +
-	"\x14weed/pb/master.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xe5\n" +
+	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xe5\n" +
 	"\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
@@ -5991,7 +5999,7 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
 	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse\"\xd2\x06\n" +
+	"\x12VolumeGrowResponse\"\x9c\a\n" +
 	"\x16BlockVolumeInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6019,11 +6027,13 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\rneeds_rebuild\x18\x14 \x01(\bH\x01R\fneedsRebuild\x88\x01\x01\x12,\n" +
 	"\x0fpublish_healthy\x18\x15 \x01(\bH\x02R\x0epublishHealthy\x88\x01\x01\x12$\n" +
 	"\vvolume_mode\x18\x16 \x01(\tH\x03R\n" +
-	"volumeMode\x88\x01\x01B\x10\n" +
+	"volumeMode\x88\x01\x01\x121\n" +
+	"\x12volume_mode_reason\x18\x17 \x01(\tH\x04R\x10volumeModeReason\x88\x01\x01B\x10\n" +
 	"\x0e_replica_readyB\x10\n" +
 	"\x0e_needs_rebuildB\x12\n" +
 	"\x10_publish_healthyB\x0e\n" +
-	"\f_volume_mode\"\x8e\x01\n" +
+	"\f_volume_modeB\x15\n" +
+	"\x13_volume_mode_reason\"\x8e\x01\n" +
 	"\x1bBlockVolumeShortInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6160,19 +6170,19 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x11ExpandBlockVolume\x12#.master_pb.ExpandBlockVolumeRequest\x1a$.master_pb.ExpandBlockVolumeResponse\"\x00B2Z0github.com/seaweedfs/seaweedfs/weed/pb/master_pbb\x06proto3"
 
 var (
-	file_weed_pb_master_proto_rawDescOnce sync.Once
-	file_weed_pb_master_proto_rawDescData []byte
+	file_master_proto_rawDescOnce sync.Once
+	file_master_proto_rawDescData []byte
 )
 
-func file_weed_pb_master_proto_rawDescGZIP() []byte {
-	file_weed_pb_master_proto_rawDescOnce.Do(func() {
-		file_weed_pb_master_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_weed_pb_master_proto_rawDesc), len(file_weed_pb_master_proto_rawDesc)))
+func file_master_proto_rawDescGZIP() []byte {
+	file_master_proto_rawDescOnce.Do(func() {
+		file_master_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_master_proto_rawDesc), len(file_master_proto_rawDesc)))
 	})
-	return file_weed_pb_master_proto_rawDescData
+	return file_master_proto_rawDescData
 }
 
-var file_weed_pb_master_proto_msgTypes = make([]protoimpl.MessageInfo, 93)
-var file_weed_pb_master_proto_goTypes = []any{
+var file_master_proto_msgTypes = make([]protoimpl.MessageInfo, 93)
+var file_master_proto_goTypes = []any{
 	(*Heartbeat)(nil),                             // 0: master_pb.Heartbeat
 	(*HeartbeatResponse)(nil),                     // 1: master_pb.HeartbeatResponse
 	(*VolumeInformationMessage)(nil),              // 2: master_pb.VolumeInformationMessage
@@ -6268,7 +6278,7 @@ var file_weed_pb_master_proto_goTypes = []any{
 	(*RaftListClusterServersResponse_ClusterServers)(nil), // 92: master_pb.RaftListClusterServersResponse.ClusterServers
 	(*volume_server_pb.VolumeServerState)(nil),            // 93: volume_server_pb.VolumeServerState
 }
-var file_weed_pb_master_proto_depIdxs = []int32{
+var file_master_proto_depIdxs = []int32{
 	2,  // 0: master_pb.Heartbeat.volumes:type_name -> master_pb.VolumeInformationMessage
 	3,  // 1: master_pb.Heartbeat.new_volumes:type_name -> master_pb.VolumeShortInformationMessage
 	3,  // 2: master_pb.Heartbeat.deleted_volumes:type_name -> master_pb.VolumeShortInformationMessage
@@ -6383,27 +6393,27 @@ var file_weed_pb_master_proto_depIdxs = []int32{
 	0,  // [0:43] is the sub-list for field type_name
 }
 
-func init() { file_weed_pb_master_proto_init() }
-func file_weed_pb_master_proto_init() {
-	if File_weed_pb_master_proto != nil {
+func init() { file_master_proto_init() }
+func file_master_proto_init() {
+	if File_master_proto != nil {
 		return
 	}
-	file_weed_pb_master_proto_msgTypes[61].OneofWrappers = []any{}
+	file_master_proto_msgTypes[61].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_weed_pb_master_proto_rawDesc), len(file_weed_pb_master_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_master_proto_rawDesc), len(file_master_proto_rawDesc)),
 			NumEnums:      0,
 			NumMessages:   93,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_weed_pb_master_proto_goTypes,
-		DependencyIndexes: file_weed_pb_master_proto_depIdxs,
-		MessageInfos:      file_weed_pb_master_proto_msgTypes,
+		GoTypes:           file_master_proto_goTypes,
+		DependencyIndexes: file_master_proto_depIdxs,
+		MessageInfos:      file_master_proto_msgTypes,
 	}.Build()
-	File_weed_pb_master_proto = out.File
-	file_weed_pb_master_proto_goTypes = nil
-	file_weed_pb_master_proto_depIdxs = nil
+	File_master_proto = out.File
+	file_master_proto_goTypes = nil
+	file_master_proto_depIdxs = nil
 }

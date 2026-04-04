@@ -40,6 +40,7 @@ type VolumeInfo struct {
 	NvmeAddr         string          `json:"nvme_addr,omitempty"`
 	NQN              string          `json:"nqn,omitempty"`
 	VolumeMode       string          `json:"volume_mode,omitempty"` // CP13-9
+	VolumeModeReason string          `json:"volume_mode_reason,omitempty"`
 }
 
 // ReplicaDetail describes one replica in the API response.
@@ -109,7 +110,7 @@ type PreflightResponse struct {
 	Reason          string               `json:"reason,omitempty"`
 	CandidateServer string               `json:"candidate_server,omitempty"`
 	CandidateHealth float64              `json:"candidate_health,omitempty"`
-	CandidateWALLSN uint64              `json:"candidate_wal_lsn,omitempty"`
+	CandidateWALLSN uint64               `json:"candidate_wal_lsn,omitempty"`
 	Rejections      []PreflightRejection `json:"rejections,omitempty"`
 	PrimaryServer   string               `json:"primary_server"`
 	PrimaryAlive    bool                 `json:"primary_alive"`
@@ -137,10 +138,10 @@ type ResolvedPolicyView struct {
 
 // VolumePlanResponse is the response for POST /block/volume/plan.
 type VolumePlanResponse struct {
-	ResolvedPolicy ResolvedPolicyView   `json:"resolved_policy"`
-	Plan           VolumePlanView       `json:"plan"`
-	Warnings       []string             `json:"warnings,omitempty"`
-	Errors         []string             `json:"errors,omitempty"`
+	ResolvedPolicy ResolvedPolicyView `json:"resolved_policy"`
+	Plan           VolumePlanView     `json:"plan"`
+	Warnings       []string           `json:"warnings,omitempty"`
+	Errors         []string           `json:"errors,omitempty"`
 }
 
 // VolumePlanView describes the placement plan.

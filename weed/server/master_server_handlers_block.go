@@ -369,18 +369,20 @@ func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http
 // entryToVolumeInfo converts a BlockVolumeEntry to a blockapi.VolumeInfo.
 // primaryAlive indicates whether the primary server is alive (in blockServers set).
 type entryReplicaSurface struct {
-	ReplicaReady    bool
-	ReplicaDegraded bool
-	VolumeMode      string
-	HealthState     string
+	ReplicaReady     bool
+	ReplicaDegraded  bool
+	VolumeMode       string
+	VolumeModeReason string
+	HealthState      string
 }
 
 func entryReplicaSurfaceInfo(e *BlockVolumeEntry, primaryAlive bool) entryReplicaSurface {
 	return entryReplicaSurface{
-		ReplicaReady:    e.ReplicaReady,
-		ReplicaDegraded: e.ReplicaDegraded,
-		VolumeMode:      e.VolumeMode,
-		HealthState:     deriveHealthStateWithLiveness(e, primaryAlive),
+		ReplicaReady:     e.ReplicaReady,
+		ReplicaDegraded:  e.ReplicaDegraded,
+		VolumeMode:       e.VolumeMode,
+		VolumeModeReason: e.HeartbeatVolumeReason,
+		HealthState:      deriveHealthStateWithLiveness(e, primaryAlive),
 	}
 }
 
@@ -423,6 +425,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 		NQN:              e.NQN,
 		HealthState:      surface.HealthState,
 		VolumeMode:       surface.VolumeMode,
+		VolumeModeReason: surface.VolumeModeReason,
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

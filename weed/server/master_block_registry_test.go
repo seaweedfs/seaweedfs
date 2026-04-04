@@ -2357,12 +2357,14 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeart
 	tests := []struct {
 		name     string
 		mode     string
+		reason   string
 		replicas []ReplicaInfo
 		wantMode string
 	}{
 		{
-			name: "bootstrap_pending",
-			mode: "bootstrap_pending",
+			name:   "bootstrap_pending",
+			mode:   "bootstrap_pending",
+			reason: "awaiting_shipper_connected",
 			replicas: []ReplicaInfo{{
 				Server: "replica-server:8080",
 				Path:   "/blocks/vol-master-mode-bootstrap-replica.blk",
@@ -2371,8 +2373,9 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeart
 			wantMode: "bootstrap_pending",
 		},
 		{
-			name: "degraded",
-			mode: "degraded",
+			name:   "degraded",
+			mode:   "degraded",
+			reason: "barrier_timeout",
 			replicas: []ReplicaInfo{{
 				Server: "replica-server:8080",
 				Path:   "/blocks/vol-master-mode-degraded-replica.blk",
@@ -2381,8 +2384,9 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeart
 			wantMode: "degraded",
 		},
 		{
-			name: "needs_rebuild",
-			mode: "needs_rebuild",
+			name:   "needs_rebuild",
+			mode:   "needs_rebuild",
+			reason: "gap_too_large",
 			replicas: []ReplicaInfo{{
 				Server: "replica-server:8080",
 				Path:   "/blocks/vol-master-mode-needs-rebuild-replica.blk",
@@ -2418,15 +2422,20 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeart
 			}
 
 			mode := tt.mode
+			reason := tt.reason
 			r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
-				Path:       "/blocks/vol-master-mode-" + tt.name + "-primary.blk",
-				Role:       blockvol.RoleToWire(blockvol.RolePrimary),
-				VolumeMode: &mode,
+				Path:             "/blocks/vol-master-mode-" + tt.name + "-primary.blk",
+				Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+				VolumeMode:       &mode,
+				VolumeModeReason: &reason,
 			}}, "")
 
 			entry, _ := r.Lookup("vol-master-mode-" + tt.name)
 			if !entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != tt.mode {
 				t.Fatalf("expected explicit volume_mode truth on entry, entry=%+v", entry)
+			}
+			if tt.reason != "" && (!entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != tt.reason) {
+				t.Fatalf("expected explicit volume_mode_reason truth on entry, entry=%+v", entry)
 			}
 			if entry.VolumeMode != tt.wantMode {
 				t.Fatalf("expected explicit volume_mode %q, got %q", tt.wantMode, entry.VolumeMode)
@@ -2462,6 +2471,9 @@ func TestRegistry_UpdateFullHeartbeat_VolumeModeFallsBackWhenFieldAbsent(t *test
 	entry, _ := r.Lookup("vol-master-mode-fallback")
 	if entry.HasHeartbeatVolumeMode {
 		t.Fatalf("did not expect explicit volume_mode when field absent, entry=%+v", entry)
+	}
+	if entry.HasHeartbeatVolumeReason {
+		t.Fatalf("did not expect explicit volume_mode_reason when field absent, entry=%+v", entry)
 	}
 	if entry.VolumeMode != "degraded" {
 		t.Fatalf("expected fallback reconstructed degraded mode, got %q", entry.VolumeMode)

@@ -1477,3 +1477,78 @@ Conclusion:
    explicit field still fall back to the previous reconstruction
 3. this slice still does not claim publication reason, restart/disturbance, or
    broad failover closure by itself
+
+---
+
+#### `16Q` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `volume_mode_reason` preservation on the heartbeat/master/API seam
+
+Why this slice exists:
+
+1. `16P` made outward `volume_mode` itself explicit across the heartbeat/master
+   seam
+2. but the master-side outward surface still drops the reason behind that mode
+   and therefore cannot preserve the bounded core-owned explanation for
+   `bootstrap_pending`, `degraded`, or `needs_rebuild`
+3. that leaves one narrow product-facing failover/publication seam even after
+   explicit mode truth is preserved
+
+Chosen implementation rule:
+
+1. widen the heartbeat wire additively with an explicit `volume_mode_reason`
+   field
+2. emit it from the current bounded core mode/publication reason on the
+   core-present path
+3. make master outward volume info prefer explicit heartbeat reason truth and
+   retain empty/default behavior as backward-compatible fallback
+4. do not broaden this slice into restart/disturbance hardening or wider launch
+   closure
+
+---
+
+#### `16Q` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `volume_mode_reason` preservation on the heartbeat/master/API seam
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `volume_mode_reason` to `BlockVolumeInfoMessage`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated so heartbeat wire presence is represented as `*string`
+3. `weed/storage/blockvol/block_heartbeat.go`
+   - heartbeat wire struct now carries explicit `VolumeModeReason`
+4. `weed/storage/blockvol/block_heartbeat_proto.go`
+   - heartbeat conversion now writes and reads `VolumeModeReason`
+5. `weed/server/volume_server_block.go`
+   - heartbeat emission now preserves the bounded core mode/publication reason
+     on the core-present path
+6. `weed/server/master_block_registry.go`
+   - primary heartbeat consume now preserves explicit heartbeat
+     `volume_mode_reason` truth on the registry entry
+7. `weed/server/master_server_handlers_block.go` and
+   `weed/storage/blockvol/blockapi/types.go`
+   - outward volume info now surfaces `VolumeModeReason`
+8. focused tests in `block_heartbeat_proto_test.go`,
+   `volume_server_block_test.go`, `master_block_registry_test.go`,
+   `master_block_observability_test.go`, and
+   `master_server_handlers_block_test.go`
+   - now prove explicit outward reason preservation and empty/default fallback
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol -count=1 -run "TestInfoMessage_(ReplicaReady|NeedsRebuild|PublishHealthy|VolumeMode|VolumeModeReason)"`
+2. `go test ./weed/server -count=1 -timeout 180s -run "Test(BlockService_CollectBlockVolumeHeartbeat_(PrimaryUsesCoreReadinessGate|PrimaryNeedsRebuildUsesCoreMode|PrimaryPublishHealthyUsesCoreTruth|PrimaryDegradedUsesCoreModeTruth)|Registry_UpdateFullHeartbeat_(ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent)|EntryToVolumeInfo_(ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(Get|List)Handler_ReflectsCoreInfluencedDegradedConsume)"`
+3. result: `PASS`
+
+Conclusion:
+
+1. the heartbeat/master/API seam no longer preserves only outward mode names
+   while dropping the bounded explanation behind them
+2. backward compatibility is preserved because older heartbeats without the new
+   field keep the previous empty/default outward reason behavior
+3. this slice still does not claim restart/disturbance hardening or broad
+   failover closure by itself

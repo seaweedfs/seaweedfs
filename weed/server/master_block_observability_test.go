@@ -416,6 +416,9 @@ func TestEntryToVolumeInfo_ReflectsCoreInfluencedReadyConsume(t *testing.T) {
 	if info.VolumeMode != "publish_healthy" {
 		t.Fatalf("expected outward VolumeMode=publish_healthy, got %q", info.VolumeMode)
 	}
+	if info.VolumeModeReason != "" {
+		t.Fatalf("expected empty outward VolumeModeReason for publish_healthy, got %q", info.VolumeModeReason)
+	}
 	if info.HealthState != HealthStateHealthy {
 		t.Fatalf("expected outward HealthState=%q, got %q", HealthStateHealthy, info.HealthState)
 	}
@@ -472,6 +475,9 @@ func TestEntryToVolumeInfo_ReflectsCoreInfluencedDegradedConsume(t *testing.T) {
 	}
 	if info.VolumeMode != "degraded" {
 		t.Fatalf("expected outward VolumeMode=degraded, got %q", info.VolumeMode)
+	}
+	if info.VolumeModeReason != "barrier_timeout" {
+		t.Fatalf("expected outward VolumeModeReason=barrier_timeout, got %q", info.VolumeModeReason)
 	}
 	if info.HealthState != HealthStateDegraded {
 		t.Fatalf("expected outward HealthState=%q, got %q", HealthStateDegraded, info.HealthState)

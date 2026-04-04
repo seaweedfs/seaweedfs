@@ -969,6 +969,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 			msgs[i].NeedsRebuild = bs.heartbeatNeedsRebuild(msgs[i].Path, s)
 			msgs[i].PublishHealthy = bs.heartbeatPublishHealthy(msgs[i].Path, s)
 			msgs[i].VolumeMode = bs.heartbeatVolumeMode(msgs[i].Path, s)
+			msgs[i].VolumeModeReason = bs.heartbeatVolumeModeReason(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
@@ -1063,6 +1064,24 @@ func (bs *BlockService) heartbeatVolumeMode(path string, state *volReplState) st
 	}
 	if proj, ok := bs.CoreProjection(path); ok {
 		return string(proj.Mode.Name)
+	}
+	return ""
+}
+
+// heartbeatVolumeModeReason returns the explicit outward volume mode reason that
+// should be exposed on the current heartbeat surface. On the core-present path
+// it prefers the mode reason and falls back to the publication reason so the
+// master can preserve the bounded explanation behind outward mode transitions.
+// Older paths return empty and keep backward-compatible default behavior.
+func (bs *BlockService) heartbeatVolumeModeReason(path string, state *volReplState) string {
+	if state == nil {
+		return ""
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		if proj.Mode.Reason != "" {
+			return proj.Mode.Reason
+		}
+		return proj.Publication.Reason
 	}
 	return ""
 }
