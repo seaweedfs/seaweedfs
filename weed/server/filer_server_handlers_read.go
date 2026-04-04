@@ -223,7 +223,7 @@ func (fs *FilerServer) GetOrHeadHandler(w http.ResponseWriter, r *http.Request) 
 		// Matches S3 API behavior. Request context (ctx) is used for metadata operations above.
 		streamCtx, streamCancel := context.WithCancel(context.WithoutCancel(ctx))
 
-		streamFn, err := filer.PrepareStreamContentWithThrottler(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs)
+		streamFn, err := filer.PrepareStreamContentWithPrefetch(streamCtx, fs.filer.MasterClient, fs.maybeGetVolumeReadJwtAuthorizationToken, chunks, offset, size, fs.option.DownloadMaxBytesPs, 4)
 		if err != nil {
 			streamCancel()
 			stats.FilerHandlerCounter.WithLabelValues(stats.ErrorReadStream).Inc()

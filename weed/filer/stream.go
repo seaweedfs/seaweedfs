@@ -245,6 +245,66 @@ func PrepareStreamContentWithThrottler(ctx context.Context, masterClient wdclien
 	}, nil
 }
 
+// PrepareStreamContentWithPrefetch is like PrepareStreamContentWithThrottler but uses
+// concurrent chunk prefetching to overlap network I/O. When prefetchAhead > 1, fetch
+// goroutines establish HTTP connections to volume servers ahead of time, streaming data
+// through io.Pipe with minimal memory overhead.
+//
+// prefetchAhead controls the number of chunks fetched concurrently:
+//   - 0 or 1: falls back to sequential fetching (same as PrepareStreamContentWithThrottler)
+//   - 2+: uses pipe-based prefetch pipeline with that many concurrent fetches
+func PrepareStreamContentWithPrefetch(ctx context.Context, masterClient wdclient.HasLookupFileIdFunction, jwtFunc VolumeServerJwtFunction, chunks []*filer_pb.FileChunk, offset int64, size int64, downloadMaxBytesPs int64, prefetchAhead int) (DoStreamContent, error) {
+	if prefetchAhead <= 1 {
+		return PrepareStreamContentWithThrottler(ctx, masterClient, jwtFunc, chunks, offset, size, downloadMaxBytesPs)
+	}
+
+	glog.V(4).InfofCtx(ctx, "prepare to stream content with prefetch=%d for chunks: %d", prefetchAhead, len(chunks))
+	chunkViews := ViewFromChunks(ctx, masterClient.GetLookupFileIdFunction(), chunks, offset, size)
+
+	fileId2Url := make(map[string][]string)
+
+	for x := chunkViews.Front(); x != nil; x = x.Next {
+		chunkView := x.Value
+		var urlStrings []string
+		var err error
+		for _, backoff := range getLookupFileIdBackoffSchedule {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			urlStrings, err = masterClient.GetLookupFileIdFunction()(ctx, chunkView.FileId)
+			if err == nil && len(urlStrings) > 0 {
+				break
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			glog.V(4).InfofCtx(ctx, "waiting for chunk: %s", chunkView.FileId)
+			timer := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				if !timer.Stop() {
+					<-timer.C
+				}
+				return nil, ctx.Err()
+			case <-timer.C:
+			}
+		}
+		if err != nil {
+			glog.V(1).InfofCtx(ctx, "operation LookupFileId %s failed, err: %v", chunkView.FileId, err)
+			return nil, err
+		} else if len(urlStrings) == 0 {
+			errUrlNotFound := fmt.Errorf("operation LookupFileId %s failed, err: urls not found", chunkView.FileId)
+			glog.ErrorCtx(ctx, errUrlNotFound)
+			return nil, errUrlNotFound
+		}
+		fileId2Url[chunkView.FileId] = urlStrings
+	}
+
+	return func(writer io.Writer) error {
+		return streamChunksPrefetched(ctx, writer, chunkViews, fileId2Url, jwtFunc, masterClient, offset, size, downloadMaxBytesPs, prefetchAhead)
+	}, nil
+}
+
 func StreamContent(masterClient wdclient.HasLookupFileIdFunction, writer io.Writer, chunks []*filer_pb.FileChunk, offset int64, size int64) error {
 	streamFn, err := PrepareStreamContent(masterClient, JwtForVolumeServer, chunks, offset, size)
 	if err != nil {
