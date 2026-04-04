@@ -194,13 +194,15 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if fastResume {
 		go func() {
 			defer s.raftServer.SetElectionTimeout(option.ElectionTimeout)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
 			timeout := time.After(option.ElectionTimeout)
 			for s.raftServer.Leader() == "" {
 				select {
 				case <-timeout:
 					glog.Warningf("Fast resume timed out waiting for leader election, restoring election timeout to %v", option.ElectionTimeout)
 					return
-				case <-time.After(100 * time.Millisecond):
+				case <-ticker.C:
 				}
 			}
 			glog.V(0).Infof("Resumed as leader with election timeout restored to %v", option.ElectionTimeout)
