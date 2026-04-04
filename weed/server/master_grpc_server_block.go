@@ -250,7 +250,11 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		return nil, fmt.Errorf("block volume %q not found", req.Name)
 	}
 
-	replicaServers := replicaServerList(&entry)
+	return lookupResponseFromEntry(&entry), nil
+}
+
+func lookupResponseFromEntry(entry *BlockVolumeEntry) *master_pb.LookupBlockVolumeResponse {
+	replicaServers := replicaServerList(entry)
 	rf := entry.ReplicaFactor
 	if rf == 0 {
 		rf = 2 // default for pre-CP8-2 entries
@@ -270,7 +274,7 @@ func (ms *MasterServer) LookupBlockVolume(ctx context.Context, req *master_pb.Lo
 		DurabilityMode: durModeStr,
 		NvmeAddr:       entry.NvmeAddr,
 		Nqn:            entry.NQN,
-	}, nil
+	}
 }
 
 // tryCreateOneReplica attempts to create one replica volume on a different server.

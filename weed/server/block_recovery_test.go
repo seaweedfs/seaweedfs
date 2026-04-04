@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 	"time"
@@ -56,6 +57,45 @@ func createTestBlockServiceWithVol(t *testing.T) (*BlockService, string) {
 
 	t.Cleanup(func() {
 		bs.v2Recovery.Shutdown()
+		store.Close()
+	})
+
+	return bs, volPath
+}
+
+func createTestBlockServiceWithVolCoreNoRecovery(t *testing.T) (*BlockService, string) {
+	t.Helper()
+	dir := t.TempDir()
+
+	volPath := filepath.Join(dir, "vol1.blk")
+	vol, err := blockvol.CreateBlockVol(volPath, blockvol.CreateOptions{
+		VolumeSize: 1 * 1024 * 1024,
+		BlockSize:  4096,
+		WALSize:    256 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	vol.Close()
+
+	store := storage.NewBlockVolumeStore()
+	if _, err := store.AddBlockVolume(volPath, ""); err != nil {
+		t.Fatalf("AddBlockVolume: %v", err)
+	}
+
+	bs := &BlockService{
+		blockStore:     store,
+		blockDir:       dir,
+		listenAddr:     "127.0.0.1:3260",
+		localServerID:  "test-server-1",
+		v2Bridge:       v2bridge.NewControlBridge(),
+		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		v2Core:         engine.NewCoreEngine(),
+		coreProj:       make(map[string]engine.PublicationProjection),
+		replStates:     make(map[string]*volReplState),
+	}
+
+	t.Cleanup(func() {
 		store.Close()
 	})
 
@@ -123,6 +163,115 @@ func TestP4_LivePath_RealVol_ReachesPlan(t *testing.T) {
 	}
 
 	t.Log("P4 live-path: ProcessAssignments → plan_catchup → exec_catchup_started → exec_completed → in_sync")
+}
+
+func TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            volPath,
+			Epoch:           1,
+			Role:            uint32(blockvol.RolePrimary),
+			ReplicaServerID: "vs2",
+			ReplicaDataAddr: "10.0.0.2:9333",
+			ReplicaCtrlAddr: "10.0.0.2:9334",
+		},
+	})
+
+	replicaID := volPath + "/vs2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil || !sender.HasActiveSession() {
+		t.Fatal("expected active sender session before catch-up")
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.runCatchUp(context.Background(), replicaID, "")
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected cached core projection after live catch-up")
+	}
+	if proj.Boundary.TargetLSN == 0 {
+		t.Fatalf("target_lsn=%d", proj.Boundary.TargetLSN)
+	}
+	if proj.Boundary.AchievedLSN == 0 {
+		t.Fatalf("achieved_lsn=%d", proj.Boundary.AchievedLSN)
+	}
+	if proj.Boundary.DurableLSN == 0 {
+		t.Fatalf("durable_lsn=%d", proj.Boundary.DurableLSN)
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if got := bs.ExecutedCoreCommands(volPath); len(got) == 0 || got[len(got)-1] != "start_catchup" {
+		t.Fatalf("expected start_catchup execution, got %v", got)
+	}
+}
+
+func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            volPath,
+			Epoch:           1,
+			Role:            uint32(blockvol.RolePrimary),
+			ReplicaServerID: "vs2",
+			ReplicaDataAddr: "10.0.0.2:9333",
+			ReplicaCtrlAddr: "10.0.0.2:9334",
+		},
+	})
+
+	replicaID := volPath + "/vs2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil || !sender.HasActiveSession() {
+		t.Fatal("expected active sender session before needs_rebuild planning")
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.runCatchUp(context.Background(), replicaID, "")
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected cached core projection after needs_rebuild escalation")
+	}
+	if proj.Mode.Name != engine.ModeNeedsRebuild {
+		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+	if proj.Recovery.Phase != engine.RecoveryNeedsRebuild {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Publication.Reason == "" {
+		t.Fatal("expected needs_rebuild reason")
+	}
+	if got := bs.ExecutedCoreCommands(volPath); len(got) != 3 {
+		t.Fatalf("needs_rebuild path should not execute start_catchup, got %v", got)
+	}
 }
 
 // --- Serialized replacement: old drained before new starts ---

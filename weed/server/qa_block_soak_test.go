@@ -95,6 +95,7 @@ func newSoakSetup(t *testing.T) *soakSetup {
 		advertisedHost: "127.0.0.1",
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		v2Core:         engine.NewCoreEngine(),
 		replStates:     make(map[string]*volReplState),
 	}
 	bs.v2Recovery = NewRecoveryManager(bs)
@@ -156,6 +157,7 @@ func TestCP13_2_BlockService_AdvertisedHost_NotOpaqueID(t *testing.T) {
 		advertisedHost: "10.0.0.42",      // routable
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		v2Core:         engine.NewCoreEngine(),
 		replStates:     make(map[string]*volReplState),
 	}
 

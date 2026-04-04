@@ -9,9 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
-	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/nvme"
@@ -23,17 +23,22 @@ type volReplState struct {
 	replicaDataAddr string
 	replicaCtrlAddr string
 	// allReplicas stores the full replica set for multi-replica idempotence.
-	allReplicas []blockvol.ReplicaAddr
-	roleApplied      bool
-	receiverReady    bool
+	allReplicas       []blockvol.ReplicaAddr
+	roleApplied       bool
+	receiverReady     bool
 	shipperConfigured bool
-	replicaEligible  bool
-	publishHealthy   bool
+	replicaEligible   bool
+	publishHealthy    bool
 }
 
 // BlockReadinessSnapshot names the assignment-to-publication closure at the
 // BlockService boundary. These flags are owned by the service/adapter layer,
 // not by blockvol's local storage mechanics.
+//
+// Important:
+// PublishHealthy here is still an adapter-local publication bit used by current
+// `weed/server` surfaces. It is NOT the semantic owner for Phase 14 core
+// publication health; that owner is `engine.PublicationView`.
 type BlockReadinessSnapshot struct {
 	RoleApplied       bool
 	ReceiverReady     bool
@@ -70,7 +75,12 @@ type BlockService struct {
 	// V2 engine bridge (Phase 08 P1).
 	v2Bridge       *v2bridge.ControlBridge
 	v2Orchestrator *engine.RecoveryOrchestrator
+	v2Core         *engine.CoreEngine
 	v2Recovery     *RecoveryManager
+	coreProjMu     sync.RWMutex
+	coreProj       map[string]engine.PublicationProjection
+	coreExecMu     sync.RWMutex
+	coreExec       map[string][]string
 
 	// P3: last-applied assignment per volume path for idempotence.
 	lastAssignMu sync.RWMutex
@@ -90,6 +100,63 @@ type BlockService struct {
 // V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
 func (bs *BlockService) V2Orchestrator() *engine.RecoveryOrchestrator {
 	return bs.v2Orchestrator
+}
+
+// V2Core returns the explicit Phase 14/15 core shell if wired.
+func (bs *BlockService) V2Core() *engine.CoreEngine {
+	return bs.v2Core
+}
+
+// CoreProjection returns the latest adapter-cached projection emitted by the
+// explicit V2 core on the narrow live path.
+func (bs *BlockService) CoreProjection(path string) (engine.PublicationProjection, bool) {
+	bs.coreProjMu.RLock()
+	defer bs.coreProjMu.RUnlock()
+	if bs.coreProj == nil {
+		return engine.PublicationProjection{}, false
+	}
+	proj, ok := bs.coreProj[path]
+	return proj, ok
+}
+
+// ExecutedCoreCommands returns the bounded list of core commands executed on the
+// current integrated path for one volume. Intended for focused runtime-ownership
+// proofs in Phase 16.
+func (bs *BlockService) ExecutedCoreCommands(path string) []string {
+	bs.coreExecMu.RLock()
+	defer bs.coreExecMu.RUnlock()
+	if bs.coreExec == nil {
+		return nil
+	}
+	cmds := bs.coreExec[path]
+	out := make([]string, len(cmds))
+	copy(out, cmds)
+	return out
+}
+
+// CoreProjectionMismatches reports fields that should already agree on the
+// narrow Phase 15A path but do not. It intentionally excludes adapter-local
+// `PublishHealthy`, which is not yet rebound to the core publication owner.
+func (bs *BlockService) CoreProjectionMismatches(path string) []string {
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		return []string{"missing_core_projection"}
+	}
+	readiness := bs.ReadinessSnapshot(path)
+	var mismatches []string
+	if readiness.RoleApplied != proj.Readiness.RoleApplied {
+		mismatches = append(mismatches, "role_applied")
+	}
+	if readiness.ReceiverReady != proj.Readiness.ReceiverReady {
+		mismatches = append(mismatches, "receiver_ready")
+	}
+	if readiness.ShipperConfigured != proj.Readiness.ShipperConfigured {
+		mismatches = append(mismatches, "shipper_configured")
+	}
+	if readiness.ShipperConnected != proj.Readiness.ShipperConnected {
+		mismatches = append(mismatches, "shipper_connected")
+	}
+	return mismatches
 }
 
 // SetServerID sets the stable server identity for V2 control semantics.
@@ -144,7 +211,9 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		nvmeListenAddr: nvmeCfg.ListenAddr,
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		v2Core:         engine.NewCoreEngine(),
 		localServerID:  listenAddr, // INTERIM: transport-shaped, see field doc
+		coreProj:       make(map[string]engine.PublicationProjection),
 	}
 	bs.v2Recovery = NewRecoveryManager(bs)
 
@@ -430,37 +499,17 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 	}
 	for i, a := range assignments {
 		role := blockvol.RoleFromWire(a.Role)
-		ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
-
-		// 1. Apply role/epoch/lease.
-		if err := bs.blockStore.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
-			return vol.HandleAssignment(a.Epoch, role, ttl)
-		}); err != nil {
+		bs.recordAppliedAssignment(a)
+		if err := bs.applyCoreAssignmentEvent(a); err != nil {
 			errs[i] = err
 			glog.Warningf("block service: assignment %s epoch=%d role=%s: %v", a.Path, a.Epoch, role, err)
 			continue
 		}
-		bs.noteRoleApplied(a.Path, role)
 
 		// 2. Replication setup based on role + addresses.
 		switch role {
 		case blockvol.RolePrimary:
-			// CP8-2: ReplicaAddrs (multi-replica) takes precedence over scalar fields.
-			if len(a.ReplicaAddrs) > 0 {
-				if err := bs.setupPrimaryReplicationMulti(a.Path, a.ReplicaAddrs); err != nil {
-					errs[i] = err
-				}
-			} else if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
-				if err := bs.setupPrimaryReplication(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr); err != nil {
-					errs[i] = err
-				}
-			}
 		case blockvol.RoleReplica:
-			if a.ReplicaDataAddr != "" && a.ReplicaCtrlAddr != "" {
-				if err := bs.setupReplicaReceiver(a.Path, a.ReplicaDataAddr, a.ReplicaCtrlAddr); err != nil {
-					errs[i] = err
-				}
-			}
 		case blockvol.RoleRebuilding:
 			if a.RebuildAddr != "" {
 				bs.startRebuild(a.Path, a.RebuildAddr, a.Epoch)
@@ -468,6 +517,263 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 		}
 	}
 	return errs
+}
+
+func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignment) error {
+	if bs == nil || bs.v2Core == nil {
+		return bs.applyRoleAssignment(a)
+	}
+	ev, ok := bs.coreAssignmentEvent(a)
+	if !ok {
+		return nil
+	}
+	result := bs.v2Core.ApplyEvent(ev)
+	return bs.applyCoreCommandsWithAssignment(result.Commands, &a)
+}
+
+func (bs *BlockService) applyCoreEvent(ev engine.Event) {
+	if bs == nil || bs.v2Core == nil {
+		return
+	}
+	result := bs.v2Core.ApplyEvent(ev)
+	bs.applyCoreCommands(result.Commands)
+}
+
+func (bs *BlockService) applyCoreCommands(cmds []engine.Command) {
+	_ = bs.applyCoreCommandsWithAssignment(cmds, nil)
+}
+
+func (bs *BlockService) applyCoreCommandsWithAssignment(cmds []engine.Command, assignment *blockvol.BlockVolumeAssignment) error {
+	for _, cmd := range cmds {
+		switch v := cmd.(type) {
+		case engine.ApplyRoleCommand:
+			if err := bs.executeApplyRoleCommand(v, assignment); err != nil {
+				return err
+			}
+		case engine.StartReceiverCommand:
+			if err := bs.executeStartReceiverCommand(v, assignment); err != nil {
+				return err
+			}
+		case engine.ConfigureShipperCommand:
+			if err := bs.executeConfigureShipperCommand(v); err != nil {
+				return err
+			}
+		case engine.InvalidateSessionCommand:
+			if err := bs.executeInvalidateSessionCommand(v); err != nil {
+				return err
+			}
+		case engine.StartCatchUpCommand:
+			if err := bs.executeStartCatchUpCommand(v); err != nil {
+				return err
+			}
+		case engine.StartRebuildCommand:
+			if err := bs.executeStartRebuildCommand(v); err != nil {
+				return err
+			}
+		case engine.PublishProjectionCommand:
+			proj := v.Projection
+			if latest, ok := bs.V2Core().Projection(v.VolumeID); ok {
+				proj = latest
+			}
+			bs.coreProjMu.Lock()
+			if bs.coreProj == nil {
+				bs.coreProj = make(map[string]engine.PublicationProjection)
+			}
+			bs.coreProj[v.VolumeID] = proj
+			bs.coreProjMu.Unlock()
+		}
+	}
+	return nil
+}
+
+func (bs *BlockService) executeApplyRoleCommand(cmd engine.ApplyRoleCommand, assignment *blockvol.BlockVolumeAssignment) error {
+	if assignment == nil {
+		return nil
+	}
+	if assignment.Path != cmd.VolumeID {
+		return fmt.Errorf("block service: core apply_role path mismatch %q != %q", assignment.Path, cmd.VolumeID)
+	}
+	if err := bs.applyRoleAssignment(*assignment); err != nil {
+		return err
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "apply_role")
+	return nil
+}
+
+func (bs *BlockService) executeStartReceiverCommand(cmd engine.StartReceiverCommand, assignment *blockvol.BlockVolumeAssignment) error {
+	if assignment == nil {
+		return nil
+	}
+	if assignment.Path != cmd.VolumeID {
+		return fmt.Errorf("block service: core start_receiver path mismatch %q != %q", assignment.Path, cmd.VolumeID)
+	}
+	if assignment.ReplicaDataAddr == "" || assignment.ReplicaCtrlAddr == "" {
+		return nil
+	}
+	if err := bs.setupReplicaReceiver(assignment.Path, assignment.ReplicaDataAddr, assignment.ReplicaCtrlAddr); err != nil {
+		return err
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_receiver")
+	bs.applyCoreEvent(engine.ReceiverReadyObserved{ID: cmd.VolumeID})
+	return nil
+}
+
+func (bs *BlockService) executeConfigureShipperCommand(cmd engine.ConfigureShipperCommand) error {
+	addrs := make([]blockvol.ReplicaAddr, 0, len(cmd.Replicas))
+	for _, replica := range cmd.Replicas {
+		if replica.Endpoint.DataAddr == "" || replica.Endpoint.CtrlAddr == "" {
+			continue
+		}
+		addrs = append(addrs, blockvol.ReplicaAddr{
+			ServerID: replica.ReplicaID,
+			DataAddr: replica.Endpoint.DataAddr,
+			CtrlAddr: replica.Endpoint.CtrlAddr,
+		})
+	}
+	if len(addrs) == 0 {
+		return nil
+	}
+	if len(addrs) == 1 {
+		if err := bs.setupPrimaryReplication(cmd.VolumeID, addrs[0].DataAddr, addrs[0].CtrlAddr); err != nil {
+			return err
+		}
+	} else {
+		if err := bs.setupPrimaryReplicationMulti(cmd.VolumeID, addrs); err != nil {
+			return err
+		}
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "configure_shipper")
+	bs.applyCoreEvent(engine.ShipperConfiguredObserved{ID: cmd.VolumeID})
+	if bs.isPrimaryShipperConnected(cmd.VolumeID) {
+		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: cmd.VolumeID})
+	}
+	return nil
+}
+
+func (bs *BlockService) executeInvalidateSessionCommand(cmd engine.InvalidateSessionCommand) error {
+	if bs == nil || bs.v2Orchestrator == nil || bs.v2Core == nil {
+		return nil
+	}
+	proj, ok := bs.v2Core.Projection(cmd.VolumeID)
+	if !ok {
+		return nil
+	}
+	for _, replicaID := range proj.ReplicaIDs {
+		sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+		if sender == nil {
+			continue
+		}
+		sender.InvalidateSession(cmd.Reason, engine.StateDisconnected)
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "invalidate_session")
+	return nil
+}
+
+func (bs *BlockService) executeStartCatchUpCommand(cmd engine.StartCatchUpCommand) error {
+	if bs == nil || bs.v2Recovery == nil {
+		return nil
+	}
+	if err := bs.v2Recovery.ExecutePendingCatchUp(cmd.VolumeID, cmd.TargetLSN); err != nil {
+		return err
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_catchup")
+	return nil
+}
+
+func (bs *BlockService) executeStartRebuildCommand(cmd engine.StartRebuildCommand) error {
+	if bs == nil || bs.v2Recovery == nil {
+		return nil
+	}
+	if err := bs.v2Recovery.ExecutePendingRebuild(cmd.VolumeID, cmd.TargetLSN); err != nil {
+		return err
+	}
+	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_rebuild")
+	return nil
+}
+
+func (bs *BlockService) applyRoleAssignment(a blockvol.BlockVolumeAssignment) error {
+	if bs == nil || bs.blockStore == nil {
+		return nil
+	}
+	role := blockvol.RoleFromWire(a.Role)
+	ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
+	if err := bs.blockStore.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
+		return vol.HandleAssignment(a.Epoch, role, ttl)
+	}); err != nil {
+		return err
+	}
+	bs.noteRoleApplied(a.Path, role)
+	bs.applyCoreEvent(engine.RoleApplied{ID: a.Path})
+	return nil
+}
+
+func (bs *BlockService) recordExecutedCoreCommand(path, name string) {
+	bs.coreExecMu.Lock()
+	defer bs.coreExecMu.Unlock()
+	if bs.coreExec == nil {
+		bs.coreExec = make(map[string][]string)
+	}
+	bs.coreExec[path] = append(bs.coreExec[path], name)
+}
+
+func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (engine.AssignmentDelivered, bool) {
+	role := blockvol.RoleFromWire(a.Role)
+	ev := engine.AssignmentDelivered{
+		ID:    a.Path,
+		Epoch: a.Epoch,
+	}
+	switch role {
+	case blockvol.RolePrimary:
+		ev.Role = engine.RolePrimary
+		if len(a.ReplicaAddrs) > 0 {
+			ev.Replicas = make([]engine.ReplicaAssignment, 0, len(a.ReplicaAddrs))
+			for _, ra := range a.ReplicaAddrs {
+				if ra.ServerID == "" {
+					continue
+				}
+				ev.Replicas = append(ev.Replicas, engine.ReplicaAssignment{
+					ReplicaID: fmt.Sprintf("%s/%s", a.Path, ra.ServerID),
+					Endpoint: engine.Endpoint{
+						DataAddr: ra.DataAddr,
+						CtrlAddr: ra.CtrlAddr,
+					},
+				})
+			}
+		} else if a.ReplicaServerID != "" && a.ReplicaDataAddr != "" {
+			ev.Replicas = []engine.ReplicaAssignment{{
+				ReplicaID: fmt.Sprintf("%s/%s", a.Path, a.ReplicaServerID),
+				Endpoint: engine.Endpoint{
+					DataAddr: a.ReplicaDataAddr,
+					CtrlAddr: a.ReplicaCtrlAddr,
+				},
+			}}
+		}
+		return ev, true
+	case blockvol.RoleReplica:
+		ev.Role = engine.RoleReplica
+		ev.Replicas = []engine.ReplicaAssignment{{
+			ReplicaID: fmt.Sprintf("%s/%s", a.Path, bs.localServerID),
+			Endpoint: engine.Endpoint{
+				DataAddr: a.ReplicaDataAddr,
+				CtrlAddr: a.ReplicaCtrlAddr,
+			},
+		}}
+		return ev, true
+	default:
+		return engine.AssignmentDelivered{}, false
+	}
+}
+
+func (bs *BlockService) isPrimaryShipperConnected(path string) bool {
+	if bs == nil || bs.blockStore == nil {
+		return false
+	}
+	connected := false
+	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		connected = len(vol.ReplicaShipperStates()) > 0 && !vol.Status().ReplicaDegraded
+		return nil
+	})
+	return connected
 }
 
 // setupPrimaryReplication configures WAL shipping from primary to replica
@@ -732,11 +1038,9 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 	defer bs.replMu.RUnlock()
 	for i := range msgs {
 		if s, ok := bs.replStates[msgs[i].Path]; ok {
-			if s.publishHealthy {
-				msgs[i].ReplicaDataAddr = s.replicaDataAddr
-				msgs[i].ReplicaCtrlAddr = s.replicaCtrlAddr
-			}
+			msgs[i].ReplicaDataAddr, msgs[i].ReplicaCtrlAddr = bs.heartbeatReplicaAddrs(msgs[i].Path, s)
 		}
+		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
 		if bs.nvmeListenAddr != "" {
 			msgs[i].NvmeAddr = bs.nvmeListenAddr
@@ -747,6 +1051,48 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 		}
 	}
 	return msgs
+}
+
+// heartbeatReplicaAddrs returns the scalar replica transport addresses that
+// should be exposed on the current heartbeat surface. On the Phase 15 live path
+// it prefers the explicit core projection when present, while preserving the
+// older adapter-local fallback for unrebound paths.
+func (bs *BlockService) heartbeatReplicaAddrs(path string, state *volReplState) (string, string) {
+	if state == nil {
+		return "", ""
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		switch proj.Role {
+		case engine.RolePrimary:
+			if proj.Readiness.ShipperConfigured {
+				return state.replicaDataAddr, state.replicaCtrlAddr
+			}
+		case engine.RoleReplica:
+			if proj.Readiness.ReceiverReady {
+				return state.replicaDataAddr, state.replicaCtrlAddr
+			}
+		}
+		return "", ""
+	}
+	if state.publishHealthy {
+		return state.replicaDataAddr, state.replicaCtrlAddr
+	}
+	return "", ""
+}
+
+// heartbeatReplicaDegraded returns the bounded degraded bit for the current
+// heartbeat surface. On the Phase 15 live path it prefers the core mode when
+// present, then falls back to the runtime-local status bit.
+func (bs *BlockService) heartbeatReplicaDegraded(path string, current bool) bool {
+	if proj, ok := bs.CoreProjection(path); ok {
+		switch proj.Mode.Name {
+		case engine.ModeDegraded, engine.ModeNeedsRebuild:
+			return true
+		default:
+			return false
+		}
+	}
+	return current
 }
 
 // multiReplicaUnchanged checks if the full replica set is unchanged.
@@ -849,7 +1195,9 @@ func (bs *BlockService) markReceiverReady(path, dataAddr, ctrlAddr string) {
 }
 
 // ReadinessSnapshot reports the service-owned assignment/readiness closure for
-// one volume. It keeps v2 publication truth above blockvol's local mechanics.
+// one volume. On the Phase 15 live path it prefers the explicit core projection
+// for the aligned readiness subset, while `PublishHealthy` remains adapter-local
+// until publication ownership is fully rebound.
 func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
 	snap := BlockReadinessSnapshot{}
 	bs.replMu.RLock()
@@ -863,12 +1211,26 @@ func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
 	}
 	bs.replMu.RUnlock()
 	if !snap.ShipperConfigured || bs.blockStore == nil {
+		if proj, ok := bs.CoreProjection(path); ok {
+			snap.RoleApplied = proj.Readiness.RoleApplied
+			snap.ReceiverReady = proj.Readiness.ReceiverReady
+			snap.ShipperConfigured = proj.Readiness.ShipperConfigured
+			snap.ShipperConnected = proj.Readiness.ShipperConnected
+			snap.ReplicaEligible = proj.Readiness.ReplicaReady
+		}
 		return snap
 	}
 	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
 		snap.ShipperConnected = len(vol.ReplicaShipperStates()) > 0 && !vol.Status().ReplicaDegraded
 		return nil
 	})
+	if proj, ok := bs.CoreProjection(path); ok {
+		snap.RoleApplied = proj.Readiness.RoleApplied
+		snap.ReceiverReady = proj.Readiness.ReceiverReady
+		snap.ShipperConfigured = proj.Readiness.ShipperConfigured
+		snap.ShipperConnected = proj.Readiness.ShipperConnected
+		snap.ReplicaEligible = proj.Readiness.ReplicaReady
+	}
 	return snap
 }
 

@@ -19,6 +19,7 @@ type ShipperDebugInfo struct {
 type BlockVolumeDebugInfo struct {
 	Path              string             `json:"path"`
 	Role              string             `json:"role"`
+	Mode              string             `json:"mode,omitempty"`
 	Epoch             uint64             `json:"epoch"`
 	HeadLSN           uint64             `json:"head_lsn"`
 	Degraded          bool               `json:"degraded"`
@@ -28,8 +29,43 @@ type BlockVolumeDebugInfo struct {
 	ShipperConnected  bool               `json:"shipper_connected"`
 	ReplicaEligible   bool               `json:"replica_eligible"`
 	PublishHealthy    bool               `json:"publish_healthy"`
+	PublicationReason string             `json:"publication_reason,omitempty"`
 	Shippers          []ShipperDebugInfo `json:"shippers,omitempty"`
 	Timestamp         string             `json:"timestamp"`
+}
+
+// DebugInfoForVolume returns the current debug surface for one volume. When the
+// Phase 15 core projection exists on the live path, this surface prefers the
+// core-owned projection truth over adapter-local convenience flags.
+func (bs *BlockService) DebugInfoForVolume(path string, vol *blockvol.BlockVol) BlockVolumeDebugInfo {
+	status := vol.Status()
+	readiness := bs.ReadinessSnapshot(path)
+	info := BlockVolumeDebugInfo{
+		Path:              path,
+		Role:              status.Role.String(),
+		Epoch:             status.Epoch,
+		HeadLSN:           status.WALHeadLSN,
+		Degraded:          status.ReplicaDegraded,
+		RoleApplied:       readiness.RoleApplied,
+		ReceiverReady:     readiness.ReceiverReady,
+		ShipperConfigured: readiness.ShipperConfigured,
+		ShipperConnected:  readiness.ShipperConnected,
+		ReplicaEligible:   readiness.ReplicaEligible,
+		PublishHealthy:    readiness.PublishHealthy,
+		Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		info.Role = string(proj.Role)
+		info.Mode = string(proj.Mode.Name)
+		info.RoleApplied = proj.Readiness.RoleApplied
+		info.ReceiverReady = proj.Readiness.ReceiverReady
+		info.ShipperConfigured = proj.Readiness.ShipperConfigured
+		info.ShipperConnected = proj.Readiness.ShipperConnected
+		info.ReplicaEligible = proj.Readiness.ReplicaReady
+		info.PublishHealthy = proj.Publication.Healthy
+		info.PublicationReason = proj.Publication.Reason
+	}
+	return info
 }
 
 // debugBlockShipperHandler returns real-time shipper state for all block volumes.
@@ -53,22 +89,7 @@ func (vs *VolumeServer) debugBlockShipperHandler(w http.ResponseWriter, r *http.
 
 	var infos []BlockVolumeDebugInfo
 	store.IterateBlockVolumes(func(path string, vol *blockvol.BlockVol) {
-		status := vol.Status()
-		readiness := vs.blockService.ReadinessSnapshot(path)
-		info := BlockVolumeDebugInfo{
-			Path:              path,
-			Role:              status.Role.String(),
-			Epoch:             status.Epoch,
-			HeadLSN:           status.WALHeadLSN,
-			Degraded:          status.ReplicaDegraded,
-			RoleApplied:       readiness.RoleApplied,
-			ReceiverReady:     readiness.ReceiverReady,
-			ShipperConfigured: readiness.ShipperConfigured,
-			ShipperConnected:  readiness.ShipperConnected,
-			ReplicaEligible:   readiness.ReplicaEligible,
-			PublishHealthy:    readiness.PublishHealthy,
-			Timestamp:         time.Now().UTC().Format(time.RFC3339Nano),
-		}
+		info := vs.blockService.DebugInfoForVolume(path, vol)
 
 		// Get per-shipper state from ShipperGroup if available.
 		sg := vol.GetShipperGroup()

@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"github.com/gorilla/mux"
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/blockapi"
 )
 
@@ -154,6 +156,77 @@ func TestBlockVolumeLookupHandler(t *testing.T) {
 	}
 }
 
+func TestBlockVolumeLookupHandler_ReflectsCoreInfluencedReadyConsume(t *testing.T) {
+	ms, ts := blockTestServer(t)
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-handler-ready")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RoleReplica),
+		LeaseTtlMs:      30000,
+		ReplicaDataAddr: "127.0.0.1:0",
+		ReplicaCtrlAddr: "127.0.0.1:0",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+	bs.replMu.Lock()
+	state := bs.replStates[path]
+	if state == nil {
+		bs.replMu.Unlock()
+		t.Fatal("missing repl state")
+	}
+	state.publishHealthy = false
+	bs.replMu.Unlock()
+
+	hb := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if hb == nil {
+		t.Fatal("heartbeat volume missing")
+	}
+
+	ms.blockRegistry.MarkBlockCapable("primary-server:8080")
+	if err := ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name:          "vol-handler-ready",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-handler-ready-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   path,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ms.blockRegistry.UpdateFullHeartbeat("replica-server:8080", blockvol.InfoMessagesToProto([]blockvol.BlockVolumeInfoMessage{*hb}), "")
+
+	resp, err := http.Get(ts.URL + "/block/volume/vol-handler-ready")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var info blockapi.VolumeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		t.Fatal(err)
+	}
+	if !info.ReplicaReady {
+		t.Fatalf("expected outward ReplicaReady=true, info=%+v", info)
+	}
+	if info.ReplicaDegraded {
+		t.Fatalf("expected outward ReplicaDegraded=false, info=%+v", info)
+	}
+	if info.VolumeMode != "publish_healthy" {
+		t.Fatalf("expected outward VolumeMode=publish_healthy, got %q", info.VolumeMode)
+	}
+}
+
 func TestBlockVolumeDeleteHandler(t *testing.T) {
 	ms, ts := blockTestServer(t)
 
@@ -177,6 +250,73 @@ func TestBlockVolumeDeleteHandler(t *testing.T) {
 	// Verify it's gone.
 	if _, ok := ms.blockRegistry.Lookup("vol1"); ok {
 		t.Error("expected vol1 to be unregistered")
+	}
+}
+
+func TestBlockVolumeListHandler_ReflectsCoreInfluencedDegradedConsume(t *testing.T) {
+	ms, ts := blockTestServer(t)
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-handler-degraded")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "replica-server:8080",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: "barrier_timeout"})
+
+	hb := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if hb == nil {
+		t.Fatal("heartbeat volume missing")
+	}
+
+	ms.blockRegistry.MarkBlockCapable("primary-server:8080")
+	if err := ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name:          "vol-handler-degraded",
+		VolumeServer:  "primary-server:8080",
+		Path:          path,
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-handler-degraded-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	ms.blockRegistry.UpdateFullHeartbeat("primary-server:8080", blockvol.InfoMessagesToProto([]blockvol.BlockVolumeInfoMessage{*hb}), "")
+
+	resp, err := http.Get(ts.URL + "/block/volumes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+
+	var infos []blockapi.VolumeInfo
+	if err := json.NewDecoder(resp.Body).Decode(&infos); err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 {
+		t.Fatalf("expected 1 volume, got %d", len(infos))
+	}
+	info := infos[0]
+	if !info.ReplicaDegraded {
+		t.Fatalf("expected outward ReplicaDegraded=true, info=%+v", info)
+	}
+	if info.VolumeMode != "degraded" {
+		t.Fatalf("expected outward VolumeMode=degraded, got %q", info.VolumeMode)
 	}
 }
 

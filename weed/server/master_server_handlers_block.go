@@ -251,8 +251,12 @@ func (ms *MasterServer) blockVolumeExpandHandler(w http.ResponseWriter, r *http.
 
 // blockStatusHandler handles GET /block/status — cluster summary with health counts.
 func (ms *MasterServer) blockStatusHandler(w http.ResponseWriter, r *http.Request) {
+	writeJsonQuiet(w, r, http.StatusOK, ms.statusResponseFromRegistry())
+}
+
+func (ms *MasterServer) statusResponseFromRegistry() blockapi.BlockStatusResponse {
 	healthSummary := ms.blockRegistry.ComputeClusterHealthSummary()
-	status := blockapi.BlockStatusResponse{
+	return blockapi.BlockStatusResponse{
 		VolumeCount:           len(ms.blockRegistry.ListAll()),
 		ServerCount:           len(ms.blockRegistry.BlockCapableServers()),
 		PromotionLSNTolerance: ms.blockRegistry.PromotionLSNTolerance(),
@@ -267,7 +271,6 @@ func (ms *MasterServer) blockStatusHandler(w http.ResponseWriter, r *http.Reques
 		UnsafeCount:           healthSummary.Unsafe,
 		NvmeCapableServers:    ms.blockRegistry.NvmeCapableServerCount(),
 	}
-	writeJsonQuiet(w, r, http.StatusOK, status)
 }
 
 // blockVolumePreflightHandler handles GET /block/volume/{name}/preflight.
@@ -365,6 +368,22 @@ func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http
 
 // entryToVolumeInfo converts a BlockVolumeEntry to a blockapi.VolumeInfo.
 // primaryAlive indicates whether the primary server is alive (in blockServers set).
+type entryReplicaSurface struct {
+	ReplicaReady    bool
+	ReplicaDegraded bool
+	VolumeMode      string
+	HealthState     string
+}
+
+func entryReplicaSurfaceInfo(e *BlockVolumeEntry, primaryAlive bool) entryReplicaSurface {
+	return entryReplicaSurface{
+		ReplicaReady:    e.ReplicaReady,
+		ReplicaDegraded: e.ReplicaDegraded,
+		VolumeMode:      e.VolumeMode,
+		HealthState:     deriveHealthStateWithLiveness(e, primaryAlive),
+	}
+}
+
 func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeInfo {
 	status := "pending"
 	if e.Status == StatusActive {
@@ -378,6 +397,7 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 	if durMode == "" {
 		durMode = "best_effort"
 	}
+	surface := entryReplicaSurfaceInfo(e, primaryAlive)
 	info := blockapi.VolumeInfo{
 		Name:             e.Name,
 		VolumeServer:     e.VolumeServer,
@@ -394,15 +414,15 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 		ReplicaDataAddr:  e.ReplicaDataAddr,
 		ReplicaCtrlAddr:  e.ReplicaCtrlAddr,
 		ReplicaFactor:    rf,
-		ReplicaReady:     e.ReplicaReady,
+		ReplicaReady:     surface.ReplicaReady,
 		HealthScore:      e.HealthScore,
-		ReplicaDegraded:  e.ReplicaDegraded,
+		ReplicaDegraded:  surface.ReplicaDegraded,
 		DurabilityMode:   durMode,
 		Preset:           e.Preset,
 		NvmeAddr:         e.NvmeAddr,
 		NQN:              e.NQN,
-		HealthState:      deriveHealthStateWithLiveness(e, primaryAlive),
-		VolumeMode:       e.VolumeMode,
+		HealthState:      surface.HealthState,
+		VolumeMode:       surface.VolumeMode,
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

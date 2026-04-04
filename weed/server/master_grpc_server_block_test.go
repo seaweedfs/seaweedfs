@@ -665,6 +665,47 @@ func TestMaster_LookupBlockVolume(t *testing.T) {
 	}
 }
 
+func TestLookupResponseFromEntry_PublicationMinimalSurface(t *testing.T) {
+	resp := lookupResponseFromEntry(&BlockVolumeEntry{
+		Name:            "lookup-minimal",
+		VolumeServer:    "vs1:9333",
+		ISCSIAddr:       "10.0.0.1:3260",
+		IQN:             "iqn.2024.test:lookup-minimal",
+		SizeBytes:       1 << 30,
+		ReplicaServer:   "vs2:9333",
+		ReplicaFactor:   2,
+		Replicas:        []ReplicaInfo{{Server: "vs2:9333"}},
+		DurabilityMode:  "sync_all",
+		NvmeAddr:        "10.0.0.1:4420",
+		NQN:             "nqn.2024-01.com.seaweedfs:vol.lookup-minimal",
+		ReplicaReady:    true,
+		ReplicaDegraded: false,
+		VolumeMode:      "publish_healthy",
+	})
+
+	if resp.VolumeServer != "vs1:9333" {
+		t.Fatalf("VolumeServer=%q", resp.VolumeServer)
+	}
+	if resp.IscsiAddr != "10.0.0.1:3260" {
+		t.Fatalf("IscsiAddr=%q", resp.IscsiAddr)
+	}
+	if resp.CapacityBytes != 1<<30 {
+		t.Fatalf("CapacityBytes=%d", resp.CapacityBytes)
+	}
+	if resp.ReplicaFactor != 2 {
+		t.Fatalf("ReplicaFactor=%d", resp.ReplicaFactor)
+	}
+	if len(resp.ReplicaServers) != 1 || resp.ReplicaServers[0] != "vs2:9333" {
+		t.Fatalf("ReplicaServers=%v", resp.ReplicaServers)
+	}
+	if resp.DurabilityMode != "sync_all" {
+		t.Fatalf("DurabilityMode=%q", resp.DurabilityMode)
+	}
+	if resp.NvmeAddr != "10.0.0.1:4420" || resp.Nqn != "nqn.2024-01.com.seaweedfs:vol.lookup-minimal" {
+		t.Fatalf("NVMe fields addr=%q nqn=%q", resp.NvmeAddr, resp.Nqn)
+	}
+}
+
 // ============================================================
 // CP8-2 T9: Multi-Replica Create/Delete/Assign Tests
 // ============================================================

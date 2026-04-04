@@ -429,13 +429,15 @@ Evidence anchor:
 
 ## Current Strongest Evidence By Layer
 
-| Layer | Main value |
-|------|------------|
-| `FSM` / design | define truth and non-goals |
-| simulator | prove protocol truth and failure-class closure cheaply |
-| prototype | prove implementation-shape and authority semantics cheaply |
-| engine | prove the accepted contracts survive real implementation structure |
-| service slice / runner | prove truth survives real control/storage/system reality |
+
+| Layer                  | Main value                                                         |
+| ---------------------- | ------------------------------------------------------------------ |
+| `FSM` / design         | define truth and non-goals                                         |
+| simulator              | prove protocol truth and failure-class closure cheaply             |
+| prototype              | prove implementation-shape and authority semantics cheaply         |
+| engine                 | prove the accepted contracts survive real implementation structure |
+| service slice / runner | prove truth survives real control/storage/system reality           |
+
 
 ## Phase Conformance Notes
 
@@ -594,16 +596,20 @@ Main review risk:
 When a later feature expands the protocol surface (for example `SmartWAL` or a new rebuild optimization), the order should be:
 
 1. `FSM / design`
+
 - define the new semantics and non-goals
 
-2. `Truth update`
+1. `Truth update`
+
 - either attach the feature to an existing truth
 - or add a new protocol truth if the feature creates a new long-lived invariant
 
-3. `Phase alignment`
+1. `Phase alignment`
+
 - define which later phases strengthen or validate that truth
 
-4. `Evidence ladder`
+1. `Evidence ladder`
+
 - simulator, prototype, engine, service slice as needed
 
 Do not start feature implementation by editing engine or service glue first and only later trying to explain what truth changed.
@@ -618,3 +624,419 @@ For any future feature, later reviews should ask:
 4. does the feature weaken any existing truth?
 
 This keeps feature growth aligned with protocol truth instead of letting implementation convenience define semantics.
+
+## 继承图
+
+最短可以看成三层：
+
+```text
+Layer 1: 已接受的语义与证据
+-----------------------------------------
+Phase 08-13
+  -> protocol truths
+  -> claim / evidence
+  -> envelope / non-claim
+  -> bounded proofs
+  -> V1-under-V2-constraints test results
+
+                ||
+                || 继承“语义约束、证明边界、不能 overclaim 的规则”
+                \/
+
+Layer 2: V2 core 原型与显式自动机
+-----------------------------------------
+Phase 14
+  -> small automata
+     - assignment
+     - recovery
+     - boundary
+     - mode
+     - publication
+  -> explicit state owner
+  -> transition rules
+  -> command emission rules
+  -> projection contracts
+
+                ||
+                || 继承“状态机结构、命令规则、对外投影规则”
+                \/
+
+Layer 3: 集成运行时
+-----------------------------------------
+Phase 15-16
+  -> weed/ adapter
+  -> blockvol executor
+  -> master / VS / heartbeat / lookup / debug / status
+  -> real command-driven path
+  -> real observation feedback path
+
+目标：
+  V2 core owns semantics
+  adapter translates
+  blockvol executes
+```
+
+如果换成“什么被继承、什么不被继承”，就是这个图：
+
+```text
+前面 phase 资产
+|
+|-- 继承
+|   |-- truth constraints
+|   |-- FSM/state-transition meaning
+|   |-- command emission conditions
+|   |-- projection/publication rules
+|   |-- accepted evidence and non-claims
+|
+|-- 不直接继承
+|   |-- V1 runtime 的状态所有权
+|   |-- V1 内联控制分支就是最终 truth
+|   |-- “测试跑通了所以产品语义成立” 这种隐式结论
+|
+v
+Phase 14 core
+|
+|-- 输出
+|   |-- explicit core engine
+|   |-- owned state
+|   |-- explicit commands
+|   |-- explicit projections
+|
+v
+Phase 15-16 integration
+|
+|-- 复用
+|   |-- blockvol flusher
+|   |-- shipper / receiver
+|   |-- rebuild server
+|   |-- existing transport/backend machinery
+|
+|-- 替换/上提
+|   |-- 谁决定 apply_role
+|   |-- 谁决定 start_receiver
+|   |-- 后面继续上提 configure_shipper 等 runtime-driving decision
+```
+
+再给你一个“现在走到哪里”的定位图：
+
+```text
+[Phase 08-13]
+约束 / 证据 / envelope / prototype input
+        |
+        v
+[Phase 14]
+V2 core shell 成立
+        |
+        v
+[Phase 15]
+surface consume core truth
+        |
+        v
+[Phase 16]
+runtime-driving decisions move from adapter -> core
+        |
+        v
+[未来]
+one bounded V2-native runtime path
+```
+
+一句话总结：
+
+- `Phase 08-13` 留下的是“规则和证据”
+- `Phase 14` 把它们变成“显式 core”
+- `Phase 15-16` 把 core 接到真实 runtime，上提语义控制权
+- `V1` 主要保留为执行 backend，不再保留为语义 owner
+
+## 逻辑
+可以。我换成更“工程视角”的讲法，不只是图，而是讲这套继承到底怎么落到代码和后续开发上。
+
+### 核心思路
+
+这个项目现在不是一条线直接从“协议文档”走到“最终产品”，而是四层：
+
+1. `truth / claim / envelope`
+2. `core semantic model`
+3. `adapter integration`
+4. `backend execution reuse`
+
+它们的关系不是谁替代谁，而是“上层定义意义，下层负责承载”。
+
+最重要的一点是：
+
+- 上层决定“什么算真”
+- 下层只负责“怎么做出来”
+
+这就是为什么我一直在强调：
+`V2 owns semantics, V1/blockvol owns execution`
+
+### 四层继承图
+
+```text
+Layer A: 语义约束层
+--------------------------------
+sw-block/design/v2-protocol-truths.md
+sw-block/design/v2-protocol-claim-and-evidence.md
+sw-block/design/v2-protocol-closure-map.zh.md
+
+定义：
+- 什么叫 assigned / ready / durable / degraded / publish healthy
+- 哪些 claim 已经接受
+- 哪些 envelope 是允许宣称的
+- 哪些 non-claim 不能偷着扩张
+
+                ||
+                || 把“正确性的标准”传下去
+                \/
+
+Layer B: V2 core 语义层
+--------------------------------
+sw-block/design/v2_mini_core_design.md
+sw-block/design/v2-phase14plus-semantic-framework.md
+sw-block/engine/replication/
+
+定义：
+- 小自动机怎么拆
+- state 谁拥有
+- transition 怎么发生
+- command 什么时候发
+- projection 允许怎么对外表达
+
+                ||
+                || 把“标准”变成“可执行语义模型”
+                \/
+
+Layer C: Adapter 集成层
+--------------------------------
+weed/server/...
+master / volume server / heartbeat / lookup / status / debug
+
+职责：
+- 把 live assignment / heartbeat / observation 送进 core
+- 把 core 的 command / projection 接回真实系统
+- 对外 surface 尽量只消费 core truth
+
+                ||
+                || 把 core 接到真实运行时
+                \/
+
+Layer D: Backend 执行层
+--------------------------------
+weed/storage/blockvol/...
+
+职责：
+- flusher
+- shipper
+- receiver
+- rebuild server
+- checkpoint / WAL / async execution
+
+只负责：
+- 执行
+- 持久化
+- 传输
+- 提供 observation
+
+不负责：
+- 最终语义定义
+```
+
+### 每层分别继承了什么
+
+#### 1. 从前面 phases 继承了什么
+
+前面 `Phase 08-13` 不是白做的，它们沉淀了三类资产：
+
+1. 语义定义
+2. 证明边界
+3. 已接受证据
+
+比如：
+- durable progress 该看什么，不该看什么
+- publication healthy 不能等同于 replica ready
+- degraded / needs_rebuild 不能乱宣称
+- 哪些测试只是 witness，哪些已经是 proof
+- 哪些 envelope 是当前 chosen path，不能擅自放大成“通用产品能力”
+
+所以现在做 `Phase 15/16`，不是重新设计世界，而是在问：
+
+- 这个 live path 是否遵守了已经接受的 truth？
+- 这个 adapter 是否把语义 owner 放错地方了？
+- 这个 surface 是否产生 overclaim？
+
+#### 2. `Phase 14` 继承并固化了什么
+
+`Phase 14` 的价值，不是“写了一个新包”，而是把前面松散的规则固化成 core 结构。
+
+它固定了四件事：
+
+1. state owner
+2. transition rule
+3. command emission rule
+4. projection contract
+
+这意味着后面就不是“看到一个 bug 再 patch 一层”，而是可以用统一问题来判断：
+
+- 这是 state 问题？
+- 这是 transition 问题？
+- 这是 command 发错时机？
+- 还是 projection overclaim？
+
+这就是原来你说的那种目标：
+“以后每个算法选择都能回答：满足哪个语义约束，避免哪个 overclaim，保住哪个 proof。”
+
+#### 3. `Phase 15` 继承了什么
+
+`Phase 15` 不是在发明新语义，而是在做一个很重要的事情：
+
+让 `weed/` 的真实 surface 开始消费 core-owned truth。
+
+也就是把过去散落在 adapter 里的这些东西逐步收回：
+
+- debug
+- heartbeat
+- readiness snapshot
+- master registry consume
+- lookup/list/status outward surface
+
+`Phase 15` 的主题不是 runtime control，而是 surface rebinding。
+
+意思是：
+
+- 先不急着改谁驱动执行
+- 先把谁有资格对外说话这件事收紧
+
+所以 `Phase 15` 更像是：
+“让嘴巴先归 core 管”
+
+#### 4. `Phase 16` 继承了什么
+
+`Phase 16` 才开始继续向下推进，去拿“手脚”。
+
+也就是从：
+
+- core 只是解释系统状态
+- adapter 还在自己决定很多执行动作
+
+变成：
+
+- core 发 command
+- adapter 只是执行 command
+- backend 执行后返回 observation
+- core 再更新 state / projection
+
+这就是为什么我刚刚在 `16A` 先把：
+
+- `apply_role`
+- `start_receiver`
+
+这两条路径接成 command-driven。
+
+这一步的意义不在于“功能变多了”，而在于 runtime ownership 往上提了。
+
+### 一张更贴 repo 的图
+
+```text
+v2-protocol-truths.md
+v2-protocol-claim-and-evidence.md
+v2-protocol-closure-map.zh.md
+        |
+        v
+v2_mini_core_design.md
+v2-phase14plus-semantic-framework.md
+        |
+        v
+sw-block/engine/replication/
+  - state
+  - event
+  - command
+  - projection
+        |
+        v
+weed/server/
+  - ApplyAssignments()
+  - heartbeat consume / produce
+  - lookup/list/status/debug
+        |
+        v
+weed/storage/blockvol/
+  - WAL
+  - flusher
+  - shipper
+  - receiver
+  - rebuild
+```
+
+可以把它理解成：
+
+- 文档定义语义世界
+- `engine/replication` 把语义世界程序化
+- `weed/server` 把程序化语义接到 live system
+- `blockvol` 提供真正的执行能力
+
+### 为什么要这样分，而不是继续修 V1
+
+这是你前面感觉最敏锐的地方：
+
+如果一直在 `V1` 上补测试、补约束、补文档，最后容易变成：
+
+- 我们越来越懂 `V1`
+- 但没有真正得到一个 `V2` owner
+
+那样后面每加一个功能都要重新回答：
+“这次到底是谁说了算？”
+
+现在这种分层，就是为了避免未来每做一次事都重新付出一大轮认知成本。
+
+理想结果是：
+
+- 新功能先接到 core 语义层
+- adapter 只做接线
+- backend 只做执行
+- proofs 可以复用
+- envelope 不需要每次重谈
+
+也就是说，前期看起来“多做了一层”，但长期是为了让后面的功能开发更便宜。
+
+### 你可以怎么理解现在的进度
+
+如果用一句最直白的话：
+
+- `Phase 08-13`：知道什么是对的，并拿到了很多边界证据
+- `Phase 14`：把“什么是对的”变成显式 core
+- `Phase 15`：让对外说法开始归 core
+- `Phase 16`：让真实执行决策开始归 core
+
+所以现在不是从零开始，也不是还在原地测 `V1`。
+而是在把以前的知识资产，逐步变成真正可接管 runtime 的结构。
+
+### 你后面看代码时可以用的判断法
+
+你如果想快速判断某一段代码属于哪一层，可以问这三个问题：
+
+1. 它是在定义“什么是真的”吗？
+如果是，那它应该靠近 `design` 或 `engine/replication`
+
+2. 它是在把外部输入翻译给 core，或者把 core 输出翻回系统吗？
+如果是，那它应该在 `weed/server`
+
+3. 它是在真正写 WAL、flush、ship、rebuild、listen socket 吗？
+如果是，那它应该属于 `blockvol` 执行层，不该拥有最终语义
+
+这个判断法很有用，因为以后 review 时会一直遇到“这段逻辑该放哪里”。
+
+## 当前最关键的设计纪律
+
+现在最需要守住的纪律其实就两条：
+
+1. 不让 `V1` 本地状态重新成为 semantic owner
+2. 不让新的 outward surface 绕开 core 再发明一套 truth
+
+只要守住这两条，前面 phases 的资产就不是散掉，而是在持续被吸收到最终架构里。
+
+如果你想，我下一条可以继续讲一个更具体的话题：
+
+1. “五个小自动机分别管什么”
+2. “为什么 `publication` 必须单独拥有 authority”
+3. “为什么 `blockvol` 的异步线程还能保留，但 semantic ownership 不能保留”
+
+你选一个，我可以继续往下展开。

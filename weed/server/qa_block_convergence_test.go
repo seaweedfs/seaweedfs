@@ -48,6 +48,7 @@ func createP2BlockService(t *testing.T) (*BlockService, string) {
 		localServerID:  "vs1-node:18080",
 		v2Bridge:       v2bridge.NewControlBridge(),
 		v2Orchestrator: engine.NewRecoveryOrchestrator(),
+		v2Core:         engine.NewCoreEngine(),
 		replStates:     make(map[string]*volReplState),
 	}
 	bs.v2Recovery = NewRecoveryManager(bs)

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
@@ -1391,7 +1392,7 @@ func TestRegistry_VolumesWithDeadPrimary_Basic(t *testing.T) {
 	r.Register(&BlockVolumeEntry{
 		Name: "vol1", VolumeServer: "vs1", Path: "/data/vol1.blk",
 		SizeBytes: 1 << 30, Epoch: 1, Role: blockvol.RoleToWire(blockvol.RolePrimary),
-		Status: StatusActive,
+		Status:   StatusActive,
 		Replicas: []ReplicaInfo{{Server: "vs2", Path: "/data/vol1.blk"}},
 	})
 
@@ -2005,5 +2006,136 @@ func TestRegistry_ReplicaReadyRequiresReplicaHeartbeat(t *testing.T) {
 	}
 	if !entry.ReplicaReady {
 		t.Fatal("aggregate replica readiness should become true after replica heartbeat")
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-master-consume")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "replica-server:8080",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: "barrier_timeout"})
+
+	hb := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if hb == nil {
+		t.Fatal("heartbeat volume missing")
+	}
+	if !hb.ReplicaDegraded {
+		t.Fatalf("expected core-influenced heartbeat degraded bit, hb=%+v", hb)
+	}
+
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-consume",
+		VolumeServer:  "primary-server:8080",
+		Path:          path,
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-consume.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("primary-server:8080", blockvol.InfoMessagesToProto([]blockvol.BlockVolumeInfoMessage{*hb}), "")
+
+	entry, _ := r.Lookup("vol-master-consume")
+	if !entry.TransportDegraded {
+		t.Fatalf("expected registry transport degraded from heartbeat, entry=%+v", entry)
+	}
+	if !entry.ReplicaDegraded {
+		t.Fatalf("expected registry aggregate degraded from heartbeat, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "degraded" {
+		t.Fatalf("expected degraded volume mode after consume, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-master-ready")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RoleReplica),
+			LeaseTtlMs:      30000,
+			ReplicaDataAddr: "127.0.0.1:0",
+			ReplicaCtrlAddr: "127.0.0.1:0",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.replMu.Lock()
+	state := bs.replStates[path]
+	if state == nil {
+		bs.replMu.Unlock()
+		t.Fatal("missing repl state")
+	}
+	state.publishHealthy = false
+	bs.replMu.Unlock()
+
+	hb := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if hb == nil {
+		t.Fatal("heartbeat volume missing")
+	}
+	if hb.ReplicaDataAddr == "" || hb.ReplicaCtrlAddr == "" {
+		t.Fatalf("expected core-influenced replica addresses on heartbeat, hb=%+v", hb)
+	}
+	if hb.ReplicaDegraded {
+		t.Fatalf("did not expect degraded heartbeat on ready path, hb=%+v", hb)
+	}
+
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-ready",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-ready-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   path,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("replica-server:8080", blockvol.InfoMessagesToProto([]blockvol.BlockVolumeInfoMessage{*hb}), "")
+
+	entry, _ := r.Lookup("vol-master-ready")
+	if !entry.Replicas[0].Ready {
+		t.Fatalf("expected replica ready from heartbeat addresses, entry=%+v", entry)
+	}
+	if !entry.ReplicaReady {
+		t.Fatalf("expected aggregate replica ready after consume, entry=%+v", entry)
+	}
+	if entry.ReplicaDegraded {
+		t.Fatalf("did not expect aggregate degraded after ready consume, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "publish_healthy" {
+		t.Fatalf("expected publish_healthy after ready consume, got %q", entry.VolumeMode)
 	}
 }

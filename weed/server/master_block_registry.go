@@ -71,23 +71,23 @@ type BlockVolumeEntry struct {
 	RebuildListenAddr string // rebuild server listen addr on primary
 
 	// CP8-2: Multi-replica support.
-	ReplicaFactor   int           // 2 or 3 (default 2)
-	Replicas        []ReplicaInfo // one per replica (RF-1 entries)
-	HealthScore     float64       // primary health score from heartbeat
-	ReplicaReady    bool          // all configured replicas are ready for publication
-	ReplicaDegraded bool          // aggregate: transport degraded OR not ready
-	TransportDegraded bool        // primary reports degraded replicas
+	ReplicaFactor     int           // 2 or 3 (default 2)
+	Replicas          []ReplicaInfo // one per replica (RF-1 entries)
+	HealthScore       float64       // primary health score from heartbeat
+	ReplicaReady      bool          // all configured replicas are ready for publication
+	ReplicaDegraded   bool          // aggregate: transport degraded OR not ready
+	TransportDegraded bool          // primary reports degraded replicas
 
 	// CP13-9: Normalized volume mode for external surfaces.
 	// Computed by recomputeReplicaState from the current entry state.
-	VolumeMode      string        // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
-	WALHeadLSN      uint64        // primary WAL head LSN from heartbeat
+	VolumeMode string // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
+	WALHeadLSN uint64 // primary WAL head LSN from heartbeat
 
 	// CP8-3-1: Durability mode.
-	DurabilityMode  string        // "best_effort", "sync_all", "sync_quorum"
+	DurabilityMode string // "best_effort", "sync_all", "sync_quorum"
 
 	// CP11B-1: Provisioning preset (control-plane metadata only).
-	Preset          string        // "database", "general", "throughput", or ""
+	Preset string // "database", "general", "throughput", or ""
 
 	// Lease tracking for failover (CP6-3 F2).
 	LastLeaseGrant time.Time
@@ -95,7 +95,7 @@ type BlockVolumeEntry struct {
 
 	// CP11A-2: Coordinated expand tracking.
 	ExpandInProgress  bool
-	ExpandFailed      bool   // true = primary committed but replica(s) failed; size suppressed
+	ExpandFailed      bool // true = primary committed but replica(s) failed; size suppressed
 	PendingExpandSize uint64
 	ExpandEpoch       uint64
 
@@ -255,7 +255,6 @@ type PlacementCandidateInfo struct {
 	AvailableBytes uint64 // 0 = unknown
 	NvmeCapable    bool
 }
-
 
 // NewBlockVolumeRegistry creates an empty registry.
 func NewBlockVolumeRegistry() *BlockVolumeRegistry {
@@ -452,7 +451,7 @@ type ReplicaAddrChange struct {
 // HeartbeatResult holds the side effects from UpdateFullHeartbeat that the
 // caller (heartbeat handler) must process.
 type HeartbeatResult struct {
-	AddrChanges     []ReplicaAddrChange
+	AddrChanges          []ReplicaAddrChange
 	PrimaryRefreshNeeded []BlockVolumeEntry // CP13-8A: entries needing primary assignment refresh
 }
 
@@ -551,88 +550,9 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			isReplica := existing.ReplicaByServer(server) != nil
 
 			if isPrimary {
-				// Primary heartbeat: update primary fields.
-				// CP11A-2: skip size update during coordinated expand.
-				if !existing.ExpandInProgress {
-					existing.SizeBytes = info.VolumeSize
-				}
-				existing.Epoch = info.Epoch
-				existing.Role = info.Role
-				existing.Status = StatusActive
-				existing.LastLeaseGrant = time.Now()
-				existing.HealthScore = info.HealthScore
-				existing.TransportDegraded = info.ReplicaDegraded
-				existing.WALHeadLSN = info.WalHeadLsn
-				// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
-				if info.DurabilityMode != "" {
-					existing.DurabilityMode = info.DurabilityMode
-				}
-				// F5: update replica addresses from heartbeat info.
-				if info.ReplicaDataAddr != "" {
-					existing.ReplicaDataAddr = info.ReplicaDataAddr
-				}
-				if info.ReplicaCtrlAddr != "" {
-					existing.ReplicaCtrlAddr = info.ReplicaCtrlAddr
-				}
-				// NVMe publication: update NVMe fields from heartbeat.
-				// Required for master restart reconstruction and NVMe enable/disable.
-				existing.NvmeAddr = info.NvmeAddr
-				existing.NQN = info.Nqn
-				// Sync first replica's data addrs to Replicas[].
-				if info.ReplicaDataAddr != "" && len(existing.Replicas) > 0 {
-					existing.Replicas[0].DataAddr = info.ReplicaDataAddr
-					existing.Replicas[0].CtrlAddr = info.ReplicaCtrlAddr
-				}
-				existing.recomputeReplicaState()
+				r.applyPrimaryHeartbeatObservation(existing, info)
 			} else if isReplica {
-				// Replica heartbeat: update ReplicaInfo fields.
-				for i := range existing.Replicas {
-					if existing.Replicas[i].Server == server {
-						existing.Replicas[i].Path = info.Path
-						existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
-						existing.Replicas[i].HealthScore = info.HealthScore
-						existing.Replicas[i].LastHeartbeat = time.Now()
-						// Keep role as RoleReplica — the VS may report a stale
-						// primary role if it hasn't received its demotion assignment yet.
-						// The registry's decision (lower epoch = replica) is authoritative.
-						existing.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
-						existing.Replicas[i].NvmeAddr = info.NvmeAddr
-						existing.Replicas[i].NQN = info.Nqn
-						existing.Replicas[i].Ready = info.ReplicaDataAddr != "" && info.ReplicaCtrlAddr != ""
-						if existing.WALHeadLSN > info.WalHeadLsn {
-							existing.Replicas[i].WALLag = existing.WALHeadLSN - info.WalHeadLsn
-						} else {
-							existing.Replicas[i].WALLag = 0
-						}
-						// CP13-8: detect address change on replica restart.
-						// If either the data or control address changed, the primary's
-						// shipper has a stale endpoint. Queue a Primary refresh.
-						if info.ReplicaDataAddr != "" || info.ReplicaCtrlAddr != "" {
-							oldData := existing.Replicas[i].DataAddr
-							oldCtrl := existing.Replicas[i].CtrlAddr
-							dataChanged := info.ReplicaDataAddr != "" && oldData != "" && oldData != info.ReplicaDataAddr
-							ctrlChanged := info.ReplicaCtrlAddr != "" && oldCtrl != "" && oldCtrl != info.ReplicaCtrlAddr
-							if dataChanged || ctrlChanged {
-								result.AddrChanges = append(result.AddrChanges, ReplicaAddrChange{
-									VolumeName:    existingName,
-									PrimaryServer: existing.VolumeServer,
-									OldDataAddr:   oldData,
-									OldCtrlAddr:   oldCtrl,
-									NewDataAddr:   info.ReplicaDataAddr,
-									NewCtrlAddr:   info.ReplicaCtrlAddr,
-								})
-							}
-							if info.ReplicaDataAddr != "" {
-								existing.Replicas[i].DataAddr = info.ReplicaDataAddr
-							}
-							if info.ReplicaCtrlAddr != "" {
-								existing.Replicas[i].CtrlAddr = info.ReplicaCtrlAddr
-							}
-						}
-						break
-					}
-				}
-				existing.recomputeReplicaState()
+				r.applyReplicaHeartbeatObservation(existing, server, existingName, info, &result)
 			} else {
 				// Server reports a volume that exists but has no record of this server.
 				// This happens after master restart. Use epoch-based reconciliation
@@ -657,19 +577,19 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 			existing, dup := r.volumes[name]
 			if !dup {
 				entry := &BlockVolumeEntry{
-					Name:           name,
-					VolumeServer:   server,
-					Path:           info.Path,
-					SizeBytes:      info.VolumeSize,
-					Epoch:          info.Epoch,
-					Role:           info.Role,
-					Status:         StatusActive,
-					LastLeaseGrant: time.Now(),
-					LeaseTTL:       30 * time.Second,
-					HealthScore:    info.HealthScore,
+					Name:              name,
+					VolumeServer:      server,
+					Path:              info.Path,
+					SizeBytes:         info.VolumeSize,
+					Epoch:             info.Epoch,
+					Role:              info.Role,
+					Status:            StatusActive,
+					LastLeaseGrant:    time.Now(),
+					LeaseTTL:          30 * time.Second,
+					HealthScore:       info.HealthScore,
 					TransportDegraded: info.ReplicaDegraded,
-					WALHeadLSN:     info.WalHeadLsn,
-					DurabilityMode: info.DurabilityMode,
+					WALHeadLSN:        info.WalHeadLsn,
+					DurabilityMode:    info.DurabilityMode,
 				}
 				if info.ReplicaDataAddr != "" {
 					entry.ReplicaDataAddr = info.ReplicaDataAddr
@@ -698,6 +618,103 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeat(server string, infos []*master
 		}
 	}
 	return result
+}
+
+// applyPrimaryHeartbeatObservation consumes one primary-side heartbeat into the
+// registry entry. Caller must hold r.mu.
+func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVolumeEntry, info *master_pb.BlockVolumeInfoMessage) {
+	// CP11A-2: skip size update during coordinated expand.
+	if !existing.ExpandInProgress {
+		existing.SizeBytes = info.VolumeSize
+	}
+	existing.Epoch = info.Epoch
+	existing.Role = info.Role
+	existing.Status = StatusActive
+	existing.LastLeaseGrant = time.Now()
+	existing.HealthScore = info.HealthScore
+	existing.TransportDegraded = info.ReplicaDegraded
+	existing.WALHeadLSN = info.WalHeadLsn
+	// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
+	if info.DurabilityMode != "" {
+		existing.DurabilityMode = info.DurabilityMode
+	}
+	// F5: update replica addresses from heartbeat info.
+	if info.ReplicaDataAddr != "" {
+		existing.ReplicaDataAddr = info.ReplicaDataAddr
+	}
+	if info.ReplicaCtrlAddr != "" {
+		existing.ReplicaCtrlAddr = info.ReplicaCtrlAddr
+	}
+	// NVMe publication: update NVMe fields from heartbeat.
+	// Required for master restart reconstruction and NVMe enable/disable.
+	existing.NvmeAddr = info.NvmeAddr
+	existing.NQN = info.Nqn
+	// Sync first replica's data addrs to Replicas[].
+	if info.ReplicaDataAddr != "" && len(existing.Replicas) > 0 {
+		existing.Replicas[0].DataAddr = info.ReplicaDataAddr
+		existing.Replicas[0].CtrlAddr = info.ReplicaCtrlAddr
+	}
+	existing.recomputeReplicaState()
+}
+
+// applyReplicaHeartbeatObservation consumes one replica-side heartbeat into the
+// registry entry. Caller must hold r.mu.
+func (r *BlockVolumeRegistry) applyReplicaHeartbeatObservation(existing *BlockVolumeEntry, server, existingName string, info *master_pb.BlockVolumeInfoMessage, result *HeartbeatResult) {
+	for i := range existing.Replicas {
+		if existing.Replicas[i].Server != server {
+			continue
+		}
+		existing.Replicas[i].Path = info.Path
+		existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
+		existing.Replicas[i].HealthScore = info.HealthScore
+		existing.Replicas[i].LastHeartbeat = time.Now()
+		// Keep role as RoleReplica — the VS may report a stale
+		// primary role if it hasn't received its demotion assignment yet.
+		// The registry's decision (lower epoch = replica) is authoritative.
+		existing.Replicas[i].Role = blockvol.RoleToWire(blockvol.RoleReplica)
+		existing.Replicas[i].NvmeAddr = info.NvmeAddr
+		existing.Replicas[i].NQN = info.Nqn
+		existing.Replicas[i].Ready = replicaReadyObservedFromHeartbeat(info)
+		if existing.WALHeadLSN > info.WalHeadLsn {
+			existing.Replicas[i].WALLag = existing.WALHeadLSN - info.WalHeadLsn
+		} else {
+			existing.Replicas[i].WALLag = 0
+		}
+		// CP13-8: detect address change on replica restart.
+		// If either the data or control address changed, the primary's
+		// shipper has a stale endpoint. Queue a Primary refresh.
+		if info.ReplicaDataAddr != "" || info.ReplicaCtrlAddr != "" {
+			oldData := existing.Replicas[i].DataAddr
+			oldCtrl := existing.Replicas[i].CtrlAddr
+			dataChanged := info.ReplicaDataAddr != "" && oldData != "" && oldData != info.ReplicaDataAddr
+			ctrlChanged := info.ReplicaCtrlAddr != "" && oldCtrl != "" && oldCtrl != info.ReplicaCtrlAddr
+			if dataChanged || ctrlChanged {
+				result.AddrChanges = append(result.AddrChanges, ReplicaAddrChange{
+					VolumeName:    existingName,
+					PrimaryServer: existing.VolumeServer,
+					OldDataAddr:   oldData,
+					OldCtrlAddr:   oldCtrl,
+					NewDataAddr:   info.ReplicaDataAddr,
+					NewCtrlAddr:   info.ReplicaCtrlAddr,
+				})
+			}
+			if info.ReplicaDataAddr != "" {
+				existing.Replicas[i].DataAddr = info.ReplicaDataAddr
+			}
+			if info.ReplicaCtrlAddr != "" {
+				existing.Replicas[i].CtrlAddr = info.ReplicaCtrlAddr
+			}
+		}
+		break
+	}
+	existing.recomputeReplicaState()
+}
+
+func replicaReadyObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) bool {
+	if info == nil {
+		return false
+	}
+	return info.ReplicaDataAddr != "" && info.ReplicaCtrlAddr != ""
 }
 
 // reconcileOnRestart handles the case where a second server reports a volume
@@ -1244,11 +1261,11 @@ type PromotionRejection struct {
 // Used by auto-promotion, manual promote API, preflight status, and logging.
 type PromotionPreflightResult struct {
 	VolumeName   string
-	Promotable   bool               // true if a candidate was found
-	Candidate    *ReplicaInfo       // best candidate (nil if !Promotable)
-	CandidateIdx int                // index in Replicas[] (-1 if !Promotable)
+	Promotable   bool                 // true if a candidate was found
+	Candidate    *ReplicaInfo         // best candidate (nil if !Promotable)
+	CandidateIdx int                  // index in Replicas[] (-1 if !Promotable)
 	Rejections   []PromotionRejection // why each non-candidate was rejected
-	Reason       string             // human-readable summary when !Promotable
+	Reason       string               // human-readable summary when !Promotable
 }
 
 // evaluatePromotionLocked evaluates promotion candidates for a volume.
@@ -1847,4 +1864,3 @@ func nameFromPath(path string) string {
 	}
 	return base
 }
-
