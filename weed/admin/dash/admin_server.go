@@ -890,6 +890,7 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 		user := ObjectStoreUser{
 			Username:    identity.Name,
 			Permissions: identity.Actions,
+			IsStatic:    s.credentialManager.IsStaticIdentity(identity.Name),
 		}
 
 		// Set email from account if available

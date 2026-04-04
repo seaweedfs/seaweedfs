@@ -125,6 +125,9 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                                 <div class="d-flex align-items-center">
                                                     <i class="fas fa-user me-2 text-muted"></i>
                                                     <strong>{user.Username}</strong>
+                                                    if user.IsStatic {
+                                                        <span class="badge bg-secondary ms-2" title="Loaded from config file (read-only)">static</span>
+                                                    }
                                                 </div>
                                             </td>
                                             <td>{user.Email}</td>
@@ -133,24 +136,28 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                                             </td>
                                             <td>
                                                 <div class="btn-group btn-group-sm" role="group">
-                                                    <button type="button" class="btn btn-outline-info" 
+                                                    <button type="button" class="btn btn-outline-info"
                                                             data-action="show-user-details" data-username={ user.Username }>
                                                         <i class="fas fa-info-circle"></i>
                                                     </button>
-                                                    <button type="button" class="btn btn-outline-primary" 
-                                                            data-action="edit-user" data-username={ user.Username }>
-                                                        <i class="fas fa-edit"></i>
-                                                    </button>
-                                                    if user.Username != "anonymous" {
+                                                    if !user.IsStatic {
+                                                        <button type="button" class="btn btn-outline-primary"
+                                                                data-action="edit-user" data-username={ user.Username }>
+                                                            <i class="fas fa-edit"></i>
+                                                        </button>
+                                                    }
+                                                    if user.Username != "anonymous" && !user.IsStatic {
                                                         <button type="button" class="btn btn-outline-secondary"
                                                                 data-action="manage-access-keys" data-username={ user.Username }>
                                                             <i class="fas fa-key"></i>
                                                         </button>
                                                     }
-                                                    <button type="button" class="btn btn-outline-danger" 
-                                                            data-action="delete-user" data-username={ user.Username }>
-                                                        <i class="fas fa-trash"></i>
-                                                    </button>
+                                                    if !user.IsStatic {
+                                                        <button type="button" class="btn btn-outline-danger"
+                                                                data-action="delete-user" data-username={ user.Username }>
+                                                            <i class="fas fa-trash"></i>
+                                                        </button>
+                                                    }
                                                 </div>
                                             </td>
                                         </tr>
