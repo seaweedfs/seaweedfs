@@ -82,16 +82,27 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		}
 
 	case CatchUpPlanned:
-		st.Recovery.Phase = RecoveryCatchingUp
-		st.Recovery.AchievedLSN = 0
-		if v.TargetLSN > st.Recovery.TargetLSN {
-			st.Recovery.TargetLSN = v.TargetLSN
-		}
-		if v.TargetLSN > st.Boundary.TargetLSN {
-			st.Boundary.TargetLSN = v.TargetLSN
+		replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID)
+		if ok {
+			st.recordCatchUpPlan(replicaID, v.TargetLSN)
+			targetLSN, achievedLSN, _ := st.catchUpAggregate()
+			st.Recovery.Phase = RecoveryCatchingUp
+			st.Recovery.AchievedLSN = achievedLSN
+			st.Recovery.TargetLSN = targetLSN
+			st.Boundary.TargetLSN = targetLSN
+			st.Boundary.AchievedLSN = achievedLSN
+		} else {
+			st.Recovery.Phase = RecoveryCatchingUp
+			st.Recovery.AchievedLSN = 0
+			if v.TargetLSN > st.Recovery.TargetLSN {
+				st.Recovery.TargetLSN = v.TargetLSN
+			}
+			if v.TargetLSN > st.Boundary.TargetLSN {
+				st.Boundary.TargetLSN = v.TargetLSN
+			}
 		}
 		st.Recovery.Reason = ""
-		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
+		if ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
 			cmds = append(cmds, StartCatchUpCommand{
 				VolumeID:  st.VolumeID,
 				ReplicaID: replicaID,
@@ -104,28 +115,56 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		}
 
 	case RecoveryProgressObserved:
-		if v.AchievedLSN > st.Recovery.AchievedLSN {
-			st.Recovery.AchievedLSN = v.AchievedLSN
-		}
-		if v.AchievedLSN > st.Boundary.AchievedLSN {
-			st.Boundary.AchievedLSN = v.AchievedLSN
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.observeCatchUpProgress(replicaID, v.AchievedLSN) {
+			_, achievedLSN, _ := st.catchUpAggregate()
+			st.Recovery.AchievedLSN = achievedLSN
+			st.Boundary.AchievedLSN = achievedLSN
+		} else {
+			if v.AchievedLSN > st.Recovery.AchievedLSN {
+				st.Recovery.AchievedLSN = v.AchievedLSN
+			}
+			if v.AchievedLSN > st.Boundary.AchievedLSN {
+				st.Boundary.AchievedLSN = v.AchievedLSN
+			}
 		}
 
 	case CatchUpCompleted:
-		if v.AchievedLSN > st.Recovery.AchievedLSN {
-			st.Recovery.AchievedLSN = v.AchievedLSN
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.completeCatchUp(replicaID, v.AchievedLSN) {
+			targetLSN, achievedLSN, allDone := st.catchUpAggregate()
+			st.Recovery.TargetLSN = targetLSN
+			st.Recovery.AchievedLSN = achievedLSN
+			st.Boundary.TargetLSN = targetLSN
+			st.Boundary.AchievedLSN = achievedLSN
+			if allDone {
+				if achievedLSN > st.Boundary.DurableLSN {
+					st.Boundary.DurableLSN = achievedLSN
+				}
+				st.Recovery.Phase = RecoveryIdle
+				st.Recovery.Reason = ""
+				st.commands.CatchUpTargets = nil
+				st.catchUps = nil
+			} else {
+				st.Recovery.Phase = RecoveryCatchingUp
+				st.Recovery.Reason = ""
+			}
+		} else {
+			if v.AchievedLSN > st.Recovery.AchievedLSN {
+				st.Recovery.AchievedLSN = v.AchievedLSN
+			}
+			if v.AchievedLSN > st.Boundary.AchievedLSN {
+				st.Boundary.AchievedLSN = v.AchievedLSN
+			}
+			if v.AchievedLSN > st.Boundary.DurableLSN {
+				st.Boundary.DurableLSN = v.AchievedLSN
+			}
+			st.Recovery.Phase = RecoveryIdle
+			st.Recovery.Reason = ""
+			st.commands.CatchUpTargets = nil
 		}
-		if v.AchievedLSN > st.Boundary.AchievedLSN {
-			st.Boundary.AchievedLSN = v.AchievedLSN
-		}
-		if v.AchievedLSN > st.Boundary.DurableLSN {
-			st.Boundary.DurableLSN = v.AchievedLSN
-		}
-		st.Recovery.Phase = RecoveryIdle
-		st.Recovery.Reason = ""
-		st.commands.CatchUpTargets = nil
 
 	case NeedsRebuildObserved:
+		st.catchUps = nil
+		st.commands.CatchUpTargets = nil
 		st.needsRebuild = true
 		st.rebuildReason = v.Reason
 		st.degraded = false
@@ -317,6 +356,7 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.Recovery = RecoveryView{Phase: RecoveryIdle}
 		st.Boundary.TargetLSN = 0
 		st.Boundary.AchievedLSN = 0
+		st.catchUps = nil
 		st.commands.RecoveryTaskEpoch = 0
 		st.commands.RecoveryTaskTargets = nil
 		st.commands.CatchUpTargets = nil
@@ -468,6 +508,77 @@ func (st *VolumeState) recoveryCommandReplicaIDFromEvent(replicaID string) (stri
 		return "", false
 	}
 	return st.recoveryCommandReplicaID()
+}
+
+func (st *VolumeState) recordCatchUpPlan(replicaID string, targetLSN uint64) {
+	if replicaID == "" || targetLSN == 0 {
+		return
+	}
+	if st.catchUps == nil {
+		st.catchUps = make(map[string]catchUpObservation)
+	}
+	obs := st.catchUps[replicaID]
+	if obs.TargetLSN != targetLSN {
+		obs.AchievedLSN = 0
+	}
+	obs.TargetLSN = targetLSN
+	obs.Completed = false
+	st.catchUps[replicaID] = obs
+}
+
+func (st *VolumeState) observeCatchUpProgress(replicaID string, achievedLSN uint64) bool {
+	if replicaID == "" || st.catchUps == nil {
+		return false
+	}
+	obs, ok := st.catchUps[replicaID]
+	if !ok {
+		return false
+	}
+	if achievedLSN > obs.AchievedLSN {
+		obs.AchievedLSN = achievedLSN
+	}
+	st.catchUps[replicaID] = obs
+	return true
+}
+
+func (st *VolumeState) completeCatchUp(replicaID string, achievedLSN uint64) bool {
+	if replicaID == "" || st.catchUps == nil {
+		return false
+	}
+	obs, ok := st.catchUps[replicaID]
+	if !ok {
+		return false
+	}
+	if achievedLSN > obs.AchievedLSN {
+		obs.AchievedLSN = achievedLSN
+	}
+	if obs.TargetLSN > obs.AchievedLSN {
+		obs.AchievedLSN = obs.TargetLSN
+	}
+	obs.Completed = true
+	st.catchUps[replicaID] = obs
+	return true
+}
+
+func (st *VolumeState) catchUpAggregate() (targetLSN uint64, achievedLSN uint64, allDone bool) {
+	if len(st.catchUps) == 0 {
+		return 0, 0, true
+	}
+	allDone = true
+	first := true
+	for _, obs := range st.catchUps {
+		if obs.TargetLSN > targetLSN {
+			targetLSN = obs.TargetLSN
+		}
+		if first || obs.AchievedLSN < achievedLSN {
+			achievedLSN = obs.AchievedLSN
+			first = false
+		}
+		if !obs.Completed {
+			allDone = false
+		}
+	}
+	return targetLSN, achievedLSN, allDone
 }
 
 func (st *VolumeState) bootstrapReason() string {

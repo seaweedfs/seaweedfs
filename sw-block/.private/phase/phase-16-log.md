@@ -912,3 +912,56 @@ Conclusion:
    replica-scoped on the bounded path
 3. this slice still does not claim broad multi-replica startup ownership or
    full recovery-loop closure
+
+---
+
+#### `16H` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: conservative multi-replica catch-up observation aggregation on the
+bounded core-present path
+
+Why this slice exists:
+
+1. `16F` made bounded recovery command addressing replica-scoped
+2. `16G` made bounded recovery observation events replica-scoped
+3. but the volume-level recovery view can still return to `idle` too early if
+   more than one replica is catching up and the first one finishes
+
+Chosen implementation rule:
+
+1. track bounded catch-up observation internally per replica
+2. aggregate the volume-level recovery view conservatively
+3. stay in `catching_up` until all bounded catch-up replicas complete
+4. do not yet claim broad multi-replica startup ownership
+
+---
+
+#### `16H` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: conservative multi-replica catch-up observation aggregation on the
+bounded core-present path
+
+What changed:
+
+1. `sw-block/engine/replication/state.go`
+   - added internal per-replica catch-up observation tracking
+2. `sw-block/engine/replication/engine.go`
+   - catch-up planning / progress / completion now aggregate volume-level
+     recovery state conservatively across bounded replicas
+3. `sw-block/engine/replication/phase14_boundary_test.go`
+   - added focused proof that one completed replica does not return the volume
+     to `idle` or `publish_healthy` while another replica is still catching up
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. result: `PASS`
+
+Conclusion:
+
+1. the bounded multi-replica catch-up observation path no longer overclaims
+   completion after the first replica finishes
+2. this slice is still only an enabling aggregation step, not broad
+   multi-replica startup ownership

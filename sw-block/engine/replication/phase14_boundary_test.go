@@ -190,3 +190,60 @@ func TestPhase14_AssignmentChangeClearsStaleRecoveryTruth(t *testing.T) {
 		t.Fatalf("publication_reason=%q", result.Projection.Publication.Reason)
 	}
 }
+
+func TestPhase14_MultiReplicaCatchUpAggregatesUntilAllComplete(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-multi-catchup",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.40:9333", CtrlAddr: "10.0.0.40:9334", Version: 1}},
+			{ReplicaID: "replica-2", Endpoint: Endpoint{DataAddr: "10.0.0.41:9333", CtrlAddr: "10.0.0.41:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(RoleApplied{ID: "vol-multi-catchup"})
+	core.ApplyEvent(ShipperConfiguredObserved{ID: "vol-multi-catchup"})
+	core.ApplyEvent(ShipperConnectedObserved{ID: "vol-multi-catchup"})
+
+	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-multi-catchup", ReplicaID: "replica-1", TargetLSN: 100})
+	if result.State.Recovery.Phase != RecoveryCatchingUp {
+		t.Fatalf("phase_after_first_plan=%s", result.State.Recovery.Phase)
+	}
+	result = core.ApplyEvent(CatchUpPlanned{ID: "vol-multi-catchup", ReplicaID: "replica-2", TargetLSN: 100})
+	if result.State.Recovery.Phase != RecoveryCatchingUp {
+		t.Fatalf("phase_after_second_plan=%s", result.State.Recovery.Phase)
+	}
+
+	result = core.ApplyEvent(RecoveryProgressObserved{ID: "vol-multi-catchup", ReplicaID: "replica-1", AchievedLSN: 100})
+	if result.Projection.Recovery.AchievedLSN != 0 {
+		t.Fatalf("aggregate_achieved_lsn=%d", result.Projection.Recovery.AchievedLSN)
+	}
+
+	result = core.ApplyEvent(CatchUpCompleted{ID: "vol-multi-catchup", ReplicaID: "replica-1", AchievedLSN: 100})
+	if result.State.Recovery.Phase != RecoveryCatchingUp {
+		t.Fatalf("phase_after_first_complete=%s", result.State.Recovery.Phase)
+	}
+	if result.Projection.Boundary.DurableLSN != 0 {
+		t.Fatalf("durable_lsn_after_first_complete=%d", result.Projection.Boundary.DurableLSN)
+	}
+	if result.Projection.Publication.Healthy {
+		t.Fatal("publication should not become healthy before all replicas complete")
+	}
+
+	result = core.ApplyEvent(CatchUpCompleted{ID: "vol-multi-catchup", ReplicaID: "replica-2", AchievedLSN: 100})
+	if result.State.Recovery.Phase != RecoveryIdle {
+		t.Fatalf("phase_after_all_complete=%s", result.State.Recovery.Phase)
+	}
+	if result.Projection.Boundary.DurableLSN != 100 {
+		t.Fatalf("durable_lsn_after_all_complete=%d", result.Projection.Boundary.DurableLSN)
+	}
+	if result.Projection.Mode.Name != ModePublishHealthy {
+		t.Fatalf("mode_after_all_complete=%s", result.Projection.Mode.Name)
+	}
+	if !result.Projection.Publication.Healthy {
+		t.Fatal("publication should become healthy after all replicas complete")
+	}
+}

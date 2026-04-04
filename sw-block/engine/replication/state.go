@@ -100,6 +100,12 @@ type commandState struct {
 	InvalidationReason    string
 }
 
+type catchUpObservation struct {
+	TargetLSN   uint64
+	AchievedLSN uint64
+	Completed   bool
+}
+
 // VolumeState is the minimal V2-core-owned state for one volume on the bounded
 // current path.
 type VolumeState struct {
@@ -120,6 +126,7 @@ type VolumeState struct {
 	rebuildReason  string
 	recoveryTarget SessionKind
 	commands       commandState
+	catchUps       map[string]catchUpObservation
 }
 
 func newVolumeState(volumeID string) *VolumeState {
@@ -161,6 +168,12 @@ func (s *VolumeState) Snapshot() VolumeState {
 		out.commands.RebuildTargets = make(map[string]uint64, len(s.commands.RebuildTargets))
 		for replicaID, target := range s.commands.RebuildTargets {
 			out.commands.RebuildTargets[replicaID] = target
+		}
+	}
+	if s.catchUps != nil {
+		out.catchUps = make(map[string]catchUpObservation, len(s.catchUps))
+		for replicaID, obs := range s.catchUps {
+			out.catchUps[replicaID] = obs
 		}
 	}
 	return out

@@ -283,6 +283,47 @@ Evidence:
 
 1. focused working-tree change after `b304b8e21`
 
+### `16H`: Multi-Replica Catch-Up Observation Aggregation
+
+Goal:
+
+1. keep the volume-level recovery view on the bounded core path from returning
+   to `idle` too early when more than one replica is still catching up
+2. make the bounded recovery projection aggregate multi-replica catch-up
+   progress conservatively enough for later startup-ownership widening
+
+Acceptance object:
+
+1. when multiple replica-scoped catch-up observations exist for the same
+   volume, the recovery phase remains `catching_up` until all bounded replicas
+   complete
+2. bounded durable/progress fields do not overclaim completion after only one
+   replica finishes
+3. current single-replica catch-up and rebuilding proofs remain green
+4. this slice still does not yet claim broad multi-replica startup ownership
+
+Current chosen path:
+
+1. bounded catch-up observation state is tracked per replica internally
+2. volume-level recovery projection aggregates that state conservatively
+3. aggregate recovery idles only after all bounded catch-up replicas complete
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. bounded catch-up observation is tracked internally per replica
+2. volume-level recovery stays `catching_up` until all bounded catch-up
+   replicas complete
+3. bounded durable/progress fields no longer overclaim completion after the
+   first replica finishes on the multi-replica catch-up path
+
+Evidence:
+
+1. focused working-tree change after `16ba70f85`
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -306,6 +347,8 @@ after `Phase 15` closeout:
    - bounded catch-up recovery-task startup ownership on the single-replica
      primary path
    - replica-scoped recovery command addressing on those same bounded paths
+   - conservative multi-replica catch-up observation aggregation on those same
+     bounded paths
 
 This checkpoint is intentionally still bounded:
 
@@ -338,12 +381,15 @@ boundary:
      same bounded paths
 8. `16G` delivered:
    - recovery observation events are replica-scoped on those same bounded paths
+9. `16H` delivered:
+   - multi-replica catch-up observation is aggregated conservatively at the
+     volume projection layer
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
 2. the next bounded semantic/runtime decision is whether to widen startup
-   ownership beyond the single-replica catch-up path now that both command and
-   observation recovery seams are replica-scoped
+   ownership beyond the single-replica catch-up path now that multi-replica
+   catch-up aggregation no longer overclaims completion
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims
