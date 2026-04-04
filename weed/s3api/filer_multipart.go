@@ -65,6 +65,12 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
+	// Validate checksum algorithm before creating the upload directory
+	_, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
+	if checksumErrCode != s3err.ErrNone {
+		return nil, checksumErrCode
+	}
+
 	// Prepare error handling outside callback scope
 	var encryptionError error
 
@@ -97,7 +103,7 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 		// Store the requested checksum algorithm so CompleteMultipartUpload can compute
 		// a composite checksum from per-part checksums
-		if _, checksumHeaderName, errCode := detectRequestedChecksumAlgorithm(r); errCode == s3err.ErrNone && checksumHeaderName != "" {
+		if checksumHeaderName != "" {
 			entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
 		}
 
@@ -364,7 +370,12 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		}
 	}
 	if checksumHeaderName != "" {
-		checksumValue = computeCompositeChecksum(checksumHeaderName, partEntries, completedPartNumbers)
+		var checksumErr error
+		checksumValue, checksumErr = computeCompositeChecksum(checksumHeaderName, partEntries, completedPartNumbers)
+		if checksumErr != nil {
+			glog.Errorf("completeMultipartUpload: composite checksum computation failed: %v", checksumErr)
+			return nil, nil, s3err.ErrInvalidPart
+		}
 	}
 
 	return &multipartCompletionState{
@@ -1072,11 +1083,13 @@ func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPart
 // It concatenates the raw (decoded) per-part checksums, hashes the result with the
 // same algorithm, and returns the value as "base64-N" where N is the part count.
 // This follows the AWS S3 multipart checksum specification.
-func computeCompositeChecksum(checksumHeaderName string, partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) string {
+// Returns an error if a part is missing its checksum (the upload was initiated with
+// a checksum algorithm, so all parts must have been uploaded with checksums).
+func computeCompositeChecksum(checksumHeaderName string, partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) (string, error) {
 	// Determine the algorithm from the header name
 	algo := checksumAlgorithmFromHeaderName(checksumHeaderName)
 	if algo == ChecksumAlgorithmNone {
-		return ""
+		return "", fmt.Errorf("unknown checksum algorithm for header %q", checksumHeaderName)
 	}
 
 	// Collect raw per-part checksums
@@ -1084,23 +1097,22 @@ func computeCompositeChecksum(checksumHeaderName string, partEntries map[int][]*
 	for _, partNumber := range completedPartNumbers {
 		entries, ok := partEntries[partNumber]
 		if !ok || len(entries) == 0 {
-			return "" // missing part, can't compute
+			return "", fmt.Errorf("part %d not found", partNumber)
 		}
 		if len(entries) > 1 {
 			sortEntriesByLatestChunk(entries)
 		}
 		entry := entries[0]
 		if entry.Extended == nil {
-			return ""
+			return "", fmt.Errorf("part %d missing checksum: upload initiated with %s but part was uploaded without a checksum", partNumber, checksumHeaderName)
 		}
 		partChecksumB64, ok := entry.Extended[s3_constants.ExtChecksumValue]
 		if !ok || len(partChecksumB64) == 0 {
-			return "" // part missing checksum
+			return "", fmt.Errorf("part %d missing checksum: upload initiated with %s but part was uploaded without a checksum", partNumber, checksumHeaderName)
 		}
 		raw, err := base64.StdEncoding.DecodeString(string(partChecksumB64))
 		if err != nil {
-			glog.Warningf("computeCompositeChecksum: failed to decode part %d checksum: %v", partNumber, err)
-			return ""
+			return "", fmt.Errorf("part %d has invalid checksum encoding: %w", partNumber, err)
 		}
 		combined = append(combined, raw...)
 	}
@@ -1108,11 +1120,11 @@ func computeCompositeChecksum(checksumHeaderName string, partEntries map[int][]*
 	// Hash the concatenated raw checksums
 	h := getCheckSumWriter(algo)
 	if h == nil {
-		return ""
+		return "", fmt.Errorf("failed to create hash writer for %s", checksumHeaderName)
 	}
 	h.Write(combined)
 	compositeRaw := h.Sum(nil)
-	return fmt.Sprintf("%s-%d", base64.StdEncoding.EncodeToString(compositeRaw), len(completedPartNumbers))
+	return fmt.Sprintf("%s-%d", base64.StdEncoding.EncodeToString(compositeRaw), len(completedPartNumbers)), nil
 }
 
 // checksumAlgorithmFromHeaderName maps a canonical header name back to its algorithm.
