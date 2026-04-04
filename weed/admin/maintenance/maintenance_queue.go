@@ -55,6 +55,14 @@ func (mq *MaintenanceQueue) saveTaskState(task *MaintenanceTask) {
 	}
 }
 
+func (mq *MaintenanceQueue) deleteTaskState(taskID string) {
+	if mq.persistence != nil {
+		if err := mq.persistence.DeleteTaskState(taskID); err != nil {
+			glog.V(2).Infof("Failed to delete task state for %s: %v", taskID, err)
+		}
+	}
+}
+
 // cleanupCompletedTasks removes old completed tasks beyond the retention limit
 func (mq *MaintenanceQueue) cleanupCompletedTasks() {
 	if mq.persistence != nil {
@@ -531,7 +539,6 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 		}
 	}
 	taskStatus := task.Status
-	taskCount := len(mq.tasks)
 	// Snapshot task state while lock is still held to avoid data race
 	var taskToSaveSnapshot *MaintenanceTask
 	if taskToSave != nil {
@@ -539,9 +546,18 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	}
 	mq.mutex.Unlock()
 
-	// Save task state to persistence outside the lock
+	// Only persist non-terminal tasks (retries). Completed/failed tasks stay
+	// in memory for the UI but are not written to disk — they would just
+	// accumulate and slow down future startups.
 	if taskToSaveSnapshot != nil {
-		mq.saveTaskState(taskToSaveSnapshot)
+		switch taskStatus {
+		case TaskStatusPending:
+			// Retry — save so the task survives a restart
+			mq.saveTaskState(taskToSaveSnapshot)
+		case TaskStatusCompleted, TaskStatusFailed:
+			// Terminal — delete the file if one exists from a previous state
+			mq.deleteTaskState(taskToSaveSnapshot.ID)
+		}
 	}
 
 	if logFn != nil {
@@ -551,13 +567,6 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 	// Remove pending operation (unless it's being retried)
 	if taskStatus != TaskStatusPending {
 		mq.removePendingOperation(taskID)
-	}
-
-	// Periodically cleanup old completed tasks (when total task count is a multiple of 10)
-	if taskStatus == TaskStatusCompleted {
-		if taskCount%10 == 0 {
-			go mq.cleanupCompletedTasks()
-		}
 	}
 }
 
