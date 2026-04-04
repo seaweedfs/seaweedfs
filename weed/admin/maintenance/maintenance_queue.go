@@ -155,8 +155,6 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 		taskSnapshot.ID, taskSnapshot.Type, taskSnapshot.VolumeID, taskSnapshot.Server, taskSnapshot.Priority, scheduleInfo, taskSnapshot.Reason)
 }
 
-// hasQueuedOrActiveTaskForVolume checks if any pending/assigned/in-progress task already exists for this volume.
-// Caller must hold mq.mutex.
 // countActiveTasksByType returns the number of active (non-terminal) tasks of a given type. Caller must hold mq.mutex.
 func (mq *MaintenanceQueue) countActiveTasksByType(taskType MaintenanceTaskType) int {
 	count := 0
@@ -181,6 +179,8 @@ func (mq *MaintenanceQueue) purgeTerminalTasksLocked() {
 	}
 }
 
+// hasQueuedOrActiveTaskForVolume checks if any pending/assigned/in-progress task already exists for this volume.
+// Caller must hold mq.mutex.
 func (mq *MaintenanceQueue) hasQueuedOrActiveTaskForVolume(volumeID uint32) bool {
 	if volumeID == 0 {
 		return false
@@ -585,7 +585,7 @@ func (mq *MaintenanceQueue) CompleteTask(taskID string, error string) {
 		case TaskStatusPending:
 			// Retry — save so the task survives a restart
 			mq.saveTaskState(taskToSaveSnapshot)
-		case TaskStatusCompleted, TaskStatusFailed:
+		case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
 			// Terminal — delete the file if one exists from a previous state
 			mq.deleteTaskState(taskToSaveSnapshot.ID)
 		}
