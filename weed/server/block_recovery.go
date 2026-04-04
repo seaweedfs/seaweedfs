@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 
-	bridge "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -235,32 +234,19 @@ func (rm *RecoveryManager) runRecovery(ctx context.Context, task *recoveryTask, 
 	}
 }
 
-// recoveryBundle holds the concrete bindings built from a BlockVol instance
-// for one recovery execution. This is the thin host-side factory output.
-type recoveryBundle struct {
-	driver   *engine.RecoveryDriver
-	executor *v2bridge.Executor
-}
-
-// buildRecoveryBundle creates the StorageAdapter + Executor + RecoveryDriver
-// from a real BlockVol. This is the shared host-side setup for both catch-up
-// and rebuild paths.
-func (rm *RecoveryManager) buildRecoveryBundle(volPath, rebuildAddr string) (*recoveryBundle, error) {
-	var sa engine.StorageAdapter
-	var executor *v2bridge.Executor
+// buildRecoveryBundle creates recovery bindings from a real BlockVol via the
+// backend-binding factory. The host shell only calls WithVolume and delegates
+// Reader/Pinner/Adapter/Executor construction to v2bridge.BuildRecoveryBundle.
+func (rm *RecoveryManager) buildRecoveryBundle(volPath, rebuildAddr string) (*engine.RecoveryDriver, *v2bridge.Executor, error) {
+	var bundle *v2bridge.RecoveryBundle
 	if err := rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
-		reader := v2bridge.NewReader(vol)
-		pinner := v2bridge.NewPinner(vol)
-		sa = bridge.NewStorageAdapter(reader, pinner)
-		executor = v2bridge.NewExecutor(vol, rebuildAddr)
+		bundle = v2bridge.BuildRecoveryBundle(vol, rebuildAddr)
 		return nil
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return &recoveryBundle{
-		driver:   &engine.RecoveryDriver{Orchestrator: rm.bs.v2Orchestrator, Storage: sa},
-		executor: executor,
-	}, nil
+	driver := &engine.RecoveryDriver{Orchestrator: rm.bs.v2Orchestrator, Storage: bundle.Storage}
+	return driver, bundle.Executor, nil
 }
 
 func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAddr string) {
@@ -271,7 +257,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	bundle, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	driver, executor, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
 	if err != nil {
 		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
 		return
@@ -289,8 +275,6 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	driver := bundle.driver
-
 	plan, err := driver.PlanRecovery(replicaID, replicaFlushedLSN)
 	if err != nil {
 		glog.Warningf("recovery: plan failed for %s: %v", replicaID, err)
@@ -299,7 +283,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
 		if bs.v2Core == nil {
-			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, bundle.executor)
+			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, executor)
 			return
 		}
 		rm.coord.Store(volPath, &rt.PendingExecution{
@@ -308,7 +292,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 			CatchUpTarget: plan.CatchUpTarget,
 			Driver:        driver,
 			Plan:          plan,
-			CatchUpIO:     bundle.executor,
+			CatchUpIO:     executor,
 		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: volPath, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(volPath) {
@@ -338,7 +322,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	bundle, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	driver, executor, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
 	if err != nil {
 		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
 		return
@@ -348,15 +332,13 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	driver := bundle.driver
-
 	plan, err := driver.PlanRebuild(replicaID)
 	if err != nil {
 		glog.Warningf("recovery: rebuild plan failed for %s: %v", replicaID, err)
 		return
 	}
 	if bs.v2Core == nil {
-		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, bundle.executor)
+		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, executor)
 		return
 	}
 	pe := &rt.PendingExecution{
@@ -365,7 +347,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		RebuildTargetLSN: plan.RebuildTargetLSN,
 		Driver:           driver,
 		Plan:             plan,
-		RebuildIO:        bundle.executor,
+		RebuildIO:        executor,
 	}
 	rm.coord.Store(volPath, pe)
 	if rm.OnPendingExecution != nil {
