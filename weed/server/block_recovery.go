@@ -53,11 +53,7 @@ func NewRecoveryManager(bs *BlockService) *RecoveryManager {
 	}
 	rm.coord = rt.NewPendingCoordinator(func(pe *rt.PendingExecution, reason string) {
 		if pe != nil && pe.Driver != nil && pe.Plan != nil {
-			if drv, ok := pe.Driver.(*engine.RecoveryDriver); ok {
-				if plan, ok := pe.Plan.(*engine.RecoveryPlan); ok {
-					drv.CancelPlan(plan, reason)
-				}
-			}
+			pe.Driver.CancelPlan(pe.Plan, reason)
 		}
 	})
 	return rm
@@ -377,30 +373,18 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 
 func (rm *RecoveryManager) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
 	pe := rm.coord.TakeCatchUp(volumeID, targetLSN)
-	if pe == nil {
+	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	drv, _ := pe.Driver.(*engine.RecoveryDriver)
-	plan, _ := pe.Plan.(*engine.RecoveryPlan)
-	io, _ := pe.CatchUpIO.(engine.CatchUpIO)
-	if drv == nil || plan == nil {
-		return nil
-	}
-	return rt.ExecuteCatchUpPlan(drv, plan, io, volumeID, rm)
+	return rt.ExecuteCatchUpPlan(pe.Driver, pe.Plan, pe.CatchUpIO, volumeID, rm)
 }
 
 func (rm *RecoveryManager) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
 	pe := rm.coord.TakeRebuild(volumeID, targetLSN)
-	if pe == nil {
+	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	drv, _ := pe.Driver.(*engine.RecoveryDriver)
-	plan, _ := pe.Plan.(*engine.RecoveryPlan)
-	io, _ := pe.RebuildIO.(engine.RebuildIO)
-	if drv == nil || plan == nil {
-		return nil
-	}
-	return rt.ExecuteRebuildPlan(drv, plan, io, volumeID, rm)
+	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, volumeID, rm)
 }
 
 // RecoveryCallbacks implementation — host-side completion notifications.

@@ -346,9 +346,7 @@ func TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath(t *testing.T) {
 		if volumeID != volPath || pending == nil || pending.Plan == nil {
 			return
 		}
-		if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
-			pending.RebuildIO = fakeRebuildIO{achievedLSN: plan.RebuildTargetLSN}
-		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
 	}
 	_, _, rebuildPort := bs.ReplicationPorts(volPath)
 	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)

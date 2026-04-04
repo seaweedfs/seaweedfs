@@ -443,9 +443,7 @@ func TestBlockService_ApplyAssignments_PrimaryRole_UsesCoreStartRecoveryTaskForC
 
 	bs.v2Recovery.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
 		if volumeID == path && pending != nil && pending.Plan != nil {
-			if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
-				pending.CatchUpIO = fakeCatchUpIO{transferredTo: plan.CatchUpTarget}
-			}
+			pending.CatchUpIO = fakeCatchUpIO{transferredTo: pending.Plan.CatchUpTarget}
 		}
 	}
 
@@ -518,9 +516,7 @@ func TestBlockService_ApplyAssignments_RebuildingRole_UsesCoreRecoveryPathWithou
 	}
 	bs.v2Recovery.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
 		if volumeID == path && pending != nil && pending.Plan != nil {
-			if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
-				pending.RebuildIO = fakeRebuildIO{achievedLSN: plan.RebuildTargetLSN}
-			}
+			pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
 		}
 	}
 

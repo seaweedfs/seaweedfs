@@ -3,29 +3,36 @@
 // be used by any adapter shell.
 package runtime
 
-import "sync"
+import (
+	"sync"
+
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+)
 
 // PendingExecution holds the state needed to execute a planned recovery
 // action. The coordinator stores one pending execution per volume and
 // matches it against incoming commands.
+//
+// All fields are typed — no interface{} handles. The host adapter builds
+// these from concrete BlockVol bindings; the coordinator and execution
+// helpers consume them without type assertions.
 type PendingExecution struct {
 	VolumeID  string
 	ReplicaID string
 
 	// CatchUpTarget is the target LSN for catch-up execution.
-	// Used by ExecutePendingCatchUp for fail-closed target matching.
+	// Used by TakeCatchUp for fail-closed target matching.
 	CatchUpTarget uint64
 
 	// RebuildTargetLSN is the target LSN for rebuild execution.
-	// Used by ExecutePendingRebuild for fail-closed target matching.
+	// Used by TakeRebuild for fail-closed target matching.
 	RebuildTargetLSN uint64
 
-	// Opaque handles — the coordinator stores these but doesn't interpret them.
-	// The host adapter supplies concrete types (driver, plan, IO bindings).
-	Driver    interface{}
-	Plan      interface{}
-	CatchUpIO interface{}
-	RebuildIO interface{}
+	// Typed recovery handles — no interface{} drift.
+	Driver    *engine.RecoveryDriver
+	Plan      *engine.RecoveryPlan
+	CatchUpIO engine.CatchUpIO
+	RebuildIO engine.RebuildIO
 }
 
 // CancelFunc is called when a pending execution is cancelled due to
