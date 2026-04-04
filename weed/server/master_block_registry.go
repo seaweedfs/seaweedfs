@@ -714,6 +714,9 @@ func replicaReadyObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) b
 	if info == nil {
 		return false
 	}
+	if info.ReplicaReady != nil {
+		return info.GetReplicaReady()
+	}
 	return info.ReplicaDataAddr != "" && info.ReplicaCtrlAddr != ""
 }
 
@@ -1271,10 +1274,10 @@ type PromotionPreflightResult struct {
 // evaluatePromotionLocked evaluates promotion candidates for a volume.
 // Caller must hold r.mu (read or write). Returns a preflight result without
 // mutating the registry. The four gates:
-//   1. Heartbeat freshness (within 2×LeaseTTL)
-//   2. WAL LSN recency (within promotionLSNTolerance of primary)
-//   3. Role must be RoleReplica (not RoleRebuilding)
-//   4. Server must be in blockServers (alive) — fixes B-12
+//  1. Heartbeat freshness (within 2×LeaseTTL)
+//  2. WAL LSN recency (within promotionLSNTolerance of primary)
+//  3. Role must be RoleReplica (not RoleRebuilding)
+//  4. Server must be in blockServers (alive) — fixes B-12
 func (r *BlockVolumeRegistry) evaluatePromotionLocked(entry *BlockVolumeEntry) PromotionPreflightResult {
 	result := PromotionPreflightResult{
 		VolumeName:   entry.Name,

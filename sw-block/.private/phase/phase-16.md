@@ -455,6 +455,102 @@ Evidence:
 
 1. focused working-tree change after `5fd9ec0ed`
 
+### `16L`: PublishHealthy Rebinding
+
+Goal:
+
+1. close one bounded publication seam by making `weed/server`
+   `PublishHealthy` surfaces reflect the core-owned publication truth rather than
+   an adapter-local convenience bit
+2. keep the slice limited to publication-health rebinding at the current
+   server/debug/readiness boundary, not broad failover/publication closure
+
+Acceptance object:
+
+1. `ReadinessSnapshot.PublishHealthy` reflects core publication truth when the
+   core projection exists
+2. mismatch/debug/readiness surfaces no longer intentionally exclude
+   `PublishHealthy` from the core-owned publication owner
+3. call sites that really need readiness/eligibility rather than publication
+   health are updated to use the correct readiness field
+4. this slice still does not yet claim broad failover/publication closure
+
+Current chosen path:
+
+1. rebind `PublishHealthy` from adapter-local state to core
+   `Publication.Healthy` on the core-present path
+2. update boundary comments and focused tests to match the rebinding
+3. keep adapter-local readiness booleans only for truly local readiness state
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `ReadinessSnapshot.PublishHealthy` now mirrors core
+   `Publication.Healthy` when the core projection exists
+2. `CoreProjectionMismatches` no longer treats `PublishHealthy` as an excluded
+   publication seam
+3. call sites that only needed readiness/eligibility now use readiness fields
+   rather than publication health as a proxy
+
+Evidence:
+
+1. focused working-tree change after `43dbebfa0`
+
+### `16M`: ReplicaReady Heartbeat Truth Rebinding
+
+Goal:
+
+1. close one bounded failover/publication seam by making replica heartbeat
+   consume carry an explicit `ReplicaReady` truth rather than forcing the master
+   registry to infer readiness from replica transport address presence
+2. keep the slice limited to the current heartbeat wire and master-registry
+   consume path, not broad failover/promotion closure
+
+Acceptance object:
+
+1. `BlockVolumeInfoMessage` carries an explicit replica-ready bit on the
+   heartbeat wire
+2. `weed/server` heartbeat emission sets that bit from the same core-owned
+   readiness truth already used at the server boundary on the core-present path
+3. `master_block_registry` consumes explicit replica readiness from heartbeat
+   first and uses address presence only as a backward-compat fallback
+4. focused proofs show master-side `ReplicaReady` and `VolumeMode` follow the
+   explicit heartbeat truth rather than a transport-address heuristic
+5. this slice still does not yet claim broad failover/promotion closure
+
+Current chosen path:
+
+1. widen `master.proto` / heartbeat conversion with an additive
+   `replica_ready` field
+2. emit that field from `CollectBlockVolumeHeartbeat` using the current bounded
+   core-owned readiness gate
+3. update registry consume and focused tests without broadening into unrelated
+   promotion logic
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `BlockVolumeInfoMessage` now carries additive explicit `replica_ready`
+   heartbeat truth on the wire
+2. `weed/server` heartbeat emission now exports explicit bounded
+   `ReplicaReady` truth from the same core-owned readiness gate already used at
+   the server boundary
+3. `master_block_registry` now prefers explicit heartbeat `ReplicaReady` when
+   present and falls back to transport-address inference only for older
+   heartbeats without the field
+4. focused proofs now show master-side `ReplicaReady` and `VolumeMode` follow
+   explicit heartbeat truth rather than transport-address presence alone
+
+Evidence:
+
+1. focused working-tree change after `16L` closeout
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -525,11 +621,18 @@ boundary:
 12. `16K` delivered:
    - replica-scoped recovery invalidation no longer depends on a remaining
      volume-wide invalidation seam
+13. `16L` delivered:
+   - `PublishHealthy` is rebound from adapter-local status to the core-owned
+     publication owner at the server boundary
+14. `16M` delivered:
+   - replica heartbeat/master consume now carries explicit bounded
+     `ReplicaReady` truth with backward-compatible fallback for older
+     heartbeats
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
-2. continue closing broader recovery-loop gaps one bounded seam at a time after
-   replica-scoped invalidation
+2. continue closing broader recovery-loop and publication seams one bounded step
+   at a time after `PublishHealthy` rebinding
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims

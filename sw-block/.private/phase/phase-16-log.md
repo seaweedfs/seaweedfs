@@ -1149,3 +1149,126 @@ Conclusion:
    relies on broad volume-wide invalidation
 2. this slice still does not claim broad failover/publication closure or full
    recovery-loop closure
+
+---
+
+#### `16L` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded `PublishHealthy` rebinding at the server boundary
+
+Why this slice exists:
+
+1. `debug` and `core projection` surfaces already treat publication health as
+   core-owned truth
+2. but `ReadinessSnapshot.PublishHealthy` still intentionally stays adapter-local
+   and `CoreProjectionMismatches` still intentionally excludes it
+3. that leaves one visible publication seam at the `weed/server` boundary even
+   though the publication owner is already the core
+
+Chosen implementation rule:
+
+1. rebind `PublishHealthy` to core `Publication.Healthy` when projection exists
+2. update only the call sites that were really using `PublishHealthy` as a proxy
+   for readiness
+3. do not broaden this slice into general failover/publication closure claims
+
+---
+
+#### `16L` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded `PublishHealthy` rebinding at the server boundary
+
+What changed:
+
+1. `weed/server/volume_server_block.go`
+   - rebound `ReadinessSnapshot.PublishHealthy` to core
+     `Publication.Healthy` on the core-present path
+   - `CoreProjectionMismatches` now includes `publish_healthy`
+2. `weed/server/volume_server_block_test.go`
+   - updated focused readiness/debug proofs to assert the rebound publication
+     truth and added a proof that core healthy publication overrides stale
+     adapter-local `publishHealthy`
+3. `weed/server/block_heartbeat_loop_test.go`
+   - changed a readiness-only collector proof to depend on `ReplicaEligible`
+     rather than publication health
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 120s -run "Test(BlockService_(ApplyAssignments_UpdatesCoreProjection(Replica|Primary)Path|ReadinessSnapshot_PrefersCoreProjectionPrimaryFields|ReadinessSnapshot_PrefersCorePublicationHealth|ReadinessSnapshot_PrefersCoreProjectionReplicaFields|DebugInfoForVolume_UsesCoreProjection(Primary|Replica)Path|CollectBlockVolumeHeartbeat_(Primary|Replica)UsesCoreReadinessGate|HeartbeatReplicaDegraded_UsesCoreMode)|BlockAssign_CollectorUsesAuthoritativeLifecycle)"`
+2. result: `PASS`
+
+Conclusion:
+
+1. the server boundary no longer keeps `PublishHealthy` as a separate
+   adapter-local publication owner on the core-present path
+2. this slice still does not claim broad failover/publication closure by itself
+
+---
+
+#### `16M` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `ReplicaReady` heartbeat truth on the heartbeat/master seam
+
+Why this slice exists:
+
+1. `weed/server` already has a bounded core-owned readiness view on the
+   core-present path
+2. but `master_block_registry` still infers replica readiness from
+   `replica_data_addr` and `replica_ctrl_addr` presence
+3. that keeps one avoidable failover/publication seam alive at the
+   heartbeat/master boundary because transport endpoint presence is only a proxy
+   for readiness truth
+
+Chosen implementation rule:
+
+1. widen the heartbeat wire additively with an explicit `replica_ready` field
+2. emit the field from the same bounded readiness gate already used at the
+   server boundary on the core-present path
+3. make master-side consume prefer explicit readiness and retain address
+   presence only as backward-compatible fallback
+4. do not broaden this slice into promotion selection or broad failover closure
+
+---
+
+#### `16M` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `ReplicaReady` heartbeat truth on the heartbeat/master seam
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `replica_ready` to `BlockVolumeInfoMessage`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated so heartbeat wire presence is represented as `*bool`
+3. `weed/storage/blockvol/block_heartbeat.go`
+   - heartbeat wire struct now carries explicit `ReplicaReady`
+4. `weed/storage/blockvol/block_heartbeat_proto.go`
+   - heartbeat conversion now writes and reads `ReplicaReady`
+5. `weed/server/volume_server_block.go`
+   - heartbeat emission now exports explicit bounded `ReplicaReady` truth from
+     the current core-owned readiness gate
+6. `weed/server/master_block_registry.go`
+   - registry consume now prefers explicit heartbeat readiness and falls back to
+     transport-address inference only when the field is absent
+7. focused tests in `block_heartbeat_proto_test.go`,
+   `volume_server_block_test.go`, and `master_block_registry_test.go`
+   - now prove the explicit heartbeat truth and backward-compatible fallback
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol/ -count=1 -run "TestInfoMessage_Replica"`
+2. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_CollectBlockVolumeHeartbeat_(Primary|Replica)UsesCoreReadinessGate|Registry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady|Registry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldAbsent)"`
+3. `go test ./weed/server/ -count=1 -timeout 120s -run "TestBlockService_ApplyAssignments_|TestP16B_|TestP4_"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the heartbeat/master seam no longer depends only on replica transport-address
+   presence as a proxy for readiness truth
+2. backward compatibility is preserved because older heartbeats without the
+   explicit field still fall back to the previous address-based heuristic
+3. this slice still does not claim broad failover or promotion closure by itself

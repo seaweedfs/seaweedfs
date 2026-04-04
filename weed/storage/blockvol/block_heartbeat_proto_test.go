@@ -205,12 +205,12 @@ func TestNilProtoConversions(t *testing.T) {
 
 func TestInfoMessage_HealthScoreRoundTrip(t *testing.T) {
 	orig := BlockVolumeInfoMessage{
-		Path:        "/data/vol.blk",
-		VolumeSize:  1 << 30,
-		BlockSize:   4096,
-		Epoch:       5,
-		HealthScore: 0.85,
-		ScrubErrors: 3,
+		Path:          "/data/vol.blk",
+		VolumeSize:    1 << 30,
+		BlockSize:     4096,
+		Epoch:         5,
+		HealthScore:   0.85,
+		ScrubErrors:   3,
 		LastScrubTime: 1709000000,
 	}
 	pb := InfoMessageToProto(orig)
@@ -244,6 +244,26 @@ func TestInfoMessage_ReplicaDegradedRoundTrip(t *testing.T) {
 	back = InfoMessageFromProto(pb)
 	if back.ReplicaDegraded {
 		t.Fatal("ReplicaDegraded should be false after round-trip")
+	}
+}
+
+func TestInfoMessage_ReplicaReadyRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:         "/data/vol.blk",
+		Epoch:        1,
+		ReplicaReady: true,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if !back.ReplicaReady {
+		t.Fatal("ReplicaReady should be true after round-trip")
+	}
+
+	orig.ReplicaReady = false
+	pb = InfoMessageToProto(orig)
+	back = InfoMessageFromProto(pb)
+	if back.ReplicaReady {
+		t.Fatal("ReplicaReady should be false after round-trip")
 	}
 }
 

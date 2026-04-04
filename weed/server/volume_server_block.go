@@ -38,9 +38,9 @@ type volReplState struct {
 // not by blockvol's local storage mechanics.
 //
 // Important:
-// PublishHealthy here is still an adapter-local publication bit used by current
-// `weed/server` surfaces. It is NOT the semantic owner for Phase 14 core
-// publication health; that owner is `engine.PublicationView`.
+// PublishHealthy here is the server-boundary mirror of the core-owned
+// publication health when a core projection exists. Adapter-local fallback
+// remains only for paths where the core is absent.
 type BlockReadinessSnapshot struct {
 	RoleApplied       bool
 	ReceiverReady     bool
@@ -140,8 +140,7 @@ func (bs *BlockService) ExecutedCoreCommands(path string) []string {
 }
 
 // CoreProjectionMismatches reports fields that should already agree on the
-// narrow Phase 15A path but do not. It intentionally excludes adapter-local
-// `PublishHealthy`, which is not yet rebound to the core publication owner.
+// current bounded core-present path but do not.
 func (bs *BlockService) CoreProjectionMismatches(path string) []string {
 	proj, ok := bs.CoreProjection(path)
 	if !ok {
@@ -160,6 +159,9 @@ func (bs *BlockService) CoreProjectionMismatches(path string) []string {
 	}
 	if readiness.ShipperConnected != proj.Readiness.ShipperConnected {
 		mismatches = append(mismatches, "shipper_connected")
+	}
+	if readiness.PublishHealthy != proj.Publication.Healthy {
+		mismatches = append(mismatches, "publish_healthy")
 	}
 	return mismatches
 }
@@ -963,6 +965,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 	for i := range msgs {
 		if s, ok := bs.replStates[msgs[i].Path]; ok {
 			msgs[i].ReplicaDataAddr, msgs[i].ReplicaCtrlAddr = bs.heartbeatReplicaAddrs(msgs[i].Path, s)
+			msgs[i].ReplicaReady = bs.heartbeatReplicaReady(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
@@ -1002,6 +1005,20 @@ func (bs *BlockService) heartbeatReplicaAddrs(path string, state *volReplState) 
 		return state.replicaDataAddr, state.replicaCtrlAddr
 	}
 	return "", ""
+}
+
+// heartbeatReplicaReady returns the explicit replica-readiness truth that should
+// be exposed on the current heartbeat surface. On the core-present path it
+// prefers the core-owned readiness projection; older paths fall back to the
+// adapter-local publish gate for compatibility.
+func (bs *BlockService) heartbeatReplicaReady(path string, state *volReplState) bool {
+	if state == nil {
+		return false
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		return proj.Readiness.ReplicaReady
+	}
+	return state.publishHealthy
 }
 
 // heartbeatReplicaDegraded returns the bounded degraded bit for the current
@@ -1118,10 +1135,10 @@ func (bs *BlockService) markReceiverReady(path, dataAddr, ctrlAddr string) {
 	state.allReplicas = nil
 }
 
-// ReadinessSnapshot reports the service-owned assignment/readiness closure for
-// one volume. On the Phase 15 live path it prefers the explicit core projection
-// for the aligned readiness subset, while `PublishHealthy` remains adapter-local
-// until publication ownership is fully rebound.
+// ReadinessSnapshot reports the current server-boundary readiness/publication
+// closure for one volume. On the core-present path it prefers the explicit core
+// projection for aligned readiness plus publication health, while retaining
+// adapter-local fallback only when the core is absent.
 func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
 	snap := BlockReadinessSnapshot{}
 	bs.replMu.RLock()
@@ -1141,6 +1158,7 @@ func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
 			snap.ShipperConfigured = proj.Readiness.ShipperConfigured
 			snap.ShipperConnected = proj.Readiness.ShipperConnected
 			snap.ReplicaEligible = proj.Readiness.ReplicaReady
+			snap.PublishHealthy = proj.Publication.Healthy
 		}
 		return snap
 	}
@@ -1154,6 +1172,7 @@ func (bs *BlockService) ReadinessSnapshot(path string) BlockReadinessSnapshot {
 		snap.ShipperConfigured = proj.Readiness.ShipperConfigured
 		snap.ShipperConnected = proj.Readiness.ShipperConnected
 		snap.ReplicaEligible = proj.Readiness.ReplicaReady
+		snap.PublishHealthy = proj.Publication.Healthy
 	}
 	return snap
 }

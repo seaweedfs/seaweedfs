@@ -8,22 +8,23 @@ import (
 // BlockVolumeInfoMessage is the heartbeat status for one block volume.
 // Mirrors the proto message that will be generated from master.proto.
 type BlockVolumeInfoMessage struct {
-	Path            string  // volume file path (unique ID on this server)
-	VolumeSize      uint64  // logical size in bytes
-	BlockSize       uint32  // block size in bytes
-	Epoch           uint64  // current fencing epoch
-	Role            uint32  // blockvol.Role as uint32 for wire compat
-	WalHeadLsn      uint64  // WAL head LSN
-	CheckpointLsn   uint64  // last flushed LSN
-	HasLease        bool    // whether volume holds a valid lease
-	DiskType        string  // e.g., "ssd", "hdd"
-	ReplicaDataAddr string  // receiver data listen addr (VS reports in heartbeat)
-	ReplicaCtrlAddr string  // receiver ctrl listen addr
-	HealthScore     float64 // CP8-2: 0.0-1.0
-	ScrubErrors     int64   // CP8-2: lifetime scrub error count
-	LastScrubTime   int64   // CP8-2: unix seconds
-	ReplicaDegraded bool    // CP8-2: true if any replica shipper degraded
-	DurabilityMode  string  // CP8-3-1: "best_effort", "sync_all", "sync_quorum"
+	Path                 string                 // volume file path (unique ID on this server)
+	VolumeSize           uint64                 // logical size in bytes
+	BlockSize            uint32                 // block size in bytes
+	Epoch                uint64                 // current fencing epoch
+	Role                 uint32                 // blockvol.Role as uint32 for wire compat
+	WalHeadLsn           uint64                 // WAL head LSN
+	CheckpointLsn        uint64                 // last flushed LSN
+	HasLease             bool                   // whether volume holds a valid lease
+	DiskType             string                 // e.g., "ssd", "hdd"
+	ReplicaDataAddr      string                 // receiver data listen addr (VS reports in heartbeat)
+	ReplicaCtrlAddr      string                 // receiver ctrl listen addr
+	ReplicaReady         bool                   // explicit replica readiness truth on the heartbeat seam
+	HealthScore          float64                // CP8-2: 0.0-1.0
+	ScrubErrors          int64                  // CP8-2: lifetime scrub error count
+	LastScrubTime        int64                  // CP8-2: unix seconds
+	ReplicaDegraded      bool                   // CP8-2: true if any replica shipper degraded
+	DurabilityMode       string                 // CP8-3-1: "best_effort", "sync_all", "sync_quorum"
 	NvmeAddr             string                 // NVMe/TCP target address (ip:port), empty if NVMe disabled
 	NQN                  string                 // NVMe subsystem NQN, empty if NVMe disabled
 	ReplicaShipperStates []ReplicaShipperStatus // CP13-7: per-replica state from primary's shipper group
@@ -60,18 +61,18 @@ func ToBlockVolumeInfoMessage(path, diskType string, vol *BlockVol) BlockVolumeI
 	status := vol.Status()
 	hs := vol.HealthStats()
 	return BlockVolumeInfoMessage{
-		Path:            path,
-		VolumeSize:      info.VolumeSize,
-		BlockSize:       info.BlockSize,
-		Epoch:           status.Epoch,
-		Role:            RoleToWire(status.Role),
-		WalHeadLsn:      status.WALHeadLSN,
-		CheckpointLsn:   status.CheckpointLSN,
-		HasLease:        status.HasLease,
-		DiskType:        diskType,
-		HealthScore:     status.HealthScore,
-		ScrubErrors:     hs.ScrubErrors,
-		LastScrubTime:   hs.LastScrubTime,
+		Path:                 path,
+		VolumeSize:           info.VolumeSize,
+		BlockSize:            info.BlockSize,
+		Epoch:                status.Epoch,
+		Role:                 RoleToWire(status.Role),
+		WalHeadLsn:           status.WALHeadLSN,
+		CheckpointLsn:        status.CheckpointLSN,
+		HasLease:             status.HasLease,
+		DiskType:             diskType,
+		HealthScore:          status.HealthScore,
+		ScrubErrors:          hs.ScrubErrors,
+		LastScrubTime:        hs.LastScrubTime,
 		ReplicaDegraded:      status.ReplicaDegraded,
 		DurabilityMode:       vol.DurabilityMode().String(),
 		ReplicaShipperStates: vol.ReplicaShipperStates(),

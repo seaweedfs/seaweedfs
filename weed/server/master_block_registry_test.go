@@ -2103,9 +2103,17 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady(t *test
 	if hb.ReplicaDataAddr == "" || hb.ReplicaCtrlAddr == "" {
 		t.Fatalf("expected core-influenced replica addresses on heartbeat, hb=%+v", hb)
 	}
+	if !hb.ReplicaReady {
+		t.Fatalf("expected explicit replica_ready truth on heartbeat, hb=%+v", hb)
+	}
 	if hb.ReplicaDegraded {
 		t.Fatalf("did not expect degraded heartbeat on ready path, hb=%+v", hb)
 	}
+
+	// Prove master-side readiness now follows the explicit heartbeat truth even
+	// when transport addresses are absent on the consume path.
+	hb.ReplicaDataAddr = ""
+	hb.ReplicaCtrlAddr = ""
 
 	r := NewBlockVolumeRegistry()
 	if err := r.Register(&BlockVolumeEntry{
@@ -2137,5 +2145,37 @@ func TestRegistry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady(t *test
 	}
 	if entry.VolumeMode != "publish_healthy" {
 		t.Fatalf("expected publish_healthy after ready consume, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldAbsent(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-ready-fallback",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-ready-fallback-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-ready-fallback.blk",
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-ready-fallback.blk",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-ready-fallback")
+	if !entry.Replicas[0].Ready {
+		t.Fatalf("expected backward-compatible ready fallback from addresses, entry=%+v", entry)
+	}
+	if !entry.ReplicaReady {
+		t.Fatalf("expected aggregate replica ready from fallback consume, entry=%+v", entry)
 	}
 }

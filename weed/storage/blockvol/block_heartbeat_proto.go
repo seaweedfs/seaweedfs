@@ -18,6 +18,7 @@ func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMess
 		DiskType:        m.DiskType,
 		ReplicaDataAddr: m.ReplicaDataAddr,
 		ReplicaCtrlAddr: m.ReplicaCtrlAddr,
+		ReplicaReady:    &m.ReplicaReady,
 		HealthScore:     m.HealthScore,
 		ScrubErrors:     m.ScrubErrors,
 		LastScrubTime:   m.LastScrubTime,
@@ -45,6 +46,7 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		DiskType:        p.DiskType,
 		ReplicaDataAddr: p.ReplicaDataAddr,
 		ReplicaCtrlAddr: p.ReplicaCtrlAddr,
+		ReplicaReady:    p.GetReplicaReady(),
 		HealthScore:     p.HealthScore,
 		ScrubErrors:     p.ScrubErrors,
 		LastScrubTime:   p.LastScrubTime,
@@ -166,4 +168,3 @@ func AssignmentsFromProto(protos []*master_pb.BlockVolumeAssignment) []BlockVolu
 	}
 	return out
 }
-

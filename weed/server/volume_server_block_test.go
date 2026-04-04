@@ -937,8 +937,8 @@ func TestBlockService_DebugInfoForVolume_UsesCoreProjectionPrimaryPath(t *testin
 	}
 
 	readiness := bs.ReadinessSnapshot(path)
-	if !readiness.PublishHealthy {
-		t.Fatalf("expected adapter-local readiness to still report publish healthy, got %+v", readiness)
+	if readiness.PublishHealthy {
+		t.Fatalf("readiness snapshot must follow core publication truth on primary path without durable boundary, got %+v", readiness)
 	}
 
 	vol, ok := bs.blockStore.GetBlockVolume(path)
@@ -1064,6 +1064,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryUsesCoreReadinessGate(t
 	if msg.ReplicaCtrlAddr != "10.0.0.2:4261" {
 		t.Fatalf("ReplicaCtrlAddr=%q", msg.ReplicaCtrlAddr)
 	}
+	if msg.ReplicaReady {
+		t.Fatalf("primary heartbeat must not claim replica-ready truth, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_ReplicaUsesCoreReadinessGate(t *testing.T) {
@@ -1117,6 +1120,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_ReplicaUsesCoreReadinessGate(t
 	if msg.ReplicaCtrlAddr != expectedCtrl {
 		t.Fatalf("ReplicaCtrlAddr=%q expected=%q", msg.ReplicaCtrlAddr, expectedCtrl)
 	}
+	if !msg.ReplicaReady {
+		t.Fatalf("replica heartbeat should carry explicit replica-ready truth, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_ReadinessSnapshot_PrefersCoreProjectionPrimaryFields(t *testing.T) {
@@ -1157,7 +1163,47 @@ func TestBlockService_ReadinessSnapshot_PrefersCoreProjectionPrimaryFields(t *te
 		t.Fatalf("expected snapshot shipper_configured from core projection, got %+v", snap)
 	}
 	if snap.PublishHealthy {
-		t.Fatalf("publish_healthy should remain adapter-local on readiness snapshot, got %+v", snap)
+		t.Fatalf("publish_healthy should follow core publication truth on primary path without durable boundary, got %+v", snap)
+	}
+}
+
+func TestBlockService_ReadinessSnapshot_PrefersCorePublicationHealth(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-readiness-publish-healthy")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: 12})
+
+	bs.replMu.Lock()
+	state := bs.replStates[path]
+	if state == nil {
+		bs.replMu.Unlock()
+		t.Fatal("missing repl state")
+	}
+	state.publishHealthy = false
+	bs.replMu.Unlock()
+
+	snap := bs.ReadinessSnapshot(path)
+	if !snap.PublishHealthy {
+		t.Fatalf("publish_healthy should follow core publication truth once healthy, got %+v", snap)
+	}
+	if mismatches := bs.CoreProjectionMismatches(path); len(mismatches) != 0 {
+		t.Fatalf("readiness/core mismatches=%v", mismatches)
 	}
 }
 
@@ -1198,7 +1244,7 @@ func TestBlockService_ReadinessSnapshot_PrefersCoreProjectionReplicaFields(t *te
 		t.Fatalf("expected snapshot replica_eligible from core projection, got %+v", snap)
 	}
 	if snap.PublishHealthy {
-		t.Fatalf("publish_healthy should remain adapter-local on readiness snapshot, got %+v", snap)
+		t.Fatalf("publish_healthy should follow core publication truth on replica path, got %+v", snap)
 	}
 }
 
