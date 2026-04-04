@@ -32,6 +32,7 @@ type RaftServerOption struct {
 	DataDir           string
 	Topo              *topology.Topology
 	RaftResumeState   bool
+	SingleMaster      bool
 	HeartbeatInterval time.Duration
 	ElectionTimeout   time.Duration
 	RaftBootstrap     bool
@@ -176,8 +177,28 @@ func NewRaftServer(option *RaftServerOption) (*RaftServer, error) {
 	if err := s.raftServer.LoadSnapshot(); err != nil {
 		return nil, err
 	}
+
+	// In single-master mode resuming state, the log is not empty so the
+	// normal self-join path won't promote to leader. The server will
+	// self-elect after the election timeout, so use a tiny timeout to
+	// make this near-instant, then restore the original after election.
+	fastResume := option.SingleMaster && option.RaftResumeState && !s.raftServer.IsLogEmpty()
+	if fastResume {
+		s.raftServer.SetElectionTimeout(time.Millisecond)
+	}
+
 	if err := s.raftServer.Start(); err != nil {
 		return nil, err
+	}
+
+	if fastResume {
+		go func() {
+			for s.raftServer.Leader() == "" {
+				time.Sleep(100 * time.Millisecond)
+			}
+			s.raftServer.SetElectionTimeout(option.ElectionTimeout)
+			glog.V(0).Infof("Resumed as leader with election timeout restored to %v", option.ElectionTimeout)
+		}()
 	}
 
 	for name, peer := range s.peers {
@@ -273,3 +294,4 @@ func (s *RaftServer) DoJoinCommand() {
 	}
 
 }
+
