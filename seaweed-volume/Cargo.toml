@@ -82,7 +82,7 @@ memmap2 = "0.9"
 uuid = { version = "1", features = ["v4"] }
 
 # HTTP client (for proxying, remote fetch)
-reqwest = { version = "0.12", features = ["rustls-tls", "stream", "multipart", "json"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "multipart", "json"] }
 
 # Content hashing
 md-5 = "0.10"
