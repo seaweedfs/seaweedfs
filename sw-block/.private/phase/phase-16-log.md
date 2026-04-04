@@ -470,7 +470,7 @@ Date: 2026-04-04
 
 Current checkpoint judgment:
 
-1. this is the first bounded integrated runtime checkpoint after `Phase 15`
+1. this is the current widened bounded runtime checkpoint after `Phase 15`
    closeout
 2. `16A` is delivered
 3. `16B` has one accepted current closure:
@@ -545,3 +545,240 @@ Review intent:
 
 1. this note does not broaden `16B`
 2. it only closes the two minor gaps identified by `manager`
+
+---
+
+#### `16C` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded rebuilding-assignment entry ownership on the core-present path
+
+Why this slice exists:
+
+1. `16B Rev 3` closed bounded catch-up/rebuild command ownership once recovery
+   execution was already on the live path
+2. one remaining adapter-local rebuild trigger still existed at assignment time:
+   `RoleRebuilding` assignments could call legacy `BlockService.startRebuild()`
+   directly
+3. assignment handling also started recovery tasks before the local assignment
+   apply path had completed
+
+What changed:
+
+1. `weed/server/volume_server_block.go`
+   - rebuilding assignments no longer directly call legacy `startRebuild()` when
+     the core is present
+   - rebuilding assignments now enter `coreAssignmentEvent()` and therefore use
+     the same bounded `apply_role` command path as other integrated assignments
+   - recovery-task startup from orchestrator results is deferred until after the
+     assignment apply loop completes
+   - legacy direct `startRebuild()` is now explicitly reserved for no-core
+     fallback only
+2. `weed/server/volume_server_block_test.go`
+   - added proof that core-present rebuilding assignment:
+     - does not use legacy direct rebuild start
+     - still applies local rebuilding role
+     - reaches core-driven `start_rebuild`
+   - added proof that no-core fallback still uses legacy direct rebuild start
+
+---
+
+#### `16C` Delivery Note Rev 2
+
+Date: 2026-04-04
+Scope: suppress false replica-ready receiver startup on rebuilding assignment
+
+What changed:
+
+1. `sw-block/engine/replication/event.go`
+   - `AssignmentDelivered` now carries `RecoveryTarget`
+2. `sw-block/engine/replication/engine.go`
+   - rebuilding assignment with `RecoveryTarget=SessionRebuild` no longer emits
+     `start_receiver`
+   - bootstrap reason for that bounded state is now `awaiting_rebuild_start`
+     instead of `awaiting_receiver_ready`
+3. `weed/server/volume_server_block.go`
+   - `RoleRebuilding` assignment now marks the core assignment event with
+     `SessionRebuild`
+4. `weed/server/volume_server_block_test.go`
+   - tightened focused proof to require exactly:
+     `apply_role`, then `start_rebuild`
+   - explicitly rejects `start_receiver` on the rebuilding-assignment path
+
+Bounded contract refinement:
+
+`16C` now additionally accepts only this narrow improvement:
+
+1. rebuilding assignment is not misclassified as receiver-start work
+2. command egress for that path is the minimum bounded set needed for:
+   - local rebuilding role apply
+   - rebuild execution ownership
+
+Validation:
+
+1. `go test ./sw-block/engine/replication/...`
+2. `go test ./weed/server -run "TestBlockService_ApplyAssignments_RebuildingRole_(UsesCoreRecoveryPathWithoutLegacyDirectStart|PreservesLegacyFallbackWithoutCore)"`
+3. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments_(RebuildingRole_|ExecutesCoreCommands_)|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
+4. result: `PASS`
+
+---
+
+#### `16D` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded rebuild recovery-task startup ownership
+
+Why this slice exists:
+
+1. `16C` closed rebuilding-assignment entry ownership
+2. one bounded startup gap still remained:
+   - recovery goroutine startup on the core-present path still came directly from
+     orchestrator `SessionsCreated` / `SessionsSuperseded`
+   - the core only owned later rebuild execution (`start_rebuild`), not the task
+     startup itself
+3. this is a runtime-loop ownership gap, but still narrow enough to fix only for
+   rebuilding-assignment startup
+
+What changed:
+
+1. `sw-block/engine/replication/command.go`
+   - added bounded `StartRecoveryTaskCommand`
+2. `sw-block/engine/replication/state.go`
+   - added command dedupe state for recovery-task startup
+3. `sw-block/engine/replication/engine.go`
+   - rebuilding assignment now emits `start_recovery_task`
+   - that command is deduped by epoch / replica / recovery kind
+4. `sw-block/engine/replication/phase14_command_test.go`
+   - added command proof that rebuilding assignment emits:
+     - `apply_role`
+     - `start_recovery_task`
+     - `publish_projection`
+5. `weed/server/volume_server_block.go`
+   - core-present path no longer starts recovery tasks from
+     `SessionsCreated` / `SessionsSuperseded`
+   - adapter now executes `start_recovery_task`
+   - removed-sender drain remains preserved
+   - legacy no-core startup path still uses `HandleAssignmentResult()`
+6. `weed/server/block_recovery.go`
+   - restored `HandleAssignmentResult()` as a no-core compatibility entry
+   - added bounded `StartRecoveryTask()` entry for core-command execution
+7. `weed/server/volume_server_block_test.go`
+   - rebuilding-assignment proof now requires:
+     - `apply_role`
+     - `start_recovery_task`
+     - `start_rebuild`
+
+Bounded contract:
+
+`16D Rev 1` currently accepts only this:
+
+1. rebuild recovery-task startup is core-command-driven on the core-present
+   rebuilding-assignment path
+2. adapter no longer starts that task directly from orchestrator create/supersede
+   results on the bounded path
+3. no-core / old `P4` live-path ownership proofs are preserved
+4. those legacy `P4` proofs now serve as compatibility guards only; they are not
+   the semantic authority proof for the core-present `16D` path
+
+It does not yet accept:
+
+1. catch-up task startup ownership
+2. full recovery-loop closure
+3. broad end-to-end failover/recovery/publication closure
+4. multi-replica recovery ownership
+5. launch / rollout readiness
+
+Validation:
+
+1. `go test ./sw-block/engine/replication/...`
+2. `go test ./weed/server -run "TestBlockService_ApplyAssignments_RebuildingRole_(UsesCoreRecoveryPathWithoutLegacyDirectStart|PreservesLegacyFallbackWithoutCore)"`
+3. `go test ./weed/server -run "TestP4_(LivePath_RealVol_ReachesPlan|SerializedReplacement_DrainsBeforeStart|ShutdownDrain)"`
+4. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments_(RebuildingRole_|ExecutesCoreCommands_)|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
+5. result: `PASS`
+
+---
+
+#### `16E` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded catch-up recovery-task startup ownership on the core-present path
+
+Why this slice exists:
+
+1. `16D` closed rebuild recovery-task startup ownership
+2. the parallel catch-up startup path still started from orchestrator
+   `SessionsCreated` / `SessionsSuperseded`
+3. this left the current `RF=2` primary-assignment path only partially
+   command-driven
+
+What changed:
+
+1. `sw-block/engine/replication/engine.go`
+   - `start_recovery_task` dedupe now resets on assignment change
+   - startup command remains bounded to a single desired replica
+   - startup command ordering now places `configure_shipper` before
+     `start_recovery_task` on the primary catch-up path
+2. `sw-block/engine/replication/phase14_command_test.go`
+   - primary assignment now proves:
+     - `apply_role`
+     - `configure_shipper`
+     - `start_recovery_task`
+     - `publish_projection`
+   - assignment change proof now requires a fresh `start_recovery_task`
+   - catch-up planning proof now runs from the primary catch-up shape
+3. `weed/server/volume_server_block.go`
+   - primary assignment now marks `RecoveryTarget=SessionCatchUp` in the core
+     assignment event on the bounded single-replica path
+4. `weed/server/volume_server_block_test.go`
+   - added focused proof that the core-present primary path executes:
+     - `apply_role`
+     - `configure_shipper`
+     - `start_recovery_task`
+     - `start_catchup`
+   - proves sender reaches `in_sync` and projection returns to `RecoveryIdle`
+
+Bounded contract:
+
+`16E Rev 1` currently accepts only this:
+
+1. catch-up recovery-task startup is core-command-driven on the core-present
+   primary-assignment path
+2. adapter no longer starts that task directly from orchestrator create/supersede
+   results on that bounded path
+3. no-core / legacy `P4` compatibility remains preserved
+
+It does not yet accept:
+
+1. multi-replica catch-up startup ownership
+2. full recovery-loop closure
+3. broad end-to-end failover/recovery/publication closure
+4. launch / rollout readiness
+
+Validation:
+
+1. `go test ./sw-block/engine/replication/...`
+2. `go test ./weed/server -run "TestBlockService_ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart|RebuildingRole_PreservesLegacyFallbackWithoutCore)"`
+3. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|RebuildingRole_|ExecutesCoreCommands_)|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
+4. result: `PASS`
+
+Bounded contract:
+
+`16C Rev 1` currently accepts only this:
+
+1. rebuilding-assignment entry no longer bypasses the core on the core-present
+   path
+2. local role apply precedes recovery task start on that bounded path
+3. old no-core fallback is preserved
+
+It does not yet accept:
+
+1. full recovery-loop closure
+2. broad end-to-end failover/recovery/publication closure
+3. multi-replica rebuild ownership
+4. launch / rollout readiness
+
+Validation:
+
+1. `go test ./weed/server -run "TestBlockService_ApplyAssignments_RebuildingRole_(UsesCoreRecoveryPathWithoutLegacyDirectStart|PreservesLegacyFallbackWithoutCore)"`
+2. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments_(RebuildingRole_|ExecutesCoreCommands_)|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
+3. result: `PASS`

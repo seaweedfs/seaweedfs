@@ -270,14 +270,16 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 	roleChanged := st.Role != ev.Role
 	epochChanged := st.Epoch != ev.Epoch
 	replicasChanged := !sameReplicaAssignments(st.DesiredReplicas, ev.Replicas)
+	recoveryTargetChanged := st.recoveryTarget != ev.RecoveryTarget
 
 	st.Epoch = ev.Epoch
 	st.Role = ev.Role
 	st.DesiredReplicas = append([]ReplicaAssignment(nil), ev.Replicas...)
+	st.recoveryTarget = ev.RecoveryTarget
 	st.Readiness.Assigned = true
 	st.Mode.Authority = RuntimeAuthorityConstrainedV1
 
-	if epochChanged || roleChanged {
+	if epochChanged || roleChanged || recoveryTargetChanged {
 		st.Readiness.RoleApplied = false
 	}
 
@@ -300,13 +302,16 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.Readiness.ShipperConnected = false
 	}
 
-	if epochChanged || roleChanged || replicasChanged {
+	if epochChanged || roleChanged || replicasChanged || recoveryTargetChanged {
 		st.degraded = false
 		st.degradeReason = ""
 		st.resetInvalidation()
 		st.Recovery = RecoveryView{Phase: RecoveryIdle}
 		st.Boundary.TargetLSN = 0
 		st.Boundary.AchievedLSN = 0
+		st.commands.RecoveryTaskEpoch = 0
+		st.commands.RecoveryTaskReplicaID = ""
+		st.commands.RecoveryTaskKind = ""
 		st.commands.CatchUpTargetLSN = 0
 		st.commands.RebuildTargetLSN = 0
 	}
@@ -332,6 +337,17 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		})
 		st.commands.ShipperConfigEpoch = st.Epoch
 		st.commands.ShipperConfigReplicas = append([]ReplicaAssignment(nil), st.DesiredReplicas...)
+	}
+	if st.shouldStartRecoveryTask() {
+		replicaID := st.DesiredReplicas[0].ReplicaID
+		cmds = append(cmds, StartRecoveryTaskCommand{
+			VolumeID:  st.VolumeID,
+			ReplicaID: replicaID,
+			Kind:      st.recoveryTarget,
+		})
+		st.commands.RecoveryTaskEpoch = st.Epoch
+		st.commands.RecoveryTaskReplicaID = replicaID
+		st.commands.RecoveryTaskKind = st.recoveryTarget
 	}
 	return cmds
 }
@@ -368,8 +384,19 @@ func (st *VolumeState) shouldApplyRole() bool {
 
 func (st *VolumeState) shouldStartReceiver() bool {
 	return st.Role == RoleReplica &&
+		st.recoveryTarget != SessionRebuild &&
 		!st.Readiness.ReceiverReady &&
 		st.commands.ReceiverStartEpoch != st.Epoch
+}
+
+func (st *VolumeState) shouldStartRecoveryTask() bool {
+	if st.recoveryTarget == "" || len(st.DesiredReplicas) != 1 {
+		return false
+	}
+	replicaID := st.DesiredReplicas[0].ReplicaID
+	return st.commands.RecoveryTaskEpoch != st.Epoch ||
+		st.commands.RecoveryTaskReplicaID != replicaID ||
+		st.commands.RecoveryTaskKind != st.recoveryTarget
 }
 
 func (st *VolumeState) shouldConfigureShipper() bool {
@@ -405,6 +432,8 @@ func (st *VolumeState) bootstrapReason() string {
 	switch {
 	case !st.Readiness.RoleApplied:
 		return "awaiting_role_apply"
+	case st.Role == RoleReplica && st.recoveryTarget == SessionRebuild:
+		return "awaiting_rebuild_start"
 	case st.Role == RoleReplica && !st.Readiness.ReceiverReady:
 		return "awaiting_receiver_ready"
 	case st.Role == RolePrimary && !st.Readiness.ShipperConfigured:

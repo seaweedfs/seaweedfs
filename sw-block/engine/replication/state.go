@@ -92,6 +92,9 @@ type commandState struct {
 	ReceiverStartEpoch    uint64
 	ShipperConfigEpoch    uint64
 	ShipperConfigReplicas []ReplicaAssignment
+	RecoveryTaskEpoch     uint64
+	RecoveryTaskReplicaID string
+	RecoveryTaskKind      SessionKind
 	CatchUpTargetLSN      uint64
 	RebuildTargetLSN      uint64
 	InvalidationIssued    bool
@@ -112,11 +115,12 @@ type VolumeState struct {
 	Publication     PublicationView
 	Recovery        RecoveryView
 
-	degraded      bool
-	degradeReason string
-	needsRebuild  bool
-	rebuildReason string
-	commands      commandState
+	degraded       bool
+	degradeReason  string
+	needsRebuild   bool
+	rebuildReason  string
+	recoveryTarget SessionKind
+	commands       commandState
 }
 
 func newVolumeState(volumeID string) *VolumeState {

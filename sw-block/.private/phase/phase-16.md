@@ -98,6 +98,104 @@ Current chosen path:
 
 Status:
 
+1. delivered
+
+### `16C`: Rebuild Assignment Entry Ownership
+
+Goal:
+
+1. remove one remaining adapter-local rebuild entry trigger from the core-present
+   path
+2. serialize rebuilding assignment local apply before the recovery task starts
+
+Acceptance object:
+
+1. `RoleRebuilding` assignment does not directly trigger legacy
+   `BlockService.startRebuild()` when the core is present
+2. the same assignment still applies local role through the core-driven command
+   chain
+3. recovery task start happens after the local assignment command path, not
+   before it
+4. old no-core fallback remains preserved
+
+Current chosen path:
+
+1. rebuilding assignment now participates in the same core assignment command
+   chain as other bounded roles
+2. direct legacy `startRebuild()` is now reserved for no-core fallback only
+3. orchestrator-driven recovery task start is deferred until the assignment
+   apply path has completed
+4. rebuilding assignment no longer emits `start_receiver` as a false
+   replica-ready side effect on the core-present path
+
+Status:
+
+1. delivered
+
+### `16D`: Rebuild Task Startup Ownership
+
+Goal:
+
+1. move bounded rebuild recovery-task startup from direct orchestrator-result
+   handling into the core command path
+2. preserve old no-core recovery startup behavior for legacy proofs
+
+Acceptance object:
+
+1. on the core-present rebuilding-assignment path, recovery goroutine startup
+   happens because the core emitted a command
+2. the adapter no longer starts rebuild recovery tasks directly from
+   `SessionsCreated` / `SessionsSuperseded` on that bounded path
+3. no-core / older `P4` live-path proofs still pass unchanged
+
+Current chosen path:
+
+1. rebuilding assignment now emits a bounded `start_recovery_task` command
+2. adapter executes that command by starting one recovery goroutine for the
+   already-attached rebuild session
+3. core-present path now uses:
+   - `apply_role`
+   - `start_recovery_task`
+   - `start_rebuild`
+4. old `HandleAssignmentResult()` startup behavior is retained only for no-core
+   compatibility and legacy `P4` proof preservation
+
+Status:
+
+1. delivered
+
+### `16E`: Catch-Up Task Startup Ownership
+
+Goal:
+
+1. move bounded catch-up recovery-task startup from direct orchestrator-result
+   handling into the core command path
+2. keep the slice bounded to the single-replica `RF=2` chosen path
+
+Acceptance object:
+
+1. on the core-present primary-assignment path, catch-up recovery-task startup
+   happens because the core emitted a command
+2. the bounded command sequence for that path becomes:
+   - `apply_role`
+   - `configure_shipper`
+   - `start_recovery_task`
+   - `start_catchup`
+3. old no-core / legacy `P4` compatibility remains preserved
+
+Current chosen path:
+
+1. primary assignment with one replica now marks `RecoveryTarget=SessionCatchUp`
+   in the core assignment event
+2. the core emits `start_recovery_task` for that bounded catch-up path
+3. the adapter starts the recovery goroutine from that command, not from
+   orchestrator create/supersede results
+4. assignment change resets the dedupe key for recovery-task startup, so endpoint
+   change / reassign still emits a fresh task-start command
+5. multi-replica startup ownership remains outside the current bounded path
+
+Status:
+
 1. active
 
 ## Current Checkpoint Review Target
@@ -118,16 +216,22 @@ after `Phase 15` closeout:
    - bounded catch-up execution runs from `StartCatchUpCommand`
 4. current working state extends that bounded path with:
    - bounded rebuild execution from `StartRebuildCommand`
+   - rebuilding assignment entry ownership
+   - rebuild recovery-task startup ownership
+   - bounded catch-up recovery-task startup ownership on the single-replica
+     primary path
 
 This checkpoint is intentionally still bounded:
 
 1. broad recovery-loop closure is not yet claimed
 2. broad end-to-end failover/recovery/publication proof is not yet claimed
-3. launch / rollout readiness is not claimed
+3. multi-replica startup ownership is not yet claimed
+4. launch / rollout readiness is not claimed
 
 ## Immediate Next Step
 
-The current checkpoint is now good enough to take as a stage/commit boundary:
+The current checkpoint is now good enough to take as the next stage/review
+boundary:
 
 1. `Phase 15` delivered
 2. `16A` delivered
@@ -135,10 +239,19 @@ The current checkpoint is now good enough to take as a stage/commit boundary:
    - live recovery observations close back into the core
    - bounded catch-up execution is core-command-driven
    - bounded rebuild execution is core-command-driven
+4. `16C` delivered:
+   - rebuilding assignment entry no longer bypasses the core
+   - rebuilding assignment no longer emits false `start_receiver`
+5. `16D` delivered:
+   - rebuild recovery-task startup is core-command-driven
+6. `16E` current bounded refinement:
+   - catch-up recovery-task startup is core-command-driven on the
+     single-replica primary path
 
-After that checkpoint, decide whether `Phase 16` needs one stricter end-to-end
-recovery/publication scenario before moving beyond the phase:
+After this checkpoint:
 
-1. keep the current bounded ownership claim narrow
-2. only add broader scenario proof if it materially strengthens the accepted bar
-3. do not broaden this into launch claims
+1. keep `legacy P4` only as a compatibility guard
+2. decide whether to widen startup ownership beyond the bounded single-replica
+   catch-up path
+3. do not yet claim full recovery-loop closure
+4. do not broaden into launch claims

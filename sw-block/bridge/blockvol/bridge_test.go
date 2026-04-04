@@ -177,4 +177,25 @@ func TestContract_BlockVolReaderInterface(t *testing.T) {
 	// Verify the contract interface is implementable.
 	var _ BlockVolReader = &pushReader{psa: NewPushStorageAdapter()}
 	var _ BlockVolPinner = &pushPinner{psa: NewPushStorageAdapter()}
+	var _ BlockVolCatchUpIO = fakeExecutor{}
+	var _ BlockVolRebuildIO = fakeExecutor{}
+	var _ BlockVolExecutor = fakeExecutor{}
+}
+
+type fakeExecutor struct{}
+
+func (fakeExecutor) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
+	return endInclusive, nil
+}
+
+func (fakeExecutor) TruncateWAL(truncateLSN uint64) error {
+	return nil
+}
+
+func (fakeExecutor) TransferSnapshot(snapshotLSN uint64) error {
+	return nil
+}
+
+func (fakeExecutor) TransferFullBase(committedLSN uint64) (uint64, error) {
+	return committedLSN, nil
 }

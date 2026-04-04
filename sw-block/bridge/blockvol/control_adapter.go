@@ -37,6 +37,30 @@ func MakeReplicaID(volumeName, serverID string) string {
 	return fmt.Sprintf("%s/%s", volumeName, serverID)
 }
 
+// ReplicaAssignmentForServer builds one engine replica assignment from stable
+// volume/server identity plus endpoint. This is the canonical identity mapping
+// shared by control ingestion and adapter-side assignment rebinding.
+func ReplicaAssignmentForServer(volumeName, serverID string, endpoint engine.Endpoint) engine.ReplicaAssignment {
+	return engine.ReplicaAssignment{
+		ReplicaID: MakeReplicaID(volumeName, serverID),
+		Endpoint:  endpoint,
+	}
+}
+
+// RecoveryTargetForRole maps a role-shaped control input to the bounded engine
+// recovery target. This is a pure translation rule, not a recovery policy
+// decision.
+func RecoveryTargetForRole(role string) engine.SessionKind {
+	switch role {
+	case "replica":
+		return engine.SessionCatchUp
+	case "rebuilding":
+		return engine.SessionRebuild
+	default:
+		return ""
+	}
+}
+
 // ToAssignmentIntent converts a master assignment into an engine intent.
 // The adapter maps role transitions to SessionKind but does NOT decide
 // the actual recovery outcome (that's the engine's job).
@@ -46,38 +70,22 @@ func (ca *ControlAdapter) ToAssignmentIntent(primary MasterAssignment, replicas 
 	}
 
 	for _, r := range replicas {
-		replicaID := MakeReplicaID(r.VolumeName, r.ReplicaServerID)
-		intent.Replicas = append(intent.Replicas, engine.ReplicaAssignment{
-			ReplicaID: replicaID,
-			Endpoint: engine.Endpoint{
-				DataAddr: r.DataAddr,
-				CtrlAddr: r.CtrlAddr,
-				Version:  r.AddrVersion,
-			},
+		replica := ReplicaAssignmentForServer(r.VolumeName, r.ReplicaServerID, engine.Endpoint{
+			DataAddr: r.DataAddr,
+			CtrlAddr: r.CtrlAddr,
+			Version:  r.AddrVersion,
 		})
+		intent.Replicas = append(intent.Replicas, replica)
 
 		// Map role to recovery intent (if needed).
-		kind := mapRoleToSessionKind(r.Role)
+		kind := RecoveryTargetForRole(r.Role)
 		if kind != "" {
 			if intent.RecoveryTargets == nil {
 				intent.RecoveryTargets = map[string]engine.SessionKind{}
 			}
-			intent.RecoveryTargets[replicaID] = kind
+			intent.RecoveryTargets[replica.ReplicaID] = kind
 		}
 	}
 
 	return intent
-}
-
-// mapRoleToSessionKind maps a master-assigned role to an engine SessionKind.
-// This is a pure translation — NO policy decision.
-func mapRoleToSessionKind(role string) engine.SessionKind {
-	switch role {
-	case "replica":
-		return engine.SessionCatchUp // default recovery for reconnecting replicas
-	case "rebuilding":
-		return engine.SessionRebuild
-	default:
-		return "" // no recovery needed (primary, or unknown)
-	}
 }

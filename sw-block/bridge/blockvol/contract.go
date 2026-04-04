@@ -1,5 +1,7 @@
 package blockvol
 
+import engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+
 // === Phase 07 P1: Handoff contract ===
 //
 // This file defines the interface boundary between:
@@ -19,11 +21,11 @@ package blockvol
 // BlockVolState represents the real storage state from a blockvol instance.
 // Each field maps to a specific blockvol source (current P1 implementation):
 //
-//   WALHeadLSN        ← vol.nextLSN - 1 (last written LSN)
-//   WALTailLSN        ← vol.super.WALCheckpointLSN (LSN boundary, not byte offset)
-//   CommittedLSN      ← vol.flusher.CheckpointLSN() (V1 interim: committed = checkpointed)
-//   CheckpointLSN     ← vol.super.WALCheckpointLSN (durable base image)
-//   CheckpointTrusted ← vol.super.Validate() == nil (superblock integrity)
+//	WALHeadLSN        ← vol.nextLSN - 1 (last written LSN)
+//	WALTailLSN        ← vol.super.WALCheckpointLSN (LSN boundary, not byte offset)
+//	CommittedLSN      ← vol.flusher.CheckpointLSN() (V1 interim: committed = checkpointed)
+//	CheckpointLSN     ← vol.super.WALCheckpointLSN (durable base image)
+//	CheckpointTrusted ← vol.super.Validate() == nil (superblock integrity)
 type BlockVolState struct {
 	WALHeadLSN        uint64
 	WALTailLSN        uint64
@@ -63,20 +65,24 @@ type BlockVolPinner interface {
 	HoldFullBase(committedLSN uint64) (release func(), err error)
 }
 
-// BlockVolExecutor performs actual recovery I/O. Implemented by the
-// weed-side bridge. It does NOT decide recovery policy — it only
-// executes what the engine tells it to do.
+// BlockVolCatchUpIO is the weed-free catch-up execution port. It intentionally
+// matches engine.CatchUpIO so executor implementations can plug directly into
+// the V2 runtime without importing weed/ into sw-block.
+type BlockVolCatchUpIO interface {
+	engine.CatchUpIO
+}
+
+// BlockVolRebuildIO is the weed-free rebuild execution port. It intentionally
+// matches engine.RebuildIO so rebuild mechanics can move behind sw-block-owned
+// contracts while real blockvol calls remain in thin adapter implementations.
+type BlockVolRebuildIO interface {
+	engine.RebuildIO
+}
+
+// BlockVolExecutor is the combined execution-muscle surface for the current
+// bounded runtime path. Implementations execute I/O only; they do not own
+// recovery policy, lifecycle meaning, or publication semantics.
 type BlockVolExecutor interface {
-	// StreamWALEntries streams WAL entries from startExclusive+1 to endInclusive
-	// to the replica. Returns the highest LSN successfully transferred.
-	StreamWALEntries(startExclusive, endInclusive uint64) (transferredTo uint64, err error)
-
-	// TransferSnapshot transfers a checkpoint/snapshot at snapshotLSN to the replica.
-	TransferSnapshot(snapshotLSN uint64) error
-
-	// TransferFullBase transfers the full extent image to the replica.
-	TransferFullBase(committedLSN uint64) error
-
-	// TruncateWAL removes entries beyond truncateLSN from the replica.
-	TruncateWAL(truncateLSN uint64) error
+	BlockVolCatchUpIO
+	BlockVolRebuildIO
 }

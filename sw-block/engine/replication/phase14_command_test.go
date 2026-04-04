@@ -8,9 +8,10 @@ import (
 func TestPhase14_CommandSequence_PrimaryAssignmentIsBounded(t *testing.T) {
 	core := NewCoreEngine()
 	ev := AssignmentDelivered{
-		ID:    "vol-cmd-primary",
-		Epoch: 1,
-		Role:  RolePrimary,
+		ID:             "vol-cmd-primary",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
 		Replicas: []ReplicaAssignment{
 			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.10:9333", CtrlAddr: "10.0.0.10:9334", Version: 1}},
 		},
@@ -20,6 +21,7 @@ func TestPhase14_CommandSequence_PrimaryAssignmentIsBounded(t *testing.T) {
 	assertCommandNames(t, result.Commands, []string{
 		"apply_role",
 		"configure_shipper",
+		"start_recovery_task",
 		"publish_projection",
 	})
 
@@ -131,15 +133,17 @@ func TestPhase14_CommandSequence_CatchUpStartIsBounded(t *testing.T) {
 	core := NewCoreEngine()
 
 	core.ApplyEvent(AssignmentDelivered{
-		ID:    "vol-cmd-catchup",
-		Epoch: 6,
-		Role:  RoleReplica,
+		ID:             "vol-cmd-catchup",
+		Epoch:          6,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
 		Replicas: []ReplicaAssignment{
 			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.16:9333", CtrlAddr: "10.0.0.16:9334", Version: 1}},
 		},
 	})
 	core.ApplyEvent(RoleApplied{ID: "vol-cmd-catchup"})
-	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-catchup"})
+	core.ApplyEvent(ShipperConfiguredObserved{ID: "vol-cmd-catchup"})
+	core.ApplyEvent(ShipperConnectedObserved{ID: "vol-cmd-catchup"})
 
 	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", TargetLSN: 55})
 	assertCommandNames(t, result.Commands, []string{
@@ -155,15 +159,14 @@ func TestPhase14_CommandSequence_RebuildStartIsBounded(t *testing.T) {
 	core := NewCoreEngine()
 
 	core.ApplyEvent(AssignmentDelivered{
-		ID:    "vol-cmd-rebuild",
-		Epoch: 7,
-		Role:  RoleReplica,
+		ID:             "vol-cmd-rebuild",
+		Epoch:          7,
+		Role:           RoleReplica,
+		RecoveryTarget: SessionRebuild,
 		Replicas: []ReplicaAssignment{
 			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.17:9333", CtrlAddr: "10.0.0.17:9334", Version: 1}},
 		},
 	})
-	core.ApplyEvent(RoleApplied{ID: "vol-cmd-rebuild"})
-	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-rebuild"})
 	core.ApplyEvent(NeedsRebuildObserved{ID: "vol-cmd-rebuild", Reason: "gap_too_large"})
 
 	result := core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", TargetLSN: 80})
@@ -176,19 +179,40 @@ func TestPhase14_CommandSequence_RebuildStartIsBounded(t *testing.T) {
 	assertCommandNames(t, result.Commands, nil)
 }
 
+func TestPhase14_CommandSequence_RebuildingAssignmentStartsRecoveryTaskWithoutReceiver(t *testing.T) {
+	core := NewCoreEngine()
+
+	result := core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-cmd-rebuild-assign",
+		Epoch:          8,
+		Role:           RoleReplica,
+		RecoveryTarget: SessionRebuild,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.20:9333", CtrlAddr: "10.0.0.20:9334", Version: 1}},
+		},
+	})
+	assertCommandNames(t, result.Commands, []string{
+		"apply_role",
+		"start_recovery_task",
+		"publish_projection",
+	})
+}
+
 func TestPhase14_CommandSequence_AssignmentChangeAllowsFreshRecoveryStart(t *testing.T) {
 	core := NewCoreEngine()
 
 	core.ApplyEvent(AssignmentDelivered{
-		ID:    "vol-cmd-reassign",
-		Epoch: 1,
-		Role:  RoleReplica,
+		ID:             "vol-cmd-reassign",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
 		Replicas: []ReplicaAssignment{
 			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.18:9333", CtrlAddr: "10.0.0.18:9334", Version: 1}},
 		},
 	})
 	core.ApplyEvent(RoleApplied{ID: "vol-cmd-reassign"})
-	core.ApplyEvent(ReceiverReadyObserved{ID: "vol-cmd-reassign"})
+	core.ApplyEvent(ShipperConfiguredObserved{ID: "vol-cmd-reassign"})
+	core.ApplyEvent(ShipperConnectedObserved{ID: "vol-cmd-reassign"})
 
 	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-reassign", TargetLSN: 90})
 	assertCommandNames(t, result.Commands, []string{
@@ -196,13 +220,20 @@ func TestPhase14_CommandSequence_AssignmentChangeAllowsFreshRecoveryStart(t *tes
 		"publish_projection",
 	})
 
-	core.ApplyEvent(AssignmentDelivered{
-		ID:    "vol-cmd-reassign",
-		Epoch: 2,
-		Role:  RoleReplica,
+	result = core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-cmd-reassign",
+		Epoch:          2,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
 		Replicas: []ReplicaAssignment{
 			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.19:9333", CtrlAddr: "10.0.0.19:9334", Version: 2}},
 		},
+	})
+	assertCommandNames(t, result.Commands, []string{
+		"apply_role",
+		"configure_shipper",
+		"start_recovery_task",
+		"publish_projection",
 	})
 
 	result = core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-reassign", TargetLSN: 90})

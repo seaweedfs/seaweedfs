@@ -9,7 +9,9 @@ import (
 	"strings"
 	"sync"
 
+	bridgeblockvol "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	"github.com/seaweedfs/seaweedfs/weed/server/blockcmd"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
@@ -95,6 +97,9 @@ type BlockService struct {
 	// routable host:port. This is the -ip value (IP or resolvable hostname),
 	// never an opaque server identity from -id.
 	advertisedHost string
+
+	// TestHook: if set, invoked when the legacy direct rebuild starter is used.
+	onLegacyStartRebuild func(path, rebuildAddr string, epoch uint64)
 }
 
 // V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
@@ -467,6 +472,8 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 // readiness bookkeeping. Returns per-assignment errors parallel to the input.
 func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssignment) []error {
 	errs := make([]error, len(assignments))
+	var legacyRecoveryResults []engine.AssignmentResult
+	var removedRecoveryResults []engine.AssignmentResult
 
 	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
 	// P3: skip V2 processing for repeated unchanged assignments.
@@ -487,8 +494,14 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 				len(result.SessionsCreated)+len(result.SessionsSuperseded))
 
 			// P4: drive live recovery execution based on engine result.
-			if bs.v2Recovery != nil && (len(result.SessionsCreated) > 0 || len(result.SessionsSuperseded) > 0 || len(result.Removed) > 0) {
-				bs.v2Recovery.HandleAssignmentResult(result, assignments)
+			if bs.v2Recovery != nil {
+				if bs.v2Core == nil {
+					if len(result.SessionsCreated) > 0 || len(result.SessionsSuperseded) > 0 || len(result.Removed) > 0 {
+						legacyRecoveryResults = append(legacyRecoveryResults, result)
+					}
+				} else if len(result.Removed) > 0 {
+					removedRecoveryResults = append(removedRecoveryResults, result)
+				}
 			}
 		}
 	}
@@ -511,9 +524,17 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 		case blockvol.RolePrimary:
 		case blockvol.RoleReplica:
 		case blockvol.RoleRebuilding:
-			if a.RebuildAddr != "" {
+			if a.RebuildAddr != "" && bs.v2Core == nil {
 				bs.startRebuild(a.Path, a.RebuildAddr, a.Epoch)
 			}
+		}
+	}
+	if bs.v2Recovery != nil {
+		for _, result := range legacyRecoveryResults {
+			bs.v2Recovery.HandleAssignmentResult(result, assignments)
+		}
+		for _, result := range removedRecoveryResults {
+			bs.v2Recovery.HandleRemovedAssignments(result)
 		}
 	}
 	return errs
@@ -544,83 +565,49 @@ func (bs *BlockService) applyCoreCommands(cmds []engine.Command) {
 }
 
 func (bs *BlockService) applyCoreCommandsWithAssignment(cmds []engine.Command, assignment *blockvol.BlockVolumeAssignment) error {
-	for _, cmd := range cmds {
-		switch v := cmd.(type) {
-		case engine.ApplyRoleCommand:
-			if err := bs.executeApplyRoleCommand(v, assignment); err != nil {
-				return err
-			}
-		case engine.StartReceiverCommand:
-			if err := bs.executeStartReceiverCommand(v, assignment); err != nil {
-				return err
-			}
-		case engine.ConfigureShipperCommand:
-			if err := bs.executeConfigureShipperCommand(v); err != nil {
-				return err
-			}
-		case engine.InvalidateSessionCommand:
-			if err := bs.executeInvalidateSessionCommand(v); err != nil {
-				return err
-			}
-		case engine.StartCatchUpCommand:
-			if err := bs.executeStartCatchUpCommand(v); err != nil {
-				return err
-			}
-		case engine.StartRebuildCommand:
-			if err := bs.executeStartRebuildCommand(v); err != nil {
-				return err
-			}
-		case engine.PublishProjectionCommand:
-			proj := v.Projection
-			if latest, ok := bs.V2Core().Projection(v.VolumeID); ok {
-				proj = latest
-			}
-			bs.coreProjMu.Lock()
-			if bs.coreProj == nil {
-				bs.coreProj = make(map[string]engine.PublicationProjection)
-			}
-			bs.coreProj[v.VolumeID] = proj
-			bs.coreProjMu.Unlock()
-		}
-	}
-	return nil
-}
-
-func (bs *BlockService) executeApplyRoleCommand(cmd engine.ApplyRoleCommand, assignment *blockvol.BlockVolumeAssignment) error {
-	if assignment == nil {
+	if bs == nil {
 		return nil
 	}
-	if assignment.Path != cmd.VolumeID {
-		return fmt.Errorf("block service: core apply_role path mismatch %q != %q", assignment.Path, cmd.VolumeID)
-	}
-	if err := bs.applyRoleAssignment(*assignment); err != nil {
-		return err
-	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "apply_role")
-	return nil
+	return bs.coreCommandDispatcher().Run(cmds, assignment)
 }
 
-func (bs *BlockService) executeStartReceiverCommand(cmd engine.StartReceiverCommand, assignment *blockvol.BlockVolumeAssignment) error {
-	if assignment == nil {
-		return nil
+func (bs *BlockService) coreCommandDispatcher() *blockcmd.Dispatcher {
+	return blockcmd.NewDispatcher(coreCommandOps{bs: bs}, coreCommandEffects{bs: bs})
+}
+
+type coreCommandOps struct {
+	bs *BlockService
+}
+
+func (ops coreCommandOps) ApplyRole(assignment blockvol.BlockVolumeAssignment) (bool, error) {
+	if ops.bs == nil {
+		return false, nil
 	}
-	if assignment.Path != cmd.VolumeID {
-		return fmt.Errorf("block service: core start_receiver path mismatch %q != %q", assignment.Path, cmd.VolumeID)
+	if err := ops.bs.applyRoleAssignment(assignment); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (ops coreCommandOps) StartReceiver(assignment blockvol.BlockVolumeAssignment) (bool, error) {
+	if ops.bs == nil {
+		return false, nil
 	}
 	if assignment.ReplicaDataAddr == "" || assignment.ReplicaCtrlAddr == "" {
-		return nil
+		return false, nil
 	}
-	if err := bs.setupReplicaReceiver(assignment.Path, assignment.ReplicaDataAddr, assignment.ReplicaCtrlAddr); err != nil {
-		return err
+	if err := ops.bs.setupReplicaReceiver(assignment.Path, assignment.ReplicaDataAddr, assignment.ReplicaCtrlAddr); err != nil {
+		return false, err
 	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_receiver")
-	bs.applyCoreEvent(engine.ReceiverReadyObserved{ID: cmd.VolumeID})
-	return nil
+	return true, nil
 }
 
-func (bs *BlockService) executeConfigureShipperCommand(cmd engine.ConfigureShipperCommand) error {
-	addrs := make([]blockvol.ReplicaAddr, 0, len(cmd.Replicas))
-	for _, replica := range cmd.Replicas {
+func (ops coreCommandOps) ConfigureShipper(volumeID string, replicas []engine.ReplicaAssignment) (bool, bool, error) {
+	if ops.bs == nil {
+		return false, false, nil
+	}
+	addrs := make([]blockvol.ReplicaAddr, 0, len(replicas))
+	for _, replica := range replicas {
 		if replica.Endpoint.DataAddr == "" || replica.Endpoint.CtrlAddr == "" {
 			continue
 		}
@@ -631,63 +618,100 @@ func (bs *BlockService) executeConfigureShipperCommand(cmd engine.ConfigureShipp
 		})
 	}
 	if len(addrs) == 0 {
-		return nil
+		return false, false, nil
 	}
 	if len(addrs) == 1 {
-		if err := bs.setupPrimaryReplication(cmd.VolumeID, addrs[0].DataAddr, addrs[0].CtrlAddr); err != nil {
-			return err
+		if err := ops.bs.setupPrimaryReplication(volumeID, addrs[0].DataAddr, addrs[0].CtrlAddr); err != nil {
+			return false, false, err
 		}
 	} else {
-		if err := bs.setupPrimaryReplicationMulti(cmd.VolumeID, addrs); err != nil {
-			return err
+		if err := ops.bs.setupPrimaryReplicationMulti(volumeID, addrs); err != nil {
+			return false, false, err
 		}
 	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "configure_shipper")
-	bs.applyCoreEvent(engine.ShipperConfiguredObserved{ID: cmd.VolumeID})
-	if bs.isPrimaryShipperConnected(cmd.VolumeID) {
-		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: cmd.VolumeID})
-	}
-	return nil
+	return true, ops.bs.isPrimaryShipperConnected(volumeID), nil
 }
 
-func (bs *BlockService) executeInvalidateSessionCommand(cmd engine.InvalidateSessionCommand) error {
-	if bs == nil || bs.v2Orchestrator == nil || bs.v2Core == nil {
-		return nil
+func (ops coreCommandOps) StartRecoveryTask(replicaID string, assignment blockvol.BlockVolumeAssignment) (bool, error) {
+	if ops.bs == nil || ops.bs.v2Recovery == nil {
+		return false, nil
 	}
-	proj, ok := bs.v2Core.Projection(cmd.VolumeID)
+	ops.bs.v2Recovery.StartRecoveryTask(replicaID, []blockvol.BlockVolumeAssignment{assignment})
+	return true, nil
+}
+
+func (ops coreCommandOps) InvalidateSession(volumeID, reason string) (bool, error) {
+	if ops.bs == nil || ops.bs.v2Orchestrator == nil || ops.bs.v2Core == nil {
+		return false, nil
+	}
+	proj, ok := ops.bs.v2Core.Projection(volumeID)
 	if !ok {
-		return nil
+		return false, nil
 	}
 	for _, replicaID := range proj.ReplicaIDs {
-		sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+		sender := ops.bs.v2Orchestrator.Registry.Sender(replicaID)
 		if sender == nil {
 			continue
 		}
-		sender.InvalidateSession(cmd.Reason, engine.StateDisconnected)
+		sender.InvalidateSession(reason, engine.StateDisconnected)
 	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "invalidate_session")
-	return nil
+	return true, nil
 }
 
-func (bs *BlockService) executeStartCatchUpCommand(cmd engine.StartCatchUpCommand) error {
-	if bs == nil || bs.v2Recovery == nil {
-		return nil
+func (ops coreCommandOps) StartCatchUp(volumeID string, targetLSN uint64) (bool, error) {
+	if ops.bs == nil || ops.bs.v2Recovery == nil {
+		return false, nil
 	}
-	if err := bs.v2Recovery.ExecutePendingCatchUp(cmd.VolumeID, cmd.TargetLSN); err != nil {
-		return err
+	if err := ops.bs.v2Recovery.ExecutePendingCatchUp(volumeID, targetLSN); err != nil {
+		return false, err
 	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_catchup")
-	return nil
+	return true, nil
 }
 
-func (bs *BlockService) executeStartRebuildCommand(cmd engine.StartRebuildCommand) error {
-	if bs == nil || bs.v2Recovery == nil {
+func (ops coreCommandOps) StartRebuild(volumeID string, targetLSN uint64) (bool, error) {
+	if ops.bs == nil || ops.bs.v2Recovery == nil {
+		return false, nil
+	}
+	if err := ops.bs.v2Recovery.ExecutePendingRebuild(volumeID, targetLSN); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+type coreCommandEffects struct {
+	bs *BlockService
+}
+
+func (effects coreCommandEffects) RecordCommand(volumeID, name string) {
+	if effects.bs == nil {
+		return
+	}
+	effects.bs.recordExecutedCoreCommand(volumeID, name)
+}
+
+func (effects coreCommandEffects) EmitCoreEvent(ev engine.Event) {
+	if effects.bs == nil {
+		return
+	}
+	effects.bs.applyCoreEvent(ev)
+}
+
+func (effects coreCommandEffects) PublishProjection(volumeID string, projection engine.PublicationProjection) error {
+	if effects.bs == nil {
 		return nil
 	}
-	if err := bs.v2Recovery.ExecutePendingRebuild(cmd.VolumeID, cmd.TargetLSN); err != nil {
-		return err
+	proj := projection
+	if core := effects.bs.V2Core(); core != nil {
+		if latest, ok := core.Projection(volumeID); ok {
+			proj = latest
+		}
 	}
-	bs.recordExecutedCoreCommand(cmd.VolumeID, "start_rebuild")
+	effects.bs.coreProjMu.Lock()
+	if effects.bs.coreProj == nil {
+		effects.bs.coreProj = make(map[string]engine.PublicationProjection)
+	}
+	effects.bs.coreProj[volumeID] = proj
+	effects.bs.coreProjMu.Unlock()
 	return nil
 }
 
@@ -731,33 +755,42 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 				if ra.ServerID == "" {
 					continue
 				}
-				ev.Replicas = append(ev.Replicas, engine.ReplicaAssignment{
-					ReplicaID: fmt.Sprintf("%s/%s", a.Path, ra.ServerID),
-					Endpoint: engine.Endpoint{
-						DataAddr: ra.DataAddr,
-						CtrlAddr: ra.CtrlAddr,
-					},
-				})
+				ev.Replicas = append(ev.Replicas, bridgeblockvol.ReplicaAssignmentForServer(a.Path, ra.ServerID, engine.Endpoint{
+					DataAddr: ra.DataAddr,
+					CtrlAddr: ra.CtrlAddr,
+				}))
+			}
+			if len(ev.Replicas) == 1 {
+				ev.RecoveryTarget = engine.SessionCatchUp
 			}
 		} else if a.ReplicaServerID != "" && a.ReplicaDataAddr != "" {
-			ev.Replicas = []engine.ReplicaAssignment{{
-				ReplicaID: fmt.Sprintf("%s/%s", a.Path, a.ReplicaServerID),
-				Endpoint: engine.Endpoint{
+			ev.Replicas = []engine.ReplicaAssignment{
+				bridgeblockvol.ReplicaAssignmentForServer(a.Path, a.ReplicaServerID, engine.Endpoint{
 					DataAddr: a.ReplicaDataAddr,
 					CtrlAddr: a.ReplicaCtrlAddr,
-				},
-			}}
+				}),
+			}
+			ev.RecoveryTarget = engine.SessionCatchUp
 		}
 		return ev, true
 	case blockvol.RoleReplica:
 		ev.Role = engine.RoleReplica
-		ev.Replicas = []engine.ReplicaAssignment{{
-			ReplicaID: fmt.Sprintf("%s/%s", a.Path, bs.localServerID),
-			Endpoint: engine.Endpoint{
+		ev.Replicas = []engine.ReplicaAssignment{
+			bridgeblockvol.ReplicaAssignmentForServer(a.Path, bs.localServerID, engine.Endpoint{
 				DataAddr: a.ReplicaDataAddr,
 				CtrlAddr: a.ReplicaCtrlAddr,
-			},
-		}}
+			}),
+		}
+		return ev, true
+	case blockvol.RoleRebuilding:
+		ev.Role = engine.RoleReplica
+		ev.RecoveryTarget = bridgeblockvol.RecoveryTargetForRole("rebuilding")
+		ev.Replicas = []engine.ReplicaAssignment{
+			bridgeblockvol.ReplicaAssignmentForServer(a.Path, bs.localServerID, engine.Endpoint{
+				DataAddr: a.ReplicaDataAddr,
+				CtrlAddr: a.ReplicaCtrlAddr,
+			}),
+		}
 		return ev, true
 	default:
 		return engine.AssignmentDelivered{}, false
@@ -901,6 +934,9 @@ func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) er
 // Future work: VS could report rebuild completion via heartbeat so master
 // can update registry state (e.g., promote from Rebuilding to Replica).
 func (bs *BlockService) startRebuild(path, rebuildAddr string, epoch uint64) {
+	if bs != nil && bs.onLegacyStartRebuild != nil {
+		bs.onLegacyStartRebuild(path, rebuildAddr, epoch)
+	}
 	go func() {
 		vol, ok := bs.blockStore.GetBlockVolume(path)
 		if !ok {

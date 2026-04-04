@@ -8,10 +8,11 @@ type Event interface {
 
 // AssignmentDelivered carries the desired local role and replica set.
 type AssignmentDelivered struct {
-	ID       string
-	Epoch    uint64
-	Role     VolumeRole
-	Replicas []ReplicaAssignment
+	ID             string
+	Epoch          uint64
+	Role           VolumeRole
+	Replicas       []ReplicaAssignment
+	RecoveryTarget SessionKind
 }
 
 func (e AssignmentDelivered) VolumeID() string { return e.ID }
