@@ -7,24 +7,28 @@ import (
 )
 
 type fakeCallbacks struct {
-	catchUpCalled bool
-	catchUpVol    string
-	catchUpLSN    uint64
+	catchUpCalled  bool
+	catchUpVol     string
+	catchUpReplica string
+	catchUpLSN     uint64
 
-	rebuildCalled bool
-	rebuildVol    string
-	rebuildPlan   *engine.RecoveryPlan
+	rebuildCalled  bool
+	rebuildVol     string
+	rebuildReplica string
+	rebuildPlan    *engine.RecoveryPlan
 }
 
-func (f *fakeCallbacks) OnCatchUpCompleted(volumeID string, achievedLSN uint64) {
+func (f *fakeCallbacks) OnCatchUpCompleted(volumeID, replicaID string, achievedLSN uint64) {
 	f.catchUpCalled = true
 	f.catchUpVol = volumeID
+	f.catchUpReplica = replicaID
 	f.catchUpLSN = achievedLSN
 }
 
-func (f *fakeCallbacks) OnRebuildCompleted(volumeID string, plan *engine.RecoveryPlan) {
+func (f *fakeCallbacks) OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan) {
 	f.rebuildCalled = true
 	f.rebuildVol = volumeID
+	f.rebuildReplica = replicaID
 	f.rebuildPlan = plan
 }
 
@@ -50,7 +54,7 @@ func TestExecuteCatchUpPlan_CallsbackOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", cb)
+	err = ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", "vol1/vs2", cb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,6 +63,9 @@ func TestExecuteCatchUpPlan_CallsbackOnSuccess(t *testing.T) {
 	}
 	if cb.catchUpVol != "vol1" {
 		t.Fatalf("vol=%s", cb.catchUpVol)
+	}
+	if cb.catchUpReplica != "vol1/vs2" {
+		t.Fatalf("replica=%s", cb.catchUpReplica)
 	}
 	if cb.catchUpLSN != 100 {
 		t.Fatalf("achievedLSN=%d", cb.catchUpLSN)
@@ -74,7 +81,7 @@ func TestExecuteCatchUpPlan_AchievedLSNMatchesTarget(t *testing.T) {
 	}
 	// The plan's CatchUpTarget is derived from storage state.
 	// The callback should receive that same target as achievedLSN.
-	err = ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", cb)
+	err = ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", "vol1/vs2", cb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +107,7 @@ func TestExecuteRebuildPlan_CallsbackOnSuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = ExecuteRebuildPlan(driver, plan, &noopRebuildIO{}, "vol2", cb)
+	err = ExecuteRebuildPlan(driver, plan, &noopRebuildIO{}, "vol2", "vol2/vs2", cb)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,6 +116,9 @@ func TestExecuteRebuildPlan_CallsbackOnSuccess(t *testing.T) {
 	}
 	if cb.rebuildVol != "vol2" {
 		t.Fatalf("vol=%s", cb.rebuildVol)
+	}
+	if cb.rebuildReplica != "vol2/vs2" {
+		t.Fatalf("replica=%s", cb.rebuildReplica)
 	}
 	if cb.rebuildPlan == nil {
 		t.Fatal("rebuild plan not passed to callback")
@@ -122,7 +132,7 @@ func TestExecuteCatchUpPlan_NilCallbacksSafe(t *testing.T) {
 		t.Fatal(err)
 	}
 	// nil callbacks should not panic.
-	if err := ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", nil); err != nil {
+	if err := ExecuteCatchUpPlan(driver, plan, &noopCatchUpIO{}, "vol1", "vol1/vs2", nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -132,12 +142,12 @@ func TestExecuteCatchUpPlan_NilCallbacksSafe(t *testing.T) {
 type noopCatchUpIO struct{}
 
 func (noopCatchUpIO) StreamWALEntries(start, end uint64) (uint64, error) { return end, nil }
-func (noopCatchUpIO) TruncateWAL(lsn uint64) error                      { return nil }
+func (noopCatchUpIO) TruncateWAL(lsn uint64) error                       { return nil }
 
 type noopRebuildIO struct{}
 
 func (noopRebuildIO) StreamWALEntries(start, end uint64) (uint64, error) { return end, nil }
-func (noopRebuildIO) TruncateWAL(lsn uint64) error                      { return nil }
+func (noopRebuildIO) TruncateWAL(lsn uint64) error                       { return nil }
 func (noopRebuildIO) TransferSnapshot(lsn uint64) error                  { return nil }
 func (noopRebuildIO) TransferFullBase(lsn uint64) (uint64, error)        { return lsn, nil }
 

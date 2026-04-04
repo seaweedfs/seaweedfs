@@ -88,6 +88,7 @@ func (e CheckpointAdvanced) VolumeID() string { return e.ID }
 
 // CatchUpPlanned freezes the current replay target as bounded recovery truth.
 type CatchUpPlanned struct {
+	ReplicaID string
 	ID        string
 	TargetLSN uint64
 }
@@ -97,6 +98,7 @@ func (e CatchUpPlanned) VolumeID() string { return e.ID }
 // RecoveryProgressObserved updates achieved replay/rebuild progress without
 // implying publication or durability closure by itself.
 type RecoveryProgressObserved struct {
+	ReplicaID   string
 	ID          string
 	AchievedLSN uint64
 }
@@ -106,6 +108,7 @@ func (e RecoveryProgressObserved) VolumeID() string { return e.ID }
 // CatchUpCompleted closes a previously planned catch-up path at an explicit
 // achieved boundary.
 type CatchUpCompleted struct {
+	ReplicaID   string
 	ID          string
 	AchievedLSN uint64
 }
@@ -114,8 +117,9 @@ func (e CatchUpCompleted) VolumeID() string { return e.ID }
 
 // NeedsRebuildObserved is a fail-closed rebuild escalation.
 type NeedsRebuildObserved struct {
-	ID     string
-	Reason string
+	ReplicaID string
+	ID        string
+	Reason    string
 }
 
 func (e NeedsRebuildObserved) VolumeID() string { return e.ID }
@@ -123,6 +127,7 @@ func (e NeedsRebuildObserved) VolumeID() string { return e.ID }
 // RebuildStarted moves the recovery truth from blocked-needs-rebuild into an
 // explicit rebuilding path with a frozen target.
 type RebuildStarted struct {
+	ReplicaID string
 	ID        string
 	TargetLSN uint64
 }
@@ -131,6 +136,7 @@ func (e RebuildStarted) VolumeID() string { return e.ID }
 
 // RebuildCommitted clears the rebuild condition with bounded durable truth.
 type RebuildCommitted struct {
+	ReplicaID     string
 	ID            string
 	AchievedLSN   uint64
 	FlushedLSN    uint64

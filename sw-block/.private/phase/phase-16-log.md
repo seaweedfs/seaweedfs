@@ -852,3 +852,63 @@ Conclusion:
    widening is reduced
 3. this slice still does not claim broad multi-replica startup ownership or
    full recovery-loop closure
+
+---
+
+#### `16G` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-scoped recovery observation events on the bounded core-present
+paths
+
+Why this slice exists:
+
+1. `16F` made recovery commands and pending matching replica-scoped
+2. but recovery planning / completion events still only identify the volume
+3. that leaves the bounded recovery loop with one remaining volume-scoped seam
+   before any later multi-replica widening can be evaluated cleanly
+
+Chosen implementation rule:
+
+1. make bounded recovery observation events carry `replicaID`
+2. make `start_catchup` / `start_rebuild` command emission consume the
+   event-scoped `replicaID`
+3. do not yet claim broad multi-replica recovery ownership or a per-replica
+   outward projection model
+
+---
+
+#### `16G` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-scoped recovery observation events on the bounded core-present
+paths
+
+What changed:
+
+1. `sw-block/engine/replication/event.go`
+   - bounded recovery planning / completion events now carry `replicaID`
+2. `sw-block/engine/replication/engine.go`
+   - bounded `start_catchup` / `start_rebuild` command emission now consumes
+     the event-scoped `replicaID`
+3. `sw-block/engine/replication/runtime`
+   - runtime callbacks and rebuild-commit shaping preserve replica-scoped
+     addressing
+4. `weed/server/block_recovery.go`
+   - recovery planning / completion events emitted back into the core now carry
+     the source `replicaID`
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. `go test ./weed/server -count=1 -timeout 120s -run "Test(P16B_|BlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart|RebuildingRole_PreservesLegacyFallbackWithoutCore)|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded))"`
+3. result: `PASS`
+
+Conclusion:
+
+1. the bounded recovery loop no longer depends on a volume-only recovery event
+   seam
+2. both recovery command addressing and recovery observation addressing are now
+   replica-scoped on the bounded path
+3. this slice still does not claim broad multi-replica startup ownership or
+   full recovery-loop closure

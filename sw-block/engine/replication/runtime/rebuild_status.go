@@ -13,7 +13,7 @@ type RebuildCompletionStatus struct {
 // DeriveRebuildCommitted computes the RebuildCommitted event from
 // post-rebuild status and the original plan. This is the reusable
 // shaping logic — the host only needs to supply the raw snapshot values.
-func DeriveRebuildCommitted(volumeID string, status RebuildCompletionStatus, plan *engine.RecoveryPlan) engine.RebuildCommitted {
+func DeriveRebuildCommitted(volumeID, replicaID string, status RebuildCompletionStatus, plan *engine.RecoveryPlan) engine.RebuildCommitted {
 	flushedLSN := status.CommittedLSN
 	if flushedLSN == 0 {
 		flushedLSN = plan.RebuildTargetLSN
@@ -27,6 +27,7 @@ func DeriveRebuildCommitted(volumeID string, status RebuildCompletionStatus, pla
 		achievedLSN = checkpointLSN
 	}
 	return engine.RebuildCommitted{
+		ReplicaID:     replicaID,
 		ID:            volumeID,
 		AchievedLSN:   achievedLSN,
 		FlushedLSN:    flushedLSN,

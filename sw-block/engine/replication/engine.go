@@ -91,7 +91,7 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 			st.Boundary.TargetLSN = v.TargetLSN
 		}
 		st.Recovery.Reason = ""
-		if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
 			cmds = append(cmds, StartCatchUpCommand{
 				VolumeID:  st.VolumeID,
 				ReplicaID: replicaID,
@@ -152,7 +152,7 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		if v.TargetLSN > st.Boundary.TargetLSN {
 			st.Boundary.TargetLSN = v.TargetLSN
 		}
-		if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartRebuild(replicaID, v.TargetLSN) {
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.shouldStartRebuild(replicaID, v.TargetLSN) {
 			cmds = append(cmds, StartRebuildCommand{
 				VolumeID:  st.VolumeID,
 				ReplicaID: replicaID,
@@ -456,6 +456,18 @@ func (st *VolumeState) recoveryCommandReplicaID() (string, bool) {
 		return "", false
 	}
 	return st.DesiredReplicas[0].ReplicaID, true
+}
+
+func (st *VolumeState) recoveryCommandReplicaIDFromEvent(replicaID string) (string, bool) {
+	if replicaID != "" {
+		for _, replica := range st.DesiredReplicas {
+			if replica.ReplicaID == replicaID {
+				return replicaID, true
+			}
+		}
+		return "", false
+	}
+	return st.recoveryCommandReplicaID()
 }
 
 func (st *VolumeState) bootstrapReason() string {

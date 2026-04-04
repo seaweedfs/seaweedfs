@@ -145,7 +145,7 @@ func TestPhase14_CommandSequence_CatchUpStartIsBounded(t *testing.T) {
 	core.ApplyEvent(ShipperConfiguredObserved{ID: "vol-cmd-catchup"})
 	core.ApplyEvent(ShipperConnectedObserved{ID: "vol-cmd-catchup"})
 
-	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", TargetLSN: 55})
+	result := core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", ReplicaID: "replica-1", TargetLSN: 55})
 	assertCommandNames(t, result.Commands, []string{
 		"start_catchup",
 		"publish_projection",
@@ -176,7 +176,7 @@ func TestPhase14_CommandSequence_RebuildStartIsBounded(t *testing.T) {
 	})
 	core.ApplyEvent(NeedsRebuildObserved{ID: "vol-cmd-rebuild", Reason: "gap_too_large"})
 
-	result := core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", TargetLSN: 80})
+	result := core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", ReplicaID: "replica-1", TargetLSN: 80})
 	assertCommandNames(t, result.Commands, []string{
 		"start_rebuild",
 		"publish_projection",

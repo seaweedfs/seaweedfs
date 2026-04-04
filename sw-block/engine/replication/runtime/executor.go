@@ -7,12 +7,12 @@ import engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 // IO bindings and receives completion notifications.
 type RecoveryCallbacks interface {
 	// OnCatchUpCompleted is called after successful catch-up execution.
-	OnCatchUpCompleted(volumeID string, achievedLSN uint64)
+	OnCatchUpCompleted(volumeID, replicaID string, achievedLSN uint64)
 
 	// OnRebuildCompleted is called after successful rebuild execution.
 	// The host should read the post-rebuild snapshot and emit the
 	// appropriate core event.
-	OnRebuildCompleted(volumeID string, plan *engine.RecoveryPlan)
+	OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan)
 }
 
 // ExecuteCatchUpPlan runs a catch-up plan using the supplied IO binding
@@ -22,6 +22,7 @@ func ExecuteCatchUpPlan(
 	plan *engine.RecoveryPlan,
 	io engine.CatchUpIO,
 	volumeID string,
+	replicaID string,
 	callbacks RecoveryCallbacks,
 ) error {
 	exec := engine.NewCatchUpExecutor(driver, plan)
@@ -34,7 +35,7 @@ func ExecuteCatchUpPlan(
 		if achievedLSN == 0 {
 			achievedLSN = plan.CatchUpStartLSN
 		}
-		callbacks.OnCatchUpCompleted(volumeID, achievedLSN)
+		callbacks.OnCatchUpCompleted(volumeID, replicaID, achievedLSN)
 	}
 	return nil
 }
@@ -46,6 +47,7 @@ func ExecuteRebuildPlan(
 	plan *engine.RecoveryPlan,
 	io engine.RebuildIO,
 	volumeID string,
+	replicaID string,
 	callbacks RecoveryCallbacks,
 ) error {
 	exec := engine.NewRebuildExecutor(driver, plan)
@@ -54,7 +56,7 @@ func ExecuteRebuildPlan(
 		return err
 	}
 	if callbacks != nil {
-		callbacks.OnRebuildCompleted(volumeID, plan)
+		callbacks.OnRebuildCompleted(volumeID, replicaID, plan)
 	}
 	return nil
 }

@@ -242,6 +242,47 @@ Evidence:
 
 1. focused working-tree change after `145327498`
 
+### `16G`: Replica-Scoped Recovery Observation Events
+
+Goal:
+
+1. remove the remaining volume-scoped recovery observation addressing on the
+   bounded core-present path
+2. make recovery planning / completion events identify the intended `replicaID`
+   explicitly
+
+Acceptance object:
+
+1. bounded recovery observation events carry `replicaID`
+2. bounded `start_catchup` / `start_rebuild` command emission consumes the
+   event-scoped `replicaID`
+3. current single-replica catch-up and rebuilding proofs remain green
+4. this slice still does not yet claim broad multi-replica recovery ownership
+
+Current chosen path:
+
+1. `CatchUpPlanned` carries `replicaID`
+2. `CatchUpCompleted` carries `replicaID`
+3. `NeedsRebuildObserved` / `RebuildStarted` / `RebuildCommitted` carry
+   `replicaID`
+4. bounded runtime helpers and host callbacks preserve that addressing
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. bounded recovery observation events now carry `replicaID`
+2. bounded `start_catchup` / `start_rebuild` command emission now consumes the
+   event-scoped `replicaID`
+3. current single-replica catch-up and rebuilding paths still behave the same,
+   but no longer depend on a volume-only recovery event seam
+
+Evidence:
+
+1. focused working-tree change after `b304b8e21`
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -295,12 +336,14 @@ boundary:
 7. `16F` delivered:
    - recovery execution commands / pending matching are replica-scoped on the
      same bounded paths
+8. `16G` delivered:
+   - recovery observation events are replica-scoped on those same bounded paths
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
 2. the next bounded semantic/runtime decision is whether to widen startup
-   ownership beyond the single-replica catch-up path now that recovery
-   addressing is replica-scoped
+   ownership beyond the single-replica catch-up path now that both command and
+   observation recovery seams are replica-scoped
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims

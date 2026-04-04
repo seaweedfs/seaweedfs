@@ -311,7 +311,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 			Plan:          plan,
 			CatchUpIO:     rctx.executor,
 		})
-		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, TargetLSN: plan.CatchUpTarget})
+		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(replicaID) {
 			rm.coord.Cancel(replicaID, "start_catchup_not_emitted")
 			return
@@ -321,7 +321,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 		if plan.Proof != nil && plan.Proof.Reason != "" {
 			reason = plan.Proof.Reason
 		}
-		bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: rctx.volPath, Reason: reason})
+		bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: rctx.volPath, ReplicaID: replicaID, Reason: reason})
 		return
 	}
 
@@ -365,7 +365,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID string, ass
 	if rm.OnPendingExecution != nil {
 		rm.OnPendingExecution(rctx.volPath, pe)
 	}
-	bs.applyCoreEvent(engine.RebuildStarted{ID: rctx.volPath, TargetLSN: plan.RebuildTargetLSN})
+	bs.applyCoreEvent(engine.RebuildStarted{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.RebuildTargetLSN})
 	if rm.coord.Has(replicaID) {
 		rm.coord.Cancel(replicaID, "start_rebuild_not_emitted")
 	}
@@ -378,7 +378,7 @@ func (rm *RecoveryManager) ExecutePendingCatchUp(replicaID string, targetLSN uin
 	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	return rt.ExecuteCatchUpPlan(pe.Driver, pe.Plan, pe.CatchUpIO, pe.VolumeID, rm)
+	return rt.ExecuteCatchUpPlan(pe.Driver, pe.Plan, pe.CatchUpIO, pe.VolumeID, pe.ReplicaID, rm)
 }
 
 func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uint64) error {
@@ -386,25 +386,25 @@ func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uin
 	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, rm)
+	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, pe.ReplicaID, rm)
 }
 
 // RecoveryCallbacks implementation — host-side completion notifications.
 
-func (rm *RecoveryManager) OnCatchUpCompleted(volumeID string, achievedLSN uint64) {
-	glog.V(0).Infof("recovery: catch-up completed for %s (achievedLSN=%d)", volumeID, achievedLSN)
+func (rm *RecoveryManager) OnCatchUpCompleted(volumeID, replicaID string, achievedLSN uint64) {
+	glog.V(0).Infof("recovery: catch-up completed for %s via %s (achievedLSN=%d)", volumeID, replicaID, achievedLSN)
 	if rm.bs != nil && rm.bs.v2Core != nil {
-		rm.bs.applyCoreEvent(engine.CatchUpCompleted{ID: volumeID, AchievedLSN: achievedLSN})
+		rm.bs.applyCoreEvent(engine.CatchUpCompleted{ID: volumeID, ReplicaID: replicaID, AchievedLSN: achievedLSN})
 	}
 }
 
-func (rm *RecoveryManager) OnRebuildCompleted(volumeID string, plan *engine.RecoveryPlan) {
-	glog.V(0).Infof("recovery: rebuild completed for %s", volumeID)
+func (rm *RecoveryManager) OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan) {
+	glog.V(0).Infof("recovery: rebuild completed for %s via %s", volumeID, replicaID)
 	if rm.bs == nil || rm.bs.v2Core == nil {
 		return
 	}
 	status := rm.readRebuildStatus(volumeID)
-	ev := rt.DeriveRebuildCommitted(volumeID, status, plan)
+	ev := rt.DeriveRebuildCommitted(volumeID, replicaID, status, plan)
 	rm.bs.applyCoreEvent(ev)
 }
 
@@ -430,7 +430,7 @@ func (rm *RecoveryManager) readRebuildStatus(volumeID string) rt.RebuildCompleti
 // Core-present paths use ExecutePendingCatchUp/ExecutePendingRebuild instead.
 
 func (rm *RecoveryManager) executeLegacyCatchUp(ctx context.Context, volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.CatchUpIO) {
-	err := rt.ExecuteCatchUpPlan(driver, plan, io, volumeID, rm)
+	err := rt.ExecuteCatchUpPlan(driver, plan, io, volumeID, replicaID, rm)
 	if err != nil {
 		if ctx.Err() != nil {
 			glog.V(1).Infof("recovery: catch-up cancelled for %s: %v", replicaID, err)
@@ -441,7 +441,7 @@ func (rm *RecoveryManager) executeLegacyCatchUp(ctx context.Context, volumeID, r
 }
 
 func (rm *RecoveryManager) executeLegacyRebuild(ctx context.Context, volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.RebuildIO) {
-	err := rt.ExecuteRebuildPlan(driver, plan, io, volumeID, rm)
+	err := rt.ExecuteRebuildPlan(driver, plan, io, volumeID, replicaID, rm)
 	if err != nil {
 		if ctx.Err() != nil {
 			glog.V(1).Infof("recovery: rebuild cancelled for %s: %v", replicaID, err)
