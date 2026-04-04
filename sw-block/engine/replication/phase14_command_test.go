@@ -29,6 +29,35 @@ func TestPhase14_CommandSequence_PrimaryAssignmentIsBounded(t *testing.T) {
 	assertCommandNames(t, result.Commands, nil)
 }
 
+func TestPhase14_CommandSequence_PrimaryMultiReplicaAssignmentStartsRecoveryPerReplica(t *testing.T) {
+	core := NewCoreEngine()
+	ev := AssignmentDelivered{
+		ID:             "vol-cmd-primary-multi",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.21:9333", CtrlAddr: "10.0.0.21:9334", Version: 1}},
+			{ReplicaID: "replica-2", Endpoint: Endpoint{DataAddr: "10.0.0.22:9333", CtrlAddr: "10.0.0.22:9334", Version: 1}},
+		},
+	}
+
+	result := core.ApplyEvent(ev)
+	assertCommandNames(t, result.Commands, []string{
+		"apply_role",
+		"configure_shipper",
+		"start_recovery_task",
+		"start_recovery_task",
+		"publish_projection",
+	})
+	if got := recoveryTaskReplicaIDs(result.Commands); !reflect.DeepEqual(got, []string{"replica-1", "replica-2"}) {
+		t.Fatalf("recovery task replicas=%v", got)
+	}
+
+	result = core.ApplyEvent(ev)
+	assertCommandNames(t, result.Commands, nil)
+}
+
 func TestPhase14_CommandSequence_ReplicaAssignmentIsBounded(t *testing.T) {
 	core := NewCoreEngine()
 	ev := AssignmentDelivered{
@@ -269,4 +298,16 @@ func assertCommandNames(t *testing.T, cmds []Command, want []string) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("commands=%v, want %v", got, want)
 	}
+}
+
+func recoveryTaskReplicaIDs(cmds []Command) []string {
+	var replicaIDs []string
+	for _, cmd := range cmds {
+		start, ok := cmd.(StartRecoveryTaskCommand)
+		if !ok {
+			continue
+		}
+		replicaIDs = append(replicaIDs, start.ReplicaID)
+	}
+	return replicaIDs
 }

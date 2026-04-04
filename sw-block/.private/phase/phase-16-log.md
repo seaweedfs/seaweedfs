@@ -965,3 +965,63 @@ Conclusion:
    completion after the first replica finishes
 2. this slice is still only an enabling aggregation step, not broad
    multi-replica startup ownership
+
+---
+
+#### `16I` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded multi-replica primary catch-up recovery-task startup ownership
+
+Why this slice exists:
+
+1. `16E` only bounded `start_recovery_task` ownership on the single-replica
+   primary catch-up path
+2. `16F-16H` made the downstream command / event / observation seams
+   replica-scoped enough to support a bounded widening
+3. the remaining gap is that primary assignment delivery still only starts one
+   bounded recovery task even when multiple catch-up replicas are present
+
+Chosen implementation rule:
+
+1. keep the widening limited to the core-present primary catch-up path
+2. emit one bounded `start_recovery_task` command per desired catch-up replica
+   on assignment delivery
+3. do not claim broad multi-replica recovery-loop closure beyond that startup
+   ownership seam
+
+---
+
+#### `16I` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded multi-replica primary catch-up recovery-task startup ownership
+
+What changed:
+
+1. `sw-block/engine/replication/engine.go`
+   - widened assignment-time `start_recovery_task` emission from a single
+     bounded replica to all desired bounded recovery replicas
+2. `weed/server/volume_server_block.go`
+   - primary assignment delivery now marks bounded catch-up recovery intent when
+     any stable replica set is present, including multi-replica assignments
+3. `sw-block/engine/replication/phase14_command_test.go`
+   - added focused proof that primary assignment emits one recovery-task command
+     per bounded replica
+4. `weed/server/volume_server_block_test.go`
+   - added focused proof that the host starts two bounded catch-up paths from
+     two emitted `start_recovery_task` commands on the multi-replica primary
+     path
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. `go test ./weed/server -count=1 -timeout 120s -run "TestBlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|PrimaryMultiReplica_UsesCoreStartRecoveryTaskPerReplica|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart)|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)"`
+3. result: `PASS`
+
+Conclusion:
+
+1. bounded multi-replica primary catch-up startup ownership is now
+   core-command-driven on the core-present path
+2. this slice still does not claim broad multi-replica recovery-loop closure or
+   broad failover/publication closure

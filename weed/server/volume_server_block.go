@@ -710,7 +710,7 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 					CtrlAddr: ra.CtrlAddr,
 				}))
 			}
-			if len(ev.Replicas) == 1 {
+			if len(ev.Replicas) > 0 {
 				ev.RecoveryTarget = engine.SessionCatchUp
 			}
 		} else if a.ReplicaServerID != "" && a.ReplicaDataAddr != "" {

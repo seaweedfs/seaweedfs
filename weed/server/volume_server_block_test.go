@@ -493,6 +493,96 @@ func TestBlockService_ApplyAssignments_PrimaryRole_UsesCoreStartRecoveryTaskForC
 	}
 }
 
+func TestBlockService_ApplyAssignments_PrimaryMultiReplica_UsesCoreStartRecoveryTaskPerReplica(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Bridge = newTestControlBridge()
+	bs.v2Orchestrator = newTestOrchestrator()
+	bs.v2Recovery = NewRecoveryManager(bs)
+	defer bs.v2Recovery.Shutdown()
+
+	path := createTestVolDirect(t, bs, "vol-core-cmd-catchup-start-multi")
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	bs.v2Recovery.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID == path && pending != nil && pending.Plan != nil {
+			pending.CatchUpIO = fakeCatchUpIO{transferredTo: pending.Plan.CatchUpTarget}
+		}
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      1,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{
+			{ServerID: "vs-2", DataAddr: "10.0.0.2:4260", CtrlAddr: "10.0.0.2:4261"},
+			{ServerID: "vs-3", DataAddr: "10.0.0.3:4260", CtrlAddr: "10.0.0.3:4261"},
+		},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	var (
+		proj    engine.PublicationProjection
+		ok      bool
+		sender2 *engine.Sender
+		sender3 *engine.Sender
+	)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		proj, ok = bs.CoreProjection(path)
+		sender2 = bs.v2Orchestrator.Registry.Sender(path + "/vs-2")
+		sender3 = bs.v2Orchestrator.Registry.Sender(path + "/vs-3")
+		if ok &&
+			proj.Recovery.Phase == engine.RecoveryIdle &&
+			sender2 != nil && sender2.State() == engine.StateInSync &&
+			sender3 != nil && sender3.State() == engine.StateInSync {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Boundary.DurableLSN == 0 {
+		t.Fatalf("durable_lsn=%d", proj.Boundary.DurableLSN)
+	}
+	if sender2 == nil || sender3 == nil {
+		t.Fatalf("senders not found: vs-2=%v vs-3=%v", sender2 != nil, sender3 != nil)
+	}
+	if sender2.State() != engine.StateInSync || sender3.State() != engine.StateInSync {
+		t.Fatalf("sender states: vs-2=%s vs-3=%s", sender2.State(), sender3.State())
+	}
+
+	cmds := bs.ExecutedCoreCommands(path)
+	if got := countCommandName(cmds, "apply_role"); got != 1 {
+		t.Fatalf("apply_role count=%d cmds=%v", got, cmds)
+	}
+	if got := countCommandName(cmds, "configure_shipper"); got != 1 {
+		t.Fatalf("configure_shipper count=%d cmds=%v", got, cmds)
+	}
+	if got := countCommandName(cmds, "start_recovery_task"); got != 2 {
+		t.Fatalf("start_recovery_task count=%d cmds=%v", got, cmds)
+	}
+	if got := countCommandName(cmds, "start_catchup"); got != 2 {
+		t.Fatalf("start_catchup count=%d cmds=%v", got, cmds)
+	}
+}
+
 func TestBlockService_ApplyAssignments_RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	bs.v2Bridge = newTestControlBridge()
@@ -1067,4 +1157,14 @@ func TestBlockService_ProcessAssignment_InvalidTransition(t *testing.T) {
 	if s.Epoch != 5 {
 		t.Fatalf("epoch should still be 5, got %d", s.Epoch)
 	}
+}
+
+func countCommandName(cmds []string, want string) int {
+	count := 0
+	for _, cmd := range cmds {
+		if cmd == want {
+			count++
+		}
+	}
+	return count
 }

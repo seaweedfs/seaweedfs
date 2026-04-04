@@ -385,7 +385,10 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.commands.ShipperConfigEpoch = st.Epoch
 		st.commands.ShipperConfigReplicas = append([]ReplicaAssignment(nil), st.DesiredReplicas...)
 	}
-	if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartRecoveryTask(replicaID) {
+	for _, replicaID := range st.recoveryTaskReplicaIDs() {
+		if !st.shouldStartRecoveryTask(replicaID) {
+			continue
+		}
 		cmds = append(cmds, StartRecoveryTaskCommand{
 			VolumeID:  st.VolumeID,
 			ReplicaID: replicaID,
@@ -496,6 +499,20 @@ func (st *VolumeState) recoveryCommandReplicaID() (string, bool) {
 		return "", false
 	}
 	return st.DesiredReplicas[0].ReplicaID, true
+}
+
+func (st *VolumeState) recoveryTaskReplicaIDs() []string {
+	if st.recoveryTarget == "" || len(st.DesiredReplicas) == 0 {
+		return nil
+	}
+	replicaIDs := make([]string, 0, len(st.DesiredReplicas))
+	for _, replica := range st.DesiredReplicas {
+		if replica.ReplicaID == "" {
+			continue
+		}
+		replicaIDs = append(replicaIDs, replica.ReplicaID)
+	}
+	return replicaIDs
 }
 
 func (st *VolumeState) recoveryCommandReplicaIDFromEvent(replicaID string) (string, bool) {

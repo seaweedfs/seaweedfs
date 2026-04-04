@@ -324,6 +324,52 @@ Evidence:
 
 1. focused working-tree change after `16ba70f85`
 
+### `16I`: Multi-Replica Catch-Up Task Startup Ownership
+
+Goal:
+
+1. widen bounded catch-up recovery-task startup ownership from the single-replica
+   primary path to the bounded multi-replica primary path
+2. keep the slice limited to task startup ownership, not broad multi-replica
+   execution closure
+
+Acceptance object:
+
+1. on the core-present primary path with multiple replicas, the core emits one
+   bounded `start_recovery_task` command per catch-up replica
+2. the adapter starts those recovery goroutines because of the emitted commands,
+   not from orchestrator create/supersede results
+3. current single-replica and rebuilding proofs remain green
+4. this slice still does not yet claim broad multi-replica recovery-loop
+   closure
+
+Current chosen path:
+
+1. primary assignment with `len(replicas) > 1` now marks bounded
+   `RecoveryTarget=SessionCatchUp` in the core assignment event
+2. core assignment command emission widens `start_recovery_task` from one
+   replica to all bounded catch-up replicas on that path
+3. bounded multi-replica catch-up execution still closes through the already
+   replica-scoped command / observation seams from `16F-16H`
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. primary assignment delivery now marks bounded catch-up startup intent for all
+   desired replicas, not only the single-replica path
+2. the core emits one bounded `start_recovery_task` command per catch-up
+   replica on that widened path
+3. the bounded adapter path now starts multi-replica primary catch-up recovery
+   work from those emitted commands and closes back through the existing
+   replica-scoped observation seams
+
+Evidence:
+
+1. focused working-tree change after `92c006eb2`
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -349,12 +395,14 @@ after `Phase 15` closeout:
    - replica-scoped recovery command addressing on those same bounded paths
    - conservative multi-replica catch-up observation aggregation on those same
      bounded paths
+   - bounded multi-replica catch-up recovery-task startup ownership on the
+     primary path
 
 This checkpoint is intentionally still bounded:
 
 1. broad recovery-loop closure is not yet claimed
 2. broad end-to-end failover/recovery/publication proof is not yet claimed
-3. multi-replica startup ownership is not yet claimed
+3. broad multi-replica startup ownership is not yet claimed
 4. launch / rollout readiness is not claimed
 
 ## Immediate Next Step
@@ -373,7 +421,7 @@ boundary:
    - rebuilding assignment no longer emits false `start_receiver`
 5. `16D` delivered:
    - rebuild recovery-task startup is core-command-driven
-6. `16E` current bounded refinement:
+6. `16E` delivered:
    - catch-up recovery-task startup is core-command-driven on the
      single-replica primary path
 7. `16F` delivered:
@@ -384,12 +432,13 @@ boundary:
 9. `16H` delivered:
    - multi-replica catch-up observation is aggregated conservatively at the
      volume projection layer
+10. `16I` delivered:
+   - multi-replica primary catch-up startup ownership is core-command-driven
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
-2. the next bounded semantic/runtime decision is whether to widen startup
-   ownership beyond the single-replica catch-up path now that multi-replica
-   catch-up aggregation no longer overclaims completion
+2. identify the next bounded runtime gap after multi-replica startup ownership,
+   most likely around broader recovery-loop closure rather than assignment entry
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims
