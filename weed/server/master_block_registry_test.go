@@ -2352,3 +2352,118 @@ func TestRegistry_UpdateFullHeartbeat_ExplicitUnhealthySuppressesStalePublishHea
 		t.Fatalf("expected explicit false to suppress stale publish_healthy heuristic, got %q", entry.VolumeMode)
 	}
 }
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeartbeat(t *testing.T) {
+	tests := []struct {
+		name     string
+		mode     string
+		replicas []ReplicaInfo
+		wantMode string
+	}{
+		{
+			name: "bootstrap_pending",
+			mode: "bootstrap_pending",
+			replicas: []ReplicaInfo{{
+				Server: "replica-server:8080",
+				Path:   "/blocks/vol-master-mode-bootstrap-replica.blk",
+				Ready:  true,
+			}},
+			wantMode: "bootstrap_pending",
+		},
+		{
+			name: "degraded",
+			mode: "degraded",
+			replicas: []ReplicaInfo{{
+				Server: "replica-server:8080",
+				Path:   "/blocks/vol-master-mode-degraded-replica.blk",
+				Ready:  true,
+			}},
+			wantMode: "degraded",
+		},
+		{
+			name: "needs_rebuild",
+			mode: "needs_rebuild",
+			replicas: []ReplicaInfo{{
+				Server: "replica-server:8080",
+				Path:   "/blocks/vol-master-mode-needs-rebuild-replica.blk",
+				Ready:  true,
+			}},
+			wantMode: "needs_rebuild",
+		},
+		{
+			name: "publish_healthy",
+			mode: "publish_healthy",
+			replicas: []ReplicaInfo{{
+				Server: "replica-server:8080",
+				Path:   "/blocks/vol-master-mode-publish-healthy-replica.blk",
+				Ready:  false,
+			}},
+			wantMode: "publish_healthy",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewBlockVolumeRegistry()
+			if err := r.Register(&BlockVolumeEntry{
+				Name:          "vol-master-mode-" + tt.name,
+				VolumeServer:  "primary-server:8080",
+				Path:          "/blocks/vol-master-mode-" + tt.name + "-primary.blk",
+				Status:        StatusActive,
+				Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+				ReplicaFactor: 2,
+				Replicas:      tt.replicas,
+			}); err != nil {
+				t.Fatalf("register: %v", err)
+			}
+
+			mode := tt.mode
+			r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+				Path:       "/blocks/vol-master-mode-" + tt.name + "-primary.blk",
+				Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+				VolumeMode: &mode,
+			}}, "")
+
+			entry, _ := r.Lookup("vol-master-mode-" + tt.name)
+			if !entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != tt.mode {
+				t.Fatalf("expected explicit volume_mode truth on entry, entry=%+v", entry)
+			}
+			if entry.VolumeMode != tt.wantMode {
+				t.Fatalf("expected explicit volume_mode %q, got %q", tt.wantMode, entry.VolumeMode)
+			}
+		})
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_VolumeModeFallsBackWhenFieldAbsent(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-mode-fallback",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-mode-fallback-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-mode-fallback-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-mode-fallback-primary.blk",
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-mode-fallback")
+	if entry.HasHeartbeatVolumeMode {
+		t.Fatalf("did not expect explicit volume_mode when field absent, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "degraded" {
+		t.Fatalf("expected fallback reconstructed degraded mode, got %q", entry.VolumeMode)
+	}
+}

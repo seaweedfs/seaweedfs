@@ -4,6 +4,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
 )
 
+func optionalStringPtr(v string) *string {
+	if v == "" {
+		return nil
+	}
+	return &v
+}
+
 // InfoMessageToProto converts a Go wire type to proto.
 func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMessage {
 	return &master_pb.BlockVolumeInfoMessage{
@@ -21,6 +28,7 @@ func InfoMessageToProto(m BlockVolumeInfoMessage) *master_pb.BlockVolumeInfoMess
 		ReplicaReady:    &m.ReplicaReady,
 		NeedsRebuild:    &m.NeedsRebuild,
 		PublishHealthy:  &m.PublishHealthy,
+		VolumeMode:      optionalStringPtr(m.VolumeMode),
 		HealthScore:     m.HealthScore,
 		ScrubErrors:     m.ScrubErrors,
 		LastScrubTime:   m.LastScrubTime,
@@ -51,6 +59,7 @@ func InfoMessageFromProto(p *master_pb.BlockVolumeInfoMessage) BlockVolumeInfoMe
 		ReplicaReady:    p.GetReplicaReady(),
 		NeedsRebuild:    p.GetNeedsRebuild(),
 		PublishHealthy:  p.GetPublishHealthy(),
+		VolumeMode:      p.GetVolumeMode(),
 		HealthScore:     p.HealthScore,
 		ScrubErrors:     p.ScrubErrors,
 		LastScrubTime:   p.LastScrubTime,

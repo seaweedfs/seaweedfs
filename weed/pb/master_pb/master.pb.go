@@ -3914,6 +3914,7 @@ type BlockVolumeInfoMessage struct {
 	ReplicaReady    *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
 	NeedsRebuild    *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
 	PublishHealthy  *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
+	VolumeMode      *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4093,6 +4094,13 @@ func (x *BlockVolumeInfoMessage) GetPublishHealthy() bool {
 		return *x.PublishHealthy
 	}
 	return false
+}
+
+func (x *BlockVolumeInfoMessage) GetVolumeMode() string {
+	if x != nil && x.VolumeMode != nil {
+		return *x.VolumeMode
+	}
+	return ""
 }
 
 type BlockVolumeShortInfoMessage struct {
@@ -5983,7 +5991,7 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
 	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse\"\x9c\x06\n" +
+	"\x12VolumeGrowResponse\"\xd2\x06\n" +
 	"\x16BlockVolumeInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6009,10 +6017,13 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x03nqn\x18\x12 \x01(\tR\x03nqn\x12(\n" +
 	"\rreplica_ready\x18\x13 \x01(\bH\x00R\freplicaReady\x88\x01\x01\x12(\n" +
 	"\rneeds_rebuild\x18\x14 \x01(\bH\x01R\fneedsRebuild\x88\x01\x01\x12,\n" +
-	"\x0fpublish_healthy\x18\x15 \x01(\bH\x02R\x0epublishHealthy\x88\x01\x01B\x10\n" +
+	"\x0fpublish_healthy\x18\x15 \x01(\bH\x02R\x0epublishHealthy\x88\x01\x01\x12$\n" +
+	"\vvolume_mode\x18\x16 \x01(\tH\x03R\n" +
+	"volumeMode\x88\x01\x01B\x10\n" +
 	"\x0e_replica_readyB\x10\n" +
 	"\x0e_needs_rebuildB\x12\n" +
-	"\x10_publish_healthy\"\x8e\x01\n" +
+	"\x10_publish_healthyB\x0e\n" +
+	"\f_volume_mode\"\x8e\x01\n" +
 	"\x1bBlockVolumeShortInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +

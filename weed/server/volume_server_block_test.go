@@ -1067,6 +1067,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryUsesCoreReadinessGate(t
 	if msg.ReplicaReady {
 		t.Fatalf("primary heartbeat must not claim replica-ready truth, msg=%+v", msg)
 	}
+	if msg.VolumeMode != "bootstrap_pending" {
+		t.Fatalf("expected explicit bootstrap_pending volume_mode on heartbeat, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_ReplicaUsesCoreReadinessGate(t *testing.T) {
@@ -1311,6 +1314,9 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMod
 	if !msg.ReplicaDegraded {
 		t.Fatalf("expected degraded bit to remain true on needs_rebuild path, msg=%+v", msg)
 	}
+	if msg.VolumeMode != "needs_rebuild" {
+		t.Fatalf("expected explicit needs_rebuild volume_mode on heartbeat, msg=%+v", msg)
+	}
 }
 
 func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreTruth(t *testing.T) {
@@ -1341,6 +1347,39 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreT
 	}
 	if !msg.PublishHealthy {
 		t.Fatalf("expected explicit publish_healthy truth on heartbeat, msg=%+v", msg)
+	}
+	if msg.VolumeMode != "publish_healthy" {
+		t.Fatalf("expected explicit publish_healthy volume_mode on heartbeat, msg=%+v", msg)
+	}
+}
+
+func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryDegradedUsesCoreModeTruth(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-heartbeat-degraded-primary")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: "barrier_timeout"})
+
+	msg := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if msg == nil {
+		t.Fatal("volume missing from heartbeat")
+	}
+	if msg.VolumeMode != "degraded" {
+		t.Fatalf("expected explicit degraded volume_mode on heartbeat, msg=%+v", msg)
 	}
 }
 

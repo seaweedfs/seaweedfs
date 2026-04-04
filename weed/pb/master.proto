@@ -515,6 +515,7 @@ message BlockVolumeInfoMessage {
   optional bool replica_ready = 19;
   optional bool needs_rebuild = 20;
   optional bool publish_healthy = 21;
+  optional string volume_mode = 22;
 }
 
 message BlockVolumeShortInfoMessage {

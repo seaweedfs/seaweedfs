@@ -22,6 +22,7 @@ type BlockVolumeInfoMessage struct {
 	ReplicaReady         bool                   // explicit replica readiness truth on the heartbeat seam
 	NeedsRebuild         bool                   // explicit needs_rebuild truth on the heartbeat seam
 	PublishHealthy       bool                   // explicit publish_healthy truth on the heartbeat seam
+	VolumeMode           string                 // explicit outward volume_mode truth on the heartbeat seam
 	HealthScore          float64                // CP8-2: 0.0-1.0
 	ScrubErrors          int64                  // CP8-2: lifetime scrub error count
 	LastScrubTime        int64                  // CP8-2: unix seconds

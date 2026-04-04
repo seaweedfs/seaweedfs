@@ -1409,3 +1409,71 @@ Conclusion:
    explicit field still fall back to the previous reconstruction
 3. this slice still does not claim full `VolumeMode` heartbeat ownership or
    broad failover closure by itself
+
+---
+
+#### `16P` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `volume_mode` preservation on the heartbeat/master seam
+
+Why this slice exists:
+
+1. `16M`, `16N`, and `16O` made the main heartbeat mode ingredients explicit
+2. but master-side outward `VolumeMode` is still reconstructed from those
+   secondary signals instead of directly consuming the core-owned mode truth
+3. that leaves one final bounded outward mode seam at the heartbeat/master
+   boundary even when the core already knows the exact chosen mode
+
+Chosen implementation rule:
+
+1. widen the heartbeat wire additively with an explicit `volume_mode` field
+2. emit it from the current bounded core mode on the core-present path
+3. make master outward mode prefer explicit heartbeat mode truth and retain the
+   previous reconstruction only as backward-compatible fallback
+4. do not broaden this slice into publication reason or restart/disturbance
+   closure
+
+---
+
+#### `16P` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `volume_mode` preservation on the heartbeat/master seam
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `volume_mode` to `BlockVolumeInfoMessage`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated so heartbeat wire presence is represented as `*string`
+3. `weed/storage/blockvol/block_heartbeat.go`
+   - heartbeat wire struct now carries explicit `VolumeMode`
+4. `weed/storage/blockvol/block_heartbeat_proto.go`
+   - heartbeat conversion now writes and reads `VolumeMode`
+5. `weed/server/volume_server_block.go`
+   - heartbeat emission now preserves explicit bounded core mode truth directly
+6. `weed/server/master_block_registry.go`
+   - outward `VolumeMode` now prefers explicit heartbeat mode truth and falls
+     back to the previous reconstruction when the field is absent
+7. focused tests in `block_heartbeat_proto_test.go`,
+   `volume_server_block_test.go`, and `master_block_registry_test.go`
+   - now prove explicit outward mode preservation and backward-compatible
+     fallback
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol/ -count=1 -run "TestInfoMessage_(Replica|NeedsRebuild|PublishHealthy|VolumeMode)"`
+2. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_CollectBlockVolumeHeartbeat_(PrimaryUsesCoreReadinessGate|PrimaryNeedsRebuildUsesCoreMode|PrimaryPublishHealthyUsesCoreTruth|PrimaryDegradedUsesCoreModeTruth)|Registry_UpdateFullHeartbeat_(ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent|ConsumesExplicitPublishHealthyFromPrimaryHeartbeat|ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat))"`
+3. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_ApplyAssignments_|P16B_|P4_|Registry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady|Registry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldAbsent|Registry_UpdateFullHeartbeat_ExplicitUnhealthySuppressesStalePublishHealthyHeuristic)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the heartbeat/master seam no longer reconstructs outward `VolumeMode` only
+   from secondary heartbeat signals when explicit core-owned mode truth is
+   available
+2. backward compatibility is preserved because older heartbeats without the
+   explicit field still fall back to the previous reconstruction
+3. this slice still does not claim publication reason, restart/disturbance, or
+   broad failover closure by itself

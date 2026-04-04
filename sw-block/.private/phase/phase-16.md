@@ -661,6 +661,62 @@ Evidence:
 
 1. focused working-tree change after `16N` closeout
 
+### `16P`: VolumeMode Heartbeat Truth Rebinding
+
+Goal:
+
+1. close one bounded failover/publication seam by preserving explicit
+   `volume_mode` truth across the heartbeat/master boundary instead of
+   reconstructing outward mode from multiple secondary heartbeat bits
+2. keep the slice limited to outward `VolumeMode` preservation on the current
+   heartbeat wire and master-registry consume path, not broader restart/failover
+   closure
+
+Acceptance object:
+
+1. `BlockVolumeInfoMessage` carries an additive explicit `volume_mode` field on
+   the heartbeat wire
+2. `weed/server` heartbeat emission sets that field from the current core-owned
+   mode truth on the core-present path
+3. `master_block_registry` prefers explicit heartbeat `volume_mode` truth for
+   outward mode while retaining the previous reconstruction as backward-compatible
+   fallback when the field is absent
+4. focused proofs show primary `bootstrap_pending`, `degraded`,
+   `needs_rebuild`, and `publish_healthy` survive heartbeat/master consume as
+   explicit outward mode truth
+5. this slice still does not yet claim broad restart/disturbance or launch
+   closure
+
+Current chosen path:
+
+1. widen `master.proto` / heartbeat conversion with an additive `volume_mode`
+   field
+2. emit that field from `CollectBlockVolumeHeartbeat` using the bounded core
+   mode on the core-present path
+3. let master outward `VolumeMode` prefer explicit heartbeat mode truth and keep
+   the previous reconstruction only as backward-compatible fallback
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `BlockVolumeInfoMessage` now carries additive explicit `volume_mode` truth on
+   the heartbeat wire
+2. `weed/server` heartbeat emission now preserves explicit bounded
+   core-owned `VolumeMode` truth on the current core-present path
+3. `master_block_registry` now prefers explicit heartbeat `volume_mode` for
+   outward mode while keeping the previous reconstruction as backward-compatible
+   fallback when the field is absent
+4. focused proofs now show primary `bootstrap_pending`, `degraded`,
+   `needs_rebuild`, and `publish_healthy` survive heartbeat/master consume as
+   explicit outward mode truth
+
+Evidence:
+
+1. focused working-tree change after `16O` closeout
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -746,6 +802,9 @@ boundary:
    - primary heartbeat/master consume now preserves explicit bounded
      healthy-publication truth with backward-compatible fallback for older
      heartbeats
+17. `16P` delivered:
+   - heartbeat/master consume now preserves explicit bounded `VolumeMode` truth
+     with backward-compatible fallback for older heartbeats
 
 After this checkpoint:
 

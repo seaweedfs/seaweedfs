@@ -968,6 +968,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 			msgs[i].ReplicaReady = bs.heartbeatReplicaReady(msgs[i].Path, s)
 			msgs[i].NeedsRebuild = bs.heartbeatNeedsRebuild(msgs[i].Path, s)
 			msgs[i].PublishHealthy = bs.heartbeatPublishHealthy(msgs[i].Path, s)
+			msgs[i].VolumeMode = bs.heartbeatVolumeMode(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
@@ -1050,6 +1051,20 @@ func (bs *BlockService) heartbeatPublishHealthy(path string, state *volReplState
 		return proj.Publication.Healthy
 	}
 	return state.publishHealthy
+}
+
+// heartbeatVolumeMode returns the explicit outward volume mode that should be
+// exposed on the current heartbeat surface. On the core-present path it
+// preserves the core-owned mode directly. Older paths return empty so the
+// master can fall back to previous reconstruction logic.
+func (bs *BlockService) heartbeatVolumeMode(path string, state *volReplState) string {
+	if state == nil {
+		return ""
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		return string(proj.Mode.Name)
+	}
+	return ""
 }
 
 // heartbeatReplicaDegraded returns the bounded degraded bit for the current

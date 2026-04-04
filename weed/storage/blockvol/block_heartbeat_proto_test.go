@@ -307,6 +307,19 @@ func TestInfoMessage_PublishHealthyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_VolumeModeRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:       "/data/vol.blk",
+		Epoch:      1,
+		VolumeMode: "bootstrap_pending",
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if back.VolumeMode != "bootstrap_pending" {
+		t.Fatalf("VolumeMode: got %q, want %q", back.VolumeMode, "bootstrap_pending")
+	}
+}
+
 func TestAssignment_MultiReplicaRoundTrip(t *testing.T) {
 	orig := BlockVolumeAssignment{
 		Path:       "/data/vol.blk",

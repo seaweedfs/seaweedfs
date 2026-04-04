@@ -71,16 +71,18 @@ type BlockVolumeEntry struct {
 	RebuildListenAddr string // rebuild server listen addr on primary
 
 	// CP8-2: Multi-replica support.
-	ReplicaFactor     int           // 2 or 3 (default 2)
-	Replicas          []ReplicaInfo // one per replica (RF-1 entries)
-	HealthScore       float64       // primary health score from heartbeat
-	ReplicaReady      bool          // all configured replicas are ready for publication
-	ReplicaDegraded   bool          // aggregate: transport degraded OR not ready
-	TransportDegraded bool          // primary reports degraded replicas
-	NeedsRebuild      bool          // explicit primary heartbeat needs_rebuild truth when present
-	HasNeedsRebuild   bool          // whether the current primary heartbeat carried explicit needs_rebuild truth
-	PublishHealthy    bool          // explicit primary heartbeat publish_healthy truth when present
-	HasPublishHealthy bool          // whether the current primary heartbeat carried explicit publish_healthy truth
+	ReplicaFactor          int           // 2 or 3 (default 2)
+	Replicas               []ReplicaInfo // one per replica (RF-1 entries)
+	HealthScore            float64       // primary health score from heartbeat
+	ReplicaReady           bool          // all configured replicas are ready for publication
+	ReplicaDegraded        bool          // aggregate: transport degraded OR not ready
+	TransportDegraded      bool          // primary reports degraded replicas
+	NeedsRebuild           bool          // explicit primary heartbeat needs_rebuild truth when present
+	HasNeedsRebuild        bool          // whether the current primary heartbeat carried explicit needs_rebuild truth
+	PublishHealthy         bool          // explicit primary heartbeat publish_healthy truth when present
+	HasPublishHealthy      bool          // whether the current primary heartbeat carried explicit publish_healthy truth
+	HeartbeatVolumeMode    string        // explicit primary heartbeat outward volume_mode truth when present
+	HasHeartbeatVolumeMode bool          // whether the current primary heartbeat carried explicit outward volume_mode truth
 
 	// CP13-9: Normalized volume mode for external surfaces.
 	// Computed by recomputeReplicaState from the current entry state.
@@ -167,6 +169,10 @@ func (e *BlockVolumeEntry) recomputeReplicaState() {
 //   - "degraded": replication was healthy but is now impaired (transient)
 //   - "needs_rebuild": one or more replicas have unrecoverable gap
 func (e *BlockVolumeEntry) computeVolumeMode() string {
+	if e.HasHeartbeatVolumeMode && validHeartbeatVolumeMode(e.HeartbeatVolumeMode) {
+		return e.HeartbeatVolumeMode
+	}
+
 	rf := e.ReplicaFactor
 	if rf == 0 {
 		rf = 1
@@ -656,6 +662,7 @@ func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVo
 	existing.TransportDegraded = info.ReplicaDegraded
 	existing.NeedsRebuild, existing.HasNeedsRebuild = primaryNeedsRebuildObservedFromHeartbeat(info)
 	existing.PublishHealthy, existing.HasPublishHealthy = primaryPublishHealthyObservedFromHeartbeat(info)
+	existing.HeartbeatVolumeMode, existing.HasHeartbeatVolumeMode = primaryVolumeModeObservedFromHeartbeat(info)
 	existing.WALHeadLSN = info.WalHeadLsn
 	// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
 	if info.DurabilityMode != "" {
@@ -761,6 +768,25 @@ func primaryPublishHealthyObservedFromHeartbeat(info *master_pb.BlockVolumeInfoM
 		return info.GetPublishHealthy(), true
 	}
 	return false, false
+}
+
+func primaryVolumeModeObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) (string, bool) {
+	if info == nil {
+		return "", false
+	}
+	if info.VolumeMode != nil {
+		return info.GetVolumeMode(), true
+	}
+	return "", false
+}
+
+func validHeartbeatVolumeMode(mode string) bool {
+	switch mode {
+	case "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild":
+		return true
+	default:
+		return false
+	}
 }
 
 // reconcileOnRestart handles the case where a second server reports a volume
