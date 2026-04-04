@@ -16,8 +16,8 @@ type BackendOps interface {
 // RecoveryCoordinator is the runtime recovery surface used by command ops.
 type RecoveryCoordinator interface {
 	StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment)
-	ExecutePendingCatchUp(volumeID string, targetLSN uint64) error
-	ExecutePendingRebuild(volumeID string, targetLSN uint64) error
+	ExecutePendingCatchUp(replicaID string, targetLSN uint64) error
+	ExecutePendingRebuild(replicaID string, targetLSN uint64) error
 }
 
 // ProjectionReader provides access to current core publication state.
@@ -103,21 +103,21 @@ func (ops *ServiceOps) InvalidateSession(volumeID, reason string) (bool, error) 
 	return true, nil
 }
 
-func (ops *ServiceOps) StartCatchUp(volumeID string, targetLSN uint64) (bool, error) {
+func (ops *ServiceOps) StartCatchUp(replicaID string, targetLSN uint64) (bool, error) {
 	if ops == nil || ops.recovery == nil {
 		return false, nil
 	}
-	if err := ops.recovery.ExecutePendingCatchUp(volumeID, targetLSN); err != nil {
+	if err := ops.recovery.ExecutePendingCatchUp(replicaID, targetLSN); err != nil {
 		return false, err
 	}
 	return true, nil
 }
 
-func (ops *ServiceOps) StartRebuild(volumeID string, targetLSN uint64) (bool, error) {
+func (ops *ServiceOps) StartRebuild(replicaID string, targetLSN uint64) (bool, error) {
 	if ops == nil || ops.recovery == nil {
 		return false, nil
 	}
-	if err := ops.recovery.ExecutePendingRebuild(volumeID, targetLSN); err != nil {
+	if err := ops.recovery.ExecutePendingRebuild(replicaID, targetLSN); err != nil {
 		return false, err
 	}
 	return true, nil

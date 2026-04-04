@@ -37,6 +37,7 @@ func (StartRecoveryTaskCommand) commandName() string { return "start_recovery_ta
 
 type StartCatchUpCommand struct {
 	VolumeID  string
+	ReplicaID string
 	TargetLSN uint64
 }
 
@@ -44,6 +45,7 @@ func (StartCatchUpCommand) commandName() string { return "start_catchup" }
 
 type StartRebuildCommand struct {
 	VolumeID  string
+	ReplicaID string
 	TargetLSN uint64
 }
 

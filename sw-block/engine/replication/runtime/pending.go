@@ -10,7 +10,7 @@ import (
 )
 
 // PendingExecution holds the state needed to execute a planned recovery
-// action. The coordinator stores one pending execution per volume and
+// action. The coordinator stores one pending execution per replica target and
 // matches it against incoming commands.
 //
 // All fields are typed — no interface{} handles. The host adapter builds
@@ -63,22 +63,23 @@ func NewPendingCoordinator(cancelFn CancelFunc) *PendingCoordinator {
 	}
 }
 
-// Store caches a pending execution for a volume, replacing any previous one.
-func (pc *PendingCoordinator) Store(volumeID string, pe *PendingExecution) {
+// Store caches a pending execution for one replica target, replacing any
+// previous one.
+func (pc *PendingCoordinator) Store(replicaID string, pe *PendingExecution) {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	pc.pending[volumeID] = pe
+	pc.pending[replicaID] = pe
 }
 
-// TakeCatchUp takes the pending execution for the volume if the catch-up
+// TakeCatchUp takes the pending execution for the replica if the catch-up
 // target matches. If there's a mismatch, the pending execution is cancelled
 // (fail-closed) and nil is returned. If no pending execution exists, nil
 // is returned.
-func (pc *PendingCoordinator) TakeCatchUp(volumeID string, targetLSN uint64) *PendingExecution {
+func (pc *PendingCoordinator) TakeCatchUp(replicaID string, targetLSN uint64) *PendingExecution {
 	pc.mu.Lock()
-	pe, ok := pc.pending[volumeID]
+	pe, ok := pc.pending[replicaID]
 	if ok {
-		delete(pc.pending, volumeID)
+		delete(pc.pending, replicaID)
 	}
 	pc.mu.Unlock()
 
@@ -94,13 +95,13 @@ func (pc *PendingCoordinator) TakeCatchUp(volumeID string, targetLSN uint64) *Pe
 	return pe
 }
 
-// TakeRebuild takes the pending execution for the volume if the rebuild
+// TakeRebuild takes the pending execution for the replica if the rebuild
 // target matches. Same fail-closed semantics as TakeCatchUp.
-func (pc *PendingCoordinator) TakeRebuild(volumeID string, targetLSN uint64) *PendingExecution {
+func (pc *PendingCoordinator) TakeRebuild(replicaID string, targetLSN uint64) *PendingExecution {
 	pc.mu.Lock()
-	pe, ok := pc.pending[volumeID]
+	pe, ok := pc.pending[replicaID]
 	if ok {
-		delete(pc.pending, volumeID)
+		delete(pc.pending, replicaID)
 	}
 	pc.mu.Unlock()
 
@@ -116,20 +117,21 @@ func (pc *PendingCoordinator) TakeRebuild(volumeID string, targetLSN uint64) *Pe
 	return pe
 }
 
-// Has returns true if a pending execution exists for the volume.
-func (pc *PendingCoordinator) Has(volumeID string) bool {
+// Has returns true if a pending execution exists for the replica target.
+func (pc *PendingCoordinator) Has(replicaID string) bool {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	_, ok := pc.pending[volumeID]
+	_, ok := pc.pending[replicaID]
 	return ok
 }
 
-// Cancel explicitly cancels and removes the pending execution for a volume.
-func (pc *PendingCoordinator) Cancel(volumeID, reason string) {
+// Cancel explicitly cancels and removes the pending execution for a replica
+// target.
+func (pc *PendingCoordinator) Cancel(replicaID, reason string) {
 	pc.mu.Lock()
-	pe, ok := pc.pending[volumeID]
+	pe, ok := pc.pending[replicaID]
 	if ok {
-		delete(pc.pending, volumeID)
+		delete(pc.pending, replicaID)
 	}
 	pc.mu.Unlock()
 
@@ -139,10 +141,10 @@ func (pc *PendingCoordinator) Cancel(volumeID, reason string) {
 }
 
 // Peek returns the pending execution without removing it. Returns nil if none.
-func (pc *PendingCoordinator) Peek(volumeID string) *PendingExecution {
+func (pc *PendingCoordinator) Peek(replicaID string) *PendingExecution {
 	pc.mu.Lock()
 	defer pc.mu.Unlock()
-	return pc.pending[volumeID]
+	return pc.pending[replicaID]
 }
 
 // CancelAll cancels and removes all pending executions.

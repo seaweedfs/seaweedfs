@@ -91,12 +91,16 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 			st.Boundary.TargetLSN = v.TargetLSN
 		}
 		st.Recovery.Reason = ""
-		if st.shouldStartCatchUp(v.TargetLSN) {
+		if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
 			cmds = append(cmds, StartCatchUpCommand{
 				VolumeID:  st.VolumeID,
+				ReplicaID: replicaID,
 				TargetLSN: v.TargetLSN,
 			})
-			st.commands.CatchUpTargetLSN = v.TargetLSN
+			if st.commands.CatchUpTargets == nil {
+				st.commands.CatchUpTargets = make(map[string]uint64)
+			}
+			st.commands.CatchUpTargets[replicaID] = v.TargetLSN
 		}
 
 	case RecoveryProgressObserved:
@@ -119,7 +123,7 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		}
 		st.Recovery.Phase = RecoveryIdle
 		st.Recovery.Reason = ""
-		st.commands.CatchUpTargetLSN = 0
+		st.commands.CatchUpTargets = nil
 
 	case NeedsRebuildObserved:
 		st.needsRebuild = true
@@ -148,12 +152,16 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		if v.TargetLSN > st.Boundary.TargetLSN {
 			st.Boundary.TargetLSN = v.TargetLSN
 		}
-		if st.shouldStartRebuild(v.TargetLSN) {
+		if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartRebuild(replicaID, v.TargetLSN) {
 			cmds = append(cmds, StartRebuildCommand{
 				VolumeID:  st.VolumeID,
+				ReplicaID: replicaID,
 				TargetLSN: v.TargetLSN,
 			})
-			st.commands.RebuildTargetLSN = v.TargetLSN
+			if st.commands.RebuildTargets == nil {
+				st.commands.RebuildTargets = make(map[string]uint64)
+			}
+			st.commands.RebuildTargets[replicaID] = v.TargetLSN
 		}
 
 	case RebuildCommitted:
@@ -180,7 +188,7 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		if achievedLSN > st.Boundary.AchievedLSN {
 			st.Boundary.AchievedLSN = achievedLSN
 		}
-		st.commands.RebuildTargetLSN = 0
+		st.commands.RebuildTargets = nil
 	}
 
 	e.recompute(st)
@@ -310,10 +318,9 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.Boundary.TargetLSN = 0
 		st.Boundary.AchievedLSN = 0
 		st.commands.RecoveryTaskEpoch = 0
-		st.commands.RecoveryTaskReplicaID = ""
-		st.commands.RecoveryTaskKind = ""
-		st.commands.CatchUpTargetLSN = 0
-		st.commands.RebuildTargetLSN = 0
+		st.commands.RecoveryTaskTargets = nil
+		st.commands.CatchUpTargets = nil
+		st.commands.RebuildTargets = nil
 	}
 
 	var cmds []Command
@@ -338,16 +345,17 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.commands.ShipperConfigEpoch = st.Epoch
 		st.commands.ShipperConfigReplicas = append([]ReplicaAssignment(nil), st.DesiredReplicas...)
 	}
-	if st.shouldStartRecoveryTask() {
-		replicaID := st.DesiredReplicas[0].ReplicaID
+	if replicaID, ok := st.recoveryCommandReplicaID(); ok && st.shouldStartRecoveryTask(replicaID) {
 		cmds = append(cmds, StartRecoveryTaskCommand{
 			VolumeID:  st.VolumeID,
 			ReplicaID: replicaID,
 			Kind:      st.recoveryTarget,
 		})
 		st.commands.RecoveryTaskEpoch = st.Epoch
-		st.commands.RecoveryTaskReplicaID = replicaID
-		st.commands.RecoveryTaskKind = st.recoveryTarget
+		if st.commands.RecoveryTaskTargets == nil {
+			st.commands.RecoveryTaskTargets = make(map[string]SessionKind)
+		}
+		st.commands.RecoveryTaskTargets[replicaID] = st.recoveryTarget
 	}
 	return cmds
 }
@@ -389,14 +397,17 @@ func (st *VolumeState) shouldStartReceiver() bool {
 		st.commands.ReceiverStartEpoch != st.Epoch
 }
 
-func (st *VolumeState) shouldStartRecoveryTask() bool {
-	if st.recoveryTarget == "" || len(st.DesiredReplicas) != 1 {
+func (st *VolumeState) shouldStartRecoveryTask(replicaID string) bool {
+	if st.recoveryTarget == "" || replicaID == "" {
 		return false
 	}
-	replicaID := st.DesiredReplicas[0].ReplicaID
-	return st.commands.RecoveryTaskEpoch != st.Epoch ||
-		st.commands.RecoveryTaskReplicaID != replicaID ||
-		st.commands.RecoveryTaskKind != st.recoveryTarget
+	if st.commands.RecoveryTaskEpoch != st.Epoch {
+		return true
+	}
+	if st.commands.RecoveryTaskTargets == nil {
+		return true
+	}
+	return st.commands.RecoveryTaskTargets[replicaID] != st.recoveryTarget
 }
 
 func (st *VolumeState) shouldConfigureShipper() bool {
@@ -411,12 +422,24 @@ func (st *VolumeState) shouldInvalidate(reason string) bool {
 	return !st.commands.InvalidationIssued || st.commands.InvalidationReason != reason
 }
 
-func (st *VolumeState) shouldStartCatchUp(targetLSN uint64) bool {
-	return targetLSN > 0 && st.commands.CatchUpTargetLSN != targetLSN
+func (st *VolumeState) shouldStartCatchUp(replicaID string, targetLSN uint64) bool {
+	if targetLSN == 0 || replicaID == "" {
+		return false
+	}
+	if st.commands.CatchUpTargets == nil {
+		return true
+	}
+	return st.commands.CatchUpTargets[replicaID] != targetLSN
 }
 
-func (st *VolumeState) shouldStartRebuild(targetLSN uint64) bool {
-	return targetLSN > 0 && st.commands.RebuildTargetLSN != targetLSN
+func (st *VolumeState) shouldStartRebuild(replicaID string, targetLSN uint64) bool {
+	if targetLSN == 0 || replicaID == "" {
+		return false
+	}
+	if st.commands.RebuildTargets == nil {
+		return true
+	}
+	return st.commands.RebuildTargets[replicaID] != targetLSN
 }
 
 func (st *VolumeState) resetInvalidation() {
@@ -426,6 +449,13 @@ func (st *VolumeState) resetInvalidation() {
 
 func (st *VolumeState) hasReplicas() bool {
 	return len(st.DesiredReplicas) > 0
+}
+
+func (st *VolumeState) recoveryCommandReplicaID() (string, bool) {
+	if len(st.DesiredReplicas) != 1 || st.DesiredReplicas[0].ReplicaID == "" {
+		return "", false
+	}
+	return st.DesiredReplicas[0].ReplicaID, true
 }
 
 func (st *VolumeState) bootstrapReason() string {

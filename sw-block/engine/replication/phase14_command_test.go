@@ -150,6 +150,13 @@ func TestPhase14_CommandSequence_CatchUpStartIsBounded(t *testing.T) {
 		"start_catchup",
 		"publish_projection",
 	})
+	start, ok := result.Commands[0].(StartCatchUpCommand)
+	if !ok {
+		t.Fatalf("cmd0=%T", result.Commands[0])
+	}
+	if start.ReplicaID != "replica-1" {
+		t.Fatalf("replica_id=%q", start.ReplicaID)
+	}
 
 	result = core.ApplyEvent(CatchUpPlanned{ID: "vol-cmd-catchup", TargetLSN: 55})
 	assertCommandNames(t, result.Commands, nil)
@@ -174,6 +181,13 @@ func TestPhase14_CommandSequence_RebuildStartIsBounded(t *testing.T) {
 		"start_rebuild",
 		"publish_projection",
 	})
+	start, ok := result.Commands[0].(StartRebuildCommand)
+	if !ok {
+		t.Fatalf("cmd0=%T", result.Commands[0])
+	}
+	if start.ReplicaID != "replica-1" {
+		t.Fatalf("replica_id=%q", start.ReplicaID)
+	}
 
 	result = core.ApplyEvent(RebuildStarted{ID: "vol-cmd-rebuild", TargetLSN: 80})
 	assertCommandNames(t, result.Commands, nil)

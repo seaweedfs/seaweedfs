@@ -144,6 +144,21 @@ func TestPendingCoordinator_StoreReplaces(t *testing.T) {
 	}
 }
 
+func TestPendingCoordinator_ReplicaScopedKeysDoNotCollide(t *testing.T) {
+	pc := NewPendingCoordinator(nil)
+	pc.Store("vol1/r1", &PendingExecution{VolumeID: "vol1", ReplicaID: "vol1/r1", CatchUpTarget: 10})
+	pc.Store("vol1/r2", &PendingExecution{VolumeID: "vol1", ReplicaID: "vol1/r2", CatchUpTarget: 20})
+
+	pe1 := pc.TakeCatchUp("vol1/r1", 10)
+	if pe1 == nil || pe1.ReplicaID != "vol1/r1" {
+		t.Fatalf("pe1=%+v", pe1)
+	}
+	pe2 := pc.TakeCatchUp("vol1/r2", 20)
+	if pe2 == nil || pe2.ReplicaID != "vol1/r2" {
+		t.Fatalf("pe2=%+v", pe2)
+	}
+}
+
 func TestPendingCoordinator_TakeFromEmpty_ReturnsNil(t *testing.T) {
 	pc := NewPendingCoordinator(nil)
 	if pc.TakeCatchUp("vol1", 100) != nil {

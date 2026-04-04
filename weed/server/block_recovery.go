@@ -303,7 +303,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 			rm.executeLegacyCatchUp(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
 			return
 		}
-		rm.coord.Store(rctx.volPath, &rt.PendingExecution{
+		rm.coord.Store(replicaID, &rt.PendingExecution{
 			VolumeID:      rctx.volPath,
 			ReplicaID:     replicaID,
 			CatchUpTarget: plan.CatchUpTarget,
@@ -312,8 +312,8 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 			CatchUpIO:     rctx.executor,
 		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, TargetLSN: plan.CatchUpTarget})
-		if rm.coord.Has(rctx.volPath) {
-			rm.coord.Cancel(rctx.volPath, "start_catchup_not_emitted")
+		if rm.coord.Has(replicaID) {
+			rm.coord.Cancel(replicaID, "start_catchup_not_emitted")
 			return
 		}
 	case engine.OutcomeNeedsRebuild:
@@ -361,32 +361,32 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID string, ass
 		Plan:             plan,
 		RebuildIO:        rctx.executor,
 	}
-	rm.coord.Store(rctx.volPath, pe)
+	rm.coord.Store(replicaID, pe)
 	if rm.OnPendingExecution != nil {
 		rm.OnPendingExecution(rctx.volPath, pe)
 	}
 	bs.applyCoreEvent(engine.RebuildStarted{ID: rctx.volPath, TargetLSN: plan.RebuildTargetLSN})
-	if rm.coord.Has(rctx.volPath) {
-		rm.coord.Cancel(rctx.volPath, "start_rebuild_not_emitted")
+	if rm.coord.Has(replicaID) {
+		rm.coord.Cancel(replicaID, "start_rebuild_not_emitted")
 	}
 }
 
 // === Core-present pending execution (delegates to runtime.PendingCoordinator) ===
 
-func (rm *RecoveryManager) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
-	pe := rm.coord.TakeCatchUp(volumeID, targetLSN)
+func (rm *RecoveryManager) ExecutePendingCatchUp(replicaID string, targetLSN uint64) error {
+	pe := rm.coord.TakeCatchUp(replicaID, targetLSN)
 	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	return rt.ExecuteCatchUpPlan(pe.Driver, pe.Plan, pe.CatchUpIO, volumeID, rm)
+	return rt.ExecuteCatchUpPlan(pe.Driver, pe.Plan, pe.CatchUpIO, pe.VolumeID, rm)
 }
 
-func (rm *RecoveryManager) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
-	pe := rm.coord.TakeRebuild(volumeID, targetLSN)
+func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uint64) error {
+	pe := rm.coord.TakeRebuild(replicaID, targetLSN)
 	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, volumeID, rm)
+	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, rm)
 }
 
 // RecoveryCallbacks implementation — host-side completion notifications.
@@ -471,4 +471,3 @@ func (rm *RecoveryManager) volumePathForReplica(replicaID string) string {
 }
 
 // --- Bridge shims ---
-

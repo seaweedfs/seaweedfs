@@ -93,10 +93,9 @@ type commandState struct {
 	ShipperConfigEpoch    uint64
 	ShipperConfigReplicas []ReplicaAssignment
 	RecoveryTaskEpoch     uint64
-	RecoveryTaskReplicaID string
-	RecoveryTaskKind      SessionKind
-	CatchUpTargetLSN      uint64
-	RebuildTargetLSN      uint64
+	RecoveryTaskTargets   map[string]SessionKind
+	CatchUpTargets        map[string]uint64
+	RebuildTargets        map[string]uint64
 	InvalidationIssued    bool
 	InvalidationReason    string
 }
@@ -145,6 +144,24 @@ func (s *VolumeState) Snapshot() VolumeState {
 	}
 	if s.commands.ShipperConfigReplicas != nil {
 		out.commands.ShipperConfigReplicas = append([]ReplicaAssignment(nil), s.commands.ShipperConfigReplicas...)
+	}
+	if s.commands.RecoveryTaskTargets != nil {
+		out.commands.RecoveryTaskTargets = make(map[string]SessionKind, len(s.commands.RecoveryTaskTargets))
+		for replicaID, kind := range s.commands.RecoveryTaskTargets {
+			out.commands.RecoveryTaskTargets[replicaID] = kind
+		}
+	}
+	if s.commands.CatchUpTargets != nil {
+		out.commands.CatchUpTargets = make(map[string]uint64, len(s.commands.CatchUpTargets))
+		for replicaID, target := range s.commands.CatchUpTargets {
+			out.commands.CatchUpTargets[replicaID] = target
+		}
+	}
+	if s.commands.RebuildTargets != nil {
+		out.commands.RebuildTargets = make(map[string]uint64, len(s.commands.RebuildTargets))
+		for replicaID, target := range s.commands.RebuildTargets {
+			out.commands.RebuildTargets[replicaID] = target
+		}
 	}
 	return out
 }

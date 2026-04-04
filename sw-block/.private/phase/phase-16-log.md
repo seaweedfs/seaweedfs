@@ -782,3 +782,73 @@ Validation:
 1. `go test ./weed/server -run "TestBlockService_ApplyAssignments_RebuildingRole_(UsesCoreRecoveryPathWithoutLegacyDirectStart|PreservesLegacyFallbackWithoutCore)"`
 2. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments_(RebuildingRole_|ExecutesCoreCommands_)|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
 3. result: `PASS`
+
+---
+
+#### `16F` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-scoped recovery command addressing on the bounded core-present
+paths
+
+Why this slice exists:
+
+1. `16E` moved recovery-task startup into the core command path
+2. but `start_catchup` / `start_rebuild` and pending execution still address
+   only one volume-wide slot
+3. that volume-scoped slot blocks any later widening toward multi-replica
+   startup ownership because concurrent replica targets would overwrite each
+   other
+
+Chosen implementation rule:
+
+1. do not yet broaden startup ownership claims
+2. first make the bounded recovery execution commands replica-scoped
+3. keep proof posture narrow to the already-accepted single-replica primary
+   path plus the bounded rebuilding path
+
+---
+
+#### `16F` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-scoped recovery command addressing on the bounded core-present
+paths
+
+What changed:
+
+1. `sw-block/engine/replication/command.go`
+   - `StartCatchUpCommand` now carries `replicaID`
+   - `StartRebuildCommand` now carries `replicaID`
+2. `sw-block/engine/replication/state.go`
+   - command memory now tracks recovery-task / catch-up / rebuild issuance by
+     replica target instead of one volume-scoped slot
+3. `sw-block/engine/replication/engine.go`
+   - bounded catch-up/rebuild execution commands now emit replica-scoped
+     addressing
+   - startup breadth is still bounded; this slice does not yet claim broad
+     multi-replica startup ownership
+4. `sw-block/engine/replication/runtime/pending.go`
+   - `PendingCoordinator` now stores and matches pending execution by replica
+     target
+5. `weed/server/blockcmd`
+   - recovery execution dispatch now forwards replica-scoped addressing
+6. `weed/server/block_recovery.go`
+   - pending catch-up/rebuild execution now takes and executes plans by
+     `replicaID`
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. `go test ./weed/server/blockcmd -count=1 -timeout 60s`
+3. `go test ./weed/server -count=1 -timeout 120s -run "Test(P16B_|BlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart|RebuildingRole_PreservesLegacyFallbackWithoutCore)|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded))"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the bounded core-present recovery path no longer relies on a volume-scoped
+   pending slot
+2. the structural blocker for any future multi-replica startup-ownership
+   widening is reduced
+3. this slice still does not claim broad multi-replica startup ownership or
+   full recovery-loop closure

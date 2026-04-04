@@ -54,18 +54,18 @@ func (f fakeOps) InvalidateSession(volumeID, reason string) (bool, error) {
 	return f.invalidateSessionFn(volumeID, reason)
 }
 
-func (f fakeOps) StartCatchUp(volumeID string, targetLSN uint64) (bool, error) {
+func (f fakeOps) StartCatchUp(replicaID string, targetLSN uint64) (bool, error) {
 	if f.startCatchUpFn == nil {
 		return false, nil
 	}
-	return f.startCatchUpFn(volumeID, targetLSN)
+	return f.startCatchUpFn(replicaID, targetLSN)
 }
 
-func (f fakeOps) StartRebuild(volumeID string, targetLSN uint64) (bool, error) {
+func (f fakeOps) StartRebuild(replicaID string, targetLSN uint64) (bool, error) {
 	if f.startRebuildFn == nil {
 		return false, nil
 	}
-	return f.startRebuildFn(volumeID, targetLSN)
+	return f.startRebuildFn(replicaID, targetLSN)
 }
 
 type fakeEffects struct {
@@ -168,17 +168,17 @@ func TestDispatcher_PublishProjectionUsesHostEffect(t *testing.T) {
 func TestDispatcher_StopsOnFirstError(t *testing.T) {
 	effects := &fakeEffects{}
 	d := NewDispatcher(fakeOps{
-		startCatchUpFn: func(volumeID string, targetLSN uint64) (bool, error) {
+		startCatchUpFn: func(replicaID string, targetLSN uint64) (bool, error) {
 			return false, errors.New("boom")
 		},
-		startRebuildFn: func(volumeID string, targetLSN uint64) (bool, error) {
+		startRebuildFn: func(replicaID string, targetLSN uint64) (bool, error) {
 			t.Fatal("should not execute after first error")
 			return false, nil
 		},
 	}, effects)
 	err := d.Run([]engine.Command{
-		engine.StartCatchUpCommand{VolumeID: "vol1", TargetLSN: 10},
-		engine.StartRebuildCommand{VolumeID: "vol1", TargetLSN: 20},
+		engine.StartCatchUpCommand{VolumeID: "vol1", ReplicaID: "vol1/r1", TargetLSN: 10},
+		engine.StartRebuildCommand{VolumeID: "vol1", ReplicaID: "vol1/r1", TargetLSN: 20},
 	}, nil)
 	if err == nil {
 		t.Fatal("expected error")
@@ -189,11 +189,11 @@ type fakeRecoveryCoordinator struct {
 	startedReplica string
 	startedAssigns []blockvol.BlockVolumeAssignment
 	catchUpCalls   []struct {
-		volumeID  string
+		replicaID string
 		targetLSN uint64
 	}
 	rebuildCalls []struct {
-		volumeID  string
+		replicaID string
 		targetLSN uint64
 	}
 }
@@ -203,19 +203,19 @@ func (f *fakeRecoveryCoordinator) StartRecoveryTask(replicaID string, assignment
 	f.startedAssigns = assignments
 }
 
-func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
+func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(replicaID string, targetLSN uint64) error {
 	f.catchUpCalls = append(f.catchUpCalls, struct {
-		volumeID  string
+		replicaID string
 		targetLSN uint64
-	}{volumeID: volumeID, targetLSN: targetLSN})
+	}{replicaID: replicaID, targetLSN: targetLSN})
 	return nil
 }
 
-func (f *fakeRecoveryCoordinator) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
+func (f *fakeRecoveryCoordinator) ExecutePendingRebuild(replicaID string, targetLSN uint64) error {
 	f.rebuildCalls = append(f.rebuildCalls, struct {
-		volumeID  string
+		replicaID string
 		targetLSN uint64
-	}{volumeID: volumeID, targetLSN: targetLSN})
+	}{replicaID: replicaID, targetLSN: targetLSN})
 	return nil
 }
 

@@ -15,8 +15,8 @@ type Ops interface {
 	ConfigureShipper(volumeID string, replicas []engine.ReplicaAssignment) (executed bool, shipperConnected bool, err error)
 	StartRecoveryTask(replicaID string, assignment blockvol.BlockVolumeAssignment) (bool, error)
 	InvalidateSession(volumeID, reason string) (bool, error)
-	StartCatchUp(volumeID string, targetLSN uint64) (bool, error)
-	StartRebuild(volumeID string, targetLSN uint64) (bool, error)
+	StartCatchUp(replicaID string, targetLSN uint64) (bool, error)
+	StartRebuild(replicaID string, targetLSN uint64) (bool, error)
 }
 
 // HostEffects applies server-adapter side effects after concrete command
@@ -104,7 +104,10 @@ func (d *Dispatcher) Run(cmds []engine.Command, assignment *blockvol.BlockVolume
 				d.effects.RecordCommand(v.VolumeID, "invalidate_session")
 			}
 		case engine.StartCatchUpCommand:
-			executed, err := d.ops.StartCatchUp(v.VolumeID, v.TargetLSN)
+			if v.ReplicaID == "" {
+				continue
+			}
+			executed, err := d.ops.StartCatchUp(v.ReplicaID, v.TargetLSN)
 			if err != nil {
 				return err
 			}
@@ -112,7 +115,10 @@ func (d *Dispatcher) Run(cmds []engine.Command, assignment *blockvol.BlockVolume
 				d.effects.RecordCommand(v.VolumeID, "start_catchup")
 			}
 		case engine.StartRebuildCommand:
-			executed, err := d.ops.StartRebuild(v.VolumeID, v.TargetLSN)
+			if v.ReplicaID == "" {
+				continue
+			}
+			executed, err := d.ops.StartRebuild(v.ReplicaID, v.TargetLSN)
 			if err != nil {
 				return err
 			}

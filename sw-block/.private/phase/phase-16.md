@@ -196,7 +196,51 @@ Current chosen path:
 
 Status:
 
-1. active
+1. delivered
+
+### `16F`: Replica-Scoped Recovery Command Addressing
+
+Goal:
+
+1. remove the remaining volume-scoped recovery command/pending slot from the
+   bounded core-present recovery path
+2. make `start_catchup` / `start_rebuild` address the intended replica
+   explicitly, even before broad multi-replica ownership is claimed
+
+Acceptance object:
+
+1. bounded core-emitted recovery execution commands identify the target
+   `replicaID`
+2. pending recovery execution is keyed by replica target instead of a single
+   volume-wide slot
+3. current single-replica catch-up and rebuilding paths remain green
+4. this slice does not yet claim broad multi-replica startup ownership
+
+Current chosen path:
+
+1. `StartCatchUpCommand` carries `replicaID` on the bounded single-replica
+   primary path
+2. `StartRebuildCommand` carries `replicaID` on the bounded rebuilding path
+3. `PendingCoordinator` matches pending execution by replica target
+4. command dispatch / recovery manager execution follow the same replica-scoped
+   addressing
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `StartCatchUpCommand` and `StartRebuildCommand` now carry `replicaID`
+2. pending recovery execution is matched by replica target instead of one
+   volume-wide slot
+3. the bounded single-replica primary catch-up path and bounded rebuilding path
+   continue to run unchanged in behavior, but now through replica-scoped
+   recovery addressing
+
+Evidence:
+
+1. focused working-tree change after `145327498`
 
 ## Current Checkpoint Review Target
 
@@ -220,6 +264,7 @@ after `Phase 15` closeout:
    - rebuild recovery-task startup ownership
    - bounded catch-up recovery-task startup ownership on the single-replica
      primary path
+   - replica-scoped recovery command addressing on those same bounded paths
 
 This checkpoint is intentionally still bounded:
 
@@ -247,11 +292,15 @@ boundary:
 6. `16E` current bounded refinement:
    - catch-up recovery-task startup is core-command-driven on the
      single-replica primary path
+7. `16F` delivered:
+   - recovery execution commands / pending matching are replica-scoped on the
+     same bounded paths
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
-2. decide whether to widen startup ownership beyond the bounded single-replica
-   catch-up path
+2. the next bounded semantic/runtime decision is whether to widen startup
+   ownership beyond the single-replica catch-up path now that recovery
+   addressing is replica-scoped
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims
