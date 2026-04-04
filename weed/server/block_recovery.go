@@ -252,7 +252,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		pinner := v2bridge.NewPinner(vol)
 		sa = bridge.NewStorageAdapter(
 			reader,
-			&pinnerShimForRecovery{pinner},
+			pinner,
 		)
 		if s := bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
 			if snap := s.SessionSnapshot(); snap != nil {
@@ -332,7 +332,7 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		pinner := v2bridge.NewPinner(vol)
 		sa = bridge.NewStorageAdapter(
 			reader,
-			&pinnerShimForRecovery{pinner},
+			pinner,
 		)
 		executor = v2bridge.NewExecutor(vol, rebuildAddr)
 		return nil
@@ -521,14 +521,3 @@ func (rm *RecoveryManager) volumePathForReplica(replicaID string) string {
 
 // --- Bridge shims ---
 
-type pinnerShimForRecovery struct{ p *v2bridge.Pinner }
-
-func (s *pinnerShimForRecovery) HoldWALRetention(startLSN uint64) (func(), error) {
-	return s.p.HoldWALRetention(startLSN)
-}
-func (s *pinnerShimForRecovery) HoldSnapshot(checkpointLSN uint64) (func(), error) {
-	return s.p.HoldSnapshot(checkpointLSN)
-}
-func (s *pinnerShimForRecovery) HoldFullBase(committedLSN uint64) (func(), error) {
-	return s.p.HoldFullBase(committedLSN)
-}
