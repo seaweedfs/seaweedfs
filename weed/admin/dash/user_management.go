@@ -175,7 +175,7 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 
 	ctx := context.Background()
 
-	// Get user using credential manager
+	// Get user using credential manager (resolves static users via filer gRPC)
 	identity, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {

@@ -45,6 +45,7 @@ type ObjectStoreUser struct {
 	SecretKey   string   `json:"secret_key"`
 	Permissions []string `json:"permissions"`
 	PolicyNames []string `json:"policy_names"`
+	IsStatic    bool     `json:"is_static"` // loaded from static config file, not editable
 }
 
 type ObjectStoreUsersData struct {

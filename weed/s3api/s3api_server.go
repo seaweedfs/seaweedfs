@@ -276,6 +276,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 				glog.Errorf("fail to load config file %s: %v", option.Config, err)
 			} else {
 				glog.V(1).Infof("Loaded %d identities from config file %s", len(s3ApiServer.iam.identities), option.Config)
+				s3ApiServer.iam.updateCredentialManagerStaticIdentities()
 			}
 		})
 	}

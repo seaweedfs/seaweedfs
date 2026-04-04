@@ -215,6 +215,7 @@ func (e *EmbeddedIamApi) writeIamErrorResponse(w http.ResponseWriter, r *http.Re
 }
 
 // GetS3ApiConfiguration loads the S3 API configuration from the credential manager.
+// The credential manager automatically includes static identities in the result.
 func (e *EmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
 	if e.getS3ApiConfigurationFunc != nil {
 		return e.getS3ApiConfigurationFunc(s3cfg)
@@ -228,6 +229,7 @@ func (e *EmbeddedIamApi) GetS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration)
 }
 
 // PutS3ApiConfiguration saves the S3 API configuration to the credential manager.
+// The credential manager automatically filters out static identities before saving.
 func (e *EmbeddedIamApi) PutS3ApiConfiguration(s3cfg *iam_pb.S3ApiConfiguration) error {
 	if e.putS3ApiConfigurationFunc != nil {
 		return e.putS3ApiConfigurationFunc(s3cfg)

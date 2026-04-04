@@ -867,6 +867,24 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
+// IsStaticUser checks if a user is a static identity by loading the
+// configuration from the credential manager and checking the IsStatic flag.
+func (s *AdminServer) IsStaticUser(username string) bool {
+	if s.credentialManager == nil {
+		return false
+	}
+	s3cfg, err := s.credentialManager.LoadConfiguration(context.Background())
+	if err != nil {
+		return false
+	}
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == username {
+			return ident.IsStatic
+		}
+	}
+	return false
+}
+
 // GetObjectStoreUsers retrieves object store users from identity.json
 func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
 	if s.credentialManager == nil {
@@ -890,6 +908,7 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 		user := ObjectStoreUser{
 			Username:    identity.Name,
 			Permissions: identity.Actions,
+			IsStatic:    identity.IsStatic,
 		}
 
 		// Set email from account if available

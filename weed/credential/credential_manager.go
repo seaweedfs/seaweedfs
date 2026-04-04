@@ -3,14 +3,18 @@ package credential
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // FilerAddressSetter is an interface for credential stores that need a dynamic filer address
@@ -21,6 +25,15 @@ type FilerAddressSetter interface {
 // CredentialManager manages user credentials using a configurable store
 type CredentialManager struct {
 	Store CredentialStore
+	// staticMu protects staticIdentities and staticNames, which are written
+	// by SetStaticIdentities (startup + config reload) and read concurrently
+	// by LoadConfiguration, SaveConfiguration, GetStaticUsernames, and IsStaticIdentity.
+	staticMu sync.RWMutex
+	// staticIdentities holds identities loaded from a static config file (-s3.config).
+	// These are included in LoadConfiguration so that listing operations
+	// return all configured identities, not just dynamic ones from the store.
+	staticIdentities []*iam_pb.Identity
+	staticNames      map[string]bool
 }
 
 // NewCredentialManager creates a new credential manager with the specified store
@@ -74,13 +87,97 @@ func (cm *CredentialManager) GetStoreName() string {
 	return ""
 }
 
-// LoadConfiguration loads the S3 API configuration
-func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
-	return cm.Store.LoadConfiguration(ctx)
+// SetStaticIdentities registers identities loaded from a static config file.
+// These identities are included in LoadConfiguration and ListUsers results
+// but are never persisted to the dynamic store.
+func (cm *CredentialManager) SetStaticIdentities(identities []*iam_pb.Identity) {
+	filtered := make([]*iam_pb.Identity, 0, len(identities))
+	names := make(map[string]bool, len(identities))
+	for _, ident := range identities {
+		if ident != nil {
+			filtered = append(filtered, ident)
+			names[ident.Name] = true
+		}
+	}
+	cm.staticMu.Lock()
+	cm.staticIdentities = filtered
+	cm.staticNames = names
+	cm.staticMu.Unlock()
 }
 
-// SaveConfiguration saves the S3 API configuration
+// IsStaticIdentity returns true if the named identity was loaded from static config.
+func (cm *CredentialManager) IsStaticIdentity(name string) bool {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
+	return cm.staticNames[name]
+}
+
+// GetStaticIdentity returns the protobuf identity for a static user, or nil.
+func (cm *CredentialManager) GetStaticIdentity(name string) *iam_pb.Identity {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
+	for _, ident := range cm.staticIdentities {
+		if ident.Name == name {
+			return ident
+		}
+	}
+	return nil
+}
+
+// GetStaticUsernames returns the names of all static identities.
+func (cm *CredentialManager) GetStaticUsernames() []string {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
+	names := make([]string, 0, len(cm.staticIdentities))
+	for _, ident := range cm.staticIdentities {
+		names = append(names, ident.Name)
+	}
+	return names
+}
+
+// LoadConfiguration loads the S3 API configuration from the store and merges
+// in any static identities so that listing operations show all users.
+func (cm *CredentialManager) LoadConfiguration(ctx context.Context) (*iam_pb.S3ApiConfiguration, error) {
+	config, err := cm.Store.LoadConfiguration(ctx)
+	if err != nil {
+		return config, err
+	}
+	// Merge static identities that are not already in the dynamic config
+	cm.staticMu.RLock()
+	staticIdents := cm.staticIdentities
+	cm.staticMu.RUnlock()
+	if len(staticIdents) > 0 {
+		dynamicNames := make(map[string]bool, len(config.Identities))
+		for _, ident := range config.Identities {
+			dynamicNames[ident.Name] = true
+		}
+		for _, si := range staticIdents {
+			if !dynamicNames[si.Name] {
+				config.Identities = append(config.Identities, si)
+			}
+		}
+	}
+	return config, nil
+}
+
+// SaveConfiguration saves the S3 API configuration.
+// Static identities are filtered out before saving to the store.
+// The caller's config is not mutated.
 func (cm *CredentialManager) SaveConfiguration(ctx context.Context, config *iam_pb.S3ApiConfiguration) error {
+	cm.staticMu.RLock()
+	staticNames := cm.staticNames
+	cm.staticMu.RUnlock()
+	if len(staticNames) > 0 {
+		var dynamicOnly []*iam_pb.Identity
+		for _, ident := range config.Identities {
+			if !staticNames[ident.Name] {
+				dynamicOnly = append(dynamicOnly, ident)
+			}
+		}
+		configCopy := *config
+		configCopy.Identities = dynamicOnly
+		return cm.Store.SaveConfiguration(ctx, &configCopy)
+	}
 	return cm.Store.SaveConfiguration(ctx, config)
 }
 
@@ -104,7 +201,12 @@ func (cm *CredentialManager) DeleteUser(ctx context.Context, username string) er
 	return cm.Store.DeleteUser(ctx, username)
 }
 
-// ListUsers returns all usernames
+// ListUsers returns usernames from the dynamic store via cm.Store.ListUsers.
+// On store error the error is returned directly without merging static entries.
+// Static identities (cm.staticIdentities) are NOT included here because
+// internal callers (e.g. DeletePolicy) look up each user in the store and
+// would fail on non-existent static entries. External callers that need the
+// full list should merge GetStaticUsernames separately.
 func (cm *CredentialManager) ListUsers(ctx context.Context) ([]string, error) {
 	return cm.Store.ListUsers(ctx)
 }
@@ -167,6 +269,26 @@ func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, docu
 	}
 	// Fallback to PutPolicy for stores that only implement CredentialStore
 	return cm.Store.PutPolicy(ctx, name, document)
+}
+
+// LoadS3ConfigFile reads a static S3 identity config file and registers
+// the identities so they appear in LoadConfiguration and listing results.
+func (cm *CredentialManager) LoadS3ConfigFile(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	config := &iam_pb.S3ApiConfiguration{}
+	opts := protojson.UnmarshalOptions{DiscardUnknown: true, AllowPartial: true}
+	if err := opts.Unmarshal(content, config); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	for _, ident := range config.Identities {
+		ident.IsStatic = true
+	}
+	cm.SetStaticIdentities(config.Identities)
+	glog.V(1).Infof("Loaded %d static identities from %s", len(config.Identities), path)
+	return nil
 }
 
 // Shutdown performs cleanup

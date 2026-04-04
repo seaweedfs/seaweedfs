@@ -82,6 +82,7 @@ type FilerOption struct {
 	AllowedOrigins            []string
 	ExposeDirectoryData       bool
 	TusBasePath               string
+	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
 }
 

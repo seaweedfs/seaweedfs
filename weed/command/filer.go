@@ -81,6 +81,7 @@ type FilerOptions struct {
 	exposeDirectoryData       *bool
 	tusBasePath               *string
 	certProvider              certprovider.Provider
+	s3ConfigFile              *string // optional path to static S3 identity config
 }
 
 func init() {
@@ -341,6 +342,15 @@ func (fo *FilerOptions) startFiler() {
 		glog.Warningf("Failed to initialize credential manager: %v", err)
 	} else {
 		glog.V(0).Infof("Initialized credential manager: %s", credentialManager.GetStoreName())
+	}
+
+	// Load static S3 identities from config file if specified
+	if fo.s3ConfigFile != nil && *fo.s3ConfigFile != "" {
+		if credentialManager != nil {
+			if err := credentialManager.LoadS3ConfigFile(*fo.s3ConfigFile); err != nil {
+				glog.Warningf("Failed to load S3 config file for static identities: %v", err)
+			}
+		}
 	}
 
 	fs, nfs_err := weed_server.NewFilerServer(defaultMux, publicVolumeMux, &weed_server.FilerOption{

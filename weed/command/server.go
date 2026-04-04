@@ -372,6 +372,8 @@ func runServer(cmd *Command, args []string) bool {
 		} else if *serverIamConfig != "" && *s3Options.iamConfig != *serverIamConfig {
 			glog.V(0).Infof("both -s3.iam.config(%s) and -iam.config(%s) provided; using -s3.iam.config", *s3Options.iamConfig, *serverIamConfig)
 		}
+		// Share the S3 static identity config file with the filer
+		filerOptions.s3ConfigFile = s3Options.config
 		go func() {
 			time.Sleep(2 * time.Second)
 			s3Options.localFilerSocket = filerOptions.localSocket
