@@ -51,6 +51,8 @@ type AdminOptions struct {
 	urlPrefix        *string
 	debug            *bool
 	debugPort        *int
+	cpuProfile       *string
+	memProfile       *string
 }
 
 func init() {
@@ -69,12 +71,9 @@ func init() {
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
 	a.debug = cmdAdmin.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	a.debugPort = cmdAdmin.Flag.Int("debug.port", 6060, "http port for debugging")
+	a.cpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
+	a.memProfile = cmdAdmin.Flag.String("memprofile", "", "memory profile output file")
 }
-
-var (
-	adminCpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
-	adminMemProfile = cmdAdmin.Flag.String("memprofile", "", "memory profile output file")
-)
 
 var cmdAdmin = &Command{
 	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
@@ -163,7 +162,7 @@ func runAdmin(cmd *Command, args []string) bool {
 		grace.StartDebugServer(*a.debugPort)
 	}
 
-	grace.SetupProfiling(*adminCpuProfile, *adminMemProfile)
+	grace.SetupProfiling(*a.cpuProfile, *a.memProfile)
 
 	// Load security configuration
 	util.LoadSecurityConfiguration()
