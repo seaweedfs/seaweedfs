@@ -488,7 +488,7 @@ func TestBlockAssign_CollectorUsesAuthoritativeLifecycle(t *testing.T) {
 	for {
 		dataAddr, ctrlAddr := bs.GetReplState(path)
 		readiness := bs.ReadinessSnapshot(path)
-		if dataAddr != "" && ctrlAddr != "" && readiness.ReceiverReady && readiness.PublishHealthy {
+		if dataAddr != "" && ctrlAddr != "" && readiness.ReceiverReady && readiness.ReplicaEligible {
 			return
 		}
 		select {
