@@ -600,35 +600,35 @@ async fn run(
         })
     };
 
+    // Bind the gRPC listener before spawning to propagate bind errors at startup.
+    let grpc_listener = tokio::net::TcpListener::bind(&grpc_addr)
+        .await
+        .unwrap_or_else(|e| panic!("Failed to bind gRPC to {}: {}", grpc_addr, e));
+    let grpc_local_addr = grpc_listener
+        .local_addr()
+        .unwrap_or_else(|e| panic!("Failed to get gRPC local addr: {}", e));
+
     let grpc_handle = {
         let grpc_state = state.clone();
-        let grpc_addr = grpc_addr.clone();
         let grpc_tls_acceptor = grpc_tls_acceptor.clone();
         let mut shutdown_rx = shutdown_tx.subscribe();
+        let shutdown_tx_grpc = shutdown_tx.clone();
         tokio::spawn(async move {
-            let addr = tokio::net::lookup_host(&grpc_addr)
-                .await
-                .expect("Failed to resolve gRPC address")
-                .next()
-                .expect("No addresses found for gRPC bind address");
             let grpc_service = VolumeGrpcService {
                 state: grpc_state.clone(),
             };
-            if let Some(tls_acceptor) = grpc_tls_acceptor {
-                let listener = tokio::net::TcpListener::bind(&grpc_addr)
-                    .await
-                    .unwrap_or_else(|e| panic!("Failed to bind gRPC to {}: {}", grpc_addr, e));
-                let incoming = grpc_tls_incoming(listener, tls_acceptor);
-                let reflection_v1 = tonic_reflection::server::Builder::configure()
-                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
-                    .build_v1()
-                    .expect("Failed to build gRPC reflection v1 service");
-                let reflection_v1alpha = tonic_reflection::server::Builder::configure()
-                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
-                    .build_v1alpha()
-                    .expect("Failed to build gRPC reflection v1alpha service");
-                info!("gRPC server listening on {} (TLS enabled)", addr);
-                if let Err(e) = build_grpc_server_builder()
+            let reflection_v1 = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                .build_v1()
+                .expect("Failed to build gRPC reflection v1 service");
+            let reflection_v1alpha = tonic_reflection::server::Builder::configure()
+                .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
+                .build_v1alpha()
+                .expect("Failed to build gRPC reflection v1alpha service");
+            let result = if let Some(tls_acceptor) = grpc_tls_acceptor {
+                let incoming = grpc_tls_incoming(grpc_listener, tls_acceptor);
+                info!("gRPC server listening on {} (TLS enabled)", grpc_local_addr);
+                build_grpc_server_builder()
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
@@ -637,32 +637,25 @@ async fn run(
                         let _ = shutdown_rx.recv().await;
                     })
                     .await
-                {
-                    error!("gRPC server error: {}", e);
-                }
             } else {
-                let reflection_v1 = tonic_reflection::server::Builder::configure()
-                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
-                    .build_v1()
-                    .expect("Failed to build gRPC reflection v1 service");
-                let reflection_v1alpha = tonic_reflection::server::Builder::configure()
-                    .register_encoded_file_descriptor_set(seaweed_volume::pb::FILE_DESCRIPTOR_SET)
-                    .build_v1alpha()
-                    .expect("Failed to build gRPC reflection v1alpha service");
-                info!("gRPC server listening on {}", addr);
-                if let Err(e) = build_grpc_server_builder()
+                let incoming =
+                    tokio_stream::wrappers::TcpListenerStream::new(grpc_listener);
+                info!("gRPC server listening on {}", grpc_local_addr);
+                build_grpc_server_builder()
                     .layer(GrpcRequestIdLayer)
                     .add_service(reflection_v1)
                     .add_service(reflection_v1alpha)
                     .add_service(build_volume_grpc_service(grpc_service))
-                    .serve_with_shutdown(addr, async move {
+                    .serve_with_incoming_shutdown(incoming, async move {
                         let _ = shutdown_rx.recv().await;
                     })
                     .await
-                {
-                    error!("gRPC server error: {}", e);
-                }
+            };
+            if let Err(ref e) = result {
+                error!("gRPC server error: {}", e);
+                let _ = shutdown_tx_grpc.send(());
             }
+            result
         })
     };
 
@@ -771,9 +764,40 @@ async fn run(
         }))
     };
 
-    // Wait for all servers
+    // Wait for servers. Use select! with &mut so the losing handle is not
+    // dropped, then await it explicitly afterward.
+    let mut server_err: Option<String> = None;
+    let mut http_handle = http_handle;
+    let mut grpc_handle = grpc_handle;
+    let grpc_finished_first = tokio::select! {
+        _ = &mut http_handle => false,
+        _ = &mut grpc_handle => true,
+    };
+    // Inspect the gRPC result (already resolved if it finished first,
+    // otherwise await it now).
+    let grpc_result = if grpc_finished_first {
+        grpc_handle.await
+    } else {
+        // HTTP finished first; gRPC is still running. Await it.
+        grpc_handle.await
+    };
+    match grpc_result {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let msg = format!("gRPC server exited with error: {}", e);
+            error!("{}", msg);
+            server_err = Some(msg);
+            // serve error already sent shutdown inside the task
+        }
+        Err(e) => {
+            let msg = format!("gRPC task panicked: {}", e);
+            error!("{}", msg);
+            server_err = Some(msg);
+            let _ = shutdown_tx.send(());
+        }
+    }
+    // Ensure the HTTP handle completes too.
     let _ = http_handle.await;
-    let _ = grpc_handle.await;
     if let Some(h) = public_handle {
         let _ = h.await;
     }
@@ -796,6 +820,10 @@ async fn run(
     #[cfg(unix)]
     if let Some(cpu_profile) = cpu_profile {
         cpu_profile.finish().map_err(std::io::Error::other)?;
+    }
+
+    if let Some(err_msg) = server_err {
+        return Err(std::io::Error::other(err_msg).into());
     }
 
     info!("Volume server stopped.");
