@@ -149,6 +149,16 @@ var cmdAdmin = &Command{
     - All static assets, API endpoints, and navigation links will use the prefix
     - Session cookies are scoped to the prefix path
 
+  Debugging and Profiling:
+    - Use -debug to start a pprof HTTP server for live profiling (localhost only)
+    - Set -debug.port to choose the pprof port (default 6060)
+    - Profiles are accessible at http://127.0.0.1:<debug.port>/debug/pprof/
+    - Use -cpuprofile and -memprofile to write profiles to files on shutdown
+    - WARNING: -debug exposes runtime internals; use only in trusted environments
+    - Examples:
+      weed admin -debug -debug.port=6060 -master="localhost:9333"
+      weed admin -cpuprofile=cpu.prof -memprofile=mem.prof -master="localhost:9333"
+
   Configuration File:
     - The security.toml file is read from ".", "$HOME/.seaweedfs/",
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order

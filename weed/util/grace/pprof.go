@@ -15,8 +15,8 @@ import (
 // The server runs in a goroutine and serves pprof endpoints at /debug/pprof/*.
 func StartDebugServer(debugPort int) {
 	go func() {
-		addr := fmt.Sprintf(":%d", debugPort)
-		glog.V(0).Infof("Starting debug server for pprof at http://localhost%s/debug/pprof/", addr)
+		addr := fmt.Sprintf("127.0.0.1:%d", debugPort)
+		glog.V(0).Infof("Starting debug server for pprof at http://%s/debug/pprof/", addr)
 		if err := http.ListenAndServe(addr, nil); err != nil && err != http.ErrServerClosed {
 			glog.Errorf("Failed to start debug server on %s: %v", addr, err)
 		}
