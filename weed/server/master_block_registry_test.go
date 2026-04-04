@@ -114,6 +114,28 @@ func TestRegistry_UpdateFullHeartbeat(t *testing.T) {
 	}
 }
 
+func TestRegistry_UpdateFullHeartbeatWithInventoryAuthority_NonAuthoritativeEmptyDoesNotDelete(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusActive})
+
+	r.UpdateFullHeartbeatWithInventoryAuthority("s1", nil, "", false)
+
+	if _, ok := r.Lookup("vol1"); !ok {
+		t.Fatal("non-authoritative empty full heartbeat should not delete vol1")
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeatWithInventoryAuthority_AuthoritativeEmptyStillDeletes(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusActive})
+
+	r.UpdateFullHeartbeatWithInventoryAuthority("s1", nil, "", true)
+
+	if _, ok := r.Lookup("vol1"); ok {
+		t.Fatal("authoritative empty full heartbeat should still delete vol1")
+	}
+}
+
 func TestRegistry_UpdateDeltaHeartbeat(t *testing.T) {
 	r := NewBlockVolumeRegistry()
 	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusPending})
@@ -1663,6 +1685,110 @@ func TestMasterRestart_HigherEpochWins(t *testing.T) {
 	}
 }
 
+func TestMasterRestart_HigherEpochRebasesExplicitPrimaryTruth(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	oldNeedsRebuild := false
+	oldPublishHealthy := true
+	oldMode := "publish_healthy"
+	oldReason := ""
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{{
+		Path:             "/data/vol1.blk",
+		Epoch:            5,
+		Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+		WalHeadLsn:       100,
+		PublishHealthy:   &oldPublishHealthy,
+		NeedsRebuild:     &oldNeedsRebuild,
+		VolumeMode:       &oldMode,
+		VolumeModeReason: &oldReason,
+		VolumeSize:       1 << 30,
+	}}, "")
+
+	newNeedsRebuild := true
+	newPublishHealthy := false
+	newMode := "needs_rebuild"
+	newReason := "gap_too_large"
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{{
+		Path:             "/data/vol1.blk",
+		Epoch:            6,
+		Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+		WalHeadLsn:       150,
+		PublishHealthy:   &newPublishHealthy,
+		NeedsRebuild:     &newNeedsRebuild,
+		VolumeMode:       &newMode,
+		VolumeModeReason: &newReason,
+		VolumeSize:       1 << 30,
+	}}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("expected vs2 as primary after rebase, got %q", entry.VolumeServer)
+	}
+	if !entry.HasNeedsRebuild || !entry.NeedsRebuild {
+		t.Fatalf("expected new primary explicit needs_rebuild truth, entry=%+v", entry)
+	}
+	if !entry.HasPublishHealthy || entry.PublishHealthy {
+		t.Fatalf("expected new primary explicit false publish_healthy truth, entry=%+v", entry)
+	}
+	if !entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != "needs_rebuild" {
+		t.Fatalf("expected new primary explicit volume_mode truth, entry=%+v", entry)
+	}
+	if !entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != "gap_too_large" {
+		t.Fatalf("expected new primary explicit volume_mode_reason truth, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "needs_rebuild" {
+		t.Fatalf("expected outward mode to follow winning primary truth, got %q", entry.VolumeMode)
+	}
+}
+
+func TestMasterRestart_HigherEpochSparsePrimaryClearsOldExplicitTruth(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+
+	oldNeedsRebuild := false
+	oldPublishHealthy := true
+	oldMode := "publish_healthy"
+	oldReason := ""
+	r.UpdateFullHeartbeat("vs1:9333", []*master_pb.BlockVolumeInfoMessage{{
+		Path:             "/data/vol1.blk",
+		Epoch:            5,
+		Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+		WalHeadLsn:       100,
+		PublishHealthy:   &oldPublishHealthy,
+		NeedsRebuild:     &oldNeedsRebuild,
+		VolumeMode:       &oldMode,
+		VolumeModeReason: &oldReason,
+		VolumeSize:       1 << 30,
+	}}, "")
+
+	r.UpdateFullHeartbeat("vs2:9333", []*master_pb.BlockVolumeInfoMessage{{
+		Path:       "/data/vol1.blk",
+		Epoch:      6,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		WalHeadLsn: 150,
+		VolumeSize: 1 << 30,
+	}}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "vs2:9333" {
+		t.Fatalf("expected vs2 as primary after sparse rebase, got %q", entry.VolumeServer)
+	}
+	if entry.HasNeedsRebuild || entry.NeedsRebuild {
+		t.Fatalf("sparse new primary should clear old explicit needs_rebuild truth, entry=%+v", entry)
+	}
+	if entry.HasPublishHealthy || entry.PublishHealthy {
+		t.Fatalf("sparse new primary should clear old explicit publish_healthy truth, entry=%+v", entry)
+	}
+	if entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != "" {
+		t.Fatalf("sparse new primary should clear old explicit volume_mode truth, entry=%+v", entry)
+	}
+	if entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != "" {
+		t.Fatalf("sparse new primary should clear old explicit volume_mode_reason truth, entry=%+v", entry)
+	}
+	if entry.VolumeMode == "publish_healthy" {
+		t.Fatalf("sparse new primary should not retain stale publish_healthy mode, entry=%+v", entry)
+	}
+}
+
 func TestMasterRestart_LowerEpochBecomesReplica(t *testing.T) {
 	r := NewBlockVolumeRegistry()
 
@@ -2180,6 +2306,80 @@ func TestRegistry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldA
 	}
 }
 
+func TestRegistry_UpdateFullHeartbeat_ReplicaReadyMissingFieldPreservesAcceptedExplicitTruth(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-ready-preserve-explicit",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-ready-preserve-explicit-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-ready-preserve-explicit.blk",
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	replicaReady := false
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-ready-preserve-explicit.blk",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+		ReplicaReady:    &replicaReady,
+	}}, "")
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-ready-preserve-explicit.blk",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-ready-preserve-explicit")
+	if !entry.Replicas[0].HasExplicitReady {
+		t.Fatalf("expected accepted explicit replica readiness to remain marked explicit, entry=%+v", entry)
+	}
+	if entry.Replicas[0].Ready {
+		t.Fatalf("missing-field replica heartbeat should preserve explicit false ready truth, entry=%+v", entry)
+	}
+	if entry.ReplicaReady {
+		t.Fatalf("aggregate replica ready should remain false after sparse heartbeat, entry=%+v", entry)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ReplicaReadyMissingFieldFreshEntryStillFallsBack(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-ready-fresh-fallback",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-ready-fresh-fallback-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-ready-fresh-fallback.blk",
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("replica-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-ready-fresh-fallback.blk",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-ready-fresh-fallback")
+	if entry.Replicas[0].HasExplicitReady {
+		t.Fatalf("fresh missing-field replica heartbeat should not invent explicit readiness, entry=%+v", entry)
+	}
+	if !entry.Replicas[0].Ready || !entry.ReplicaReady {
+		t.Fatalf("fresh missing-field replica heartbeat should still fall back to addresses, entry=%+v", entry)
+	}
+}
+
 func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat(t *testing.T) {
 	r := NewBlockVolumeRegistry()
 	if err := r.Register(&BlockVolumeEntry{
@@ -2477,5 +2677,177 @@ func TestRegistry_UpdateFullHeartbeat_VolumeModeFallsBackWhenFieldAbsent(t *test
 	}
 	if entry.VolumeMode != "degraded" {
 		t.Fatalf("expected fallback reconstructed degraded mode, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_AutoRegisterPreservesExplicitPrimaryTruthOnRestart(t *testing.T) {
+	tests := []struct {
+		name           string
+		needsRebuild   bool
+		publishHealthy bool
+		mode           string
+		reason         string
+		wantMode       string
+		wantReason     string
+	}{
+		{
+			name:           "publish_healthy",
+			needsRebuild:   false,
+			publishHealthy: true,
+			mode:           "publish_healthy",
+			reason:         "",
+			wantMode:       "publish_healthy",
+			wantReason:     "",
+		},
+		{
+			name:           "needs_rebuild",
+			needsRebuild:   true,
+			publishHealthy: false,
+			mode:           "needs_rebuild",
+			reason:         "gap_too_large",
+			wantMode:       "needs_rebuild",
+			wantReason:     "gap_too_large",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := NewBlockVolumeRegistry()
+			r.MarkBlockCapable("primary-server:8080")
+
+			mode := tt.mode
+			reason := tt.reason
+			needsRebuild := tt.needsRebuild
+			publishHealthy := tt.publishHealthy
+			r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+				Path:             "/blocks/vol-restart-" + tt.name + ".blk",
+				VolumeSize:       1 << 30,
+				BlockSize:        4096,
+				Epoch:            7,
+				Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+				NeedsRebuild:     &needsRebuild,
+				PublishHealthy:   &publishHealthy,
+				VolumeMode:       &mode,
+				VolumeModeReason: &reason,
+			}}, "")
+
+			entry, ok := r.Lookup("vol-restart-" + tt.name)
+			if !ok {
+				t.Fatalf("expected auto-registered entry for %q", tt.name)
+			}
+			if !entry.HasNeedsRebuild || entry.NeedsRebuild != tt.needsRebuild {
+				t.Fatalf("needs_rebuild truth lost during auto-register, entry=%+v", entry)
+			}
+			if !entry.HasPublishHealthy || entry.PublishHealthy != tt.publishHealthy {
+				t.Fatalf("publish_healthy truth lost during auto-register, entry=%+v", entry)
+			}
+			if !entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != tt.mode {
+				t.Fatalf("volume_mode truth lost during auto-register, entry=%+v", entry)
+			}
+			if !entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != tt.reason {
+				t.Fatalf("volume_mode_reason truth lost during auto-register, entry=%+v", entry)
+			}
+			if entry.VolumeMode != tt.wantMode {
+				t.Fatalf("expected outward volume_mode %q after auto-register, got %q", tt.wantMode, entry.VolumeMode)
+			}
+
+			info := entryToVolumeInfo(&entry, true)
+			if info.VolumeMode != tt.wantMode {
+				t.Fatalf("expected outward API volume_mode %q after auto-register, got %q", tt.wantMode, info.VolumeMode)
+			}
+			if info.VolumeModeReason != tt.wantReason {
+				t.Fatalf("expected outward API volume_mode_reason %q after auto-register, got %q", tt.wantReason, info.VolumeModeReason)
+			}
+		})
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_MissingFieldsPreserveAcceptedExplicitPrimaryTruth(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-preserve-explicit-truth",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-preserve-explicit-truth-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-preserve-explicit-truth-replica.blk",
+			Ready:  true,
+			Role:   blockvol.RoleToWire(blockvol.RoleRebuilding),
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	needsRebuild := false
+	publishHealthy := false
+	mode := "degraded"
+	reason := "barrier_timeout"
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:             "/blocks/vol-master-preserve-explicit-truth-primary.blk",
+		Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded:  true,
+		NeedsRebuild:     &needsRebuild,
+		PublishHealthy:   &publishHealthy,
+		VolumeMode:       &mode,
+		VolumeModeReason: &reason,
+	}}, "")
+
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-preserve-explicit-truth-primary.blk",
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-preserve-explicit-truth")
+	if !entry.HasNeedsRebuild || entry.NeedsRebuild {
+		t.Fatalf("missing-field heartbeat should preserve explicit false needs_rebuild truth, entry=%+v", entry)
+	}
+	if !entry.HasPublishHealthy || entry.PublishHealthy {
+		t.Fatalf("missing-field heartbeat should preserve explicit false publish_healthy truth, entry=%+v", entry)
+	}
+	if !entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != "degraded" {
+		t.Fatalf("missing-field heartbeat should preserve explicit volume_mode truth, entry=%+v", entry)
+	}
+	if !entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != "barrier_timeout" {
+		t.Fatalf("missing-field heartbeat should preserve explicit volume_mode_reason truth, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "degraded" {
+		t.Fatalf("missing-field heartbeat should preserve outward degraded mode, got %q", entry.VolumeMode)
+	}
+
+	info := entryToVolumeInfo(&entry, true)
+	if info.VolumeMode != "degraded" {
+		t.Fatalf("expected outward API volume_mode=degraded, got %q", info.VolumeMode)
+	}
+	if info.VolumeModeReason != "barrier_timeout" {
+		t.Fatalf("expected outward API volume_mode_reason=barrier_timeout, got %q", info.VolumeModeReason)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_MissingFieldsDoNotInventExplicitTruthOnFreshEntry(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary-server:8080")
+
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-fresh-fallback-primary.blk",
+		VolumeSize:      1 << 30,
+		BlockSize:       4096,
+		Epoch:           3,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+	}}, "")
+
+	entry, ok := r.Lookup("vol-master-fresh-fallback-primary")
+	if !ok {
+		t.Fatal("expected fresh entry from auto-register")
+	}
+	if entry.HasNeedsRebuild || entry.HasPublishHealthy || entry.HasHeartbeatVolumeMode || entry.HasHeartbeatVolumeReason {
+		t.Fatalf("fresh missing-field heartbeat should not invent explicit truth, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "allocated_only" {
+		t.Fatalf("expected fresh fallback outward mode allocated_only without explicit truth, got %q", entry.VolumeMode)
 	}
 }

@@ -55,9 +55,10 @@ type Heartbeat struct {
 	DeletedBlockVolumes []*BlockVolumeShortInfoMessage `protobuf:"bytes,26,rep,name=deleted_block_volumes,json=deletedBlockVolumes,proto3" json:"deleted_block_volumes,omitempty"`
 	HasNoBlockVolumes   bool                           `protobuf:"varint,27,opt,name=has_no_block_volumes,json=hasNoBlockVolumes,proto3" json:"has_no_block_volumes,omitempty"`
 	// server-level NVMe/TCP target address (empty if NVMe disabled on this VS)
-	BlockNvmeAddr string `protobuf:"bytes,28,opt,name=block_nvme_addr,json=blockNvmeAddr,proto3" json:"block_nvme_addr,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	BlockNvmeAddr                     string `protobuf:"bytes,28,opt,name=block_nvme_addr,json=blockNvmeAddr,proto3" json:"block_nvme_addr,omitempty"`
+	BlockVolumeInventoryAuthoritative *bool  `protobuf:"varint,29,opt,name=block_volume_inventory_authoritative,json=blockVolumeInventoryAuthoritative,proto3,oneof" json:"block_volume_inventory_authoritative,omitempty"`
+	unknownFields                     protoimpl.UnknownFields
+	sizeCache                         protoimpl.SizeCache
 }
 
 func (x *Heartbeat) Reset() {
@@ -263,6 +264,13 @@ func (x *Heartbeat) GetBlockNvmeAddr() string {
 		return x.BlockNvmeAddr
 	}
 	return ""
+}
+
+func (x *Heartbeat) GetBlockVolumeInventoryAuthoritative() bool {
+	if x != nil && x.BlockVolumeInventoryAuthoritative != nil {
+		return *x.BlockVolumeInventoryAuthoritative
+	}
+	return false
 }
 
 type HeartbeatResponse struct {
@@ -5631,8 +5639,7 @@ var File_master_proto protoreflect.FileDescriptor
 
 const file_master_proto_rawDesc = "" +
 	"\n" +
-	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xe5\n" +
-	"\n" +
+	"\fmaster.proto\x12\tmaster_pb\x1a\x13volume_server.proto\"\xe4\v\n" +
 	"\tHeartbeat\x12\x0e\n" +
 	"\x02ip\x18\x01 \x01(\tR\x02ip\x12\x12\n" +
 	"\x04port\x18\x02 \x01(\rR\x04port\x12\x1d\n" +
@@ -5664,10 +5671,12 @@ const file_master_proto_rawDesc = "" +
 	"\x11new_block_volumes\x18\x19 \x03(\v2&.master_pb.BlockVolumeShortInfoMessageR\x0fnewBlockVolumes\x12Z\n" +
 	"\x15deleted_block_volumes\x18\x1a \x03(\v2&.master_pb.BlockVolumeShortInfoMessageR\x13deletedBlockVolumes\x12/\n" +
 	"\x14has_no_block_volumes\x18\x1b \x01(\bR\x11hasNoBlockVolumes\x12&\n" +
-	"\x0fblock_nvme_addr\x18\x1c \x01(\tR\rblockNvmeAddr\x1aB\n" +
+	"\x0fblock_nvme_addr\x18\x1c \x01(\tR\rblockNvmeAddr\x12T\n" +
+	"$block_volume_inventory_authoritative\x18\x1d \x01(\bH\x00R!blockVolumeInventoryAuthoritative\x88\x01\x01\x1aB\n" +
 	"\x14MaxVolumeCountsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01\"\xa9\x03\n" +
+	"\x05value\x18\x02 \x01(\rR\x05value:\x028\x01B'\n" +
+	"%_block_volume_inventory_authoritative\"\xa9\x03\n" +
 	"\x11HeartbeatResponse\x12*\n" +
 	"\x11volume_size_limit\x18\x01 \x01(\x04R\x0fvolumeSizeLimit\x12\x16\n" +
 	"\x06leader\x18\x02 \x01(\tR\x06leader\x12'\n" +
@@ -6398,6 +6407,7 @@ func file_master_proto_init() {
 	if File_master_proto != nil {
 		return
 	}
+	file_master_proto_msgTypes[0].OneofWrappers = []any{}
 	file_master_proto_msgTypes[61].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

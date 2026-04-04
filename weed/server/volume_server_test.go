@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
@@ -65,5 +66,49 @@ func TestMaintenanceMode(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestCollectBlockVolumeHeartbeat_IncludesInventoryAuthority(t *testing.T) {
+	vs := &VolumeServer{
+		store: &storage.Store{},
+		blockService: &BlockService{
+			blockStore:                  storage.NewBlockVolumeStore(),
+			blockInventoryAuthoritative: false,
+		},
+	}
+
+	hb := vs.collectBlockVolumeHeartbeat("127.0.0.1", 18080, "dc1", "rack1")
+	if hb.BlockVolumeInventoryAuthoritative == nil {
+		t.Fatal("expected block inventory authority bit to be present")
+	}
+	if hb.GetBlockVolumeInventoryAuthoritative() {
+		t.Fatal("expected non-authoritative block inventory bit on test heartbeat")
+	}
+	if !hb.HasNoBlockVolumes {
+		t.Fatal("expected empty heartbeat to report has_no_block_volumes")
+	}
+}
+
+func TestStartBlockService_ScanFailureEmitsNonAuthoritativeInventory(t *testing.T) {
+	missingDir := filepath.Join(t.TempDir(), "missing-block-dir")
+	bs := StartBlockService("127.0.0.1:3260", missingDir, "", "", NVMeConfig{})
+	if bs == nil {
+		t.Fatal("expected block service even when startup scan fails")
+	}
+	if bs.BlockInventoryAuthoritative() {
+		t.Fatal("startup scan failure should leave block inventory non-authoritative")
+	}
+
+	vs := &VolumeServer{
+		store:        &storage.Store{},
+		blockService: bs,
+	}
+	hb := vs.collectBlockVolumeHeartbeat("127.0.0.1", 18080, "dc1", "rack1")
+	if hb.BlockVolumeInventoryAuthoritative == nil {
+		t.Fatal("expected inventory authority bit on startup-scan-failure heartbeat")
+	}
+	if hb.GetBlockVolumeInventoryAuthoritative() {
+		t.Fatal("startup-scan-failure heartbeat should be non-authoritative")
 	}
 }

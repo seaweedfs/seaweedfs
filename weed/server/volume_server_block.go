@@ -97,6 +97,10 @@ type BlockService struct {
 	// routable host:port. This is the -ip value (IP or resolvable hostname),
 	// never an opaque server identity from -id.
 	advertisedHost string
+	// blockInventoryAuthoritative reports whether the in-memory block inventory is
+	// authoritative enough to drive master-side stale cleanup from a full
+	// heartbeat. It becomes false when startup inventory scan fails.
+	blockInventoryAuthoritative bool
 
 	// TestHook: if set, invoked when the legacy direct rebuild starter is used.
 	onLegacyStartRebuild func(path, rebuildAddr string, epoch uint64)
@@ -110,6 +114,15 @@ func (bs *BlockService) V2Orchestrator() *engine.RecoveryOrchestrator {
 // V2Core returns the explicit Phase 14/15 core shell if wired.
 func (bs *BlockService) V2Core() *engine.CoreEngine {
 	return bs.v2Core
+}
+
+// BlockInventoryAuthoritative reports whether the current block inventory can be
+// treated as authoritative for full-heartbeat stale cleanup.
+func (bs *BlockService) BlockInventoryAuthoritative() bool {
+	if bs == nil {
+		return false
+	}
+	return bs.blockInventoryAuthoritative
 }
 
 // CoreProjection returns the latest adapter-cached projection emitted by the
@@ -210,17 +223,18 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 	}
 
 	bs := &BlockService{
-		blockStore:     storage.NewBlockVolumeStore(),
-		iqnPrefix:      iqnPrefix,
-		nqnPrefix:      nqnPrefix,
-		blockDir:       blockDir,
-		listenAddr:     listenAddr,
-		nvmeListenAddr: nvmeCfg.ListenAddr,
-		v2Bridge:       v2bridge.NewControlBridge(),
-		v2Orchestrator: engine.NewRecoveryOrchestrator(),
-		v2Core:         engine.NewCoreEngine(),
-		localServerID:  listenAddr, // INTERIM: transport-shaped, see field doc
-		coreProj:       make(map[string]engine.PublicationProjection),
+		blockStore:                  storage.NewBlockVolumeStore(),
+		iqnPrefix:                   iqnPrefix,
+		nqnPrefix:                   nqnPrefix,
+		blockDir:                    blockDir,
+		listenAddr:                  listenAddr,
+		nvmeListenAddr:              nvmeCfg.ListenAddr,
+		v2Bridge:                    v2bridge.NewControlBridge(),
+		v2Orchestrator:              engine.NewRecoveryOrchestrator(),
+		v2Core:                      engine.NewCoreEngine(),
+		localServerID:               listenAddr, // INTERIM: transport-shaped, see field doc
+		coreProj:                    make(map[string]engine.PublicationProjection),
+		blockInventoryAuthoritative: false,
 	}
 	bs.v2Recovery = NewRecoveryManager(bs)
 
@@ -290,6 +304,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		name := strings.TrimSuffix(entry.Name(), ".blk")
 		bs.registerVolume(vol, name)
 	}
+	bs.blockInventoryAuthoritative = true
 
 	// Start iSCSI target in background.
 	go func() {

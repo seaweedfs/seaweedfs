@@ -1552,3 +1552,391 @@ Conclusion:
    field keep the previous empty/default outward reason behavior
 3. this slice still does not claim restart/disturbance hardening or broad
    failover closure by itself
+
+---
+
+#### `16R` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit primary-truth preservation on master restart auto-register
+
+Why this slice exists:
+
+1. `16N-16Q` made primary heartbeat truth explicit across the steady-state
+   heartbeat/master/API seam
+2. but the fresh-registry auto-register branch in `UpdateFullHeartbeat`
+   reconstructs only size/epoch/degraded/publication metadata and drops the new
+   explicit primary truth
+3. that leaves a bounded restart/disturbance seam where master restart can
+   collapse accepted explicit heartbeat truth back to older heuristics
+
+Chosen implementation rule:
+
+1. preserve explicit primary heartbeat `needs_rebuild`, `publish_healthy`,
+   `volume_mode`, and `volume_mode_reason` when auto-registering from a fresh
+   registry after restart
+2. prove outward mode/reason surfaces remain coherent after restart
+   reconstruction
+3. do not broaden this slice into general restart hardening or repeated-failover
+   closure
+
+---
+
+#### `16R` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit primary-truth preservation on master restart auto-register
+
+What changed:
+
+1. `weed/server/master_block_registry.go`
+   - fresh-registry auto-register now preserves explicit primary heartbeat
+     `needs_rebuild`, `publish_healthy`, `volume_mode`, and
+     `volume_mode_reason` truth instead of dropping them during restart
+     reconstruction
+2. `weed/server/master_block_registry_test.go`
+   - added a focused proof that fresh-registry auto-register preserves explicit
+     primary truth and outward API-facing mode/reason after restart
+3. `sw-block/.private/phase/phase-16.md`
+   - recorded `16R` as the next bounded restart/disturbance seam and marked it
+     delivered
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "TestRegistry_(UpdateFullHeartbeat_(AutoRegisterPreservesExplicitPrimaryTruthOnRestart|ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent)|ReplicaHeartbeat_ReconstructsAfterRestart)"`
+2. `go test ./weed/server -count=1 -timeout 180s -run "Test(EntryToVolumeInfo_(ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(List|Get)Handler_ReflectsCoreInfluencedDegradedConsume|P11P3_HeartbeatReconstruction|P12P1_Restart_SameLineage)"`
+3. result: `PASS`
+
+Conclusion:
+
+1. accepted explicit primary heartbeat truth is now preserved not only on the
+   steady-state consume path but also on bounded master restart reconstruction
+2. this closes one concrete restart/disturbance seam without broadening into
+   general restart hardening or repeated-failover closure
+
+---
+
+#### `16S` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit primary-truth retention when heartbeat fields are absent
+
+Why this slice exists:
+
+1. `16N-16R` made several bounded primary heartbeat truths explicit and
+   preserved them across steady-state and restart reconstruction paths
+2. but the steady-state existing-entry consume path still clears those explicit
+   truths whenever a later heartbeat omits the newer fields entirely
+3. that leaves a bounded disturbance/compat seam where accepted explicit truth
+   can regress back to heuristics simply because a heartbeat is field-sparse
+
+Chosen implementation rule:
+
+1. preserve already accepted explicit primary heartbeat `needs_rebuild`,
+   `publish_healthy`, `volume_mode`, and `volume_mode_reason` truth when the
+   corresponding field is absent on a later heartbeat
+2. keep fresh-entry/auto-register behavior unchanged so absent fields still mean
+   "no explicit truth yet" on first observation
+3. do not broaden this slice into entry-deletion policy or general restart
+   hardening
+
+---
+
+#### `16S` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit primary-truth retention when heartbeat fields are absent
+
+What changed:
+
+1. `weed/server/master_block_registry.go`
+   - existing-entry primary heartbeat consume now preserves already accepted
+     explicit primary truth when a later heartbeat omits the newer explicit
+     fields entirely
+2. `weed/server/master_block_registry_test.go`
+   - added focused proofs that missing-field heartbeats preserve accepted
+     explicit truth on existing entries while still not inventing explicit truth
+     on fresh auto-registered entries
+3. `sw-block/.private/phase/phase-16.md`
+   - recorded `16S` as the bounded missing-field retention seam and marked it
+     delivered
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "TestRegistry_UpdateFullHeartbeat_(MissingFieldsPreserveAcceptedExplicitPrimaryTruth|MissingFieldsDoNotInventExplicitTruthOnFreshEntry|AutoRegisterPreservesExplicitPrimaryTruthOnRestart|ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent|NeedsRebuildFallsBackWhenFieldAbsent|ExplicitHealthySuppressesStaleNeedsRebuildHeuristic|ConsumesExplicitPublishHealthyFromPrimaryHeartbeat|ExplicitUnhealthySuppressesStalePublishHealthyHeuristic)"`
+2. `go test ./weed/server -count=1 -timeout 180s -run "Test(EntryToVolumeInfo_(ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(List|Get)Handler_ReflectsCoreInfluencedDegradedConsume|P11P3_HeartbeatReconstruction|P12P1_Restart_SameLineage)"`
+3. result: `PASS`
+
+Conclusion:
+
+1. once accepted on the bounded primary path, explicit heartbeat truth no longer
+   regresses merely because a later heartbeat is field-sparse
+2. backward-compatible fresh-entry fallback is preserved because absent fields
+   still do not create explicit truth on first observation
+
+---
+
+#### `16T` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded authoritative guard for empty full block heartbeat inventory
+
+Why this slice exists:
+
+1. full block heartbeat currently treats empty inventory as enough to make stale
+   cleanup/delete decisions on the master side
+2. that leaves a bounded disturbance seam because "authoritatively empty" and
+   "non-authoritative/temporarily unavailable inventory" still share the same
+   empty heartbeat shape
+3. the next narrow closure step is to make stale-delete eligibility depend on an
+   explicit authoritative signal, not empty inventory alone
+
+Chosen implementation rule:
+
+1. add one additive heartbeat-level signal for block inventory authority
+2. keep the current chosen-path regular and shutdown-originated empty inventory
+   heartbeats authoritative
+3. make master full-heartbeat stale cleanup conditional on that signal
+4. do not broaden this slice into general restart policy or long-window
+   disturbance handling
+
+---
+
+#### `16T` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded authoritative guard for empty full block heartbeat inventory
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `block_volume_inventory_authoritative` to the
+     top-level `Heartbeat`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated for the new heartbeat-level optional authority bit
+3. `weed/server/volume_server_block.go`
+   - `BlockService` now tracks whether its block inventory is authoritative
+     enough for full-heartbeat stale cleanup
+4. `weed/server/volume_grpc_client_to_master.go`
+   - full block heartbeats now emit explicit block inventory authority; regular
+     and shutdown-originated empty inventory heartbeats stay authoritative on
+     the current chosen path
+5. `weed/server/master_grpc_server.go`
+   - master heartbeat handling now forwards the explicit block inventory
+     authority into block full-heartbeat reconciliation
+6. `weed/server/master_block_registry.go`
+   - full-heartbeat stale cleanup now runs only when block inventory is
+     authoritative
+7. focused tests in `master_block_registry_test.go` and `volume_server_test.go`
+   - now prove non-authoritative empty full heartbeat preserves entries while
+     authoritative empty inventory keeps the old delete behavior
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "Test(CollectBlockVolumeHeartbeat_IncludesInventoryAuthority|Registry_UpdateFullHeartbeatWithInventoryAuthority_(NonAuthoritativeEmptyDoesNotDelete|AuthoritativeEmptyStillDeletes)|Registry_UpdateFullHeartbeat_(MissingFieldsPreserveAcceptedExplicitPrimaryTruth|AutoRegisterPreservesExplicitPrimaryTruthOnRestart)|Master_ExpandCoordinated_B10_HeartbeatDoesNotDeleteDuringExpand|QA_Reg_FullHeartbeatEmptyServer)"`
+2. `go test ./weed/server -count=1 -timeout 180s -run "Test(Registry_UpdateFullHeartbeat$|Registry_UpdateFullHeartbeat_VolumeModeFallsBackWhenFieldAbsent|Registry_UpdateFullHeartbeat_ConsumesExplicitVolumeModeFromPrimaryHeartbeat|P12P1_Restart_SameLineage|P11P3_HeartbeatReconstruction)"`
+3. result: `PASS`
+
+Conclusion:
+
+1. empty full block heartbeat is no longer forced to mean authoritative delete
+   intent on the master side
+2. this closes one bounded disturbance seam by making stale-delete eligibility
+   explicit without yet deciding the broader restart-window policy itself
+
+---
+
+#### `16U` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: real sender-side non-authoritative block inventory path
+
+Why this slice exists:
+
+1. `16T` added an explicit block-inventory authority bit and guarded master-side
+   stale delete with it
+2. but on the chosen runtime path that new bit was still mostly only wire
+   capability; no real sender-side path emitted `false`
+3. the next bounded closure step is to bind one truthful runtime condition to
+   that bit without widening into general restart policy
+
+Chosen implementation rule:
+
+1. use startup block-directory scan failure as one truthful
+   non-authoritative-inventory condition
+2. prove that ordinary full-heartbeat emission carries `false` there
+3. prove master-side inventory-authority guard still preserves entries there
+
+---
+
+#### `16U` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: real sender-side non-authoritative block inventory path
+
+What changed:
+
+1. `weed/server/volume_server_test.go`
+   - added a focused startup-scan-failure proof showing a real block-service
+     sender path emits `block_volume_inventory_authoritative=false`
+2. `sw-block/.private/phase/phase-16.md`
+   - recorded `16U` as delivered and folded it into the checkpoint package
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "Test(StartBlockService_ScanFailureEmitsNonAuthoritativeInventory|CollectBlockVolumeHeartbeat_IncludesInventoryAuthority|Registry_UpdateFullHeartbeatWithInventoryAuthority_(NonAuthoritativeEmptyDoesNotDelete|AuthoritativeEmptyStillDeletes))"`
+2. result: `PASS`
+
+Conclusion:
+
+1. the block-inventory authority bit now has one real sender-side runtime
+   meaning instead of remaining only a latent wire affordance
+2. this still does not decide the broader restart-window policy
+
+---
+
+#### `16V` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: restart primary-swap explicit-truth rebase
+
+Why this slice exists:
+
+1. `16R-16S` preserved explicit primary truth across restart auto-register and
+   later sparse heartbeats
+2. but restart reconciliation could still promote a new primary while retaining
+   explicit truth that belonged to the old primary longer than intended
+3. the next bounded closure step is to rebind explicit truth at the exact
+   primary-swap seam
+
+Chosen implementation rule:
+
+1. when restart reconciliation promotes a new primary, explicit
+   `needs_rebuild`, `publish_healthy`, `volume_mode`, and `volume_mode_reason`
+   must come from the winning heartbeat
+2. if the winning heartbeat is sparse, clear old explicit truth rather than
+   preserving it across ownership change
+3. recompute outward surfaces immediately after primary swap
+
+---
+
+#### `16V` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: restart primary-swap explicit-truth rebase
+
+What changed:
+
+1. `weed/server/master_block_registry.go`
+   - factored explicit primary-truth consume into a helper and used it both for
+     existing-entry retention and restart primary-swap rebase
+   - primary-swap reconciliation now clears stale old-primary explicit truth
+     when the winning heartbeat omits those fields
+   - primary-swap reconciliation now recomputes outward aggregate state
+     immediately after demotion/promotion
+2. `weed/server/master_block_registry_test.go`
+   - added focused proofs that higher-epoch promotion rebases explicit truth to
+     the winning heartbeat and that sparse winning heartbeats clear stale
+     old-primary truth
+3. `sw-block/.private/phase/phase-16.md`
+   - recorded `16V` as delivered and folded it into the checkpoint package
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "Test(MasterRestart_(HigherEpochWins|HigherEpochRebasesExplicitPrimaryTruth|HigherEpochSparsePrimaryClearsOldExplicitTruth|LowerEpochBecomesReplica|SameEpoch_HigherLSNWins|SameEpoch_SameLSN_ExistingWins|SameEpoch_RoleTrusted)|Registry_UpdateFullHeartbeat_(AutoRegisterPreservesExplicitPrimaryTruthOnRestart|MissingFieldsPreserveAcceptedExplicitPrimaryTruth|ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent))"`
+2. result: `PASS`
+
+Conclusion:
+
+1. explicit primary truth is now bound to the winning primary after restart
+   reconciliation rather than being retained across ownership change
+2. this closes one bounded restart seam without widening into general restart
+   policy or failover redesign
+
+---
+
+#### `16W` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-side explicit readiness retention parity
+
+Why this slice exists:
+
+1. `16M` made replica readiness explicit on the heartbeat/master seam
+2. but replica consume still fell back to address heuristics whenever a later
+   heartbeat omitted `ReplicaReady`, even after explicit truth had already been
+   accepted
+3. the next bounded closure step is to mirror the primary-side missing-field
+   retention discipline for this one replica truth
+
+Chosen implementation rule:
+
+1. once an existing replica entry has accepted explicit `ReplicaReady`, preserve
+   that truth across sparse later heartbeats
+2. keep fresh-entry behavior backward-compatible: absent `ReplicaReady` still
+   falls back to transport addresses until explicit truth has been observed
+3. do not widen this slice into broader replica policy redesign
+
+---
+
+#### `16W` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: replica-side explicit readiness retention parity
+
+What changed:
+
+1. `weed/server/master_block_registry.go`
+   - replica entries now track whether readiness was explicitly carried on a
+     heartbeat
+   - existing replica entries preserve accepted explicit readiness on sparse
+     later heartbeats, while fresh entries still use address fallback
+2. `weed/server/master_block_registry_test.go`
+   - added focused proofs for accepted explicit-readiness retention and
+     fresh-entry backward-compatible fallback
+3. `sw-block/.private/phase/phase-16.md`
+   - recorded `16W` as delivered and folded it into the checkpoint package
+
+Proof / evidence:
+
+1. `go test ./weed/server -count=1 -timeout 180s -run "TestRegistry_UpdateFullHeartbeat_(ConsumesCoreInfluencedReplicaReady|ReplicaReadyFallsBackToAddressesWhenFieldAbsent|ReplicaReadyMissingFieldPreservesAcceptedExplicitTruth|ReplicaReadyMissingFieldFreshEntryStillFallsBack)"`
+2. result: `PASS`
+
+Conclusion:
+
+1. replica-side explicit readiness now follows the same bounded sparse-heartbeat
+   retention discipline as the primary side
+2. backward compatibility remains preserved because fresh entries still fall
+   back to address-shaped readiness when no explicit field has yet been observed
+
+---
+
+#### `Phase 16` Finish-Line Checkpoint Package Rev 1
+
+Date: 2026-04-04
+Scope: bounded runtime checkpoint through `16W`
+
+What changed:
+
+1. `sw-block/.private/phase/phase-16.md`
+   - updated the `Phase 16` checkpoint to include `16U-16W`
+   - added accepted claim set, explicit non-claims, residual gaps, and exact
+     proof commands
+2. `sw-block/.private/phase/phase-16-finish-review.md`
+   - created a structured review artifact for the bounded finish-line checkpoint
+3. `sw-block/design/v2-protocol-claim-and-evidence.md`
+   - recorded the bounded runtime-checkpoint claim and its evidence anchor
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol -count=1 -run "TestInfoMessage_(ReplicaReady|NeedsRebuild|PublishHealthy|VolumeMode|VolumeModeReason)"`
+2. `go test ./weed/server -count=1 -timeout 180s -run "Test(Registry_UpdateFullHeartbeat_(ConsumesCoreInfluencedReplicaReady|ReplicaReadyFallsBackToAddressesWhenFieldAbsent|ReplicaReadyMissingFieldPreservesAcceptedExplicitTruth|ReplicaReadyMissingFieldFreshEntryStillFallsBack|ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat|NeedsRebuildFallsBackWhenFieldAbsent|ExplicitHealthySuppressesStaleNeedsRebuildHeuristic|ConsumesExplicitPublishHealthyFromPrimaryHeartbeat|ExplicitUnhealthySuppressesStalePublishHealthyHeuristic|ConsumesExplicitVolumeModeFromPrimaryHeartbeat|VolumeModeFallsBackWhenFieldAbsent|AutoRegisterPreservesExplicitPrimaryTruthOnRestart|MissingFieldsPreserveAcceptedExplicitPrimaryTruth|MissingFieldsDoNotInventExplicitTruthOnFreshEntry)|MasterRestart_(HigherEpochWins|HigherEpochRebasesExplicitPrimaryTruth|HigherEpochSparsePrimaryClearsOldExplicitTruth|LowerEpochBecomesReplica|SameEpoch_HigherLSNWins|SameEpoch_SameLSN_ExistingWins|SameEpoch_RoleTrusted)|StartBlockService_ScanFailureEmitsNonAuthoritativeInventory|CollectBlockVolumeHeartbeat_IncludesInventoryAuthority|Registry_UpdateFullHeartbeatWithInventoryAuthority_(NonAuthoritativeEmptyDoesNotDelete|AuthoritativeEmptyStillDeletes)|P11P3_HeartbeatReconstruction|P12P1_Restart_SameLineage)"`
+3. `go test ./weed/server -count=1 -timeout 180s -run "Test(EntryToVolumeInfo_(ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(Get|List)Handler_ReflectsCoreInfluencedDegradedConsume|Master_ExpandCoordinated_B10_HeartbeatDoesNotDeleteDuringExpand|QA_Reg_FullHeartbeatEmptyServer)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the visible bounded heartbeat/restart truth-closure seams through `16W` are
+   now packaged as one reviewable checkpoint
+2. broader recovery-loop, failover/publication, and long-window disturbance
+   behavior remain explicit residuals rather than hidden claims

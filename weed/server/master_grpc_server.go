@@ -277,7 +277,16 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 		// (BlockVolumeInfos on first heartbeat) or deltas (NewBlockVolumes/DeletedBlockVolumes
 		// on subsequent heartbeats), never both in the same message.
 		if len(heartbeat.BlockVolumeInfos) > 0 || heartbeat.HasNoBlockVolumes {
-			hbResult := ms.blockRegistry.UpdateFullHeartbeat(dn.Url(), heartbeat.BlockVolumeInfos, heartbeat.BlockNvmeAddr)
+			blockInventoryAuthoritative := true
+			if heartbeat.BlockVolumeInventoryAuthoritative != nil {
+				blockInventoryAuthoritative = heartbeat.GetBlockVolumeInventoryAuthoritative()
+			}
+			hbResult := ms.blockRegistry.UpdateFullHeartbeatWithInventoryAuthority(
+				dn.Url(),
+				heartbeat.BlockVolumeInfos,
+				heartbeat.BlockNvmeAddr,
+				blockInventoryAuthoritative,
+			)
 			// CP13-8: If a replica's receiver address changed (e.g., restart with port conflict),
 			// immediately refresh the primary's assignment with the new addresses.
 			for _, ac := range hbResult.AddrChanges {

@@ -349,16 +349,18 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			return
 		case <-vs.stopChan:
 			var volumeMessages []*master_pb.VolumeInformationMessage
+			blockInventoryAuthoritative := true
 			emptyBeat := &master_pb.Heartbeat{
-				Ip:                ip,
-				Port:              port,
-				PublicUrl:         vs.store.PublicUrl,
-				MaxFileKey:        uint64(0),
-				DataCenter:        dataCenter,
-				Rack:              rack,
-				Volumes:           volumeMessages,
-				HasNoVolumes:      len(volumeMessages) == 0,
-				HasNoBlockVolumes: vs.blockService != nil,
+				Ip:                                ip,
+				Port:                              port,
+				PublicUrl:                         vs.store.PublicUrl,
+				MaxFileKey:                        uint64(0),
+				DataCenter:                        dataCenter,
+				Rack:                              rack,
+				Volumes:                           volumeMessages,
+				HasNoVolumes:                      len(volumeMessages) == 0,
+				HasNoBlockVolumes:                 vs.blockService != nil,
+				BlockVolumeInventoryAuthoritative: &blockInventoryAuthoritative,
 			}
 			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {
@@ -374,13 +376,15 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 // Uses BlockService.CollectBlockVolumeHeartbeat which includes replication addresses (R1-4).
 func (vs *VolumeServer) collectBlockVolumeHeartbeat(ip string, port uint32, dc, rack string) *master_pb.Heartbeat {
 	msgs := vs.blockService.CollectBlockVolumeHeartbeat()
+	blockInventoryAuthoritative := vs.blockService.BlockInventoryAuthoritative()
 	return &master_pb.Heartbeat{
-		Ip:                ip,
-		Port:              port,
-		DataCenter:        dc,
-		Rack:              rack,
-		BlockVolumeInfos:  blockvol.InfoMessagesToProto(msgs),
-		HasNoBlockVolumes: len(msgs) == 0,
-		BlockNvmeAddr:     vs.blockService.NvmeListenAddr(),
+		Ip:                                ip,
+		Port:                              port,
+		DataCenter:                        dc,
+		Rack:                              rack,
+		BlockVolumeInfos:                  blockvol.InfoMessagesToProto(msgs),
+		HasNoBlockVolumes:                 len(msgs) == 0,
+		BlockNvmeAddr:                     vs.blockService.NvmeListenAddr(),
+		BlockVolumeInventoryAuthoritative: &blockInventoryAuthoritative,
 	}
 }

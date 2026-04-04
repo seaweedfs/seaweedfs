@@ -108,6 +108,7 @@ These are the claims that may currently be made without overreach.
 | `C-ADAPTER-CLOSURE` | assignment / readiness / publication closure is explicit on the chosen path | bounded chosen path only; does not imply mode normalization or pure-core extraction | `CP13-8A` proof package | allowed |
 | `C-CONSTRAINED-V1-RUNTIME` | current integrated checks are evaluating `V1` runtime behavior under `V2` constraints rather than validating a completed `V2 runtime` | current chosen path only, until explicit `V2 core` extraction | `v2_mini_core_design.md`, `Phase 13` docs | allowed |
 | `C-MODE-NORMALIZATION` | one bounded mode-policy / normalization package is closed on the current constrained chosen path | bounded chosen path only; does not imply pure `V2 core` extraction or broad product policy | `CP13-9` docs/tests | allowed |
+| `C-PHASE16-RUNTIME-CHECKPOINT` | the bounded heartbeat/master/API runtime path now preserves accepted explicit truth across the delivered `16M-16W` restart/disturbance seams | bounded chosen path only; excludes broad recovery-loop, broad failover/publication, and launch claims | `sw-block/.private/phase/phase-16-finish-review.md`, `phase-16.md`, focused `weed/server` tests | allowed |
 | `C-LAUNCH-APPROVAL` | broad product launch readiness | outside current phase | future | not allowed |
 
 ## Evidence Map
@@ -124,6 +125,7 @@ These are the claims that may currently be made without overreach.
 | Real-workload package | one bounded workload matrix passes on the corrected chosen path | `CP13-8` scenario/doc | tester validation reports |
 | Assignment/publication closure | assignment does not imply readiness/publication and corrected wiring refreshes replication truth explicitly | `CP13-8A` code/tests/debug evidence | tester investigation, bug docs |
 | Mode normalization | one bounded mode set is explicit and surface-consistent on the constrained current path | `CP13-9` contract/doc/tests | tester validation report |
+| Runtime truth closure under restart/disturbance | accepted explicit truth survives the delivered bounded `Phase 16` heartbeat/restart seams through `16W` | `phase-16-finish-review.md`, `phase-16.md`, focused restart/heartbeat tests in `weed/server` | `v2-product-completion-overview.md`, `v2-protocol-truths.md` |
 
 ## Invalidated Or Narrowed Evidence
 
