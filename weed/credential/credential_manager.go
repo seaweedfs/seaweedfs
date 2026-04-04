@@ -3,15 +3,18 @@ package credential
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/encoding/protojson"
 )
 
 // FilerAddressSetter is an interface for credential stores that need a dynamic filer address
@@ -254,6 +257,23 @@ func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, docu
 	}
 	// Fallback to PutPolicy for stores that only implement CredentialStore
 	return cm.Store.PutPolicy(ctx, name, document)
+}
+
+// LoadS3ConfigFile reads a static S3 identity config file and registers
+// the identities so they appear in LoadConfiguration and listing results.
+func (cm *CredentialManager) LoadS3ConfigFile(path string) error {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", path, err)
+	}
+	config := &iam_pb.S3ApiConfiguration{}
+	opts := protojson.UnmarshalOptions{DiscardUnknown: true, AllowPartial: true}
+	if err := opts.Unmarshal(content, config); err != nil {
+		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	cm.SetStaticIdentities(config.Identities)
+	glog.V(1).Infof("Loaded %d static identities from %s", len(config.Identities), path)
+	return nil
 }
 
 // Shutdown performs cleanup
