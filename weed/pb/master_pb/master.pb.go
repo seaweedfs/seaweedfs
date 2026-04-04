@@ -3912,6 +3912,7 @@ type BlockVolumeInfoMessage struct {
 	NvmeAddr        string                 `protobuf:"bytes,17,opt,name=nvme_addr,json=nvmeAddr,proto3" json:"nvme_addr,omitempty"`
 	Nqn             string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
 	ReplicaReady    *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
+	NeedsRebuild    *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4075,6 +4076,13 @@ func (x *BlockVolumeInfoMessage) GetNqn() string {
 func (x *BlockVolumeInfoMessage) GetReplicaReady() bool {
 	if x != nil && x.ReplicaReady != nil {
 		return *x.ReplicaReady
+	}
+	return false
+}
+
+func (x *BlockVolumeInfoMessage) GetNeedsRebuild() bool {
+	if x != nil && x.NeedsRebuild != nil {
+		return *x.NeedsRebuild
 	}
 	return false
 }
@@ -5967,7 +5975,7 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
 	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse\"\x9e\x05\n" +
+	"\x12VolumeGrowResponse\"\xda\x05\n" +
 	"\x16BlockVolumeInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -5991,8 +5999,10 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x0fdurability_mode\x18\x10 \x01(\tR\x0edurabilityMode\x12\x1b\n" +
 	"\tnvme_addr\x18\x11 \x01(\tR\bnvmeAddr\x12\x10\n" +
 	"\x03nqn\x18\x12 \x01(\tR\x03nqn\x12(\n" +
-	"\rreplica_ready\x18\x13 \x01(\bH\x00R\freplicaReady\x88\x01\x01B\x10\n" +
-	"\x0e_replica_ready\"\x8e\x01\n" +
+	"\rreplica_ready\x18\x13 \x01(\bH\x00R\freplicaReady\x88\x01\x01\x12(\n" +
+	"\rneeds_rebuild\x18\x14 \x01(\bH\x01R\fneedsRebuild\x88\x01\x01B\x10\n" +
+	"\x0e_replica_readyB\x10\n" +
+	"\x0e_needs_rebuild\"\x8e\x01\n" +
 	"\x1bBlockVolumeShortInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +

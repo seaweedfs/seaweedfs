@@ -2179,3 +2179,108 @@ func TestRegistry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldA
 		t.Fatalf("expected aggregate replica ready from fallback consume, entry=%+v", entry)
 	}
 }
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-needs-rebuild",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-needs-rebuild-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-needs-rebuild-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	needsRebuild := true
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-needs-rebuild-primary.blk",
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+		NeedsRebuild:    &needsRebuild,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-needs-rebuild")
+	if !entry.NeedsRebuild || !entry.HasNeedsRebuild {
+		t.Fatalf("expected explicit needs_rebuild truth on entry, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "needs_rebuild" {
+		t.Fatalf("expected needs_rebuild from explicit primary heartbeat truth, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_NeedsRebuildFallsBackWhenFieldAbsent(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-needs-rebuild-fallback",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-needs-rebuild-fallback-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-needs-rebuild-fallback-replica.blk",
+			Ready:  true,
+			Role:   blockvol.RoleToWire(blockvol.RoleRebuilding),
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-needs-rebuild-fallback-primary.blk",
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-needs-rebuild-fallback")
+	if entry.HasNeedsRebuild {
+		t.Fatalf("did not expect explicit needs_rebuild truth when field absent, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "needs_rebuild" {
+		t.Fatalf("expected fallback needs_rebuild from replica role heuristic, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ExplicitHealthySuppressesStaleNeedsRebuildHeuristic(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-needs-rebuild-explicit-false",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-needs-rebuild-explicit-false-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-needs-rebuild-explicit-false-replica.blk",
+			Ready:  true,
+			Role:   blockvol.RoleToWire(blockvol.RoleRebuilding),
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	needsRebuild := false
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            "/blocks/vol-master-needs-rebuild-explicit-false-primary.blk",
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaDegraded: true,
+		NeedsRebuild:    &needsRebuild,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-needs-rebuild-explicit-false")
+	if !entry.HasNeedsRebuild || entry.NeedsRebuild {
+		t.Fatalf("expected explicit false needs_rebuild truth on entry, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "degraded" {
+		t.Fatalf("expected explicit false to suppress stale needs_rebuild heuristic, got %q", entry.VolumeMode)
+	}
+}

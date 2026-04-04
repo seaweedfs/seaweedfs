@@ -1280,6 +1280,39 @@ func TestBlockService_HeartbeatReplicaDegraded_UsesCoreMode(t *testing.T) {
 	}
 }
 
+func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMode(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-heartbeat-needs-rebuild-primary")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: path, ReplicaID: path + "/vs-2", Reason: "gap_too_large"})
+
+	msg := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if msg == nil {
+		t.Fatal("volume missing from heartbeat")
+	}
+	if !msg.NeedsRebuild {
+		t.Fatalf("expected explicit needs_rebuild truth on heartbeat, msg=%+v", msg)
+	}
+	if !msg.ReplicaDegraded {
+		t.Fatalf("expected degraded bit to remain true on needs_rebuild path, msg=%+v", msg)
+	}
+}
+
 func TestBlockService_HeartbeatIncludesReplicaAddrs(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	path := createTestVolDirect(t, bs, "vol1")

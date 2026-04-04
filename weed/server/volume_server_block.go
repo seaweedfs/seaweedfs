@@ -966,6 +966,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 		if s, ok := bs.replStates[msgs[i].Path]; ok {
 			msgs[i].ReplicaDataAddr, msgs[i].ReplicaCtrlAddr = bs.heartbeatReplicaAddrs(msgs[i].Path, s)
 			msgs[i].ReplicaReady = bs.heartbeatReplicaReady(msgs[i].Path, s)
+			msgs[i].NeedsRebuild = bs.heartbeatNeedsRebuild(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
@@ -1019,6 +1020,20 @@ func (bs *BlockService) heartbeatReplicaReady(path string, state *volReplState) 
 		return proj.Readiness.ReplicaReady
 	}
 	return state.publishHealthy
+}
+
+// heartbeatNeedsRebuild returns the explicit needs_rebuild truth that should be
+// exposed on the current heartbeat surface. On the core-present path it
+// preserves the stronger core mode instead of collapsing it into the degraded
+// bit. Older paths keep returning false and rely on previous heuristics.
+func (bs *BlockService) heartbeatNeedsRebuild(path string, state *volReplState) bool {
+	if state == nil {
+		return false
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		return proj.Mode.Name == engine.ModeNeedsRebuild
+	}
+	return false
 }
 
 // heartbeatReplicaDegraded returns the bounded degraded bit for the current

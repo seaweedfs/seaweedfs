@@ -77,6 +77,8 @@ type BlockVolumeEntry struct {
 	ReplicaReady      bool          // all configured replicas are ready for publication
 	ReplicaDegraded   bool          // aggregate: transport degraded OR not ready
 	TransportDegraded bool          // primary reports degraded replicas
+	NeedsRebuild      bool          // explicit primary heartbeat needs_rebuild truth when present
+	HasNeedsRebuild   bool          // whether the current primary heartbeat carried explicit needs_rebuild truth
 
 	// CP13-9: Normalized volume mode for external surfaces.
 	// Computed by recomputeReplicaState from the current entry state.
@@ -178,10 +180,18 @@ func (e *BlockVolumeEntry) computeVolumeMode() string {
 		return "bootstrap_pending"
 	}
 
-	// Check for NeedsRebuild state on any replica.
-	for _, ri := range e.Replicas {
-		if blockvol.RoleFromWire(ri.Role) == blockvol.RoleRebuilding {
+	// Prefer explicit primary heartbeat needs_rebuild truth when present.
+	if e.HasNeedsRebuild {
+		if e.NeedsRebuild {
 			return "needs_rebuild"
+		}
+	} else {
+		// Backward-compatible fallback: older paths may only surface needs_rebuild
+		// through replica-side role heuristics.
+		for _, ri := range e.Replicas {
+			if blockvol.RoleFromWire(ri.Role) == blockvol.RoleRebuilding {
+				return "needs_rebuild"
+			}
 		}
 	}
 
@@ -633,6 +643,7 @@ func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVo
 	existing.LastLeaseGrant = time.Now()
 	existing.HealthScore = info.HealthScore
 	existing.TransportDegraded = info.ReplicaDegraded
+	existing.NeedsRebuild, existing.HasNeedsRebuild = primaryNeedsRebuildObservedFromHeartbeat(info)
 	existing.WALHeadLSN = info.WalHeadLsn
 	// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
 	if info.DurabilityMode != "" {
@@ -718,6 +729,16 @@ func replicaReadyObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) b
 		return info.GetReplicaReady()
 	}
 	return info.ReplicaDataAddr != "" && info.ReplicaCtrlAddr != ""
+}
+
+func primaryNeedsRebuildObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) (bool, bool) {
+	if info == nil {
+		return false, false
+	}
+	if info.NeedsRebuild != nil {
+		return info.GetNeedsRebuild(), true
+	}
+	return false, false
 }
 
 // reconcileOnRestart handles the case where a second server reports a volume

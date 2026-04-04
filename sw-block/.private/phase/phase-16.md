@@ -551,6 +551,60 @@ Evidence:
 
 1. focused working-tree change after `16L` closeout
 
+### `16N`: NeedsRebuild Heartbeat Mode Preservation
+
+Goal:
+
+1. close one bounded failover/publication seam by preserving explicit
+   `needs_rebuild` truth across the primary heartbeat/master consume boundary
+   instead of collapsing it into a generic degraded bit
+2. keep the slice limited to `needs_rebuild` preservation on the heartbeat wire
+   and master-registry consume path, not broad `VolumeMode` rebinding
+
+Acceptance object:
+
+1. `BlockVolumeInfoMessage` carries an additive explicit `needs_rebuild` bit on
+   the heartbeat wire
+2. `weed/server` heartbeat emission sets that bit from the current core-owned
+   mode truth on the core-present path
+3. `master_block_registry` consumes explicit heartbeat `needs_rebuild` truth
+   before the older replica-role / degraded-bit heuristic
+4. focused proofs show primary `needs_rebuild` survives heartbeat/master consume
+   even when the old heuristic would only yield `degraded`
+5. this slice still does not yet claim broad `VolumeMode` heartbeat ownership or
+   broad failover closure
+
+Current chosen path:
+
+1. widen `master.proto` / heartbeat conversion with an additive
+   `needs_rebuild` field
+2. emit that field from `CollectBlockVolumeHeartbeat` using the bounded core
+   mode on the primary path
+3. let master consume prefer explicit `needs_rebuild` truth while retaining the
+   previous heuristic as backward-compatible fallback
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `BlockVolumeInfoMessage` now carries additive explicit `needs_rebuild`
+   heartbeat truth on the wire
+2. `weed/server` heartbeat emission now preserves explicit bounded
+   `needs_rebuild` truth from the core-owned mode on the current core-present
+   path
+3. `master_block_registry` now prefers explicit heartbeat `needs_rebuild` truth
+   over the older collapsed degraded-bit / replica-role heuristic while keeping
+   the previous heuristic as backward-compatible fallback when the field is
+   absent
+4. focused proofs now show primary `needs_rebuild` survives heartbeat/master
+   consume as `needs_rebuild` rather than collapsing into generic `degraded`
+
+Evidence:
+
+1. focused working-tree change after `16M` closeout
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -627,6 +681,10 @@ boundary:
 14. `16M` delivered:
    - replica heartbeat/master consume now carries explicit bounded
      `ReplicaReady` truth with backward-compatible fallback for older
+     heartbeats
+15. `16N` delivered:
+   - primary heartbeat/master consume now preserves explicit bounded
+     `needs_rebuild` truth with backward-compatible fallback for older
      heartbeats
 
 After this checkpoint:

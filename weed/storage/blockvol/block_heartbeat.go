@@ -20,6 +20,7 @@ type BlockVolumeInfoMessage struct {
 	ReplicaDataAddr      string                 // receiver data listen addr (VS reports in heartbeat)
 	ReplicaCtrlAddr      string                 // receiver ctrl listen addr
 	ReplicaReady         bool                   // explicit replica readiness truth on the heartbeat seam
+	NeedsRebuild         bool                   // explicit needs_rebuild truth on the heartbeat seam
 	HealthScore          float64                // CP8-2: 0.0-1.0
 	ScrubErrors          int64                  // CP8-2: lifetime scrub error count
 	LastScrubTime        int64                  // CP8-2: unix seconds

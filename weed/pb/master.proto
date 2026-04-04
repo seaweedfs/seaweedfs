@@ -513,6 +513,7 @@ message BlockVolumeInfoMessage {
   string nvme_addr = 17;
   string nqn = 18;
   optional bool replica_ready = 19;
+  optional bool needs_rebuild = 20;
 }
 
 message BlockVolumeShortInfoMessage {

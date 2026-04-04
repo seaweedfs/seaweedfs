@@ -267,6 +267,26 @@ func TestInfoMessage_ReplicaReadyRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_NeedsRebuildRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:         "/data/vol.blk",
+		Epoch:        1,
+		NeedsRebuild: true,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if !back.NeedsRebuild {
+		t.Fatal("NeedsRebuild should be true after round-trip")
+	}
+
+	orig.NeedsRebuild = false
+	pb = InfoMessageToProto(orig)
+	back = InfoMessageFromProto(pb)
+	if back.NeedsRebuild {
+		t.Fatal("NeedsRebuild should be false after round-trip")
+	}
+}
+
 func TestAssignment_MultiReplicaRoundTrip(t *testing.T) {
 	orig := BlockVolumeAssignment{
 		Path:       "/data/vol.blk",

@@ -1272,3 +1272,71 @@ Conclusion:
 2. backward compatibility is preserved because older heartbeats without the
    explicit field still fall back to the previous address-based heuristic
 3. this slice still does not claim broad failover or promotion closure by itself
+
+---
+
+#### `16N` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `needs_rebuild` preservation on the heartbeat/master seam
+
+Why this slice exists:
+
+1. `16M` made replica readiness explicit on the heartbeat/master seam
+2. but the primary heartbeat still collapses core `ModeNeedsRebuild` and
+   `ModeDegraded` into the same `replica_degraded` bit
+3. that means master-side outward `VolumeMode` can still lose one important
+   product-facing distinction even when the core already knows the stronger
+   `needs_rebuild` truth
+
+Chosen implementation rule:
+
+1. widen the heartbeat wire additively with an explicit `needs_rebuild` field
+2. emit it from the current bounded core mode on the core-present path
+3. make master-side consume prefer explicit `needs_rebuild` truth and retain the
+   previous heuristic only as backward-compatible fallback
+4. do not broaden this slice into full `VolumeMode` heartbeat ownership
+
+---
+
+#### `16N` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `needs_rebuild` preservation on the heartbeat/master seam
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `needs_rebuild` to `BlockVolumeInfoMessage`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated so heartbeat wire presence is represented as `*bool`
+3. `weed/storage/blockvol/block_heartbeat.go`
+   - heartbeat wire struct now carries explicit `NeedsRebuild`
+4. `weed/storage/blockvol/block_heartbeat_proto.go`
+   - heartbeat conversion now writes and reads `NeedsRebuild`
+5. `weed/server/volume_server_block.go`
+   - heartbeat emission now preserves explicit bounded `needs_rebuild` truth
+     from the current core mode
+6. `weed/server/master_block_registry.go`
+   - registry consume now prefers explicit heartbeat `needs_rebuild` truth and
+     keeps the older heuristic only when the field is absent
+7. focused tests in `block_heartbeat_proto_test.go`,
+   `volume_server_block_test.go`, and `master_block_registry_test.go`
+   - now prove explicit `needs_rebuild` preservation and backward-compatible
+     fallback
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol/ -count=1 -run "TestInfoMessage_(Replica|NeedsRebuild)"`
+2. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMode|HeartbeatReplicaDegraded_UsesCoreMode|Registry_UpdateFullHeartbeat_(ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat|NeedsRebuildFallsBackWhenFieldAbsent|ExplicitHealthySuppressesStaleNeedsRebuildHeuristic))"`
+3. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_ApplyAssignments_|P16B_|P4_|Registry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the heartbeat/master seam no longer collapses explicit core
+   `needs_rebuild` truth into a generic degraded-only signal
+2. backward compatibility is preserved because older heartbeats without the
+   explicit field still fall back to the previous heuristic
+3. this slice still does not claim full `VolumeMode` heartbeat ownership or
+   broad failover closure by itself
