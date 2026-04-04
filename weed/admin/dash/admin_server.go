@@ -125,7 +125,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, s3ConfigFile string) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -192,13 +192,6 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 			} else {
 				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
-		}
-	}
-
-	// Load static S3 identities from config file if specified
-	if s3ConfigFile != "" && credentialManager != nil {
-		if err := credentialManager.LoadS3ConfigFile(s3ConfigFile); err != nil {
-			glog.Warningf("Failed to load S3 config file for static identities: %v", err)
 		}
 	}
 
@@ -874,6 +867,24 @@ func (s *AdminServer) DeleteS3Bucket(bucketName string) error {
 	})
 }
 
+// IsStaticUser checks if a user is a static identity by loading the
+// configuration from the credential manager and checking the IsStatic flag.
+func (s *AdminServer) IsStaticUser(username string) bool {
+	if s.credentialManager == nil {
+		return false
+	}
+	s3cfg, err := s.credentialManager.LoadConfiguration(context.Background())
+	if err != nil {
+		return false
+	}
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == username {
+			return ident.IsStatic
+		}
+	}
+	return false
+}
+
 // GetObjectStoreUsers retrieves object store users from identity.json
 func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUser, error) {
 	if s.credentialManager == nil {
@@ -897,7 +908,7 @@ func (s *AdminServer) GetObjectStoreUsers(ctx context.Context) ([]ObjectStoreUse
 		user := ObjectStoreUser{
 			Username:    identity.Name,
 			Permissions: identity.Actions,
-			IsStatic:    s.credentialManager.IsStaticIdentity(identity.Name),
+			IsStatic:    identity.IsStatic,
 		}
 
 		// Set email from account if available

@@ -1102,6 +1102,7 @@ func (iam *IdentityAccessManagement) GetStaticIdentities() []*iam_pb.Identity {
 			Name:        ident.Name,
 			Disabled:    ident.Disabled,
 			PolicyNames: policyNames,
+			IsStatic:    true,
 		}
 		for _, action := range ident.Actions {
 			pbIdent.Actions = append(pbIdent.Actions, string(action))

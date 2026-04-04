@@ -283,6 +283,9 @@ func (cm *CredentialManager) LoadS3ConfigFile(path string) error {
 	if err := opts.Unmarshal(content, config); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
 	}
+	for _, ident := range config.Identities {
+		ident.IsStatic = true
+	}
 	cm.SetStaticIdentities(config.Identities)
 	glog.V(1).Infof("Loaded %d static identities from %s", len(config.Identities), path)
 	return nil

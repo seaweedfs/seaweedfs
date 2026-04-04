@@ -101,6 +101,10 @@ func (s *IamGrpcServer) GetUser(ctx context.Context, req *iam_pb.GetUserRequest)
 	identity, err := s.credentialManager.GetUser(ctx, req.Username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
+			// Fall back to static identities (loaded from -s3.config file)
+			if si := s.credentialManager.GetStaticIdentity(req.Username); si != nil {
+				return &iam_pb.GetUserResponse{Identity: si}, nil
+			}
 			return nil, status.Errorf(codes.NotFound, "user %s not found", req.Username)
 		}
 		glog.Errorf("Failed to get user %s: %v", req.Username, err)

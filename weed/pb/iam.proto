@@ -186,6 +186,7 @@ message Identity {
     bool disabled = 5;  // User status: false = enabled (default), true = disabled
     repeated string service_account_ids = 6;  // IDs of service accounts owned by this user
     repeated string policy_names = 7;
+    bool is_static = 8;  // Loaded from static config file (read-only, not editable via API)
 }
 
 message Credential {

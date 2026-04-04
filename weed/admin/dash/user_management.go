@@ -175,18 +175,13 @@ func (s *AdminServer) GetObjectStoreUserDetails(username string) (*UserDetails, 
 
 	ctx := context.Background()
 
-	// Get user using credential manager
+	// Get user using credential manager (resolves static users via filer gRPC)
 	identity, err := s.credentialManager.GetUser(ctx, username)
 	if err != nil {
 		if err == credential.ErrUserNotFound {
-			// Check if it's a static identity (loaded from config file)
-			identity = s.credentialManager.GetStaticIdentity(username)
-			if identity == nil {
-				return nil, fmt.Errorf("user %s not found", username)
-			}
-		} else {
-			return nil, fmt.Errorf("failed to get user: %w", err)
+			return nil, fmt.Errorf("user %s not found", username)
 		}
+		return nil, fmt.Errorf("failed to get user: %w", err)
 	}
 
 	details := &UserDetails{

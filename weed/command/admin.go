@@ -48,7 +48,6 @@ type AdminOptions struct {
 	dataDir          *string
 	icebergPort      *int
 	urlPrefix        *string
-	s3ConfigFile     *string // optional path to static S3 identity config
 }
 
 func init() {
@@ -336,11 +335,7 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	}
 
 	// Create admin server (plugin is always enabled)
-	var s3ConfigFile string
-	if options.s3ConfigFile != nil {
-		s3ConfigFile = *options.s3ConfigFile
-	}
-	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort, s3ConfigFile)
+	adminServer := dash.NewAdminServer(*options.master, nil, dataDir, icebergPort)
 
 	// Show discovered filers
 	filers := adminServer.GetAllFilers()

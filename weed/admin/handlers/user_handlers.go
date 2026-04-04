@@ -93,7 +93,7 @@ func (h *UserHandlers) UpdateUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cm := h.adminServer.GetCredentialManager(); cm != nil && cm.IsStaticIdentity(username) {
+	if h.adminServer.IsStaticUser(username) {
 		writeJSONError(w, http.StatusForbidden, "Cannot modify static user "+username+" (loaded from config file)")
 		return
 	}
@@ -125,7 +125,7 @@ func (h *UserHandlers) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if cm := h.adminServer.GetCredentialManager(); cm != nil && cm.IsStaticIdentity(username) {
+	if h.adminServer.IsStaticUser(username) {
 		writeJSONError(w, http.StatusForbidden, "Cannot delete static user "+username+" (loaded from config file)")
 		return
 	}

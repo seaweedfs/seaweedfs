@@ -820,10 +820,9 @@ func runMini(cmd *Command, args []string) bool {
 	miniFilerOptions.disableHttp = miniDisableHttp
 	miniMasterOptions.disableHttp = miniDisableHttp
 
-	// Share the S3 static identity config file with the filer and admin
-	// so their credential managers can also serve static users.
+	// Share the S3 static identity config file with the filer so its
+	// credential manager can also serve static users.
 	miniFilerOptions.s3ConfigFile = miniS3Config
-	miniAdminOptions.s3ConfigFile = miniS3Config
 
 	filerAddress := string(pb.NewServerAddress(*miniIp, *miniFilerOptions.port, *miniFilerOptions.portGrpc))
 	miniS3Options.filer = &filerAddress
