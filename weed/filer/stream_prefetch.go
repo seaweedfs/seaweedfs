@@ -10,6 +10,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -21,7 +22,7 @@ type chunkPipeResult struct {
 	fetchErr   error         // final error from fetch goroutine
 	written    int64         // bytes written by fetch goroutine
 	done       chan struct{} // closed when fetch goroutine finishes
-	urlStrings []string      // URLs used (for retry logic)
+	urlStrings []string      // snapshot of URLs at dispatch time (for retry logic)
 }
 
 // streamChunksPrefetched streams chunks with concurrent prefetch using io.Pipe.
@@ -46,14 +47,22 @@ func streamChunksPrefetched(
 ) error {
 	downloadThrottler := util.NewWriteThrottler(downloadMaxBytesPs)
 
+	// Create a local cancellable context so the consumer can stop the producer
+	// and all in-flight fetch goroutines on error (e.g., client disconnect).
+	localCtx, localCancel := context.WithCancel(ctx)
+	defer localCancel()
+
 	// Ordered channel: one entry per chunk, in file order.
 	// Capacity = prefetchAhead so the producer can run ahead.
-	results := make(chan chunkPipeResult, prefetchAhead)
+	// Uses pointer to avoid copying the struct while fetch goroutines write to it.
+	results := make(chan *chunkPipeResult, prefetchAhead)
 
 	// Semaphore to limit concurrent fetch goroutines (and thus HTTP connections).
 	sem := make(chan struct{}, prefetchAhead)
 
 	// Producer: walks chunk list, launches fetch goroutines, sends results in order.
+	// The producer only reads from fileId2Url (populated before streaming starts),
+	// so there is no concurrent map access — the consumer never writes to it.
 	var producerWg sync.WaitGroup
 	producerWg.Add(1)
 	go func() {
@@ -65,7 +74,7 @@ func streamChunksPrefetched(
 
 			// Check context before starting new fetch
 			select {
-			case <-ctx.Done():
+			case <-localCtx.Done():
 				return
 			default:
 			}
@@ -73,46 +82,45 @@ func streamChunksPrefetched(
 			// Acquire semaphore slot (bounds concurrent HTTP connections)
 			select {
 			case sem <- struct{}{}:
-			case <-ctx.Done():
+			case <-localCtx.Done():
 				return
 			}
 
 			pr, pw := io.Pipe()
-			done := make(chan struct{})
 			urlStrings := fileId2Url[chunkView.FileId]
 			jwt := jwtFunc(chunkView.FileId)
 
-			result := chunkPipeResult{
+			result := &chunkPipeResult{
 				chunkView:  chunkView,
 				reader:     pr,
-				done:       done,
+				done:       make(chan struct{}),
 				urlStrings: urlStrings,
 			}
 
 			// Launch fetch goroutine
-			go func(cv *ChunkView, urls []string, jwt string, pw *io.PipeWriter, result *chunkPipeResult) {
+			go func(cv *ChunkView, urls []string, jwt string, pw *io.PipeWriter, res *chunkPipeResult) {
 				defer func() { <-sem }() // release semaphore
-				defer close(result.done)
+				defer close(res.done)
 
 				written, err := retriedStreamFetchChunkData(
-					ctx, pw, urls, jwt,
+					localCtx, pw, urls, jwt,
 					cv.CipherKey, cv.IsGzipped, cv.IsFullChunk(),
 					cv.OffsetInChunk, int(cv.ViewSize),
 				)
-				result.written = written
-				result.fetchErr = err
+				res.written = written
+				res.fetchErr = err
 
 				if err != nil {
 					pw.CloseWithError(err)
 				} else {
 					pw.Close()
 				}
-			}(chunkView, urlStrings, jwt, pw, &result)
+			}(chunkView, urlStrings, jwt, pw, result)
 
 			// Send result to consumer (blocks if channel full, back-pressuring producer)
 			select {
 			case results <- result:
-			case <-ctx.Done():
+			case <-localCtx.Done():
 				// Consumer gone; close the pipe so fetch goroutine unblocks
 				pr.Close()
 				return
@@ -121,8 +129,9 @@ func streamChunksPrefetched(
 	}()
 
 	// Consumer: reads from results channel in order, writes to response writer.
-	// Allocate a reusable copy buffer (256KB).
-	copyBuf := make([]byte, 256*1024)
+	// Use the SeaweedFS memory pool for the copy buffer to reduce GC pressure.
+	copyBuf := mem.Allocate(256 * 1024)
+	defer mem.Free(copyBuf)
 	remaining := size
 
 	var consumeErr error
@@ -158,11 +167,11 @@ func streamChunksPrefetched(
 
 		// If read failed with no data, try cache invalidation + re-fetch (same as sequential path)
 		if err != nil && copied == 0 {
-			if err := ctx.Err(); err != nil {
+			if err := localCtx.Err(); err != nil {
 				consumeErr = err
 				break
 			}
-			retryErr := retryWithCacheInvalidation(ctx, writer, chunkView, result.urlStrings, jwtFunc, masterClient, fileId2Url)
+			retryErr := retryWithCacheInvalidation(localCtx, writer, chunkView, result.urlStrings, jwtFunc, masterClient)
 			if retryErr != nil {
 				stats.FilerHandlerCounter.WithLabelValues("chunkDownloadError").Inc()
 				consumeErr = fmt.Errorf("read chunk: %w", retryErr)
@@ -171,8 +180,8 @@ func streamChunksPrefetched(
 			// Retry succeeded
 			err = nil
 		} else if err != nil {
-			if ctx.Err() != nil {
-				consumeErr = ctx.Err()
+			if localCtx.Err() != nil {
+				consumeErr = localCtx.Err()
 			} else {
 				stats.FilerHandlerCounter.WithLabelValues("chunkDownloadError").Inc()
 				consumeErr = fmt.Errorf("read chunk: %w", err)
@@ -186,6 +195,10 @@ func streamChunksPrefetched(
 		stats.FilerHandlerCounter.WithLabelValues("chunkDownload").Inc()
 		downloadThrottler.MaybeSlowdown(int64(chunkView.ViewSize))
 	}
+
+	// Cancel the local context to stop the producer and any in-flight fetchers early.
+	// This ensures goroutines don't linger after the consumer exits (e.g., on write error).
+	localCancel()
 
 	// Drain remaining results to close pipes and unblock fetch goroutines
 	for result := range results {
@@ -220,7 +233,6 @@ func retryWithCacheInvalidation(
 	oldUrlStrings []string,
 	jwtFunc VolumeServerJwtFunction,
 	masterClient wdclient.HasLookupFileIdFunction,
-	fileId2Url map[string][]string,
 ) error {
 	invalidator, ok := masterClient.(CacheInvalidator)
 	if !ok {
@@ -252,8 +264,5 @@ func retryWithCacheInvalidation(
 		chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(),
 		chunkView.OffsetInChunk, int(chunkView.ViewSize),
 	)
-	if err == nil {
-		fileId2Url[chunkView.FileId] = newUrlStrings
-	}
 	return err
 }
