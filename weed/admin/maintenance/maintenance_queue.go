@@ -33,80 +33,12 @@ func (mq *MaintenanceQueue) SetPersistence(persistence TaskPersistence) {
 	glog.V(1).Infof("Maintenance queue configured with task persistence")
 }
 
-// LoadTasksFromPersistence loads tasks from persistent storage on startup
+// LoadTasksFromPersistence is called on startup. Previous task states are NOT loaded
+// into memory — the maintenance scanner will re-detect current needs from the live
+// cluster state. Old completed task files on disk are cleaned up by the periodic
+// cleanup loop.
 func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
-	if mq.persistence == nil {
-		glog.V(1).Infof("No task persistence configured, skipping task loading")
-		return nil
-	}
-
-	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
-
-	glog.Infof("Loading tasks from persistence...")
-
-	tasks, err := mq.persistence.LoadAllTaskStates()
-	if err != nil {
-		return fmt.Errorf("failed to load task states: %w", err)
-	}
-
-	glog.Infof("DEBUG LoadTasksFromPersistence: Found %d tasks in persistence", len(tasks))
-
-	// Reset task maps
-	mq.tasks = make(map[string]*MaintenanceTask)
-	mq.pendingTasks = make([]*MaintenanceTask, 0)
-
-	// Load tasks by status
-	for _, task := range tasks {
-		glog.Infof("DEBUG LoadTasksFromPersistence: Loading task %s (type: %s, status: %s, scheduled: %v)", task.ID, task.Type, task.Status, task.ScheduledAt)
-		mq.tasks[task.ID] = task
-
-		switch task.Status {
-		case TaskStatusPending:
-			glog.Infof("DEBUG LoadTasksFromPersistence: Adding task %s to pending queue", task.ID)
-			mq.pendingTasks = append(mq.pendingTasks, task)
-		case TaskStatusAssigned, TaskStatusInProgress:
-			// For assigned/in-progress tasks, we need to check if the worker is still available
-			// If not, we should fail them and make them eligible for retry
-			if task.WorkerID != "" {
-				if _, exists := mq.workers[task.WorkerID]; !exists {
-					glog.Warningf("Task %s was assigned to unavailable worker %s, marking as failed", task.ID, task.WorkerID)
-					task.Status = TaskStatusFailed
-					task.Error = "Worker unavailable after restart"
-					completedTime := time.Now()
-					task.CompletedAt = &completedTime
-
-					// Check if it should be retried
-					if task.RetryCount < task.MaxRetries {
-						task.RetryCount++
-						task.Status = TaskStatusPending
-						task.WorkerID = ""
-						task.StartedAt = nil
-						task.CompletedAt = nil
-						task.Error = ""
-						task.ScheduledAt = time.Now().Add(1 * time.Minute) // Retry after restart delay
-						glog.Infof("DEBUG LoadTasksFromPersistence: Retrying task %s, adding to pending queue", task.ID)
-						mq.pendingTasks = append(mq.pendingTasks, task)
-					}
-				}
-			}
-		}
-
-		// Sync task with ActiveTopology for capacity tracking
-		if mq.integration != nil {
-			mq.integration.SyncTask(task)
-		}
-	}
-
-	// Sort pending tasks by priority and schedule time
-	sort.Slice(mq.pendingTasks, func(i, j int) bool {
-		if mq.pendingTasks[i].Priority != mq.pendingTasks[j].Priority {
-			return mq.pendingTasks[i].Priority > mq.pendingTasks[j].Priority
-		}
-		return mq.pendingTasks[i].ScheduledAt.Before(mq.pendingTasks[j].ScheduledAt)
-	})
-
-	glog.Infof("Loaded %d tasks from persistence (%d pending)", len(tasks), len(mq.pendingTasks))
+	glog.Infof("Task queue initialized (previous tasks will be re-detected by scanner)")
 	return nil
 }
 
@@ -273,6 +205,9 @@ func (mq *MaintenanceQueue) CancelPendingTasksByType(taskType MaintenanceTaskTyp
 
 // AddTasksFromResults converts detection results to tasks and adds them to the queue
 func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) {
+	// Purge terminal tasks from memory before adding new ones
+	mq.purgeTerminalTasks()
+
 	for _, result := range results {
 		// Validate that task has proper typed parameters
 		if result.TypedParams == nil {
@@ -294,6 +229,28 @@ func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) 
 			ScheduledAt: result.ScheduleAt,
 		}
 		mq.AddTask(task)
+	}
+}
+
+// purgeTerminalTasks removes completed/failed/cancelled tasks from memory and disk.
+// Called before adding new scan results so old unimportant tasks don't accumulate.
+func (mq *MaintenanceQueue) purgeTerminalTasks() {
+	mq.mutex.Lock()
+	var toDelete []string
+	for id, task := range mq.tasks {
+		switch task.Status {
+		case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
+			toDelete = append(toDelete, id)
+			delete(mq.tasks, id)
+		}
+	}
+	mq.mutex.Unlock()
+
+	if len(toDelete) > 0 && mq.persistence != nil {
+		for _, id := range toDelete {
+			mq.persistence.DeleteTaskState(id)
+		}
+		glog.V(1).Infof("Purged %d terminal tasks from memory and disk", len(toDelete))
 	}
 }
 

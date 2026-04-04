@@ -1091,7 +1091,7 @@ func (cp *ConfigPersistence) loadTaskStateLocked(taskID string) (*maintenance.Ma
 	// Convert protobuf to maintenance task
 	task := cp.protobufToMaintenanceTask(taskStateFile.Task)
 
-	glog.V(2).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
+	glog.V(3).Infof("Loaded task state for task %s from %s", taskID, taskFilePath)
 	return task, nil
 }
 
