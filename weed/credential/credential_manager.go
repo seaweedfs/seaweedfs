@@ -112,6 +112,18 @@ func (cm *CredentialManager) IsStaticIdentity(name string) bool {
 	return cm.staticNames[name]
 }
 
+// GetStaticIdentity returns the protobuf identity for a static user, or nil.
+func (cm *CredentialManager) GetStaticIdentity(name string) *iam_pb.Identity {
+	cm.staticMu.RLock()
+	defer cm.staticMu.RUnlock()
+	for _, ident := range cm.staticIdentities {
+		if ident.Name == name {
+			return ident
+		}
+	}
+	return nil
+}
+
 // GetStaticUsernames returns the names of all static identities.
 func (cm *CredentialManager) GetStaticUsernames() []string {
 	cm.staticMu.RLock()
