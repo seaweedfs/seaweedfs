@@ -184,3 +184,125 @@ func TestDispatcher_StopsOnFirstError(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+type fakeRecoveryCoordinator struct {
+	startedReplica string
+	startedAssigns []blockvol.BlockVolumeAssignment
+	catchUpCalls   []struct {
+		volumeID string
+		targetLSN uint64
+	}
+	rebuildCalls []struct {
+		volumeID string
+		targetLSN uint64
+	}
+}
+
+func (f *fakeRecoveryCoordinator) StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment) {
+	f.startedReplica = replicaID
+	f.startedAssigns = assignments
+}
+
+func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
+	f.catchUpCalls = append(f.catchUpCalls, struct {
+		volumeID string
+		targetLSN uint64
+	}{volumeID: volumeID, targetLSN: targetLSN})
+	return nil
+}
+
+func (f *fakeRecoveryCoordinator) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
+	f.rebuildCalls = append(f.rebuildCalls, struct {
+		volumeID string
+		targetLSN uint64
+	}{volumeID: volumeID, targetLSN: targetLSN})
+	return nil
+}
+
+type fakeProjectionReader struct {
+	proj engine.PublicationProjection
+	ok   bool
+}
+
+func (f fakeProjectionReader) Projection(volumeID string) (engine.PublicationProjection, bool) {
+	if !f.ok || f.proj.VolumeID != volumeID {
+		return engine.PublicationProjection{}, false
+	}
+	return f.proj, true
+}
+
+type fakeSessionInvalidator struct {
+	reasons []string
+	states  []engine.ReplicaState
+}
+
+func (f *fakeSessionInvalidator) InvalidateSession(reason string, targetState engine.ReplicaState) {
+	f.reasons = append(f.reasons, reason)
+	f.states = append(f.states, targetState)
+}
+
+func TestServiceOps_StartRecoveryTaskUsesRecoveryCoordinator(t *testing.T) {
+	rec := &fakeRecoveryCoordinator{}
+	ops := NewServiceOps(fakeOps{}, rec, nil, nil)
+	assign := blockvol.BlockVolumeAssignment{Path: "vol1"}
+	executed, err := ops.StartRecoveryTask("vol1/vs2", assign)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("expected executed")
+	}
+	if rec.startedReplica != "vol1/vs2" || len(rec.startedAssigns) != 1 || rec.startedAssigns[0].Path != "vol1" {
+		t.Fatalf("started=%q assigns=%v", rec.startedReplica, rec.startedAssigns)
+	}
+}
+
+func TestServiceOps_InvalidateSessionUsesProjectionAndSenderResolver(t *testing.T) {
+	s1 := &fakeSessionInvalidator{}
+	s2 := &fakeSessionInvalidator{}
+	ops := NewServiceOps(
+		fakeOps{},
+		nil,
+		fakeProjectionReader{
+			ok: true,
+			proj: engine.PublicationProjection{
+				VolumeID:   "vol1",
+				ReplicaIDs: []string{"vol1/vs2", "vol1/vs3"},
+			},
+		},
+		func(replicaID string) SessionInvalidator {
+			switch replicaID {
+			case "vol1/vs2":
+				return s1
+			case "vol1/vs3":
+				return s2
+			default:
+				return nil
+			}
+		},
+	)
+	executed, err := ops.InvalidateSession("vol1", "test_reason")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("expected executed")
+	}
+	if !reflect.DeepEqual(s1.reasons, []string{"test_reason"}) || !reflect.DeepEqual(s2.reasons, []string{"test_reason"}) {
+		t.Fatalf("reasons1=%v reasons2=%v", s1.reasons, s2.reasons)
+	}
+	if len(s1.states) != 1 || s1.states[0] != engine.StateDisconnected {
+		t.Fatalf("states1=%v", s1.states)
+	}
+}
+
+func TestServiceOps_StartRecoveryTask_NilRecoveryIsNoop(t *testing.T) {
+	ops := NewServiceOps(fakeOps{}, nil, nil, nil)
+	executed, err := ops.StartRecoveryTask("vol1/vs2", blockvol.BlockVolumeAssignment{Path: "vol1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executed {
+		t.Fatal("expected noop when recovery is nil")
+	}
+}

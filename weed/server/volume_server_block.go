@@ -572,14 +572,42 @@ func (bs *BlockService) applyCoreCommandsWithAssignment(cmds []engine.Command, a
 }
 
 func (bs *BlockService) coreCommandDispatcher() *blockcmd.Dispatcher {
-	return blockcmd.NewDispatcher(coreCommandOps{bs: bs}, coreCommandEffects{bs: bs})
+	var recovery blockcmd.RecoveryCoordinator
+	if bs != nil && bs.v2Recovery != nil {
+		recovery = bs.v2Recovery
+	}
+	var projection blockcmd.ProjectionReader
+	if bs != nil && bs.v2Core != nil {
+		projection = bs.v2Core
+	}
+	return blockcmd.NewDispatcher(
+		blockcmd.NewServiceOps(
+			coreCommandBackend{bs: bs},
+			recovery,
+			projection,
+			func(replicaID string) blockcmd.SessionInvalidator {
+				if bs == nil || bs.v2Orchestrator == nil {
+					return nil
+				}
+				return bs.v2Orchestrator.Registry.Sender(replicaID)
+			},
+		),
+		coreCommandEffects{bs: bs},
+	)
 }
 
-type coreCommandOps struct {
+func (bs *BlockService) commandBindings() *v2bridge.CommandBindings {
+	if bs == nil {
+		return nil
+	}
+	return v2bridge.NewCommandBindings(bs.blockStore, bs.listenAddr, bs.advertisedHost)
+}
+
+type coreCommandBackend struct {
 	bs *BlockService
 }
 
-func (ops coreCommandOps) ApplyRole(assignment blockvol.BlockVolumeAssignment) (bool, error) {
+func (ops coreCommandBackend) ApplyRole(assignment blockvol.BlockVolumeAssignment) (bool, error) {
 	if ops.bs == nil {
 		return false, nil
 	}
@@ -589,7 +617,7 @@ func (ops coreCommandOps) ApplyRole(assignment blockvol.BlockVolumeAssignment) (
 	return true, nil
 }
 
-func (ops coreCommandOps) StartReceiver(assignment blockvol.BlockVolumeAssignment) (bool, error) {
+func (ops coreCommandBackend) StartReceiver(assignment blockvol.BlockVolumeAssignment) (bool, error) {
 	if ops.bs == nil {
 		return false, nil
 	}
@@ -602,7 +630,7 @@ func (ops coreCommandOps) StartReceiver(assignment blockvol.BlockVolumeAssignmen
 	return true, nil
 }
 
-func (ops coreCommandOps) ConfigureShipper(volumeID string, replicas []engine.ReplicaAssignment) (bool, bool, error) {
+func (ops coreCommandBackend) ConfigureShipper(volumeID string, replicas []engine.ReplicaAssignment) (bool, bool, error) {
 	if ops.bs == nil {
 		return false, false, nil
 	}
@@ -630,52 +658,6 @@ func (ops coreCommandOps) ConfigureShipper(volumeID string, replicas []engine.Re
 		}
 	}
 	return true, ops.bs.isPrimaryShipperConnected(volumeID), nil
-}
-
-func (ops coreCommandOps) StartRecoveryTask(replicaID string, assignment blockvol.BlockVolumeAssignment) (bool, error) {
-	if ops.bs == nil || ops.bs.v2Recovery == nil {
-		return false, nil
-	}
-	ops.bs.v2Recovery.StartRecoveryTask(replicaID, []blockvol.BlockVolumeAssignment{assignment})
-	return true, nil
-}
-
-func (ops coreCommandOps) InvalidateSession(volumeID, reason string) (bool, error) {
-	if ops.bs == nil || ops.bs.v2Orchestrator == nil || ops.bs.v2Core == nil {
-		return false, nil
-	}
-	proj, ok := ops.bs.v2Core.Projection(volumeID)
-	if !ok {
-		return false, nil
-	}
-	for _, replicaID := range proj.ReplicaIDs {
-		sender := ops.bs.v2Orchestrator.Registry.Sender(replicaID)
-		if sender == nil {
-			continue
-		}
-		sender.InvalidateSession(reason, engine.StateDisconnected)
-	}
-	return true, nil
-}
-
-func (ops coreCommandOps) StartCatchUp(volumeID string, targetLSN uint64) (bool, error) {
-	if ops.bs == nil || ops.bs.v2Recovery == nil {
-		return false, nil
-	}
-	if err := ops.bs.v2Recovery.ExecutePendingCatchUp(volumeID, targetLSN); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (ops coreCommandOps) StartRebuild(volumeID string, targetLSN uint64) (bool, error) {
-	if ops.bs == nil || ops.bs.v2Recovery == nil {
-		return false, nil
-	}
-	if err := ops.bs.v2Recovery.ExecutePendingRebuild(volumeID, targetLSN); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 type coreCommandEffects struct {
@@ -719,13 +701,10 @@ func (bs *BlockService) applyRoleAssignment(a blockvol.BlockVolumeAssignment) er
 	if bs == nil || bs.blockStore == nil {
 		return nil
 	}
-	role := blockvol.RoleFromWire(a.Role)
-	ttl := blockvol.LeaseTTLFromWire(a.LeaseTtlMs)
-	if err := bs.blockStore.WithVolume(a.Path, func(vol *blockvol.BlockVol) error {
-		return vol.HandleAssignment(a.Epoch, role, ttl)
-	}); err != nil {
+	if err := bs.commandBindings().ApplyRole(a); err != nil {
 		return err
 	}
+	role := blockvol.RoleFromWire(a.Role)
 	bs.noteRoleApplied(a.Path, role)
 	bs.applyCoreEvent(engine.RoleApplied{ID: a.Path})
 	return nil
@@ -801,12 +780,7 @@ func (bs *BlockService) isPrimaryShipperConnected(path string) bool {
 	if bs == nil || bs.blockStore == nil {
 		return false
 	}
-	connected := false
-	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		connected = len(vol.ReplicaShipperStates()) > 0 && !vol.Status().ReplicaDegraded
-		return nil
-	})
-	return connected
+	return bs.commandBindings().IsPrimaryShipperConnected(path)
 }
 
 // setupPrimaryReplication configures WAL shipping from primary to replica
@@ -825,23 +799,11 @@ func (bs *BlockService) setupPrimaryReplication(path, replicaDataAddr, replicaCt
 		return nil
 	}
 
-	// Compute deterministic rebuild listen address.
-	_, _, rebuildPort := bs.ReplicationPorts(path)
-	host := bs.listenAddr
-	if idx := strings.LastIndex(host, ":"); idx >= 0 {
-		host = host[:idx]
-	}
-	rebuildAddr := fmt.Sprintf("%s:%d", host, rebuildPort)
-
-	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		vol.SetReplicaAddr(replicaDataAddr, replicaCtrlAddr)
-		// R1-2: Start rebuild server so replicas can catch up after failover.
-		if err := vol.StartRebuildServer(rebuildAddr); err != nil {
-			glog.Warningf("block service: start rebuild server %s on %s: %v", path, rebuildAddr, err)
-			// Non-fatal: WAL shipping can work without rebuild server.
-		}
-		return nil
-	}); err != nil {
+	rebuildAddr, err := bs.commandBindings().ConfigurePrimaryReplication(path, []blockvol.ReplicaAddr{{
+		DataAddr: replicaDataAddr,
+		CtrlAddr: replicaCtrlAddr,
+	}})
+	if err != nil {
 		glog.Warningf("block service: setup primary replication %s: %v", path, err)
 		return err
 	}
@@ -868,21 +830,8 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 		}
 	}
 
-	// Compute deterministic rebuild listen address.
-	_, _, rebuildPort := bs.ReplicationPorts(path)
-	host := bs.listenAddr
-	if idx := strings.LastIndex(host, ":"); idx >= 0 {
-		host = host[:idx]
-	}
-	rebuildAddr := fmt.Sprintf("%s:%d", host, rebuildPort)
-
-	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		vol.SetReplicaAddrs(addrs)
-		if err := vol.StartRebuildServer(rebuildAddr); err != nil {
-			glog.Warningf("block service: start rebuild server %s on %s: %v", path, rebuildAddr, err)
-		}
-		return nil
-	}); err != nil {
+	rebuildAddr, err := bs.commandBindings().ConfigurePrimaryReplication(path, addrs)
+	if err != nil {
 		glog.Warningf("block service: setup primary replication (multi) %s: %v", path, err)
 		return err
 	}
@@ -893,39 +842,13 @@ func (bs *BlockService) setupPrimaryReplicationMulti(path string, addrs []blockv
 
 // setupReplicaReceiver starts the replica WAL receiver.
 func (bs *BlockService) setupReplicaReceiver(path, dataAddr, ctrlAddr string) error {
-	// CP13-2: Pass the routable advertisedIP (from -ip flag, NOT from -id/serverID)
-	// so wildcard-bind listeners resolve to a real IP, not an opaque identity string.
-	var canonDataAddr, canonCtrlAddr string
-	advHost := bs.advertisedHost
-	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		if advHost != "" {
-			if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr, advHost); err != nil {
-				return err
-			}
-		} else {
-			if err := vol.StartReplicaReceiver(dataAddr, ctrlAddr); err != nil {
-				return err
-			}
-		}
-		// Read back canonical addresses from the receiver.
-		if vol.ReplicaReceiverAddr() != nil {
-			canonDataAddr = vol.ReplicaReceiverAddr().DataAddr
-			canonCtrlAddr = vol.ReplicaReceiverAddr().CtrlAddr
-		}
-		return nil
-	}); err != nil {
+	endpoints, err := bs.commandBindings().StartReceiver(path, dataAddr, ctrlAddr)
+	if err != nil {
 		glog.Warningf("block service: setup replica receiver %s: %v", path, err)
 		return err
 	}
-	// Fallback to assignment addresses if receiver didn't report.
-	if canonDataAddr == "" {
-		canonDataAddr = dataAddr
-	}
-	if canonCtrlAddr == "" {
-		canonCtrlAddr = ctrlAddr
-	}
-	bs.markReceiverReady(path, canonDataAddr, canonCtrlAddr)
-	glog.V(0).Infof("block service: replica %s receiving on %s/%s", path, canonDataAddr, canonCtrlAddr)
+	bs.markReceiverReady(path, endpoints.DataAddr, endpoints.CtrlAddr)
+	glog.V(0).Infof("block service: replica %s receiving on %s/%s", path, endpoints.DataAddr, endpoints.CtrlAddr)
 	return nil
 }
 
