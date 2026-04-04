@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
@@ -234,48 +235,63 @@ func (rm *RecoveryManager) runRecovery(ctx context.Context, task *recoveryTask, 
 	}
 }
 
-// buildRecoveryBundle creates recovery bindings from a real BlockVol via the
-// backend-binding factory. The host shell only calls WithVolume and delegates
-// Reader/Pinner/Adapter/Executor construction to v2bridge.BuildRecoveryBundle.
-func (rm *RecoveryManager) buildRecoveryBundle(volPath, rebuildAddr string) (*engine.RecoveryDriver, *v2bridge.Executor, error) {
+// recoveryContext holds the resolved context for one recovery execution.
+// Built by resolveRecoveryContext from replicaID + rebuildAddr.
+type recoveryContext struct {
+	volPath           string
+	driver            *engine.RecoveryDriver
+	executor          *v2bridge.Executor
+	replicaFlushedLSN uint64 // catch-up start point (0 if no session)
+}
+
+// resolveRecoveryContext resolves volume path, builds recovery bindings,
+// and looks up the replica's flushed progress. This is the shared host-side
+// context resolution for both catch-up and rebuild paths.
+func (rm *RecoveryManager) resolveRecoveryContext(replicaID, rebuildAddr string) (*recoveryContext, error) {
+	volPath := rm.volumePathForReplica(replicaID)
+	if volPath == "" {
+		return nil, fmt.Errorf("cannot determine volume path for %s", replicaID)
+	}
+
 	var bundle *v2bridge.RecoveryBundle
 	if err := rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
 		bundle = v2bridge.BuildRecoveryBundle(vol, rebuildAddr)
 		return nil
 	}); err != nil {
-		return nil, nil, err
+		return nil, fmt.Errorf("cannot access volume %s: %w", volPath, err)
 	}
+
 	driver := &engine.RecoveryDriver{Orchestrator: rm.bs.v2Orchestrator, Storage: bundle.Storage}
-	return driver, bundle.Executor, nil
+
+	var replicaFlushedLSN uint64
+	if s := rm.bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
+		if snap := s.SessionSnapshot(); snap != nil {
+			replicaFlushedLSN = snap.StartLSN
+		}
+	}
+
+	return &recoveryContext{
+		volPath:           volPath,
+		driver:            driver,
+		executor:          bundle.Executor,
+		replicaFlushedLSN: replicaFlushedLSN,
+	}, nil
 }
 
 func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAddr string) {
 	bs := rm.bs
-	volPath := rm.volumePathForReplica(replicaID)
-	if volPath == "" {
-		glog.Warningf("recovery: cannot determine volume path for %s", replicaID)
-		return
-	}
 
-	driver, executor, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	rctx, err := rm.resolveRecoveryContext(replicaID, rebuildAddr)
 	if err != nil {
-		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
+		glog.Warningf("recovery: %v", err)
 		return
-	}
-
-	// Look up replica's flushed progress for catch-up planning.
-	var replicaFlushedLSN uint64
-	if s := bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
-		if snap := s.SessionSnapshot(); snap != nil {
-			replicaFlushedLSN = snap.StartLSN
-		}
 	}
 
 	if ctx.Err() != nil {
 		return
 	}
 
-	plan, err := driver.PlanRecovery(replicaID, replicaFlushedLSN)
+	plan, err := rctx.driver.PlanRecovery(replicaID, rctx.replicaFlushedLSN)
 	if err != nil {
 		glog.Warningf("recovery: plan failed for %s: %v", replicaID, err)
 		return
@@ -283,20 +299,20 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
 		if bs.v2Core == nil {
-			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, executor)
+			rm.executeLegacyCatchUp(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
 			return
 		}
-		rm.coord.Store(volPath, &rt.PendingExecution{
-			VolumeID:      volPath,
+		rm.coord.Store(rctx.volPath, &rt.PendingExecution{
+			VolumeID:      rctx.volPath,
 			ReplicaID:     replicaID,
 			CatchUpTarget: plan.CatchUpTarget,
-			Driver:        driver,
+			Driver:        rctx.driver,
 			Plan:          plan,
-			CatchUpIO:     executor,
+			CatchUpIO:     rctx.executor,
 		})
-		bs.applyCoreEvent(engine.CatchUpPlanned{ID: volPath, TargetLSN: plan.CatchUpTarget})
-		if rm.coord.Has(volPath) {
-			rm.coord.Cancel(volPath, "start_catchup_not_emitted")
+		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, TargetLSN: plan.CatchUpTarget})
+		if rm.coord.Has(rctx.volPath) {
+			rm.coord.Cancel(rctx.volPath, "start_catchup_not_emitted")
 			return
 		}
 	case engine.OutcomeNeedsRebuild:
@@ -304,27 +320,22 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 		if plan.Proof != nil && plan.Proof.Reason != "" {
 			reason = plan.Proof.Reason
 		}
-		bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: volPath, Reason: reason})
+		bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: rctx.volPath, Reason: reason})
 		return
 	}
 
 	if ctx.Err() != nil {
-		driver.CancelPlan(plan, "context_cancelled")
+		rctx.driver.CancelPlan(plan, "context_cancelled")
 		return
 	}
 }
 
 func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAddr string) {
 	bs := rm.bs
-	volPath := rm.volumePathForReplica(replicaID)
-	if volPath == "" {
-		glog.Warningf("recovery: cannot determine volume path for %s", replicaID)
-		return
-	}
 
-	driver, executor, err := rm.buildRecoveryBundle(volPath, rebuildAddr)
+	rctx, err := rm.resolveRecoveryContext(replicaID, rebuildAddr)
 	if err != nil {
-		glog.Warningf("recovery: cannot access volume %s: %v", volPath, err)
+		glog.Warningf("recovery: %v", err)
 		return
 	}
 
@@ -332,30 +343,30 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 
-	plan, err := driver.PlanRebuild(replicaID)
+	plan, err := rctx.driver.PlanRebuild(replicaID)
 	if err != nil {
 		glog.Warningf("recovery: rebuild plan failed for %s: %v", replicaID, err)
 		return
 	}
 	if bs.v2Core == nil {
-		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, executor)
+		rm.executeLegacyRebuild(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
 		return
 	}
 	pe := &rt.PendingExecution{
-		VolumeID:         volPath,
+		VolumeID:         rctx.volPath,
 		ReplicaID:        replicaID,
 		RebuildTargetLSN: plan.RebuildTargetLSN,
-		Driver:           driver,
+		Driver:           rctx.driver,
 		Plan:             plan,
-		RebuildIO:        executor,
+		RebuildIO:        rctx.executor,
 	}
-	rm.coord.Store(volPath, pe)
+	rm.coord.Store(rctx.volPath, pe)
 	if rm.OnPendingExecution != nil {
-		rm.OnPendingExecution(volPath, pe)
+		rm.OnPendingExecution(rctx.volPath, pe)
 	}
-	bs.applyCoreEvent(engine.RebuildStarted{ID: volPath, TargetLSN: plan.RebuildTargetLSN})
-	if rm.coord.Has(volPath) {
-		rm.coord.Cancel(volPath, "start_rebuild_not_emitted")
+	bs.applyCoreEvent(engine.RebuildStarted{ID: rctx.volPath, TargetLSN: plan.RebuildTargetLSN})
+	if rm.coord.Has(rctx.volPath) {
+		rm.coord.Cancel(rctx.volPath, "start_rebuild_not_emitted")
 	}
 }
 
