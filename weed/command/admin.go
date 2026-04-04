@@ -30,6 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 var (
@@ -48,6 +49,8 @@ type AdminOptions struct {
 	dataDir          *string
 	icebergPort      *int
 	urlPrefix        *string
+	debug            *bool
+	debugPort        *int
 }
 
 func init() {
@@ -64,7 +67,14 @@ func init() {
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
+	a.debug = cmdAdmin.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	a.debugPort = cmdAdmin.Flag.Int("debug.port", 6060, "http port for debugging")
 }
+
+var (
+	adminCpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
+	adminMemProfile = cmdAdmin.Flag.String("memprofile", "", "memory profile output file")
+)
 
 var cmdAdmin = &Command{
 	UsageLine: "admin -port=23646 -master=localhost:9333 [-port.grpc=33646] [-dataDir=/path/to/data]",
@@ -149,6 +159,12 @@ var cmdAdmin = &Command{
 }
 
 func runAdmin(cmd *Command, args []string) bool {
+	if *a.debug {
+		grace.StartDebugServer(*a.debugPort)
+	}
+
+	grace.SetupProfiling(*adminCpuProfile, *adminMemProfile)
+
 	// Load security configuration
 	util.LoadSecurityConfiguration()
 
