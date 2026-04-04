@@ -30,6 +30,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 )
 
 var (
@@ -48,6 +49,10 @@ type AdminOptions struct {
 	dataDir          *string
 	icebergPort      *int
 	urlPrefix        *string
+	debug            *bool
+	debugPort        *int
+	cpuProfile       *string
+	memProfile       *string
 }
 
 func init() {
@@ -64,6 +69,10 @@ func init() {
 	a.readOnlyPassword = cmdAdmin.Flag.String("readOnlyPassword", "", "read-only user password (optional, for view-only access; requires adminPassword to be set)")
 	a.icebergPort = cmdAdmin.Flag.Int("iceberg.port", 8181, "Iceberg REST Catalog port (0 to hide in UI)")
 	a.urlPrefix = cmdAdmin.Flag.String("urlPrefix", "", "URL path prefix when running behind a reverse proxy under a subdirectory (e.g. /seaweedfs)")
+	a.debug = cmdAdmin.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
+	a.debugPort = cmdAdmin.Flag.Int("debug.port", 6060, "http port for debugging")
+	a.cpuProfile = cmdAdmin.Flag.String("cpuprofile", "", "cpu profile output file")
+	a.memProfile = cmdAdmin.Flag.String("memprofile", "", "memory profile output file")
 }
 
 var cmdAdmin = &Command{
@@ -140,6 +149,16 @@ var cmdAdmin = &Command{
     - All static assets, API endpoints, and navigation links will use the prefix
     - Session cookies are scoped to the prefix path
 
+  Debugging and Profiling:
+    - Use -debug to start a pprof HTTP server for live profiling (localhost only)
+    - Set -debug.port to choose the pprof port (default 6060)
+    - Profiles are accessible at http://127.0.0.1:<debug.port>/debug/pprof/
+    - Use -cpuprofile and -memprofile to write profiles to files on shutdown
+    - WARNING: -debug exposes runtime internals; use only in trusted environments
+    - Examples:
+      weed admin -debug -debug.port=6060 -master="localhost:9333"
+      weed admin -cpuprofile=cpu.prof -memprofile=mem.prof -master="localhost:9333"
+
   Configuration File:
     - The security.toml file is read from ".", "$HOME/.seaweedfs/",
       "/usr/local/etc/seaweedfs/", or "/etc/seaweedfs/", in that order
@@ -149,6 +168,12 @@ var cmdAdmin = &Command{
 }
 
 func runAdmin(cmd *Command, args []string) bool {
+	if *a.debug {
+		grace.StartDebugServer(*a.debugPort)
+	}
+
+	grace.SetupProfiling(*a.cpuProfile, *a.memProfile)
+
 	// Load security configuration
 	util.LoadSecurityConfiguration()
 
