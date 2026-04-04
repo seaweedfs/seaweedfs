@@ -391,6 +391,79 @@ Constraint / overclaim / proof review:
 
 ---
 
+#### `16B` Delivery Note Rev 3
+
+Date: 2026-04-04
+Scope: bounded rebuild execution ownership on the same recovery path
+
+What changed:
+
+1. pending recovery execution storage now carries engine-level catch-up / rebuild
+   I/O interfaces instead of a concrete `v2bridge.Executor` only
+2. `RecoveryManager.runRebuild()` now follows the same bounded pattern as
+   catch-up on the core-present path:
+   - plan rebuild
+   - cache pending execution
+   - emit `RebuildStarted`
+   - execute only if `StartRebuildCommand` consumes the pending plan
+3. if no fresh `StartRebuildCommand` is emitted, pending rebuild execution is
+   cancelled fail-closed instead of executing implicitly
+4. added focused rebuild proofs:
+   - live `runRebuild()` caches pending rebuild, emits `RebuildStarted`,
+     consumes `StartRebuildCommand`, and closes completion back into projection
+   - no fresh command means no implicit rebuild execution
+
+Files changed:
+
+1. `weed/server/block_recovery.go`
+   - split pending execution I/O into `engine.CatchUpIO` / `engine.RebuildIO`
+   - reused shared execution helpers for rebuild ownership closure
+2. `weed/server/block_recovery_test.go`
+   - added bounded live-path rebuild ownership proof
+   - added bounded rebuild fail-closed proof
+
+Bounded contract:
+
+`16B Rev 3` accepts only this:
+
+1. bounded rebuild execution now runs from `StartRebuildCommand`
+2. the corresponding rebuild completion observation still closes back into the
+   core
+3. if no fresh rebuild command is emitted, the pending rebuild plan does not run
+   implicitly
+
+It does not yet accept:
+
+1. full recovery-loop closure
+2. broad multi-replica rebuild ownership
+3. launch / rollout readiness
+
+Validation:
+
+1. `go test ./weed/server -run "TestP(4_LivePath_RealVol_ReachesPlan|16B_(Run(CatchUp|Rebuild)_|StartRebuildCommand_))"`
+2. `go test ./weed/server -run "Test(P4_|P16B_|BlockService_(ApplyAssignments|BarrierRejected|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)|Registry_(ReplicaReadyRequiresReplicaHeartbeat|UpdateFullHeartbeat|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaDegraded|UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady)|EntryToVolumeInfo_(IncludesHealthState|ReflectsCoreInfluencedReadyConsume|ReflectsCoreInfluencedDegradedConsume)|BlockVolume(LookupHandler_ReflectsCoreInfluencedReadyConsume|ListHandler_ReflectsCoreInfluencedDegradedConsume)|BlockStatusHandler_(IncludesHealthCounts|ReflectsCoreInfluencedConsumeCounts)|LookupResponseFromEntry_PublicationMinimalSurface)"`
+3. result: `PASS`
+
+Constraint / overclaim / proof review:
+
+1. semantic constraint satisfied
+   - `Phase 16` now has bounded command ownership for both catch-up and rebuild
+     execution on the selected recovery path
+2. overclaim avoided
+   - this revision proves bounded rebuild execution ownership, not full
+     recovery-loop closure or broad rebuild runtime closure
+3. proof preserved
+   - accepted `P4` no-core recovery tests still pass, and the existing
+     `15B/16A/16B` consume-chain proofs remain green
+
+Review status:
+
+1. this is a new working-state delivery beyond the previously reviewed
+   catch-up-only checkpoint
+2. external review has not yet been re-run for this widened `16B` state
+
+---
+
 #### `16` Checkpoint Review Note
 
 Date: 2026-04-04
@@ -403,6 +476,8 @@ Current checkpoint judgment:
 3. `16B` has one accepted current closure:
    - live recovery observations close back into the core
    - bounded catch-up execution is core-command-driven
+4. rebuild observation ingress exists, but rebuild execution ownership is not
+   part of the accepted checkpoint
 
 Recommended review target:
 
@@ -411,6 +486,7 @@ Recommended review target:
    - `16A delivered`
    - `16B current bounded closure`
 2. do not review it as:
+   - rebuild execution ownership
    - full rebuild execution ownership
    - full recovery-loop closure
    - launch / rollout readiness
@@ -427,3 +503,45 @@ Suggested commit boundary if review is accepted:
 8. `weed/server/master_block_observability_test.go`
 9. `weed/server/block_recovery.go`
 10. `weed/server/block_recovery_test.go`
+
+---
+
+#### `16B` Post-Review Fix Note
+
+Date: 2026-04-04
+
+Context:
+
+1. prior `manager` review accepted widened `16B Rev 3` with two minor fixes
+2. required fixes were:
+   - add one positive live-path rebuild ownership proof
+   - tighten `Phase 16` wording from `first bounded` to `current widened bounded`
+
+What was changed:
+
+1. `weed/server/block_recovery.go`
+   - added a minimal test hook so focused tests can override freshly cached
+     pending rebuild I/O without changing production ownership semantics
+2. `weed/server/block_recovery_test.go`
+   - replaced the seeded positive rebuild proof with
+     `TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath`
+   - the test now proves the full live chain:
+     `runRebuild()` -> pending rebuild cached -> `RebuildStarted` ->
+     `StartRebuildCommand` -> adapter execution -> rebuild completion
+3. `sw-block/.private/phase/phase-16.md`
+   - tightened wording to `current widened bounded runtime checkpoint`
+4. `sw-block/.private/phase/phase-16-rev3-review.md`
+   - updated evidence summary to cite the live-path rebuild proof
+5. `sw-block/.private/phase/phase-16-rev3-manager-rereview.md`
+   - added a bounded delta note for `manager` re-review only
+
+Validation:
+
+1. focused recovery suite: `PASS`
+2. combined `P4/15B/16A/16B` proof suite: `PASS`
+3. lints: clean
+
+Review intent:
+
+1. this note does not broaden `16B`
+2. it only closes the two minor gaps identified by `manager`

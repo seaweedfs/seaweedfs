@@ -93,8 +93,8 @@ Current chosen path:
 1. live recovery observations now return into the core on catch-up and rebuild
    entry/exit points
 2. bounded catch-up execution now runs from `StartCatchUpCommand`
-3. rebuild execution is the next likely runtime-driving candidate on the same
-   path
+3. bounded rebuild execution now runs from `StartRebuildCommand`
+4. full recovery-loop closure remains outside the current bounded path
 
 Status:
 
@@ -102,7 +102,7 @@ Status:
 
 ## Current Checkpoint Review Target
 
-The current review target is the first bounded integrated runtime checkpoint
+The current review target is the current widened bounded runtime checkpoint
 after `Phase 15` closeout:
 
 1. `Phase 15` delivered:
@@ -113,27 +113,32 @@ after `Phase 15` closeout:
      - `start_receiver`
      - `configure_shipper`
      - `invalidate_session`
-3. `16B` active with accepted current closure:
+3. previously reviewed `16B` closure:
    - live recovery observations return into the core
    - bounded catch-up execution runs from `StartCatchUpCommand`
+4. current working state extends that bounded path with:
+   - bounded rebuild execution from `StartRebuildCommand`
 
 This checkpoint is intentionally still bounded:
 
-1. `start_rebuild` execution ownership is not yet in scope
-2. broad recovery-loop closure is not yet claimed
+1. broad recovery-loop closure is not yet claimed
+2. broad end-to-end failover/recovery/publication proof is not yet claimed
 3. launch / rollout readiness is not claimed
 
 ## Immediate Next Step
 
-Start `16A` with the narrowest runtime-driving execution decision still owned by
-adapter branching:
+The current checkpoint is now good enough to take as a stage/commit boundary:
 
-1. choose one path where the core already emits a bounded command
-2. let the adapter execute from that command instead of from implicit local
-   control flow
-3. keep `blockvol` as execution backend and treat its local state only as
-   observation input
+1. `Phase 15` delivered
+2. `16A` delivered
+3. `16B` bounded recovery execution ownership:
+   - live recovery observations close back into the core
+   - bounded catch-up execution is core-command-driven
+   - bounded rebuild execution is core-command-driven
 
-The next likely engineering target is the matching rebuild execution path,
-unless the current `Phase 15 + 16A + 16B` boundary is accepted as the next
-commit checkpoint first.
+After that checkpoint, decide whether `Phase 16` needs one stricter end-to-end
+recovery/publication scenario before moving beyond the phase:
+
+1. keep the current bounded ownership claim narrow
+2. only add broader scenario proof if it materially strengthens the accepted bar
+3. do not broaden this into launch claims

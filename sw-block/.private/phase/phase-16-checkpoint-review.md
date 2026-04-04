@@ -42,12 +42,14 @@ Bounded live recovery closure now covers:
 1. live recovery observations return into the core on catch-up / rebuild
    entry/exit points
 2. bounded catch-up execution runs from `StartCatchUpCommand`
-3. old no-core path compatibility remains preserved
+3. rebuild execution ownership is not part of the accepted checkpoint
+4. old no-core path compatibility remains preserved
 
 Expected judgment:
 
 1. this is a real bounded runtime closure step
-2. it is not yet full recovery-loop ownership
+2. rebuild is still observation-only / next candidate on this path
+3. it is not yet full recovery-loop ownership
 
 ## What Is Explicitly Out Of Scope
 

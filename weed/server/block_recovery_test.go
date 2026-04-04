@@ -2,7 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -100,6 +102,25 @@ func createTestBlockServiceWithVolCoreNoRecovery(t *testing.T) (*BlockService, s
 	})
 
 	return bs, volPath
+}
+
+type fakeRebuildIO struct {
+	achievedLSN uint64
+}
+
+func (f fakeRebuildIO) TransferFullBase(committedLSN uint64) (uint64, error) {
+	if f.achievedLSN > 0 {
+		return f.achievedLSN, nil
+	}
+	return committedLSN, nil
+}
+
+func (f fakeRebuildIO) TransferSnapshot(snapshotLSN uint64) error {
+	return nil
+}
+
+func (f fakeRebuildIO) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
+	return endInclusive, nil
 }
 
 // --- Live-path with real vol: reaches planning ---
@@ -271,6 +292,141 @@ func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
 	}
 	if got := bs.ExecutedCoreCommands(volPath); len(got) != 3 {
 		t.Fatalf("needs_rebuild path should not execute start_catchup, got %v", got)
+	}
+}
+
+func TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	bs.v2Orchestrator.ProcessAssignment(engine.AssignmentIntent{
+		Replicas: []engine.ReplicaAssignment{{
+			ReplicaID: replicaID,
+			Endpoint:  engine.Endpoint{DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334"},
+		}},
+		Epoch: 1,
+		RecoveryTargets: map[string]engine.SessionKind{
+			replicaID: engine.SessionRebuild,
+		},
+	})
+
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender not found")
+	}
+	snap := sender.SessionSnapshot()
+	if snap == nil || snap.Kind != engine.SessionRebuild {
+		t.Fatalf("session=%+v", snap)
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *pendingRecoveryExecution) {
+		if volumeID != volPath || pending == nil || pending.plan == nil {
+			return
+		}
+		pending.rebuildIO = fakeRebuildIO{achievedLSN: pending.plan.RebuildTargetLSN}
+	}
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+	rm.runRebuild(context.Background(), replicaID, rebuildAddr)
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected cached core projection after live command-driven rebuild")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s, want in_sync", sender.State())
+	}
+	if got := bs.ExecutedCoreCommands(volPath); len(got) == 0 || got[len(got)-1] != "start_rebuild" {
+		t.Fatalf("expected start_rebuild execution, got %v", got)
+	}
+}
+
+func TestP16B_RunRebuild_FailClosedWithoutFreshStartRebuildCommand(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	var targetLSN uint64
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		if err := vol.ForceFlush(); err != nil {
+			return err
+		}
+		targetLSN = vol.StatusSnapshot().CommittedLSN
+		return nil
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	bs.v2Orchestrator.ProcessAssignment(engine.AssignmentIntent{
+		Replicas: []engine.ReplicaAssignment{{
+			ReplicaID: replicaID,
+			Endpoint:  engine.Endpoint{DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334"},
+		}},
+		Epoch: 1,
+		RecoveryTargets: map[string]engine.SessionKind{
+			replicaID: engine.SessionRebuild,
+		},
+	})
+
+	// Prime the core with the same rebuild target before wiring recovery,
+	// so the subsequent live run does not emit a fresh start_rebuild command.
+	bs.applyCoreEvent(engine.RebuildStarted{ID: volPath, TargetLSN: targetLSN})
+	before := bs.ExecutedCoreCommands(volPath)
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+	rm.runRebuild(context.Background(), replicaID, rebuildAddr)
+
+	after := bs.ExecutedCoreCommands(volPath)
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("rebuild should fail closed without fresh start_rebuild command: before=%v after=%v", before, after)
+	}
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender not found")
+	}
+	if sender.State() == engine.StateInSync {
+		t.Fatalf("sender should not become in_sync without executing start_rebuild, state=%s", sender.State())
 	}
 }
 

@@ -39,6 +39,10 @@ type RecoveryManager struct {
 	// TestHook: if set, called before execution starts. Tests use this
 	// to hold the goroutine alive for serialized-replacement proofs.
 	OnBeforeExecute func(replicaID string)
+
+	// TestHook: if set, may adjust a freshly cached pending execution before
+	// the core event is emitted. Used only by focused ownership tests.
+	OnPendingExecution func(volumeID string, pending *pendingRecoveryExecution)
 }
 
 type pendingRecoveryExecution struct {
@@ -46,7 +50,8 @@ type pendingRecoveryExecution struct {
 	replicaID string
 	driver    *engine.RecoveryDriver
 	plan      *engine.RecoveryPlan
-	io        *v2bridge.Executor
+	catchUpIO engine.CatchUpIO
+	rebuildIO engine.RebuildIO
 }
 
 func NewRecoveryManager(bs *BlockService) *RecoveryManager {
@@ -282,7 +287,7 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 			replicaID: replicaID,
 			driver:    driver,
 			plan:      plan,
-			io:        executor,
+			catchUpIO: executor,
 		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: volPath, TargetLSN: plan.CatchUpTarget})
 		if rm.hasPendingExecution(volPath) {
@@ -355,8 +360,13 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		replicaID: replicaID,
 		driver:    driver,
 		plan:      plan,
-		io:        executor,
+		rebuildIO: executor,
 	})
+	if rm.OnPendingExecution != nil {
+		if pending, ok := rm.peekPendingExecution(volPath); ok {
+			rm.OnPendingExecution(volPath, pending)
+		}
+	}
 	bs.applyCoreEvent(engine.RebuildStarted{ID: volPath, TargetLSN: plan.RebuildTargetLSN})
 	if rm.hasPendingExecution(volPath) {
 		rm.cancelPendingExecution(volPath, "start_rebuild_not_emitted")
@@ -379,6 +389,13 @@ func (rm *RecoveryManager) takePendingExecution(volumeID string) (*pendingRecove
 	if ok {
 		delete(rm.pending, volumeID)
 	}
+	return pending, ok
+}
+
+func (rm *RecoveryManager) peekPendingExecution(volumeID string) (*pendingRecoveryExecution, bool) {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	pending, ok := rm.pending[volumeID]
 	return pending, ok
 }
 
@@ -406,7 +423,7 @@ func (rm *RecoveryManager) ExecutePendingCatchUp(volumeID string, targetLSN uint
 		pending.driver.CancelPlan(pending.plan, "start_catchup_target_mismatch")
 		return nil
 	}
-	return rm.executeCatchUpPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.io)
+	return rm.executeCatchUpPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.catchUpIO)
 }
 
 func (rm *RecoveryManager) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
@@ -418,10 +435,10 @@ func (rm *RecoveryManager) ExecutePendingRebuild(volumeID string, targetLSN uint
 		pending.driver.CancelPlan(pending.plan, "start_rebuild_target_mismatch")
 		return nil
 	}
-	return rm.executeRebuildPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.io)
+	return rm.executeRebuildPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.rebuildIO)
 }
 
-func (rm *RecoveryManager) executeCatchUpPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io *v2bridge.Executor) error {
+func (rm *RecoveryManager) executeCatchUpPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.CatchUpIO) error {
 	exec := engine.NewCatchUpExecutor(driver, plan)
 	exec.IO = io
 	if err := exec.Execute(nil, 0); err != nil {
@@ -438,7 +455,7 @@ func (rm *RecoveryManager) executeCatchUpPlan(volumeID, replicaID string, driver
 	return nil
 }
 
-func (rm *RecoveryManager) executeRebuildPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io *v2bridge.Executor) error {
+func (rm *RecoveryManager) executeRebuildPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.RebuildIO) error {
 	exec := engine.NewRebuildExecutor(driver, plan)
 	exec.IO = io
 	if err := exec.Execute(); err != nil {
