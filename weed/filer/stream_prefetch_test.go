@@ -39,7 +39,8 @@ func (m *testMasterClient) InvalidateCache(fileId string) {
 
 func noopJwt(fileId string) string { return "" }
 
-// createTestServer creates a mock volume server with configurable behavior
+// createTestServer creates a mock volume server that serves chunk data.
+// Supports Range header for partial chunk reads (exercising OffsetInChunk paths).
 func createTestServer(chunkData map[string][]byte) *httptest.Server {
 	var mu sync.RWMutex
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -54,6 +55,26 @@ func createTestServer(chunkData map[string][]byte) *httptest.Server {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
+
+		// Handle Range header for partial chunk reads
+		rangeHeader := r.Header.Get("Range")
+		if rangeHeader != "" {
+			var start, end int64
+			if _, err := fmt.Sscanf(rangeHeader, "bytes=%d-%d", &start, &end); err == nil {
+				if start < 0 || end >= int64(len(data)) || start > end {
+					w.Header().Set("Content-Range", fmt.Sprintf("bytes */%d", len(data)))
+					w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+					return
+				}
+				rangeData := data[start : end+1]
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)))
+				w.Header().Set("Content-Length", fmt.Sprintf("%d", len(rangeData)))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(rangeData)
+				return
+			}
+		}
+
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 		w.WriteHeader(http.StatusOK)
 		w.Write(data)
@@ -66,14 +87,12 @@ func makeChunksAndServer(t *testing.T, numChunks, chunkSize int) ([]*filer_pb.Fi
 
 	chunkData := make(map[string][]byte, numChunks)
 	chunks := make([]*filer_pb.FileChunk, numChunks)
-	allData := make([]byte, 0, numChunks*chunkSize)
 
 	for i := 0; i < numChunks; i++ {
 		fileId := fmt.Sprintf("1,%x", i)
 		data := make([]byte, chunkSize)
 		rand.Read(data)
 		chunkData[fileId] = data
-		allData = append(allData, data...)
 
 		chunks[i] = &filer_pb.FileChunk{
 			FileId:       fileId,
