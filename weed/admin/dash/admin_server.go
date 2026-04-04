@@ -125,7 +125,7 @@ type AdminServer struct {
 
 // Type definitions moved to types.go
 
-func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int) *AdminServer {
+func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, icebergPort int, s3ConfigFile string) *AdminServer {
 	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.admin")
 
 	// Create master client with multiple master support
@@ -192,6 +192,13 @@ func NewAdminServer(masters string, templateFS http.FileSystem, dataDir string, 
 			} else {
 				glog.V(0).Infof("Credential store %s does not support filer address function", store.GetName())
 			}
+		}
+	}
+
+	// Load static S3 identities from config file if specified
+	if s3ConfigFile != "" && credentialManager != nil {
+		if err := credentialManager.LoadS3ConfigFile(s3ConfigFile); err != nil {
+			glog.Warningf("Failed to load S3 config file for static identities: %v", err)
 		}
 	}
 
