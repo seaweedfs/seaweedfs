@@ -78,12 +78,16 @@ const MaxTasksPerType = 100
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
 
-	// Enforce per-type capacity limit
-	if mq.countTasksByType(task.Type) >= MaxTasksPerType {
-		mq.mutex.Unlock()
-		glog.V(1).Infof("Task skipped (type %s at capacity %d): volume %d on %s",
-			task.Type, MaxTasksPerType, task.VolumeID, task.Server)
-		return
+	// Enforce per-type capacity limit (only counting active tasks)
+	if mq.countActiveTasksByType(task.Type) >= MaxTasksPerType {
+		// Purge terminal tasks first, then recheck
+		mq.purgeTerminalTasksLocked()
+		if mq.countActiveTasksByType(task.Type) >= MaxTasksPerType {
+			mq.mutex.Unlock()
+			glog.V(1).Infof("Task skipped (type %s at capacity %d): volume %d on %s",
+				task.Type, MaxTasksPerType, task.VolumeID, task.Server)
+			return
+		}
 	}
 
 	// Enforce one queued/active task per volume (across all task types).
@@ -153,15 +157,28 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 
 // hasQueuedOrActiveTaskForVolume checks if any pending/assigned/in-progress task already exists for this volume.
 // Caller must hold mq.mutex.
-// countTasksByType returns the number of non-terminal tasks of a given type. Caller must hold mq.mutex.
-func (mq *MaintenanceQueue) countTasksByType(taskType MaintenanceTaskType) int {
+// countActiveTasksByType returns the number of active (non-terminal) tasks of a given type. Caller must hold mq.mutex.
+func (mq *MaintenanceQueue) countActiveTasksByType(taskType MaintenanceTaskType) int {
 	count := 0
 	for _, t := range mq.tasks {
 		if t.Type == taskType {
-			count++
+			switch t.Status {
+			case TaskStatusPending, TaskStatusAssigned, TaskStatusInProgress:
+				count++
+			}
 		}
 	}
 	return count
+}
+
+// purgeTerminalTasksLocked removes terminal tasks from the in-memory map. Caller must hold mq.mutex.
+func (mq *MaintenanceQueue) purgeTerminalTasksLocked() {
+	for id, task := range mq.tasks {
+		switch task.Status {
+		case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
+			delete(mq.tasks, id)
+		}
+	}
 }
 
 func (mq *MaintenanceQueue) hasQueuedOrActiveTaskForVolume(volumeID uint32) bool {
@@ -265,25 +282,18 @@ func (mq *MaintenanceQueue) AddTasksFromResults(results []*TaskDetectionResult) 
 	}
 }
 
-// purgeTerminalTasks removes completed/failed/cancelled tasks from memory and disk.
-// Called before adding new scan results so old unimportant tasks don't accumulate.
+// purgeTerminalTasks removes completed/failed/cancelled tasks from memory.
+// Terminal tasks are already deleted from disk by CompleteTask, so this
+// only needs to clean up the in-memory map.
 func (mq *MaintenanceQueue) purgeTerminalTasks() {
 	mq.mutex.Lock()
-	var toDelete []string
-	for id, task := range mq.tasks {
-		switch task.Status {
-		case TaskStatusCompleted, TaskStatusFailed, TaskStatusCancelled:
-			toDelete = append(toDelete, id)
-			delete(mq.tasks, id)
-		}
-	}
+	before := len(mq.tasks)
+	mq.purgeTerminalTasksLocked()
+	purged := before - len(mq.tasks)
 	mq.mutex.Unlock()
 
-	if len(toDelete) > 0 && mq.persistence != nil {
-		for _, id := range toDelete {
-			mq.persistence.DeleteTaskState(id)
-		}
-		glog.V(1).Infof("Purged %d terminal tasks from memory and disk", len(toDelete))
+	if purged > 0 {
+		glog.V(1).Infof("Purged %d terminal tasks from memory", purged)
 	}
 }
 
