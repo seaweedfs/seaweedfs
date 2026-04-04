@@ -1053,7 +1053,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Prepare streaming function with simple master client wrapper
 	tStreamPrep := time.Now()
 	// Use filerClient directly (not wrapped) so it can support cache invalidation
-	streamFn, err := filer.PrepareStreamContentWithThrottler(
+	streamFn, err := filer.PrepareStreamContentWithPrefetch(
 		ctx,
 		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
@@ -1061,6 +1061,7 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		offset,
 		size,
 		0, // no throttling
+		4, // prefetch 4 chunks ahead for overlapped fetching
 	)
 	streamPrepTime = time.Since(tStreamPrep)
 	if err != nil {
@@ -1928,7 +1929,7 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 	}
 
 	// Create streaming reader - use filerClient directly for cache invalidation support
-	streamFn, err := filer.PrepareStreamContentWithThrottler(
+	streamFn, err := filer.PrepareStreamContentWithPrefetch(
 		ctx,
 		s3a.filerClient,
 		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
@@ -1936,6 +1937,7 @@ func (s3a *S3ApiServer) getEncryptedStreamFromVolumes(ctx context.Context, entry
 		0,
 		totalSize,
 		0,
+		4, // prefetch 4 chunks ahead for overlapped fetching
 	)
 	if err != nil {
 		return nil, err
