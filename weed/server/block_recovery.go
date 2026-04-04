@@ -72,7 +72,7 @@ func NewRecoveryManager(bs *BlockService) *RecoveryManager {
 // goroutines. Core-present paths should use StartRecoveryTask instead.
 func (rm *RecoveryManager) HandleAssignmentResult(result engine.AssignmentResult, assignments []blockvol.BlockVolumeAssignment) {
 	for _, replicaID := range result.Removed {
-		rm.cancelAndDrain(replicaID, true)
+		rm.cancelAndDrainWithReason(replicaID, true, "recovery_removed")
 	}
 	for _, replicaID := range result.SessionsSuperseded {
 		rm.cancelAndDrain(replicaID, false)
@@ -89,7 +89,7 @@ func (rm *RecoveryManager) HandleAssignmentResult(result engine.AssignmentResult
 // execution on the bounded live path.
 func (rm *RecoveryManager) HandleRemovedAssignments(result engine.AssignmentResult) {
 	for _, replicaID := range result.Removed {
-		rm.cancelAndDrain(replicaID, true)
+		rm.cancelAndDrainWithReason(replicaID, true, "recovery_removed")
 	}
 }
 
@@ -100,9 +100,26 @@ func (rm *RecoveryManager) StartRecoveryTask(replicaID string, assignments []blo
 	rm.startTask(replicaID, assignments)
 }
 
+// DrainRecoveryTask drains removed recovery work from an explicit core-owned
+// command seam on the core-present path.
+func (rm *RecoveryManager) DrainRecoveryTask(replicaID, reason string) {
+	if reason == "" {
+		reason = "recovery_removed"
+	}
+	rm.cancelAndDrainWithReason(replicaID, true, reason)
+}
+
 // cancelAndDrain cancels a running task and WAITS for it to exit.
 // This ensures no overlap between old and new owners.
 func (rm *RecoveryManager) cancelAndDrain(replicaID string, invalidateSession bool) {
+	reason := ""
+	if invalidateSession {
+		reason = "recovery_removed"
+	}
+	rm.cancelAndDrainWithReason(replicaID, invalidateSession, reason)
+}
+
+func (rm *RecoveryManager) cancelAndDrainWithReason(replicaID string, invalidateSession bool, reason string) {
 	rm.mu.Lock()
 	task, ok := rm.tasks[replicaID]
 	if !ok {
@@ -113,7 +130,7 @@ func (rm *RecoveryManager) cancelAndDrain(replicaID string, invalidateSession bo
 	task.cancel()
 	if invalidateSession && rm.bs.v2Orchestrator != nil {
 		if s := rm.bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
-			s.InvalidateSession("recovery_removed", engine.StateDisconnected)
+			s.InvalidateSession(reason, engine.StateDisconnected)
 		}
 	}
 	delete(rm.tasks, replicaID)

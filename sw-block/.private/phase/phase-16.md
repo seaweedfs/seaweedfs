@@ -370,6 +370,91 @@ Evidence:
 
 1. focused working-tree change after `92c006eb2`
 
+### `16J`: Removed-Replica Recovery Drain Ownership
+
+Goal:
+
+1. close one more bounded recovery-loop gap by moving removed-replica recovery
+   drain ownership off the direct orchestrator-result seam and onto an explicit
+   core-owned path
+2. keep the slice limited to removed-replica drain / invalidation on the
+   core-present path, not broad recovery-loop closure
+
+Acceptance object:
+
+1. on the core-present path, replica removal no longer requires
+   `HandleRemovedAssignments(result)` as the primary recovery-drain trigger
+2. the host drains removed recovery work because of an explicit core-owned
+   command or event seam
+3. current bounded startup / execution / observation proofs remain green
+4. this slice still does not yet claim broad failover/publication closure
+
+Current chosen path:
+
+1. define one bounded core-owned seam for removed-replica recovery drain
+2. rebind the core-present host path to consume that seam instead of direct
+   orchestrator-result removal handling
+3. keep legacy no-core compatibility unchanged
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. the core now emits a bounded `drain_recovery_task` command when assignment
+   delivery removes a previously recovery-owned replica target
+2. the core-present host path drains removed recovery work from that command
+   instead of using direct `orchestrator.ProcessAssignment(...).Removed` as the
+   primary trigger
+3. legacy no-core compatibility remains isolated in `RecoveryManager`
+
+Evidence:
+
+1. focused working-tree change after `5fd9ec0ed`
+
+### `16K`: Replica-Scoped Session Invalidation
+
+Goal:
+
+1. close one bounded multi-replica runtime gap by making per-replica failure
+   invalidation explicit instead of broad volume-wide invalidation
+2. keep the slice limited to replica-scoped invalidation for replica-scoped
+   recovery events, not broad failover/publication closure
+
+Acceptance object:
+
+1. a replica-scoped recovery failure/escalation on the core-present path can
+   invalidate only the affected replica session
+2. volume-wide invalidation paths remain volume-wide where the event itself is
+   volume-scoped
+3. current bounded startup / execution / drain proofs remain green
+4. this slice still does not yet claim broad failover/publication closure
+
+Current chosen path:
+
+1. widen `InvalidateSessionCommand` from volume-only addressing to optional
+   replica-scoped addressing
+2. emit replica-scoped invalidation from replica-scoped recovery events such as
+   `NeedsRebuildObserved`
+3. keep `BarrierRejected` and other volume-scoped invalidation paths unchanged
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `InvalidateSessionCommand` now supports bounded replica-scoped addressing in
+   addition to volume-wide invalidation
+2. replica-scoped recovery escalation now invalidates only the affected replica
+   session on the core-present path
+3. volume-scoped invalidation paths such as `BarrierRejected` remain unchanged
+
+Evidence:
+
+1. focused working-tree change after `5fd9ec0ed`
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -434,11 +519,17 @@ boundary:
      volume projection layer
 10. `16I` delivered:
    - multi-replica primary catch-up startup ownership is core-command-driven
+11. `16J` delivered:
+   - removed-replica recovery drain is core-command-driven on the core-present
+     path
+12. `16K` delivered:
+   - replica-scoped recovery invalidation no longer depends on a remaining
+     volume-wide invalidation seam
 
 After this checkpoint:
 
 1. keep `legacy P4` only as a compatibility guard
-2. identify the next bounded runtime gap after multi-replica startup ownership,
-   most likely around broader recovery-loop closure rather than assignment entry
+2. continue closing broader recovery-loop gaps one bounded seam at a time after
+   replica-scoped invalidation
 3. do not yet claim full recovery-loop closure
 4. do not broaden into launch claims

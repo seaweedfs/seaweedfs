@@ -473,7 +473,6 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssignment) []error {
 	errs := make([]error, len(assignments))
 	var legacyRecoveryResults []engine.AssignmentResult
-	var removedRecoveryResults []engine.AssignmentResult
 
 	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
 	// P3: skip V2 processing for repeated unchanged assignments.
@@ -499,8 +498,6 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 					if len(result.SessionsCreated) > 0 || len(result.SessionsSuperseded) > 0 || len(result.Removed) > 0 {
 						legacyRecoveryResults = append(legacyRecoveryResults, result)
 					}
-				} else if len(result.Removed) > 0 {
-					removedRecoveryResults = append(removedRecoveryResults, result)
 				}
 			}
 		}
@@ -532,9 +529,6 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 	if bs.v2Recovery != nil {
 		for _, result := range legacyRecoveryResults {
 			bs.v2Recovery.HandleAssignmentResult(result, assignments)
-		}
-		for _, result := range removedRecoveryResults {
-			bs.v2Recovery.HandleRemovedAssignments(result)
 		}
 	}
 	return errs

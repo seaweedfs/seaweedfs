@@ -1025,3 +1025,127 @@ Conclusion:
    core-command-driven on the core-present path
 2. this slice still does not claim broad multi-replica recovery-loop closure or
    broad failover/publication closure
+
+---
+
+#### `16J` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded removed-replica recovery drain ownership on the core-present path
+
+Why this slice exists:
+
+1. `16A-16I` have moved bounded assignment, startup, execution, addressing, and
+   observation seams toward explicit core ownership
+2. but removed-replica recovery drain on the core-present path still depends on
+   direct `orchestrator.ProcessAssignment(...).Removed` handling in
+   `weed/server`
+3. that means one visible recovery-loop branch is still outside the explicit
+   core-owned command / event seam
+
+Chosen implementation rule:
+
+1. add one bounded core-owned seam for removed-replica drain
+2. rebind only the core-present host path to consume that seam
+3. leave legacy no-core compatibility handling intact
+
+---
+
+#### `16J` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded removed-replica recovery drain ownership on the core-present path
+
+What changed:
+
+1. `sw-block/engine/replication/command.go`
+   - added bounded `drain_recovery_task` as an explicit core command
+2. `sw-block/engine/replication/engine.go`
+   - assignment delivery now emits `drain_recovery_task` for previously
+     recovery-owned replica targets that are no longer in the bounded target set
+3. `weed/server/blockcmd/dispatch.go` and `weed/server/blockcmd/service_ops.go`
+   - added server-adapter handling for the new drain command
+4. `weed/server/block_recovery.go`
+   - exposed a bounded recovery drain method that cancels and drains removed
+     replica work from the new command seam while leaving legacy no-core methods
+     intact
+5. `weed/server/volume_server_block.go`
+   - removed the core-present direct dependency on
+     `HandleRemovedAssignments(result)`
+6. focused proofs:
+   - `sw-block/engine/replication/phase14_command_test.go`
+   - `weed/server/blockcmd/dispatch_test.go`
+   - `weed/server/volume_server_block_test.go`
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. `go test ./weed/server/blockcmd -count=1`
+3. `go test ./weed/server -count=1 -timeout 120s -run "TestBlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|PrimaryMultiReplica_UsesCoreStartRecoveryTaskPerReplica|RemovedReplica_UsesCoreDrainRecoveryTask|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart)|BarrierRejected_ExecutesCoreInvalidateSession|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. removed-replica recovery drain on the core-present path is now
+   core-command-driven rather than primarily orchestrator-result-driven
+2. this slice still does not claim broad recovery-loop closure or
+   failover/publication closure
+
+---
+
+#### `16K` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded replica-scoped session invalidation on the core-present path
+
+Why this slice exists:
+
+1. `16F-16J` already made recovery command addressing, observation events,
+   startup, and removed-task drain much more replica-scoped
+2. but `InvalidateSessionCommand` still invalidates all replica sessions for a
+   volume even when the triggering recovery event is already replica-scoped
+3. that over-broad seam becomes more problematic as bounded multi-replica
+   runtime ownership widens
+
+Chosen implementation rule:
+
+1. extend invalidation command addressing to optionally target one replica
+2. emit replica-scoped invalidation only from replica-scoped recovery events
+3. preserve volume-wide invalidation for truly volume-scoped failures
+
+---
+
+#### `16K` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded replica-scoped session invalidation on the core-present path
+
+What changed:
+
+1. `sw-block/engine/replication/command.go`
+   - widened `invalidate_session` command addressing to optionally target one
+     replica
+2. `sw-block/engine/replication/engine.go`
+   - replica-scoped recovery escalation now emits targeted invalidation while
+     volume-scoped barrier rejection remains volume-wide
+3. `weed/server/blockcmd/dispatch.go` and `weed/server/blockcmd/service_ops.go`
+   - server adapter now invalidates one sender when `ReplicaID` is present and
+     still invalidates all projection replicas for volume-wide paths
+4. focused proofs:
+   - `sw-block/engine/replication/phase14_command_test.go`
+   - `weed/server/blockcmd/dispatch_test.go`
+   - `weed/server/volume_server_block_test.go`
+
+Proof / evidence:
+
+1. `go test ./...` from `sw-block/engine/replication`
+2. `go test ./weed/server/blockcmd -count=1`
+3. `go test ./weed/server -count=1 -timeout 120s -run "TestBlockService_(ApplyAssignments_(PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|PrimaryMultiReplica_UsesCoreStartRecoveryTaskPerReplica|RemovedReplica_UsesCoreDrainRecoveryTask|RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart)|BarrierRejected_ExecutesCoreInvalidateSession|BarrierRejected_DoesNotReexecuteInvalidateOnSameReason|NeedsRebuildObserved_InvalidatesOnlyTargetReplica|DebugInfoForVolume|CollectBlockVolumeHeartbeat|ReadinessSnapshot|HeartbeatReplicaDegraded)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. replica-scoped recovery invalidation on the core-present path no longer
+   relies on broad volume-wide invalidation
+2. this slice still does not claim broad failover/publication closure or full
+   recovery-loop closure

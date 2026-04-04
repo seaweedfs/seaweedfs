@@ -35,6 +35,14 @@ type StartRecoveryTaskCommand struct {
 
 func (StartRecoveryTaskCommand) commandName() string { return "start_recovery_task" }
 
+type DrainRecoveryTaskCommand struct {
+	VolumeID  string
+	ReplicaID string
+	Reason    string
+}
+
+func (DrainRecoveryTaskCommand) commandName() string { return "drain_recovery_task" }
+
 type StartCatchUpCommand struct {
 	VolumeID  string
 	ReplicaID string
@@ -52,8 +60,9 @@ type StartRebuildCommand struct {
 func (StartRebuildCommand) commandName() string { return "start_rebuild" }
 
 type InvalidateSessionCommand struct {
-	VolumeID string
-	Reason   string
+	VolumeID  string
+	ReplicaID string
+	Reason    string
 }
 
 func (InvalidateSessionCommand) commandName() string { return "invalidate_session" }

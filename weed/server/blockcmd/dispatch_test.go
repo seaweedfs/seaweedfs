@@ -14,7 +14,8 @@ type fakeOps struct {
 	startReceiverFn     func(blockvol.BlockVolumeAssignment) (bool, error)
 	configureShipperFn  func(string, []engine.ReplicaAssignment) (bool, bool, error)
 	startRecoveryTaskFn func(string, blockvol.BlockVolumeAssignment) (bool, error)
-	invalidateSessionFn func(string, string) (bool, error)
+	drainRecoveryTaskFn func(string, string) (bool, error)
+	invalidateSessionFn func(string, string, string) (bool, error)
 	startCatchUpFn      func(string, uint64) (bool, error)
 	startRebuildFn      func(string, uint64) (bool, error)
 }
@@ -47,11 +48,18 @@ func (f fakeOps) StartRecoveryTask(replicaID string, assignment blockvol.BlockVo
 	return f.startRecoveryTaskFn(replicaID, assignment)
 }
 
-func (f fakeOps) InvalidateSession(volumeID, reason string) (bool, error) {
+func (f fakeOps) DrainRecoveryTask(replicaID, reason string) (bool, error) {
+	if f.drainRecoveryTaskFn == nil {
+		return false, nil
+	}
+	return f.drainRecoveryTaskFn(replicaID, reason)
+}
+
+func (f fakeOps) InvalidateSession(volumeID, replicaID, reason string) (bool, error) {
 	if f.invalidateSessionFn == nil {
 		return false, nil
 	}
-	return f.invalidateSessionFn(volumeID, reason)
+	return f.invalidateSessionFn(volumeID, replicaID, reason)
 }
 
 func (f fakeOps) StartCatchUp(replicaID string, targetLSN uint64) (bool, error) {
@@ -188,7 +196,11 @@ func TestDispatcher_StopsOnFirstError(t *testing.T) {
 type fakeRecoveryCoordinator struct {
 	startedReplica string
 	startedAssigns []blockvol.BlockVolumeAssignment
-	catchUpCalls   []struct {
+	drained        []struct {
+		replicaID string
+		reason    string
+	}
+	catchUpCalls []struct {
 		replicaID string
 		targetLSN uint64
 	}
@@ -201,6 +213,13 @@ type fakeRecoveryCoordinator struct {
 func (f *fakeRecoveryCoordinator) StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment) {
 	f.startedReplica = replicaID
 	f.startedAssigns = assignments
+}
+
+func (f *fakeRecoveryCoordinator) DrainRecoveryTask(replicaID, reason string) {
+	f.drained = append(f.drained, struct {
+		replicaID string
+		reason    string
+	}{replicaID: replicaID, reason: reason})
 }
 
 func (f *fakeRecoveryCoordinator) ExecutePendingCatchUp(replicaID string, targetLSN uint64) error {
@@ -265,6 +284,29 @@ func TestServiceOps_StartRecoveryTaskUsesRecoveryCoordinator(t *testing.T) {
 	}
 	if rec.startedReplica != "vol1/vs2" || len(rec.startedAssigns) != 1 || rec.startedAssigns[0].Path != "vol1" {
 		t.Fatalf("started=%q assigns=%v", rec.startedReplica, rec.startedAssigns)
+	}
+}
+
+func TestDispatcher_DrainRecoveryTaskRecordsExecution(t *testing.T) {
+	effects := &fakeEffects{}
+	var drained []string
+	d := NewDispatcher(fakeOps{
+		drainRecoveryTaskFn: func(replicaID, reason string) (bool, error) {
+			drained = append(drained, replicaID+":"+reason)
+			return true, nil
+		},
+	}, effects)
+	err := d.Run([]engine.Command{
+		engine.DrainRecoveryTaskCommand{VolumeID: "vol1", ReplicaID: "vol1/vs2", Reason: "assignment_removed"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(drained, []string{"vol1/vs2:assignment_removed"}) {
+		t.Fatalf("drained=%v", drained)
+	}
+	if !reflect.DeepEqual(effects.recorded, []string{"vol1:drain_recovery_task"}) {
+		t.Fatalf("recorded=%v", effects.recorded)
 	}
 }
 
@@ -342,7 +384,7 @@ func TestServiceOps_InvalidateSessionUsesProjectionAndSenderResolver(t *testing.
 			}
 		},
 	)
-	executed, err := ops.InvalidateSession("vol1", "test_reason")
+	executed, err := ops.InvalidateSession("vol1", "", "test_reason")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,6 +396,60 @@ func TestServiceOps_InvalidateSessionUsesProjectionAndSenderResolver(t *testing.
 	}
 	if len(s1.states) != 1 || s1.states[0] != engine.StateDisconnected {
 		t.Fatalf("states1=%v", s1.states)
+	}
+}
+
+func TestServiceOps_InvalidateSessionTargetsSingleReplicaWhenProvided(t *testing.T) {
+	s1 := &fakeSessionInvalidator{}
+	s2 := &fakeSessionInvalidator{}
+	ops := NewServiceOps(
+		fakeOps{},
+		nil,
+		fakeProjectionReader{
+			ok: true,
+			proj: engine.PublicationProjection{
+				VolumeID:   "vol1",
+				ReplicaIDs: []string{"vol1/vs2", "vol1/vs3"},
+			},
+		},
+		func(replicaID string) SessionInvalidator {
+			switch replicaID {
+			case "vol1/vs2":
+				return s1
+			case "vol1/vs3":
+				return s2
+			default:
+				return nil
+			}
+		},
+	)
+	executed, err := ops.InvalidateSession("vol1", "vol1/vs2", "test_reason")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("expected executed")
+	}
+	if !reflect.DeepEqual(s1.reasons, []string{"test_reason"}) {
+		t.Fatalf("reasons1=%v", s1.reasons)
+	}
+	if len(s2.reasons) != 0 {
+		t.Fatalf("reasons2=%v", s2.reasons)
+	}
+}
+
+func TestServiceOps_DrainRecoveryTaskUsesRecoveryCoordinator(t *testing.T) {
+	rec := &fakeRecoveryCoordinator{}
+	ops := NewServiceOps(fakeOps{}, rec, nil, nil)
+	executed, err := ops.DrainRecoveryTask("vol1/vs2", "assignment_removed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !executed {
+		t.Fatal("expected executed")
+	}
+	if len(rec.drained) != 1 || rec.drained[0].replicaID != "vol1/vs2" || rec.drained[0].reason != "assignment_removed" {
+		t.Fatalf("drained=%v", rec.drained)
 	}
 }
 

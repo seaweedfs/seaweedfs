@@ -241,6 +241,76 @@ func TestPhase14_CommandSequence_RebuildingAssignmentStartsRecoveryTaskWithoutRe
 	})
 }
 
+func TestPhase14_CommandSequence_AssignmentChangeDrainsRemovedRecoveryReplica(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-cmd-remove-replica",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.30:9333", CtrlAddr: "10.0.0.30:9334", Version: 1}},
+			{ReplicaID: "replica-2", Endpoint: Endpoint{DataAddr: "10.0.0.31:9333", CtrlAddr: "10.0.0.31:9334", Version: 1}},
+		},
+	})
+
+	result := core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-cmd-remove-replica",
+		Epoch:          2,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.30:9333", CtrlAddr: "10.0.0.30:9334", Version: 1}},
+		},
+	})
+	assertCommandNames(t, result.Commands, []string{
+		"apply_role",
+		"configure_shipper",
+		"drain_recovery_task",
+		"start_recovery_task",
+		"publish_projection",
+	})
+	if got := drainRecoveryTaskReplicaIDs(result.Commands); !reflect.DeepEqual(got, []string{"replica-2"}) {
+		t.Fatalf("drain recovery task replicas=%v", got)
+	}
+	if got := recoveryTaskReplicaIDs(result.Commands); !reflect.DeepEqual(got, []string{"replica-1"}) {
+		t.Fatalf("start recovery task replicas=%v", got)
+	}
+}
+
+func TestPhase14_CommandSequence_NeedsRebuildInvalidatesOnlyAffectedReplica(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-cmd-needs-rebuild-targeted",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.32:9333", CtrlAddr: "10.0.0.32:9334", Version: 1}},
+			{ReplicaID: "replica-2", Endpoint: Endpoint{DataAddr: "10.0.0.33:9333", CtrlAddr: "10.0.0.33:9334", Version: 1}},
+		},
+	})
+
+	result := core.ApplyEvent(NeedsRebuildObserved{
+		ID:        "vol-cmd-needs-rebuild-targeted",
+		ReplicaID: "replica-2",
+		Reason:    "gap_too_large",
+	})
+	assertCommandNames(t, result.Commands, []string{
+		"invalidate_session",
+		"publish_projection",
+	})
+	invalidate, ok := result.Commands[0].(InvalidateSessionCommand)
+	if !ok {
+		t.Fatalf("cmd0=%T", result.Commands[0])
+	}
+	if invalidate.ReplicaID != "replica-2" {
+		t.Fatalf("invalidate replica_id=%q", invalidate.ReplicaID)
+	}
+}
+
 func TestPhase14_CommandSequence_AssignmentChangeAllowsFreshRecoveryStart(t *testing.T) {
 	core := NewCoreEngine()
 
@@ -308,6 +378,18 @@ func recoveryTaskReplicaIDs(cmds []Command) []string {
 			continue
 		}
 		replicaIDs = append(replicaIDs, start.ReplicaID)
+	}
+	return replicaIDs
+}
+
+func drainRecoveryTaskReplicaIDs(cmds []Command) []string {
+	var replicaIDs []string
+	for _, cmd := range cmds {
+		drain, ok := cmd.(DrainRecoveryTaskCommand)
+		if !ok {
+			continue
+		}
+		replicaIDs = append(replicaIDs, drain.ReplicaID)
 	}
 	return replicaIDs
 }

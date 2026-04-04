@@ -16,6 +16,7 @@ type BackendOps interface {
 // RecoveryCoordinator is the runtime recovery surface used by command ops.
 type RecoveryCoordinator interface {
 	StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment)
+	DrainRecoveryTask(replicaID, reason string)
 	ExecutePendingCatchUp(replicaID string, targetLSN uint64) error
 	ExecutePendingRebuild(replicaID string, targetLSN uint64) error
 }
@@ -85,9 +86,25 @@ func (ops *ServiceOps) StartRecoveryTask(replicaID string, assignment blockvol.B
 	return true, nil
 }
 
-func (ops *ServiceOps) InvalidateSession(volumeID, reason string) (bool, error) {
+func (ops *ServiceOps) DrainRecoveryTask(replicaID, reason string) (bool, error) {
+	if ops == nil || ops.recovery == nil {
+		return false, nil
+	}
+	ops.recovery.DrainRecoveryTask(replicaID, reason)
+	return true, nil
+}
+
+func (ops *ServiceOps) InvalidateSession(volumeID, replicaID, reason string) (bool, error) {
 	if ops == nil || ops.projection == nil || ops.senderByID == nil {
 		return false, nil
+	}
+	if replicaID != "" {
+		sender := ops.senderByID(replicaID)
+		if sender == nil {
+			return false, nil
+		}
+		sender.InvalidateSession(reason, engine.StateDisconnected)
+		return true, nil
 	}
 	proj, ok := ops.projection.Projection(volumeID)
 	if !ok {

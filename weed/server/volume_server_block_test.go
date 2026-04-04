@@ -583,6 +583,99 @@ func TestBlockService_ApplyAssignments_PrimaryMultiReplica_UsesCoreStartRecovery
 	}
 }
 
+func TestBlockService_ApplyAssignments_RemovedReplica_UsesCoreDrainRecoveryTask(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Bridge = newTestControlBridge()
+	bs.v2Orchestrator = newTestOrchestrator()
+	bs.v2Recovery = NewRecoveryManager(bs)
+	defer bs.v2Recovery.Shutdown()
+
+	path := createTestVolDirect(t, bs, "vol-core-cmd-drain-removed")
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	holdTask := make(chan struct{})
+	taskReached := make(chan struct{}, 1)
+	bs.v2Recovery.OnBeforeExecute = func(replicaID string) {
+		if replicaID == path+"/vs-2" {
+			taskReached <- struct{}{}
+			<-holdTask
+		}
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	select {
+	case <-taskReached:
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery task did not reach OnBeforeExecute")
+	}
+
+	replicaID := path + "/vs-2"
+	bs.v2Recovery.mu.Lock()
+	oldTask := bs.v2Recovery.tasks[replicaID]
+	bs.v2Recovery.mu.Unlock()
+	if oldTask == nil {
+		t.Fatal("expected active recovery task before removal")
+	}
+	oldDone := oldTask.done
+
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		close(holdTask)
+	}()
+
+	errs = bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("remove apply errs=%v", errs)
+	}
+
+	select {
+	case <-oldDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("removed recovery task did not drain")
+	}
+
+	if got := bs.v2Recovery.ActiveTaskCount(); got != 0 {
+		t.Fatalf("active tasks=%d, want 0", got)
+	}
+	if sender := bs.v2Orchestrator.Registry.Sender(replicaID); sender != nil {
+		t.Fatalf("removed sender should be gone, got %v", sender)
+	}
+
+	cmds := bs.ExecutedCoreCommands(path)
+	if got := countCommandName(cmds, "start_recovery_task"); got != 1 {
+		t.Fatalf("start_recovery_task count=%d cmds=%v", got, cmds)
+	}
+	if got := countCommandName(cmds, "drain_recovery_task"); got != 1 {
+		t.Fatalf("drain_recovery_task count=%d cmds=%v", got, cmds)
+	}
+}
+
 func TestBlockService_ApplyAssignments_RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	bs.v2Bridge = newTestControlBridge()
@@ -779,6 +872,48 @@ func TestBlockService_BarrierRejected_DoesNotReexecuteInvalidateOnSameReason(t *
 	}
 	if !reflect.DeepEqual(second, first) {
 		t.Fatalf("repeated failure should not re-execute invalidate_session: first=%v second=%v", first, second)
+	}
+}
+
+func TestBlockService_NeedsRebuildObserved_InvalidatesOnlyTargetReplica(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Bridge = newTestControlBridge()
+	bs.v2Orchestrator = newTestOrchestrator()
+	path := createTestVolDirect(t, bs, "vol-core-cmd-targeted-invalidate")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      1,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{
+			{ServerID: "vs-2", DataAddr: "10.0.0.2:4260", CtrlAddr: "10.0.0.2:4261"},
+			{ServerID: "vs-3", DataAddr: "10.0.0.3:4260", CtrlAddr: "10.0.0.3:4261"},
+		},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replica2 := bs.v2Orchestrator.Registry.Sender(path + "/vs-2")
+	replica3 := bs.v2Orchestrator.Registry.Sender(path + "/vs-3")
+	if replica2 == nil || replica3 == nil {
+		t.Fatalf("senders not found: vs2=%v vs3=%v", replica2 != nil, replica3 != nil)
+	}
+	if !replica2.HasActiveSession() || !replica3.HasActiveSession() {
+		t.Fatal("both senders should start with active sessions")
+	}
+
+	bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: path, ReplicaID: path + "/vs-2", Reason: "gap_too_large"})
+
+	if replica2.HasActiveSession() {
+		t.Fatal("target replica session should be invalidated")
+	}
+	if !replica3.HasActiveSession() {
+		t.Fatal("non-target replica session should remain active")
+	}
+	if got := bs.ExecutedCoreCommands(path); countCommandName(got, "invalidate_session") != 1 {
+		t.Fatalf("executed commands=%v", got)
 	}
 }
 

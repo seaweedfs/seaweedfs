@@ -14,7 +14,8 @@ type Ops interface {
 	StartReceiver(assignment blockvol.BlockVolumeAssignment) (bool, error)
 	ConfigureShipper(volumeID string, replicas []engine.ReplicaAssignment) (executed bool, shipperConnected bool, err error)
 	StartRecoveryTask(replicaID string, assignment blockvol.BlockVolumeAssignment) (bool, error)
-	InvalidateSession(volumeID, reason string) (bool, error)
+	DrainRecoveryTask(replicaID, reason string) (bool, error)
+	InvalidateSession(volumeID, replicaID, reason string) (bool, error)
 	StartCatchUp(replicaID string, targetLSN uint64) (bool, error)
 	StartRebuild(replicaID string, targetLSN uint64) (bool, error)
 }
@@ -95,8 +96,19 @@ func (d *Dispatcher) Run(cmds []engine.Command, assignment *blockvol.BlockVolume
 			if executed {
 				d.effects.RecordCommand(v.VolumeID, "start_recovery_task")
 			}
+		case engine.DrainRecoveryTaskCommand:
+			if v.ReplicaID == "" {
+				continue
+			}
+			executed, err := d.ops.DrainRecoveryTask(v.ReplicaID, v.Reason)
+			if err != nil {
+				return err
+			}
+			if executed {
+				d.effects.RecordCommand(v.VolumeID, "drain_recovery_task")
+			}
 		case engine.InvalidateSessionCommand:
-			executed, err := d.ops.InvalidateSession(v.VolumeID, v.Reason)
+			executed, err := d.ops.InvalidateSession(v.VolumeID, v.ReplicaID, v.Reason)
 			if err != nil {
 				return err
 			}

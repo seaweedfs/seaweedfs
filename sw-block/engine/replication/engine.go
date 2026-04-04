@@ -1,6 +1,9 @@
 package replication
 
-import "reflect"
+import (
+	"reflect"
+	"sort"
+)
 
 // CoreEngine is the first explicit Phase 14 V2 core shell.
 // It is deterministic and side-effect free: one event in, updated state and
@@ -172,9 +175,11 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 		st.Recovery.Phase = RecoveryNeedsRebuild
 		st.Recovery.Reason = v.Reason
 		if st.shouldInvalidate(v.Reason) {
+			replicaID, _ := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID)
 			cmds = append(cmds, InvalidateSessionCommand{
-				VolumeID: st.VolumeID,
-				Reason:   v.Reason,
+				VolumeID:  st.VolumeID,
+				ReplicaID: replicaID,
+				Reason:    v.Reason,
 			})
 			st.commands.InvalidationIssued = true
 			st.commands.InvalidationReason = v.Reason
@@ -318,6 +323,7 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 	epochChanged := st.Epoch != ev.Epoch
 	replicasChanged := !sameReplicaAssignments(st.DesiredReplicas, ev.Replicas)
 	recoveryTargetChanged := st.recoveryTarget != ev.RecoveryTarget
+	previousRecoveryTaskTargets := recoveryTaskTargetReplicaIDs(st.commands.RecoveryTaskTargets)
 
 	st.Epoch = ev.Epoch
 	st.Role = ev.Role
@@ -384,6 +390,13 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		})
 		st.commands.ShipperConfigEpoch = st.Epoch
 		st.commands.ShipperConfigReplicas = append([]ReplicaAssignment(nil), st.DesiredReplicas...)
+	}
+	for _, replicaID := range removedRecoveryTaskReplicaIDs(previousRecoveryTaskTargets, st.recoveryTaskReplicaIDs()) {
+		cmds = append(cmds, DrainRecoveryTaskCommand{
+			VolumeID:  st.VolumeID,
+			ReplicaID: replicaID,
+			Reason:    "assignment_removed",
+		})
 	}
 	for _, replicaID := range st.recoveryTaskReplicaIDs() {
 		if !st.shouldStartRecoveryTask(replicaID) {
@@ -513,6 +526,39 @@ func (st *VolumeState) recoveryTaskReplicaIDs() []string {
 		replicaIDs = append(replicaIDs, replica.ReplicaID)
 	}
 	return replicaIDs
+}
+
+func recoveryTaskTargetReplicaIDs(targets map[string]SessionKind) []string {
+	if len(targets) == 0 {
+		return nil
+	}
+	replicaIDs := make([]string, 0, len(targets))
+	for replicaID := range targets {
+		if replicaID == "" {
+			continue
+		}
+		replicaIDs = append(replicaIDs, replicaID)
+	}
+	sort.Strings(replicaIDs)
+	return replicaIDs
+}
+
+func removedRecoveryTaskReplicaIDs(previousTargets, currentTargets []string) []string {
+	if len(previousTargets) == 0 {
+		return nil
+	}
+	current := make(map[string]struct{}, len(currentTargets))
+	for _, replicaID := range currentTargets {
+		current[replicaID] = struct{}{}
+	}
+	removed := make([]string, 0, len(previousTargets))
+	for _, replicaID := range previousTargets {
+		if _, ok := current[replicaID]; ok {
+			continue
+		}
+		removed = append(removed, replicaID)
+	}
+	return removed
 }
 
 func (st *VolumeState) recoveryCommandReplicaIDFromEvent(replicaID string) (string, bool) {
