@@ -8,7 +8,6 @@
 package v2bridge
 
 import (
-	"fmt"
 	"log"
 
 	bridge "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
@@ -85,35 +84,26 @@ func (cb *ControlBridge) convertPrimaryAssignment(a blockvol.BlockVolumeAssignme
 }
 
 func (cb *ControlBridge) convertReplicaAssignment(a blockvol.BlockVolumeAssignment, volumeName, localServerID string) engine.AssignmentIntent {
+	replica := bridge.ReplicaAssignmentForServer(volumeName, localServerID, engine.Endpoint{
+		DataAddr: a.ReplicaDataAddr,
+		CtrlAddr: a.ReplicaCtrlAddr,
+	})
 	return engine.AssignmentIntent{
-		Epoch: a.Epoch,
-		Replicas: []engine.ReplicaAssignment{
-			{
-				ReplicaID: fmt.Sprintf("%s/%s", volumeName, localServerID),
-				Endpoint: engine.Endpoint{
-					DataAddr: a.ReplicaDataAddr,
-					CtrlAddr: a.ReplicaCtrlAddr,
-				},
-			},
-		},
+		Epoch:    a.Epoch,
+		Replicas: []engine.ReplicaAssignment{replica},
 	}
 }
 
 func (cb *ControlBridge) convertRebuildAssignment(a blockvol.BlockVolumeAssignment, volumeName, localServerID string) engine.AssignmentIntent {
-	replicaID := fmt.Sprintf("%s/%s", volumeName, localServerID)
+	replica := bridge.ReplicaAssignmentForServer(volumeName, localServerID, engine.Endpoint{
+		DataAddr: a.ReplicaDataAddr,
+		CtrlAddr: a.ReplicaCtrlAddr,
+	})
 	return engine.AssignmentIntent{
-		Epoch: a.Epoch,
-		Replicas: []engine.ReplicaAssignment{
-			{
-				ReplicaID: replicaID,
-				Endpoint: engine.Endpoint{
-					DataAddr: a.ReplicaDataAddr,
-					CtrlAddr: a.ReplicaCtrlAddr,
-				},
-			},
-		},
+		Epoch:    a.Epoch,
+		Replicas: []engine.ReplicaAssignment{replica},
 		RecoveryTargets: map[string]engine.SessionKind{
-			replicaID: engine.SessionRebuild,
+			replica.ReplicaID: bridge.RecoveryTargetForRole("rebuilding"),
 		},
 	}
 }
