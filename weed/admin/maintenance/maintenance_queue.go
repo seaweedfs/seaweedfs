@@ -72,9 +72,19 @@ func (mq *MaintenanceQueue) cleanupCompletedTasks() {
 	}
 }
 
+const MaxTasksPerType = 100
+
 // AddTask adds a new maintenance task to the queue with deduplication
 func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 	mq.mutex.Lock()
+
+	// Enforce per-type capacity limit
+	if mq.countTasksByType(task.Type) >= MaxTasksPerType {
+		mq.mutex.Unlock()
+		glog.V(1).Infof("Task skipped (type %s at capacity %d): volume %d on %s",
+			task.Type, MaxTasksPerType, task.VolumeID, task.Server)
+		return
+	}
 
 	// Enforce one queued/active task per volume (across all task types).
 	if mq.hasQueuedOrActiveTaskForVolume(task.VolumeID) {
@@ -143,6 +153,17 @@ func (mq *MaintenanceQueue) AddTask(task *MaintenanceTask) {
 
 // hasQueuedOrActiveTaskForVolume checks if any pending/assigned/in-progress task already exists for this volume.
 // Caller must hold mq.mutex.
+// countTasksByType returns the number of non-terminal tasks of a given type. Caller must hold mq.mutex.
+func (mq *MaintenanceQueue) countTasksByType(taskType MaintenanceTaskType) int {
+	count := 0
+	for _, t := range mq.tasks {
+		if t.Type == taskType {
+			count++
+		}
+	}
+	return count
+}
+
 func (mq *MaintenanceQueue) hasQueuedOrActiveTaskForVolume(volumeID uint32) bool {
 	if volumeID == 0 {
 		return false
