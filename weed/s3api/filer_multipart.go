@@ -65,6 +65,12 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 
 	uploadIdString = uploadIdString + "_" + strings.ReplaceAll(uuid.New().String(), "-", "")
 
+	// Validate checksum algorithm before creating the upload directory
+	_, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
+	if checksumErrCode != s3err.ErrNone {
+		return nil, checksumErrCode
+	}
+
 	// Prepare error handling outside callback scope
 	var encryptionError error
 
@@ -94,6 +100,12 @@ func (s3a *S3ApiServer) createMultipartUpload(r *http.Request, input *s3.CreateM
 			return // Exit callback, letting mkdir handle the error
 		}
 		s3a.applyMultipartEncryptionConfig(entry, encryptionConfig)
+
+		// Store the requested checksum algorithm so CompleteMultipartUpload can compute
+		// a composite checksum from per-part checksums
+		if checksumHeaderName != "" {
+			entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
+		}
 
 		// Extract and store object lock metadata from request headers
 		// This ensures object lock settings from create_multipart_upload are preserved
@@ -129,6 +141,11 @@ type CompleteMultipartUploadResult struct {
 	Bucket   *string  `xml:"Bucket,omitempty"`
 	Key      *string  `xml:"Key,omitempty"`
 	ETag     *string  `xml:"ETag,omitempty"`
+
+	// Checksum fields — returned as HTTP response headers, not in the XML body
+	ChecksumHeaderName string `xml:"-"`
+	ChecksumValue      string `xml:"-"`
+
 	// VersionId is NOT included in XML body - it should only be in x-amz-version-id HTTP header
 
 	// Store the VersionId internally for setting HTTP header, but don't marshal to XML
@@ -173,15 +190,17 @@ type multipartPartBoundary struct {
 }
 
 type multipartCompletionState struct {
-	deleteEntries  []*filer_pb.Entry
-	partEntries    map[int][]*filer_pb.Entry
-	pentry         *filer_pb.Entry
-	mime           string
-	finalParts     []*filer_pb.FileChunk
-	offset         int64
-	partBoundaries []multipartPartBoundary
-	multipartETag  string
-	entityWithTtl  bool
+	deleteEntries      []*filer_pb.Entry
+	partEntries        map[int][]*filer_pb.Entry
+	pentry             *filer_pb.Entry
+	mime               string
+	finalParts         []*filer_pb.FileChunk
+	offset             int64
+	partBoundaries     []multipartPartBoundary
+	multipartETag      string
+	entityWithTtl      bool
+	checksumHeaderName string // e.g. "X-Amz-Checksum-Crc32", empty if no checksum
+	checksumValue      string // composite base64 checksum with "-N" suffix
 }
 
 func completeMultipartResult(r *http.Request, input *s3.CompleteMultipartUploadInput, etag string, entry *filer_pb.Entry) *CompleteMultipartUploadResult {
@@ -346,16 +365,36 @@ func (s3a *S3ApiServer) prepareMultipartCompletionState(r *http.Request, input *
 		}
 	}
 
+	// Compute composite checksum from per-part checksums if the upload
+	// was initiated with a checksum algorithm (stored in upload dir entry)
+	checksumHeaderName := ""
+	checksumValue := ""
+	if pentry.Extended != nil {
+		if algoName, ok := pentry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
+			checksumHeaderName = string(algoName)
+		}
+	}
+	if checksumHeaderName != "" {
+		var checksumErr error
+		checksumValue, checksumErr = computeCompositeChecksum(checksumHeaderName, partEntries, completedPartNumbers)
+		if checksumErr != nil {
+			glog.Errorf("completeMultipartUpload: composite checksum computation failed: %v", checksumErr)
+			return nil, nil, s3err.ErrInvalidPart
+		}
+	}
+
 	return &multipartCompletionState{
-		deleteEntries:  deleteEntries,
-		partEntries:    partEntries,
-		pentry:         pentry,
-		mime:           mime,
-		finalParts:     finalParts,
-		offset:         offset,
-		partBoundaries: partBoundaries,
-		multipartETag:  calculateMultipartETag(partEntries, completedPartNumbers),
-		entityWithTtl:  entityWithTtl,
+		deleteEntries:      deleteEntries,
+		partEntries:        partEntries,
+		pentry:             pentry,
+		mime:               mime,
+		finalParts:         finalParts,
+		offset:             offset,
+		partBoundaries:     partBoundaries,
+		multipartETag:      calculateMultipartETag(partEntries, completedPartNumbers),
+		entityWithTtl:      entityWithTtl,
+		checksumHeaderName: checksumHeaderName,
+		checksumValue:      checksumValue,
 	}, nil, s3err.ErrNone
 }
 
@@ -442,6 +481,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 				// Persist ETag to ensure subsequent HEAD/GET uses the same value
 				versionEntry.Extended[s3_constants.ExtETagKey] = []byte(completionState.multipartETag)
+				// Store composite checksum if computed from per-part checksums
+				if completionState.checksumHeaderName != "" && completionState.checksumValue != "" {
+					versionEntry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(completionState.checksumHeaderName)
+					versionEntry.Extended[s3_constants.ExtChecksumValue] = []byte(completionState.checksumValue)
+				}
 
 				// Preserve ALL SSE metadata from the first part (if any)
 				// SSE metadata is stored in individual parts, not the upload directory
@@ -490,11 +534,13 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			// For versioned buckets, all content is stored in .versions directory
 			// The latest version information is tracked in the .versions directory metadata
 			output = &CompleteMultipartUploadResult{
-				Location:  aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-				Bucket:    input.Bucket,
-				ETag:      aws.String(etagQuote),
-				Key:       objectKey(input.Key),
-				VersionId: aws.String(versionId),
+				Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:             input.Bucket,
+				ETag:               aws.String(etagQuote),
+				Key:                objectKey(input.Key),
+				VersionId:          aws.String(versionId),
+				ChecksumHeaderName: completionState.checksumHeaderName,
+				ChecksumValue:      completionState.checksumValue,
 			}
 			return s3err.ErrNone
 		}
@@ -534,6 +580,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 				}
 				// Persist ETag to ensure subsequent HEAD/GET uses the same value
 				entry.Extended[s3_constants.ExtETagKey] = []byte(completionState.multipartETag)
+				// Store composite checksum if computed from per-part checksums
+				if completionState.checksumHeaderName != "" && completionState.checksumValue != "" {
+					entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(completionState.checksumHeaderName)
+					entry.Extended[s3_constants.ExtChecksumValue] = []byte(completionState.checksumValue)
+				}
 				if completionState.pentry.Attributes != nil && completionState.pentry.Attributes.Mime != "" {
 					entry.Attributes.Mime = completionState.pentry.Attributes.Mime
 				} else if completionState.mime != "" {
@@ -547,10 +598,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 			// Note: Suspended versioning should NOT return VersionId field according to AWS S3 spec
 			output = &CompleteMultipartUploadResult{
-				Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-				Bucket:   input.Bucket,
-				ETag:     aws.String(etagQuote),
-				Key:      objectKey(input.Key),
+				Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+				Bucket:             input.Bucket,
+				ETag:               aws.String(etagQuote),
+				Key:                objectKey(input.Key),
+				ChecksumHeaderName: completionState.checksumHeaderName,
+				ChecksumValue:      completionState.checksumValue,
 				// VersionId field intentionally omitted for suspended versioning
 			}
 			return s3err.ErrNone
@@ -589,6 +642,11 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 			}
 			// Persist ETag to ensure subsequent HEAD/GET uses the same value
 			entry.Extended[s3_constants.ExtETagKey] = []byte(completionState.multipartETag)
+			// Store composite checksum if computed from per-part checksums
+			if completionState.checksumHeaderName != "" && completionState.checksumValue != "" {
+				entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(completionState.checksumHeaderName)
+				entry.Extended[s3_constants.ExtChecksumValue] = []byte(completionState.checksumValue)
+			}
 			if completionState.pentry.Attributes != nil && completionState.pentry.Attributes.Mime != "" {
 				entry.Attributes.Mime = completionState.pentry.Attributes.Mime
 			} else if completionState.mime != "" {
@@ -606,10 +664,12 @@ func (s3a *S3ApiServer) completeMultipartUpload(r *http.Request, input *s3.Compl
 
 		// For non-versioned buckets, return response without VersionId
 		output = &CompleteMultipartUploadResult{
-			Location: aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
-			Bucket:   input.Bucket,
-			ETag:     aws.String(etagQuote),
-			Key:      objectKey(input.Key),
+			Location:           aws.String(fmt.Sprintf("%s://%s/%s/%s", getRequestScheme(r), r.Host, url.PathEscape(*input.Bucket), urlPathEscape(*input.Key))),
+			Bucket:             input.Bucket,
+			ETag:               aws.String(etagQuote),
+			Key:                objectKey(input.Key),
+			ChecksumHeaderName: completionState.checksumHeaderName,
+			ChecksumValue:      completionState.checksumValue,
 		}
 		return s3err.ErrNone
 	})
@@ -1028,6 +1088,72 @@ func calculateMultipartETag(partEntries map[int][]*filer_pb.Entry, completedPart
 		}
 	}
 	return fmt.Sprintf("%x-%d", md5.Sum(etags), len(completedPartNumbers))
+}
+
+// computeCompositeChecksum computes a composite checksum from per-part checksums.
+// It concatenates the raw (decoded) per-part checksums, hashes the result with the
+// same algorithm, and returns the value as "base64-N" where N is the part count.
+// This follows the AWS S3 multipart checksum specification.
+// Returns an error if a part is missing its checksum (the upload was initiated with
+// a checksum algorithm, so all parts must have been uploaded with checksums).
+func computeCompositeChecksum(checksumHeaderName string, partEntries map[int][]*filer_pb.Entry, completedPartNumbers []int) (string, error) {
+	// Determine the algorithm from the header name
+	algo := checksumAlgorithmFromHeaderName(checksumHeaderName)
+	if algo == ChecksumAlgorithmNone {
+		return "", fmt.Errorf("unknown checksum algorithm for header %q", checksumHeaderName)
+	}
+
+	// Collect raw per-part checksums
+	var combined []byte
+	for _, partNumber := range completedPartNumbers {
+		entries, ok := partEntries[partNumber]
+		if !ok || len(entries) == 0 {
+			return "", fmt.Errorf("part %d not found", partNumber)
+		}
+		if len(entries) > 1 {
+			sortEntriesByLatestChunk(entries)
+		}
+		entry := entries[0]
+		if entry.Extended == nil {
+			return "", fmt.Errorf("part %d missing checksum: upload initiated with %s but part was uploaded without a checksum", partNumber, checksumHeaderName)
+		}
+		// Validate the part's checksum algorithm matches the upload's expected algorithm
+		partAlgo, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]
+		if !ok || len(partAlgo) == 0 {
+			return "", fmt.Errorf("part %d missing checksum: upload initiated with %s but part was uploaded without a checksum", partNumber, checksumHeaderName)
+		}
+		if string(partAlgo) != checksumHeaderName {
+			return "", fmt.Errorf("part %d checksum algorithm mismatch: upload expects %s but part has %s", partNumber, checksumHeaderName, string(partAlgo))
+		}
+		partChecksumB64, ok := entry.Extended[s3_constants.ExtChecksumValue]
+		if !ok || len(partChecksumB64) == 0 {
+			return "", fmt.Errorf("part %d missing checksum value: upload initiated with %s but part has no checksum value", partNumber, checksumHeaderName)
+		}
+		raw, err := base64.StdEncoding.DecodeString(string(partChecksumB64))
+		if err != nil {
+			return "", fmt.Errorf("part %d has invalid checksum encoding: %w", partNumber, err)
+		}
+		combined = append(combined, raw...)
+	}
+
+	// Hash the concatenated raw checksums
+	h := getCheckSumWriter(algo)
+	if h == nil {
+		return "", fmt.Errorf("failed to create hash writer for %s", checksumHeaderName)
+	}
+	h.Write(combined)
+	compositeRaw := h.Sum(nil)
+	return fmt.Sprintf("%s-%d", base64.StdEncoding.EncodeToString(compositeRaw), len(completedPartNumbers)), nil
+}
+
+// checksumAlgorithmFromHeaderName maps a canonical header name back to its algorithm.
+func checksumAlgorithmFromHeaderName(headerName string) ChecksumAlgorithm {
+	for _, entry := range checksumHeaders {
+		if entry.name == headerName {
+			return entry.alg
+		}
+	}
+	return ChecksumAlgorithmNone
 }
 
 func getEtagFromEntry(entry *filer_pb.Entry) string {

@@ -2068,6 +2068,21 @@ func (s3a *S3ApiServer) setResponseHeaders(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	// Set checksum header if stored in metadata, but only when:
+	// 1. The request contains "x-amz-checksum-mode: ENABLED" (per AWS S3 spec)
+	// 2. The request is NOT a ranged GET (Range header absent)
+	//    The stored checksum covers the full object; returning it for partial
+	//    responses causes SDK checksum validation failures.
+	if r != nil && r.Header.Get("X-Amz-Checksum-Mode") == "ENABLED" && r.Header.Get("Range") == "" {
+		if entry.Extended != nil {
+			if algoName, ok := entry.Extended[s3_constants.ExtChecksumAlgorithm]; ok {
+				if checksumVal, ok := entry.Extended[s3_constants.ExtChecksumValue]; ok {
+					w.Header().Set(string(algoName), string(checksumVal))
+				}
+			}
+		}
+	}
+
 	// Apply S3 passthrough headers from query parameters
 	// AWS S3 supports overriding response headers via query parameters like:
 	// ?response-cache-control=no-cache&response-content-type=application/json

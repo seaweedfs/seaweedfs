@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash"
 	"io"
 	"net/http"
 	"net/url"
@@ -71,6 +72,9 @@ type SSEResponseMetadata struct {
 	SSEType          string
 	KMSKeyID         string
 	BucketKeyEnabled bool
+	// Checksum fields for S3 additional checksum support
+	ChecksumHeaderName string // e.g. "X-Amz-Checksum-Sha256"
+	ChecksumValue      string // base64-encoded checksum value
 }
 
 func (s3a *S3ApiServer) PutObjectHandler(w http.ResponseWriter, r *http.Request) {
@@ -358,6 +362,19 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	plaintextHash := md5.New()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
+	// Detect and set up additional checksum computation (S3 checksum algorithm support)
+	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
+	if checksumErrCode != s3err.ErrNone {
+		return "", checksumErrCode, SSEResponseMetadata{}
+	}
+	var checksumHash hash.Hash
+	if checksumAlgo != ChecksumAlgorithmNone {
+		checksumHash = getCheckSumWriter(checksumAlgo)
+		if checksumHash != nil {
+			dataReader = io.TeeReader(dataReader, checksumHash)
+		}
+	}
+
 	// Handle all SSE encryption types in a unified manner
 	sseResult, sseErrorCode := s3a.handleAllSSEEncryption(r, dataReader, partOffset)
 	if sseErrorCode != s3err.ErrNone {
@@ -634,6 +651,24 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	// Store ETag in Extended attribute for future retrieval (e.g. multipart parts)
 	entry.Extended[s3_constants.ExtETagKey] = []byte(etag)
 
+	// Store additional checksum if one was computed
+	checksumBase64 := ""
+	if checksumHash != nil && checksumHeaderName != "" {
+		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
+		// Verify against client-provided checksum if present in request headers
+		// (non-chunked uploads send the value directly; chunked uploads validate in the reader)
+		if expectedChecksum := r.Header.Get(checksumHeaderName); expectedChecksum != "" {
+			if expectedChecksum != checksumBase64 {
+				glog.Warningf("putToFiler: checksum mismatch for %s: expected %s, got %s", checksumHeaderName, expectedChecksum, checksumBase64)
+				s3a.deleteOrphanedChunks(chunkResult.FileChunks)
+				return "", s3err.ErrBadDigest, SSEResponseMetadata{}
+			}
+		}
+		entry.Extended[s3_constants.ExtChecksumAlgorithm] = []byte(checksumHeaderName)
+		entry.Extended[s3_constants.ExtChecksumValue] = []byte(checksumBase64)
+		glog.V(3).Infof("putToFiler: stored checksum %s=%s for %s", checksumHeaderName, checksumBase64, filePath)
+	}
+
 	// Set object owner according to bucket ownership settings.
 	s3a.setObjectOwnerFromRequest(r, bucket, entry)
 
@@ -802,7 +837,9 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 
 	// Build SSE response metadata with encryption details
 	responseMetadata := SSEResponseMetadata{
-		SSEType: sseType,
+		SSEType:            sseType,
+		ChecksumHeaderName: checksumHeaderName,
+		ChecksumValue:      checksumBase64,
 	}
 
 	// For SSE-KMS, include key ID and bucket-key-enabled flag from stored metadata
@@ -814,6 +851,93 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	return etag, s3err.ErrNone, responseMetadata
+}
+
+// checksumAlgorithmMapping maps algorithm name strings to their enum and header name.
+var checksumAlgorithmMapping = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"CRC32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"CRC32C":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"CRC64NVME": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"SHA1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"SHA256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// trailerToChecksumAlgorithm maps trailer header names to their algorithm and canonical header name.
+var trailerToChecksumAlgorithm = map[string]struct {
+	alg  ChecksumAlgorithm
+	name string
+}{
+	"x-amz-checksum-crc32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"x-amz-checksum-crc32c":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"x-amz-checksum-crc64nvme": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	"x-amz-checksum-sha1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"x-amz-checksum-sha256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// checksumHeaders is the ordered list of individual checksum headers to check.
+// Using a slice ensures deterministic selection order.
+var checksumHeaders = []struct {
+	header string
+	alg    ChecksumAlgorithm
+	name   string
+}{
+	{s3_constants.AmzChecksumCRC32, ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	{s3_constants.AmzChecksumCRC32C, ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	{s3_constants.AmzChecksumCRC64NVME, ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
+	{s3_constants.AmzChecksumSHA1, ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+}
+
+// detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
+// It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
+// x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
+// headers. Returns the algorithm enum, the canonical HTTP header name, and an error code
+// if an unsupported algorithm is specified.
+func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
+	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs)
+	if algo := r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name, s3err.ErrNone
+		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzSdkChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
+	}
+
+	// Check x-amz-checksum-algorithm header
+	if algo := r.Header.Get(s3_constants.AmzChecksumAlgorithm); algo != "" {
+		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
+			return m.alg, m.name, s3err.ErrNone
+		}
+		glog.Warningf("unsupported checksum algorithm in %s: %q", s3_constants.AmzChecksumAlgorithm, algo)
+		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
+	}
+
+	// Check x-amz-trailer header (used by chunked uploads, may be comma-separated)
+	if trailer := r.Header.Get(s3_constants.AmzTrailer); trailer != "" {
+		for _, part := range strings.Split(trailer, ",") {
+			part = strings.TrimSpace(strings.ToLower(part))
+			if part == "" {
+				continue
+			}
+			if m, ok := trailerToChecksumAlgorithm[part]; ok {
+				return m.alg, m.name, s3err.ErrNone
+			}
+			// Non-checksum trailers (e.g. x-amz-server-side-encryption) are fine — skip them
+		}
+	}
+
+	// Check individual checksum headers (non-chunked uploads send the value directly)
+	// Uses ordered slice for deterministic selection
+	for _, entry := range checksumHeaders {
+		if r.Header.Get(entry.header) != "" {
+			return entry.alg, entry.name, s3err.ErrNone
+		}
+	}
+
+	return ChecksumAlgorithmNone, "", s3err.ErrNone
 }
 
 const defaultFileMode = uint32(0660)
@@ -882,6 +1006,11 @@ func (s3a *S3ApiServer) setSSEResponseHeaders(w http.ResponseWriter, r *http.Req
 		} else if bucketKeyEnabled := r.Header.Get(s3_constants.AmzServerSideEncryptionBucketKeyEnabled); bucketKeyEnabled == "true" {
 			w.Header().Set(s3_constants.AmzServerSideEncryptionBucketKeyEnabled, "true")
 		}
+	}
+
+	// Set checksum response header if a checksum was computed
+	if sseMetadata.ChecksumHeaderName != "" && sseMetadata.ChecksumValue != "" {
+		w.Header().Set(sseMetadata.ChecksumHeaderName, sseMetadata.ChecksumValue)
 	}
 }
 
