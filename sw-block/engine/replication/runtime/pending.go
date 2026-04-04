@@ -137,3 +137,20 @@ func (pc *PendingCoordinator) Peek(volumeID string) *PendingExecution {
 	defer pc.mu.Unlock()
 	return pc.pending[volumeID]
 }
+
+// CancelAll cancels and removes all pending executions.
+func (pc *PendingCoordinator) CancelAll(reason string) {
+	pc.mu.Lock()
+	all := make(map[string]*PendingExecution, len(pc.pending))
+	for k, v := range pc.pending {
+		all[k] = v
+	}
+	pc.pending = make(map[string]*PendingExecution)
+	pc.mu.Unlock()
+
+	if pc.cancelFn != nil {
+		for _, pe := range all {
+			pc.cancelFn(pe, reason)
+		}
+	}
+}

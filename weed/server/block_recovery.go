@@ -6,6 +6,7 @@ import (
 
 	bridge "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/v2bridge"
@@ -31,10 +32,10 @@ type recoveryTask struct {
 type RecoveryManager struct {
 	bs *BlockService
 
-	mu      sync.Mutex
-	tasks   map[string]*recoveryTask
-	pending map[string]*pendingRecoveryExecution
-	wg      sync.WaitGroup
+	mu    sync.Mutex
+	tasks map[string]*recoveryTask
+	coord *rt.PendingCoordinator
+	wg    sync.WaitGroup
 
 	// TestHook: if set, called before execution starts. Tests use this
 	// to hold the goroutine alive for serialized-replacement proofs.
@@ -42,24 +43,24 @@ type RecoveryManager struct {
 
 	// TestHook: if set, may adjust a freshly cached pending execution before
 	// the core event is emitted. Used only by focused ownership tests.
-	OnPendingExecution func(volumeID string, pending *pendingRecoveryExecution)
-}
-
-type pendingRecoveryExecution struct {
-	volumeID  string
-	replicaID string
-	driver    *engine.RecoveryDriver
-	plan      *engine.RecoveryPlan
-	catchUpIO engine.CatchUpIO
-	rebuildIO engine.RebuildIO
+	OnPendingExecution func(volumeID string, pending *rt.PendingExecution)
 }
 
 func NewRecoveryManager(bs *BlockService) *RecoveryManager {
-	return &RecoveryManager{
-		bs:      bs,
-		tasks:   make(map[string]*recoveryTask),
-		pending: make(map[string]*pendingRecoveryExecution),
+	rm := &RecoveryManager{
+		bs:    bs,
+		tasks: make(map[string]*recoveryTask),
 	}
+	rm.coord = rt.NewPendingCoordinator(func(pe *rt.PendingExecution, reason string) {
+		if pe != nil && pe.Driver != nil && pe.Plan != nil {
+			if drv, ok := pe.Driver.(*engine.RecoveryDriver); ok {
+				if plan, ok := pe.Plan.(*engine.RecoveryPlan); ok {
+					drv.CancelPlan(plan, reason)
+				}
+			}
+		}
+	})
+	return rm
 }
 
 // === LEGACY NO-CORE COMPATIBILITY ===
@@ -160,13 +161,8 @@ func (rm *RecoveryManager) Shutdown() {
 		}
 	}
 	rm.tasks = make(map[string]*recoveryTask)
-	for volumeID, pending := range rm.pending {
-		if pending != nil && pending.driver != nil && pending.plan != nil {
-			pending.driver.CancelPlan(pending.plan, "recovery_shutdown")
-		}
-		delete(rm.pending, volumeID)
-	}
 	rm.mu.Unlock()
+	rm.coord.CancelAll("recovery_shutdown")
 	rm.wg.Wait()
 }
 
@@ -288,25 +284,20 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID, rebuildAdd
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
 		if bs.v2Core == nil {
-			if err := rm.executeCatchUpPlan(volPath, replicaID, driver, plan, executor); err != nil {
-				if ctx.Err() != nil {
-					glog.V(1).Infof("recovery: catch-up cancelled for %s: %v", replicaID, err)
-				} else {
-					glog.Warningf("recovery: catch-up execution failed for %s: %v", replicaID, err)
-				}
-			}
+			rm.executeLegacyCatchUp(ctx, volPath, replicaID, driver, plan, executor)
 			return
 		}
-		rm.storePendingExecution(volPath, &pendingRecoveryExecution{
-			volumeID:  volPath,
-			replicaID: replicaID,
-			driver:    driver,
-			plan:      plan,
-			catchUpIO: executor,
+		rm.coord.Store(volPath, &rt.PendingExecution{
+			VolumeID:      volPath,
+			ReplicaID:     replicaID,
+			CatchUpTarget: plan.CatchUpTarget,
+			Driver:        driver,
+			Plan:          plan,
+			CatchUpIO:     executor,
 		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: volPath, TargetLSN: plan.CatchUpTarget})
-		if rm.hasPendingExecution(volPath) {
-			rm.cancelPendingExecution(volPath, "start_catchup_not_emitted")
+		if rm.coord.Has(volPath) {
+			rm.coord.Cancel(volPath, "start_catchup_not_emitted")
 			return
 		}
 	case engine.OutcomeNeedsRebuild:
@@ -361,124 +352,70 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID, rebuildAdd
 		return
 	}
 	if bs.v2Core == nil {
-		if err := rm.executeRebuildPlan(volPath, replicaID, driver, plan, executor); err != nil {
-			if ctx.Err() != nil {
-				glog.V(1).Infof("recovery: rebuild cancelled for %s: %v", replicaID, err)
-			} else {
-				glog.Warningf("recovery: rebuild execution failed for %s: %v", replicaID, err)
-			}
-		}
+		rm.executeLegacyRebuild(ctx, volPath, replicaID, driver, plan, executor)
 		return
 	}
-	rm.storePendingExecution(volPath, &pendingRecoveryExecution{
-		volumeID:  volPath,
-		replicaID: replicaID,
-		driver:    driver,
-		plan:      plan,
-		rebuildIO: executor,
-	})
+	pe := &rt.PendingExecution{
+		VolumeID:         volPath,
+		ReplicaID:        replicaID,
+		RebuildTargetLSN: plan.RebuildTargetLSN,
+		Driver:           driver,
+		Plan:             plan,
+		RebuildIO:        executor,
+	}
+	rm.coord.Store(volPath, pe)
 	if rm.OnPendingExecution != nil {
-		if pending, ok := rm.peekPendingExecution(volPath); ok {
-			rm.OnPendingExecution(volPath, pending)
-		}
+		rm.OnPendingExecution(volPath, pe)
 	}
 	bs.applyCoreEvent(engine.RebuildStarted{ID: volPath, TargetLSN: plan.RebuildTargetLSN})
-	if rm.hasPendingExecution(volPath) {
-		rm.cancelPendingExecution(volPath, "start_rebuild_not_emitted")
+	if rm.coord.Has(volPath) {
+		rm.coord.Cancel(volPath, "start_rebuild_not_emitted")
 	}
 }
 
-func (rm *RecoveryManager) storePendingExecution(volumeID string, pending *pendingRecoveryExecution) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-	if rm.pending == nil {
-		rm.pending = make(map[string]*pendingRecoveryExecution)
-	}
-	rm.pending[volumeID] = pending
-}
-
-func (rm *RecoveryManager) takePendingExecution(volumeID string) (*pendingRecoveryExecution, bool) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-	pending, ok := rm.pending[volumeID]
-	if ok {
-		delete(rm.pending, volumeID)
-	}
-	return pending, ok
-}
-
-func (rm *RecoveryManager) peekPendingExecution(volumeID string) (*pendingRecoveryExecution, bool) {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-	pending, ok := rm.pending[volumeID]
-	return pending, ok
-}
-
-func (rm *RecoveryManager) hasPendingExecution(volumeID string) bool {
-	rm.mu.Lock()
-	defer rm.mu.Unlock()
-	_, ok := rm.pending[volumeID]
-	return ok
-}
-
-func (rm *RecoveryManager) cancelPendingExecution(volumeID, reason string) {
-	pending, ok := rm.takePendingExecution(volumeID)
-	if !ok || pending == nil || pending.driver == nil || pending.plan == nil {
-		return
-	}
-	pending.driver.CancelPlan(pending.plan, reason)
-}
+// === Core-present pending execution (delegates to runtime.PendingCoordinator) ===
 
 func (rm *RecoveryManager) ExecutePendingCatchUp(volumeID string, targetLSN uint64) error {
-	pending, ok := rm.takePendingExecution(volumeID)
-	if !ok || pending == nil || pending.plan == nil || pending.driver == nil {
+	pe := rm.coord.TakeCatchUp(volumeID, targetLSN)
+	if pe == nil {
 		return nil
 	}
-	if pending.plan.CatchUpTarget != targetLSN {
-		pending.driver.CancelPlan(pending.plan, "start_catchup_target_mismatch")
+	drv, _ := pe.Driver.(*engine.RecoveryDriver)
+	plan, _ := pe.Plan.(*engine.RecoveryPlan)
+	io, _ := pe.CatchUpIO.(engine.CatchUpIO)
+	if drv == nil || plan == nil {
 		return nil
 	}
-	return rm.executeCatchUpPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.catchUpIO)
+	return rt.ExecuteCatchUpPlan(drv, plan, io, volumeID, rm)
 }
 
 func (rm *RecoveryManager) ExecutePendingRebuild(volumeID string, targetLSN uint64) error {
-	pending, ok := rm.takePendingExecution(volumeID)
-	if !ok || pending == nil || pending.plan == nil || pending.driver == nil {
+	pe := rm.coord.TakeRebuild(volumeID, targetLSN)
+	if pe == nil {
 		return nil
 	}
-	if pending.plan.RebuildTargetLSN != targetLSN {
-		pending.driver.CancelPlan(pending.plan, "start_rebuild_target_mismatch")
+	drv, _ := pe.Driver.(*engine.RecoveryDriver)
+	plan, _ := pe.Plan.(*engine.RecoveryPlan)
+	io, _ := pe.RebuildIO.(engine.RebuildIO)
+	if drv == nil || plan == nil {
 		return nil
 	}
-	return rm.executeRebuildPlan(volumeID, pending.replicaID, pending.driver, pending.plan, pending.rebuildIO)
+	return rt.ExecuteRebuildPlan(drv, plan, io, volumeID, rm)
 }
 
-func (rm *RecoveryManager) executeCatchUpPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.CatchUpIO) error {
-	exec := engine.NewCatchUpExecutor(driver, plan)
-	exec.IO = io
-	if err := exec.Execute(nil, 0); err != nil {
-		return err
-	}
-	glog.V(0).Infof("recovery: catch-up completed for %s", replicaID)
+// RecoveryCallbacks implementation — host-side completion notifications.
+
+func (rm *RecoveryManager) OnCatchUpCompleted(volumeID string, achievedLSN uint64) {
+	glog.V(0).Infof("recovery: catch-up completed for %s (achievedLSN=%d)", volumeID, achievedLSN)
 	if rm.bs != nil && rm.bs.v2Core != nil {
-		achievedLSN := plan.CatchUpTarget
-		if achievedLSN == 0 {
-			achievedLSN = plan.CatchUpStartLSN
-		}
 		rm.bs.applyCoreEvent(engine.CatchUpCompleted{ID: volumeID, AchievedLSN: achievedLSN})
 	}
-	return nil
 }
 
-func (rm *RecoveryManager) executeRebuildPlan(volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.RebuildIO) error {
-	exec := engine.NewRebuildExecutor(driver, plan)
-	exec.IO = io
-	if err := exec.Execute(); err != nil {
-		return err
-	}
-	glog.V(0).Infof("recovery: rebuild completed for %s", replicaID)
+func (rm *RecoveryManager) OnRebuildCompleted(volumeID string, plan *engine.RecoveryPlan) {
+	glog.V(0).Infof("recovery: rebuild completed for %s", volumeID)
 	if rm.bs == nil || rm.bs.v2Core == nil {
-		return nil
+		return
 	}
 	var snap blockvol.V2StatusSnapshot
 	if err := rm.bs.blockStore.WithVolume(volumeID, func(vol *blockvol.BlockVol) error {
@@ -505,7 +442,34 @@ func (rm *RecoveryManager) executeRebuildPlan(volumeID, replicaID string, driver
 		FlushedLSN:    flushedLSN,
 		CheckpointLSN: checkpointLSN,
 	})
-	return nil
+}
+
+// === LEGACY NO-CORE COMPATIBILITY ===
+//
+// These methods execute recovery plans directly without going through the
+// core command path. They exist only for no-core compatibility and older tests.
+// Core-present paths use ExecutePendingCatchUp/ExecutePendingRebuild instead.
+
+func (rm *RecoveryManager) executeLegacyCatchUp(ctx context.Context, volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.CatchUpIO) {
+	err := rt.ExecuteCatchUpPlan(driver, plan, io, volumeID, rm)
+	if err != nil {
+		if ctx.Err() != nil {
+			glog.V(1).Infof("recovery: catch-up cancelled for %s: %v", replicaID, err)
+		} else {
+			glog.Warningf("recovery: catch-up execution failed for %s: %v", replicaID, err)
+		}
+	}
+}
+
+func (rm *RecoveryManager) executeLegacyRebuild(ctx context.Context, volumeID, replicaID string, driver *engine.RecoveryDriver, plan *engine.RecoveryPlan, io engine.RebuildIO) {
+	err := rt.ExecuteRebuildPlan(driver, plan, io, volumeID, rm)
+	if err != nil {
+		if ctx.Err() != nil {
+			glog.V(1).Infof("recovery: rebuild cancelled for %s: %v", replicaID, err)
+		} else {
+			glog.Warningf("recovery: rebuild execution failed for %s: %v", replicaID, err)
+		}
+	}
 }
 
 func (rm *RecoveryManager) deriveRebuildAddr(replicaID string, assignments []blockvol.BlockVolumeAssignment) string {

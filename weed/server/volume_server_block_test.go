@@ -4,8 +4,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
@@ -91,6 +93,21 @@ func createTestVolDirect(t *testing.T, bs *BlockService, name string) string {
 		t.Fatalf("register %s: %v", name, err)
 	}
 	return path
+}
+
+type fakeCatchUpIO struct {
+	transferredTo uint64
+}
+
+func (f fakeCatchUpIO) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
+	if f.transferredTo > 0 {
+		return f.transferredTo, nil
+	}
+	return endInclusive, nil
+}
+
+func (f fakeCatchUpIO) TruncateWAL(truncateLSN uint64) error {
+	return nil
 }
 
 func TestBlockService_ProcessAssignment_Primary(t *testing.T) {
@@ -402,6 +419,210 @@ func TestBlockService_ApplyAssignments_ExecutesCoreCommands_ReplicaRoleAndReceiv
 	readiness := bs.ReadinessSnapshot(path)
 	if !readiness.RoleApplied || !readiness.ReceiverReady {
 		t.Fatalf("readiness=%+v", readiness)
+	}
+}
+
+func TestBlockService_ApplyAssignments_PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Bridge = newTestControlBridge()
+	bs.v2Orchestrator = newTestOrchestrator()
+	bs.v2Recovery = NewRecoveryManager(bs)
+	defer bs.v2Recovery.Shutdown()
+
+	path := createTestVolDirect(t, bs, "vol-core-cmd-catchup-start")
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	bs.v2Recovery.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID == path && pending != nil && pending.Plan != nil {
+			if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
+				pending.CatchUpIO = fakeCatchUpIO{transferredTo: plan.CatchUpTarget}
+			}
+		}
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		proj, ok := bs.CoreProjection(path)
+		sender := bs.v2Orchestrator.Registry.Sender(path + "/vs-2")
+		if ok && proj.Recovery.Phase == engine.RecoveryIdle && sender != nil && sender.State() == engine.StateInSync {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	cmds := bs.ExecutedCoreCommands(path)
+	if !reflect.DeepEqual(cmds, []string{"apply_role", "configure_shipper", "start_recovery_task", "start_catchup"}) {
+		t.Fatalf("expected primary assignment to execute apply_role + configure_shipper + start_recovery_task + start_catchup, got %v", cmds)
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Boundary.DurableLSN == 0 {
+		t.Fatalf("durable_lsn=%d", proj.Boundary.DurableLSN)
+	}
+	sender := bs.v2Orchestrator.Registry.Sender(path + "/vs-2")
+	if sender == nil {
+		t.Fatal("sender not found")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s", sender.State())
+	}
+}
+
+func TestBlockService_ApplyAssignments_RebuildingRole_UsesCoreRecoveryPathWithoutLegacyDirectStart(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Bridge = newTestControlBridge()
+	bs.v2Orchestrator = newTestOrchestrator()
+	bs.v2Recovery = NewRecoveryManager(bs)
+	defer bs.v2Recovery.Shutdown()
+
+	path := createTestVolDirect(t, bs, "vol-core-cmd-rebuild-assignment")
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		if err := vol.WriteLBA(0, make([]byte, 4096)); err != nil {
+			return err
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	legacyCalls := 0
+	bs.onLegacyStartRebuild = func(path, rebuildAddr string, epoch uint64) {
+		legacyCalls++
+	}
+	bs.v2Recovery.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID == path && pending != nil && pending.Plan != nil {
+			if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
+				pending.RebuildIO = fakeRebuildIO{achievedLSN: plan.RebuildTargetLSN}
+			}
+		}
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           2,
+		Role:            blockvol.RoleToWire(blockvol.RoleRebuilding),
+		LeaseTtlMs:      30000,
+		ReplicaDataAddr: "127.0.0.1:0",
+		ReplicaCtrlAddr: "127.0.0.1:0",
+		RebuildAddr:     "127.0.0.1:15000",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		proj, ok := bs.CoreProjection(path)
+		sender := bs.v2Orchestrator.Registry.Sender(path + "/vs-test")
+		if ok && proj.Recovery.Phase == engine.RecoveryIdle && sender != nil && sender.State() == engine.StateInSync {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if legacyCalls != 0 {
+		t.Fatalf("legacy direct rebuild should not run when core is present, calls=%d", legacyCalls)
+	}
+	vol, ok := bs.blockStore.GetBlockVolume(path)
+	if !ok {
+		t.Fatal("volume not found")
+	}
+	status := vol.Status()
+	if status.Role != blockvol.RoleRebuilding || status.Epoch != 2 {
+		t.Fatalf("status=%+v", status)
+	}
+	cmds := bs.ExecutedCoreCommands(path)
+	if !reflect.DeepEqual(cmds, []string{"apply_role", "start_recovery_task", "start_rebuild"}) {
+		t.Fatalf("expected rebuilding assignment to execute apply_role + start_recovery_task + start_rebuild, got %v", cmds)
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Mode.Reason == "awaiting_receiver_ready" {
+		t.Fatalf("rebuilding assignment should not be reported as awaiting receiver readiness: %+v", proj.Mode)
+	}
+	sender := bs.v2Orchestrator.Registry.Sender(path + "/vs-test")
+	if sender == nil {
+		t.Fatal("sender not found")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s", sender.State())
+	}
+}
+
+func TestBlockService_ApplyAssignments_RebuildingRole_PreservesLegacyFallbackWithoutCore(t *testing.T) {
+	dir := t.TempDir()
+	store := storage.NewBlockVolumeStore()
+	t.Cleanup(func() { store.Close() })
+	bs := &BlockService{
+		blockStore:    store,
+		blockDir:      dir,
+		listenAddr:    "127.0.0.1:3260",
+		iqnPrefix:     "iqn.2024-01.com.seaweedfs:vol.",
+		replStates:    make(map[string]*volReplState),
+		localServerID: "vs-test",
+	}
+
+	path := createTestVolDirect(t, bs, "vol-legacy-rebuild")
+	legacyCalls := 0
+	legacyCalled := make(chan struct{}, 1)
+	bs.onLegacyStartRebuild = func(path, rebuildAddr string, epoch uint64) {
+		legacyCalls++
+		select {
+		case legacyCalled <- struct{}{}:
+		default:
+		}
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:        path,
+		Epoch:       3,
+		Role:        blockvol.RoleToWire(blockvol.RoleRebuilding),
+		LeaseTtlMs:  30000,
+		RebuildAddr: "127.0.0.1:15000",
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	select {
+	case <-legacyCalled:
+	case <-time.After(1 * time.Second):
+		t.Fatal("expected legacy direct rebuild to be used without core")
+	}
+	if legacyCalls != 1 {
+		t.Fatalf("legacy direct rebuild calls=%d", legacyCalls)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/v2bridge"
@@ -341,11 +342,13 @@ func TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
-	rm.OnPendingExecution = func(volumeID string, pending *pendingRecoveryExecution) {
-		if volumeID != volPath || pending == nil || pending.plan == nil {
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
 			return
 		}
-		pending.rebuildIO = fakeRebuildIO{achievedLSN: pending.plan.RebuildTargetLSN}
+		if plan, ok := pending.Plan.(*engine.RecoveryPlan); ok {
+			pending.RebuildIO = fakeRebuildIO{achievedLSN: plan.RebuildTargetLSN}
+		}
 	}
 	_, _, rebuildPort := bs.ReplicationPorts(volPath)
 	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
