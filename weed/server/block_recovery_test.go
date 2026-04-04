@@ -220,7 +220,7 @@ func TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
-	rm.runCatchUp(context.Background(), replicaID, "")
+	rm.runCatchUp(context.Background(), replicaID, nil)
 
 	proj, ok := bs.CoreProjection(volPath)
 	if !ok {
@@ -276,7 +276,7 @@ func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
-	rm.runCatchUp(context.Background(), replicaID, "")
+	rm.runCatchUp(context.Background(), replicaID, nil)
 
 	proj, ok := bs.CoreProjection(volPath)
 	if !ok {
@@ -350,7 +350,7 @@ func TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath(t *testing.T) {
 	}
 	_, _, rebuildPort := bs.ReplicationPorts(volPath)
 	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
-	rm.runRebuild(context.Background(), replicaID, rebuildAddr)
+	rm.runRebuild(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
 
 	proj, ok := bs.CoreProjection(volPath)
 	if !ok {
@@ -416,7 +416,7 @@ func TestP16B_RunRebuild_FailClosedWithoutFreshStartRebuildCommand(t *testing.T)
 	bs.v2Recovery = rm
 	_, _, rebuildPort := bs.ReplicationPorts(volPath)
 	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
-	rm.runRebuild(context.Background(), replicaID, rebuildAddr)
+	rm.runRebuild(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
 
 	after := bs.ExecutedCoreCommands(volPath)
 	if !reflect.DeepEqual(after, before) {
