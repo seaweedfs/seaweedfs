@@ -35,9 +35,13 @@ func (mq *MaintenanceQueue) SetPersistence(persistence TaskPersistence) {
 
 // LoadTasksFromPersistence is called on startup. Previous task states are NOT loaded
 // into memory — the maintenance scanner will re-detect current needs from the live
-// cluster state. Old completed task files on disk are cleaned up by the periodic
-// cleanup loop.
+// cluster state. Stale task files from previous runs are deleted from disk.
 func (mq *MaintenanceQueue) LoadTasksFromPersistence() error {
+	if mq.persistence != nil {
+		if err := mq.persistence.DeleteAllTaskStates(); err != nil {
+			glog.Warningf("Failed to clean up old task files: %v", err)
+		}
+	}
 	glog.Infof("Task queue initialized (previous tasks will be re-detected by scanner)")
 	return nil
 }

@@ -1135,6 +1135,43 @@ func (cp *ConfigPersistence) loadAllTaskStatesLocked() ([]*maintenance.Maintenan
 	return tasks, nil
 }
 
+// DeleteAllTaskStates removes all task state .pb files from disk without reading them.
+// Used at startup to clean up stale files from previous runs — the scanner will
+// re-detect any tasks that are still needed from live cluster state.
+func (cp *ConfigPersistence) DeleteAllTaskStates() error {
+	cp.tasksMu.Lock()
+	defer cp.tasksMu.Unlock()
+
+	if cp.dataDir == "" {
+		return nil
+	}
+
+	tasksDir := filepath.Join(cp.dataDir, TasksSubdir)
+	entries, err := os.ReadDir(tasksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read tasks directory: %w", err)
+	}
+
+	var removed int
+	for _, entry := range entries {
+		if !entry.IsDir() && filepath.Ext(entry.Name()) == ".pb" {
+			if err := os.Remove(filepath.Join(tasksDir, entry.Name())); err != nil && !os.IsNotExist(err) {
+				glog.Warningf("Failed to delete task file %s: %v", entry.Name(), err)
+			} else {
+				removed++
+			}
+		}
+	}
+
+	if removed > 0 {
+		glog.Infof("Cleaned up %d stale task files from disk", removed)
+	}
+	return nil
+}
+
 // DeleteTaskState removes a task state file from disk
 func (cp *ConfigPersistence) DeleteTaskState(taskID string) error {
 	cp.tasksMu.Lock()

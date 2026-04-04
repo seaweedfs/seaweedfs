@@ -130,6 +130,7 @@ type TaskPersistence interface {
 	LoadTaskState(taskID string) (*MaintenanceTask, error)
 	LoadAllTaskStates() ([]*MaintenanceTask, error)
 	DeleteTaskState(taskID string) error
+	DeleteAllTaskStates() error
 	CleanupCompletedTasks() error
 
 	// Policy persistence

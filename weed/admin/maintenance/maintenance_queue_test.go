@@ -693,6 +693,7 @@ func (m *MockPersistence) SaveTaskState(task *MaintenanceTask) error            
 func (m *MockPersistence) LoadTaskState(taskID string) (*MaintenanceTask, error)    { return nil, nil }
 func (m *MockPersistence) LoadAllTaskStates() ([]*MaintenanceTask, error)           { return m.tasks, nil }
 func (m *MockPersistence) DeleteTaskState(taskID string) error                      { return nil }
+func (m *MockPersistence) DeleteAllTaskStates() error                               { return nil }
 func (m *MockPersistence) CleanupCompletedTasks() error                             { return nil }
 func (m *MockPersistence) SaveTaskPolicy(taskType string, policy *TaskPolicy) error { return nil }
 
