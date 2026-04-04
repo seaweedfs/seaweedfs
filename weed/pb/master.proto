@@ -514,6 +514,7 @@ message BlockVolumeInfoMessage {
   string nqn = 18;
   optional bool replica_ready = 19;
   optional bool needs_rebuild = 20;
+  optional bool publish_healthy = 21;
 }
 
 message BlockVolumeShortInfoMessage {

@@ -3913,6 +3913,7 @@ type BlockVolumeInfoMessage struct {
 	Nqn             string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
 	ReplicaReady    *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
 	NeedsRebuild    *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
+	PublishHealthy  *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -4083,6 +4084,13 @@ func (x *BlockVolumeInfoMessage) GetReplicaReady() bool {
 func (x *BlockVolumeInfoMessage) GetNeedsRebuild() bool {
 	if x != nil && x.NeedsRebuild != nil {
 		return *x.NeedsRebuild
+	}
+	return false
+}
+
+func (x *BlockVolumeInfoMessage) GetPublishHealthy() bool {
+	if x != nil && x.PublishHealthy != nil {
+		return *x.PublishHealthy
 	}
 	return false
 }
@@ -5975,7 +5983,7 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
 	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse\"\xda\x05\n" +
+	"\x12VolumeGrowResponse\"\x9c\x06\n" +
 	"\x16BlockVolumeInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6000,9 +6008,11 @@ const file_weed_pb_master_proto_rawDesc = "" +
 	"\tnvme_addr\x18\x11 \x01(\tR\bnvmeAddr\x12\x10\n" +
 	"\x03nqn\x18\x12 \x01(\tR\x03nqn\x12(\n" +
 	"\rreplica_ready\x18\x13 \x01(\bH\x00R\freplicaReady\x88\x01\x01\x12(\n" +
-	"\rneeds_rebuild\x18\x14 \x01(\bH\x01R\fneedsRebuild\x88\x01\x01B\x10\n" +
+	"\rneeds_rebuild\x18\x14 \x01(\bH\x01R\fneedsRebuild\x88\x01\x01\x12,\n" +
+	"\x0fpublish_healthy\x18\x15 \x01(\bH\x02R\x0epublishHealthy\x88\x01\x01B\x10\n" +
 	"\x0e_replica_readyB\x10\n" +
-	"\x0e_needs_rebuild\"\x8e\x01\n" +
+	"\x0e_needs_rebuildB\x12\n" +
+	"\x10_publish_healthy\"\x8e\x01\n" +
 	"\x1bBlockVolumeShortInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +

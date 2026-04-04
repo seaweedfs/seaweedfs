@@ -1340,3 +1340,72 @@ Conclusion:
    explicit field still fall back to the previous heuristic
 3. this slice still does not claim full `VolumeMode` heartbeat ownership or
    broad failover closure by itself
+
+---
+
+#### `16O` Start Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `publish_healthy` preservation on the heartbeat/master seam
+
+Why this slice exists:
+
+1. `16M` made replica readiness explicit on the heartbeat/master seam
+2. `16N` preserved explicit `needs_rebuild` truth on the same seam
+3. but master-side outward healthy publication is still reconstructed from
+   secondary readiness/degraded heuristics rather than explicitly consumed from
+   the current core-owned publication owner
+
+Chosen implementation rule:
+
+1. widen the heartbeat wire additively with an explicit `publish_healthy` field
+2. emit it from the current bounded core publication truth on the core-present
+   path
+3. make master-side consume prefer explicit healthy publication truth and retain
+   the previous reconstruction only as backward-compatible fallback
+4. do not broaden this slice into full `VolumeMode` heartbeat ownership
+
+---
+
+#### `16O` Delivery Note Rev 1
+
+Date: 2026-04-04
+Scope: bounded explicit `publish_healthy` preservation on the heartbeat/master seam
+
+What changed:
+
+1. `weed/pb/master.proto`
+   - added additive optional `publish_healthy` to `BlockVolumeInfoMessage`
+2. `weed/pb/master_pb/master.pb.go`
+   - regenerated so heartbeat wire presence is represented as `*bool`
+3. `weed/storage/blockvol/block_heartbeat.go`
+   - heartbeat wire struct now carries explicit `PublishHealthy`
+4. `weed/storage/blockvol/block_heartbeat_proto.go`
+   - heartbeat conversion now writes and reads `PublishHealthy`
+5. `weed/server/volume_server_block.go`
+   - heartbeat emission now preserves explicit bounded healthy-publication truth
+     from the current core publication owner
+6. `weed/server/master_block_registry.go`
+   - registry consume now prefers explicit heartbeat `publish_healthy` truth and
+     keeps the older reconstruction only when the field is absent
+7. focused tests in `block_heartbeat_proto_test.go`,
+   `volume_server_block_test.go`, and `master_block_registry_test.go`
+   - now prove explicit healthy-publication preservation and backward-compatible
+     fallback
+
+Proof / evidence:
+
+1. `go test ./weed/storage/blockvol/ -count=1 -run "TestInfoMessage_(Replica|NeedsRebuild|PublishHealthy)"`
+2. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreTruth|Registry_UpdateFullHeartbeat_(ConsumesExplicitPublishHealthyFromPrimaryHeartbeat|ExplicitUnhealthySuppressesStalePublishHealthyHeuristic)|BlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMode|Registry_UpdateFullHeartbeat_ConsumesExplicitNeedsRebuildFromPrimaryHeartbeat)"`
+3. `go test ./weed/server/ -count=1 -timeout 120s -run "Test(BlockService_ApplyAssignments_|P16B_|P4_|Registry_UpdateFullHeartbeat_ConsumesCoreInfluencedReplicaReady|Registry_UpdateFullHeartbeat_ReplicaReadyFallsBackToAddressesWhenFieldAbsent)"`
+4. result: `PASS`
+
+Conclusion:
+
+1. the heartbeat/master seam no longer reconstructs healthy publication only
+   from secondary readiness/degraded signals when explicit core publication
+   truth is available
+2. backward compatibility is preserved because older heartbeats without the
+   explicit field still fall back to the previous reconstruction
+3. this slice still does not claim full `VolumeMode` heartbeat ownership or
+   broad failover closure by itself

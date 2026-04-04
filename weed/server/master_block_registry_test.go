@@ -2284,3 +2284,71 @@ func TestRegistry_UpdateFullHeartbeat_ExplicitHealthySuppressesStaleNeedsRebuild
 		t.Fatalf("expected explicit false to suppress stale needs_rebuild heuristic, got %q", entry.VolumeMode)
 	}
 }
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesExplicitPublishHealthyFromPrimaryHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-publish-healthy",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-publish-healthy-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-publish-healthy-replica.blk",
+			Ready:  false,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	publishHealthy := true
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:           "/blocks/vol-master-publish-healthy-primary.blk",
+		Role:           blockvol.RoleToWire(blockvol.RolePrimary),
+		PublishHealthy: &publishHealthy,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-publish-healthy")
+	if !entry.PublishHealthy || !entry.HasPublishHealthy {
+		t.Fatalf("expected explicit publish_healthy truth on entry, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "publish_healthy" {
+		t.Fatalf("expected publish_healthy from explicit primary heartbeat truth, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_ExplicitUnhealthySuppressesStalePublishHealthyHeuristic(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-master-publish-healthy-explicit-false",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-master-publish-healthy-explicit-false-primary.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-master-publish-healthy-explicit-false-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	publishHealthy := false
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:           "/blocks/vol-master-publish-healthy-explicit-false-primary.blk",
+		Role:           blockvol.RoleToWire(blockvol.RolePrimary),
+		PublishHealthy: &publishHealthy,
+	}}, "")
+
+	entry, _ := r.Lookup("vol-master-publish-healthy-explicit-false")
+	if !entry.HasPublishHealthy || entry.PublishHealthy {
+		t.Fatalf("expected explicit false publish_healthy truth on entry, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "bootstrap_pending" {
+		t.Fatalf("expected explicit false to suppress stale publish_healthy heuristic, got %q", entry.VolumeMode)
+	}
+}

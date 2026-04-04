@@ -605,6 +605,62 @@ Evidence:
 
 1. focused working-tree change after `16M` closeout
 
+### `16O`: PublishHealthy Heartbeat Mode Preservation
+
+Goal:
+
+1. close one bounded failover/publication seam by preserving explicit
+   `publish_healthy` truth across the primary heartbeat/master consume boundary
+   instead of reconstructing that mode only from secondary readiness/degraded
+   heuristics
+2. keep the slice limited to publication-health preservation on the current
+   heartbeat wire and master-registry consume path, not broad full
+   `VolumeMode` heartbeat ownership
+
+Acceptance object:
+
+1. `BlockVolumeInfoMessage` carries an additive explicit `publish_healthy` bit
+   on the heartbeat wire
+2. `weed/server` heartbeat emission sets that bit from the current core-owned
+   publication truth on the core-present path
+3. `master_block_registry` consumes explicit heartbeat `publish_healthy` truth
+   before reconstructing healthy publication from secondary heuristics
+4. focused proofs show primary healthy publication survives heartbeat/master
+   consume as explicit publication truth
+5. this slice still does not yet claim full `VolumeMode` heartbeat ownership or
+   broad failover closure
+
+Current chosen path:
+
+1. widen `master.proto` / heartbeat conversion with an additive
+   `publish_healthy` field
+2. emit that field from `CollectBlockVolumeHeartbeat` using the bounded core
+   publication truth on the primary path
+3. let master consume prefer explicit healthy publication truth while retaining
+   the previous reconstruction as backward-compatible fallback
+
+Status:
+
+1. delivered
+
+Delivered result:
+
+1. `BlockVolumeInfoMessage` now carries additive explicit `publish_healthy`
+   heartbeat truth on the wire
+2. `weed/server` heartbeat emission now preserves explicit bounded
+   healthy-publication truth from the core-owned publication owner on the
+   current core-present path
+3. `master_block_registry` now prefers explicit heartbeat `publish_healthy`
+   truth over secondary readiness/degraded reconstruction while keeping the
+   previous reconstruction as backward-compatible fallback when the field is
+   absent
+4. focused proofs now show primary healthy publication survives heartbeat/master
+   consume as explicit publication truth rather than only as reconstructed mode
+
+Evidence:
+
+1. focused working-tree change after `16N` closeout
+
 ## Current Checkpoint Review Target
 
 The current review target is the current widened bounded runtime checkpoint
@@ -685,6 +741,10 @@ boundary:
 15. `16N` delivered:
    - primary heartbeat/master consume now preserves explicit bounded
      `needs_rebuild` truth with backward-compatible fallback for older
+     heartbeats
+16. `16O` delivered:
+   - primary heartbeat/master consume now preserves explicit bounded
+     healthy-publication truth with backward-compatible fallback for older
      heartbeats
 
 After this checkpoint:

@@ -287,6 +287,26 @@ func TestInfoMessage_NeedsRebuildRoundTrip(t *testing.T) {
 	}
 }
 
+func TestInfoMessage_PublishHealthyRoundTrip(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:           "/data/vol.blk",
+		Epoch:          1,
+		PublishHealthy: true,
+	}
+	pb := InfoMessageToProto(orig)
+	back := InfoMessageFromProto(pb)
+	if !back.PublishHealthy {
+		t.Fatal("PublishHealthy should be true after round-trip")
+	}
+
+	orig.PublishHealthy = false
+	pb = InfoMessageToProto(orig)
+	back = InfoMessageFromProto(pb)
+	if back.PublishHealthy {
+		t.Fatal("PublishHealthy should be false after round-trip")
+	}
+}
+
 func TestAssignment_MultiReplicaRoundTrip(t *testing.T) {
 	orig := BlockVolumeAssignment{
 		Path:       "/data/vol.blk",

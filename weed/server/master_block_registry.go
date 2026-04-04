@@ -79,6 +79,8 @@ type BlockVolumeEntry struct {
 	TransportDegraded bool          // primary reports degraded replicas
 	NeedsRebuild      bool          // explicit primary heartbeat needs_rebuild truth when present
 	HasNeedsRebuild   bool          // whether the current primary heartbeat carried explicit needs_rebuild truth
+	PublishHealthy    bool          // explicit primary heartbeat publish_healthy truth when present
+	HasPublishHealthy bool          // whether the current primary heartbeat carried explicit publish_healthy truth
 
 	// CP13-9: Normalized volume mode for external surfaces.
 	// Computed by recomputeReplicaState from the current entry state.
@@ -195,6 +197,11 @@ func (e *BlockVolumeEntry) computeVolumeMode() string {
 		}
 	}
 
+	// Prefer explicit primary heartbeat publish_healthy truth when present.
+	if e.HasPublishHealthy && e.PublishHealthy {
+		return "publish_healthy"
+	}
+
 	// Replicas exist but not all ready.
 	if !e.ReplicaReady {
 		return "bootstrap_pending"
@@ -203,6 +210,10 @@ func (e *BlockVolumeEntry) computeVolumeMode() string {
 	// All ready but transport degraded.
 	if e.TransportDegraded {
 		return "degraded"
+	}
+
+	if e.HasPublishHealthy {
+		return "bootstrap_pending"
 	}
 
 	return "publish_healthy"
@@ -644,6 +655,7 @@ func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVo
 	existing.HealthScore = info.HealthScore
 	existing.TransportDegraded = info.ReplicaDegraded
 	existing.NeedsRebuild, existing.HasNeedsRebuild = primaryNeedsRebuildObservedFromHeartbeat(info)
+	existing.PublishHealthy, existing.HasPublishHealthy = primaryPublishHealthyObservedFromHeartbeat(info)
 	existing.WALHeadLSN = info.WalHeadLsn
 	// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
 	if info.DurabilityMode != "" {
@@ -737,6 +749,16 @@ func primaryNeedsRebuildObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMes
 	}
 	if info.NeedsRebuild != nil {
 		return info.GetNeedsRebuild(), true
+	}
+	return false, false
+}
+
+func primaryPublishHealthyObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) (bool, bool) {
+	if info == nil {
+		return false, false
+	}
+	if info.PublishHealthy != nil {
+		return info.GetPublishHealthy(), true
 	}
 	return false, false
 }

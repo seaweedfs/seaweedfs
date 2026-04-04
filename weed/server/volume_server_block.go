@@ -967,6 +967,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 			msgs[i].ReplicaDataAddr, msgs[i].ReplicaCtrlAddr = bs.heartbeatReplicaAddrs(msgs[i].Path, s)
 			msgs[i].ReplicaReady = bs.heartbeatReplicaReady(msgs[i].Path, s)
 			msgs[i].NeedsRebuild = bs.heartbeatNeedsRebuild(msgs[i].Path, s)
+			msgs[i].PublishHealthy = bs.heartbeatPublishHealthy(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
@@ -1034,6 +1035,21 @@ func (bs *BlockService) heartbeatNeedsRebuild(path string, state *volReplState) 
 		return proj.Mode.Name == engine.ModeNeedsRebuild
 	}
 	return false
+}
+
+// heartbeatPublishHealthy returns the explicit publish_healthy truth that should
+// be exposed on the current heartbeat surface. On the core-present path it
+// preserves the core-owned publication truth rather than reconstructing it from
+// secondary readiness/degraded signals. Older paths fall back to the existing
+// adapter-local publish flag for compatibility.
+func (bs *BlockService) heartbeatPublishHealthy(path string, state *volReplState) bool {
+	if state == nil {
+		return false
+	}
+	if proj, ok := bs.CoreProjection(path); ok {
+		return proj.Publication.Healthy
+	}
+	return state.publishHealthy
 }
 
 // heartbeatReplicaDegraded returns the bounded degraded bit for the current

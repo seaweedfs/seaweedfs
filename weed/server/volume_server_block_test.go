@@ -1313,6 +1313,37 @@ func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryNeedsRebuildUsesCoreMod
 	}
 }
 
+func TestBlockService_CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreTruth(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-heartbeat-publish-healthy-primary")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: 12})
+
+	msg := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if msg == nil {
+		t.Fatal("volume missing from heartbeat")
+	}
+	if !msg.PublishHealthy {
+		t.Fatalf("expected explicit publish_healthy truth on heartbeat, msg=%+v", msg)
+	}
+}
+
 func TestBlockService_HeartbeatIncludesReplicaAddrs(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	path := createTestVolDirect(t, bs, "vol1")
