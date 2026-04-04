@@ -62,6 +62,14 @@ func NewRecoveryManager(bs *BlockService) *RecoveryManager {
 	}
 }
 
+// === LEGACY NO-CORE COMPATIBILITY ===
+//
+// The following methods (HandleAssignmentResult, HandleRemovedAssignments)
+// preserve pre-Phase-16 behavior for no-core paths and older tests.
+// Core-present paths use StartRecoveryTask + ExecutePendingCatchUp/Rebuild
+// instead. These legacy entry points should NOT be strengthened into
+// semantic-authority proofs — they are compatibility guards only.
+
 // HandleAssignmentResult preserves the pre-16D behavior for no-core paths and
 // older tests: session creation/supersede results directly start recovery
 // goroutines. Core-present paths should use StartRecoveryTask instead.
