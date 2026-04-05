@@ -1,6 +1,6 @@
 # V2 Product Completion Overview
 
-Date: 2026-04-04
+Date: 2026-04-05
 Status: active
 Purpose: provide one product-level overview of current V2 engineering completion, V1 reuse strategy, and the roadmap from the accepted candidate path to a production-ready block engine
 
@@ -48,6 +48,8 @@ It already has:
 5. an accepted `Phase 16` finish-line runtime checkpoint
 6. an active `Phase 17` product-claim package that now makes broader branch,
    contract, policy, and launch-envelope boundaries explicit
+7. a first bounded productionization artifact set for pilot / preflight /
+   stop-condition / rollout-review discipline
 
 The most important current distinction is:
 
@@ -165,9 +167,9 @@ working path". They are closure and launch-envelope gaps:
 3. restart / disturbance preservation outside the current `17C` policy table
    - current long-window behavior is now policy-shaped, but not yet a broad
      production hardening statement
-4. pilot / rollout package
-   - the first launch envelope is now drafted, but pilot pack, preflight, stop
-     conditions, and rollout review artifacts are still missing
+4. pilot execution and review outcome
+   - the bounded productionization artifacts now exist, but no bounded pilot run,
+     incident ledger, or rollout decision outcome has been accepted yet
 5. long-run / soak / performance extension beyond the bounded floor
    - `Phase 12 P4` remains the bounded floor; broader confidence still belongs to
      later productionization
@@ -183,7 +185,8 @@ Target:
 
 Status:
 
-1. in progress
+1. checkpoint package drafted
+2. review outcome still pending
 
 Main output:
 
@@ -211,13 +214,15 @@ Status:
 
 1. first draft frozen inside `Phase 17`
 2. not yet accepted as a launch decision package
+3. bounded productionization artifacts now exist for pilot discipline, but do not
+   by themselves imply launch approval
 
 Main work:
 
 1. accept or refine the bounded supported matrix
 2. accept or refine explicit exclusions outside the first launch claim
 3. bind product-facing surfaces to the named supported envelope
-4. define preflight, success, and stop conditions
+4. keep pilot/preflight/stop/rollout artifacts aligned to the same frozen matrix
 
 ### Stage 3: Internal pilot and incident-driven hardening
 
@@ -227,13 +232,17 @@ Target:
 
 Main work:
 
-1. run a limited internal pilot package
+1. run a limited internal pilot package using the existing bounded artifact set
 2. route incidents with explicit classification:
    - config / environment issue
    - known exclusion
    - true product bug
 3. harden only within the named supported envelope
 4. perform controlled rollout review only within the named supported envelope
+5. record one explicit decision outcome:
+   - stay in pilot
+   - widen within the same envelope
+   - block expansion
 
 Rules:
 
@@ -294,7 +303,8 @@ It is:
 
 1. finish review/freeze of the bounded `Phase 17` branch/contract/policy/envelope
    package
-2. run a limited internal pilot with explicit stop conditions
+2. execute the bounded internal pilot using the explicit preflight/stop/rollout
+   artifacts
 3. harden from incidents without silently broadening scope
 4. only broaden claims when new evidence supports them
 

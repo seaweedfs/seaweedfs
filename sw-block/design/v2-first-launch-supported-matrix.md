@@ -70,13 +70,24 @@ These are still required before this matrix can be read as a real launch
 decision package:
 
 1. a frozen `Phase 17` checkpoint review outcome
-2. a pilot pack with:
-   - preflight checklist
-   - success criteria
-   - stop / rollback conditions
-3. controlled-rollout review artifacts
-4. any additional evidence needed if the product wants claims broader than the
+2. any additional evidence needed if the product wants claims broader than the
    current bounded `17B/17C` contract/policy package
+
+## Current Productionization Artifacts
+
+The first bounded productionization artifacts now exist for the chosen path:
+
+1. `v2-bounded-internal-pilot-pack.md`
+   - bounded pilot scope
+   - success criteria
+   - incident classification
+2. `v2-pilot-preflight-checklist.md`
+   - start/resume gate for the bounded pilot
+3. `v2-pilot-stop-conditions.md`
+   - stop/contain/rollback-exposure rules
+4. `v2-controlled-rollout-review.md`
+   - bounded post-pilot decision gate
+   - allowed outcomes: stay in pilot / widen within same envelope / block expansion
 
 ## Not Launch-Blocking In This Draft
 
@@ -121,3 +132,7 @@ When using this matrix, read it with these constraints:
 2. `sw-block/.private/phase/phase-17-checkpoint-review.md`
 3. `sw-block/design/v2-product-completion-overview.md`
 4. `sw-block/design/v2-protocol-claim-and-evidence.md`
+5. `sw-block/design/v2-bounded-internal-pilot-pack.md`
+6. `sw-block/design/v2-pilot-preflight-checklist.md`
+7. `sw-block/design/v2-pilot-stop-conditions.md`
+8. `sw-block/design/v2-controlled-rollout-review.md`

@@ -1,6 +1,6 @@
 # V2 Protocol Claim And Evidence
 
-Date: 2026-04-03
+Date: 2026-04-05
 Status: active
 Purpose: keep one centralized ledger for the current chosen envelope, accepted claims, supporting evidence, invalidated evidence, and rerun obligations
 
@@ -111,6 +111,7 @@ These are the claims that may currently be made without overreach.
 | `C-PHASE16-RUNTIME-CHECKPOINT` | the bounded heartbeat/master/API runtime path now preserves accepted explicit truth across the delivered `16M-16W` restart/disturbance seams | bounded chosen path only; excludes broad recovery-loop, broad failover/publication, and launch claims | `sw-block/.private/phase/phase-16-finish-review.md`, `phase-16.md`, focused `weed/server` tests | allowed |
 | `C-PHASE17-PRODUCT-CHECKPOINT` | the current broader recovery-branch map, bounded failover/publication contract, bounded disturbance policy table, and first-launch envelope draft are explicit for the chosen path | bounded chosen path only; excludes broad production readiness, broad transport/frontend approval, and broad whole-surface failover/publication proof | `sw-block/.private/phase/phase-17.md`, `sw-block/.private/phase/phase-17-checkpoint-review.md` | allowed |
 | `C-FIRST-LAUNCH-ENVELOPE-DRAFT` | one bounded first-launch supported matrix is frozen as a draft with explicit exclusions and launch blockers | bounded chosen path only; not a launch decision, pilot approval, or rollout approval | `sw-block/design/v2-first-launch-supported-matrix.md` | allowed |
+| `C-PRODUCTIONIZATION-ARTIFACT-SET` | one bounded productionization artifact set now exists for internal pilot, preflight, stop-condition, and controlled-rollout discipline inside the frozen chosen envelope | bounded chosen path only; artifact existence only, not pilot success, rollout approval, or broader launch proof | `sw-block/design/v2-bounded-internal-pilot-pack.md`, `v2-pilot-preflight-checklist.md`, `v2-pilot-stop-conditions.md`, `v2-controlled-rollout-review.md` | allowed |
 | `C-LAUNCH-APPROVAL` | broad product launch readiness | outside current phase | future | not allowed |
 
 ## Evidence Map
@@ -131,6 +132,7 @@ These are the claims that may currently be made without overreach.
 | Failover/publication bounded contract | one bounded whole-chain statement is explicit for publication ownership/address coherence after failover completion and winning assignment delivery | `phase-17.md`, `phase-17-checkpoint-review.md`, publication/disturbance tests in `weed/server` | `v2-first-launch-supported-matrix.md` |
 | Disturbance policy table | startup/restart/rejoin/repeated-failover/degraded-sparsity behavior is explicit as runtime rule, temporary inconsistency policy, or non-claim | `phase-17.md`, `phase-17-checkpoint-review.md`, restart/disturbance tests in `weed/server` | `v2-product-completion-overview.md` |
 | First-launch supported matrix | one bounded launch envelope draft is explicit with supported scope, exclusions, and launch blockers | `v2-first-launch-supported-matrix.md` | `phase-17-checkpoint-review.md`, `Phase 12 P4`, `CP13`, `Phase 16` |
+| Productionization artifact set | one bounded artifact set defines pilot scope, preflight gate, stop/contain rules, and post-pilot rollout review discipline | `v2-bounded-internal-pilot-pack.md`, `v2-pilot-preflight-checklist.md`, `v2-pilot-stop-conditions.md`, `v2-controlled-rollout-review.md` | `v2-first-launch-supported-matrix.md`, `v2-product-completion-overview.md` |
 
 ## Invalidated Or Narrowed Evidence
 
