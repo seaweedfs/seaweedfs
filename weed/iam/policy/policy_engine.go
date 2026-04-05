@@ -600,12 +600,33 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	return true
 }
 
-// matchesActions checks if any action in the list matches the requested action
+// multipartActionSet contains S3 multipart upload actions that are implicitly
+// granted when s3:PutObject is allowed, since multipart upload is an
+// implementation detail of putting objects.
+var multipartActionSet = map[string]bool{
+	"s3:CreateMultipartUpload":      true,
+	"s3:UploadPart":                 true,
+	"s3:CompleteMultipartUpload":    true,
+	"s3:AbortMultipartUpload":       true,
+	"s3:ListMultipartUploadParts":   true,
+	"s3:ListBucketMultipartUploads": true,
+}
+
+// matchesActions checks if any action in the list matches the requested action.
+// It also implicitly grants multipart upload actions when s3:PutObject is allowed,
+// mirroring the behavior in the S3 API policy engine (see PR #8445).
 func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, evalCtx *EvaluationContext) bool {
+	hasPutObjectPermission := false
 	for _, action := range actions {
 		if awsIAMMatch(action, requestedAction, evalCtx) {
 			return true
 		}
+		if !hasPutObjectPermission && awsIAMMatch(action, "s3:PutObject", evalCtx) {
+			hasPutObjectPermission = true
+		}
+	}
+	if hasPutObjectPermission && multipartActionSet[requestedAction] {
+		return true
 	}
 	return false
 }
