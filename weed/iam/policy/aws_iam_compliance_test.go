@@ -110,6 +110,92 @@ func TestAWSIAMMatch(t *testing.T) {
 	}
 }
 
+func TestMatchesActionsMultipartExpansion(t *testing.T) {
+	engine := &PolicyEngine{initialized: true}
+	evalCtx := &EvaluationContext{}
+
+	tests := []struct {
+		name            string
+		actions         []string
+		requestedAction string
+		expected        bool
+	}{
+		{
+			name:            "PutObject directly matches PutObject",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:PutObject",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows CreateMultipartUpload",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:CreateMultipartUpload",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows UploadPart",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:UploadPart",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows CompleteMultipartUpload",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:CompleteMultipartUpload",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows AbortMultipartUpload",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:AbortMultipartUpload",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows ListMultipartUploadParts",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:ListMultipartUploadParts",
+			expected:        true,
+		},
+		{
+			name:            "PutObject implicitly allows ListBucketMultipartUploads",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:ListBucketMultipartUploads",
+			expected:        true,
+		},
+		{
+			name:            "PutObject does not allow GetObject",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "s3:GetObject",
+			expected:        false,
+		},
+		{
+			name:            "GetObject does not allow CreateMultipartUpload",
+			actions:         []string{"s3:GetObject"},
+			requestedAction: "s3:CreateMultipartUpload",
+			expected:        false,
+		},
+		{
+			name:            "wildcard s3:Put* implicitly allows multipart via PutObject match",
+			actions:         []string{"s3:Put*"},
+			requestedAction: "s3:CreateMultipartUpload",
+			expected:        true,
+		},
+		{
+			name:            "case-insensitive multipart action lookup",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "S3:CREATEMULTIPARTUPLOAD",
+			expected:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := engine.matchesActions(tt.actions, tt.requestedAction, evalCtx)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
 func TestExpandPolicyVariables(t *testing.T) {
 	evalCtx := &EvaluationContext{
 		RequestContext: map[string]interface{}{

@@ -600,10 +600,29 @@ func (e *PolicyEngine) statementMatches(statement *Statement, evalCtx *Evaluatio
 	return true
 }
 
-// matchesActions checks if any action in the list matches the requested action
+// multipartActionSet contains lowercased S3 multipart upload actions that are
+// implicitly granted when s3:PutObject is allowed, since multipart upload is an
+// implementation detail of putting objects. Keys are lowercased for
+// case-insensitive lookup (AWS IAM actions are case-insensitive).
+var multipartActionSet = map[string]bool{
+	"s3:createmultipartupload":      true,
+	"s3:uploadpart":                 true,
+	"s3:completemultipartupload":    true,
+	"s3:abortmultipartupload":       true,
+	"s3:listmultipartuploadparts":   true,
+	"s3:listbucketmultipartuploads": true,
+}
+
+// matchesActions checks if any action in the list matches the requested action.
+// It also implicitly grants multipart upload actions when s3:PutObject is allowed,
+// mirroring the behavior in the S3 API policy engine (see PR #8445).
 func (e *PolicyEngine) matchesActions(actions []string, requestedAction string, evalCtx *EvaluationContext) bool {
+	isMultipart := multipartActionSet[strings.ToLower(requestedAction)]
 	for _, action := range actions {
 		if awsIAMMatch(action, requestedAction, evalCtx) {
+			return true
+		}
+		if isMultipart && awsIAMMatch(action, "s3:PutObject", evalCtx) {
 			return true
 		}
 	}
