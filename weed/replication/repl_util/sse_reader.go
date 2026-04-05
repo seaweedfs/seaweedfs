@@ -1,6 +1,7 @@
 package repl_util
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 
@@ -34,7 +35,28 @@ func MaybeDecryptReader(reader io.Reader, entry *filer_pb.Entry) (io.Reader, err
 	return nil, fmt.Errorf("unsupported SSE type: %v", sseType)
 }
 
+// MaybeDecryptContent decrypts inline entry content if SSE-encrypted.
+// Returns the original content unchanged if no SSE encryption is detected.
+func MaybeDecryptContent(content []byte, entry *filer_pb.Entry) ([]byte, error) {
+	if entry == nil || len(content) == 0 {
+		return content, nil
+	}
+
+	sseType := detectSSEType(entry)
+	if sseType == filer_pb.SSEType_NONE {
+		return content, nil
+	}
+
+	reader := bytes.NewReader(content)
+	decrypted, err := MaybeDecryptReader(reader, entry)
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(decrypted)
+}
+
 func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
+	// Check chunk metadata first
 	var detected filer_pb.SSEType
 	for _, chunk := range entry.GetChunks() {
 		if chunk.SseType != filer_pb.SSEType_NONE {
@@ -45,7 +67,23 @@ func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
 			}
 		}
 	}
-	return detected
+	if detected != filer_pb.SSEType_NONE {
+		return detected
+	}
+
+	// Fall back to extended metadata for inline objects (no chunks)
+	if entry.Extended != nil {
+		if len(entry.Extended[s3_constants.SeaweedFSSSES3Key]) > 0 {
+			return filer_pb.SSEType_SSE_S3
+		}
+		if len(entry.Extended[s3_constants.SeaweedFSSSEKMSKey]) > 0 {
+			return filer_pb.SSEType_SSE_KMS
+		}
+		if len(entry.Extended[s3_constants.SeaweedFSSSEIV]) > 0 {
+			return filer_pb.SSEType_SSE_C
+		}
+	}
+	return filer_pb.SSEType_NONE
 }
 
 func decryptSSES3(reader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {

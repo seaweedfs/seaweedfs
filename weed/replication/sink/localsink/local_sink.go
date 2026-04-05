@@ -2,6 +2,7 @@ package localsink
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -120,7 +121,11 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 	}
 
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		content, err := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if err != nil {
+			return fmt.Errorf("decrypt inline SSE content: %w", err)
+		}
+		return writeFunc(content)
 	}
 
 	if err := repl_util.CopyFromChunkViewsWithEntry(chunkViews, localsink.filerSource, writeFunc, entry); err != nil {

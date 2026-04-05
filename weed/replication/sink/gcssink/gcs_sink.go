@@ -127,7 +127,12 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 
 	var writeErr error
 	if len(entry.Content) > 0 {
-		writeErr = writeFunc(entry.Content)
+		content, decErr := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if decErr != nil {
+			writeErr = fmt.Errorf("decrypt inline SSE content: %w", decErr)
+		} else {
+			writeErr = writeFunc(content)
+		}
 	} else {
 		writeErr = repl_util.CopyFromChunkViewsWithEntry(chunkViews, g.filerSource, writeFunc, entry)
 	}
