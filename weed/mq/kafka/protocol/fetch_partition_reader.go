@@ -138,11 +138,13 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	// Get high water mark
 	hwm, hwmErr := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	if hwmErr != nil {
-		glog.Errorf("[%s] CRITICAL: Failed to get HWM for %s[%d]: %v",
+		// HWM lookup can fail when the partition has been deactivated between consumer
+		// sessions. Proceed with the fetch anyway — the broker will return the correct
+		// data (or empty) based on its own state. Use a sentinel HWM so we don't
+		// short-circuit below.
+		glog.Warningf("[%s] HWM lookup failed for %s[%d]: %v — will attempt fetch anyway",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
-		result.recordBatch = []byte{}
-		result.highWaterMark = 0
-		return
+		hwm = req.requestedOffset + 1 // ensure requestedOffset < hwm so we don't bail out
 	}
 	result.highWaterMark = hwm
 
@@ -228,15 +230,17 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 		return fetchResult.RecordBatches, fetchResult.NextOffset
 	}
 
-	// Multi-batch failed - try single batch WITHOUT the timeout constraint
-	// to ensure we get at least some data even if multi-batch timed out
+	// Multi-batch failed - try single batch with a fresh timeout
 	glog.Warningf("[%s] Multi-batch fetch failed for %s[%d] offset=%d after %v, falling back to single-batch (err: %v)",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, fromOffset, fetchDuration, err)
 
-	// Use original context for fallback, NOT the timed-out fetchCtx
-	// This ensures the fallback has a fresh chance to fetch data
+	// Use a fresh timeout for the fallback to prevent unbounded blocking.
+	// The original ctx (connection context) has no deadline, so passing it
+	// directly could block the data-plane goroutine indefinitely.
+	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 10*time.Second)
+	defer fallbackCancel()
 	fallbackStartTime := time.Now()
-	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(ctx, pr.topicName, pr.partitionID, fromOffset, 10)
+	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(fallbackCtx, pr.topicName, pr.partitionID, fromOffset, 10)
 	fallbackDuration := time.Since(fallbackStartTime)
 
 	if fallbackDuration > 2*time.Second {
