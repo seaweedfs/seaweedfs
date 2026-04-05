@@ -730,7 +730,10 @@ func TestFailoverFlow_AuthorizesAndActivatesHealthyCandidate(t *testing.T) {
 		t.Fatalf("sync node-b: %v", err)
 	}
 
-	result, err := ExecuteFailoverFlow(master, "flow-vol", 2, []FailoverParticipant{nodeB, nodeC})
+	result, err := ExecuteFailoverFlow(master, "flow-vol", 2, []FailoverTarget{
+		mustInProcessFailoverTarget(t, nodeB),
+		mustInProcessFailoverTarget(t, nodeC),
+	})
 	if err != nil {
 		t.Fatalf("execute failover flow: %v", err)
 	}
@@ -792,10 +795,11 @@ func TestFailoverFlow_StopsAtActivationGate(t *testing.T) {
 		t.Fatalf("seed node-b: %v", err)
 	}
 
-	result, err := ExecuteFailoverFlow(master, "flow-gated-vol", 2, []FailoverParticipant{
-		nodeB,
-		staticFailoverParticipant{
-			promotion: masterv2.PromotionQueryResponse{
+	result, err := ExecuteFailoverFlow(master, "flow-gated-vol", 2, []FailoverTarget{
+		mustInProcessFailoverTarget(t, nodeB),
+		staticFailoverTarget(
+			"node-c",
+			masterv2.PromotionQueryResponse{
 				VolumeName:   "flow-gated-vol",
 				NodeID:       "node-c",
 				Epoch:        1,
@@ -804,7 +808,7 @@ func TestFailoverFlow_StopsAtActivationGate(t *testing.T) {
 				Eligible:     false,
 				Reason:       "needs_rebuild",
 			},
-			summary: protocolv2.ReplicaSummaryResponse{
+			protocolv2.ReplicaSummaryResponse{
 				VolumeName:        "flow-gated-vol",
 				NodeID:            "node-c",
 				Epoch:             1,
@@ -819,7 +823,7 @@ func TestFailoverFlow_StopsAtActivationGate(t *testing.T) {
 				Eligible:          false,
 				Reason:            "needs_rebuild",
 			},
-		},
+		),
 	})
 	if err == nil {
 		t.Fatal("expected failover gate error")
@@ -888,7 +892,10 @@ func TestFailoverSession_StepwiseStagesExposeIntermediateState(t *testing.T) {
 		t.Fatalf("sync node-b: %v", err)
 	}
 
-	session, err := NewFailoverSession(master, "session-vol", 2, []FailoverParticipant{nodeB, nodeC})
+	session, err := NewFailoverSession(master, "session-vol", 2, []FailoverTarget{
+		mustInProcessFailoverTarget(t, nodeB),
+		mustInProcessFailoverTarget(t, nodeC),
+	})
 	if err != nil {
 		t.Fatalf("new failover session: %v", err)
 	}
@@ -981,10 +988,11 @@ func TestFailoverSession_SnapshotCapturesFailureState(t *testing.T) {
 		t.Fatalf("seed node-b: %v", err)
 	}
 
-	session, err := NewFailoverSession(master, "snapshot-gated-vol", 2, []FailoverParticipant{
-		nodeB,
-		staticFailoverParticipant{
-			promotion: masterv2.PromotionQueryResponse{
+	session, err := NewFailoverSession(master, "snapshot-gated-vol", 2, []FailoverTarget{
+		mustInProcessFailoverTarget(t, nodeB),
+		staticFailoverTarget(
+			"node-c",
+			masterv2.PromotionQueryResponse{
 				VolumeName:   "snapshot-gated-vol",
 				NodeID:       "node-c",
 				Epoch:        1,
@@ -993,7 +1001,7 @@ func TestFailoverSession_SnapshotCapturesFailureState(t *testing.T) {
 				Eligible:     false,
 				Reason:       "needs_rebuild",
 			},
-			summary: protocolv2.ReplicaSummaryResponse{
+			protocolv2.ReplicaSummaryResponse{
 				VolumeName:        "snapshot-gated-vol",
 				NodeID:            "node-c",
 				Epoch:             1,
@@ -1008,7 +1016,7 @@ func TestFailoverSession_SnapshotCapturesFailureState(t *testing.T) {
 				Eligible:          false,
 				Reason:            "needs_rebuild",
 			},
-		},
+		),
 	})
 	if err != nil {
 		t.Fatalf("new failover session: %v", err)
@@ -1051,10 +1059,10 @@ func TestInProcessFailoverDriver_ExecuteHealthyFailover(t *testing.T) {
 		t.Fatalf("new node-c: %v", err)
 	}
 	defer nodeC.Close()
-	if err := driver.RegisterParticipant("node-b", nodeB); err != nil {
+	if err := driver.RegisterTarget(mustInProcessFailoverTarget(t, nodeB)); err != nil {
 		t.Fatalf("register node-b: %v", err)
 	}
-	if err := driver.RegisterParticipant("node-c", nodeC); err != nil {
+	if err := driver.RegisterTarget(mustInProcessFailoverTarget(t, nodeC)); err != nil {
 		t.Fatalf("register node-c: %v", err)
 	}
 
@@ -1121,11 +1129,12 @@ func TestInProcessFailoverDriver_ExecuteStopsOnGate(t *testing.T) {
 		t.Fatalf("new node-b: %v", err)
 	}
 	defer nodeB.Close()
-	if err := driver.RegisterParticipant("node-b", nodeB); err != nil {
+	if err := driver.RegisterTarget(mustInProcessFailoverTarget(t, nodeB)); err != nil {
 		t.Fatalf("register node-b: %v", err)
 	}
-	if err := driver.RegisterParticipant("node-c", staticFailoverParticipant{
-		promotion: masterv2.PromotionQueryResponse{
+	if err := driver.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
 			VolumeName:   "driver-gated-vol",
 			NodeID:       "node-c",
 			Epoch:        1,
@@ -1134,7 +1143,7 @@ func TestInProcessFailoverDriver_ExecuteStopsOnGate(t *testing.T) {
 			Eligible:     false,
 			Reason:       "needs_rebuild",
 		},
-		summary: protocolv2.ReplicaSummaryResponse{
+		protocolv2.ReplicaSummaryResponse{
 			VolumeName:        "driver-gated-vol",
 			NodeID:            "node-c",
 			Epoch:             1,
@@ -1149,7 +1158,7 @@ func TestInProcessFailoverDriver_ExecuteStopsOnGate(t *testing.T) {
 			Eligible:          false,
 			Reason:            "needs_rebuild",
 		},
-	}); err != nil {
+	)); err != nil {
 		t.Fatalf("register node-c: %v", err)
 	}
 
@@ -1181,6 +1190,335 @@ func TestInProcessFailoverDriver_ExecuteStopsOnGate(t *testing.T) {
 	}
 }
 
+func TestInProcessRuntimeManager_ExecuteHealthyFailoverAndPersistSnapshot(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "manager-b.blk")
+	pathC := filepath.Join(tempDir, "manager-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "manager-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "manager-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "manager-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if err := nodeB.WriteLBA("manager-vol", 0, bytes.Repeat([]byte{0x52}, 4096)); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("manager-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+
+	result, err := manager.ExecuteFailover("manager-vol", 2)
+	if err != nil {
+		t.Fatalf("manager execute failover: %v", err)
+	}
+	if result.Assignment.NodeID != "node-b" {
+		t.Fatalf("assignment node=%q, want node-b", result.Assignment.NodeID)
+	}
+
+	lastSnap, ok := manager.LastFailoverSnapshot()
+	if !ok {
+		t.Fatal("expected last failover snapshot")
+	}
+	if lastSnap.Stage != FailoverStageActivated {
+		t.Fatalf("snapshot stage=%q, want %q", lastSnap.Stage, FailoverStageActivated)
+	}
+	if lastSnap.SelectedNodeID != "node-b" {
+		t.Fatalf("snapshot selected node=%q, want node-b", lastSnap.SelectedNodeID)
+	}
+
+	perVolSnap, ok := manager.FailoverSnapshot("manager-vol")
+	if !ok {
+		t.Fatal("expected per-volume failover snapshot")
+	}
+	if perVolSnap.Result.Truth.PrimaryNodeID != "node-b" {
+		t.Fatalf("per-volume truth primary=%q, want node-b", perVolSnap.Result.Truth.PrimaryNodeID)
+	}
+
+	lastResult, ok := manager.LastFailoverResult()
+	if !ok {
+		t.Fatal("expected last failover result")
+	}
+	if lastResult.Assignment.NodeID != "node-b" {
+		t.Fatalf("last result assignment=%q, want node-b", lastResult.Assignment.NodeID)
+	}
+}
+
+func TestInProcessRuntimeManager_ExecuteStopsOnGateAndPersistsFailureSnapshot(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
+			VolumeName:   "manager-gated-vol",
+			NodeID:       "node-c",
+			Epoch:        1,
+			CommittedLSN: 1,
+			WALHeadLSN:   1,
+			Eligible:     false,
+			Reason:       "needs_rebuild",
+		},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:        "manager-gated-vol",
+			NodeID:            "node-c",
+			Epoch:             1,
+			Role:              "replica",
+			Mode:              "needs_rebuild",
+			CommittedLSN:      3,
+			DurableLSN:        2,
+			CheckpointLSN:     1,
+			RecoveryPhase:     "needs_rebuild",
+			LastBarrierOK:     false,
+			LastBarrierReason: "timeout",
+			Eligible:          false,
+			Reason:            "needs_rebuild",
+		},
+	)); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "manager-gated-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "manager-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "manager-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+
+	_, err = manager.ExecuteFailover("manager-gated-vol", 2)
+	if err == nil {
+		t.Fatal("expected manager failover gate error")
+	}
+
+	lastSnap, ok := manager.LastFailoverSnapshot()
+	if !ok {
+		t.Fatal("expected last failover snapshot")
+	}
+	if lastSnap.Stage != FailoverStageFailed {
+		t.Fatalf("snapshot stage=%q, want %q", lastSnap.Stage, FailoverStageFailed)
+	}
+	if lastSnap.LastError == "" {
+		t.Fatal("expected snapshot last error")
+	}
+	if !lastSnap.Result.Truth.NeedsRebuild {
+		t.Fatalf("expected needs_rebuild truth in snapshot: %+v", lastSnap.Result.Truth)
+	}
+}
+
+func TestTransportEvidenceAdapter_HealthyFailoverFlow(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	transport := NewInMemoryFailoverEvidenceTransport()
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := transport.RegisterHandler("node-b", nodeB); err != nil {
+		t.Fatalf("register node-b handler: %v", err)
+	}
+	if err := transport.RegisterHandler("node-c", nodeC); err != nil {
+		t.Fatalf("register node-c handler: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "transport-b.blk")
+	pathC := filepath.Join(tempDir, "transport-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "transport-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "transport-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "transport-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if err := nodeB.WriteLBA("transport-vol", 0, bytes.Repeat([]byte{0x61}, 4096)); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("transport-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+
+	result, err := ExecuteFailoverFlow(master, "transport-vol", 2, []FailoverTarget{
+		mustHybridFailoverTarget(t, nodeB, transport),
+		mustHybridFailoverTarget(t, nodeC, transport),
+	})
+	if err != nil {
+		t.Fatalf("transport-backed failover flow: %v", err)
+	}
+	if result.Assignment.NodeID != "node-b" {
+		t.Fatalf("assignment node=%q, want node-b", result.Assignment.NodeID)
+	}
+	if result.Truth.PrimaryNodeID != "node-b" {
+		t.Fatalf("truth primary=%q, want node-b", result.Truth.PrimaryNodeID)
+	}
+}
+
+func TestTransportEvidenceAdapter_GatedFailoverFlow(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	transport := NewInMemoryFailoverEvidenceTransport()
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := transport.RegisterHandler("node-b", nodeB); err != nil {
+		t.Fatalf("register node-b handler: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "transport-gated-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "transport-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "transport-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+
+	_, err = ExecuteFailoverFlow(master, "transport-gated-vol", 2, []FailoverTarget{
+		mustHybridFailoverTarget(t, nodeB, transport),
+		staticFailoverTarget(
+			"node-c",
+			masterv2.PromotionQueryResponse{
+				VolumeName:   "transport-gated-vol",
+				NodeID:       "node-c",
+				Epoch:        1,
+				CommittedLSN: 1,
+				WALHeadLSN:   1,
+				Eligible:     false,
+				Reason:       "needs_rebuild",
+			},
+			protocolv2.ReplicaSummaryResponse{
+				VolumeName:        "transport-gated-vol",
+				NodeID:            "node-c",
+				Epoch:             1,
+				Role:              "replica",
+				Mode:              "needs_rebuild",
+				CommittedLSN:      3,
+				DurableLSN:        2,
+				CheckpointLSN:     1,
+				RecoveryPhase:     "needs_rebuild",
+				LastBarrierOK:     false,
+				LastBarrierReason: "timeout",
+				Eligible:          false,
+				Reason:            "needs_rebuild",
+			},
+		),
+	})
+	if err == nil {
+		t.Fatal("expected gated transport-backed failover error")
+	}
+}
+
 func mustHeartbeat(t *testing.T, node *Node) masterv2.NodeHeartbeat {
 	t.Helper()
 	hb, err := node.Heartbeat()
@@ -1202,6 +1540,24 @@ func mustPromotionEvidence(t *testing.T, node *Node, volumeName string, epoch ui
 	return resp
 }
 
+func mustInProcessFailoverTarget(t *testing.T, node *Node) FailoverTarget {
+	t.Helper()
+	target, err := NewInProcessFailoverTarget(node)
+	if err != nil {
+		t.Fatalf("new in-process failover target: %v", err)
+	}
+	return target
+}
+
+func mustHybridFailoverTarget(t *testing.T, node *Node, transport FailoverEvidenceTransport) FailoverTarget {
+	t.Helper()
+	target, err := NewHybridInProcessFailoverTarget(node, transport)
+	if err != nil {
+		t.Fatalf("new hybrid failover target: %v", err)
+	}
+	return target
+}
+
 type staticReplicaSummarySource struct {
 	resp protocolv2.ReplicaSummaryResponse
 	err  error
@@ -1211,25 +1567,37 @@ func (s staticReplicaSummarySource) QueryReplicaSummary(protocolv2.ReplicaSummar
 	return s.resp, s.err
 }
 
-type staticFailoverParticipant struct {
+type staticFailoverAdapter struct {
 	promotion masterv2.PromotionQueryResponse
 	summary   protocolv2.ReplicaSummaryResponse
 	err       error
 }
 
-func (s staticFailoverParticipant) QueryPromotionEvidence(masterv2.PromotionQueryRequest) (masterv2.PromotionQueryResponse, error) {
+func staticFailoverTarget(nodeID string, promotion masterv2.PromotionQueryResponse, summary protocolv2.ReplicaSummaryResponse) FailoverTarget {
+	adapter := staticFailoverAdapter{
+		promotion: promotion,
+		summary:   summary,
+	}
+	return FailoverTarget{
+		NodeID:   nodeID,
+		Evidence: adapter,
+		Takeover: adapter,
+	}
+}
+
+func (s staticFailoverAdapter) QueryPromotionEvidence(masterv2.PromotionQueryRequest) (masterv2.PromotionQueryResponse, error) {
 	return s.promotion, s.err
 }
 
-func (s staticFailoverParticipant) QueryReplicaSummary(protocolv2.ReplicaSummaryRequest) (protocolv2.ReplicaSummaryResponse, error) {
+func (s staticFailoverAdapter) QueryReplicaSummary(protocolv2.ReplicaSummaryRequest) (protocolv2.ReplicaSummaryResponse, error) {
 	return s.summary, s.err
 }
 
-func (s staticFailoverParticipant) PreparePrimaryTakeover(PrimaryTakeoverPlan) (ReconstructedPrimaryTruth, error) {
+func (s staticFailoverAdapter) PreparePrimaryTakeover(PrimaryTakeoverPlan) (ReconstructedPrimaryTruth, error) {
 	return ReconstructedPrimaryTruth{}, fmt.Errorf("static failover participant cannot prepare takeover")
 }
 
-func (s staticFailoverParticipant) GatePrimaryActivation(string, ReconstructedPrimaryTruth) error {
+func (s staticFailoverAdapter) GatePrimaryActivation(string, ReconstructedPrimaryTruth) error {
 	return fmt.Errorf("static failover participant cannot gate activation")
 }
 

@@ -14,8 +14,8 @@ import (
 type InProcessFailoverDriver struct {
 	master *masterv2.Master
 
-	mu           sync.RWMutex
-	participants map[string]FailoverParticipant
+	mu      sync.RWMutex
+	targets map[string]FailoverTarget
 }
 
 // NewInProcessFailoverDriver creates a driver for one in-process masterv2.
@@ -24,26 +24,39 @@ func NewInProcessFailoverDriver(master *masterv2.Master) (*InProcessFailoverDriv
 		return nil, fmt.Errorf("volumev2: master is nil")
 	}
 	return &InProcessFailoverDriver{
-		master:       master,
-		participants: make(map[string]FailoverParticipant),
+		master:  master,
+		targets: make(map[string]FailoverTarget),
 	}, nil
 }
 
-// RegisterParticipant binds one stable node id to one failover participant.
-func (d *InProcessFailoverDriver) RegisterParticipant(nodeID string, participant FailoverParticipant) error {
+// RegisterTarget binds one stable node id to one explicit failover target.
+func (d *InProcessFailoverDriver) RegisterTarget(target FailoverTarget) error {
 	if d == nil {
 		return fmt.Errorf("volumev2: failover driver is nil")
 	}
-	if nodeID == "" {
-		return fmt.Errorf("volumev2: participant node id is required")
+	if target.NodeID == "" {
+		return fmt.Errorf("volumev2: target node id is required")
 	}
-	if participant == nil {
-		return fmt.Errorf("volumev2: participant %q is nil", nodeID)
+	if target.Evidence == nil {
+		return fmt.Errorf("volumev2: target %q missing evidence adapter", target.NodeID)
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.participants[nodeID] = participant
+	d.targets[target.NodeID] = target
 	return nil
+}
+
+// RegisterParticipant preserves the old convenience path by wrapping one
+// legacy failover participant into an explicit target.
+func (d *InProcessFailoverDriver) RegisterParticipant(nodeID string, participant FailoverParticipant) error {
+	if participant == nil {
+		return fmt.Errorf("volumev2: participant %q is nil", nodeID)
+	}
+	return d.RegisterTarget(FailoverTarget{
+		NodeID:   nodeID,
+		Evidence: participant,
+		Takeover: participant,
+	})
 }
 
 // UnregisterParticipant removes one node from the in-process driver.
@@ -53,7 +66,7 @@ func (d *InProcessFailoverDriver) UnregisterParticipant(nodeID string) {
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	delete(d.participants, nodeID)
+	delete(d.targets, nodeID)
 }
 
 // ParticipantNodeIDs returns the currently registered node ids in stable order.
@@ -63,8 +76,8 @@ func (d *InProcessFailoverDriver) ParticipantNodeIDs() []string {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	nodeIDs := make([]string, 0, len(d.participants))
-	for nodeID := range d.participants {
+	nodeIDs := make([]string, 0, len(d.targets))
+	for nodeID := range d.targets {
 		nodeIDs = append(nodeIDs, nodeID)
 	}
 	slices.Sort(nodeIDs)
@@ -77,11 +90,11 @@ func (d *InProcessFailoverDriver) NewSession(volumeName string, expectedEpoch ui
 	if d == nil {
 		return nil, fmt.Errorf("volumev2: failover driver is nil")
 	}
-	participants, err := d.resolveParticipants(nodeIDs)
+	targets, err := d.resolveTargets(nodeIDs)
 	if err != nil {
 		return nil, err
 	}
-	return NewFailoverSession(d.master, volumeName, expectedEpoch, participants)
+	return NewFailoverSession(d.master, volumeName, expectedEpoch, targets)
 }
 
 // Execute runs one failover using the resolved participant set.
@@ -93,30 +106,30 @@ func (d *InProcessFailoverDriver) Execute(volumeName string, expectedEpoch uint6
 	return session.Run()
 }
 
-func (d *InProcessFailoverDriver) resolveParticipants(nodeIDs []string) ([]FailoverParticipant, error) {
+func (d *InProcessFailoverDriver) resolveTargets(nodeIDs []string) ([]FailoverTarget, error) {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	if len(d.participants) == 0 {
-		return nil, fmt.Errorf("volumev2: no failover participants registered")
+	if len(d.targets) == 0 {
+		return nil, fmt.Errorf("volumev2: no failover targets registered")
 	}
 
 	resolvedIDs := nodeIDs
 	if len(resolvedIDs) == 0 {
-		resolvedIDs = make([]string, 0, len(d.participants))
-		for nodeID := range d.participants {
+		resolvedIDs = make([]string, 0, len(d.targets))
+		for nodeID := range d.targets {
 			resolvedIDs = append(resolvedIDs, nodeID)
 		}
 		slices.Sort(resolvedIDs)
 	}
 
-	participants := make([]FailoverParticipant, 0, len(resolvedIDs))
+	targets := make([]FailoverTarget, 0, len(resolvedIDs))
 	for _, nodeID := range resolvedIDs {
-		participant, ok := d.participants[nodeID]
+		target, ok := d.targets[nodeID]
 		if !ok {
-			return nil, fmt.Errorf("volumev2: unknown failover participant %q", nodeID)
+			return nil, fmt.Errorf("volumev2: unknown failover target %q", nodeID)
 		}
-		participants = append(participants, participant)
+		targets = append(targets, target)
 	}
-	return participants, nil
+	return targets, nil
 }

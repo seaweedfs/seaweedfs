@@ -2,12 +2,15 @@
 
 Date: 2026-04-05
 Status: active
-Purpose: keep one centralized ledger for the current chosen envelope, accepted claims, supporting evidence, invalidated evidence, and rerun obligations
+Purpose: keep one centralized ledger for the current chosen envelope, accepted claims, supporting evidence, invalidated evidence, rerun obligations, and review baseline references
 
 ## Why This Document Exists
 
 `v2-protocol-truths.md` records stable protocol truths.
 `v2-protocol-closure-map.zh.md` records the structural closure model.
+`v2-two-loop-protocol.md` records the current kernel protocol boundary.
+`v2-automata-ownership-map.md` records ownership of identity/control/data semantics.
+`v2-kernel-closure-review.md` records the current kernel closure standard.
 
 What they do not track in one place is the current operational contract:
 
@@ -18,6 +21,23 @@ What they do not track in one place is the current operational contract:
 5. which reruns are required before a claim can be restored
 
 This document is that ledger.
+
+It is not the only architectural source of truth.
+It is the review base ledger that must be read together with the current kernel
+boundary documents.
+
+## Review Base
+
+When reviewing a V2 change, use the following stack together:
+
+1. `v2-two-loop-protocol.md` for protocol boundary and authority rules
+2. `v2-automata-ownership-map.md` for ownership of facts, events, and commands
+3. `v2-kernel-closure-review.md` for current kernel milestone and closure standard
+4. `v2-protocol-claim-and-evidence.md` for what may currently be claimed and
+   what evidence is still valid
+
+Use this document as the claim/evidence ledger and review entry point, not as
+the only place where kernel structure is defined.
 
 ## How To Use It
 
@@ -32,24 +52,30 @@ If the answer changes the current state of the product, update this ledger in th
 
 ## Interpretation Rule For Current Integrated Evidence
 
-Until an explicit `V2 core` exists as a real code structure and live event/command owner,
-current integrated evidence should be interpreted as:
+Current integrated evidence should be interpreted in two layers:
 
-1. validation of current `V1` runtime behavior under `V2` constraints
-2. not proof that a completed `V2 runtime` already exists
+1. kernel-boundary evidence for the emerging `masterv2 + volumev2 + purev2`
+   structure
+2. validation of constrained current-runtime behavior where the evidence still
+   comes from the older integrated path
 
 This means:
 
-1. protocol truths and claim boundaries may already be `V2`-owned
-2. workload and integration passes may still be about the constrained current runtime
-3. later phases must keep separating:
+1. protocol truths and kernel ownership boundaries may already be `V2`-owned
+2. some workload and integration passes may still be about the constrained
+   current runtime
+3. reviews must keep separating:
    - semantic authority
+   - new kernel closure evidence
    - constrained current-runtime validation
    - future pure-core extraction
 
+If these layers are mixed, the review should be treated as incomplete.
+
 ## Current Chosen Envelope
 
-This is the bounded envelope currently allowed for active V2 claims:
+This is the bounded legacy/integrated envelope currently allowed for active
+runtime/product claims:
 
 | Item | Current value | Source |
 |------|---------------|--------|
@@ -67,6 +93,13 @@ Current explicit exclusions:
 3. broad rollout / launch approval
 4. broad transport matrix claims outside explicitly named evidence
 5. treating synthetic benchmarks as substitutes for real workload validation
+
+This envelope does not limit kernel-boundary reviews.
+Kernel-boundary reviews should instead follow:
+
+1. `v2-two-loop-protocol.md`
+2. `v2-automata-ownership-map.md`
+3. `v2-kernel-closure-review.md`
 
 ## Active Protocol Constraints
 
@@ -86,6 +119,10 @@ These are the currently binding constraints that later work must preserve.
 | `CP13-7` | unrecoverable gap must escalate to `NeedsRebuild` and block normal paths | `Phase 13` | active |
 | `CP13-8A` | assignment delivered != receiver ready != publish healthy | `Phase 13` | active |
 | `CP13-9` | bounded external mode meaning must stay explicit and surface-consistent on the constrained current path | `Phase 13` | active |
+| `K1` | `masterv2` is identity authority, not continuous recovery planner | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md` | active |
+| `K2` | each volume is treated as a micro-cluster whose selected primary owns data-control truth | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md` | active |
+| `K3` | takeover authorization belongs to `masterv2`, but reconstruction and activation gating belong to the new primary | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md` | active |
+| `K4` | `Loop 1` and `Loop 2` must not collapse into one heartbeat or one state owner | `v2-two-loop-protocol.md` | active |
 
 ## Accepted Baselines
 
@@ -112,12 +149,18 @@ These are the claims that may currently be made without overreach.
 | `C-PHASE17-PRODUCT-CHECKPOINT` | the current broader recovery-branch map, bounded failover/publication contract, bounded disturbance policy table, and first-launch envelope draft are explicit for the chosen path | bounded chosen path only; excludes broad production readiness, broad transport/frontend approval, and broad whole-surface failover/publication proof | `sw-block/.private/phase/phase-17.md`, `sw-block/.private/phase/phase-17-checkpoint-review.md` | allowed |
 | `C-FIRST-LAUNCH-ENVELOPE-DRAFT` | one bounded first-launch supported matrix is frozen as a draft with explicit exclusions and launch blockers | bounded chosen path only; not a launch decision, pilot approval, or rollout approval | `sw-block/design/v2-first-launch-supported-matrix.md` | allowed |
 | `C-PRODUCTIONIZATION-ARTIFACT-SET` | one bounded productionization artifact set now exists for internal pilot, preflight, stop-condition, and controlled-rollout discipline inside the frozen chosen envelope | bounded chosen path only; artifact existence only, not pilot success, rollout approval, or broader launch proof | `sw-block/design/v2-bounded-internal-pilot-pack.md`, `v2-pilot-preflight-checklist.md`, `v2-pilot-stop-conditions.md`, `v2-controlled-rollout-review.md` | allowed |
+| `C-KERNEL-BOUNDARY` | the current V2 kernel boundary is explicitly defined around `masterv2` identity authority, `volumev2` takeover/data-control shell, and `purev2` execution adapter reuse | kernel-boundary statement only; not broad runtime/product readiness | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md`, `v2-kernel-closure-review.md` | allowed |
+| `C-INPROCESS-FAILOVER-MILESTONE` | one in-process failover milestone exists with explicit authorization, reconstruction, activation gating, session observability, and driver seams | in-process `masterv2 + volumev2` code path only; not transport-complete RF2 product proof | `sw-block/runtime/masterv2/*`, `sw-block/runtime/volumev2/*` tests | allowed |
+| `C-INPROCESS-RF2-FAILOVER-RUNTIME` | one runtime-owned in-process RF2 failover slice exists with participant registry, explicit runtime entry point, persisted session snapshots/results, and component-style healthy/gated failover tests | in-process runtime only; not transport-backed RF2 product proof | `sw-block/runtime/volumev2/runtime_manager.go`, `failover*.go`, `poc_test.go` | allowed |
 | `C-LAUNCH-APPROVAL` | broad product launch readiness | outside current phase | future | not allowed |
 
 ## Evidence Map
 
 | Evidence area | What it proves | Primary evidence | Support evidence |
 |---------------|----------------|------------------|------------------|
+| Kernel ownership boundary | `masterv2`, `volumev2`, and `purev2` are split with explicit authority boundaries | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md`, `v2-kernel-closure-review.md` | code in `sw-block/runtime/masterv2/`, `volumev2/`, `purev2/` |
+| In-process failover milestone | one explicit failover chain exists from promotion evidence through authorization, takeover preparation, activation gating, session observability, and driver wiring | `sw-block/runtime/volumev2/poc_test.go`, `failover.go`, `failover_driver.go` | `sw-block/runtime/masterv2/master_test.go` |
+| In-process RF2 failover runtime | one runtime-owned failover manager exists with participant registry, runtime entry point, persisted snapshots/results, and component-style healthy/gated failover tests | `sw-block/runtime/volumev2/runtime_manager.go`, `poc_test.go` | `failover.go`, `failover_driver.go`, `v2-kernel-closure-review.md` |
 | Identity / addressing | stable identity and routable publication | `CP13-2` tests and docs | `qa_block_soak_test.go`, `sync_all_bug_test.go` |
 | Durable progress | barrier durability truth and non-legacy authority | `CP13-3` tests and docs | protocol tests around barrier handling |
 | State eligibility | only eligible replica state may satisfy sync durability | `CP13-4` tests and docs | adversarial state tests |
@@ -165,4 +208,5 @@ No active `Phase 13` blocker currently remains inside the accepted bounded chose
 1. do not add a new claim anywhere else without adding or updating the corresponding row here
 2. when a bug narrows evidence, record the invalidation here in the same change
 3. when a rerun restores a claim, move the row from `Invalidated Or Narrowed Evidence` to `Allowed Claims` or update its status
-4. keep this document bounded to the active chosen path; do not turn it into a future roadmap
+4. use this document as the review ledger, but keep kernel structure and authority rules in the dedicated kernel documents
+5. keep this document bounded to active reviewable claims; do not turn it into a future roadmap

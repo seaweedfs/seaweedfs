@@ -6,13 +6,13 @@ import (
 	"github.com/seaweedfs/seaweedfs/sw-block/runtime/masterv2"
 )
 
-// FailoverParticipant is the minimal surface needed to execute one failover
-// flow across Loop 1 authorization and Loop 2 takeover preparation.
+// FailoverParticipant is the legacy in-process convenience surface that
+// predates the explicit failover adapter seam. It remains as a compatibility
+// wrapper for tests and local callers while the adapter-backed target becomes
+// the primary contract.
 type FailoverParticipant interface {
-	QueryPromotionEvidence(masterv2.PromotionQueryRequest) (masterv2.PromotionQueryResponse, error)
-	QueryReplicaSummarySource
-	PreparePrimaryTakeover(PrimaryTakeoverPlan) (ReconstructedPrimaryTruth, error)
-	GatePrimaryActivation(volumeName string, truth ReconstructedPrimaryTruth) error
+	FailoverEvidenceAdapter
+	FailoverTakeoverAdapter
 }
 
 // QueryReplicaSummarySource aliases the peer summary surface so the failover
@@ -60,34 +60,61 @@ type FailoverSession struct {
 	master        *masterv2.Master
 	volumeName    string
 	expectedEpoch uint64
-	participants  []FailoverParticipant
+	targets       []FailoverTarget
 
 	responses []masterv2.PromotionQueryResponse
-	byNode    map[string]FailoverParticipant
+	byNode    map[string]FailoverTarget
 	result    FailoverResult
 	stage     FailoverStage
 	lastErr   error
 }
 
-// NewFailoverSession validates the narrow failover inputs and returns a
+// NewFailoverSession validates the adapter-backed failover inputs and returns a
 // stepwise orchestration session.
-func NewFailoverSession(master *masterv2.Master, volumeName string, expectedEpoch uint64, participants []FailoverParticipant) (*FailoverSession, error) {
+func NewFailoverSession(master *masterv2.Master, volumeName string, expectedEpoch uint64, targets []FailoverTarget) (*FailoverSession, error) {
 	if master == nil {
 		return nil, fmt.Errorf("volumev2: master is nil")
 	}
 	if volumeName == "" {
 		return nil, fmt.Errorf("volumev2: volume name is required")
 	}
-	if len(participants) == 0 {
-		return nil, fmt.Errorf("volumev2: failover participants are required")
+	if len(targets) == 0 {
+		return nil, fmt.Errorf("volumev2: failover targets are required")
 	}
 	return &FailoverSession{
 		master:        master,
 		volumeName:    volumeName,
 		expectedEpoch: expectedEpoch,
-		participants:  participants,
+		targets:       targets,
 		stage:         FailoverStageNew,
 	}, nil
+}
+
+// NewFailoverSessionFromParticipants adapts the legacy participant surface into
+// the explicit target seam for compatibility with older in-process tests.
+func NewFailoverSessionFromParticipants(master *masterv2.Master, volumeName string, expectedEpoch uint64, participants []FailoverParticipant) (*FailoverSession, error) {
+	targets := make([]FailoverTarget, 0, len(participants))
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		resp, err := participant.QueryPromotionEvidence(masterv2.PromotionQueryRequest{
+			VolumeName:    volumeName,
+			ExpectedEpoch: expectedEpoch,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("volumev2: participant target discovery %s: %w", volumeName, err)
+		}
+		if resp.NodeID == "" {
+			return nil, fmt.Errorf("volumev2: participant target discovery for %s missing node id", volumeName)
+		}
+		targets = append(targets, FailoverTarget{
+			NodeID:   resp.NodeID,
+			Evidence: participant,
+			Takeover: participant,
+		})
+	}
+	return NewFailoverSession(master, volumeName, expectedEpoch, targets)
 }
 
 // CollectPromotionEvidence gathers fresh promotion responses from all
@@ -96,13 +123,13 @@ func (s *FailoverSession) CollectPromotionEvidence() ([]masterv2.PromotionQueryR
 	if s == nil {
 		return nil, fmt.Errorf("volumev2: failover session is nil")
 	}
-	responses := make([]masterv2.PromotionQueryResponse, 0, len(s.participants))
-	byNode := make(map[string]FailoverParticipant, len(s.participants))
-	for _, participant := range s.participants {
-		if participant == nil {
+	responses := make([]masterv2.PromotionQueryResponse, 0, len(s.targets))
+	byNode := make(map[string]FailoverTarget, len(s.targets))
+	for _, target := range s.targets {
+		if target.NodeID == "" || target.Evidence == nil {
 			continue
 		}
-		resp, err := participant.QueryPromotionEvidence(masterv2.PromotionQueryRequest{
+		resp, err := target.Evidence.QueryPromotionEvidence(masterv2.PromotionQueryRequest{
 			VolumeName:    s.volumeName,
 			ExpectedEpoch: s.expectedEpoch,
 		})
@@ -113,7 +140,7 @@ func (s *FailoverSession) CollectPromotionEvidence() ([]masterv2.PromotionQueryR
 			return nil, s.failf("volumev2: promotion evidence for %s missing node id", s.volumeName)
 		}
 		responses = append(responses, resp)
-		byNode[resp.NodeID] = participant
+		byNode[resp.NodeID] = target
 	}
 	if len(responses) == 0 {
 		return nil, s.failf("volumev2: no failover evidence collected for %s", s.volumeName)
@@ -167,13 +194,18 @@ func (s *FailoverSession) PrepareTakeover() (ReconstructedPrimaryTruth, error) {
 		return ReconstructedPrimaryTruth{}, s.failf("volumev2: authorized node %q missing participant", s.result.Assignment.NodeID)
 	}
 	peers := make([]ReplicaSummarySource, 0, len(s.byNode)-1)
-	for nodeID, participant := range s.byNode {
+	for nodeID, target := range s.byNode {
 		if nodeID == s.result.Assignment.NodeID {
 			continue
 		}
-		peers = append(peers, participant)
+		if target.Evidence != nil {
+			peers = append(peers, target.Evidence)
+		}
 	}
-	truth, err := selected.PreparePrimaryTakeover(PrimaryTakeoverPlan{
+	if selected.Takeover == nil {
+		return ReconstructedPrimaryTruth{}, s.failf("volumev2: authorized node %q missing takeover adapter", s.result.Assignment.NodeID)
+	}
+	truth, err := selected.Takeover.PreparePrimaryTakeover(PrimaryTakeoverPlan{
 		Assignment: s.result.Assignment,
 		Peers:      peers,
 	})
@@ -205,7 +237,10 @@ func (s *FailoverSession) Activate() error {
 	if !ok {
 		return s.failf("volumev2: authorized node %q missing participant", s.result.Assignment.NodeID)
 	}
-	if err := selected.GatePrimaryActivation(s.volumeName, s.result.Truth); err != nil {
+	if selected.Takeover == nil {
+		return s.failf("volumev2: authorized node %q missing takeover adapter", s.result.Assignment.NodeID)
+	}
+	if err := selected.Takeover.GatePrimaryActivation(s.volumeName, s.result.Truth); err != nil {
 		return s.fail(err)
 	}
 	s.stage = FailoverStageActivated
@@ -283,8 +318,18 @@ func (s *FailoverSession) Run() (FailoverResult, error) {
 // ExecuteFailoverFlow runs the narrow failover path:
 // fresh promotion evidence -> master authorization -> takeover preparation ->
 // activation gate. It intentionally does not choreograph catch-up or rebuild.
-func ExecuteFailoverFlow(master *masterv2.Master, volumeName string, expectedEpoch uint64, participants []FailoverParticipant) (FailoverResult, error) {
-	session, err := NewFailoverSession(master, volumeName, expectedEpoch, participants)
+func ExecuteFailoverFlow(master *masterv2.Master, volumeName string, expectedEpoch uint64, targets []FailoverTarget) (FailoverResult, error) {
+	session, err := NewFailoverSession(master, volumeName, expectedEpoch, targets)
+	if err != nil {
+		return FailoverResult{}, err
+	}
+	return session.Run()
+}
+
+// ExecuteFailoverFlowFromParticipants preserves the old in-process participant
+// entry point while the explicit target seam becomes primary.
+func ExecuteFailoverFlowFromParticipants(master *masterv2.Master, volumeName string, expectedEpoch uint64, participants []FailoverParticipant) (FailoverResult, error) {
+	session, err := NewFailoverSessionFromParticipants(master, volumeName, expectedEpoch, participants)
 	if err != nil {
 		return FailoverResult{}, err
 	}
