@@ -180,6 +180,12 @@ func TestMatchesActionsMultipartExpansion(t *testing.T) {
 			requestedAction: "s3:CreateMultipartUpload",
 			expected:        true,
 		},
+		{
+			name:            "case-insensitive multipart action lookup",
+			actions:         []string{"s3:PutObject"},
+			requestedAction: "S3:CREATEMULTIPARTUPLOAD",
+			expected:        true,
+		},
 	}
 
 	for _, tt := range tests {
