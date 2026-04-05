@@ -12,6 +12,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
+	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/http"
@@ -143,6 +144,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		sourceFiler.ToGrpcAddress(),
 		sourcePath,
 		*backupOption.proxyByFiler)
+
+	if err := s3api.GetSSES3KeyManager().InitializeWithFiler(filerSource); err != nil {
+		return fmt.Errorf("SSE-S3 key manager initialization failed: %v", err)
+	}
 	dataSink.SetSourceFiler(filerSource)
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
