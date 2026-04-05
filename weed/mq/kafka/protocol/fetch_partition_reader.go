@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -136,22 +137,21 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	}()
 
 	// Get high water mark
+	hwmUnknown := false
 	hwm, hwmErr := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	if hwmErr != nil {
 		// HWM lookup can fail when the partition has been deactivated between consumer
 		// sessions. Proceed with the fetch anyway — the broker will return the correct
-		// data (or empty) based on its own state. Use a sentinel so we don't
-		// short-circuit below; keep result.highWaterMark at 0 for now and let
-		// the broker response inform it later.
+		// data (or empty) based on its own state. Use math.MaxInt64 as sentinel so
+		// FetchMultipleBatches doesn't artificially cap recordsAvailable, and we
+		// don't hit the early-return below. The actual HWM will be derived from
+		// the fetch result (newOffset) after the read.
 		glog.Warningf("[%s] HWM lookup failed for %s[%d]: %v — will attempt fetch anyway",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
-		// Use a large sentinel so FetchMultipleBatches doesn't artificially
-		// limit recordsAvailable to 1. The broker will return only what
-		// actually exists regardless of this value.
-		hwm = req.requestedOffset + 10000
-	} else {
-		result.highWaterMark = hwm
+		hwm = math.MaxInt64
+		hwmUnknown = true
 	}
+	result.highWaterMark = hwm
 
 	glog.V(2).Infof("[%s] HWM for %s[%d]: %d (requested: %d)",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwm, req.requestedOffset)
@@ -177,10 +177,20 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
 	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, req.maxWaitMs, hwm)
 
+	// When HWM was unknown, derive a reasonable value from the fetch result
+	// so the client sees a meaningful high water mark instead of MaxInt64.
+	if hwmUnknown {
+		if newOffset > req.requestedOffset {
+			result.highWaterMark = newOffset // best estimate: end of what we read
+		} else {
+			result.highWaterMark = req.requestedOffset // no data found
+		}
+	}
+
 	// Log what we got back - DETAILED for diagnostics
 	if len(recordBatch) == 0 {
 		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, result.highWaterMark)
 		result.recordBatch = []byte{}
 	} else {
 		result.recordBatch = recordBatch
