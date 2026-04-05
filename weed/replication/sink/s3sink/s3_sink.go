@@ -193,10 +193,12 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	// Upload the file to S3.
 	uploadInput := s3manager.UploadInput{
-		Bucket:  aws.String(s3sink.bucket),
-		Key:     aws.String(key),
-		Body:    reader,
-		Tagging: aws.String(tags),
+		Bucket: aws.String(s3sink.bucket),
+		Key:    aws.String(key),
+		Body:   reader,
+	}
+	if tags != "" {
+		uploadInput.Tagging = aws.String(tags)
 	}
 	if len(entry.Attributes.Md5) > 0 {
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
