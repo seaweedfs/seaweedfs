@@ -15,6 +15,7 @@ import (
 // semantics). The master only consumes this evidence; it does not own or
 // synthesize it.
 type BlockPromotionEvidence struct {
+	Server               string  // server address that produced this evidence
 	Path                 string
 	Epoch                uint64
 	CommittedLSN         uint64

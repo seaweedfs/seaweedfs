@@ -1648,6 +1648,8 @@ func (r *BlockVolumeRegistry) applyPromotionLocked(entry *BlockVolumeEntry, name
 	entry.HasHeartbeatVolumeMode = false
 	entry.HeartbeatVolumeReason = ""
 	entry.HasHeartbeatVolumeReason = false
+	entry.EngineProjectionMode = ""
+	entry.HasEngineProjectionMode = false
 
 	// Remove promoted from Replicas. Others stay.
 	entry.Replicas = append(entry.Replicas[:candidateIdx], entry.Replicas[candidateIdx+1:]...)
@@ -1701,6 +1703,26 @@ func (r *BlockVolumeRegistry) PromoteBestReplica(name string) (uint64, error) {
 
 	newEpoch := r.applyPromotionLocked(entry, name, promoted, bestIdx)
 	return newEpoch, nil
+}
+
+// PromoteReplicaByServer promotes a specific replica identified by server
+// address to primary. Used by T3 V2 path where the master already selected
+// the winner via fresh evidence. Bypasses V1 eligibility gates since the
+// caller (V2 evidence path) owns eligibility determination.
+func (r *BlockVolumeRegistry) PromoteReplicaByServer(name, server string) (uint64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, ok := r.volumes[name]
+	if !ok {
+		return 0, fmt.Errorf("block volume %q not found", name)
+	}
+	for i, ri := range entry.Replicas {
+		if ri.Server == server {
+			newEpoch := r.applyPromotionLocked(entry, name, ri, i)
+			return newEpoch, nil
+		}
+	}
+	return 0, fmt.Errorf("block volume %q: replica server %q not found", name, server)
 }
 
 // evaluateManualPromotionLocked evaluates promotion candidates for a manual promote request.

@@ -36,6 +36,7 @@ func queryAllCandidateEvidence(querier BlockPromotionEvidenceQuerier, candidates
 			errs = append(errs, fmt.Errorf("evidence query %s %s: %w", c.server, c.path, err))
 			continue
 		}
+		ev.Server = c.server
 		evidence = append(evidence, ev)
 	}
 	return evidence, errs

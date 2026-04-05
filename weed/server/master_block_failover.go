@@ -250,6 +250,8 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 
 // promoteReplica promotes the best replica to primary for the named volume,
 // enqueues an assignment for the new primary, and records a pending rebuild.
+// When blockV2Promotion is true, uses fresh on-demand evidence and
+// durability-first selection. When false, uses legacy health-score-first.
 func (ms *MasterServer) promoteReplica(volumeName string) {
 	entry, ok := ms.blockRegistry.Lookup(volumeName)
 	if !ok {
@@ -259,6 +261,16 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		return
 	}
 
+	if ms.blockV2Promotion && ms.blockVSQueryEvidence != nil {
+		ms.promoteReplicaV2(volumeName, entry)
+		return
+	}
+	ms.promoteReplicaV1(volumeName, entry)
+}
+
+// promoteReplicaV1 is the legacy promotion path: health-score-first,
+// heartbeat-stale data, no fresh evidence query.
+func (ms *MasterServer) promoteReplicaV1(volumeName string, entry BlockVolumeEntry) {
 	oldPrimary := entry.VolumeServer
 	oldPath := entry.Path
 	oldPrimaryISCSIAddr := entry.ISCSIAddr
@@ -269,6 +281,56 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		glog.Warningf("failover: PromoteBestReplica %q: %v", volumeName, err)
 		return
 	}
+
+	ms.finalizePromotion(volumeName, oldPrimary, oldPath, oldPrimaryISCSIAddr, newEpoch)
+}
+
+// promoteReplicaV2 queries each candidate for fresh evidence, selects by
+// CommittedLSN (durability-first), and fail-closes when no eligible candidate
+// exists. Does NOT silently fall back to V1 — if evidence fails, promotion
+// does not proceed.
+func (ms *MasterServer) promoteReplicaV2(volumeName string, entry BlockVolumeEntry) {
+	oldPrimary := entry.VolumeServer
+	oldPath := entry.Path
+	oldPrimaryISCSIAddr := entry.ISCSIAddr
+
+	// Collect candidates from registry membership.
+	var candidates []promotionCandidate
+	for _, ri := range entry.Replicas {
+		candidates = append(candidates, promotionCandidate{
+			server:        ri.Server,
+			path:          ri.Path,
+			expectedEpoch: entry.Epoch,
+		})
+	}
+	if len(candidates) == 0 {
+		glog.Warningf("failover V2: %q has no replica candidates", volumeName)
+		return
+	}
+
+	// Query each candidate for fresh evidence.
+	evidence, errs := queryAllCandidateEvidence(ms.blockVSQueryEvidence, candidates)
+	for _, err := range errs {
+		glog.Warningf("failover V2: %s", err)
+	}
+
+	// Durability-first selection. Fail-closed if no eligible candidate.
+	best, err := selectDurabilityFirstCandidate(evidence)
+	if err != nil {
+		glog.Warningf("failover V2: %q: %v (queried %d, errors %d)",
+			volumeName, err, len(candidates), len(errs))
+		return
+	}
+
+	// Apply promotion in registry using the selected server.
+	newEpoch, err := ms.blockRegistry.PromoteReplicaByServer(volumeName, best.Server)
+	if err != nil {
+		glog.Warningf("failover V2: PromoteReplicaByServer %q %s: %v", volumeName, best.Server, err)
+		return
+	}
+
+	glog.V(0).Infof("failover V2: %q selected %s (CommittedLSN=%d WALHeadLSN=%d HealthScore=%.2f)",
+		volumeName, best.Server, best.CommittedLSN, best.WALHeadLSN, best.HealthScore)
 
 	ms.finalizePromotion(volumeName, oldPrimary, oldPath, oldPrimaryISCSIAddr, newEpoch)
 }

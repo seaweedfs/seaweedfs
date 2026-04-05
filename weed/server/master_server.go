@@ -109,7 +109,9 @@ type MasterServer struct {
 	blockVSPrepareExpand func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error
 	blockVSCommitExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error)
 	blockVSCancelExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) error
+	blockVSQueryEvidence BlockPromotionEvidenceQuerier // T2: fresh on-demand promotion evidence
 	nextExpandEpoch      atomic.Uint64
+	blockV2Promotion     bool // T3: when true, use durability-first V2 promotion; when false, legacy V1
 
 	// Test-only hook: called after AcquireExpandInflight but before the
 	// re-read Lookup in coordinated expand. Nil in production.

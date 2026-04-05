@@ -1178,3 +1178,169 @@ func TestT4_RebuildEmptyAddr_StillQueued(t *testing.T) {
 		t.Fatal("rebuild assignment should still be queued even with empty addr")
 	}
 }
+
+// T3 V2 promotion tests.
+
+func testMasterServerV2(t *testing.T, querier BlockPromotionEvidenceQuerier) *MasterServer {
+	t.Helper()
+	ms := testMasterServerForFailover(t)
+	ms.blockV2Promotion = true
+	ms.blockVSQueryEvidence = querier
+	return ms
+}
+
+func TestFailoverV2_HigherCommittedLSNWins(t *testing.T) {
+	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
+		switch server {
+		case "vs2":
+			return BlockPromotionEvidence{
+				Server: "vs2", Path: path, Epoch: 1,
+				CommittedLSN: 10, WALHeadLSN: 10, HealthScore: 1.0,
+				EngineProjectionMode: "publish_healthy", Eligible: true,
+			}, nil
+		case "vs3":
+			return BlockPromotionEvidence{
+				Server: "vs3", Path: path, Epoch: 1,
+				CommittedLSN: 20, WALHeadLSN: 20, HealthScore: 0.5,
+				EngineProjectionMode: "publish_healthy", Eligible: true,
+			}, nil
+		}
+		return BlockPromotionEvidence{}, fmt.Errorf("unknown server %s", server)
+	}
+	ms := testMasterServerV2(t, querier)
+
+	// Register with two replicas.
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	ms.blockRegistry.MarkBlockCapable("vs3")
+	if err := ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name: "vol-v2-lsn", VolumeServer: "vs1",
+		Path: "/data/vol-v2-lsn.blk", Epoch: 1,
+		Role: blockvol.RoleToWire(blockvol.RolePrimary), Status: StatusActive,
+		LeaseTTL: 1 * time.Second, LastLeaseGrant: time.Now().Add(-5 * time.Second),
+		Replicas: []ReplicaInfo{
+			{Server: "vs2", Path: "/data/vol-v2-lsn.blk", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "vs3", Path: "/data/vol-v2-lsn.blk", HealthScore: 0.5, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+		},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-lsn")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// vs3 has higher CommittedLSN (20 > 10) despite lower health (0.5 < 1.0).
+	if entry.VolumeServer != "vs3" {
+		t.Fatalf("promoted %q, want vs3 (higher CommittedLSN)", entry.VolumeServer)
+	}
+	if entry.Epoch != 2 {
+		t.Fatalf("epoch=%d, want 2", entry.Epoch)
+	}
+	// Assignment should be enqueued.
+	pending := ms.blockAssignmentQueue.Peek("vs3")
+	if len(pending) == 0 {
+		t.Fatal("expected assignment enqueued for promoted vs3")
+	}
+}
+
+func TestFailoverV2_AllIneligible_NoPromotion(t *testing.T) {
+	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
+		return BlockPromotionEvidence{
+			Server: server, Path: path, Epoch: 1,
+			CommittedLSN: 10, WALHeadLSN: 10,
+			EngineProjectionMode: "needs_rebuild", Eligible: false, Reason: "needs_rebuild",
+		}, nil
+	}
+	ms := testMasterServerV2(t, querier)
+	registerVolumeWithReplica(t, ms, "vol-v2-nopromo", "vs1", "vs2", 1, 1*time.Second)
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-nopromo")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// No promotion should have occurred — fail-closed.
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("primary changed to %q, want vs1 (fail-closed, no eligible)", entry.VolumeServer)
+	}
+	if entry.Epoch != 1 {
+		t.Fatalf("epoch=%d, want 1 (unchanged)", entry.Epoch)
+	}
+}
+
+func TestFailoverV2_EvidenceQueryFailure_NoPromotion(t *testing.T) {
+	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
+		return BlockPromotionEvidence{}, fmt.Errorf("connection refused")
+	}
+	ms := testMasterServerV2(t, querier)
+	registerVolumeWithReplica(t, ms, "vol-v2-fail", "vs1", "vs2", 1, 1*time.Second)
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-fail")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// Evidence failure in V2 mode → no promotion, not silent V1 fallback.
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("primary changed to %q, want vs1 (fail-closed on evidence failure)", entry.VolumeServer)
+	}
+}
+
+func TestFailoverV2_FlagOff_UsesLegacy(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	ms.blockV2Promotion = false // explicitly off
+	registerVolumeWithReplica(t, ms, "vol-legacy", "vs1", "vs2", 1, 1*time.Second)
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-legacy")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// Legacy path should promote (V1 health-score-first).
+	if entry.VolumeServer != "vs2" {
+		t.Fatalf("promoted %q, want vs2 (legacy path)", entry.VolumeServer)
+	}
+	if entry.Epoch != 2 {
+		t.Fatalf("epoch=%d, want 2", entry.Epoch)
+	}
+}
+
+func TestFailoverV2_EpochBumpAndAssignmentOnlyAfterSelection(t *testing.T) {
+	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
+		return BlockPromotionEvidence{
+			Server: server, Path: path, Epoch: 1,
+			CommittedLSN: 15, WALHeadLSN: 15, HealthScore: 1.0,
+			EngineProjectionMode: "replica_ready", Eligible: true,
+		}, nil
+	}
+	ms := testMasterServerV2(t, querier)
+	registerVolumeWithReplica(t, ms, "vol-v2-epoch", "vs1", "vs2", 1, 1*time.Second)
+
+	// Before failover: epoch=1, no pending assignments.
+	if pending := ms.blockAssignmentQueue.Peek("vs2"); len(pending) > 0 {
+		t.Fatal("unexpected pending assignments before failover")
+	}
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-epoch")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	if entry.Epoch != 2 {
+		t.Fatalf("epoch=%d, want 2 after promotion", entry.Epoch)
+	}
+	pending := ms.blockAssignmentQueue.Peek("vs2")
+	if len(pending) == 0 {
+		t.Fatal("expected assignment enqueued after successful selection")
+	}
+	if pending[0].Epoch != 2 {
+		t.Fatalf("assignment epoch=%d, want 2", pending[0].Epoch)
+	}
+}
