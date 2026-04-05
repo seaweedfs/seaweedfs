@@ -115,8 +115,10 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	totalSize := filer.FileSize(entry)
 	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
-	obj := g.client.Bucket(g.bucket).Object(key)
-	wc := obj.NewWriter(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(ctx)
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := wc.Write(data)
@@ -131,8 +133,10 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	}
 
 	if writeErr != nil {
+		// Cancel the context to abort the GCS upload without touching
+		// any existing object at this key.
+		cancel()
 		wc.Close()
-		obj.Delete(context.Background())
 		return writeErr
 	}
 
