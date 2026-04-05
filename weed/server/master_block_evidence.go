@@ -84,3 +84,15 @@ type promotionCandidate struct {
 	path          string
 	expectedEpoch uint64
 }
+
+// defaultBlockVSQueryEvidence is the production evidence querier.
+// Once proto is regenerated on M01, this will call the VS gRPC
+// QueryBlockPromotionEvidence RPC. Until then, it returns an explicit
+// error so the fail-closed path is exercised.
+func (ms *MasterServer) defaultBlockVSQueryEvidence(ctx context.Context, server, path string, expectedEpoch uint64) (BlockPromotionEvidence, error) {
+	// TODO(T2-transport): Replace with gRPC call after proto regen:
+	//   operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
+	//     resp, err := client.QueryBlockPromotionEvidence(ctx, &volume_server_pb.QueryBlockPromotionEvidenceRequest{...})
+	//   })
+	return BlockPromotionEvidence{}, fmt.Errorf("V2 promotion evidence RPC not yet available (pending proto regen on M01): server=%s path=%s", server, path)
+}

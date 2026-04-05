@@ -261,7 +261,11 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		return
 	}
 
-	if ms.blockV2Promotion && ms.blockVSQueryEvidence != nil {
+	if ms.blockV2Promotion {
+		if ms.blockVSQueryEvidence == nil {
+			glog.Warningf("failover: V2 promotion enabled but evidence querier is nil for %q — fail closed (not falling back to V1)", volumeName)
+			return
+		}
 		ms.promoteReplicaV2(volumeName, entry)
 		return
 	}
@@ -312,6 +316,15 @@ func (ms *MasterServer) promoteReplicaV2(volumeName string, entry BlockVolumeEnt
 	evidence, errs := queryAllCandidateEvidence(ms.blockVSQueryEvidence, candidates)
 	for _, err := range errs {
 		glog.Warningf("failover V2: %s", err)
+	}
+
+	// Fail-closed on partial evidence: if any candidate query failed, an
+	// unreachable candidate may be the most durable. Promoting from
+	// incomplete evidence violates durability-first ordering.
+	if len(errs) > 0 {
+		glog.Warningf("failover V2: %q: fail-closed — %d/%d candidate queries failed, cannot guarantee durability ordering",
+			volumeName, len(errs), len(candidates))
+		return
 	}
 
 	// Durability-first selection. Fail-closed if no eligible candidate.

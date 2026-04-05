@@ -74,6 +74,7 @@ type MasterOptions struct {
 	debug                      *bool
 	debugPort                  *int
 	blockPromotionLSNTolerance *int
+	blockV2Promotion           *bool
 }
 
 func init() {
@@ -106,6 +107,7 @@ func init() {
 	m.debug = cmdMaster.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	m.debugPort = cmdMaster.Flag.Int("debug.port", 6060, "http port for debugging")
 	m.blockPromotionLSNTolerance = cmdMaster.Flag.Int("block.promotion.lsnTolerance", 100, "max WAL LSN lag for block volume replica promotion eligibility")
+	m.blockV2Promotion = cmdMaster.Flag.Bool("block.v2Promotion", false, "enable V2 durability-first promotion (requires proto regen for evidence RPC)")
 }
 
 var cmdMaster = &Command{
@@ -415,5 +417,6 @@ func (m *MasterOptions) toMasterOption(whiteList []string) *weed_server.MasterOp
 		TelemetryUrl:               *m.telemetryUrl,
 		TelemetryEnabled:           *m.telemetryEnabled,
 		BlockPromotionLSNTolerance: *m.blockPromotionLSNTolerance,
+		BlockV2Promotion:           *m.blockV2Promotion,
 	}
 }

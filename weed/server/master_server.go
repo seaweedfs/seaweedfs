@@ -65,6 +65,7 @@ type MasterOption struct {
 	TelemetryEnabled            bool
 	VolumeGrowthDisabled        bool
 	BlockPromotionLSNTolerance  int
+	BlockV2Promotion            bool // T3: enable durability-first V2 promotion
 }
 
 type MasterServer struct {
@@ -180,6 +181,10 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 	ms.blockVSPrepareExpand = ms.defaultBlockVSPrepareExpand
 	ms.blockVSCommitExpand = ms.defaultBlockVSCommitExpand
 	ms.blockVSCancelExpand = ms.defaultBlockVSCancelExpand
+	ms.blockV2Promotion = option.BlockV2Promotion
+	if ms.blockV2Promotion {
+		ms.blockVSQueryEvidence = ms.defaultBlockVSQueryEvidence
+	}
 
 	ms.MasterClient.SetOnPeerUpdateFn(ms.OnPeerUpdate)
 

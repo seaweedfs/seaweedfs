@@ -1311,6 +1311,76 @@ func TestFailoverV2_FlagOff_UsesLegacy(t *testing.T) {
 	}
 }
 
+func TestFailoverV2_NilQuerier_FailsClosed(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	ms.blockV2Promotion = true
+	ms.blockVSQueryEvidence = nil // V2 on, but querier not wired
+	registerVolumeWithReplica(t, ms, "vol-v2-nilq", "vs1", "vs2", 1, 1*time.Second)
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-nilq")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// Must fail closed, not silently use V1.
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("primary changed to %q, want vs1 (fail-closed on nil querier)", entry.VolumeServer)
+	}
+	if entry.Epoch != 1 {
+		t.Fatalf("epoch=%d, want 1 (unchanged)", entry.Epoch)
+	}
+}
+
+func TestFailoverV2_PartialEvidenceFailure_FailsClosed(t *testing.T) {
+	callCount := 0
+	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
+		callCount++
+		if server == "vs2" {
+			return BlockPromotionEvidence{}, fmt.Errorf("connection refused")
+		}
+		// vs3 responds successfully — but we should still fail closed because
+		// vs2 (unreachable) might be the most durable candidate.
+		return BlockPromotionEvidence{
+			Server: server, Path: path, Epoch: 1,
+			CommittedLSN: 5, WALHeadLSN: 5, HealthScore: 1.0,
+			EngineProjectionMode: "publish_healthy", Eligible: true,
+		}, nil
+	}
+	ms := testMasterServerV2(t, querier)
+
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+	ms.blockRegistry.MarkBlockCapable("vs3")
+	if err := ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name: "vol-v2-partial", VolumeServer: "vs1",
+		Path: "/data/vol-v2-partial.blk", Epoch: 1,
+		Role: blockvol.RoleToWire(blockvol.RolePrimary), Status: StatusActive,
+		LeaseTTL: 1 * time.Second, LastLeaseGrant: time.Now().Add(-5 * time.Second),
+		Replicas: []ReplicaInfo{
+			{Server: "vs2", Path: "/data/vol-v2-partial.blk", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+			{Server: "vs3", Path: "/data/vol-v2-partial.blk", HealthScore: 1.0, Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now()},
+		},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	ms.failoverBlockVolumes("vs1")
+
+	entry, ok := ms.blockRegistry.Lookup("vol-v2-partial")
+	if !ok {
+		t.Fatal("entry missing")
+	}
+	// Must fail closed: incomplete evidence set, unreachable candidate
+	// might be the most durable.
+	if entry.VolumeServer != "vs1" {
+		t.Fatalf("primary changed to %q, want vs1 (fail-closed on partial evidence)", entry.VolumeServer)
+	}
+	if entry.Epoch != 1 {
+		t.Fatalf("epoch=%d, want 1 (unchanged)", entry.Epoch)
+	}
+}
+
 func TestFailoverV2_EpochBumpAndAssignmentOnlyAfterSelection(t *testing.T) {
 	querier := func(_ context.Context, server, path string, epoch uint64) (BlockPromotionEvidence, error) {
 		return BlockPromotionEvidence{
