@@ -123,7 +123,7 @@ func (localsink *LocalSink) CreateEntry(key string, entry *filer_pb.Entry, signa
 		return writeFunc(entry.Content)
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, localsink.filerSource, writeFunc); err != nil {
+	if err := repl_util.CopyFromChunkViewsWithEntry(chunkViews, localsink.filerSource, writeFunc, entry); err != nil {
 		return err
 	}
 

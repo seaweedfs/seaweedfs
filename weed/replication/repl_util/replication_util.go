@@ -2,14 +2,52 @@ package repl_util
 
 import (
 	"context"
+	"io"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
 func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error) error {
+	return CopyFromChunkViewsWithEntry(chunkViews, filerSource, writeFunc, nil)
+}
+
+// CopyFromChunkViewsWithEntry copies chunk data with optional SSE decryption.
+// If entry has SSE-encrypted chunks, data is decrypted before writing.
+func CopyFromChunkViewsWithEntry(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error, entry *filer_pb.Entry) error {
+	if entry != nil && detectSSEType(entry) != filer_pb.SSEType_NONE {
+		return copyWithDecryption(filerSource, entry, writeFunc)
+	}
+	return copyChunkViews(chunkViews, filerSource, writeFunc)
+}
+
+func copyWithDecryption(filerSource *source.FilerSource, entry *filer_pb.Entry, writeFunc func(data []byte) error) error {
+	reader := filer.NewFileReader(filerSource, entry)
+	decrypted, err := MaybeDecryptReader(reader, entry)
+	if err != nil {
+		return err
+	}
+	buf := make([]byte, 128*1024)
+	for {
+		n, readErr := decrypted.Read(buf)
+		if n > 0 {
+			if writeErr := writeFunc(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if readErr == io.EOF {
+			return nil
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+}
+
+func copyChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error) error {
 
 	for x := chunkViews.Front(); x != nil; x = x.Next {
 		chunk := x.Value
