@@ -32,6 +32,7 @@ type BlockVolumeInfoMessage struct {
 	NvmeAddr             string                 // NVMe/TCP target address (ip:port), empty if NVMe disabled
 	NQN                  string                 // NVMe subsystem NQN, empty if NVMe disabled
 	ReplicaShipperStates []ReplicaShipperStatus // CP13-7: per-replica state from primary's shipper group
+	EngineProjectionMode string                 // T1: pure V2 engine-derived local projection mode (distinct from VolumeMode)
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats

@@ -3922,8 +3922,9 @@ type BlockVolumeInfoMessage struct {
 	ReplicaReady     *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
 	NeedsRebuild     *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
 	PublishHealthy   *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
-	VolumeMode       *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
-	VolumeModeReason *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
+	VolumeMode             *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
+	VolumeModeReason       *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
+	EngineProjectionMode   *string                `protobuf:"bytes,24,opt,name=engine_projection_mode,json=engineProjectionMode,proto3,oneof" json:"engine_projection_mode,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4115,6 +4116,13 @@ func (x *BlockVolumeInfoMessage) GetVolumeMode() string {
 func (x *BlockVolumeInfoMessage) GetVolumeModeReason() string {
 	if x != nil && x.VolumeModeReason != nil {
 		return *x.VolumeModeReason
+	}
+	return ""
+}
+
+func (x *BlockVolumeInfoMessage) GetEngineProjectionMode() string {
+	if x != nil && x.EngineProjectionMode != nil {
+		return *x.EngineProjectionMode
 	}
 	return ""
 }

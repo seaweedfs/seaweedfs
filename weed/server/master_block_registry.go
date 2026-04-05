@@ -86,6 +86,8 @@ type BlockVolumeEntry struct {
 	HasHeartbeatVolumeMode   bool          // whether the current primary heartbeat carried explicit outward volume_mode truth
 	HeartbeatVolumeReason    string        // explicit primary heartbeat outward volume_mode_reason truth when present
 	HasHeartbeatVolumeReason bool          // whether the current primary heartbeat carried explicit outward volume_mode_reason truth
+	EngineProjectionMode     string        // T1: pure V2 engine-derived local projection mode (distinct from HeartbeatVolumeMode)
+	HasEngineProjectionMode  bool          // whether the current primary heartbeat carried explicit engine_projection_mode
 	PendingPrimaryHeartbeat  bool          // promotion selected a new primary, but it has not yet heartbeated as primary on the new epoch
 
 	// CP13-9: Normalized volume mode for external surfaces.
@@ -646,6 +648,7 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeatWithInventoryAuthority(server s
 				entry.PublishHealthy, entry.HasPublishHealthy = primaryPublishHealthyObservedFromHeartbeat(info)
 				entry.HeartbeatVolumeMode, entry.HasHeartbeatVolumeMode = primaryVolumeModeObservedFromHeartbeat(info)
 				entry.HeartbeatVolumeReason, entry.HasHeartbeatVolumeReason = primaryVolumeReasonObservedFromHeartbeat(info)
+				entry.EngineProjectionMode, entry.HasEngineProjectionMode = primaryEngineProjectionModeObservedFromHeartbeat(info)
 				if info.ReplicaDataAddr != "" {
 					entry.ReplicaDataAddr = info.ReplicaDataAddr
 				}
@@ -686,10 +689,21 @@ func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVo
 	existing.Role = info.Role
 	existing.Status = StatusActive
 	existing.LastLeaseGrant = time.Now()
+	newPrimaryTurnover := existing.PendingPrimaryHeartbeat
 	existing.PendingPrimaryHeartbeat = false
 	existing.HealthScore = info.HealthScore
 	existing.TransportDegraded = info.ReplicaDegraded
 	applyExplicitPrimaryTruthFromHeartbeat(existing, info, true)
+	// T1: on the first heartbeat from a newly promoted primary, clear stale
+	// EngineProjectionMode if the new primary does not emit the field. A new
+	// primary that omits the field must not inherit the old primary's
+	// V2-local projection — that would create synthetic master-side truth.
+	if newPrimaryTurnover {
+		if _, ok := primaryEngineProjectionModeObservedFromHeartbeat(info); !ok {
+			existing.EngineProjectionMode = ""
+			existing.HasEngineProjectionMode = false
+		}
+	}
 	existing.WALHeadLSN = info.WalHeadLsn
 	// F3: only update DurabilityMode when non-empty (prevents older VS from clearing strict mode).
 	if info.DurabilityMode != "" {
@@ -846,6 +860,16 @@ func primaryVolumeReasonObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMes
 	return "", false
 }
 
+func primaryEngineProjectionModeObservedFromHeartbeat(info *master_pb.BlockVolumeInfoMessage) (string, bool) {
+	if info == nil {
+		return "", false
+	}
+	if info.EngineProjectionMode != nil {
+		return info.GetEngineProjectionMode(), true
+	}
+	return "", false
+}
+
 func applyExplicitPrimaryTruthFromHeartbeat(existing *BlockVolumeEntry, info *master_pb.BlockVolumeInfoMessage, preserveWhenAbsent bool) {
 	if existing == nil || info == nil {
 		return
@@ -877,6 +901,13 @@ func applyExplicitPrimaryTruthFromHeartbeat(existing *BlockVolumeEntry, info *ma
 	} else if !preserveWhenAbsent {
 		existing.HeartbeatVolumeReason = ""
 		existing.HasHeartbeatVolumeReason = false
+	}
+	if epm, ok := primaryEngineProjectionModeObservedFromHeartbeat(info); ok {
+		existing.EngineProjectionMode = epm
+		existing.HasEngineProjectionMode = true
+	} else if !preserveWhenAbsent {
+		existing.EngineProjectionMode = ""
+		existing.HasEngineProjectionMode = false
 	}
 }
 

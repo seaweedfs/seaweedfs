@@ -2988,3 +2988,221 @@ func TestRegistry_UpdateFullHeartbeat_MissingFieldsDoNotInventExplicitTruthOnFre
 		t.Fatalf("expected fresh fallback outward mode allocated_only without explicit truth, got %q", entry.VolumeMode)
 	}
 }
+
+func TestRegistry_UpdateFullHeartbeat_ConsumesEngineProjectionModeFromPrimaryHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-epm",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-epm.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 2,
+		Replicas: []ReplicaInfo{{
+			Server: "replica-server:8080",
+			Path:   "/blocks/vol-epm-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	epm := "publish_healthy"
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:                 "/blocks/vol-epm.blk",
+		Role:                 blockvol.RoleToWire(blockvol.RolePrimary),
+		EngineProjectionMode: &epm,
+	}}, "")
+
+	entry, ok := r.Lookup("vol-epm")
+	if !ok {
+		t.Fatal("expected entry")
+	}
+	if !entry.HasEngineProjectionMode {
+		t.Fatalf("expected HasEngineProjectionMode=true, entry=%+v", entry)
+	}
+	if entry.EngineProjectionMode != "publish_healthy" {
+		t.Fatalf("expected EngineProjectionMode=%q, got %q", "publish_healthy", entry.EngineProjectionMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_EngineProjectionModeDistinctFromVolumeMode(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:          "vol-epm-distinct",
+		VolumeServer:  "primary-server:8080",
+		Path:          "/blocks/vol-epm-distinct.blk",
+		Status:        StatusActive,
+		Role:          blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor: 1,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Send heartbeat with EngineProjectionMode but no VolumeMode.
+	epm := "degraded"
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:                 "/blocks/vol-epm-distinct.blk",
+		Role:                 blockvol.RoleToWire(blockvol.RolePrimary),
+		EngineProjectionMode: &epm,
+	}}, "")
+
+	entry, ok := r.Lookup("vol-epm-distinct")
+	if !ok {
+		t.Fatal("expected entry")
+	}
+	// EngineProjectionMode should be "degraded" (from V2 core).
+	if entry.EngineProjectionMode != "degraded" {
+		t.Fatalf("EngineProjectionMode=%q, want %q", entry.EngineProjectionMode, "degraded")
+	}
+	// VolumeMode should fall back to master-computed value (not "degraded")
+	// because VolumeMode field was absent in heartbeat.
+	if entry.HasHeartbeatVolumeMode {
+		t.Fatalf("expected no HeartbeatVolumeMode when field was absent, got %q", entry.HeartbeatVolumeMode)
+	}
+	// The two fields are independent — EngineProjectionMode does not
+	// influence VolumeMode and vice versa. RF=1 with no replicas falls
+	// back to "allocated_only" via computeVolumeMode(), NOT "degraded".
+	if entry.VolumeMode == "degraded" {
+		t.Fatalf("VolumeMode must not leak from EngineProjectionMode: got %q, want master-computed fallback", entry.VolumeMode)
+	}
+	if entry.VolumeMode != "allocated_only" {
+		t.Fatalf("VolumeMode=%q, want %q (master-computed fallback for RF=1)", entry.VolumeMode, "allocated_only")
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_EngineProjectionModeAbsentPreservesExisting(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:                    "vol-epm-preserve",
+		VolumeServer:            "primary-server:8080",
+		Path:                    "/blocks/vol-epm-preserve.blk",
+		Status:                  StatusActive,
+		Role:                    blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor:           1,
+		EngineProjectionMode:    "publish_healthy",
+		HasEngineProjectionMode: true,
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Heartbeat without EngineProjectionMode field (older VS or V1 path).
+	r.UpdateFullHeartbeat("primary-server:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path: "/blocks/vol-epm-preserve.blk",
+		Role: blockvol.RoleToWire(blockvol.RolePrimary),
+	}}, "")
+
+	entry, ok := r.Lookup("vol-epm-preserve")
+	if !ok {
+		t.Fatal("expected entry")
+	}
+	// preserveWhenAbsent=true in applyPrimaryHeartbeatObservation, so the
+	// existing value should be preserved when the field is absent.
+	if !entry.HasEngineProjectionMode {
+		t.Fatalf("expected preserved HasEngineProjectionMode=true")
+	}
+	if entry.EngineProjectionMode != "publish_healthy" {
+		t.Fatalf("expected preserved EngineProjectionMode=%q, got %q", "publish_healthy", entry.EngineProjectionMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_EngineProjectionModeClearsOnPrimaryTurnover(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	// Register with old primary that has EngineProjectionMode.
+	if err := r.Register(&BlockVolumeEntry{
+		Name:                    "vol-epm-turnover",
+		VolumeServer:            "old-primary:8080",
+		Path:                    "/blocks/vol-epm-turnover.blk",
+		Status:                  StatusActive,
+		Role:                    blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor:           2,
+		EngineProjectionMode:    "publish_healthy",
+		HasEngineProjectionMode: true,
+		Replicas: []ReplicaInfo{{
+			Server: "new-primary:8080",
+			Path:   "/blocks/vol-epm-turnover-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Simulate promotion: PromoteBestReplica sets PendingPrimaryHeartbeat
+	// and changes VolumeServer. Use UpdateEntry to mutate the internal entry.
+	if err := r.UpdateEntry("vol-epm-turnover", func(e *BlockVolumeEntry) {
+		e.VolumeServer = "new-primary:8080"
+		e.PendingPrimaryHeartbeat = true
+		e.Replicas = nil
+	}); err != nil {
+		t.Fatalf("update entry: %v", err)
+	}
+
+	// New primary heartbeats WITHOUT EngineProjectionMode (e.g., older VS).
+	r.UpdateFullHeartbeat("new-primary:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path: "/blocks/vol-epm-turnover.blk",
+		Role: blockvol.RoleToWire(blockvol.RolePrimary),
+	}}, "")
+
+	entry, ok := r.Lookup("vol-epm-turnover")
+	if !ok {
+		t.Fatal("expected entry")
+	}
+	// The old primary's EngineProjectionMode must NOT survive the turnover.
+	// A new primary that omits the field must not inherit stale V2-local
+	// projection from the old primary.
+	if entry.HasEngineProjectionMode {
+		t.Fatalf("stale EngineProjectionMode survived primary turnover: %q", entry.EngineProjectionMode)
+	}
+	if entry.EngineProjectionMode != "" {
+		t.Fatalf("stale EngineProjectionMode=%q, want empty after turnover", entry.EngineProjectionMode)
+	}
+}
+
+func TestRegistry_UpdateFullHeartbeat_EngineProjectionModePreservedOnNewPrimaryWithField(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name:                    "vol-epm-turnover-with",
+		VolumeServer:            "old-primary:8080",
+		Path:                    "/blocks/vol-epm-turnover-with.blk",
+		Status:                  StatusActive,
+		Role:                    blockvol.RoleToWire(blockvol.RolePrimary),
+		ReplicaFactor:           2,
+		EngineProjectionMode:    "publish_healthy",
+		HasEngineProjectionMode: true,
+		Replicas: []ReplicaInfo{{
+			Server: "new-primary:8080",
+			Path:   "/blocks/vol-epm-turnover-with-replica.blk",
+			Ready:  true,
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	if err := r.UpdateEntry("vol-epm-turnover-with", func(e *BlockVolumeEntry) {
+		e.VolumeServer = "new-primary:8080"
+		e.PendingPrimaryHeartbeat = true
+		e.Replicas = nil
+	}); err != nil {
+		t.Fatalf("update entry: %v", err)
+	}
+
+	// New primary heartbeats WITH its own EngineProjectionMode.
+	epm := "degraded"
+	r.UpdateFullHeartbeat("new-primary:8080", []*master_pb.BlockVolumeInfoMessage{{
+		Path:                 "/blocks/vol-epm-turnover-with.blk",
+		Role:                 blockvol.RoleToWire(blockvol.RolePrimary),
+		EngineProjectionMode: &epm,
+	}}, "")
+
+	entry, ok := r.Lookup("vol-epm-turnover-with")
+	if !ok {
+		t.Fatal("expected entry")
+	}
+	// New primary emits its own field — should use that, not the old value.
+	if !entry.HasEngineProjectionMode {
+		t.Fatal("expected HasEngineProjectionMode=true from new primary")
+	}
+	if entry.EngineProjectionMode != "degraded" {
+		t.Fatalf("EngineProjectionMode=%q, want %q from new primary", entry.EngineProjectionMode, "degraded")
+	}
+}

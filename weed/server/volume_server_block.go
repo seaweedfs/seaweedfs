@@ -1017,6 +1017,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 			msgs[i].VolumeModeReason = bs.heartbeatVolumeModeReason(msgs[i].Path, s)
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
+		msgs[i].EngineProjectionMode = bs.heartbeatEngineProjectionMode(msgs[i].Path)
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
 		if bs.nvmeListenAddr != "" {
 			msgs[i].NvmeAddr = bs.nvmeListenAddr
@@ -1127,6 +1128,17 @@ func (bs *BlockService) heartbeatVolumeModeReason(path string, state *volReplSta
 			return proj.Mode.Reason
 		}
 		return proj.Publication.Reason
+	}
+	return ""
+}
+
+// heartbeatEngineProjectionMode returns the pure V2 engine-derived local
+// projection mode. This reads ONLY from the V2 core projection — no ad-hoc
+// fallback. Returns empty if V2 core is not present for this volume.
+// Distinct from heartbeatVolumeMode which may fall back to non-V2 paths.
+func (bs *BlockService) heartbeatEngineProjectionMode(path string) string {
+	if proj, ok := bs.CoreProjection(path); ok {
+		return string(proj.Mode.Name)
 	}
 	return ""
 }

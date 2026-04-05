@@ -518,6 +518,7 @@ message BlockVolumeInfoMessage {
   optional bool publish_healthy = 21;
   optional string volume_mode = 22;
   optional string volume_mode_reason = 23;
+  optional string engine_projection_mode = 24; // V2: pure engine-derived local projection mode
 }
 
 message BlockVolumeShortInfoMessage {
