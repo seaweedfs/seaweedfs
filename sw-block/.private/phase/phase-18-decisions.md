@@ -116,3 +116,29 @@ Implication:
 1. the first active Loop 2 runtime is summary-driven
 2. later work can deepen it into real continuous keepup/catchup/rebuild
    choreography without changing the ownership rule
+
+## D6: `M3` Closes On One Bounded Continuity Statement, Not Broad RF2 Proof
+
+Decision:
+
+1. `M3` is considered complete when one runtime-owned continuity path exists:
+   write -> active Loop 2 observation -> failover -> readback verification
+2. `M3` requires both:
+   - a healthy path
+   - a gated fail-closed path
+3. `M3` does not imply broad RF2 product continuity proof
+
+Why:
+
+1. after `M1` and `M2`, the next meaningful closure is to compose failover and
+   active Loop 2 into one bounded continuity statement
+2. this proves the runtime is not only structurally correct, but already able to
+   carry one real end-to-end continuity story
+3. keeping the claim bounded avoids overreading the current in-process runtime as
+   a complete RF2 product path
+
+Implication:
+
+1. later work can attach RF2-facing product/runtime surfaces on top of a real
+   continuity-bearing runtime slice
+2. `M4` should attach one bounded surface without widening the continuity claim

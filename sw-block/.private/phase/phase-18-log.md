@@ -104,3 +104,31 @@ Current interpretation:
 2. this is still bounded summary-driven runtime ownership, not full shipper or
    rebuild-task choreography
 3. the next active work should move to `M3`
+
+### `M3` Delivered
+
+Delivered in this update:
+
+1. one runtime-owned replicated continuity entry point now exists:
+   - `ExecuteReplicatedContinuity(...)`
+2. failover and active Loop 2 are now composed into one bounded continuity path
+3. the continuity result captures:
+   - pre-failover Loop 2 snapshot
+   - failover result
+   - selected primary
+   - readback length
+   - data match
+
+Tests:
+
+1. `TestInProcessRuntimeManager_ExecuteReplicatedContinuity_HappyPath`
+2. `TestInProcessRuntimeManager_ExecuteReplicatedContinuity_GatedPath`
+3. `go test ./sw-block/runtime/masterv2 ./sw-block/runtime/volumev2`
+
+Current interpretation:
+
+1. `M3` is complete as one bounded replicated continuity closure on the current
+   runtime path
+2. this is still a bounded continuity claim on the in-process/runtime-owned
+   path, not broad RF2 product continuity proof
+3. the next active work should move to `M4`

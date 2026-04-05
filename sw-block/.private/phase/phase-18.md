@@ -227,11 +227,25 @@ Exit criteria:
 
 Current status:
 
-1. not started
+1. delivered
+2. one runtime-owned replicated continuity entry point now exists
+3. failover and active Loop 2 are now combined into one bounded continuity
+   statement
+4. current boundary:
+   - continuity is closed on the bounded in-process runtime path
+   - this is not yet a broad RF2 product continuity claim
 
 Review/test update:
 
-1. pending
+1. delivered code:
+   - `ExecuteReplicatedContinuity(...)`
+   - `ReplicatedContinuityResult`
+2. delivered tests:
+   - healthy replicated continuity through failover
+   - gated replicated continuity fail-closed path
+3. result:
+   - the runtime now owns one bounded write -> observe -> failover -> readback
+     continuity statement
 
 ### `M4`: RF2 Product Runtime Surfaces
 
@@ -311,9 +325,8 @@ written decision in `phase-18-decisions.md`.
 
 The active next work is:
 
-1. `M3` seam step
-2. turn the current failover + active Loop 2 runtime slices into one bounded
-   replicated continuity statement
+1. `M4` seam step
+2. attach one bounded RF2-facing runtime/product surface to the new runtime
 
 ## Review Base
 

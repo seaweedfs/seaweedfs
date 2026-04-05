@@ -16,6 +16,7 @@ type InProcessRuntimeManager struct {
 	evidenceTransport *InMemoryFailoverEvidenceTransport
 
 	mu                sync.RWMutex
+	localNodes        map[string]*Node
 	lastSnapshot      FailoverSnapshot
 	lastResult        FailoverResult
 	hasLastResult     bool
@@ -36,6 +37,7 @@ func NewInProcessRuntimeManager(master *masterv2.Master) (*InProcessRuntimeManag
 	return &InProcessRuntimeManager{
 		driver:            driver,
 		evidenceTransport: NewInMemoryFailoverEvidenceTransport(),
+		localNodes:        make(map[string]*Node),
 		snapshotsByName:   make(map[string]FailoverSnapshot),
 		resultsByName:     make(map[string]FailoverResult),
 		loop2ByVolume:     make(map[string]Loop2RuntimeSnapshot),
@@ -53,6 +55,9 @@ func (m *InProcessRuntimeManager) RegisterNode(node *Node) error {
 	if err := m.evidenceTransport.RegisterHandler(node.NodeID(), node); err != nil {
 		return err
 	}
+	m.mu.Lock()
+	m.localNodes[node.NodeID()] = node
+	m.mu.Unlock()
 	target, err := NewHybridInProcessFailoverTarget(node, m.evidenceTransport)
 	if err != nil {
 		return err
@@ -84,6 +89,9 @@ func (m *InProcessRuntimeManager) UnregisterParticipant(nodeID string) {
 	if m.evidenceTransport != nil {
 		m.evidenceTransport.UnregisterHandler(nodeID)
 	}
+	m.mu.Lock()
+	delete(m.localNodes, nodeID)
+	m.mu.Unlock()
 	m.driver.UnregisterParticipant(nodeID)
 }
 
@@ -239,4 +247,20 @@ func (m *InProcessRuntimeManager) recordLoop2Snapshot(volumeName string, snapsho
 	if volumeName != "" {
 		m.loop2ByVolume[volumeName] = snapshot
 	}
+}
+
+func (m *InProcessRuntimeManager) localNode(nodeID string) (*Node, error) {
+	if m == nil {
+		return nil, fmt.Errorf("volumev2: runtime manager is nil")
+	}
+	if nodeID == "" {
+		return nil, fmt.Errorf("volumev2: local node id is required")
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	node, ok := m.localNodes[nodeID]
+	if !ok || node == nil {
+		return nil, fmt.Errorf("volumev2: local node %q is not registered", nodeID)
+	}
+	return node, nil
 }

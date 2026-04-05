@@ -1739,6 +1739,184 @@ func TestInProcessRuntimeManager_ObserveLoop2_NeedsRebuild(t *testing.T) {
 	}
 }
 
+func TestInProcessRuntimeManager_ExecuteReplicatedContinuity_HappyPath(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "continuity-b.blk")
+	pathC := filepath.Join(tempDir, "continuity-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "continuity-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "continuity-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "continuity-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte{0x7A}, 4096)
+	result, err := manager.ExecuteReplicatedContinuity("continuity-vol", "node-b", 2, []string{"node-c"}, 0, payload)
+	if err != nil {
+		t.Fatalf("execute replicated continuity: %v", err)
+	}
+	if result.Loop2BeforeFailover.Mode != Loop2RuntimeModeKeepUp {
+		t.Fatalf("loop2 before failover=%q, want %q", result.Loop2BeforeFailover.Mode, Loop2RuntimeModeKeepUp)
+	}
+	if result.SelectedPrimaryNodeID != "node-c" {
+		t.Fatalf("selected primary=%q, want node-c", result.SelectedPrimaryNodeID)
+	}
+	if !result.DataMatch {
+		t.Fatalf("expected continuity data match: %+v", result)
+	}
+	if result.ReadBackLength != uint32(len(payload)) {
+		t.Fatalf("readback length=%d, want %d", result.ReadBackLength, len(payload))
+	}
+}
+
+func TestInProcessRuntimeManager_ExecuteReplicatedContinuity_GatedPath(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "continuity-gated-b.blk")
+	pathC := filepath.Join(tempDir, "continuity-gated-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "continuity-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "continuity-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "continuity-gated-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
+			VolumeName:   "continuity-gated-vol",
+			NodeID:       "node-c",
+			Epoch:        2,
+			CommittedLSN: 1,
+			WALHeadLSN:   1,
+			Eligible:     false,
+			Reason:       "needs_rebuild",
+		},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:        "continuity-gated-vol",
+			NodeID:            "node-c",
+			Epoch:             2,
+			Role:              "replica",
+			Mode:              "needs_rebuild",
+			CommittedLSN:      1,
+			DurableLSN:        1,
+			CheckpointLSN:     1,
+			RecoveryPhase:     "needs_rebuild",
+			LastBarrierOK:     false,
+			LastBarrierReason: "timeout",
+			Eligible:          false,
+			Reason:            "needs_rebuild",
+		},
+	)); err != nil {
+		t.Fatalf("override node-c target: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte{0x7B}, 4096)
+	result, err := manager.ExecuteReplicatedContinuity("continuity-gated-vol", "node-b", 2, []string{"node-c"}, 0, payload)
+	if err == nil {
+		t.Fatal("expected gated replicated continuity error")
+	}
+	if result.Loop2BeforeFailover.Mode != Loop2RuntimeModeNeedsRebuild {
+		t.Fatalf("loop2 before failover=%q, want %q", result.Loop2BeforeFailover.Mode, Loop2RuntimeModeNeedsRebuild)
+	}
+	if result.SelectedPrimaryNodeID != "" {
+		t.Fatalf("selected primary=%q, want empty on gated continuity", result.SelectedPrimaryNodeID)
+	}
+	if result.DataMatch {
+		t.Fatalf("unexpected continuity data match on gated path: %+v", result)
+	}
+}
+
 func mustHeartbeat(t *testing.T, node *Node) masterv2.NodeHeartbeat {
 	t.Helper()
 	hb, err := node.Heartbeat()
