@@ -1519,6 +1519,226 @@ func TestTransportEvidenceAdapter_GatedFailoverFlow(t *testing.T) {
 	}
 }
 
+func TestLoop2RuntimeSession_KeepUpOnHealthyReplicaSet(t *testing.T) {
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "loop2-keepup-b.blk")
+	assignB := masterv2.Assignment{
+		Name:          "loop2-keepup-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         3,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{assignB}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	payload := bytes.Repeat([]byte{0x71}, 4096)
+	if err := nodeB.WriteLBA("loop2-keepup-vol", 0, payload); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("loop2-keepup-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+	primary := mustReplicaSummary(t, nodeB, "loop2-keepup-vol", 3)
+
+	session, err := NewLoop2RuntimeSession("loop2-keepup-vol", "node-b", 3, []FailoverTarget{
+		mustInProcessFailoverTarget(t, nodeB),
+		staticFailoverTarget(
+			"node-c",
+			masterv2.PromotionQueryResponse{VolumeName: "loop2-keepup-vol", NodeID: "node-c"},
+			protocolv2.ReplicaSummaryResponse{
+				VolumeName:    "loop2-keepup-vol",
+				NodeID:        "node-c",
+				Epoch:         3,
+				Role:          "replica",
+				Mode:          "replica_ready",
+				RoleApplied:   true,
+				ReceiverReady: true,
+				CommittedLSN:  primary.CommittedLSN,
+				DurableLSN:    primary.DurableLSN,
+				CheckpointLSN: primary.CheckpointLSN,
+				LastBarrierOK: true,
+				Eligible:      true,
+			},
+		),
+	})
+	if err != nil {
+		t.Fatalf("new loop2 runtime session: %v", err)
+	}
+	snap, err := session.ObserveOnce()
+	if err != nil {
+		t.Fatalf("observe loop2 keepup: %v", err)
+	}
+	if snap.Mode != Loop2RuntimeModeKeepUp {
+		t.Fatalf("loop2 mode=%q, want %q", snap.Mode, Loop2RuntimeModeKeepUp)
+	}
+	if snap.HealthyReplicaCount != 2 {
+		t.Fatalf("healthy replicas=%d, want 2", snap.HealthyReplicaCount)
+	}
+}
+
+func TestInProcessRuntimeManager_ObserveLoop2_CatchingUp(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "loop2-catchup-b.blk")
+	assignB := masterv2.Assignment{
+		Name:          "loop2-catchup-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         4,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{assignB}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	payload := bytes.Repeat([]byte{0x72}, 4096)
+	if err := nodeB.WriteLBA("loop2-catchup-vol", 0, payload); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("loop2-catchup-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+	primary := mustReplicaSummary(t, nodeB, "loop2-catchup-vol", 4)
+
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{VolumeName: "loop2-catchup-vol", NodeID: "node-c"},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:    "loop2-catchup-vol",
+			NodeID:        "node-c",
+			Epoch:         4,
+			Role:          "replica",
+			Mode:          "replica_ready",
+			RoleApplied:   true,
+			ReceiverReady: true,
+			CommittedLSN:  primary.CommittedLSN - 1,
+			DurableLSN:    primary.CommittedLSN - 1,
+			CheckpointLSN: primary.CheckpointLSN,
+			TargetLSN:     primary.CommittedLSN,
+			AchievedLSN:   primary.CommittedLSN - 1,
+			RecoveryPhase: "catching_up",
+			LastBarrierOK: true,
+			Eligible:      true,
+		},
+	)); err != nil {
+		t.Fatalf("register node-c target: %v", err)
+	}
+
+	snap, err := manager.ObserveLoop2("loop2-catchup-vol", "node-b", 4)
+	if err != nil {
+		t.Fatalf("observe loop2 catchup: %v", err)
+	}
+	if snap.Mode != Loop2RuntimeModeCatchingUp {
+		t.Fatalf("loop2 mode=%q, want %q", snap.Mode, Loop2RuntimeModeCatchingUp)
+	}
+	if snap.Reason == "" {
+		t.Fatal("expected loop2 catching_up reason")
+	}
+	lastSnap, ok := manager.LastLoop2Snapshot()
+	if !ok {
+		t.Fatal("expected last loop2 snapshot")
+	}
+	if lastSnap.Mode != Loop2RuntimeModeCatchingUp {
+		t.Fatalf("last loop2 mode=%q, want %q", lastSnap.Mode, Loop2RuntimeModeCatchingUp)
+	}
+}
+
+func TestInProcessRuntimeManager_ObserveLoop2_NeedsRebuild(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "loop2-rebuild-b.blk")
+	assignB := masterv2.Assignment{
+		Name:          "loop2-rebuild-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         5,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{assignB}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{VolumeName: "loop2-rebuild-vol", NodeID: "node-c"},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:        "loop2-rebuild-vol",
+			NodeID:            "node-c",
+			Epoch:             5,
+			Role:              "replica",
+			Mode:              "needs_rebuild",
+			RoleApplied:       true,
+			ReceiverReady:     false,
+			CommittedLSN:      1,
+			DurableLSN:        1,
+			CheckpointLSN:     1,
+			RecoveryPhase:     "needs_rebuild",
+			LastBarrierOK:     false,
+			LastBarrierReason: "timeout",
+			Eligible:          false,
+			Reason:            "needs_rebuild",
+		},
+	)); err != nil {
+		t.Fatalf("register node-c target: %v", err)
+	}
+
+	snap, err := manager.ObserveLoop2("loop2-rebuild-vol", "node-b", 5)
+	if err != nil {
+		t.Fatalf("observe loop2 needs_rebuild: %v", err)
+	}
+	if snap.Mode != Loop2RuntimeModeNeedsRebuild {
+		t.Fatalf("loop2 mode=%q, want %q", snap.Mode, Loop2RuntimeModeNeedsRebuild)
+	}
+	if snap.Reason != "needs_rebuild" {
+		t.Fatalf("loop2 reason=%q, want needs_rebuild", snap.Reason)
+	}
+	perVolSnap, ok := manager.Loop2Snapshot("loop2-rebuild-vol")
+	if !ok {
+		t.Fatal("expected per-volume loop2 snapshot")
+	}
+	if perVolSnap.Mode != Loop2RuntimeModeNeedsRebuild {
+		t.Fatalf("per-volume loop2 mode=%q, want %q", perVolSnap.Mode, Loop2RuntimeModeNeedsRebuild)
+	}
+}
+
 func mustHeartbeat(t *testing.T, node *Node) masterv2.NodeHeartbeat {
 	t.Helper()
 	hb, err := node.Heartbeat()
@@ -1536,6 +1756,18 @@ func mustPromotionEvidence(t *testing.T, node *Node, volumeName string, epoch ui
 	})
 	if err != nil {
 		t.Fatalf("promotion evidence: %v", err)
+	}
+	return resp
+}
+
+func mustReplicaSummary(t *testing.T, node *Node, volumeName string, epoch uint64) protocolv2.ReplicaSummaryResponse {
+	t.Helper()
+	resp, err := node.QueryReplicaSummary(protocolv2.ReplicaSummaryRequest{
+		VolumeName:    volumeName,
+		ExpectedEpoch: epoch,
+	})
+	if err != nil {
+		t.Fatalf("replica summary: %v", err)
 	}
 	return resp
 }

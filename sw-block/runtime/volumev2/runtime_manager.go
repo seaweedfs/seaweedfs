@@ -15,12 +15,15 @@ type InProcessRuntimeManager struct {
 	driver            *InProcessFailoverDriver
 	evidenceTransport *InMemoryFailoverEvidenceTransport
 
-	mu              sync.RWMutex
-	lastSnapshot    FailoverSnapshot
-	lastResult      FailoverResult
-	hasLastResult   bool
-	snapshotsByName map[string]FailoverSnapshot
-	resultsByName   map[string]FailoverResult
+	mu                sync.RWMutex
+	lastSnapshot      FailoverSnapshot
+	lastResult        FailoverResult
+	hasLastResult     bool
+	snapshotsByName   map[string]FailoverSnapshot
+	resultsByName     map[string]FailoverResult
+	lastLoop2Snapshot Loop2RuntimeSnapshot
+	hasLastLoop2      bool
+	loop2ByVolume     map[string]Loop2RuntimeSnapshot
 }
 
 // NewInProcessRuntimeManager creates a runtime-owned failover manager over one
@@ -35,6 +38,7 @@ func NewInProcessRuntimeManager(master *masterv2.Master) (*InProcessRuntimeManag
 		evidenceTransport: NewInMemoryFailoverEvidenceTransport(),
 		snapshotsByName:   make(map[string]FailoverSnapshot),
 		resultsByName:     make(map[string]FailoverResult),
+		loop2ByVolume:     make(map[string]Loop2RuntimeSnapshot),
 	}, nil
 }
 
@@ -114,6 +118,34 @@ func (m *InProcessRuntimeManager) ExecuteFailover(volumeName string, expectedEpo
 	return result, runErr
 }
 
+// NewLoop2RuntimeSession resolves runtime-owned targets and creates an active
+// Loop 2 session for one selected primary.
+func (m *InProcessRuntimeManager) NewLoop2RuntimeSession(volumeName, primaryNodeID string, expectedEpoch uint64, nodeIDs ...string) (*Loop2RuntimeSession, error) {
+	if m == nil || m.driver == nil {
+		return nil, fmt.Errorf("volumev2: runtime manager is nil")
+	}
+	targets, err := m.driver.resolveTargets(nodeIDs)
+	if err != nil {
+		return nil, err
+	}
+	return NewLoop2RuntimeSession(volumeName, primaryNodeID, expectedEpoch, targets)
+}
+
+// ObserveLoop2 runs one active Loop 2 observation and persists the latest
+// runtime snapshot.
+func (m *InProcessRuntimeManager) ObserveLoop2(volumeName, primaryNodeID string, expectedEpoch uint64, nodeIDs ...string) (Loop2RuntimeSnapshot, error) {
+	if m == nil {
+		return Loop2RuntimeSnapshot{}, fmt.Errorf("volumev2: runtime manager is nil")
+	}
+	session, err := m.NewLoop2RuntimeSession(volumeName, primaryNodeID, expectedEpoch, nodeIDs...)
+	if err != nil {
+		return Loop2RuntimeSnapshot{}, err
+	}
+	snapshot, obsErr := session.ObserveOnce()
+	m.recordLoop2Snapshot(volumeName, session.Snapshot())
+	return snapshot, obsErr
+}
+
 // LastFailoverSnapshot returns the most recent runtime-owned failover snapshot.
 func (m *InProcessRuntimeManager) LastFailoverSnapshot() (FailoverSnapshot, bool) {
 	if m == nil {
@@ -162,6 +194,31 @@ func (m *InProcessRuntimeManager) FailoverResult(volumeName string) (FailoverRes
 	return result, ok
 }
 
+// LastLoop2Snapshot returns the most recent active Loop 2 runtime snapshot.
+func (m *InProcessRuntimeManager) LastLoop2Snapshot() (Loop2RuntimeSnapshot, bool) {
+	if m == nil {
+		return Loop2RuntimeSnapshot{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !m.hasLastLoop2 {
+		return Loop2RuntimeSnapshot{}, false
+	}
+	return m.lastLoop2Snapshot, true
+}
+
+// Loop2Snapshot returns the latest active Loop 2 runtime snapshot for one
+// volume if present.
+func (m *InProcessRuntimeManager) Loop2Snapshot(volumeName string) (Loop2RuntimeSnapshot, bool) {
+	if m == nil {
+		return Loop2RuntimeSnapshot{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	snapshot, ok := m.loop2ByVolume[volumeName]
+	return snapshot, ok
+}
+
 func (m *InProcessRuntimeManager) recordSnapshot(volumeName string, snapshot FailoverSnapshot, result FailoverResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -171,5 +228,15 @@ func (m *InProcessRuntimeManager) recordSnapshot(volumeName string, snapshot Fai
 	if volumeName != "" {
 		m.snapshotsByName[volumeName] = snapshot
 		m.resultsByName[volumeName] = result
+	}
+}
+
+func (m *InProcessRuntimeManager) recordLoop2Snapshot(volumeName string, snapshot Loop2RuntimeSnapshot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastLoop2Snapshot = snapshot
+	m.hasLastLoop2 = true
+	if volumeName != "" {
+		m.loop2ByVolume[volumeName] = snapshot
 	}
 }

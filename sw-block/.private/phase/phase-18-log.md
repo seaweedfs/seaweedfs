@@ -76,3 +76,31 @@ Current interpretation:
 2. this is still a bounded request/response transport implementation, not broad
    network-product proof
 3. the next active work should move to `M2`
+
+### `M2` Delivered
+
+Delivered in this update:
+
+1. one runtime-owned active Loop 2 session/controller now exists:
+   - `Loop2RuntimeSession`
+2. one bounded active runtime snapshot now exists:
+   - `Loop2RuntimeSnapshot`
+   - `Loop2RuntimeMode`
+3. the runtime manager now owns active Loop 2 observation entry points and
+   retained snapshots
+4. the active Loop 2 slice is driven by bounded replica summaries rather than
+   by hidden backend ownership
+
+Tests:
+
+1. `TestLoop2RuntimeSession_KeepUpOnHealthyReplicaSet`
+2. `TestInProcessRuntimeManager_ObserveLoop2_CatchingUp`
+3. `TestInProcessRuntimeManager_ObserveLoop2_NeedsRebuild`
+4. `go test ./sw-block/runtime/masterv2 ./sw-block/runtime/volumev2`
+
+Current interpretation:
+
+1. `M2` is complete as the first active Loop 2 runtime slice
+2. this is still bounded summary-driven runtime ownership, not full shipper or
+   rebuild-task choreography
+3. the next active work should move to `M3`

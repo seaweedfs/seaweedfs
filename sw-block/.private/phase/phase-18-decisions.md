@@ -93,3 +93,26 @@ Implication:
    - primary-local takeover
 2. later transport work may widen execution transport, but only without changing
    the authority split
+
+## D5: `M2` Closes On A Bounded Summary-Driven Active Loop 2 Runtime
+
+Decision:
+
+1. `M2` is considered complete when Loop 2 becomes runtime-owned outside
+   failover-only logic through a bounded active observation/controller slice
+2. `M2` does not require full shipper task execution or rebuild choreography
+
+Why:
+
+1. the main gap after `M1` is not more transport syntax; it is that Loop 2
+   should exist as an active runtime owner
+2. bounded replica summaries already carry enough information to derive a first
+   runtime-owned `keepup` / `catching_up` / `needs_rebuild` slice
+3. this allows the runtime to become continuously meaningful without pretending
+   the full replication executor is already migrated
+
+Implication:
+
+1. the first active Loop 2 runtime is summary-driven
+2. later work can deepen it into real continuous keepup/catchup/rebuild
+   choreography without changing the ownership rule

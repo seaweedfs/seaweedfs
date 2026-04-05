@@ -177,11 +177,30 @@ Exit criteria:
 
 Current status:
 
-1. not started
+1. delivered
+2. one runtime-owned active Loop 2 session/controller now derives bounded
+   `keepup` / `catching_up` / `needs_rebuild` runtime modes from replica
+   summaries
+3. the runtime manager now owns explicit active Loop 2 observation entry points
+   and snapshots
+4. current boundary:
+   - the active runtime is bounded summary-driven, not full shipper/rebuild task
+     choreography
 
 Review/test update:
 
-1. pending
+1. delivered code:
+   - `Loop2RuntimeSession`
+   - `Loop2RuntimeSnapshot`
+   - `Loop2RuntimeMode`
+   - runtime-manager `ObserveLoop2(...)` / `LastLoop2Snapshot(...)` /
+     `Loop2Snapshot(...)`
+2. delivered tests:
+   - healthy `keepup`
+   - lagging `catching_up`
+   - explicit `needs_rebuild`
+3. result:
+   - Loop 2 now has a runtime-owned active slice outside failover-only logic
 
 ### `M3`: Replicated Data Continuity Closure
 
@@ -292,9 +311,9 @@ written decision in `phase-18-decisions.md`.
 
 The active next work is:
 
-1. `M2` seam step
-2. keep the new transport/session-backed failover path as the reference closure
-   while active Loop 2 runtime is introduced
+1. `M3` seam step
+2. turn the current failover + active Loop 2 runtime slices into one bounded
+   replicated continuity statement
 
 ## Review Base
 
