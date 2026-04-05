@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -34,12 +35,17 @@ func MaybeDecryptReader(reader io.Reader, entry *filer_pb.Entry) (io.Reader, err
 }
 
 func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
+	var detected filer_pb.SSEType
 	for _, chunk := range entry.GetChunks() {
 		if chunk.SseType != filer_pb.SSEType_NONE {
-			return chunk.SseType
+			if detected == filer_pb.SSEType_NONE {
+				detected = chunk.SseType
+			} else if chunk.SseType != detected {
+				glog.Warningf("entry has mixed SSE types across chunks: %v and %v, using %v", detected, chunk.SseType, detected)
+			}
 		}
 	}
-	return filer_pb.SSEType_NONE
+	return detected
 }
 
 func decryptSSES3(reader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
