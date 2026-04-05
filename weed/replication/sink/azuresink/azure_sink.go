@@ -138,6 +138,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	_, err := appendBlobClient.Create(ctxCreate, nil)
 
 	needsWrite := true
+	freshlyCreated := false
 	if err != nil {
 		if bloberror.HasCode(err, bloberror.BlobAlreadyExists) {
 			// Handle existing blob - check if overwrite is needed and perform it if necessary
@@ -146,14 +147,35 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 			if handleErr != nil {
 				return handleErr
 			}
+			// handleExistingBlob recreates the blob when needsWrite is true
+			freshlyCreated = needsWrite
 		} else {
 			return fmt.Errorf("azure create append blob %s/%s: %w", g.container, key, err)
 		}
+	} else {
+		freshlyCreated = true
 	}
 
 	// If we don't need to write (blob is up-to-date), return early
 	if !needsWrite {
 		return nil
+	}
+
+	// cleanupOnError deletes a freshly created blob when content write fails,
+	// preventing empty blobs from being left behind.
+	cleanupOnError := func(writeErr error) error {
+		if !freshlyCreated {
+			return writeErr
+		}
+		glog.Warningf("azure sink: cleaning up empty blob %s/%s after write failure: %v", g.container, key, writeErr)
+		ctxCleanup, cancelCleanup := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
+		defer cancelCleanup()
+		if _, delErr := appendBlobClient.Delete(ctxCleanup, nil); delErr != nil {
+			if !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
+				glog.Warningf("azure sink: failed to clean up blob %s/%s: %v", g.container, key, delErr)
+			}
+		}
+		return writeErr
 	}
 
 	writeFunc := func(data []byte) error {
@@ -164,11 +186,14 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		if err := writeFunc(entry.Content); err != nil {
+			return cleanupOnError(err)
+		}
+		return nil
 	}
 
 	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
-		return err
+		return cleanupOnError(err)
 	}
 
 	return nil
