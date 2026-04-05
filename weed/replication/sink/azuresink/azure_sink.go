@@ -170,7 +170,9 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 		glog.Warningf("azure sink: cleaning up empty blob %s/%s after write failure: %v", g.container, key, writeErr)
 		ctxCleanup, cancelCleanup := context.WithTimeout(context.Background(), azure.DefaultAzureOpTimeout)
 		defer cancelCleanup()
-		if _, delErr := appendBlobClient.Delete(ctxCleanup, nil); delErr != nil {
+		if _, delErr := appendBlobClient.Delete(ctxCleanup, &blob.DeleteOptions{
+			DeleteSnapshots: to.Ptr(blob.DeleteSnapshotsOptionTypeInclude),
+		}); delErr != nil {
 			if !bloberror.HasCode(delErr, bloberror.BlobNotFound) {
 				glog.Warningf("azure sink: failed to clean up blob %s/%s: %v", g.container, key, delErr)
 			}
