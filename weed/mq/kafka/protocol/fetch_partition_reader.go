@@ -140,13 +140,15 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	if hwmErr != nil {
 		// HWM lookup can fail when the partition has been deactivated between consumer
 		// sessions. Proceed with the fetch anyway — the broker will return the correct
-		// data (or empty) based on its own state. Use a sentinel HWM so we don't
-		// short-circuit below.
+		// data (or empty) based on its own state. Use a sentinel so we don't
+		// short-circuit below; keep result.highWaterMark at 0 for now and let
+		// the broker response inform it later.
 		glog.Warningf("[%s] HWM lookup failed for %s[%d]: %v — will attempt fetch anyway",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
-		hwm = req.requestedOffset + 1 // ensure requestedOffset < hwm so we don't bail out
+		hwm = req.requestedOffset + 1 // internal sentinel only
+	} else {
+		result.highWaterMark = hwm
 	}
-	result.highWaterMark = hwm
 
 	glog.V(2).Infof("[%s] HWM for %s[%d]: %d (requested: %d)",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwm, req.requestedOffset)
@@ -237,7 +239,13 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	// Use a fresh timeout for the fallback to prevent unbounded blocking.
 	// The original ctx (connection context) has no deadline, so passing it
 	// directly could block the data-plane goroutine indefinitely.
-	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, 10*time.Second)
+	// Tie the budget to the client's MaxWaitTime so one slow partition
+	// doesn't hold the reader longer than the request allows.
+	fallbackTimeout := time.Duration(maxWaitMs) * time.Millisecond
+	if fallbackTimeout <= 0 || fallbackTimeout > 10*time.Second {
+		fallbackTimeout = 10 * time.Second
+	}
+	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, fallbackTimeout)
 	defer fallbackCancel()
 	fallbackStartTime := time.Now()
 	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(fallbackCtx, pr.topicName, pr.partitionID, fromOffset, 10)
