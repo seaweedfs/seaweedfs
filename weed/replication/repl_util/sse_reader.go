@@ -78,13 +78,29 @@ func detectSSEType(entry *filer_pb.Entry) (filer_pb.SSEType, error) {
 
 	// Fall back to extended metadata for inline objects (no chunks)
 	if entry.Extended != nil {
-		if len(entry.Extended[s3_constants.SeaweedFSSSES3Key]) > 0 {
+		hasS3 := len(entry.Extended[s3_constants.SeaweedFSSSES3Key]) > 0
+		hasKMS := len(entry.Extended[s3_constants.SeaweedFSSSEKMSKey]) > 0
+		hasC := len(entry.Extended[s3_constants.SeaweedFSSSEIV]) > 0
+		count := 0
+		if hasS3 {
+			count++
+		}
+		if hasKMS {
+			count++
+		}
+		if hasC {
+			count++
+		}
+		if count > 1 {
+			return filer_pb.SSEType_NONE, fmt.Errorf("conflicting SSE metadata in entry: multiple SSE key types present")
+		}
+		if hasS3 {
 			return filer_pb.SSEType_SSE_S3, nil
 		}
-		if len(entry.Extended[s3_constants.SeaweedFSSSEKMSKey]) > 0 {
+		if hasKMS {
 			return filer_pb.SSEType_SSE_KMS, nil
 		}
-		if len(entry.Extended[s3_constants.SeaweedFSSSEIV]) > 0 {
+		if hasC {
 			return filer_pb.SSEType_SSE_C, nil
 		}
 	}

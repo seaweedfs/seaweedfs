@@ -10,25 +10,28 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
-var sseInitOnce sync.Once
-var sseInitErr error
+var (
+	sseInitMu          sync.Mutex
+	sseInitialized     bool
+)
 
 // InitializeSSEForReplication sets up SSE-S3 and SSE-KMS decryption so that
 // replication sinks can transparently decrypt encrypted objects.
 // SSE-S3 is initialized from the filer (KEK stored on filer).
-// SSE-KMS is initialized from Viper config (security.toml [kms] section).
+// SSE-KMS is initialized from Viper config (security.toml [kms] section or
+// WEED_KMS_* environment variables).
 // SSE-C cannot be decrypted (customer key not available) and will error at
 // decryption time.
 //
-// Safe to call multiple times; initialization runs only once per process.
+// Safe to call multiple times; only the first successful initialization takes
+// effect. Failed attempts do not prevent future retries.
 func InitializeSSEForReplication(filerSource filer_pb.FilerClient) error {
-	sseInitOnce.Do(func() {
-		sseInitErr = doInitializeSSE(filerSource)
-	})
-	return sseInitErr
-}
+	sseInitMu.Lock()
+	defer sseInitMu.Unlock()
+	if sseInitialized {
+		return nil
+	}
 
-func doInitializeSSE(filerSource filer_pb.FilerClient) error {
 	// Initialize SSE-S3 key manager from filer
 	if err := s3api.GetSSES3KeyManager().InitializeWithFiler(filerSource); err != nil {
 		return err
@@ -38,19 +41,15 @@ func doInitializeSSE(filerSource filer_pb.FilerClient) error {
 	// KMS configuration is typically in the S3 config file which the
 	// replication commands don't load directly. Support loading from
 	// security.toml [kms] section or WEED_KMS_* environment variables.
-	v := util.GetViper()
-	if v.IsSet("kms") {
-		loader := kms.NewConfigLoader(v)
-		if err := loader.LoadConfigurations(); err != nil {
-			glog.Warningf("KMS initialization from config failed: %v (SSE-KMS decryption will not be available)", err)
-		} else if err := loader.ValidateConfiguration(); err != nil {
-			glog.Warningf("KMS configuration validation failed: %v (SSE-KMS decryption will not be available)", err)
-		} else {
-			glog.V(0).Infof("KMS initialized for replication")
-		}
+	loader := kms.NewConfigLoader(util.GetViper())
+	if err := loader.LoadConfigurations(); err != nil {
+		glog.Warningf("KMS initialization from config failed: %v (SSE-KMS decryption will not be available)", err)
+	} else if err := loader.ValidateConfiguration(); err != nil {
+		glog.Warningf("KMS configuration validation failed: %v (SSE-KMS decryption will not be available)", err)
 	} else {
-		glog.V(1).Infof("No [kms] section in config — SSE-KMS decryption will not be available")
+		glog.V(0).Infof("KMS initialized for replication")
 	}
 
+	sseInitialized = true
 	return nil
 }
