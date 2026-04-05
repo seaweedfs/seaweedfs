@@ -28,8 +28,18 @@ func copyWithDecryption(filerSource *source.FilerSource, entry *filer_pb.Entry, 
 	reader := filer.NewFileReader(filerSource, entry)
 	decrypted, err := MaybeDecryptReader(reader, entry)
 	if err != nil {
+		if closer, ok := reader.(io.Closer); ok {
+			closer.Close()
+		}
 		return err
 	}
+	defer func() {
+		if closer, ok := decrypted.(io.Closer); ok {
+			closer.Close()
+		} else if closer, ok := reader.(io.Closer); ok {
+			closer.Close()
+		}
+	}()
 	buf := make([]byte, 128*1024)
 	for {
 		n, readErr := decrypted.Read(buf)
