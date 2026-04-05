@@ -3,6 +3,7 @@ package S3Sink
 import (
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -219,13 +220,16 @@ func cleanKey(key string) string {
 }
 
 // buildTaggingString builds the S3 Tagging header value from entry extended metadata.
+// Only keys with the AmzObjectTaggingPrefix ("X-Amz-Tagging-") are included as object
+// tags. The prefix is stripped and values are URL-encoded to produce a valid S3 tagging
+// query string.
 func buildTaggingString(extended map[string][]byte) string {
-	tags := ""
+	tagValues := url.Values{}
 	for k, v := range extended {
-		if len(tags) > 0 {
-			tags = tags + "&"
+		if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
+			tagKey := k[len(s3_constants.AmzObjectTaggingPrefix):]
+			tagValues.Set(tagKey, string(v))
 		}
-		tags = tags + k + "=" + string(v)
 	}
-	return tags
+	return tagValues.Encode()
 }
