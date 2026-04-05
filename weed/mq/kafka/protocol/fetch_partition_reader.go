@@ -145,7 +145,10 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 		// the broker response inform it later.
 		glog.Warningf("[%s] HWM lookup failed for %s[%d]: %v — will attempt fetch anyway",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
-		hwm = req.requestedOffset + 1 // internal sentinel only
+		// Use a large sentinel so FetchMultipleBatches doesn't artificially
+		// limit recordsAvailable to 1. The broker will return only what
+		// actually exists regardless of this value.
+		hwm = req.requestedOffset + 10000
 	} else {
 		result.highWaterMark = hwm
 	}
@@ -240,9 +243,13 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	// The original ctx (connection context) has no deadline, so passing it
 	// directly could block the data-plane goroutine indefinitely.
 	// Tie the budget to the client's MaxWaitTime so one slow partition
-	// doesn't hold the reader longer than the request allows.
+	// doesn't hold the reader longer than the request allows. Use a
+	// floor of 2s because the fallback typically reads from disk via gRPC,
+	// and anything shorter would almost certainly fail.
 	fallbackTimeout := time.Duration(maxWaitMs) * time.Millisecond
-	if fallbackTimeout <= 0 || fallbackTimeout > 10*time.Second {
+	if fallbackTimeout < 2*time.Second {
+		fallbackTimeout = 2 * time.Second
+	} else if fallbackTimeout > 10*time.Second {
 		fallbackTimeout = 10 * time.Second
 	}
 	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, fallbackTimeout)
