@@ -35,7 +35,8 @@ Use these rules for all later phases:
 
 ## Current Baseline
 
-Current accepted path now runs through the `Phase 16` finish-line checkpoint:
+Current accepted path now runs through the completed `Phase 18` and `Phase 19`
+checkpoints:
 
 1. protocol/algo truth set is strong
 2. engine recovery core is strong on the chosen path
@@ -55,6 +56,16 @@ Current accepted path now runs through the `Phase 16` finish-line checkpoint:
    - assignment/publication closure accepted
    - bounded mode normalization accepted
    - bounded heartbeat/restart truth closure accepted
+9. `Phase 18` closed the bounded RF2 runtime-bearing kernel slice and explicit
+   productionization envelope
+10. `Phase 19` closed one bounded working RF2 block path with:
+   - live transport-backed evidence
+   - continuous Loop 2 service
+   - bounded auto failover
+   - runtime-managed frontend rebinding
+   - bounded repair/catch-up
+   - end-to-end handoff proof
+   - bounded CSI/operator adapters
 
 Phase-accounting note:
 
@@ -66,11 +77,16 @@ Phase-accounting note:
 6. `Phase 13` is closed and should be read as one bounded constrained-runtime contract package, not as launch approval
 7. `Phase 14` is closed as explicit `V2 core` extraction
 8. `Phase 15` is closed as bounded adapter/projection rebinding
-9. `Phase 16` is closed as a bounded `V2`-native runtime checkpoint, not as broad product/launch proof
-10. the immediate next planning focus is now the productionization program plus the larger post-`Phase 16` gates:
-   - broader recovery/failover/publication statement
-   - launch-envelope freeze
-   - pilot/rollout discipline
+9. `Phase 16` is closed as a bounded `V2`-native runtime checkpoint, not as
+   broad product/launch proof
+10. `Phase 17` is closed as the bounded product-checkpoint / first-launch draft
+11. `Phase 18` is closed as the bounded RF2 runtime-bearing kernel slice plus
+   productionization envelope
+12. `Phase 19` is closed as one bounded working RF2 block path
+13. the immediate next planning focus is now:
+   - multi-process / multi-host proof for the current working path
+   - broader rebuild / CSI / operator hardening
+   - pilot-ready validation gates on top of the bounded working path
 
 Important interpretation rule:
 
@@ -86,10 +102,12 @@ Important interpretation rule:
 
 This means the next work should focus mainly on:
 
-1. keeping accepted `Phase 14-16` closure closed
-2. turning the bounded runtime checkpoint into an explicit launch envelope
-3. deciding broader failover/recovery/publication claims only through named evidence
-4. using `Phase 13-16` evidence as acceptance input rather than reopening micro-seams by default
+1. keeping accepted `Phase 14-19` closure closed
+2. widening the current working path into multi-process / multi-host validation
+3. deciding broader rebuild / CSI / operator / pilot claims only through named
+   evidence
+4. using `Phase 13-19` evidence as acceptance input rather than reopening
+   micro-seams by default
 
 ## Phase Roadmap
 

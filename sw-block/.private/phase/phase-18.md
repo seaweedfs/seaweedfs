@@ -1,7 +1,7 @@
 # Phase 18
 
 Date: 2026-04-05
-Status: active
+Status: complete
 Purpose: drive the new `masterv2 + volumev2 + purev2` kernel from the current
 in-process RF2 failover runtime slice toward a bounded productizable RF2 runtime
 in disciplined major milestones
@@ -271,11 +271,30 @@ Exit criteria:
 
 Current status:
 
-1. not started
+1. delivered
+2. one bounded RF2-facing runtime/product surface package now exists
+3. the runtime manager now projects failover, active Loop 2, and continuity into
+   one compressed outward RF2 surface
+4. current boundary:
+   - the surface is derived from runtime-owned snapshots/results only
+   - it does not become an independent truth owner or broad frontend/product
+     approval claim
 
 Review/test update:
 
-1. pending
+1. delivered code:
+   - `RF2VolumeSurface`
+   - `RF2SurfaceMode`
+   - `RF2ContinuityStatus`
+   - runtime-manager `RF2VolumeSurface(...)`
+2. supporting runtime observability added:
+   - `ReplicatedContinuitySnapshot`
+   - runtime-manager continuity snapshot retention/accessors
+3. delivered tests:
+   - healthy RF2 surface package
+   - gated RF2 surface package
+4. result:
+   - one bounded RF2-facing runtime/product surface now exists on the new runtime
 
 ### `M5`: Productionization / Launch Envelope
 
@@ -302,11 +321,30 @@ Exit criteria:
 
 Current status:
 
-1. not started
+1. delivered
+2. one bounded productionization / launch envelope now exists around the
+   `Phase 18` RF2 runtime-bearing path
+3. one explicit review result now exists:
+   - `block expansion`
+   - `not pilot-ready`
+4. current boundary:
+   - the artifact set freezes the current support statement, exclusions, and
+     blockers
+   - it does not claim working block product readiness
 
 Review/test update:
 
-1. pending
+1. delivered docs:
+   - `v2-rf2-runtime-bounded-envelope.md`
+   - `v2-rf2-runtime-bounded-envelope-review.md`
+2. rebound productionization artifacts:
+   - `v2-bounded-internal-pilot-pack.md`
+   - `v2-pilot-preflight-checklist.md`
+   - `v2-pilot-stop-conditions.md`
+   - `v2-controlled-rollout-review.md`
+3. result:
+   - the new runtime path now has a bounded productionization artifact set with
+     explicit current judgment
 
 ## Initial Order
 
@@ -323,10 +361,11 @@ written decision in `phase-18-decisions.md`.
 
 ## Current Focus
 
-The active next work is:
+`Phase 18` close-out:
 
-1. `M4` seam step
-2. attach one bounded RF2-facing runtime/product surface to the new runtime
+1. `M1-M5` are now delivered
+2. later work should widen from this point only through explicit new closure,
+   not by rereading `Phase 18` as working-product proof
 
 ## Review Base
 

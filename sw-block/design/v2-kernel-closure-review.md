@@ -134,79 +134,79 @@ Another way to state the same result:
 
 The current milestone is:
 
-1. explicit `masterv2` promotion authorization
-2. explicit `volumev2` takeover preparation and activation gating
-3. stepwise `FailoverSession` orchestration with observable stages
-4. one in-process failover driver seam over registered participants
-5. one runtime-owned `volumev2` manager that executes failover through a single
-   runtime entry point and retains latest failover snapshot/result
+1. live transport-backed failover-time evidence now crosses one real loopback
+   HTTP path
+2. one continuous Loop 2 service and one bounded auto-failover service now exist
+3. one runtime-managed frontend path and one bounded repair/catch-up wrapper now
+   exist
+4. one end-to-end RF2 handoff proof now exists with continued I/O on the new
+   primary
+5. one bounded operator surface and one bounded CSI runtime backend adapter now
+   sit on top of runtime-owned truth
 
 What this milestone proves:
 
-1. failover is no longer only an implicit concept hidden in mixed runtime code
-2. authorization, reconstruction, activation, and runtime ownership are now
-   separate code seams
-3. the new kernel already has a usable in-process RF2 failover runtime slice
+1. the new kernel can now carry RF2 failover, active replication observation,
+   bounded continuity, real serving, and one outward/operator/CSI surface stack
+   without collapsing authority ownership
+2. runtime/product-facing state can now be attached as compressed projection
+   rather than by inventing a new truth owner
+3. the `masterv2` identity boundary and primary-led data-control boundary still
+   remain intact
+4. one bounded working RF2 block path now exists
 
 What it does not yet prove:
 
-1. real transport-backed replica communication
-2. background membership and health management beyond explicit failover calls
-3. end-to-end replicated data continuity through a real primary handoff
+1. broad RF2 product approval across deployment and frontend/operator matrices
+2. full rebuild lifecycle choreography beyond the bounded repair wrapper
+3. multi-process / multi-host proof for the current working path
+4. pilot-ready or launch-ready working block behavior
 
 ## Next Major Milestone
 
 The next major milestone should be:
 
-`transport-backed RF2 failover runtime`
+`multi-process and pilot-ready RF2 validation`
 
-This means one level above the current in-process runtime slice:
+This means one level above the current runtime/product surface slice:
 
-1. `FailoverSession` no longer talks only to in-memory participants
-2. promotion evidence and bounded replica summaries cross a real transport seam
-3. runtime-owned failover still preserves stage/error/result observability
-4. the runtime keeps the separation:
-   - `masterv2` authorizes
-   - the selected primary reconstructs and gates activation
-   - the transport/runtime only carries requests, responses, and results
+1. prove the current working path outside the current bounded runtime harness
+2. widen the working path into multi-process or multi-host validation
+3. harden rebuild lifecycle and operator/CSI behavior on that wider path
+4. attach pilot/preflight/containment evidence on top of the widened path
 
 ### Target Shape
 
 Code should look roughly like:
 
-1. `masterv2`: heartbeat, promotion evidence arbitration, assignment authority
-2. `volumev2`: node shell, takeover seams, failover session, runtime/manager
+1. `masterv2`: identity authority only
+2. `volumev2`: runtime-owned failover, active service Loop 2, repair, continuity,
+   and projected RF2 surfaces
 3. `purev2`: execution adapter and local boundary observation
-4. transport/session adapters: promotion query and replica-summary exchange
-5. `engine/replication`: semantic brain and future active data-control automata
+4. transport/session adapters: live participant communication beyond the current
+   bounded harness
+5. product-facing layer: bounded frontend/operator/CSI attachment with pilot
+   artifacts
 
 ### Exit Criteria
 
 The milestone should be considered complete when all are true:
 
-1. one runtime-level API can execute failover without tests manually stitching
-   participants and sessions together
-2. one transport-backed runtime-level API can execute failover without
-   in-process participant shortcuts
-3. runtime-level observability exposes current/last failover stage, selected
-   node, assignment, and bounded truth across the transport seam
-4. one healthy component-style failover test passes through the runtime entry
-   point
-5. one gated/degraded component-style failover test stops through the same
-   runtime entry point
-6. no new recovery-planner responsibility leaks back into `masterv2`
+1. the current bounded working path is proven outside the current harness
+2. pilot/preflight/containment evidence exists for that wider path
+3. no new product/runtime surface silently widens into broad launch approval
 
 ### Non-Goals
 
 This milestone should not try to prove:
 
-1. broad product RF2 readiness
-2. full catch-up or rebuild choreography
-3. CSI or frontend productionization on top of RF2
-4. broad transport matrix approval
+1. broad product launch approval
+2. broad matrix approval across all transport/frontend combinations
+3. broad `RF>2` product closure
+4. reopening the kernel authority split
 
-It should prove only that the new kernel can carry the same authority model
-through a real transport boundary without collapsing the ownership split.
+It should prove only that the current working RF2 block path can widen toward
+pilot-ready validation without collapsing the ownership model.
 
 ## Main Risk
 

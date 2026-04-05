@@ -2,7 +2,10 @@ package volumev2
 
 import (
 	"bytes"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/sw-block/runtime/masterv2"
 	"github.com/seaweedfs/seaweedfs/sw-block/runtime/protocolv2"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/iscsi"
 )
 
 func TestPOC_MasterV2VolumeV2_RF1HeartbeatAssignmentFlow(t *testing.T) {
@@ -1519,6 +1523,929 @@ func TestTransportEvidenceAdapter_GatedFailoverFlow(t *testing.T) {
 	}
 }
 
+func TestHTTPTransportEvidenceAdapter_HealthyFailoverFlow(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	transport := NewHTTPFailoverEvidenceTransport()
+	defer transport.Close()
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := transport.RegisterHandler("node-b", nodeB); err != nil {
+		t.Fatalf("register node-b handler: %v", err)
+	}
+	if err := transport.RegisterHandler("node-c", nodeC); err != nil {
+		t.Fatalf("register node-c handler: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "http-transport-b.blk")
+	pathC := filepath.Join(tempDir, "http-transport-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "http-transport-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "http-transport-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "http-transport-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if err := nodeB.WriteLBA("http-transport-vol", 0, bytes.Repeat([]byte{0x71}, 4096)); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("http-transport-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+
+	result, err := ExecuteFailoverFlow(master, "http-transport-vol", 2, []FailoverTarget{
+		mustHybridFailoverTarget(t, nodeB, transport),
+		mustHybridFailoverTarget(t, nodeC, transport),
+	})
+	if err != nil {
+		t.Fatalf("http transport failover flow: %v", err)
+	}
+	if result.Assignment.NodeID != "node-b" {
+		t.Fatalf("assignment node=%q, want node-b", result.Assignment.NodeID)
+	}
+	if result.Truth.PrimaryNodeID != "node-b" {
+		t.Fatalf("truth primary=%q, want node-b", result.Truth.PrimaryNodeID)
+	}
+}
+
+func TestHTTPTransportEvidenceAdapter_GatedFailoverFlow(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	transport := NewHTTPFailoverEvidenceTransport()
+	defer transport.Close()
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := transport.RegisterHandler("node-b", nodeB); err != nil {
+		t.Fatalf("register node-b handler: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "http-transport-gated-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "http-transport-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "http-transport-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+
+	_, err = ExecuteFailoverFlow(master, "http-transport-gated-vol", 2, []FailoverTarget{
+		mustHybridFailoverTarget(t, nodeB, transport),
+		staticFailoverTarget(
+			"node-c",
+			masterv2.PromotionQueryResponse{
+				VolumeName:   "http-transport-gated-vol",
+				NodeID:       "node-c",
+				Epoch:        1,
+				CommittedLSN: 1,
+				WALHeadLSN:   1,
+				Eligible:     false,
+				Reason:       "needs_rebuild",
+			},
+			protocolv2.ReplicaSummaryResponse{
+				VolumeName:        "http-transport-gated-vol",
+				NodeID:            "node-c",
+				Epoch:             1,
+				Role:              "replica",
+				Mode:              "needs_rebuild",
+				CommittedLSN:      3,
+				DurableLSN:        2,
+				CheckpointLSN:     1,
+				RecoveryPhase:     "needs_rebuild",
+				LastBarrierOK:     false,
+				LastBarrierReason: "timeout",
+				Eligible:          false,
+				Reason:            "needs_rebuild",
+			},
+		),
+	})
+	if err == nil {
+		t.Fatal("expected gated http transport failover error")
+	}
+}
+
+func TestInProcessRuntimeManager_Loop2Service_RefreshesRF2Surface(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "loop2-service-b.blk")
+	pathC := filepath.Join(tempDir, "loop2-service-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "loop2-service-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "loop2-service-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "loop2-service-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	handle, err := manager.StartLoop2Service(Loop2ServiceConfig{
+		VolumeName:    "loop2-service-vol",
+		PrimaryNodeID: "node-b",
+		ExpectedEpoch: 2,
+		NodeIDs:       []string{"node-b", "node-c"},
+		Interval:      10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("start loop2 service: %v", err)
+	}
+	defer func() {
+		handle.Stop()
+		handle.Wait()
+	}()
+
+	waitForCondition(t, time.Second, func() bool {
+		surface, ok := manager.RF2VolumeSurface("loop2-service-vol")
+		return ok && surface.HasLoop2 && surface.Mode == RF2SurfaceModeHealthy
+	})
+}
+
+func TestInProcessRuntimeManager_AutoFailoverService_TriggersOnPrimaryLoss(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "auto-failover-b.blk")
+	pathC := filepath.Join(tempDir, "auto-failover-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "auto-failover-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "auto-failover-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "auto-failover-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	handle, err := manager.StartAutoFailoverService(AutoFailoverConfig{
+		VolumeName:    "auto-failover-vol",
+		PrimaryNodeID: "node-b",
+		ExpectedEpoch: 2,
+		NodeIDs:       []string{"node-b", "node-c"},
+		Interval:      10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("start auto failover service: %v", err)
+	}
+	defer func() {
+		handle.Stop()
+		handle.Wait()
+	}()
+
+	manager.DisconnectEvidenceNode("node-b")
+	waitForCondition(t, time.Second, func() bool {
+		result, ok := manager.FailoverResult("auto-failover-vol")
+		return ok && result.Assignment.NodeID == "node-c"
+	})
+	if handle.PrimaryNodeID() != "node-c" {
+		t.Fatalf("tracked primary=%q, want node-c", handle.PrimaryNodeID())
+	}
+}
+
+func TestInProcessRuntimeManager_AutoFailoverService_DoesNotTriggerOnCatchingUpReplica(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "auto-suppress-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "auto-suppress-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "auto-suppress-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
+			VolumeName:    "auto-suppress-vol",
+			NodeID:        "node-c",
+			Epoch:         2,
+			CommittedLSN:  1,
+			WALHeadLSN:    1,
+			ReceiverReady: true,
+			Eligible:      true,
+		},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:    "auto-suppress-vol",
+			NodeID:        "node-c",
+			Epoch:         2,
+			Role:          "replica",
+			CommittedLSN:  1,
+			DurableLSN:    1,
+			CheckpointLSN: 1,
+			TargetLSN:     2,
+			AchievedLSN:   1,
+			RecoveryPhase: "catching_up",
+			Eligible:      true,
+			LastBarrierOK: true,
+		},
+	)); err != nil {
+		t.Fatalf("register node-c target: %v", err)
+	}
+
+	handle, err := manager.StartAutoFailoverService(AutoFailoverConfig{
+		VolumeName:    "auto-suppress-vol",
+		PrimaryNodeID: "node-b",
+		ExpectedEpoch: 2,
+		NodeIDs:       []string{"node-b", "node-c"},
+		Interval:      10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("start auto failover service: %v", err)
+	}
+	defer func() {
+		handle.Stop()
+		handle.Wait()
+	}()
+
+	time.Sleep(120 * time.Millisecond)
+	if _, ok := manager.FailoverResult("auto-suppress-vol"); ok {
+		t.Fatal("unexpected auto failover result on catching_up replica")
+	}
+	surface, ok := manager.RF2VolumeSurface("auto-suppress-vol")
+	if !ok {
+		t.Fatal("expected rf2 volume surface")
+	}
+	if surface.Mode != RF2SurfaceModeCatchingUp {
+		t.Fatalf("surface mode=%q, want %q", surface.Mode, RF2SurfaceModeCatchingUp)
+	}
+}
+
+func TestInProcessRuntimeManager_ExportVolumeISCSI_BindsFrontendToRuntimeNode(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+
+	pathB := filepath.Join(t.TempDir(), "frontend-runtime-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "frontend-runtime-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "frontend-runtime-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+
+	export, err := manager.ExportVolumeISCSI("frontend-runtime-vol", "node-b", "127.0.0.1:0", "iqn.2026-04.com.seaweedfs:test.frontend-runtime-vol")
+	if err != nil {
+		t.Fatalf("export volume iscsi: %v", err)
+	}
+	snapshot, ok := manager.ISCSIExport("frontend-runtime-vol")
+	if !ok {
+		t.Fatal("expected managed iscsi export snapshot")
+	}
+	if snapshot.NodeID != "node-b" {
+		t.Fatalf("snapshot node=%q, want node-b", snapshot.NodeID)
+	}
+
+	conn := mustLoginISCSI(t, export.Address, export.IQN)
+	defer conn.Close()
+
+	writeData := bytes.Repeat([]byte{0x58}, 4096)
+	var writeCDB [16]byte
+	writeCDB[0] = iscsi.ScsiWrite10
+	binary.BigEndian.PutUint32(writeCDB[2:6], 0)
+	binary.BigEndian.PutUint16(writeCDB[7:9], 1)
+	resp := sendSCSICmd(t, conn, writeCDB, 2, false, true, writeData, uint32(len(writeData)))
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("iscsi write failed: status=%d", resp.SCSIStatus())
+	}
+
+	var syncCDB [16]byte
+	syncCDB[0] = iscsi.ScsiSyncCache10
+	resp = sendSCSICmd(t, conn, syncCDB, 3, false, false, nil, 0)
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("iscsi sync cache failed: status=%d", resp.SCSIStatus())
+	}
+
+	readBack, err := nodeB.ReadLBA("frontend-runtime-vol", 0, uint32(len(writeData)))
+	if err != nil {
+		t.Fatalf("backend read: %v", err)
+	}
+	if !bytes.Equal(readBack, writeData) {
+		t.Fatal("backend readback mismatch")
+	}
+}
+
+func TestInProcessRuntimeManager_RepairReplicaFromPrimary_ReturnsLoop2ToHealthy(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "repair-b.blk")
+	pathC := filepath.Join(tempDir, "repair-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "repair-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	assignments := []masterv2.Assignment{
+		{
+			Name:          "repair-vol",
+			Path:          pathB,
+			NodeID:        "node-b",
+			Epoch:         2,
+			LeaseTTL:      30 * time.Second,
+			CreateOptions: testCreateOptions(),
+			Role:          "primary",
+		},
+		{
+			Name:          "repair-vol",
+			Path:          pathC,
+			NodeID:        "node-c",
+			Epoch:         2,
+			LeaseTTL:      30 * time.Second,
+			CreateOptions: testCreateOptions(),
+			Role:          "primary",
+		},
+	}
+	if err := nodeB.ApplyAssignments(assignments[:1]); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments(assignments[1:]); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte{0x62}, 4096)
+	if err := nodeB.WriteLBA("repair-vol", 0, payload); err != nil {
+		t.Fatalf("write node-b: %v", err)
+	}
+	if err := nodeB.SyncCache("repair-vol"); err != nil {
+		t.Fatalf("sync node-b: %v", err)
+	}
+
+	before, err := manager.ObserveLoop2("repair-vol", "node-b", 2, "node-b", "node-c")
+	if err != nil {
+		t.Fatalf("observe before repair: %v", err)
+	}
+	if before.Mode != Loop2RuntimeModeCatchingUp {
+		t.Fatalf("before repair mode=%q, want %q", before.Mode, Loop2RuntimeModeCatchingUp)
+	}
+
+	result, err := manager.RepairReplicaFromPrimary("repair-vol", "node-b", "node-c", 2, uint32(len(payload)))
+	if err != nil {
+		t.Fatalf("repair replica from primary: %v", err)
+	}
+	if result.Loop2Before.Mode != Loop2RuntimeModeCatchingUp {
+		t.Fatalf("repair before mode=%q, want %q", result.Loop2Before.Mode, Loop2RuntimeModeCatchingUp)
+	}
+	if result.Loop2After.Mode != Loop2RuntimeModeKeepUp {
+		t.Fatalf("repair after mode=%q, want %q", result.Loop2After.Mode, Loop2RuntimeModeKeepUp)
+	}
+	if !result.DataMatch {
+		t.Fatalf("repair data match=false: %+v", result)
+	}
+}
+
+func TestInProcessRuntimeManager_EndToEndRF2Handoff_ContinuesIOOnNewPrimary(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "e2e-b.blk")
+	pathC := filepath.Join(tempDir, "e2e-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "e2e-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "e2e-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "e2e-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	export, err := manager.ExportVolumeISCSI("e2e-vol", "node-b", "127.0.0.1:0", "iqn.2026-04.com.seaweedfs:test.e2e-vol.primary")
+	if err != nil {
+		t.Fatalf("export primary iscsi: %v", err)
+	}
+	conn := mustLoginISCSI(t, export.Address, export.IQN)
+	defer conn.Close()
+
+	firstPayload := bytes.Repeat([]byte{0x63}, 4096)
+	var writeCDB [16]byte
+	writeCDB[0] = iscsi.ScsiWrite10
+	binary.BigEndian.PutUint32(writeCDB[2:6], 0)
+	binary.BigEndian.PutUint16(writeCDB[7:9], 1)
+	resp := sendSCSICmd(t, conn, writeCDB, 2, false, true, firstPayload, uint32(len(firstPayload)))
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("initial iscsi write failed: status=%d", resp.SCSIStatus())
+	}
+	var syncCDB [16]byte
+	syncCDB[0] = iscsi.ScsiSyncCache10
+	resp = sendSCSICmd(t, conn, syncCDB, 3, false, false, nil, 0)
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("initial iscsi sync failed: status=%d", resp.SCSIStatus())
+	}
+
+	if _, err := manager.RepairReplicaFromPrimary("e2e-vol", "node-b", "node-c", 2, uint32(len(firstPayload))); err != nil {
+		t.Fatalf("repair before failover: %v", err)
+	}
+
+	handle, err := manager.StartAutoFailoverService(AutoFailoverConfig{
+		VolumeName:    "e2e-vol",
+		PrimaryNodeID: "node-b",
+		ExpectedEpoch: 2,
+		NodeIDs:       []string{"node-b", "node-c"},
+		Interval:      10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("start auto failover service: %v", err)
+	}
+	defer func() {
+		handle.Stop()
+		handle.Wait()
+	}()
+
+	manager.DisconnectEvidenceNode("node-b")
+	waitForCondition(t, time.Second, func() bool {
+		result, ok := manager.FailoverResult("e2e-vol")
+		return ok && result.Assignment.NodeID == "node-c"
+	})
+
+	exportAfter, err := manager.ExportCurrentPrimaryISCSI("e2e-vol", "127.0.0.1:0", "iqn.2026-04.com.seaweedfs:test.e2e-vol.failover")
+	if err != nil {
+		t.Fatalf("export new primary iscsi: %v", err)
+	}
+	connAfter := mustLoginISCSI(t, exportAfter.Address, exportAfter.IQN)
+	defer connAfter.Close()
+
+	var readCDB [16]byte
+	readCDB[0] = iscsi.ScsiRead10
+	binary.BigEndian.PutUint32(readCDB[2:6], 0)
+	binary.BigEndian.PutUint16(readCDB[7:9], 1)
+	resp = sendSCSICmd(t, connAfter, readCDB, 4, true, false, nil, uint32(len(firstPayload)))
+	if resp.Opcode() != iscsi.OpSCSIDataIn {
+		t.Fatalf("expected Data-In after failover, got %s", iscsi.OpcodeName(resp.Opcode()))
+	}
+	if !bytes.Equal(resp.DataSegment, firstPayload) {
+		t.Fatal("post-failover readback mismatch")
+	}
+
+	secondPayload := bytes.Repeat([]byte{0x64}, 4096)
+	resp = sendSCSICmd(t, connAfter, writeCDB, 5, false, true, secondPayload, uint32(len(secondPayload)))
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("post-failover write failed: status=%d", resp.SCSIStatus())
+	}
+	resp = sendSCSICmd(t, connAfter, syncCDB, 6, false, false, nil, 0)
+	if resp.SCSIStatus() != iscsi.SCSIStatusGood {
+		t.Fatalf("post-failover sync failed: status=%d", resp.SCSIStatus())
+	}
+	finalRead, err := nodeC.ReadLBA("e2e-vol", 0, uint32(len(secondPayload)))
+	if err != nil {
+		t.Fatalf("node-c backend read: %v", err)
+	}
+	if !bytes.Equal(finalRead, secondPayload) {
+		t.Fatal("post-failover backend readback mismatch")
+	}
+}
+
+func TestInProcessRuntimeManager_EndToEndRF2Handoff_GatedReplicaStopsFailClosed(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManagerWithEvidenceTransport(master, NewHTTPFailoverEvidenceTransport())
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "e2e-gated-b.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "e2e-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "e2e-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
+			VolumeName:   "e2e-gated-vol",
+			NodeID:       "node-c",
+			Epoch:        2,
+			CommittedLSN: 1,
+			WALHeadLSN:   1,
+			Eligible:     false,
+			Reason:       "needs_rebuild",
+		},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:        "e2e-gated-vol",
+			NodeID:            "node-c",
+			Epoch:             2,
+			Role:              "replica",
+			Mode:              "needs_rebuild",
+			CommittedLSN:      1,
+			DurableLSN:        1,
+			CheckpointLSN:     1,
+			RecoveryPhase:     "needs_rebuild",
+			LastBarrierOK:     false,
+			LastBarrierReason: "timeout",
+			Eligible:          false,
+			Reason:            "needs_rebuild",
+		},
+	)); err != nil {
+		t.Fatalf("register node-c target: %v", err)
+	}
+
+	handle, err := manager.StartAutoFailoverService(AutoFailoverConfig{
+		VolumeName:    "e2e-gated-vol",
+		PrimaryNodeID: "node-b",
+		ExpectedEpoch: 2,
+		NodeIDs:       []string{"node-b", "node-c"},
+		Interval:      10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("start auto failover service: %v", err)
+	}
+	defer func() {
+		handle.Stop()
+		handle.Wait()
+	}()
+
+	manager.DisconnectEvidenceNode("node-b")
+	waitForCondition(t, time.Second, func() bool {
+		snap, ok := manager.FailoverSnapshot("e2e-gated-vol")
+		return ok && snap.Stage == FailoverStageFailed
+	})
+	result, ok := manager.FailoverResult("e2e-gated-vol")
+	if !ok {
+		t.Fatal("expected recorded gated failover result slot")
+	}
+	if result.Assignment.NodeID != "" {
+		t.Fatalf("unexpected successful assignment on gated handoff: %+v", result)
+	}
+}
+
+func TestInProcessRuntimeManager_OperatorSurface_ExposesRuntimeOwnedViews(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	defer manager.Close()
+
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "operator-b.blk")
+	pathC := filepath.Join(tempDir, "operator-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "operator-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "operator-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "operator-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if _, err := manager.ObserveLoop2("operator-vol", "node-b", 2, "node-b", "node-c"); err != nil {
+		t.Fatalf("observe loop2: %v", err)
+	}
+	if _, err := manager.ExportVolumeISCSI("operator-vol", "node-b", "127.0.0.1:0", "iqn.2026-04.com.seaweedfs:test.operator-vol"); err != nil {
+		t.Fatalf("export iscsi: %v", err)
+	}
+
+	handle, err := manager.StartOperatorSurface("127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("start operator surface: %v", err)
+	}
+	defer handle.Close()
+
+	resp, err := http.Get("http://" + handle.Address() + "/v1/volumes/operator-vol/rf2")
+	if err != nil {
+		t.Fatalf("get rf2 surface: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rf2 status=%d, want 200", resp.StatusCode)
+	}
+	var rf2Surface RF2VolumeSurface
+	if err := json.NewDecoder(resp.Body).Decode(&rf2Surface); err != nil {
+		t.Fatalf("decode rf2 surface: %v", err)
+	}
+	if rf2Surface.Mode != RF2SurfaceModeHealthy {
+		t.Fatalf("rf2 surface mode=%q, want %q", rf2Surface.Mode, RF2SurfaceModeHealthy)
+	}
+
+	resp, err = http.Get("http://" + handle.Address() + "/v1/volumes/operator-vol/frontend")
+	if err != nil {
+		t.Fatalf("get frontend surface: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("frontend status=%d, want 200", resp.StatusCode)
+	}
+	var frontend ManagedISCSIExportSnapshot
+	if err := json.NewDecoder(resp.Body).Decode(&frontend); err != nil {
+		t.Fatalf("decode frontend surface: %v", err)
+	}
+	if frontend.NodeID != "node-b" {
+		t.Fatalf("frontend node=%q, want node-b", frontend.NodeID)
+	}
+}
+
 func TestLoop2RuntimeSession_KeepUpOnHealthyReplicaSet(t *testing.T) {
 	nodeB, err := New(Config{NodeID: "node-b"})
 	if err != nil {
@@ -1917,6 +2844,226 @@ func TestInProcessRuntimeManager_ExecuteReplicatedContinuity_GatedPath(t *testin
 	}
 }
 
+func TestInProcessRuntimeManager_RF2VolumeSurface_HealthyPackage(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "rf2-surface-b.blk")
+	pathC := filepath.Join(tempDir, "rf2-surface-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "rf2-surface-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "rf2-surface-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "rf2-surface-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte{0x55}, 4096)
+	if _, err := manager.ExecuteReplicatedContinuity("rf2-surface-vol", "node-b", 2, []string{"node-c"}, 0, payload); err != nil {
+		t.Fatalf("execute replicated continuity: %v", err)
+	}
+
+	continuitySnap, ok := manager.ReplicatedContinuitySnapshot("rf2-surface-vol")
+	if !ok {
+		t.Fatal("expected continuity snapshot")
+	}
+	if continuitySnap.LastError != "" {
+		t.Fatalf("continuity last_error=%q, want empty", continuitySnap.LastError)
+	}
+
+	surface, ok := manager.RF2VolumeSurface("rf2-surface-vol")
+	if !ok {
+		t.Fatal("expected rf2 volume surface")
+	}
+	if !surface.HasLoop2 || !surface.HasFailover || !surface.HasContinuity {
+		t.Fatalf("surface source flags=%+v, want all true", surface)
+	}
+	if surface.Mode != RF2SurfaceModeHealthy {
+		t.Fatalf("surface mode=%q, want %q", surface.Mode, RF2SurfaceModeHealthy)
+	}
+	if surface.ReplicationMode != Loop2RuntimeModeKeepUp {
+		t.Fatalf("replication mode=%q, want %q", surface.ReplicationMode, Loop2RuntimeModeKeepUp)
+	}
+	if surface.FailoverStage != FailoverStageActivated {
+		t.Fatalf("failover stage=%q, want %q", surface.FailoverStage, FailoverStageActivated)
+	}
+	if surface.FailoverNodeID != "node-c" {
+		t.Fatalf("failover node=%q, want node-c", surface.FailoverNodeID)
+	}
+	if surface.ContinuityStatus != RF2ContinuityStatusProven {
+		t.Fatalf("continuity status=%q, want %q", surface.ContinuityStatus, RF2ContinuityStatusProven)
+	}
+	if surface.ContinuityNodeID != "node-c" {
+		t.Fatalf("continuity node=%q, want node-c", surface.ContinuityNodeID)
+	}
+}
+
+func TestInProcessRuntimeManager_RF2VolumeSurface_GatedPackage(t *testing.T) {
+	master := masterv2.New(masterv2.Config{})
+	manager, err := NewInProcessRuntimeManager(master)
+	if err != nil {
+		t.Fatalf("new runtime manager: %v", err)
+	}
+	nodeB, err := New(Config{NodeID: "node-b"})
+	if err != nil {
+		t.Fatalf("new node-b: %v", err)
+	}
+	defer nodeB.Close()
+	nodeC, err := New(Config{NodeID: "node-c"})
+	if err != nil {
+		t.Fatalf("new node-c: %v", err)
+	}
+	defer nodeC.Close()
+	if err := manager.RegisterNode(nodeB); err != nil {
+		t.Fatalf("register node-b: %v", err)
+	}
+	if err := manager.RegisterNode(nodeC); err != nil {
+		t.Fatalf("register node-c: %v", err)
+	}
+
+	tempDir := t.TempDir()
+	pathB := filepath.Join(tempDir, "rf2-surface-gated-b.blk")
+	pathC := filepath.Join(tempDir, "rf2-surface-gated-c.blk")
+	if err := master.DeclarePrimary(masterv2.VolumeSpec{
+		Name:          "rf2-surface-gated-vol",
+		Path:          pathB,
+		PrimaryNodeID: "node-a",
+		CreateOptions: testCreateOptions(),
+	}); err != nil {
+		t.Fatalf("declare primary: %v", err)
+	}
+	if err := nodeB.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "rf2-surface-gated-vol",
+		Path:          pathB,
+		NodeID:        "node-b",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-b: %v", err)
+	}
+	if err := nodeC.ApplyAssignments([]masterv2.Assignment{{
+		Name:          "rf2-surface-gated-vol",
+		Path:          pathC,
+		NodeID:        "node-c",
+		Epoch:         2,
+		LeaseTTL:      30 * time.Second,
+		CreateOptions: testCreateOptions(),
+		Role:          "primary",
+	}}); err != nil {
+		t.Fatalf("seed node-c: %v", err)
+	}
+	if err := manager.RegisterTarget(staticFailoverTarget(
+		"node-c",
+		masterv2.PromotionQueryResponse{
+			VolumeName:   "rf2-surface-gated-vol",
+			NodeID:       "node-c",
+			Epoch:        2,
+			CommittedLSN: 1,
+			WALHeadLSN:   1,
+			Eligible:     false,
+			Reason:       "needs_rebuild",
+		},
+		protocolv2.ReplicaSummaryResponse{
+			VolumeName:        "rf2-surface-gated-vol",
+			NodeID:            "node-c",
+			Epoch:             2,
+			Role:              "replica",
+			Mode:              "needs_rebuild",
+			CommittedLSN:      1,
+			DurableLSN:        1,
+			CheckpointLSN:     1,
+			RecoveryPhase:     "needs_rebuild",
+			LastBarrierOK:     false,
+			LastBarrierReason: "timeout",
+			Eligible:          false,
+			Reason:            "needs_rebuild",
+		},
+	)); err != nil {
+		t.Fatalf("override node-c target: %v", err)
+	}
+
+	payload := bytes.Repeat([]byte{0x56}, 4096)
+	if _, err := manager.ExecuteReplicatedContinuity("rf2-surface-gated-vol", "node-b", 2, []string{"node-c"}, 0, payload); err == nil {
+		t.Fatal("expected gated replicated continuity error")
+	}
+
+	continuitySnap, ok := manager.ReplicatedContinuitySnapshot("rf2-surface-gated-vol")
+	if !ok {
+		t.Fatal("expected continuity snapshot")
+	}
+	if continuitySnap.LastError == "" {
+		t.Fatal("expected continuity last_error")
+	}
+
+	surface, ok := manager.RF2VolumeSurface("rf2-surface-gated-vol")
+	if !ok {
+		t.Fatal("expected rf2 volume surface")
+	}
+	if surface.Mode != RF2SurfaceModeBlocked {
+		t.Fatalf("surface mode=%q, want %q", surface.Mode, RF2SurfaceModeBlocked)
+	}
+	if surface.ReplicationMode != Loop2RuntimeModeNeedsRebuild {
+		t.Fatalf("replication mode=%q, want %q", surface.ReplicationMode, Loop2RuntimeModeNeedsRebuild)
+	}
+	if surface.FailoverStage != FailoverStageFailed {
+		t.Fatalf("failover stage=%q, want %q", surface.FailoverStage, FailoverStageFailed)
+	}
+	if surface.FailoverError == "" {
+		t.Fatal("expected failover error")
+	}
+	if surface.ContinuityStatus != RF2ContinuityStatusFailed {
+		t.Fatalf("continuity status=%q, want %q", surface.ContinuityStatus, RF2ContinuityStatusFailed)
+	}
+	if surface.ContinuityError == "" {
+		t.Fatal("expected continuity error")
+	}
+}
+
 func mustHeartbeat(t *testing.T, node *Node) masterv2.NodeHeartbeat {
 	t.Helper()
 	hb, err := node.Heartbeat()
@@ -1948,6 +3095,18 @@ func mustReplicaSummary(t *testing.T, node *Node, volumeName string, epoch uint6
 		t.Fatalf("replica summary: %v", err)
 	}
 	return resp
+}
+
+func waitForCondition(t *testing.T, timeout time.Duration, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition not reached before timeout")
 }
 
 func mustInProcessFailoverTarget(t *testing.T, node *Node) FailoverTarget {

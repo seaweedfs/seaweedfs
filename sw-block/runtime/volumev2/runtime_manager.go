@@ -13,34 +13,50 @@ import (
 // observability.
 type InProcessRuntimeManager struct {
 	driver            *InProcessFailoverDriver
-	evidenceTransport *InMemoryFailoverEvidenceTransport
+	evidenceTransport ManagedFailoverEvidenceTransport
 
-	mu                sync.RWMutex
-	localNodes        map[string]*Node
-	lastSnapshot      FailoverSnapshot
-	lastResult        FailoverResult
-	hasLastResult     bool
-	snapshotsByName   map[string]FailoverSnapshot
-	resultsByName     map[string]FailoverResult
-	lastLoop2Snapshot Loop2RuntimeSnapshot
-	hasLastLoop2      bool
-	loop2ByVolume     map[string]Loop2RuntimeSnapshot
+	mu                 sync.RWMutex
+	localNodes         map[string]*Node
+	lastSnapshot       FailoverSnapshot
+	lastResult         FailoverResult
+	hasLastResult      bool
+	snapshotsByName    map[string]FailoverSnapshot
+	resultsByName      map[string]FailoverResult
+	lastLoop2Snapshot  Loop2RuntimeSnapshot
+	hasLastLoop2       bool
+	loop2ByVolume      map[string]Loop2RuntimeSnapshot
+	lastContinuity     ReplicatedContinuitySnapshot
+	hasLastContinuity  bool
+	continuityByVolume map[string]ReplicatedContinuitySnapshot
+	frontendExports    map[string]*managedISCSIExport
 }
 
 // NewInProcessRuntimeManager creates a runtime-owned failover manager over one
 // in-process masterv2 instance.
 func NewInProcessRuntimeManager(master *masterv2.Master) (*InProcessRuntimeManager, error) {
+	return NewInProcessRuntimeManagerWithEvidenceTransport(master, nil)
+}
+
+// NewInProcessRuntimeManagerWithEvidenceTransport creates a runtime-owned
+// failover manager over one in-process masterv2 instance using the supplied
+// managed evidence transport. When nil, an in-memory transport is used.
+func NewInProcessRuntimeManagerWithEvidenceTransport(master *masterv2.Master, transport ManagedFailoverEvidenceTransport) (*InProcessRuntimeManager, error) {
 	driver, err := NewInProcessFailoverDriver(master)
 	if err != nil {
 		return nil, err
 	}
+	if transport == nil {
+		transport = NewInMemoryFailoverEvidenceTransport()
+	}
 	return &InProcessRuntimeManager{
-		driver:            driver,
-		evidenceTransport: NewInMemoryFailoverEvidenceTransport(),
-		localNodes:        make(map[string]*Node),
-		snapshotsByName:   make(map[string]FailoverSnapshot),
-		resultsByName:     make(map[string]FailoverResult),
-		loop2ByVolume:     make(map[string]Loop2RuntimeSnapshot),
+		driver:             driver,
+		evidenceTransport:  transport,
+		localNodes:         make(map[string]*Node),
+		snapshotsByName:    make(map[string]FailoverSnapshot),
+		resultsByName:      make(map[string]FailoverResult),
+		loop2ByVolume:      make(map[string]Loop2RuntimeSnapshot),
+		continuityByVolume: make(map[string]ReplicatedContinuitySnapshot),
+		frontendExports:    make(map[string]*managedISCSIExport),
 	}, nil
 }
 
@@ -93,6 +109,52 @@ func (m *InProcessRuntimeManager) UnregisterParticipant(nodeID string) {
 	delete(m.localNodes, nodeID)
 	m.mu.Unlock()
 	m.driver.UnregisterParticipant(nodeID)
+}
+
+// DisconnectEvidenceNode removes the evidence handler for one node while
+// leaving the runtime-owned target and local node registration intact. This is
+// useful for bounded live-transport fault injection.
+func (m *InProcessRuntimeManager) DisconnectEvidenceNode(nodeID string) {
+	if m == nil || m.evidenceTransport == nil {
+		return
+	}
+	m.evidenceTransport.UnregisterHandler(nodeID)
+}
+
+// ReconnectEvidenceNode re-registers one local node behind the configured
+// evidence transport.
+func (m *InProcessRuntimeManager) ReconnectEvidenceNode(nodeID string) error {
+	if m == nil || m.evidenceTransport == nil {
+		return fmt.Errorf("volumev2: runtime manager is nil")
+	}
+	node, err := m.localNode(nodeID)
+	if err != nil {
+		return err
+	}
+	return m.evidenceTransport.RegisterHandler(nodeID, node)
+}
+
+// Close releases runtime-manager owned transport resources.
+func (m *InProcessRuntimeManager) Close() error {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	exports := make([]*managedISCSIExport, 0, len(m.frontendExports))
+	for volumeName, export := range m.frontendExports {
+		exports = append(exports, export)
+		delete(m.frontendExports, volumeName)
+	}
+	m.mu.Unlock()
+	for _, export := range exports {
+		if export != nil && export.handle != nil {
+			_ = export.handle.Close()
+		}
+	}
+	if m.evidenceTransport == nil {
+		return nil
+	}
+	return m.evidenceTransport.Close()
 }
 
 // ParticipantNodeIDs returns the current runtime-owned participant ids.
@@ -227,6 +289,32 @@ func (m *InProcessRuntimeManager) Loop2Snapshot(volumeName string) (Loop2Runtime
 	return snapshot, ok
 }
 
+// LastReplicatedContinuitySnapshot returns the most recent bounded continuity
+// snapshot observed by the runtime manager.
+func (m *InProcessRuntimeManager) LastReplicatedContinuitySnapshot() (ReplicatedContinuitySnapshot, bool) {
+	if m == nil {
+		return ReplicatedContinuitySnapshot{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if !m.hasLastContinuity {
+		return ReplicatedContinuitySnapshot{}, false
+	}
+	return m.lastContinuity, true
+}
+
+// ReplicatedContinuitySnapshot returns the latest bounded continuity snapshot
+// for one volume if present.
+func (m *InProcessRuntimeManager) ReplicatedContinuitySnapshot(volumeName string) (ReplicatedContinuitySnapshot, bool) {
+	if m == nil {
+		return ReplicatedContinuitySnapshot{}, false
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	snapshot, ok := m.continuityByVolume[volumeName]
+	return snapshot, ok
+}
+
 func (m *InProcessRuntimeManager) recordSnapshot(volumeName string, snapshot FailoverSnapshot, result FailoverResult) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -246,6 +334,16 @@ func (m *InProcessRuntimeManager) recordLoop2Snapshot(volumeName string, snapsho
 	m.hasLastLoop2 = true
 	if volumeName != "" {
 		m.loop2ByVolume[volumeName] = snapshot
+	}
+}
+
+func (m *InProcessRuntimeManager) recordContinuitySnapshot(volumeName string, snapshot ReplicatedContinuitySnapshot) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.lastContinuity = snapshot
+	m.hasLastContinuity = true
+	if volumeName != "" {
+		m.continuityByVolume[volumeName] = snapshot
 	}
 }
 

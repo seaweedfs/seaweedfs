@@ -1,7 +1,7 @@
 # Phase 18 Log
 
 Date: 2026-04-05
-Status: active
+Status: complete
 
 ## 2026-04-05
 
@@ -132,3 +132,64 @@ Current interpretation:
 2. this is still a bounded continuity claim on the in-process/runtime-owned
    path, not broad RF2 product continuity proof
 3. the next active work should move to `M4`
+
+### `M4` Delivered
+
+Delivered in this update:
+
+1. one bounded RF2-facing runtime/product surface package now exists:
+   - `RF2VolumeSurface`
+   - `RF2SurfaceMode`
+   - `RF2ContinuityStatus`
+2. the runtime manager now projects:
+   - active Loop 2 snapshot
+   - failover snapshot
+   - continuity snapshot
+   into one compressed outward RF2 surface
+3. continuity results are now retained as runtime-owned observable snapshots:
+   - `ReplicatedContinuitySnapshot`
+
+Tests:
+
+1. `TestInProcessRuntimeManager_RF2VolumeSurface_HealthyPackage`
+2. `TestInProcessRuntimeManager_RF2VolumeSurface_GatedPackage`
+3. `go test ./sw-block/runtime/masterv2 ./sw-block/runtime/volumev2`
+
+Current interpretation:
+
+1. `M4` is complete as the first bounded RF2-facing runtime/product surface on
+   the new runtime
+2. the surface remains a compressed projection of runtime-owned truth rather than
+   a new semantic owner
+3. this is not a broad frontend/product approval or launch-readiness claim
+4. the next active work should move to `M5`
+
+### `M5` Delivered
+
+Delivered in this update:
+
+1. one bounded productionization / launch envelope now exists for the current
+   `Phase 18` RF2 runtime-bearing path:
+   - `v2-rf2-runtime-bounded-envelope.md`
+2. one explicit bounded review result now exists:
+   - `v2-rf2-runtime-bounded-envelope-review.md`
+   - current result: `block expansion` / `not pilot-ready`
+3. the productionization artifact set was rebound onto the new runtime path:
+   - `v2-bounded-internal-pilot-pack.md`
+   - `v2-pilot-preflight-checklist.md`
+   - `v2-pilot-stop-conditions.md`
+   - `v2-controlled-rollout-review.md`
+
+Tests / review checks:
+
+1. document-only milestone; no new runtime code added
+2. consistency review anchored on delivered `M1-M4` code/docs
+
+Current interpretation:
+
+1. `M5` is complete as a bounded productionization artifact set around the new
+   runtime path
+2. the current judgment is explicitly:
+   - `block expansion`
+   - `not pilot-ready`
+3. `Phase 18` is complete

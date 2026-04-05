@@ -19,13 +19,21 @@ type ReplicatedContinuityResult struct {
 	DataMatch             bool
 }
 
+// ReplicatedContinuitySnapshot is the read-only observable result of the most
+// recent bounded continuity run for one volume.
+type ReplicatedContinuitySnapshot struct {
+	VolumeName string
+	LastError  string
+	Result     ReplicatedContinuityResult
+}
+
 // ExecuteReplicatedContinuity runs one bounded continuity statement through the
 // current runtime:
 // mirror writes to the bounded participant set -> observe active Loop 2 ->
 // fail over to the survivor set -> read back data from the newly selected
 // primary. This is a bounded continuity closure, not a full replication product
 // claim.
-func (m *InProcessRuntimeManager) ExecuteReplicatedContinuity(volumeName, sourcePrimaryNodeID string, expectedEpoch uint64, survivorNodeIDs []string, lba uint64, payload []byte) (ReplicatedContinuityResult, error) {
+func (m *InProcessRuntimeManager) ExecuteReplicatedContinuity(volumeName, sourcePrimaryNodeID string, expectedEpoch uint64, survivorNodeIDs []string, lba uint64, payload []byte) (result ReplicatedContinuityResult, runErr error) {
 	if m == nil {
 		return ReplicatedContinuityResult{}, fmt.Errorf("volumev2: runtime manager is nil")
 	}
@@ -42,59 +50,77 @@ func (m *InProcessRuntimeManager) ExecuteReplicatedContinuity(volumeName, source
 		return ReplicatedContinuityResult{}, fmt.Errorf("volumev2: continuity survivor node ids are required")
 	}
 
+	result = ReplicatedContinuityResult{
+		VolumeName:          volumeName,
+		SourcePrimaryNodeID: sourcePrimaryNodeID,
+		ExpectedEpoch:       expectedEpoch,
+	}
+	defer func() {
+		snapshot := ReplicatedContinuitySnapshot{
+			VolumeName: volumeName,
+			Result:     result,
+		}
+		if runErr != nil {
+			snapshot.LastError = runErr.Error()
+		}
+		m.recordContinuitySnapshot(volumeName, snapshot)
+	}()
+
 	nodeIDs := append([]string{sourcePrimaryNodeID}, survivorNodeIDs...)
 	nodeIDs = uniqueSorted(nodeIDs)
 	nodes := make([]*Node, 0, len(nodeIDs))
 	for _, nodeID := range nodeIDs {
 		node, err := m.localNode(nodeID)
 		if err != nil {
-			return ReplicatedContinuityResult{}, err
+			runErr = err
+			return result, runErr
 		}
 		nodes = append(nodes, node)
 	}
 
 	for _, node := range nodes {
 		if err := node.WriteLBA(volumeName, lba, payload); err != nil {
-			return ReplicatedContinuityResult{}, fmt.Errorf("volumev2: continuity write %s on %s: %w", volumeName, node.NodeID(), err)
+			runErr = fmt.Errorf("volumev2: continuity write %s on %s: %w", volumeName, node.NodeID(), err)
+			return result, runErr
 		}
 	}
 	for _, node := range nodes {
 		if err := node.SyncCache(volumeName); err != nil {
-			return ReplicatedContinuityResult{}, fmt.Errorf("volumev2: continuity sync %s on %s: %w", volumeName, node.NodeID(), err)
+			runErr = fmt.Errorf("volumev2: continuity sync %s on %s: %w", volumeName, node.NodeID(), err)
+			return result, runErr
 		}
-	}
-
-	result := ReplicatedContinuityResult{
-		VolumeName:          volumeName,
-		SourcePrimaryNodeID: sourcePrimaryNodeID,
-		ExpectedEpoch:       expectedEpoch,
 	}
 
 	loop2Snap, err := m.ObserveLoop2(volumeName, sourcePrimaryNodeID, expectedEpoch, nodeIDs...)
 	if err != nil {
-		return result, err
+		runErr = err
+		return result, runErr
 	}
 	result.Loop2BeforeFailover = loop2Snap
 
 	failover, err := m.ExecuteFailover(volumeName, expectedEpoch, survivorNodeIDs...)
 	result.Failover = failover
 	if err != nil {
-		return result, err
+		runErr = err
+		return result, runErr
 	}
 	result.SelectedPrimaryNodeID = failover.Assignment.NodeID
 
 	selectedNode, err := m.localNode(failover.Assignment.NodeID)
 	if err != nil {
-		return result, err
+		runErr = err
+		return result, runErr
 	}
 	readBack, err := selectedNode.ReadLBA(volumeName, lba, uint32(len(payload)))
 	if err != nil {
-		return result, fmt.Errorf("volumev2: continuity readback %s on %s: %w", volumeName, selectedNode.NodeID(), err)
+		runErr = fmt.Errorf("volumev2: continuity readback %s on %s: %w", volumeName, selectedNode.NodeID(), err)
+		return result, runErr
 	}
 	result.ReadBackLength = uint32(len(readBack))
 	result.DataMatch = bytes.Equal(readBack, payload)
 	if !result.DataMatch {
-		return result, fmt.Errorf("volumev2: continuity payload mismatch after failover")
+		runErr = fmt.Errorf("volumev2: continuity payload mismatch after failover")
+		return result, runErr
 	}
 	return result, nil
 }

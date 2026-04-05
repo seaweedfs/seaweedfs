@@ -1,7 +1,7 @@
 # Phase 18 Decisions
 
 Date: 2026-04-05
-Status: active
+Status: complete
 
 ## D1: Phase 18 Uses M1-M5 As The Main Spine
 
@@ -142,3 +142,60 @@ Implication:
 1. later work can attach RF2-facing product/runtime surfaces on top of a real
    continuity-bearing runtime slice
 2. `M4` should attach one bounded surface without widening the continuity claim
+
+## D7: `M4` Closes On Compressed Surface Projection, Not New Truth Ownership
+
+Decision:
+
+1. `M4` is considered complete when at least one bounded RF2-facing
+   runtime/product surface is projected from the new runtime
+2. the surface must be derived from runtime-owned failover, Loop 2, and
+   continuity observations
+3. the surface must remain a compressed projection and must not become an
+   independent truth owner
+
+Why:
+
+1. after `M3`, the next meaningful closure is to let the runtime expose one
+   outward RF2-facing package
+2. the new surface should prove that external/product-facing views can be bound
+   to the new runtime without moving semantic ownership out of the kernel/runtime
+3. keeping the surface compressed preserves the authority split and prevents
+   frontend/backend code from silently redefining truth
+
+Implication:
+
+1. later product or operator APIs should reuse projected runtime surfaces instead
+   of inventing parallel truth models
+2. `M5` should harden the supported envelope around this projected surface rather
+   than reopening kernel ownership
+
+## D8: `M5` Closes On Explicit Envelope And Explicit Non-Readiness
+
+Decision:
+
+1. `M5` is considered complete when the current `Phase 18` runtime-bearing path
+   has:
+   - one bounded productionization envelope
+   - one explicit review result
+   - one rebound pilot/preflight/stop/review artifact set
+2. the current review result may explicitly be `block expansion` / `not
+   pilot-ready`
+3. `M5` does not require the new runtime path to already be a working block
+   product
+
+Why:
+
+1. after `M1-M4`, the next needed closure is not more kernel proof; it is a clean
+   statement of what the current path does and does not justify operationally
+2. the right productionization artifact set should reduce overclaiming, not hide
+   blockers
+3. explicit non-readiness is better than silently reusing older chosen-path
+   pilot/launch language
+
+Implication:
+
+1. later work should widen from an explicit `not pilot-ready` baseline rather than
+   from ambiguous artifact inheritance
+2. `Phase 18` is complete once the bounded envelope and review judgment are both
+   explicit
