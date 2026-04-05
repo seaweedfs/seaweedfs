@@ -188,13 +188,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
 	// process tagging
-	tags := ""
-	for k, v := range entry.Extended {
-		if len(tags) > 0 {
-			tags = tags + "&"
-		}
-		tags = tags + k + "=" + string(v)
-	}
+	tags := buildTaggingString(entry.Extended)
 
 	// Upload the file to S3.
 	uploadInput := s3manager.UploadInput{
@@ -222,4 +216,16 @@ func cleanKey(key string) string {
 		key = key[1:]
 	}
 	return key
+}
+
+// buildTaggingString builds the S3 Tagging header value from entry extended metadata.
+func buildTaggingString(extended map[string][]byte) string {
+	tags := ""
+	for k, v := range extended {
+		if len(tags) > 0 {
+			tags = tags + "&"
+		}
+		tags = tags + k + "=" + string(v)
+	}
+	return tags
 }
