@@ -54,8 +54,7 @@ type FailoverVolumeState struct {
 // Volume-oriented: each entry describes one volume's failover state.
 // Aggregate counts are derived from the volume list.
 type FailoverDiagnostic struct {
-	V2PromotionEnabled   bool           // T3: whether durability-first V2 promotion is active
-	V2PromotionReady     bool           // T3: whether V2 evidence querier is wired (false = fail-closed placeholder)
+	V2PromotionMode      string         // T3: "disabled", "placeholder_fail_closed", "transport_ready"
 	Volumes              []FailoverVolumeState
 	PendingRebuildCount  map[string]int // dead server → count of pending rebuilds
 	DeferredPromotionCount map[string]int // dead server → count of deferred promotion timers
@@ -99,8 +98,14 @@ func (fs *blockFailoverState) DiagnosticSnapshot() FailoverDiagnostic {
 // V2 promotion rollout state so operators can observe the active mode.
 func (ms *MasterServer) FailoverDiagnosticSnapshot() FailoverDiagnostic {
 	diag := ms.blockFailover.DiagnosticSnapshot()
-	diag.V2PromotionEnabled = ms.blockV2Promotion
-	diag.V2PromotionReady = ms.blockV2Promotion && ms.blockVSQueryEvidence != nil
+	switch {
+	case !ms.blockV2Promotion:
+		diag.V2PromotionMode = "disabled"
+	case ms.blockV2EvidenceTransport:
+		diag.V2PromotionMode = "transport_ready"
+	default:
+		diag.V2PromotionMode = "placeholder_fail_closed"
+	}
 	return diag
 }
 
