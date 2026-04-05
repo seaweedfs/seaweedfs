@@ -14,8 +14,14 @@ import (
 // CopyFromChunkViews copies chunk data with optional SSE decryption.
 // If entry has SSE-encrypted chunks, data is decrypted before writing.
 func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error, entry *filer_pb.Entry) error {
-	if entry != nil && detectSSEType(entry) != filer_pb.SSEType_NONE {
-		return copyWithDecryption(filerSource, entry, writeFunc)
+	if entry != nil {
+		sseType, err := detectSSEType(entry)
+		if err != nil {
+			return err
+		}
+		if sseType != filer_pb.SSEType_NONE {
+			return copyWithDecryption(filerSource, entry, writeFunc)
+		}
 	}
 	return copyChunkViews(chunkViews, filerSource, writeFunc)
 }

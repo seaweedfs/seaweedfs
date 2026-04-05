@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
@@ -18,7 +17,10 @@ func MaybeDecryptReader(reader io.Reader, entry *filer_pb.Entry) (io.Reader, err
 		return reader, nil
 	}
 
-	sseType := detectSSEType(entry)
+	sseType, err := detectSSEType(entry)
+	if err != nil {
+		return nil, err
+	}
 	if sseType == filer_pb.SSEType_NONE {
 		return reader, nil
 	}
@@ -42,7 +44,10 @@ func MaybeDecryptContent(content []byte, entry *filer_pb.Entry) ([]byte, error) 
 		return content, nil
 	}
 
-	sseType := detectSSEType(entry)
+	sseType, err := detectSSEType(entry)
+	if err != nil {
+		return nil, err
+	}
 	if sseType == filer_pb.SSEType_NONE {
 		return content, nil
 	}
@@ -55,7 +60,7 @@ func MaybeDecryptContent(content []byte, entry *filer_pb.Entry) ([]byte, error) 
 	return io.ReadAll(decrypted)
 }
 
-func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
+func detectSSEType(entry *filer_pb.Entry) (filer_pb.SSEType, error) {
 	// Check chunk metadata first
 	var detected filer_pb.SSEType
 	for _, chunk := range entry.GetChunks() {
@@ -63,27 +68,27 @@ func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
 			if detected == filer_pb.SSEType_NONE {
 				detected = chunk.SseType
 			} else if chunk.SseType != detected {
-				glog.Warningf("entry has mixed SSE types across chunks: %v and %v, using %v", detected, chunk.SseType, detected)
+				return filer_pb.SSEType_NONE, fmt.Errorf("mixed SSE types in chunks: %v and %v", detected, chunk.SseType)
 			}
 		}
 	}
 	if detected != filer_pb.SSEType_NONE {
-		return detected
+		return detected, nil
 	}
 
 	// Fall back to extended metadata for inline objects (no chunks)
 	if entry.Extended != nil {
 		if len(entry.Extended[s3_constants.SeaweedFSSSES3Key]) > 0 {
-			return filer_pb.SSEType_SSE_S3
+			return filer_pb.SSEType_SSE_S3, nil
 		}
 		if len(entry.Extended[s3_constants.SeaweedFSSSEKMSKey]) > 0 {
-			return filer_pb.SSEType_SSE_KMS
+			return filer_pb.SSEType_SSE_KMS, nil
 		}
 		if len(entry.Extended[s3_constants.SeaweedFSSSEIV]) > 0 {
-			return filer_pb.SSEType_SSE_C
+			return filer_pb.SSEType_SSE_C, nil
 		}
 	}
-	return filer_pb.SSEType_NONE
+	return filer_pb.SSEType_NONE, nil
 }
 
 func decryptSSES3(reader io.Reader, entry *filer_pb.Entry) (io.Reader, error) {
