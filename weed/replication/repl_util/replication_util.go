@@ -11,13 +11,9 @@ import (
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 )
 
-func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error) error {
-	return CopyFromChunkViewsWithEntry(chunkViews, filerSource, writeFunc, nil)
-}
-
-// CopyFromChunkViewsWithEntry copies chunk data with optional SSE decryption.
+// CopyFromChunkViews copies chunk data with optional SSE decryption.
 // If entry has SSE-encrypted chunks, data is decrypted before writing.
-func CopyFromChunkViewsWithEntry(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error, entry *filer_pb.Entry) error {
+func CopyFromChunkViews(chunkViews *filer.IntervalList[*filer.ChunkView], filerSource *source.FilerSource, writeFunc func(data []byte) error, entry *filer_pb.Entry) error {
 	if entry != nil && detectSSEType(entry) != filer_pb.SSEType_NONE {
 		return copyWithDecryption(filerSource, entry, writeFunc)
 	}

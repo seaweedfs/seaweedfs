@@ -124,7 +124,7 @@ func (g *B2Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures []int
 		return writeFunc(content)
 	}
 
-	if err := repl_util.CopyFromChunkViewsWithEntry(chunkViews, g.filerSource, writeFunc, entry); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry); err != nil {
 		return err
 	}
 

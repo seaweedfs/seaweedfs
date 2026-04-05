@@ -134,7 +134,7 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 			writeErr = writeFunc(content)
 		}
 	} else {
-		writeErr = repl_util.CopyFromChunkViewsWithEntry(chunkViews, g.filerSource, writeFunc, entry)
+		writeErr = repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry)
 	}
 
 	if writeErr != nil {

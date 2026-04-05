@@ -196,7 +196,7 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 		return nil
 	}
 
-	if err := repl_util.CopyFromChunkViewsWithEntry(chunkViews, g.filerSource, writeFunc, entry); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry); err != nil {
 		return cleanupOnError(err)
 	}
 
