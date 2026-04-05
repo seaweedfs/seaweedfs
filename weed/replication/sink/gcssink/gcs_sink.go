@@ -115,23 +115,28 @@ func (g *GcsSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []in
 	totalSize := filer.FileSize(entry)
 	chunkViews := filer.ViewFromChunks(context.Background(), g.filerSource.LookupFileId, entry.GetChunks(), 0, int64(totalSize))
 
-	wc := g.client.Bucket(g.bucket).Object(key).NewWriter(context.Background())
-	defer wc.Close()
+	obj := g.client.Bucket(g.bucket).Object(key)
+	wc := obj.NewWriter(context.Background())
 
 	writeFunc := func(data []byte) error {
 		_, writeErr := wc.Write(data)
 		return writeErr
 	}
 
+	var writeErr error
 	if len(entry.Content) > 0 {
-		return writeFunc(entry.Content)
+		writeErr = writeFunc(entry.Content)
+	} else {
+		writeErr = repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc)
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
-		return err
+	if writeErr != nil {
+		wc.Close()
+		obj.Delete(context.Background())
+		return writeErr
 	}
 
-	return nil
+	return wc.Close()
 
 }
 
