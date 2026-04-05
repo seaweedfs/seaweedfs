@@ -130,6 +130,7 @@ type TaskPersistence interface {
 	LoadTaskState(taskID string) (*MaintenanceTask, error)
 	LoadAllTaskStates() ([]*MaintenanceTask, error)
 	DeleteTaskState(taskID string) error
+	DeleteAllTaskStates() error
 	CleanupCompletedTasks() error
 
 	// Policy persistence
@@ -206,12 +207,11 @@ type MaintenanceQueue struct {
 
 // MaintenanceScanner analyzes the cluster and generates maintenance tasks
 type MaintenanceScanner struct {
-	adminClient      AdminClient
-	policy           *MaintenancePolicy
-	queue            *MaintenanceQueue
-	lastScan         map[MaintenanceTaskType]time.Time
-	integration      *MaintenanceIntegration
-	lastTopologyInfo *master_pb.TopologyInfo
+	adminClient AdminClient
+	policy      *MaintenancePolicy
+	queue       *MaintenanceQueue
+	lastScan    map[MaintenanceTaskType]time.Time
+	integration *MaintenanceIntegration
 }
 
 // TaskDetectionResult represents the result of scanning for maintenance needs

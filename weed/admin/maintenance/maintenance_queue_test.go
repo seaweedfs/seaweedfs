@@ -693,10 +693,11 @@ func (m *MockPersistence) SaveTaskState(task *MaintenanceTask) error            
 func (m *MockPersistence) LoadTaskState(taskID string) (*MaintenanceTask, error)    { return nil, nil }
 func (m *MockPersistence) LoadAllTaskStates() ([]*MaintenanceTask, error)           { return m.tasks, nil }
 func (m *MockPersistence) DeleteTaskState(taskID string) error                      { return nil }
+func (m *MockPersistence) DeleteAllTaskStates() error                               { return nil }
 func (m *MockPersistence) CleanupCompletedTasks() error                             { return nil }
 func (m *MockPersistence) SaveTaskPolicy(taskType string, policy *TaskPolicy) error { return nil }
 
-func TestMaintenanceQueue_LoadTasksCapacitySync(t *testing.T) {
+func TestMaintenanceQueue_LoadTasksStartsEmpty(t *testing.T) {
 	// Setup
 	policy := &MaintenancePolicy{
 		TaskPolicies: map[string]*worker_pb.TaskPolicy{
@@ -704,56 +705,25 @@ func TestMaintenanceQueue_LoadTasksCapacitySync(t *testing.T) {
 		},
 	}
 	mq := NewMaintenanceQueue(policy)
-	integration := NewMaintenanceIntegration(mq, policy)
-	mq.SetIntegration(integration)
-	at := integration.GetActiveTopology()
 
-	topologyInfo := &master_pb.TopologyInfo{
-		DataCenterInfos: []*master_pb.DataCenterInfo{
-			{
-				Id: "dc1",
-				RackInfos: []*master_pb.RackInfo{
-					{
-						Id: "rack1",
-						DataNodeInfos: []*master_pb.DataNodeInfo{
-							{
-								Id: "server1",
-								DiskInfos: map[string]*master_pb.DiskInfo{
-									"hdd1": {DiskId: 1, VolumeCount: 1, MaxVolumeCount: 10},
-									"hdd2": {DiskId: 2, VolumeCount: 0, MaxVolumeCount: 10},
-								},
-							},
-						},
-					},
-				},
-			},
-		},
-	}
-	at.UpdateTopology(topologyInfo)
-
-	// Setup mock persistence with a pending task
-	taskID := "load_test_123"
+	// Setup mock persistence with tasks — these should NOT be loaded
 	mockTask := &MaintenanceTask{
-		ID:     taskID,
+		ID:     "old_task_123",
 		Type:   "balance",
 		Status: TaskStatusPending,
-		TypedParams: &worker_pb.TaskParams{
-			TaskId:  taskID,
-			Sources: []*worker_pb.TaskSource{{Node: "server1", DiskId: 1}},
-			Targets: []*worker_pb.TaskTarget{{Node: "server1", DiskId: 2}},
-		},
 	}
 	mq.SetPersistence(&MockPersistence{tasks: []*MaintenanceTask{mockTask}})
 
-	// Load tasks
+	// LoadTasksFromPersistence should be a no-op — scanner will re-detect
 	err := mq.LoadTasksFromPersistence()
 	if err != nil {
-		t.Fatalf("Failed to load tasks: %v", err)
+		t.Fatalf("LoadTasksFromPersistence failed: %v", err)
 	}
 
-	// Verify capacity is reserved in ActiveTopology after loading (9 left)
-	if at.GetEffectiveAvailableCapacity("server1", 2) != 9 {
-		t.Errorf("Expected capacity 9 after loading tasks, got %d", at.GetEffectiveAvailableCapacity("server1", 2))
+	// Queue should be empty — tasks will be re-detected by scanner
+	stats := mq.GetStats()
+	if stats.TotalTasks != 0 {
+		t.Errorf("Expected 0 tasks after startup, got %d", stats.TotalTasks)
 	}
 }
 
