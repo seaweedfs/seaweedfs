@@ -387,3 +387,126 @@ After Phase 20, the production binary has V2 correctness:
 
 And it runs on real hardware with real network, real iSCSI clients, and
 real WAL shipping — not in a simulation harness.
+
+## Reviewer Packs
+
+### T2: Promotion Evidence Query RPC
+
+**Allowed**: Dedicated RPC for promotion evidence. Return fresh local facts
+from queried VS at call time. Read from local blockvol status and V2 core
+projection. Return explicit eligibility plus reason. Keep heartbeat and
+evidence query as separate channels.
+
+**Not allowed**: Reuse heartbeat payload as promotion decision source.
+Reconstruct evidence from master registry caches. Let master guess
+engine_projection_mode. Hide evidence failure behind silent fallback when
+V2 path is enabled. Mix assignment authorization into the evidence RPC.
+
+**Truth owner**: Local storage/runtime facts = blockvol. Local semantic
+projection and eligibility = V2 engine on queried VS. Master only consumes
+evidence; it does not own or synthesize it.
+
+**Required tests**: (1) Handler returns live committed_lsn / wal_head_lsn.
+(2) Handler returns current engine_projection_mode from core projection.
+(3) Handler returns eligible=false with explicit reason for gated states.
+(4) Query against stale/unknown/missing volume fails cleanly.
+(5) Proto/wire field presence/absence handled correctly.
+
+**Pitfalls**: Using cached registry state instead of querying fresh VS-local
+facts. Smuggling promotion policy into handler. Making RPC look like
+"mini assignment" instead of evidence-only observation.
+
+### T3: Durability-First Promotion Selection
+
+**Allowed**: Master collects candidates from registry membership. Queries
+each via T2 at failover time. Filter on eligible==true. Rank by
+CommittedLSN then WALHeadLSN then health. Fail closed when no eligible
+candidate. Explicit feature flag for temporary V1 fallback.
+
+**Not allowed**: Promote based only on last heartbeat. Rank health before
+durability. Silently fall back to V1 when evidence query fails in V2 mode.
+Treat "best-looking candidate" as sufficient when durability is ambiguous.
+Let master override a node's ineligibility reason.
+
+**Truth owner**: Candidate durability/eligibility = queried VS local state +
+engine. Promotion authorization = master. Registry = cluster membership/index
+state, not evidence truth owner.
+
+**Required tests**: (1) Higher CommittedLSN wins even if health lower.
+(2) Equal CommittedLSN, higher WALHeadLSN wins. (3) All ineligible => no
+promotion. (4) Evidence query failure in V2 mode => fail-closed. (5)
+Flag-off uses legacy. (6) Epoch bump + assignment enqueue only after
+successful selection.
+
+**Pitfalls**: Leaving old PromoteBestReplica() heuristics in decision path.
+Making flag a silent rescue. Letting registry-side stale WALHeadLSN
+participate in final ordering.
+
+### T4: Local Activation Gate
+
+**Allowed**: After assignment through V2 core, read resulting local
+projection. Gate local activation based on mode/reason. Refuse serving
+while gated. Clear gate only when projection reaches allowed serving state.
+Heartbeat may report gated state after enforcement.
+
+**Not allowed**: Treat assignment delivery as permission to serve. Wait for
+master/heartbeat to enforce no-serve. Allow frontend/iSCSI publish while
+degraded or needs_rebuild. Reinterpret bad reconstruction as "good enough."
+Put gate only in operator surfaces while serving still proceeds.
+
+**Truth owner**: Reconstruction judgment and activation gate = promoted
+primary local V2 engine/runtime. Master may observe, does not enforce.
+Frontend/export = execution surface only.
+
+**Required tests**: (1) Degraded projection does not export/serve.
+(2) needs_rebuild does not export/serve. (3) Healthy projection clears
+gate. (4) Gate enforced before heartbeat round-trip. (5) Recovery from
+gated to healthy re-enables serving.
+
+**Pitfalls**: Gate enforced too late (after export). Checking VolumeMode
+instead of local engine projection. Gate advisory in logs but not in
+serving paths.
+
+### T5: ClusterReplicationMode on Master
+
+**Allowed**: Compute new master-owned field from multi-replica facts. Keep
+separate from EngineProjectionMode. Use for cluster/operator judgment.
+Derive from replica set facts, freshness, lag. Distinct field on registry
+entry and surfaces.
+
+**Not allowed**: Reuse/rename VolumeMode. Copy primary's
+EngineProjectionMode into ClusterReplicationMode. Collapse local and
+cluster concepts. Expose two ambiguous generic mode fields. Override local
+VS truth with master-computed local semantics.
+
+**Truth owner**: EngineProjectionMode = VS-local engine truth.
+ClusterReplicationMode = master-owned cluster judgment. VolumeMode = legacy
+transitional, not new semantic source.
+
+**Required tests**: (1) All healthy => keepup. (2) Replica behind =>
+catching_up. (3) Missing/failed => degraded. (4) Unrecoverable gap =>
+needs_rebuild. (5) Explicit proof the two modes can differ without
+conflict. (6) Surface/API shows distinct naming.
+
+**Pitfalls**: Computing from only primary-local projection. Reusing old
+VolumeMode semantics. Exposing field ambiguously.
+
+### Cross-Task Guardrails
+
+**Allowed**: Additive migration with explicit flags. Reuse V1 execution
+while replacing decision ownership. Projection/cache layers carrying truth
+from actual owner. Fail-closed when critical evidence unavailable.
+
+**Not allowed**: Silent fallback. Dual-truth mode handling with unclear
+authority. Master-side invention of local semantic truth. New
+simulation-only seams bypassing production binary path.
+
+**Global required tests**: (1) End-to-end failover exercising T2+T3+T4.
+(2) No serve-after-promotion when activation gated. (3) Operator surface
+proves local vs cluster modes distinct. (4) Legacy-flag test proves
+fallback is explicit and observable.
+
+**Recurring failure pattern to watch**: Heartbeat becomes overloaded into
+liveness + evidence + decision. Master starts "helpfully" reconstructing
+local semantics. Local gate exists in logs/surfaces but actual serving path
+still open.

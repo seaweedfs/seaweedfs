@@ -159,6 +159,8 @@ service VolumeServer {
     }
     rpc CancelExpandBlockVolume (CancelExpandBlockVolumeRequest) returns (CancelExpandBlockVolumeResponse) {
     }
+    rpc QueryBlockPromotionEvidence (QueryBlockPromotionEvidenceRequest) returns (QueryBlockPromotionEvidenceResponse) {
+    }
 
 }
 
@@ -871,4 +873,22 @@ message CancelExpandBlockVolumeRequest {
     uint64 expand_epoch = 2;
 }
 message CancelExpandBlockVolumeResponse {
+}
+
+// T2: Fresh on-demand promotion evidence. Master queries VS at failover
+// time. Returns live local facts, not cached/stale heartbeat data.
+message QueryBlockPromotionEvidenceRequest {
+    string path = 1;           // volume file path on queried VS
+    uint64 expected_epoch = 2; // caller's expected epoch for staleness check
+}
+message QueryBlockPromotionEvidenceResponse {
+    string path = 1;
+    uint64 epoch = 2;
+    uint64 committed_lsn = 3;
+    uint64 wal_head_lsn = 4;
+    uint64 checkpoint_lsn = 5;
+    string engine_projection_mode = 6; // pure V2 engine local projection, empty if no core
+    bool   eligible = 7;
+    string reason = 8;                 // why ineligible, or empty
+    double health_score = 9;
 }
