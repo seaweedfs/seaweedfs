@@ -207,9 +207,11 @@ authorization.
   6. Bump epoch, enqueue assignment to selected candidate
 
 **Legacy fallback policy**:
-- Add `--block.v2-promotion` flag (default `true`)
+- Add `--block.v2Promotion` flag (default `false` — safe rollout default
+  until proto regen enables the evidence RPC; once RPC is live, flip to
+  default `true`)
 - When `true`: `promoteReplicaV2()` with fail-closed on evidence failure
-- When `false`: existing `promoteReplica()` (V1 path)
+- When `false`: existing `promoteReplicaV1()` (V1 path)
 - The flag is observable via `/vol/status` and metrics
 - The flag is intended to be removed once V2 is validated, not permanent
 
