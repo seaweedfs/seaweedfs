@@ -147,6 +147,8 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 			if handleErr != nil {
 				return handleErr
 			}
+			// handleExistingBlob recreates the blob when needsWrite is true
+			freshlyCreated = needsWrite
 		} else {
 			return fmt.Errorf("azure create append blob %s/%s: %w", g.container, key, err)
 		}
