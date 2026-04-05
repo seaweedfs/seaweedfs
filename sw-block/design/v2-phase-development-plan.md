@@ -1,6 +1,6 @@
 # V2 Phase Development Plan
 
-Date: 2026-04-02
+Date: 2026-04-04
 Status: active
 Purpose: define the execution-oriented phase plan after the current candidate-path work, with explicit module status and target phase ownership
 
@@ -35,22 +35,26 @@ Use these rules for all later phases:
 
 ## Current Baseline
 
-Current accepted path through `Phase 13`, with `Phase 14` now the immediate next engineering focus:
+Current accepted path now runs through the `Phase 16` finish-line checkpoint:
 
 1. protocol/algo truth set is strong
 2. engine recovery core is strong on the chosen path
 3. control-plane closure is accepted on the chosen path
 4. selected product-surface rebinding is accepted on the chosen path
 5. bounded production hardening is accepted on the chosen path
-6. one bounded accepted path exists for:
-  - `RF=2`
-  - `sync_all`
-  - existing master / volume-server heartbeat path
-  - `blockvol` as execution backend
-7. `Phase 13` has now closed the bounded `WAL V1.5` contract package for the current constrained chosen path:
-  - real-workload package accepted
-  - assignment/publication closure accepted
-  - bounded mode normalization accepted
+6. explicit `V2 core` extraction and adapter/projection rebinding are accepted as
+   bounded engineering structure
+7. one bounded `V2`-native runtime checkpoint is now accepted for:
+   - `RF=2`
+   - `sync_all`
+   - existing master / volume-server heartbeat path
+   - `blockvol` as execution backend
+8. `Phase 13` froze the bounded `WAL V1.5` contract package and `Phase 14-16`
+   carried that package forward into a bounded runtime-owned checkpoint:
+   - real-workload package accepted
+   - assignment/publication closure accepted
+   - bounded mode normalization accepted
+   - bounded heartbeat/restart truth closure accepted
 
 Phase-accounting note:
 
@@ -60,28 +64,32 @@ Phase-accounting note:
 4. `Phase 11` is closed
 5. `Phase 12` is the accepted hardening baseline for the chosen path
 6. `Phase 13` is closed and should be read as one bounded constrained-runtime contract package, not as launch approval
-7. `Phase 14` is now the immediate next engineering focus:
-   - explicit `V2 core` extraction
-   - not more deepening of constrained-`V1` validation by default
+7. `Phase 14` is closed as explicit `V2 core` extraction
+8. `Phase 15` is closed as bounded adapter/projection rebinding
+9. `Phase 16` is closed as a bounded `V2`-native runtime checkpoint, not as broad product/launch proof
+10. the immediate next planning focus is now the productionization program plus the larger post-`Phase 16` gates:
+   - broader recovery/failover/publication statement
+   - launch-envelope freeze
+   - pilot/rollout discipline
 
 Important interpretation rule:
 
 1. the accepted chosen path and claim/evidence set are real
 2. the current `weed/` runtime structure is not automatically the final `V2` structure
-3. until `Phase 14` establishes an explicit `V2 core`, current integrated tests should be read primarily as:
-   - `V1` runtime validation under `V2` constraints
-   - not proof that a completed `V2 runtime` already exists
+3. even after the `Phase 16` finish-line checkpoint, current integrated evidence should still be read as:
+   - one bounded `V2`-owned runtime path on the chosen integration
+   - not broad proof for every recovery/failover/disturbance or launch scenario
 4. future phases must treat:
    - `v2-protocol-claim-and-evidence.md` as current claim authority
    - `v2_mini_core_design.md` as engineering-structure authority
    - `v2-reuse-replacement-boundary.md` as reuse vs replacement authority
 
-This means the next phases should focus mainly on:
+This means the next work should focus mainly on:
 
-1. extracting the long-term `V2 core` structure explicitly
-2. rebinding `weed/` into adapter / projection / backend roles
-3. closing one bounded `V2`-native runtime path before productionization
-4. using `Phase 13` evidence as acceptance input rather than continuing to treat constrained-`V1` validation as the main workstream
+1. keeping accepted `Phase 14-16` closure closed
+2. turning the bounded runtime checkpoint into an explicit launch envelope
+3. deciding broader failover/recovery/publication claims only through named evidence
+4. using `Phase 13-16` evidence as acceptance input rather than reopening micro-seams by default
 
 ## Phase Roadmap
 
@@ -414,6 +422,12 @@ Key files / ownership:
 2. `sw-block/design/v2-phase14plus-semantic-framework.md`
 3. `sw-block/engine/replication/`
 
+Current status:
+
+1. complete as a bounded engineering-structure phase
+2. accepted output is explicit `state / event / command / projection` ownership,
+   not broad live-runtime or launch proof
+
 ### Phase 15: Adapter And Projection Rebinding
 
 Goal:
@@ -463,6 +477,12 @@ Key files / ownership:
 5. `weed/server/master_block_registry.go`
 6. `weed/server/master_block_failover.go`
 
+Current status:
+
+1. complete as bounded adapter/projection rebinding on the chosen path
+2. accepted output is explicit adapter/projection ownership, not broad
+   runtime-closure or launch proof
+
 ### Phase 16: V2-Native Runtime Closure
 
 Goal:
@@ -496,6 +516,19 @@ Key files / ownership:
 1. `sw-block/engine/replication/`
 2. `weed/server/`
 3. selected `weed/storage/blockvol/v2bridge/*` files
+
+Current status:
+
+1. complete as a bounded runtime checkpoint through the `Phase 16` finish line
+2. accepted checkpoint now covers:
+   - steady-state and bounded restart reconstruction preserve accepted explicit
+     truth on the chosen path
+   - sparse heartbeats do not silently erase already accepted truth
+   - empty full-inventory delete behavior is explicit rather than heuristic
+3. non-claims remain explicit:
+   - not broad recovery-loop closure
+   - not broad failover/publication proof
+   - not launch / rollout readiness
 
 ### Cross-Phase Review Rule For `Phase 14+`
 
@@ -572,25 +605,25 @@ Cross-cutting rules:
 
 | Module area | Current status | Current owner phase | Next target phase | Notes |
 | ----------- | -------------- | ------------------- | ----------------- | ----- |
-| `sw-block/engine/replication` core FSM/orchestrator/driver | Strong long-term `V2 core` asset | `Phase 09` accepted, `Phase 13` active constraints | `Phase 14` | Main next work is explicit `state / event / command / projection` extraction, not reopening accepted semantics. |
-| Engine executor real I/O boundary (`CatchUpIO` / `RebuildIO`) | Strong on chosen path | `Phase 09` accepted | `Phase 14/16` | Keep the boundary stable; later work is to connect it to explicit `V2 core` ownership and runtime closure. |
-| `weed/storage/blockvol/v2bridge/control.go` | Strong boundary adapter on chosen path | `Phase 08/09/10` accepted | `Phase 15` | Remains a bridge between `V2` truth and runtime execution; should not accumulate new semantic authority casually. |
-| `weed/storage/blockvol/v2bridge/reader.go` | Strong backend-facing adapter | `Phase 09` accepted | `Phase 15/16` | Mostly stable; later work is explicit boundary ownership and runtime proof, not new protocol semantics. |
-| `weed/storage/blockvol/v2bridge/pinner.go` | Strong backend-facing adapter | `Phase 09` accepted | `Phase 15/16` | Retention safety is proven on the chosen path; later work is keeping it under explicit `V2` control boundaries. |
-| `weed/storage/blockvol/v2bridge/executor.go` WAL scan | Strong backend-facing adapter | `Phase 09` accepted | `Phase 15/16` | Real execution path is closed on the chosen path; later work is core-driven runtime integration. |
-| `v2bridge` `TransferFullBase` | Strong on chosen path | `Phase 09 P1` accepted | `Phase 16` | Execution closure is accepted; do not reopen casually unless core-driven runtime closure exposes a real contradiction. |
-| `v2bridge` `TransferSnapshot` | Strong on chosen path | `Phase 09 P2` accepted | `Phase 16` | Execution closure is accepted; later work is bounded runtime closure rather than first-implementation discovery. |
-| `v2bridge` `TruncateWAL` | Strong on chosen path | `Phase 09 P3` accepted | `Phase 16` | Narrow contract is accepted; later work is preserving that contract under explicit runtime ownership. |
-| `weed/server/volume_server_block.go` V2 assignment intake | Adapter-boundary reality with accepted chosen-path closure | `Phase 10 P4` accepted, `Phase 13` contradiction pressure | `Phase 15` | This is where assignment/readiness/publication closure must become explicit adapter behavior rather than mixed service semantics. |
-| `weed/server/block_recovery.go` live runtime ownership | V2-owned runtime truth on chosen path | `Phase 09/10` accepted | `Phase 15/16` | Serialized ownership is accepted; later work is making it cooperate with explicit `V2 core` and projection boundaries. |
-| `weed/server/master_block_registry.go` / failover / handlers | Mixed projection/truth reality | `Phase 10-12` accepted surfaces | `Phase 15` | Should converge toward projection store + operator-visible truth surfaces rather than mixed business-logic/state storage. |
-| `blockvol` WAL/flusher/checkpoint runtime | Reuse reality | Existing production code | `Phase 16` | Reuse implementation; do not let `V1` replication semantics redefine `V2` truth. |
-| `blockvol` rebuild transport/server reality | Reuse with redesign boundary | Existing production code | `Phase 16` | Bounded chosen-path integration is accepted; later work is runtime closure under `V2` authority. |
-| local server identity (`localServerID`) | Strong chosen-path rule with narrowed semantics | `Phase 10 P1` accepted, `Phase 13` constraints | `Phase 15` | Stable identity must remain distinct from transport address shape and explicit in later adapter/projection work. |
-| Snapshot product path | Strong on chosen path | `Phase 11` accepted | `Phase 16` | Product-visible snapshot workflow is accepted on the chosen path; later work is preserving it under `V2`-native runtime closure. |
-| `CSI` integration | Strong on chosen path | `Phase 11` accepted | `Phase 16` | Bounded controller/node lifecycle rebinding is accepted; later work is runtime preservation, not first rebinding. |
-| `NVMe` / `iSCSI` front-ends | Strong on chosen path | `Phase 11` accepted | `Phase 16` | Publication/address truth rebinding is accepted; later work is proving the `V2`-driven runtime path beneath them. |
-| Testrunner / infra / metrics | Strong support layer | existing | `Phase 13-16` | Reuse to validate contract closure, adapter contradictions, runtime closure, and later productization gates. |
+| `sw-block/engine/replication` core FSM/orchestrator/driver | Strong long-term `V2 core` asset | `Phase 14` accepted, `Phase 16` runtime checkpoint accepted | Productionization / broader failover gate | Main next work is not new core extraction; it is using the accepted core as authority when deciding broader post-`Phase 16` claims. |
+| Engine executor real I/O boundary (`CatchUpIO` / `RebuildIO`) | Strong on chosen path | `Phase 09` accepted, `Phase 16` integrated on bounded path | Productionization / broader recovery-loop gate | Keep the boundary stable; later work is broader runtime/failover evidence, not first implementation. |
+| `weed/storage/blockvol/v2bridge/control.go` | Strong boundary adapter on chosen path | `Phase 15` accepted, `Phase 16` checkpoint accepted | Productionization | Remains a bridge between `V2` truth and runtime execution; should not accumulate new semantic authority casually. |
+| `weed/storage/blockvol/v2bridge/reader.go` | Strong backend-facing adapter | `Phase 09` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / broader disturbance hardening | Mostly stable; later work is evidence under wider disturbance classes, not new protocol semantics. |
+| `weed/storage/blockvol/v2bridge/pinner.go` | Strong backend-facing adapter | `Phase 09` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / broader disturbance hardening | Retention safety is proven on the chosen path; later work is long-window hardening rather than ownership redesign. |
+| `weed/storage/blockvol/v2bridge/executor.go` WAL scan | Strong backend-facing adapter | `Phase 09` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / broader recovery-loop gate | Real execution path is closed on the chosen path; later work is broader runtime evidence. |
+| `v2bridge` `TransferFullBase` | Strong on chosen path | `Phase 09 P1` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / broader recovery-loop gate | Execution closure is accepted; do not reopen casually unless broader runtime evidence exposes a real contradiction. |
+| `v2bridge` `TransferSnapshot` | Strong on chosen path | `Phase 09 P2` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / launch-envelope gate | Execution closure is accepted; later work is first supported-envelope accounting. |
+| `v2bridge` `TruncateWAL` | Strong on chosen path | `Phase 09 P3` accepted, `Phase 16` bounded runtime checkpoint accepted | Productionization / broader recovery-loop gate | Narrow contract is accepted; later work is preserving that contract under broader disturbance evidence. |
+| `weed/server/volume_server_block.go` V2 assignment intake | Adapter-boundary reality with accepted chosen-path closure | `Phase 15` accepted, `Phase 16` finish-line checkpoint accepted | Productionization / broader failover gate | This boundary is now explicit on the chosen path; next work is wider gate evidence, not another rebinding phase. |
+| `weed/server/block_recovery.go` live runtime ownership | V2-owned runtime truth on chosen path | `Phase 16` finish-line checkpoint accepted | Productionization / broader recovery-loop gate | Serialized ownership is accepted on the bounded path; later work is proving more of the surrounding loop without widening claims casually. |
+| `weed/server/master_block_registry.go` / failover / handlers | Bounded projection/truth closure accepted on chosen path | `Phase 15` accepted, `Phase 16` finish-line checkpoint accepted | Productionization / broader failover/publication gate | Heartbeat/restart truth-closure seams are closed on the bounded path; remaining work is broader gate evidence and launch scoping. |
+| `blockvol` WAL/flusher/checkpoint runtime | Reuse reality | Existing production code, bounded path accepted through `Phase 16` | Productionization / broader disturbance hardening | Reuse implementation; do not let `V1` replication semantics redefine `V2` truth. |
+| `blockvol` rebuild transport/server reality | Reuse with redesign boundary | Existing production code, bounded path accepted through `Phase 16` | Productionization / broader recovery-loop gate | Bounded chosen-path integration is accepted; later work is wider disturbance/failover evidence under `V2` authority. |
+| local server identity (`localServerID`) | Strong chosen-path rule with narrowed semantics | `Phase 10 P1` accepted, carried through `Phase 16` | Productionization / launch-envelope gate | Stable identity must remain distinct from transport address shape; next work is supported-envelope/accounting, not semantic redesign. |
+| Snapshot product path | Strong on chosen path | `Phase 11` accepted, preserved through `Phase 16` | Productionization / launch-envelope gate | Product-visible snapshot workflow is accepted on the chosen path; next work is first supported envelope and exclusions. |
+| `CSI` integration | Strong on chosen path | `Phase 11` accepted, preserved through `Phase 16` | Productionization / launch-envelope gate | Bounded controller/node lifecycle rebinding is accepted; next work is supported-matrix/accounting rather than first rebinding. |
+| `NVMe` / `iSCSI` front-ends | Strong on chosen path | `Phase 11` accepted, preserved through `Phase 16` | Productionization / launch-envelope gate | Publication/address truth rebinding is accepted; next work is envelope freeze and broader incident-driven hardening. |
+| Testrunner / infra / metrics | Strong support layer | existing, used through `Phase 13-16` checkpointing | Productionization | Reuse to validate launch-envelope gates, pilot packs, incident buckets, and broader hardening claims. |
 
 
 ## Completion-State Targets
@@ -615,40 +648,50 @@ Use these rough targets to judge whether a phase is moving the product meaningfu
 
 If the goal is to maximize product completion efficiently, the recommended order is now:
 
-1. keep `Phase 09-12` accepted closures closed and do not reopen them casually
-2. keep `Phase 13` closed as the bounded `WAL V1.5` contract package
-3. move next to `Phase 14` core extraction:
-   - explicit `state / event / command / projection`
-   - minimal `ApplyEvent() -> Decide() -> EmitCommands()` path
-4. then `Phase 15` adapter/projection rebinding:
-   - assignment
-   - readiness
-   - publication
-   - diagnostics
-5. then `Phase 16` bounded `V2`-native runtime closure
-6. only then move to the productionization program:
-   - freeze launch envelope
-   - run limited internal pilot
-   - harden from incidents
-   - review controlled rollout
+1. keep `Phase 09-16` accepted closures closed and do not reopen them casually
+2. treat the `Phase 16` finish-line checkpoint as the bounded runtime stop-line,
+   not as a reason to continue indefinite micro-slicing
+3. move next to the productionization program:
+   - `P0` launch-envelope freeze
+   - `P1` limited internal pilot pack
+   - `P2` incident-driven hardening loop
+   - `P3` controlled rollout review
+4. only reopen runtime logic if broader failover/recovery/publication evidence
+   exposes a real contradiction
+5. keep larger post-`Phase 16` gates explicit:
+   - broader recovery-loop closure
+   - broader failover/publication statement
+   - long-window restart/disturbance hardening
 
 The most important near-term engineering weight should now go to:
 
-1. making `sw-block/engine/replication` the explicit long-term `V2 core`
-2. keeping `weed/` changes bounded to adapter / projection / backend roles unless they are explicitly promoted into `V2`-owned authority
-3. using `CP13-1..9` as acceptance input for new `V2 core` work rather than as a reason to keep extending constrained-`V1` validation
+1. freezing the first supported launch envelope from accepted `Phase 12-16`
+   evidence
+2. deciding what broader failover/recovery/publication claims are actually
+   supportable before widening product scope
+3. keeping `weed/` changes bounded unless a real contradiction requires broader
+   runtime work
 
 ## Short Summary
 
-The V2 line now has accepted execution, control, product-surface, and hardening closure on one bounded chosen path.
+The V2 line now has an accepted bounded path through:
 
-The next development plan should not jump directly from `Phase 12` to productionization.
-It should move through four bounded engineering phases first:
+1. execution closure
+2. control-plane closure
+3. product-surface rebinding
+4. bounded hardening
+5. constrained-runtime contract freeze
+6. explicit `V2 core` extraction
+7. adapter/projection rebinding
+8. bounded `Phase 16` runtime closure
 
-1. `Phase 13`: freeze the current `WAL V1.5` constrained-runtime contract package
-2. `Phase 14`: extract the explicit `V2 core`
-3. `Phase 15`: rebind `weed/` as adapter/projection reality
-4. `Phase 16`: close one bounded `V2`-native runtime path
+The roadmap should now stop treating `Phase 14-16` as future work.
+Their bounded checkpoint is complete.
 
-Only after that should the roadmap move into bounded launch-envelope freeze, internal pilot, incident-driven hardening, and controlled rollout review.
+From here the practical plan is:
+
+1. freeze the first supported launch envelope
+2. decide the larger post-`Phase 16` failover/recovery/publication claim boundary
+3. run a limited internal pilot
+4. harden from incidents without silently widening scope
 
