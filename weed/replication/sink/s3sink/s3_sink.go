@@ -3,6 +3,7 @@ package S3Sink
 import (
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -188,20 +189,16 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 		entry.Extended[s3_constants.AmzUserMetaMtime] = []byte(strconv.FormatInt(entry.Attributes.Mtime, 10))
 	}
 	// process tagging
-	tags := ""
-	for k, v := range entry.Extended {
-		if len(tags) > 0 {
-			tags = tags + "&"
-		}
-		tags = tags + k + "=" + string(v)
-	}
+	tags := buildTaggingString(entry.Extended)
 
 	// Upload the file to S3.
 	uploadInput := s3manager.UploadInput{
-		Bucket:  aws.String(s3sink.bucket),
-		Key:     aws.String(key),
-		Body:    reader,
-		Tagging: aws.String(tags),
+		Bucket: aws.String(s3sink.bucket),
+		Key:    aws.String(key),
+		Body:   reader,
+	}
+	if tags != "" {
+		uploadInput.Tagging = aws.String(tags)
 	}
 	if len(entry.Attributes.Md5) > 0 {
 		uploadInput.ContentMD5 = aws.String(base64.StdEncoding.EncodeToString([]byte(entry.Attributes.Md5)))
@@ -222,4 +219,19 @@ func cleanKey(key string) string {
 		key = key[1:]
 	}
 	return key
+}
+
+// buildTaggingString builds the S3 Tagging header value from entry extended metadata.
+// Only keys with the AmzObjectTaggingPrefix ("X-Amz-Tagging-") are included as object
+// tags. The prefix is stripped and values are URL-encoded to produce a valid S3 tagging
+// query string.
+func buildTaggingString(extended map[string][]byte) string {
+	tagValues := url.Values{}
+	for k, v := range extended {
+		if strings.HasPrefix(k, s3_constants.AmzObjectTaggingPrefix) {
+			tagKey := k[len(s3_constants.AmzObjectTaggingPrefix):]
+			tagValues.Set(tagKey, string(v))
+		}
+	}
+	return tagValues.Encode()
 }
