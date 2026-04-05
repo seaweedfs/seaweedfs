@@ -122,8 +122,14 @@ phases:
         name: "promote-test"
         reason: "T7 integration test: manual failover"
         save_as: promote_result
+      - action: assert_equal
+        actual: "{{ promote_result_rejections_count }}"
+        expected: "0"
+      - action: wait_volume_healthy
+        name: "promote-test"
+        timeout: 60s
       - action: print
-        msg: "promoted to {{ promote_result_server }} epoch={{ promote_result_epoch }}"
+        msg: "promoted to {{ promote_result_server }} epoch={{ promote_result_epoch }} reason={{ promote_result_reason }}"
 
   # Phase 5: Verify promoted state
   - name: verify_promoted

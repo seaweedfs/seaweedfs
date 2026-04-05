@@ -2,6 +2,9 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
+	"hash/fnv"
+	"strings"
 	"sync"
 	"time"
 
@@ -258,6 +261,7 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 
 	oldPrimary := entry.VolumeServer
 	oldPath := entry.Path
+	oldPrimaryISCSIAddr := entry.ISCSIAddr
 
 	// CP8-2: Use PromoteBestReplica (picks by health score, tie-break by WALHeadLSN).
 	newEpoch, err := ms.blockRegistry.PromoteBestReplica(volumeName)
@@ -266,13 +270,13 @@ func (ms *MasterServer) promoteReplica(volumeName string) {
 		return
 	}
 
-	ms.finalizePromotion(volumeName, oldPrimary, oldPath, newEpoch)
+	ms.finalizePromotion(volumeName, oldPrimary, oldPath, oldPrimaryISCSIAddr, newEpoch)
 }
 
 // finalizePromotion performs post-registry promotion steps:
 // enqueue assignment for new primary, record pending rebuild for old primary, bump metrics.
 // Called by both promoteReplica (auto) and blockVolumePromoteHandler (manual).
-func (ms *MasterServer) finalizePromotion(volumeName, oldPrimary, oldPath string, newEpoch uint64) {
+func (ms *MasterServer) finalizePromotion(volumeName, oldPrimary, oldPath, oldPrimaryISCSIAddr string, newEpoch uint64) {
 	// Re-read entry after promotion.
 	entry, ok := ms.blockRegistry.Lookup(volumeName)
 	if !ok {
@@ -303,16 +307,48 @@ func (ms *MasterServer) finalizePromotion(volumeName, oldPrimary, oldPath string
 	ms.blockAssignmentQueue.Enqueue(entry.VolumeServer, assignment)
 
 	// Record pending rebuild for when dead server reconnects.
+	replicaDataAddr, replicaCtrlAddr := deterministicReplicaAddrsForReplicaPath(oldPath, oldPrimary, oldPrimaryISCSIAddr)
 	ms.recordPendingRebuild(oldPrimary, pendingRebuild{
 		VolumeName: volumeName,
 		OldPath:    oldPath,
 		NewPrimary: entry.VolumeServer,
 		Epoch:      newEpoch,
+		ReplicaDataAddr: replicaDataAddr,
+		ReplicaCtrlAddr: replicaCtrlAddr,
 	})
 
 	ms.blockRegistry.PromotionsTotal.Add(1)
 	glog.V(0).Infof("failover: promoted replica for %q: new primary=%s epoch=%d (old primary=%s)",
 		volumeName, entry.VolumeServer, newEpoch, oldPrimary)
+}
+
+// deterministicReplicaAddrsForReplicaPath mirrors the volume-server-side
+// ReplicationPorts derivation so the master can preserve the reconnect catch-up
+// path even before the restarted replica emits a second heartbeat with explicit
+// receiver addresses.
+func deterministicReplicaAddrsForReplicaPath(path, serverAddr, iscsiAddr string) (dataAddr, ctrlAddr string) {
+	host := serverAddr
+	if idx := strings.LastIndex(host, ":"); idx >= 0 {
+		host = host[:idx]
+	}
+	if host == "" {
+		return "", ""
+	}
+
+	basePort := 3260
+	if idx := strings.LastIndex(iscsiAddr, ":"); idx >= 0 {
+		var p int
+		if _, err := fmt.Sscanf(iscsiAddr[idx+1:], "%d", &p); err == nil && p > 0 {
+			basePort = p
+		}
+	}
+
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(path))
+	offset := int(h.Sum32()%500) * 3
+	dataPort := basePort + 1000 + offset
+	ctrlPort := dataPort + 1
+	return fmt.Sprintf("%s:%d", host, dataPort), fmt.Sprintf("%s:%d", host, ctrlPort)
 }
 
 // recordPendingRebuild stores a pending rebuild for a dead server.

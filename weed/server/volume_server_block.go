@@ -559,7 +559,7 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 	if !ok {
 		return nil
 	}
-	result := bs.v2Core.ApplyEvent(ev)
+	result := bs.coreApplyAndLog(ev)
 	return bs.applyCoreCommandsWithAssignment(result.Commands, &a)
 }
 
@@ -567,8 +567,23 @@ func (bs *BlockService) applyCoreEvent(ev engine.Event) {
 	if bs == nil || bs.v2Core == nil {
 		return
 	}
-	result := bs.v2Core.ApplyEvent(ev)
+	result := bs.coreApplyAndLog(ev)
 	bs.applyCoreCommands(result.Commands)
+}
+
+// coreApplyAndLog applies an event to the V2 core and logs the transition.
+// All core event paths (assignment-driven and observation-driven) must use this
+// so the VS log contains a complete trace for post-run diagnosis.
+func (bs *BlockService) coreApplyAndLog(ev engine.Event) engine.ApplyResult {
+	result := bs.v2Core.ApplyEvent(ev)
+	glog.V(0).Infof("core [%s]: event=%T mode=%s pub=%v reason=%q readiness={applied=%v shipper_cfg=%v shipper_conn=%v recv=%v} boundary={durable=%d committed=%d} cmds=%d",
+		ev.VolumeID(), ev, result.Projection.Mode.Name,
+		result.Projection.Publication.Healthy, result.Projection.Publication.Reason,
+		result.Projection.Readiness.RoleApplied, result.Projection.Readiness.ShipperConfigured,
+		result.Projection.Readiness.ShipperConnected, result.Projection.Readiness.ReceiverReady,
+		result.Projection.Boundary.DurableLSN, result.Projection.Boundary.CommittedLSN,
+		len(result.Commands))
+	return result
 }
 
 func (bs *BlockService) applyCoreCommands(cmds []engine.Command) {
@@ -713,10 +728,11 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 		if len(a.ReplicaAddrs) > 0 {
 			ev.Replicas = make([]engine.ReplicaAssignment, 0, len(a.ReplicaAddrs))
 			for _, ra := range a.ReplicaAddrs {
-				if ra.ServerID == "" {
+				replicaServerID := legacyReplicaServerID(ra.ServerID, ra.DataAddr, ra.CtrlAddr)
+				if replicaServerID == "" {
 					continue
 				}
-				ev.Replicas = append(ev.Replicas, bridgeblockvol.ReplicaAssignmentForServer(a.Path, ra.ServerID, engine.Endpoint{
+				ev.Replicas = append(ev.Replicas, bridgeblockvol.ReplicaAssignmentForServer(a.Path, replicaServerID, engine.Endpoint{
 					DataAddr: ra.DataAddr,
 					CtrlAddr: ra.CtrlAddr,
 				}))
@@ -724,9 +740,9 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 			if len(ev.Replicas) > 0 {
 				ev.RecoveryTarget = engine.SessionCatchUp
 			}
-		} else if a.ReplicaServerID != "" && a.ReplicaDataAddr != "" {
+		} else if replicaServerID := legacyReplicaServerID(a.ReplicaServerID, a.ReplicaDataAddr, a.ReplicaCtrlAddr); replicaServerID != "" && a.ReplicaDataAddr != "" {
 			ev.Replicas = []engine.ReplicaAssignment{
-				bridgeblockvol.ReplicaAssignmentForServer(a.Path, a.ReplicaServerID, engine.Endpoint{
+				bridgeblockvol.ReplicaAssignmentForServer(a.Path, replicaServerID, engine.Endpoint{
 					DataAddr: a.ReplicaDataAddr,
 					CtrlAddr: a.ReplicaCtrlAddr,
 				}),
@@ -756,6 +772,20 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 	default:
 		return engine.AssignmentDelivered{}, false
 	}
+}
+
+// legacyReplicaServerID keeps the V2 core wired even when a legacy scalar
+// assignment path does not carry explicit ReplicaServerID. Prefer the stable
+// server identity when present; otherwise fall back to transport identity so
+// the primary still models replica membership and configures shippers.
+func legacyReplicaServerID(serverID, dataAddr, ctrlAddr string) string {
+	if serverID != "" {
+		return serverID
+	}
+	if dataAddr != "" {
+		return dataAddr
+	}
+	return ctrlAddr
 }
 
 func (bs *BlockService) isPrimaryShipperConnected(path string) bool {

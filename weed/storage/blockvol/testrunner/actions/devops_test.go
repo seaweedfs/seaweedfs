@@ -2,9 +2,11 @@ package actions
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/internal/blockapi"
 )
 
 func TestDevOpsActions_Registration(t *testing.T) {
@@ -174,5 +176,62 @@ func TestK8sActions_TierGating(t *testing.T) {
 	registry.EnableTiers([]string{TierK8s})
 	if _, err := registry.Get("kubectl_apply"); err != nil {
 		t.Errorf("k8s enabled: %v", err)
+	}
+}
+
+func TestVolumeHealthyReady_AllowsSyncAllOnlyAfterPublishHealthy(t *testing.T) {
+	tests := []struct {
+		name       string
+		info       *blockapi.VolumeInfo
+		wantReady  bool
+		wantReason string
+	}{
+		{
+			name: "sync_all_waits_for_publish_healthy",
+			info: &blockapi.VolumeInfo{
+				ReplicaFactor:    2,
+				DurabilityMode:   "sync_all",
+				VolumeMode:       "bootstrap_pending",
+				VolumeModeReason: "awaiting_shipper_connected",
+			},
+			wantReady:  false,
+			wantReason: "publish_healthy",
+		},
+		{
+			name: "sync_all_publish_healthy_passes",
+			info: &blockapi.VolumeInfo{
+				ReplicaFactor:  2,
+				DurabilityMode: "sync_all",
+				VolumeMode:     "publish_healthy",
+			},
+			wantReady: true,
+		},
+		{
+			name: "best_effort_not_blocked_by_publish_mode",
+			info: &blockapi.VolumeInfo{
+				ReplicaFactor:  2,
+				DurabilityMode: "best_effort",
+				VolumeMode:     "bootstrap_pending",
+			},
+			wantReady: true,
+		},
+		{
+			name: "nil_info_rejected",
+			info: nil,
+			wantReady: false,
+			wantReason: "missing",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotReady, gotReason := volumeHealthyReady(tt.info)
+			if gotReady != tt.wantReady {
+				t.Fatalf("ready=%v, want %v (reason=%q)", gotReady, tt.wantReady, gotReason)
+			}
+			if tt.wantReason != "" && !strings.Contains(gotReason, tt.wantReason) {
+				t.Fatalf("reason=%q, want substring %q", gotReason, tt.wantReason)
+			}
+		})
 	}
 }

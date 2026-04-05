@@ -143,6 +143,50 @@ func TestQueue_ConfirmFromHeartbeat_PrunesConfirmed(t *testing.T) {
 	}
 }
 
+func TestQueue_ConfirmFromHeartbeat_SameEpochRefreshWaitsForReplicaTransport(t *testing.T) {
+	q := NewBlockAssignmentQueue()
+	initial := mkAssign("/a.blk", 5, 1)
+	refresh := mkAssign("/a.blk", 5, 1)
+	refresh.ReplicaAddrs = []blockvol.ReplicaAddr{{
+		DataAddr: "10.0.0.2:14260",
+		CtrlAddr: "10.0.0.2:14261",
+		ServerID: "vs2",
+	}}
+	q.Enqueue("s1", initial)
+	q.Enqueue("s1", refresh)
+
+	// Old heartbeat confirms the epoch/role but does not yet report the refreshed
+	// replica transport, so only the original promote assignment is confirmed.
+	q.ConfirmFromHeartbeat("s1", []blockvol.BlockVolumeInfoMessage{{
+		Path:  "/a.blk",
+		Epoch: 5,
+	}})
+
+	got := q.Peek("s1")
+	if len(got) != 1 {
+		t.Fatalf("expected refresh assignment to remain pending, got %d: %+v", len(got), got)
+	}
+	if got[0].Path != "/a.blk" || got[0].Epoch != 5 {
+		t.Fatalf("wrong remaining assignment: %+v", got[0])
+	}
+	if len(got[0].ReplicaAddrs) != 1 {
+		t.Fatalf("remaining refresh assignment lost replica addrs: %+v", got[0])
+	}
+
+	// Once the promoted VS reports the refreshed replica transport in heartbeat,
+	// the same-epoch refresh is confirmed and removed.
+	q.ConfirmFromHeartbeat("s1", []blockvol.BlockVolumeInfoMessage{{
+		Path:            "/a.blk",
+		Epoch:           5,
+		ReplicaDataAddr: "10.0.0.2:14260",
+		ReplicaCtrlAddr: "10.0.0.2:14261",
+	}})
+
+	if q.Pending("s1") != 0 {
+		t.Fatalf("expected refresh assignment to be confirmed after transport appears, got %d pending", q.Pending("s1"))
+	}
+}
+
 func TestQueue_PeekPrunesStaleEpochs(t *testing.T) {
 	q := NewBlockAssignmentQueue()
 	q.Enqueue("s1", mkAssign("/a.blk", 1, 1)) // stale

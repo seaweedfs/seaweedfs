@@ -296,6 +296,42 @@ func TestBlockService_ApplyAssignments_UpdatesCoreProjectionPrimaryPath(t *testi
 	}
 }
 
+func TestBlockService_ApplyAssignments_PrimaryScalarReplicaAddrWithoutServerID(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-core-primary-scalar")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 {
+		t.Fatalf("errs len=%d", len(errs))
+	}
+	if errs[0] != nil {
+		t.Fatalf("apply assignment: %v", errs[0])
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection to be cached on narrow live path")
+	}
+	if !proj.Readiness.RoleApplied {
+		t.Fatalf("role_applied should be observed even on scalar fallback path, projection=%+v", proj)
+	}
+	if len(proj.ReplicaIDs) != 1 {
+		t.Fatalf("replica_ids=%v", proj.ReplicaIDs)
+	}
+	if proj.Mode.Name != engine.ModeBootstrapPending {
+		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+}
+
 func TestBlockService_ApplyAssignments_RepeatedUnchangedStaysInSyncWithCore(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	path := createTestVolDirect(t, bs, "vol-core-repeat")
@@ -962,6 +998,18 @@ func TestBlockService_DebugInfoForVolume_UsesCoreProjectionPrimaryPath(t *testin
 	if info.PublicationReason != proj.Publication.Reason {
 		t.Fatalf("publication_reason=%q projection_reason=%q", info.PublicationReason, proj.Publication.Reason)
 	}
+	if info.CoreProjection == nil {
+		t.Fatal("expected embedded core projection in debug info")
+	}
+	if info.CoreProjection.VolumeID != proj.VolumeID || info.CoreProjection.Mode.Name != proj.Mode.Name {
+		t.Fatalf("embedded core projection diverged: got=%+v want=%+v", info.CoreProjection, proj)
+	}
+	if !reflect.DeepEqual(info.ExecutedCoreCommands, bs.ExecutedCoreCommands(path)) {
+		t.Fatalf("executed_core_commands=%v want=%v", info.ExecutedCoreCommands, bs.ExecutedCoreCommands(path))
+	}
+	if len(info.ProjectionMismatches) != 0 {
+		t.Fatalf("projection_mismatches=%v", info.ProjectionMismatches)
+	}
 	if info.PublishHealthy {
 		t.Fatalf("debug surface must not overclaim healthy on primary path without durable boundary: %+v", info)
 	}
@@ -1011,6 +1059,18 @@ func TestBlockService_DebugInfoForVolume_UsesCoreProjectionReplicaPath(t *testin
 	}
 	if info.PublicationReason != proj.Publication.Reason {
 		t.Fatalf("publication_reason=%q projection_reason=%q", info.PublicationReason, proj.Publication.Reason)
+	}
+	if info.CoreProjection == nil {
+		t.Fatal("expected embedded core projection in debug info")
+	}
+	if info.CoreProjection.VolumeID != proj.VolumeID || info.CoreProjection.Role != proj.Role {
+		t.Fatalf("embedded core projection diverged: got=%+v want=%+v", info.CoreProjection, proj)
+	}
+	if !reflect.DeepEqual(info.ExecutedCoreCommands, bs.ExecutedCoreCommands(path)) {
+		t.Fatalf("executed_core_commands=%v want=%v", info.ExecutedCoreCommands, bs.ExecutedCoreCommands(path))
+	}
+	if len(info.ProjectionMismatches) != 0 {
+		t.Fatalf("projection_mismatches=%v", info.ProjectionMismatches)
 	}
 }
 

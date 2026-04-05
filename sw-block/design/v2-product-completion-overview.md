@@ -23,8 +23,9 @@ This document is the product-completion view.
 It complements:
 
 1. `v2-protocol-truths.md` for accepted semantics
-2. `v2-phase-development-plan.md` for the current phase ladder
-3. `../.private/phase/phase-16.md` for the active bounded runtime-closure contract
+2. `v2-capability-map.md` for the capability-expansion and test-closure view
+3. `v2-phase-development-plan.md` for the current phase ladder
+4. `../.private/phase/phase-16.md` for the active bounded runtime-closure contract
 
 ## Current Position
 

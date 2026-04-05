@@ -84,7 +84,9 @@ func (q *BlockAssignmentQueue) Confirm(server string, path string, epoch uint64)
 }
 
 // ConfirmFromHeartbeat batch-confirms assignments that match reported heartbeat info.
-// An assignment is confirmed if the VS reports (path, epoch) that matches.
+// Same-epoch refresh assignments that carry replica transport are only confirmed
+// once the heartbeat reflects that transport, so they are not dropped before
+// the promoted VS actually applies them.
 func (q *BlockAssignmentQueue) ConfirmFromHeartbeat(server string, infos []blockvol.BlockVolumeInfoMessage) {
 	if len(infos) == 0 {
 		return
@@ -97,24 +99,40 @@ func (q *BlockAssignmentQueue) ConfirmFromHeartbeat(server string, infos []block
 		return
 	}
 
-	// Build a set of reported (path, epoch) pairs.
-	type key struct {
-		path  string
-		epoch uint64
-	}
-	reported := make(map[key]bool, len(infos))
-	for _, info := range infos {
-		reported[key{info.Path, info.Epoch}] = true
-	}
-
 	// Keep only assignments not confirmed.
 	kept := pending[:0]
 	for _, a := range pending {
-		if !reported[key{a.Path, a.Epoch}] {
+		if !assignmentConfirmedByHeartbeat(a, infos) {
 			kept = append(kept, a)
 		}
 	}
 	q.queues[server] = kept
+}
+
+func assignmentConfirmedByHeartbeat(a blockvol.BlockVolumeAssignment, infos []blockvol.BlockVolumeInfoMessage) bool {
+	for _, info := range infos {
+		if info.Path != a.Path || info.Epoch != a.Epoch {
+			continue
+		}
+		expectedData, expectedCtrl, requiresReplicaTransport := assignmentReplicaTransport(a)
+		if !requiresReplicaTransport {
+			return true
+		}
+		if info.ReplicaDataAddr == expectedData && info.ReplicaCtrlAddr == expectedCtrl {
+			return true
+		}
+	}
+	return false
+}
+
+func assignmentReplicaTransport(a blockvol.BlockVolumeAssignment) (dataAddr, ctrlAddr string, ok bool) {
+	if a.ReplicaDataAddr != "" || a.ReplicaCtrlAddr != "" {
+		return a.ReplicaDataAddr, a.ReplicaCtrlAddr, true
+	}
+	if len(a.ReplicaAddrs) == 1 {
+		return a.ReplicaAddrs[0].DataAddr, a.ReplicaAddrs[0].CtrlAddr, true
+	}
+	return "", "", false
 }
 
 // Pending returns the number of pending assignments for the server.

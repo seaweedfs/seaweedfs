@@ -86,6 +86,7 @@ type BlockVolumeEntry struct {
 	HasHeartbeatVolumeMode   bool          // whether the current primary heartbeat carried explicit outward volume_mode truth
 	HeartbeatVolumeReason    string        // explicit primary heartbeat outward volume_mode_reason truth when present
 	HasHeartbeatVolumeReason bool          // whether the current primary heartbeat carried explicit outward volume_mode_reason truth
+	PendingPrimaryHeartbeat  bool          // promotion selected a new primary, but it has not yet heartbeated as primary on the new epoch
 
 	// CP13-9: Normalized volume mode for external surfaces.
 	// Computed by recomputeReplicaState from the current entry state.
@@ -204,6 +205,12 @@ func (e *BlockVolumeEntry) computeVolumeMode() string {
 				return "needs_rebuild"
 			}
 		}
+	}
+
+	// A registry-driven promotion has selected a winner, but outward publication
+	// should not read as complete until that winner heartbeats as the new primary.
+	if e.PendingPrimaryHeartbeat {
+		return "bootstrap_pending"
 	}
 
 	// Prefer explicit primary heartbeat publish_healthy truth when present.
@@ -679,6 +686,7 @@ func (r *BlockVolumeRegistry) applyPrimaryHeartbeatObservation(existing *BlockVo
 	existing.Role = info.Role
 	existing.Status = StatusActive
 	existing.LastLeaseGrant = time.Now()
+	existing.PendingPrimaryHeartbeat = false
 	existing.HealthScore = info.HealthScore
 	existing.TransportDegraded = info.ReplicaDegraded
 	applyExplicitPrimaryTruthFromHeartbeat(existing, info, true)
@@ -737,6 +745,8 @@ func (r *BlockVolumeRegistry) applyReplicaHeartbeatObservation(existing *BlockVo
 			oldCtrl := existing.Replicas[i].CtrlAddr
 			dataChanged := info.ReplicaDataAddr != "" && oldData != "" && oldData != info.ReplicaDataAddr
 			ctrlChanged := info.ReplicaCtrlAddr != "" && oldCtrl != "" && oldCtrl != info.ReplicaCtrlAddr
+			dataBecameKnown := oldData == "" && info.ReplicaDataAddr != ""
+			ctrlBecameKnown := oldCtrl == "" && info.ReplicaCtrlAddr != ""
 			if dataChanged || ctrlChanged {
 				result.AddrChanges = append(result.AddrChanges, ReplicaAddrChange{
 					VolumeName:    existingName,
@@ -753,6 +763,17 @@ func (r *BlockVolumeRegistry) applyReplicaHeartbeatObservation(existing *BlockVo
 			if info.ReplicaCtrlAddr != "" {
 				existing.Replicas[i].CtrlAddr = info.ReplicaCtrlAddr
 			}
+			if dataBecameKnown || ctrlBecameKnown {
+				existing.NeedsPrimaryRefresh = true
+			}
+		}
+		if len(existing.Replicas) > 0 && existing.Replicas[0].Server == server {
+			existing.ReplicaServer = existing.Replicas[0].Server
+			existing.ReplicaPath = existing.Replicas[0].Path
+			existing.ReplicaISCSIAddr = existing.Replicas[0].ISCSIAddr
+			existing.ReplicaIQN = existing.Replicas[0].IQN
+			existing.ReplicaDataAddr = existing.Replicas[0].DataAddr
+			existing.ReplicaCtrlAddr = existing.Replicas[0].CtrlAddr
 		}
 		break
 	}
@@ -1005,7 +1026,15 @@ func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *Block
 	for i := range existing.Replicas {
 		if existing.Replicas[i].Server == newServer {
 			// Update in place — force RoleReplica regardless of heartbeat claim.
+			oldData := existing.Replicas[i].DataAddr
+			oldCtrl := existing.Replicas[i].CtrlAddr
 			existing.Replicas[i].Path = info.Path
+			if info.ReplicaDataAddr != "" {
+				existing.Replicas[i].DataAddr = info.ReplicaDataAddr
+			}
+			if info.ReplicaCtrlAddr != "" {
+				existing.Replicas[i].CtrlAddr = info.ReplicaCtrlAddr
+			}
 			existing.Replicas[i].HealthScore = info.HealthScore
 			existing.Replicas[i].WALHeadLSN = info.WalHeadLsn
 			existing.Replicas[i].LastHeartbeat = time.Now()
@@ -1013,6 +1042,17 @@ func (r *BlockVolumeRegistry) upsertServerAsReplica(name string, existing *Block
 			existing.Replicas[i].NvmeAddr = info.NvmeAddr
 			existing.Replicas[i].NQN = info.Nqn
 			applyReplicaReadyFromHeartbeat(&existing.Replicas[i], info, true)
+			if len(existing.Replicas) > 0 && existing.Replicas[0].Server == newServer {
+				existing.ReplicaServer = existing.Replicas[0].Server
+				existing.ReplicaPath = existing.Replicas[0].Path
+				existing.ReplicaISCSIAddr = existing.Replicas[0].ISCSIAddr
+				existing.ReplicaIQN = existing.Replicas[0].IQN
+				existing.ReplicaDataAddr = existing.Replicas[0].DataAddr
+				existing.ReplicaCtrlAddr = existing.Replicas[0].CtrlAddr
+			}
+			if (oldData == "" && existing.Replicas[i].DataAddr != "") || (oldCtrl == "" && existing.Replicas[i].CtrlAddr != "") {
+				existing.NeedsPrimaryRefresh = true
+			}
 			return
 		}
 	}
@@ -1563,9 +1603,20 @@ func (r *BlockVolumeRegistry) applyPromotionLocked(entry *BlockVolumeEntry, name
 	entry.Epoch = newEpoch
 	entry.Role = blockvol.RoleToWire(blockvol.RolePrimary)
 	entry.LastLeaseGrant = time.Now()
+	entry.PendingPrimaryHeartbeat = true
+	entry.HealthScore = candidate.HealthScore
+	entry.WALHeadLSN = candidate.WALHeadLSN
 
 	// Clear stale rebuild/publication metadata from old primary (B-11 partial fix).
 	entry.RebuildListenAddr = ""
+	entry.NeedsRebuild = false
+	entry.HasNeedsRebuild = false
+	entry.PublishHealthy = false
+	entry.HasPublishHealthy = false
+	entry.HeartbeatVolumeMode = ""
+	entry.HasHeartbeatVolumeMode = false
+	entry.HeartbeatVolumeReason = ""
+	entry.HasHeartbeatVolumeReason = false
 
 	// Remove promoted from Replicas. Others stay.
 	entry.Replicas = append(entry.Replicas[:candidateIdx], entry.Replicas[candidateIdx+1:]...)
@@ -1590,6 +1641,7 @@ func (r *BlockVolumeRegistry) applyPromotionLocked(entry *BlockVolumeEntry, name
 
 	// Update byServer index: new primary server now hosts this volume.
 	r.addToServer(entry.VolumeServer, name)
+	entry.recomputeReplicaState()
 
 	return newEpoch
 }

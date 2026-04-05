@@ -1266,6 +1266,143 @@ func TestRegistry_PromoteBestReplica_ClearsRebuildAddr(t *testing.T) {
 	}
 }
 
+func TestRegistry_PromoteBestReplica_ClearsStalePrimaryTruthUntilNewPrimaryHeartbeat(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.MarkBlockCapable("replica2")
+	r.Register(&BlockVolumeEntry{
+		Name:                     "vol1",
+		VolumeServer:             "primary",
+		Path:                     "/data/vol1.blk",
+		Epoch:                    5,
+		ReplicaFactor:            3,
+		PublishHealthy:           true,
+		HasPublishHealthy:        true,
+		HeartbeatVolumeMode:      "publish_healthy",
+		HasHeartbeatVolumeMode:   true,
+		HeartbeatVolumeReason:    "",
+		HasHeartbeatVolumeReason: true,
+		WALHeadLSN:               120,
+		Replicas: []ReplicaInfo{
+			{
+				Server:           "replica1",
+				Path:             "/r1.blk",
+				HealthScore:      1.0,
+				WALHeadLSN:       110,
+				LastHeartbeat:    time.Now(),
+				Role:             blockvol.RoleToWire(blockvol.RoleReplica),
+				Ready:            true,
+				HasExplicitReady: true,
+			},
+			{
+				Server:           "replica2",
+				Path:             "/r2.blk",
+				HealthScore:      0.9,
+				WALHeadLSN:       109,
+				LastHeartbeat:    time.Now(),
+				Role:             blockvol.RoleToWire(blockvol.RoleReplica),
+				Ready:            true,
+				HasExplicitReady: true,
+			},
+		},
+	})
+
+	newEpoch, err := r.PromoteBestReplica("vol1")
+	if err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+	if newEpoch != 6 {
+		t.Fatalf("epoch=%d, want 6", newEpoch)
+	}
+
+	entry, _ := r.Lookup("vol1")
+	if entry.VolumeServer != "replica1" {
+		t.Fatalf("expected replica1 promoted, got %q", entry.VolumeServer)
+	}
+	if !entry.PendingPrimaryHeartbeat {
+		t.Fatalf("expected promotion to wait for new primary heartbeat, entry=%+v", entry)
+	}
+	if entry.HasPublishHealthy || entry.PublishHealthy {
+		t.Fatalf("stale publish_healthy truth should be cleared on promotion, entry=%+v", entry)
+	}
+	if entry.HasHeartbeatVolumeMode || entry.HeartbeatVolumeMode != "" {
+		t.Fatalf("stale heartbeat volume_mode should be cleared on promotion, entry=%+v", entry)
+	}
+	if entry.HasHeartbeatVolumeReason || entry.HeartbeatVolumeReason != "" {
+		t.Fatalf("stale heartbeat volume_mode_reason should be cleared on promotion, entry=%+v", entry)
+	}
+	if entry.WALHeadLSN != 110 {
+		t.Fatalf("expected promoted primary WALHeadLSN rebased to candidate, got %d", entry.WALHeadLSN)
+	}
+	if entry.VolumeMode != "bootstrap_pending" {
+		t.Fatalf("expected outward mode bootstrap_pending until new primary heartbeat, got %q", entry.VolumeMode)
+	}
+}
+
+func TestRegistry_PromoteBestReplica_NewPrimaryHeartbeatClearsPendingAndRestoresExplicitTruth(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("replica1")
+	r.MarkBlockCapable("replica2")
+	r.Register(&BlockVolumeEntry{
+		Name:          "vol1",
+		VolumeServer:  "primary",
+		Path:          "/data/vol1.blk",
+		Epoch:         5,
+		ReplicaFactor: 3,
+		Replicas: []ReplicaInfo{
+			{
+				Server:           "replica1",
+				Path:             "/r1.blk",
+				HealthScore:      1.0,
+				WALHeadLSN:       110,
+				LastHeartbeat:    time.Now(),
+				Role:             blockvol.RoleToWire(blockvol.RoleReplica),
+				Ready:            true,
+				HasExplicitReady: true,
+			},
+			{
+				Server:           "replica2",
+				Path:             "/r2.blk",
+				HealthScore:      0.9,
+				WALHeadLSN:       109,
+				LastHeartbeat:    time.Now(),
+				Role:             blockvol.RoleToWire(blockvol.RoleReplica),
+				Ready:            true,
+				HasExplicitReady: true,
+			},
+		},
+	})
+
+	if _, err := r.PromoteBestReplica("vol1"); err != nil {
+		t.Fatalf("PromoteBestReplica: %v", err)
+	}
+
+	publishHealthy := true
+	mode := "publish_healthy"
+	reason := ""
+	r.UpdateFullHeartbeat("replica1", []*master_pb.BlockVolumeInfoMessage{{
+		Path:             "/r1.blk",
+		Epoch:            6,
+		Role:             blockvol.RoleToWire(blockvol.RolePrimary),
+		WalHeadLsn:       110,
+		PublishHealthy:   &publishHealthy,
+		VolumeMode:       &mode,
+		VolumeModeReason: &reason,
+		VolumeSize:       1 << 30,
+	}}, "")
+
+	entry, _ := r.Lookup("vol1")
+	if entry.PendingPrimaryHeartbeat {
+		t.Fatalf("expected new primary heartbeat to clear pending state, entry=%+v", entry)
+	}
+	if !entry.HasPublishHealthy || !entry.PublishHealthy {
+		t.Fatalf("expected explicit publish_healthy truth from promoted primary heartbeat, entry=%+v", entry)
+	}
+	if entry.VolumeMode != "publish_healthy" {
+		t.Fatalf("expected outward mode publish_healthy after promoted primary heartbeat, got %q", entry.VolumeMode)
+	}
+}
+
 // --- LeaseGrants ---
 
 func TestRegistry_LeaseGrants_PrimaryOnly(t *testing.T) {

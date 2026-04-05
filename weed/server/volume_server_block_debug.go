@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
@@ -17,21 +18,24 @@ type ShipperDebugInfo struct {
 
 // BlockVolumeDebugInfo is the real-time block volume state.
 type BlockVolumeDebugInfo struct {
-	Path              string             `json:"path"`
-	Role              string             `json:"role"`
-	Mode              string             `json:"mode,omitempty"`
-	Epoch             uint64             `json:"epoch"`
-	HeadLSN           uint64             `json:"head_lsn"`
-	Degraded          bool               `json:"degraded"`
-	RoleApplied       bool               `json:"role_applied"`
-	ReceiverReady     bool               `json:"receiver_ready"`
-	ShipperConfigured bool               `json:"shipper_configured"`
-	ShipperConnected  bool               `json:"shipper_connected"`
-	ReplicaEligible   bool               `json:"replica_eligible"`
-	PublishHealthy    bool               `json:"publish_healthy"`
-	PublicationReason string             `json:"publication_reason,omitempty"`
-	Shippers          []ShipperDebugInfo `json:"shippers,omitempty"`
-	Timestamp         string             `json:"timestamp"`
+	Path                 string                        `json:"path"`
+	Role                 string                        `json:"role"`
+	Mode                 string                        `json:"mode,omitempty"`
+	Epoch                uint64                        `json:"epoch"`
+	HeadLSN              uint64                        `json:"head_lsn"`
+	Degraded             bool                          `json:"degraded"`
+	RoleApplied          bool                          `json:"role_applied"`
+	ReceiverReady        bool                          `json:"receiver_ready"`
+	ShipperConfigured    bool                          `json:"shipper_configured"`
+	ShipperConnected     bool                          `json:"shipper_connected"`
+	ReplicaEligible      bool                          `json:"replica_eligible"`
+	PublishHealthy       bool                          `json:"publish_healthy"`
+	PublicationReason    string                        `json:"publication_reason,omitempty"`
+	Shippers             []ShipperDebugInfo            `json:"shippers,omitempty"`
+	CoreProjection       *engine.PublicationProjection `json:"core_projection,omitempty"`
+	ExecutedCoreCommands []string                      `json:"executed_core_commands,omitempty"`
+	ProjectionMismatches []string                      `json:"projection_mismatches,omitempty"`
+	Timestamp            string                        `json:"timestamp"`
 }
 
 // DebugInfoForVolume returns the current debug surface for one volume. When the
@@ -64,6 +68,14 @@ func (bs *BlockService) DebugInfoForVolume(path string, vol *blockvol.BlockVol) 
 		info.ReplicaEligible = proj.Readiness.ReplicaReady
 		info.PublishHealthy = proj.Publication.Healthy
 		info.PublicationReason = proj.Publication.Reason
+		projCopy := proj
+		info.CoreProjection = &projCopy
+	}
+	if cmds := bs.ExecutedCoreCommands(path); len(cmds) > 0 {
+		info.ExecutedCoreCommands = cmds
+	}
+	if mismatches := bs.CoreProjectionMismatches(path); len(mismatches) > 0 {
+		info.ProjectionMismatches = mismatches
 	}
 	return info
 }

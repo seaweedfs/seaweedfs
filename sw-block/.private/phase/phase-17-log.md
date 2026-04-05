@@ -369,3 +369,119 @@ Open next seam:
 
 1. no additional ownership move is currently justified on the readiness-state
    path
+
+---
+
+### `17E` Logging Format Note
+
+Date: 2026-04-05
+Scope: bounded failover-completion evidence loop
+
+Use this section format for every `17E` run summary.
+
+Intent:
+
+1. keep `Phase 17` as the main semantic/product boundary home
+2. keep each run summary short in the phase log
+3. move full evidence details into a dedicated result document
+4. make the next action explicit after every run
+
+Required entry shape:
+
+### `17E` Run `#N` Summary
+
+Date:
+Scenario:
+Commit / binary:
+Environment:
+Classification:
+
+Allowed classification values:
+
+1. `pure V2 core evidence`
+2. `integrated runtime under V2 semantics`
+
+Result:
+
+1. `PASS`
+2. `FAIL`
+3. `PARTIAL`
+
+Key finding:
+
+1. one sentence only
+2. state the bounded semantic conclusion, not only the symptom
+
+What this run proves:
+
+1. keep to one or two bounded points
+
+What this run does NOT prove:
+
+1. keep exclusions explicit
+
+Result document:
+
+1. reference one dedicated result md
+
+Next action:
+
+1. exact next step
+2. owner
+
+Current recommended result-doc template:
+
+1. `learn/test/phase-17e-run-result-template.md`
+
+Recommended usage note:
+
+1. if a run only proves `primary changed + I/O resumed`, log it as `PARTIAL`
+2. if historical readback was not reached, say exactly where the run stopped
+3. if the finding is about live `weed/server` + `blockvol`, classify it as
+   `integrated runtime under V2 semantics`, not as pure `V2 core`
+
+---
+
+### `17E` Run `#1` Summary
+
+Date: 2026-04-05
+Scenario: `internal/recovery-baseline-failover`
+Commit / binary: exact binary identity not yet pinned from the returned run
+bundle
+Environment: Windows launcher with `sw-test-runner` SSH orchestration to Linux
+`m01` / `m02`
+Classification: `integrated runtime under V2 semantics`
+
+Result:
+
+1. `FAIL`
+
+Key finding:
+
+1. `wait_volume_healthy` is more truthful now, but `block_promote +
+   wait_volume_healthy` still does not guarantee immediate `sync_all`
+   barrier-ready writes on the promoted primary
+
+What this run proves:
+
+1. the runner now exposes the bootstrap/publish transition more honestly before
+   declaring healthy
+2. the current integrated runtime still has a post-promote stability gap that
+   can surface before the intended auto-failover evidence section begins
+
+What this run does NOT prove:
+
+1. it does not yet prove auto-failover historical-read continuity
+2. it does not yet prove that the upgraded failover scenario bundle is green on
+   the chosen path
+
+Result document:
+
+1. `learn/test/phase-17e-run-01-recovery-baseline-failover-2026-04-05.md`
+
+Next action:
+
+1. collect the remote bundle and node logs, then separate setup-promote
+   stability from the auto-failover baseline so the next run can test the real
+   failover continuity claim
+2. owner: shared

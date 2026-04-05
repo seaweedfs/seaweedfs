@@ -328,6 +328,14 @@ func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http
 		return
 	}
 
+	// Capture the old primary's iSCSI base port before promotion so the shared
+	// finalize path can derive deterministic receiver ports for the reconnecting
+	// old primary.
+	oldPrimaryISCSIAddr := ""
+	if entry, ok := ms.blockRegistry.Lookup(name); ok {
+		oldPrimaryISCSIAddr = entry.ISCSIAddr
+	}
+
 	// ManualPromote captures oldPrimary/oldPath under lock to avoid TOCTOU (BUG-T5-2).
 	newEpoch, oldPrimary, oldPath, pf, err := ms.blockRegistry.ManualPromote(name, req.TargetServer, req.Force)
 	if err != nil {
@@ -352,7 +360,7 @@ func (ms *MasterServer) blockVolumePromoteHandler(w http.ResponseWriter, r *http
 	}
 
 	// Post-promotion orchestration (same as auto path).
-	ms.finalizePromotion(name, oldPrimary, oldPath, newEpoch)
+	ms.finalizePromotion(name, oldPrimary, oldPath, oldPrimaryISCSIAddr, newEpoch)
 
 	if req.Reason != "" {
 		glog.V(0).Infof("manual promote %q: reason=%q", name, req.Reason)

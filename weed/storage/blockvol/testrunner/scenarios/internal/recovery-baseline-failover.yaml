@@ -4,8 +4,8 @@ timeout: 10m
 # Robust dimension: automatic failover after primary death.
 #
 # Flow:
-#   1. Create RF=2 sync_all volume, record primary
-#   2. Write data, disconnect iSCSI
+#   1. Create RF=2 sync_all volume on the natural primary
+#   2. Bootstrap first barrier with a real write, then record primary
 #   3. Kill primary VS (SIGKILL)
 #   4. Wait for lease expiry (30s TTL + margin)
 #   5. Verify: master auto-promotes replica to primary (no manual promote)
@@ -90,24 +90,6 @@ phases:
         replica_factor: "2"
         durability_mode: "sync_all"
 
-      - action: wait_volume_healthy
-        name: "{{ volume_name }}"
-        timeout: 60s
-
-      # Force primary to m02 so we have a known node to kill.
-      - action: block_promote
-        name: "{{ volume_name }}"
-        target_server: "10.0.0.3:18480"
-        force: "true"
-        reason: "failover-setup"
-
-      - action: sleep
-        duration: 5s
-
-      - action: wait_volume_healthy
-        name: "{{ volume_name }}"
-        timeout: 60s
-
   - name: record-before
     actions:
       - action: discover_primary
@@ -117,7 +99,9 @@ phases:
       - action: print
         msg: "Before: primary={{ before }} ({{ before_server }}), replica={{ before_replica_node }}"
 
-      # Write data so volume has real state.
+      # Bootstrap sync_all with a real write before requiring publish_healthy.
+      # Fresh RF=2 volumes do not become publish_healthy until the first
+      # barrier succeeds and establishes durable truth.
       - action: lookup_block_volume
         name: "{{ volume_name }}"
         save_as: vol
@@ -139,6 +123,30 @@ phases:
         time_based: "true"
         name: pre-write
 
+      - action: dd_write
+        node: m01
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        seek: "16"
+        save_as: pre_failover_md5
+
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device }}"
+        bs: 1M
+        count: "2"
+        skip: "16"
+        save_as: pre_failover_verify
+
+      - action: assert_equal
+        actual: "{{ pre_failover_verify }}"
+        expected: "{{ pre_failover_md5 }}"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
       - action: iscsi_cleanup
         node: m01
         ignore_error: true
@@ -146,8 +154,11 @@ phases:
   - name: kill-primary
     actions:
       - action: print
-        msg: "=== Killing primary on m02 ({{ before_server }}) ==="
+        msg: "=== Killing primary ({{ before_server }}) ==="
 
+      # The cluster starts m02 before m01, so the natural initial primary is
+      # the first server (m02 / vs1_pid). Keep the kill target fixed here and
+      # use discover_primary only as an evidence check.
       - action: exec
         node: m02
         cmd: "kill -9 {{ vs1_pid }}"
@@ -171,18 +182,16 @@ phases:
         timeout: 60s
         save_as: after
 
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
       - action: discover_primary
         name: "{{ volume_name }}"
         save_as: new_pri
 
       - action: print
         msg: "After auto-failover: primary={{ new_pri }} ({{ new_pri_server }})"
-
-      # Verify primary actually changed.
-      - action: assert_block_field
-        name: "{{ volume_name }}"
-        field: volume_server
-        expected: "10.0.0.1:18480"
 
       - action: print
         msg: "AUTO-FAILOVER VERIFIED: {{ before_server }} → {{ new_pri_server }}"
@@ -197,6 +206,18 @@ phases:
         port: "3295"
         iqn: "{{ vol_iqn }}"
         save_as: device2
+
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "2"
+        skip: "16"
+        save_as: post_failover_md5
+
+      - action: assert_equal
+        actual: "{{ post_failover_md5 }}"
+        expected: "{{ pre_failover_md5 }}"
 
       - action: fio_json
         node: m01

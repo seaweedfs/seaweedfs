@@ -122,8 +122,25 @@ phases:
         name: "promote-test"
         reason: "T7 integration test: manual failover"
         save_as: promote_result
+      - action: assert_equal
+        actual: "{{ promote_result_rejections_count }}"
+        expected: "0"
+      # Restart the killed VS so it re-registers as replica.
+      # Without this, RF=2 with 1 VS alive can never reach publish_healthy.
+      - action: start_weed_volume
+        node: target_node
+        port: "18192"
+        master: "localhost:9435"
+        dir: "/tmp/sw-b3m-vs1"
+        extra_args: "-block.dir=/tmp/sw-b3m-vs1/blocks -block.listen=:3279 -ip=192.168.1.184"
+        save_as: vs1_new_pid
+      - action: sleep
+        duration: 10s
+      - action: wait_volume_healthy
+        name: "promote-test"
+        timeout: 120s
       - action: print
-        msg: "promoted to {{ promote_result_server }} epoch={{ promote_result_epoch }}"
+        msg: "promoted to {{ promote_result_server }} epoch={{ promote_result_epoch }} reason={{ promote_result_reason }}"
 
   # Phase 5: Verify promoted state
   - name: verify_promoted
@@ -178,6 +195,10 @@ phases:
       - action: stop_weed
         node: target_node
         pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: target_node
+        pid: "{{ vs1_new_pid }}"
         ignore_error: true
       - action: stop_weed
         node: target_node

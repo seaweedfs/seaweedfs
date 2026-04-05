@@ -713,6 +713,11 @@ func blockPromote(ctx context.Context, actx *tr.ActionContext, act tr.Action) (m
 	if act.SaveAs != "" {
 		actx.Vars[act.SaveAs+"_server"] = resp.NewPrimary
 		actx.Vars[act.SaveAs+"_epoch"] = strconv.FormatUint(resp.Epoch, 10)
+		actx.Vars[act.SaveAs+"_reason"] = resp.Reason
+		actx.Vars[act.SaveAs+"_rejections_count"] = strconv.Itoa(len(resp.Rejections))
+		if raw, err := json.Marshal(resp.Rejections); err == nil {
+			actx.Vars[act.SaveAs+"_rejections_json"] = string(raw)
+		}
 	}
 	return map[string]string{"value": resp.NewPrimary}, nil
 }
@@ -798,11 +803,33 @@ func waitVolumeHealthy(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 				continue
 			}
 
+			if ready, reason := volumeHealthyReady(info); !ready {
+				actx.Log("  poll %d: %s", poll, reason)
+				continue
+			}
+
 			actx.Log("  volume %q healthy after %d polls (RF=%d, mode=%s, degraded=%v)",
-				name, poll, info.ReplicaFactor, info.DurabilityMode, info.ReplicaDegraded)
+				name, poll, info.ReplicaFactor, info.VolumeMode, info.ReplicaDegraded)
 			return map[string]string{"value": "healthy"}, nil
 		}
 	}
+}
+
+func volumeHealthyReady(info *blockapi.VolumeInfo) (bool, string) {
+	if info == nil {
+		return false, "volume info missing"
+	}
+	if info.ReplicaFactor > 1 && info.DurabilityMode == "sync_all" && info.VolumeMode != "publish_healthy" {
+		mode := info.VolumeMode
+		if mode == "" {
+			mode = "unknown"
+		}
+		if info.VolumeModeReason != "" {
+			return false, fmt.Sprintf("volume_mode=%s (%s), waiting for publish_healthy", mode, info.VolumeModeReason)
+		}
+		return false, fmt.Sprintf("volume_mode=%s, waiting for publish_healthy", mode)
+	}
+	return true, ""
 }
 
 // discoverPrimary looks up a block volume and maps the primary's IP to a topology node name.

@@ -1324,7 +1324,7 @@ func TestQA_T5_PromoteHandler_HTTP(t *testing.T) {
 	}
 
 	// Simulate finalizePromotion.
-	ms.finalizePromotion("vol1", oldPrimary, oldPath, newEpoch)
+	ms.finalizePromotion("vol1", oldPrimary, oldPath, "", newEpoch)
 
 	// Verify.
 	entry, _ := ms.blockRegistry.Lookup("vol1")
@@ -1401,7 +1401,7 @@ func TestQA_T5_PromotionsTotal_CountsBothAutoAndManual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("manual promote: %v", err)
 	}
-	ms.finalizePromotion("vol2", oldPrimary, oldPath, newEpoch)
+	ms.finalizePromotion("vol2", oldPrimary, oldPath, "", newEpoch)
 	afterManual := ms.blockRegistry.PromotionsTotal.Load()
 	if afterManual != afterAuto+1 {
 		t.Fatalf("manual promote should increment PromotionsTotal: afterAuto=%d afterManual=%d", afterAuto, afterManual)

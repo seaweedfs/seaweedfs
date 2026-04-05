@@ -114,16 +114,18 @@ phases:
 
   - name: wait-failover
     actions:
-      - action: sleep
-        duration: 40s
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "{{ primary_before }}"
+        timeout: 60s
+        save_as: primary_after
       - action: assert_block_field
         name: "{{ volume_name }}"
         field: epoch
         save_as: epoch_after
-      - action: assert_block_field
+      - action: wait_volume_healthy
         name: "{{ volume_name }}"
-        field: volume_server
-        save_as: primary_after
+        timeout: 60s
       - action: print
         msg: "After failover: primary={{ primary_after }} epoch={{ epoch_after }}"
       - action: assert_greater

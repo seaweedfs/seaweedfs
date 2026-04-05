@@ -5,9 +5,9 @@
 // replication dead. sync_all barrier passes vacuously with 0 shippers.
 //
 // This test suite verifies:
-// 1. After promote + old primary re-register, the new primary's assignment
-//    includes the re-registered replica's addresses
-// 2. sync_all with 0 shippers and RF>1 is detected as a gap
+//  1. After promote + old primary re-register, the new primary's assignment
+//     includes the re-registered replica's addresses
+//  2. sync_all with 0 shippers and RF>1 is detected as a gap
 package weed_server
 
 import (
@@ -127,12 +127,110 @@ func TestPromote_AssignmentHasReplicaAddrs(t *testing.T) {
 	}
 
 	if !foundReplicaAddrs {
-		t.Fatalf("BUG: after promote + re-register, new primary vs2 has NO assignment "+
-			"with replica addresses.\n"+
-			"This means the shipper will never be configured and replication is dead.\n"+
+		t.Fatalf("BUG: after promote + re-register, new primary vs2 has NO assignment " +
+			"with replica addresses.\n" +
+			"This means the shipper will never be configured and replication is dead.\n" +
 			"The master must send an updated assignment to vs2 after vs1 re-registers as replica.")
 	}
 	t.Log("post-promote assignment has replica addresses — shipper will be configured")
+}
+
+// TestPromote_ReRegisterAddressUpgradeTriggersPrimaryRefresh verifies the
+// rejoin path where the first stale heartbeat re-registers the old primary as a
+// replica before it has receiver addresses, and a later heartbeat upgrades that
+// replica entry with real addresses. The master must send a fresh Primary
+// assignment once the addresses become known.
+func TestPromote_ReRegisterAddressUpgradeTriggersPrimaryRefresh(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+
+	pathA := "/data/vs1/vol1.blk"
+	pathB := "/data/vs2/vol1.blk"
+
+	ms.blockRegistry.MarkBlockCapable("vs1")
+	ms.blockRegistry.MarkBlockCapable("vs2")
+
+	ms.blockRegistry.Register(&BlockVolumeEntry{
+		Name:           "vol1",
+		VolumeServer:   "vs1",
+		Path:           pathA,
+		ISCSIAddr:      "vs1:3260",
+		SizeBytes:      1 << 30,
+		Epoch:          1,
+		Role:           blockvol.RoleToWire(blockvol.RolePrimary),
+		Status:         StatusActive,
+		LeaseTTL:       30 * time.Second,
+		LastLeaseGrant: time.Now().Add(-1 * time.Minute),
+		ReplicaServer:  "vs2",
+		ReplicaPath:    pathB,
+		Replicas: []ReplicaInfo{{
+			Server:        "vs2",
+			Path:          pathB,
+			ISCSIAddr:     "vs2:3260",
+			HealthScore:   1.0,
+			Role:          blockvol.RoleToWire(blockvol.RoleReplica),
+			LastHeartbeat: time.Now(),
+			DataAddr:      "vs2:14260",
+			CtrlAddr:      "vs2:14261",
+		}},
+	})
+
+	ms.failoverBlockVolumes("vs1")
+
+	// Drain promotion assignment.
+	for _, a := range ms.blockAssignmentQueue.Peek("vs2") {
+		ms.blockAssignmentQueue.Confirm("vs2", a.Path, a.Epoch)
+	}
+
+	// First stale heartbeat from the old primary re-registers it as a replica,
+	// but before it has receiver addresses.
+	firstHB := ms.blockRegistry.UpdateFullHeartbeat("vs1", []*master_pb.BlockVolumeInfoMessage{{
+		Path:       pathA,
+		VolumeSize: 1 << 30,
+		Epoch:      1,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+	}}, "")
+	for _, refreshEntry := range firstHB.PrimaryRefreshNeeded {
+		ms.enqueuePrimaryRefresh(refreshEntry)
+	}
+	for _, a := range ms.blockAssignmentQueue.Peek("vs2") {
+		ms.blockAssignmentQueue.Confirm("vs2", a.Path, a.Epoch)
+	}
+
+	entry := lookupEntryT(t, ms.blockRegistry, "vol1")
+	if len(entry.Replicas) != 1 {
+		t.Fatalf("after stale re-register: replicas=%d, want 1", len(entry.Replicas))
+	}
+	if entry.Replicas[0].DataAddr != "" || entry.Replicas[0].CtrlAddr != "" {
+		t.Fatalf("stale re-register should not have addresses yet, entry=%+v", entry.Replicas[0])
+	}
+
+	// Second heartbeat arrives after the replica assignment was applied and the
+	// receiver endpoints are now known. This must trigger a fresh Primary refresh.
+	secondHB := ms.blockRegistry.UpdateFullHeartbeat("vs1", []*master_pb.BlockVolumeInfoMessage{{
+		Path:            pathA,
+		VolumeSize:      1 << 30,
+		Epoch:           entry.Epoch,
+		Role:            blockvol.RoleToWire(blockvol.RoleReplica),
+		ReplicaDataAddr: "vs1:14260",
+		ReplicaCtrlAddr: "vs1:14261",
+	}}, "")
+	for _, refreshEntry := range secondHB.PrimaryRefreshNeeded {
+		ms.enqueuePrimaryRefresh(refreshEntry)
+	}
+
+	updatedAssignments := ms.blockAssignmentQueue.Peek("vs2")
+	foundReplicaAddrs := false
+	for _, a := range updatedAssignments {
+		if a.Path != entry.Path {
+			continue
+		}
+		if a.ReplicaDataAddr != "" || len(a.ReplicaAddrs) > 0 {
+			foundReplicaAddrs = true
+		}
+	}
+	if !foundReplicaAddrs {
+		t.Fatalf("address-upgrade heartbeat did not trigger primary refresh with replica addresses")
+	}
 }
 
 // TestPromote_ReplicasEmptyAfterPromote documents the current behavior:

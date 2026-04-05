@@ -7,7 +7,14 @@ Historical planning/review documents were moved to `../docs/archive/design/` to 
 ## Read First
 
 - `v2-protocol-truths.md`
+- `v2-capability-map.md`
+- `v2-pure-runtime-rf1-bootstrap.md`
+- `v2-volumev2-single-node-mvp.md`
+- `v2-proof-and-retest-pyramid.md`
 - `v2-protocol-claim-and-evidence.md`
+- `v2-two-loop-protocol.md`
+- `v2-automata-ownership-map.md`
+- `v2-loop1-surface-draft.md`
 - `v2-product-completion-overview.md`
 - `v2-phase-development-plan.md`
 - `v2-semantic-methodology.zh.md`
