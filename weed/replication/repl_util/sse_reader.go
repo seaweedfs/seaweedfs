@@ -30,7 +30,7 @@ func MaybeDecryptReader(reader io.Reader, entry *filer_pb.Entry) (io.Reader, err
 		return nil, fmt.Errorf("SSE-C encrypted object cannot be decrypted during replication (customer key not available)")
 	}
 
-	return reader, nil
+	return nil, fmt.Errorf("unsupported SSE type: %v", sseType)
 }
 
 func detectSSEType(entry *filer_pb.Entry) filer_pb.SSEType {
