@@ -3,7 +3,6 @@ package S3Sink
 import (
 	"encoding/base64"
 	"fmt"
-	"io"
 	"net/url"
 	"strconv"
 	"strings"
@@ -166,18 +165,10 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	// Decrypt SSE-encrypted objects so the destination receives plaintext
 	decryptedReader, err := repl_util.MaybeDecryptReader(reader, entry)
 	if err != nil {
-		if closer, ok := reader.(io.Closer); ok {
-			closer.Close()
-		}
+		repl_util.CloseReader(reader)
 		return fmt.Errorf("decrypt SSE object: %w", err)
 	}
-	defer func() {
-		if closer, ok := decryptedReader.(io.Closer); ok {
-			closer.Close()
-		} else if closer, ok := reader.(io.Closer); ok {
-			closer.Close()
-		}
-	}()
+	defer repl_util.CloseMaybeDecryptedReader(reader, decryptedReader)
 
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {

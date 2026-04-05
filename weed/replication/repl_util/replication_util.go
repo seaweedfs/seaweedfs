@@ -28,18 +28,10 @@ func copyWithDecryption(filerSource *source.FilerSource, entry *filer_pb.Entry, 
 	reader := filer.NewFileReader(filerSource, entry)
 	decrypted, err := MaybeDecryptReader(reader, entry)
 	if err != nil {
-		if closer, ok := reader.(io.Closer); ok {
-			closer.Close()
-		}
+		CloseReader(reader)
 		return err
 	}
-	defer func() {
-		if closer, ok := decrypted.(io.Closer); ok {
-			closer.Close()
-		} else if closer, ok := reader.(io.Closer); ok {
-			closer.Close()
-		}
-	}()
+	defer CloseMaybeDecryptedReader(reader, decrypted)
 	buf := make([]byte, 128*1024)
 	for {
 		n, readErr := decrypted.Read(buf)
@@ -54,6 +46,23 @@ func copyWithDecryption(filerSource *source.FilerSource, entry *filer_pb.Entry, 
 		if readErr != nil {
 			return readErr
 		}
+	}
+}
+
+// CloseReader closes r if it implements io.Closer.
+func CloseReader(r io.Reader) {
+	if closer, ok := r.(io.Closer); ok {
+		closer.Close()
+	}
+}
+
+// CloseMaybeDecryptedReader closes the decrypted reader if it implements io.Closer,
+// otherwise falls back to closing the original reader.
+func CloseMaybeDecryptedReader(original, decrypted io.Reader) {
+	if closer, ok := decrypted.(io.Closer); ok {
+		closer.Close()
+	} else {
+		CloseReader(original)
 	}
 }
 
