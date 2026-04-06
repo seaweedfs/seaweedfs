@@ -23,6 +23,7 @@ type ECBalanceTask struct {
 	collection     string
 	grpcDialOption grpc.DialOption
 	progress       float64
+	reporting      bool // re-entry guard to prevent recursive reportProgress calls
 }
 
 // NewECBalanceTask creates a new EC balance task instance
@@ -211,6 +212,11 @@ func (t *ECBalanceTask) GetProgress() float64 {
 
 // reportProgress updates the stored progress and reports it via the callback
 func (t *ECBalanceTask) reportProgress(progress float64, stage string) {
+	if t.reporting {
+		return
+	}
+	t.reporting = true
+	defer func() { t.reporting = false }()
 	t.progress = progress
 	t.ReportProgressWithStage(progress, stage)
 	glog.Infof("EC balance volume %d: [%.2f] %s", t.volumeID, progress, stage)
