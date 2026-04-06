@@ -7,14 +7,18 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/kms"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
 func TestDetectSSEType(t *testing.T) {
@@ -249,32 +253,63 @@ func TestMaybeDecryptContent_MixedExtended_Error(t *testing.T) {
 }
 
 // --- SSE-S3 integration tests ---
-// These tests exercise the SSE-S3 AES-CTR encrypt/decrypt round-trip using
-// CreateSSES3EncryptedReader and CreateSSES3DecryptedReader directly. The
-// key manager envelope (SerializeSSES3Metadata) is not tested here because
-// it requires a filer connection to set the super key.
+// These tests exercise the full MaybeDecryptReader/MaybeDecryptContent path
+// for SSE-S3: detectSSEType → decryptSSES3 → DeserializeSSES3Metadata →
+// GetSSES3IV → CreateSSES3DecryptedReader. A test KEK is injected via
+// WEED_S3_SSE_KEK env var and a mock filer client.
+
+// testFilerClient is a minimal filer_pb.FilerClient mock that returns
+// ErrNotFound for all lookups (no KEK on filer — we use env var instead).
+type testFilerClient struct{}
+
+func (c *testFilerClient) WithFilerClient(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	return fmt.Errorf("%w", filer_pb.ErrNotFound)
+}
+func (c *testFilerClient) AdjustedUrl(loc *filer_pb.Location) string { return loc.Url }
+func (c *testFilerClient) GetDataCenter() string                     { return "" }
+
+// setupTestSSES3 initializes the global SSE-S3 key manager with a test KEK
+// via the WEED_S3_SSE_KEK env var and returns the KEK bytes + cleanup func.
+func setupTestSSES3(t *testing.T) (kek []byte, cleanup func()) {
+	t.Helper()
+
+	kek = make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, kek); err != nil {
+		t.Fatal(err)
+	}
+
+	// Force Viper to pick up the new env var
+	os.Setenv("WEED_S3_SSE_KEK", hex.EncodeToString(kek))
+
+	// Reset Viper cache so it reads the new env var
+	v := util.GetViper()
+	v.AutomaticEnv()
+
+	// Re-initialize the global key manager with the KEK from env
+	km := s3api.GetSSES3KeyManager()
+	if err := km.InitializeWithFiler(&testFilerClient{}); err != nil {
+		os.Unsetenv("WEED_S3_SSE_KEK")
+		t.Fatalf("InitializeWithFiler: %v", err)
+	}
+
+	return kek, func() {
+		os.Unsetenv("WEED_S3_SSE_KEK")
+		// Re-initialize with no KEK to clear the super key
+		km.InitializeWithFiler(&testFilerClient{})
+	}
+}
 
 func TestMaybeDecryptReader_SSES3(t *testing.T) {
+	_, cleanup := setupTestSSES3(t)
+	defer cleanup()
+
 	plaintext := []byte("SSE-S3 encrypted content for testing round-trip decryption")
 
-	// Generate a random DEK and IV
-	dek := make([]byte, 32)
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+	// Generate a DEK and encrypt
+	sseKey, err := s3api.GenerateSSES3Key()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		t.Fatal(err)
-	}
-
-	sseKey := &s3api.SSES3Key{
-		Key:       dek,
-		KeyID:     "test-key-id",
-		Algorithm: s3_constants.SSEAlgorithmAES256,
-		IV:        iv,
-	}
-
-	// Encrypt the plaintext using the same AES-CTR that SSE-S3 uses
 	encReader, encIV, err := s3api.CreateSSES3EncryptedReader(bytes.NewReader(plaintext), sseKey)
 	if err != nil {
 		t.Fatalf("encrypt: %v", err)
@@ -284,17 +319,28 @@ func TestMaybeDecryptReader_SSES3(t *testing.T) {
 		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	// Now build serialized metadata that bypasses the key manager envelope.
-	// Since we can't easily set up the global key manager's super key without
-	// a filer, we test at the CreateSSES3DecryptedReader level directly,
-	// which is what decryptSSES3 calls after deserializing.
-	decrypted, err := s3api.CreateSSES3DecryptedReader(bytes.NewReader(ciphertext), sseKey, encIV)
+	// Build serialized SSE-S3 metadata (uses the global key manager to
+	// envelope-encrypt the DEK with the test KEK)
+	sseKey.IV = encIV
+	metadataBytes, err := s3api.SerializeSSES3Metadata(sseKey)
 	if err != nil {
-		t.Fatalf("decrypt: %v", err)
+		t.Fatalf("serialize metadata: %v", err)
+	}
+
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.SeaweedFSSSES3Key: metadataBytes,
+		},
+	}
+
+	// Test full path: MaybeDecryptReader → decryptSSES3 → DeserializeSSES3Metadata → CreateSSES3DecryptedReader
+	decrypted, err := MaybeDecryptReader(bytes.NewReader(ciphertext), entry)
+	if err != nil {
+		t.Fatalf("MaybeDecryptReader: %v", err)
 	}
 	result, err := io.ReadAll(decrypted)
 	if err != nil {
-		t.Fatalf("read decrypted: %v", err)
+		t.Fatalf("ReadAll: %v", err)
 	}
 	if !bytes.Equal(result, plaintext) {
 		t.Errorf("SSE-S3 round-trip failed: got %q, want %q", result, plaintext)
@@ -302,40 +348,44 @@ func TestMaybeDecryptReader_SSES3(t *testing.T) {
 }
 
 func TestMaybeDecryptContent_SSES3(t *testing.T) {
+	_, cleanup := setupTestSSES3(t)
+	defer cleanup()
+
 	plaintext := []byte("inline SSE-S3 content")
 
-	dek := make([]byte, 32)
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, dek); err != nil {
+	// Generate a DEK and encrypt inline content
+	sseKey, err := s3api.GenerateSSES3Key()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		t.Fatal(err)
+	encReader, encIV, err := s3api.CreateSSES3EncryptedReader(bytes.NewReader(plaintext), sseKey)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	ciphertext, err := io.ReadAll(encReader)
+	if err != nil {
+		t.Fatalf("read ciphertext: %v", err)
 	}
 
-	// Encrypt with AES-CTR (same as SSE-S3)
-	block, err := aes.NewCipher(dek)
+	sseKey.IV = encIV
+	metadataBytes, err := s3api.SerializeSSES3Metadata(sseKey)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("serialize metadata: %v", err)
 	}
-	ciphertext := make([]byte, len(plaintext))
-	cipher.NewCTR(block, iv).XORKeyStream(ciphertext, plaintext)
 
-	// Verify decryption via CreateSSES3DecryptedReader
-	reader, err := s3api.CreateSSES3DecryptedReader(
-		bytes.NewReader(ciphertext),
-		&s3api.SSES3Key{Key: dek, KeyID: "test", Algorithm: s3_constants.SSEAlgorithmAES256},
-		iv,
-	)
-	if err != nil {
-		t.Fatalf("decrypt: %v", err)
+	entry := &filer_pb.Entry{
+		Extended: map[string][]byte{
+			s3_constants.SeaweedFSSSES3Key: metadataBytes,
+		},
 	}
-	result, err := io.ReadAll(reader)
+
+	// Test full path: MaybeDecryptContent → MaybeDecryptReader → decryptSSES3
+	result, err := MaybeDecryptContent(ciphertext, entry)
 	if err != nil {
-		t.Fatalf("read: %v", err)
+		t.Fatalf("MaybeDecryptContent: %v", err)
 	}
 	if !bytes.Equal(result, plaintext) {
-		t.Errorf("got %q, want %q", result, plaintext)
+		t.Errorf("SSE-S3 round-trip failed: got %q, want %q", result, plaintext)
 	}
 }
 
