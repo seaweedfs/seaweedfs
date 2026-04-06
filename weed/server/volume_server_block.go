@@ -588,7 +588,20 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 func (bs *BlockService) evaluateActivationGate(path string) {
 	proj, ok := bs.CoreProjection(path)
 	if !ok {
-		return // no V2 core, no gate enforcement
+		// Fail-closed: if V2 core is active but projection is missing for
+		// this path, gate locally. Mirrors T2's missing_engine_projection
+		// posture. Only skip enforcement if V2 core is entirely absent.
+		if bs.v2Core == nil {
+			return
+		}
+		bs.activationGateMu.Lock()
+		_, wasGated := bs.activationGated[path]
+		bs.activationGated[path] = "missing_engine_projection"
+		bs.activationGateMu.Unlock()
+		if !wasGated {
+			bs.gateServing(path, "missing_engine_projection")
+		}
+		return
 	}
 	bs.activationGateMu.Lock()
 	_, wasGated := bs.activationGated[path]
@@ -618,29 +631,37 @@ func (bs *BlockService) evaluateActivationGate(path string) {
 // sessions and preventing new connections. This is the actual serving
 // enforcement for T4 — not just bookkeeping.
 func (bs *BlockService) gateServing(path, reason string) {
-	glog.V(0).Infof("activation gated: %s — %s (disconnecting from iSCSI)", path, reason)
+	name := volumeNameFromPath(path)
+	glog.V(0).Infof("activation gated: %s — %s (disconnecting frontends)", path, reason)
 	if bs.targetServer != nil {
-		name := volumeNameFromPath(path)
 		iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
 		bs.targetServer.DisconnectVolume(iqn)
+	}
+	if bs.nvmeServer != nil {
+		nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
+		bs.nvmeServer.RemoveVolume(nqn)
 	}
 }
 
 // ungateServing re-registers a volume with the iSCSI target after the gate
 // clears (projection reaches a serving-allowed state).
 func (bs *BlockService) ungateServing(path string) {
-	glog.V(0).Infof("activation gate cleared: %s (re-registering with iSCSI)", path)
-	if bs.targetServer == nil {
-		return
-	}
+	glog.V(0).Infof("activation gate cleared: %s (re-registering frontends)", path)
 	vol, ok := bs.blockStore.GetBlockVolume(path)
 	if !ok || vol == nil {
 		return
 	}
 	name := volumeNameFromPath(path)
-	iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
-	adapter := blockvol.NewBlockVolAdapter(vol)
-	bs.targetServer.AddVolume(iqn, adapter)
+	if bs.targetServer != nil {
+		iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
+		adapter := blockvol.NewBlockVolAdapter(vol)
+		bs.targetServer.AddVolume(iqn, adapter)
+	}
+	if bs.nvmeServer != nil {
+		nqn := blockvol.BuildNQN(bs.nqnPrefix, name)
+		nvmeAdapter := nvme.NewNVMeAdapter(vol)
+		bs.nvmeServer.AddVolume(nqn, nvmeAdapter, nvmeAdapter.DeviceNGUID())
+	}
 }
 
 // volumeNameFromPath extracts the volume name from a .blk file path.
