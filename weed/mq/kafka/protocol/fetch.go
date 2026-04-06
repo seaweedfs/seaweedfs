@@ -55,7 +55,10 @@ func (h *Handler) handleFetch(ctx context.Context, correlationID uint32, apiVers
 			for _, partition := range topic.Partitions {
 				hwm, err := h.seaweedMQHandler.GetLatestOffset(topic.Name, partition.PartitionID)
 				if err != nil {
-					continue
+					// HWM lookup failed (e.g. partition deactivated between consumer
+					// sessions). Assume data may be available rather than blocking in
+					// the long-poll loop — the actual fetch will determine the truth.
+					return true
 				}
 				// Normalize fetch offset
 				effectiveOffset := partition.FetchOffset

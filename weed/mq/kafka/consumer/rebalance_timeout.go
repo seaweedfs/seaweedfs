@@ -116,11 +116,9 @@ func (rtm *RebalanceTimeoutManager) IsRebalanceStuck(group *ConsumerGroup, maxRe
 	return time.Since(group.LastActivity) > maxRebalanceDuration
 }
 
-// ForceCompleteRebalance forces completion of a stuck rebalance
+// ForceCompleteRebalance forces completion of a stuck rebalance.
+// IMPORTANT: The caller must already hold group.Mu.Lock().
 func (rtm *RebalanceTimeoutManager) ForceCompleteRebalance(group *ConsumerGroup) {
-	group.Mu.Lock()
-	defer group.Mu.Unlock()
-
 	// If stuck in preparing rebalance, move to completing
 	if group.State == GroupStatePreparingRebalance {
 		group.State = GroupStateCompletingRebalance

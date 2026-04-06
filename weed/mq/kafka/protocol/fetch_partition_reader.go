@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"math"
 	"sync"
 	"time"
 
@@ -136,13 +137,19 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	}()
 
 	// Get high water mark
+	hwmUnknown := false
 	hwm, hwmErr := pr.handler.seaweedMQHandler.GetLatestOffset(pr.topicName, pr.partitionID)
 	if hwmErr != nil {
-		glog.Errorf("[%s] CRITICAL: Failed to get HWM for %s[%d]: %v",
+		// HWM lookup can fail when the partition has been deactivated between consumer
+		// sessions. Proceed with the fetch anyway — the broker will return the correct
+		// data (or empty) based on its own state. Use math.MaxInt64 as sentinel so
+		// FetchMultipleBatches doesn't artificially cap recordsAvailable, and we
+		// don't hit the early-return below. The actual HWM will be derived from
+		// the fetch result (newOffset) after the read.
+		glog.Warningf("[%s] HWM lookup failed for %s[%d]: %v — will attempt fetch anyway",
 			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, hwmErr)
-		result.recordBatch = []byte{}
-		result.highWaterMark = 0
-		return
+		hwm = math.MaxInt64
+		hwmUnknown = true
 	}
 	result.highWaterMark = hwm
 
@@ -170,10 +177,20 @@ func (pr *partitionReader) serveFetchRequest(ctx context.Context, req *partition
 	// Fetch on-demand - no pre-fetching to avoid overwhelming the broker
 	recordBatch, newOffset := pr.readRecords(ctx, req.requestedOffset, req.maxBytes, req.maxWaitMs, hwm)
 
+	// When HWM was unknown, derive a reasonable value from the fetch result
+	// so the client sees a meaningful high water mark instead of MaxInt64.
+	if hwmUnknown {
+		if newOffset > req.requestedOffset {
+			result.highWaterMark = newOffset // best estimate: end of what we read
+		} else {
+			result.highWaterMark = req.requestedOffset // no data found
+		}
+	}
+
 	// Log what we got back - DETAILED for diagnostics
 	if len(recordBatch) == 0 {
 		glog.V(2).Infof("[%s] FETCH %s[%d]: readRecords returned EMPTY (offset=%d, hwm=%d)",
-			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, hwm)
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, req.requestedOffset, result.highWaterMark)
 		result.recordBatch = []byte{}
 	} else {
 		result.recordBatch = recordBatch
@@ -228,15 +245,40 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 		return fetchResult.RecordBatches, fetchResult.NextOffset
 	}
 
-	// Multi-batch failed - try single batch WITHOUT the timeout constraint
-	// to ensure we get at least some data even if multi-batch timed out
+	// Multi-batch failed - try single batch with a fresh timeout
 	glog.Warningf("[%s] Multi-batch fetch failed for %s[%d] offset=%d after %v, falling back to single-batch (err: %v)",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, fromOffset, fetchDuration, err)
 
-	// Use original context for fallback, NOT the timed-out fetchCtx
-	// This ensures the fallback has a fresh chance to fetch data
+	// Compute the remaining time budget for the fallback. If the parent
+	// context carries a deadline, honour it; otherwise derive remaining
+	// from maxWaitMs minus elapsed time. This prevents the fallback from
+	// restarting the full budget after the multi-batch fetch already
+	// consumed part of it.
+	var remaining time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining = time.Until(deadline)
+	} else {
+		remaining = time.Duration(maxWaitMs)*time.Millisecond - time.Since(fetchStartTime)
+	}
+	if remaining <= 0 {
+		// Budget exhausted — skip the fallback entirely.
+		glog.V(2).Infof("[%s] No remaining budget for fallback on %s[%d] (maxWait=%dms, elapsed=%v)",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, maxWaitMs, time.Since(fetchStartTime))
+		return []byte{}, fromOffset
+	}
+	// Clamp: floor of 2s so disk reads via gRPC have a realistic chance,
+	// but never exceed 10s to bound data-plane blocking.
+	fallbackTimeout := remaining
+	if fallbackTimeout < 2*time.Second {
+		fallbackTimeout = 2 * time.Second
+	}
+	if fallbackTimeout > 10*time.Second {
+		fallbackTimeout = 10 * time.Second
+	}
+	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, fallbackTimeout)
+	defer fallbackCancel()
 	fallbackStartTime := time.Now()
-	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(ctx, pr.topicName, pr.partitionID, fromOffset, 10)
+	smqRecords, err := pr.handler.seaweedMQHandler.GetStoredRecords(fallbackCtx, pr.topicName, pr.partitionID, fromOffset, 10)
 	fallbackDuration := time.Since(fallbackStartTime)
 
 	if fallbackDuration > 2*time.Second {
