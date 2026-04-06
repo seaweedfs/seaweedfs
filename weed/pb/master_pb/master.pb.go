@@ -3925,6 +3925,8 @@ type BlockVolumeInfoMessage struct {
 	VolumeMode             *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
 	VolumeModeReason       *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
 	EngineProjectionMode   *string                `protobuf:"bytes,24,opt,name=engine_projection_mode,json=engineProjectionMode,proto3,oneof" json:"engine_projection_mode,omitempty"`
+	ActivationGated        *bool                  `protobuf:"varint,25,opt,name=activation_gated,json=activationGated,proto3,oneof" json:"activation_gated,omitempty"`
+	ActivationGateReason   *string                `protobuf:"bytes,26,opt,name=activation_gate_reason,json=activationGateReason,proto3,oneof" json:"activation_gate_reason,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -4123,6 +4125,20 @@ func (x *BlockVolumeInfoMessage) GetVolumeModeReason() string {
 func (x *BlockVolumeInfoMessage) GetEngineProjectionMode() string {
 	if x != nil && x.EngineProjectionMode != nil {
 		return *x.EngineProjectionMode
+	}
+	return ""
+}
+
+func (x *BlockVolumeInfoMessage) GetActivationGated() bool {
+	if x != nil && x.ActivationGated != nil {
+		return *x.ActivationGated
+	}
+	return false
+}
+
+func (x *BlockVolumeInfoMessage) GetActivationGateReason() string {
+	if x != nil && x.ActivationGateReason != nil {
+		return *x.ActivationGateReason
 	}
 	return ""
 }

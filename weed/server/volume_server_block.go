@@ -581,24 +581,72 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 // and gates or clears activation accordingly. This is the local enforcement
 // point for T4 — the promoted node decides locally whether reconstruction
 // quality allows serving.
+//
+// Enforcement: when gated, the volume is disconnected from the iSCSI target
+// (active sessions terminated, volume removed). When ungated, the volume is
+// re-registered with the iSCSI target.
 func (bs *BlockService) evaluateActivationGate(path string) {
 	proj, ok := bs.CoreProjection(path)
 	if !ok {
 		return // no V2 core, no gate enforcement
 	}
 	bs.activationGateMu.Lock()
-	defer bs.activationGateMu.Unlock()
+	_, wasGated := bs.activationGated[path]
 	switch proj.Mode.Name {
 	case "publish_healthy", "replica_ready":
 		delete(bs.activationGated, path)
+		bs.activationGateMu.Unlock()
+		// Ungate: re-register with iSCSI target if transitioning from gated.
+		if wasGated {
+			bs.ungateServing(path)
+		}
 	default:
 		reason := fmt.Sprintf("engine_projection_mode=%s", proj.Mode.Name)
 		if proj.Mode.Reason != "" {
 			reason += ": " + proj.Mode.Reason
 		}
 		bs.activationGated[path] = reason
-		glog.V(0).Infof("activation gated: %s — %s", path, reason)
+		bs.activationGateMu.Unlock()
+		// Gate: disconnect from iSCSI target if not already gated.
+		if !wasGated {
+			bs.gateServing(path, reason)
+		}
 	}
+}
+
+// gateServing disconnects a volume from the iSCSI target, terminating active
+// sessions and preventing new connections. This is the actual serving
+// enforcement for T4 — not just bookkeeping.
+func (bs *BlockService) gateServing(path, reason string) {
+	glog.V(0).Infof("activation gated: %s — %s (disconnecting from iSCSI)", path, reason)
+	if bs.targetServer != nil {
+		name := volumeNameFromPath(path)
+		iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
+		bs.targetServer.DisconnectVolume(iqn)
+	}
+}
+
+// ungateServing re-registers a volume with the iSCSI target after the gate
+// clears (projection reaches a serving-allowed state).
+func (bs *BlockService) ungateServing(path string) {
+	glog.V(0).Infof("activation gate cleared: %s (re-registering with iSCSI)", path)
+	if bs.targetServer == nil {
+		return
+	}
+	vol, ok := bs.blockStore.GetBlockVolume(path)
+	if !ok || vol == nil {
+		return
+	}
+	name := volumeNameFromPath(path)
+	iqn := bs.iqnPrefix + blockvol.SanitizeIQN(name)
+	adapter := blockvol.NewBlockVolAdapter(vol)
+	bs.targetServer.AddVolume(iqn, adapter)
+}
+
+// volumeNameFromPath extracts the volume name from a .blk file path.
+func volumeNameFromPath(path string) string {
+	name := filepath.Base(path)
+	return strings.TrimSuffix(name, ".blk")
 }
 
 // IsActivationGated returns whether a volume is currently gated from serving
@@ -630,6 +678,11 @@ func (bs *BlockService) applyCoreEvent(ev engine.Event) {
 	}
 	result := bs.coreApplyAndLog(ev)
 	bs.applyCoreCommands(result.Commands)
+	// T4: re-evaluate activation gate after every core event. This is the
+	// runtime recovery path — when recovery/catch-up completes and the
+	// projection transitions to a serving-allowed state, the gate clears
+	// and the volume is re-registered with the iSCSI target.
+	bs.evaluateActivationGate(ev.VolumeID())
 }
 
 // coreApplyAndLog applies an event to the V2 core and logs the transition.
