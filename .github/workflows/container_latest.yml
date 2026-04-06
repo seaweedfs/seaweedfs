@@ -174,7 +174,7 @@ jobs:
           fi
 
       - name: Download pre-built Rust binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: rust-volume-*
           merge-multiple: true
@@ -286,7 +286,7 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.source_ref || github.ref }}
       - name: Download pre-built Rust binaries for local scan
         if: needs.setup.outputs.publish != 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: rust-volume-*
           merge-multiple: true
