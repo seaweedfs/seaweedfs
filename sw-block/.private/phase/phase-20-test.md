@@ -183,7 +183,7 @@ Legend:
 
 ## Phase 20 Current Coverage Reading
 
-Post-Tier-1 component test implementation. 49 total tests.
+Post-Tier-1 component test implementation. 48 total tests.
 
 | Capability | Unit | Component | Integration | Hardware / Runner | Current reading |
 |---|---|---|---|---|---|
@@ -921,6 +921,10 @@ This should currently be read as:
 `T6` and `T7` should not be treated as one single pass/fail run.
 
 They should execute in stages.
+
+Execution details, scenario packs, and observation checklists live in:
+
+1. `sw-block/.private/phase/phase-20-t6-runbook.md`
 
 ### Stage 0: Bootstrap Closure Prerequisite
 
