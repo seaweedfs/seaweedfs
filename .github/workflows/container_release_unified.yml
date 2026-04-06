@@ -168,7 +168,7 @@ jobs:
 
       - name: Download pre-built Rust binaries
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: rust-volume-*
           merge-multiple: true
