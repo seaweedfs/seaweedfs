@@ -315,3 +315,73 @@ func TestT5_APISurface_DistinctNaming(t *testing.T) {
 			info.EngineProjectionMode, info.ClusterReplicationMode)
 	}
 }
+
+// P20-T5-C3: FailoverDiagnosticSnapshot carries both mode fields.
+func TestT5_DiagnosticSnapshot_CarriesModes(t *testing.T) {
+	ms := testMasterServerForFailover(t)
+	registerVolumeWithReplica(t, ms, "vol-diag-modes", "vs1", "vs2", 1, 5*time.Second)
+
+	// Set EngineProjectionMode + ClusterReplicationMode on the entry.
+	if err := ms.blockRegistry.UpdateEntry("vol-diag-modes", func(e *BlockVolumeEntry) {
+		e.EngineProjectionMode = "publish_healthy"
+		e.HasEngineProjectionMode = true
+		e.ClusterReplicationMode = "catching_up"
+	}); err != nil {
+		t.Fatalf("update entry: %v", err)
+	}
+
+	// Trigger a pending rebuild so the volume appears in failover diagnostic.
+	ms.recordPendingRebuild("vs-dead", pendingRebuild{
+		VolumeName: "vol-diag-modes",
+		NewPrimary: "vs2",
+		Epoch:      2,
+	})
+
+	diag := ms.FailoverDiagnosticSnapshot()
+	var found *FailoverVolumeState
+	for i := range diag.Volumes {
+		if diag.Volumes[i].VolumeName == "vol-diag-modes" {
+			found = &diag.Volumes[i]
+			break
+		}
+	}
+	if found == nil {
+		t.Fatal("expected vol-diag-modes in failover diagnostic")
+	}
+	if found.ClusterReplicationMode != "catching_up" {
+		t.Fatalf("diagnostic ClusterReplicationMode=%q, want catching_up", found.ClusterReplicationMode)
+	}
+	if found.EngineProjectionMode != "publish_healthy" {
+		t.Fatalf("diagnostic EngineProjectionMode=%q, want publish_healthy", found.EngineProjectionMode)
+	}
+}
+
+// P20-T3-C5: V2PromotionMode diagnostic reflects all three states.
+func TestT3_V2PromotionMode_DiagnosticTriState(t *testing.T) {
+	// State 1: disabled
+	ms1 := testMasterServerForFailover(t)
+	ms1.blockV2Promotion = false
+	diag1 := ms1.FailoverDiagnosticSnapshot()
+	if diag1.V2PromotionMode != "disabled" {
+		t.Fatalf("state 1: V2PromotionMode=%q, want disabled", diag1.V2PromotionMode)
+	}
+
+	// State 2: placeholder_fail_closed
+	ms2 := testMasterServerForFailover(t)
+	ms2.blockV2Promotion = true
+	ms2.blockVSQueryEvidence = ms2.defaultBlockVSQueryEvidence
+	ms2.blockV2EvidenceTransport = false
+	diag2 := ms2.FailoverDiagnosticSnapshot()
+	if diag2.V2PromotionMode != "placeholder_fail_closed" {
+		t.Fatalf("state 2: V2PromotionMode=%q, want placeholder_fail_closed", diag2.V2PromotionMode)
+	}
+
+	// State 3: transport_ready
+	ms3 := testMasterServerForFailover(t)
+	ms3.blockV2Promotion = true
+	ms3.blockV2EvidenceTransport = true
+	diag3 := ms3.FailoverDiagnosticSnapshot()
+	if diag3.V2PromotionMode != "transport_ready" {
+		t.Fatalf("state 3: V2PromotionMode=%q, want transport_ready", diag3.V2PromotionMode)
+	}
+}

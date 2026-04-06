@@ -623,3 +623,59 @@ func TestP10P1_ProtoRoundTrip_MissingServerID_NotSynthesized(t *testing.T) {
 		t.Fatalf("decode: ReplicaServerID=%q, want empty (not synthesized)", decoded.ReplicaServerID)
 	}
 }
+
+// P20-T1-C3: EngineProjectionMode survives proto round-trip.
+func TestP20_ProtoRoundTrip_EngineProjectionMode(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:                 "/data/epm-roundtrip.blk",
+		Epoch:                5,
+		EngineProjectionMode: "publish_healthy",
+	}
+	pb := InfoMessageToProto(orig)
+	decoded := InfoMessageFromProto(pb)
+	if decoded.EngineProjectionMode != "publish_healthy" {
+		t.Fatalf("EngineProjectionMode=%q after round-trip, want %q", decoded.EngineProjectionMode, "publish_healthy")
+	}
+
+	// Empty field stays empty (nil presence).
+	origEmpty := BlockVolumeInfoMessage{Path: "/data/epm-empty.blk"}
+	pbEmpty := InfoMessageToProto(origEmpty)
+	if pbEmpty.EngineProjectionMode != nil {
+		t.Fatalf("nil EngineProjectionMode produced non-nil proto: %v", *pbEmpty.EngineProjectionMode)
+	}
+	decodedEmpty := InfoMessageFromProto(pbEmpty)
+	if decodedEmpty.EngineProjectionMode != "" {
+		t.Fatalf("empty EngineProjectionMode=%q after round-trip, want empty", decodedEmpty.EngineProjectionMode)
+	}
+}
+
+// P20-T4-C8: ActivationGated + ActivationGateReason survive proto round-trip.
+func TestP20_ProtoRoundTrip_ActivationGated(t *testing.T) {
+	orig := BlockVolumeInfoMessage{
+		Path:                 "/data/gate-roundtrip.blk",
+		ActivationGated:      true,
+		ActivationGateReason: "engine_projection_mode=degraded: barrier_timeout",
+	}
+	pb := InfoMessageToProto(orig)
+	decoded := InfoMessageFromProto(pb)
+	if !decoded.ActivationGated {
+		t.Fatal("ActivationGated=false after round-trip, want true")
+	}
+	if decoded.ActivationGateReason != orig.ActivationGateReason {
+		t.Fatalf("ActivationGateReason=%q, want %q", decoded.ActivationGateReason, orig.ActivationGateReason)
+	}
+
+	// Not-gated: false should round-trip without spurious reason.
+	origNotGated := BlockVolumeInfoMessage{
+		Path:            "/data/gate-notgated.blk",
+		ActivationGated: false,
+	}
+	pbNot := InfoMessageToProto(origNotGated)
+	decodedNot := InfoMessageFromProto(pbNot)
+	if decodedNot.ActivationGated {
+		t.Fatal("not-gated produced ActivationGated=true after round-trip")
+	}
+	if decodedNot.ActivationGateReason != "" {
+		t.Fatalf("not-gated produced reason=%q, want empty", decodedNot.ActivationGateReason)
+	}
+}
