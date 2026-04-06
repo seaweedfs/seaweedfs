@@ -272,7 +272,7 @@ func (rm *RecoveryManager) resolveRecoveryContext(replicaID string, assignments 
 
 	var bundle *v2bridge.RecoveryBundle
 	if err := rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
-		bundle = v2bridge.BuildRecoveryBundle(vol, rebuildAddr)
+		bundle = v2bridge.BuildRecoveryBundle(vol, rebuildAddr, replicaID)
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("cannot access volume %s: %w", volPath, err)
@@ -328,6 +328,9 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 			Plan:          plan,
 			CatchUpIO:     rctx.executor,
 		})
+		if rm.OnPendingExecution != nil {
+			rm.OnPendingExecution(rctx.volPath, rm.coord.Peek(replicaID))
+		}
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(replicaID) {
 			rm.coord.Cancel(replicaID, "start_catchup_not_emitted")
@@ -408,11 +411,34 @@ func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uin
 
 // RecoveryCallbacks implementation — host-side completion notifications.
 
+func (rm *RecoveryManager) OnRecoveryProgress(volumeID, replicaID string, achievedLSN uint64) {
+	if rm.bs == nil || rm.bs.v2Core == nil {
+		return
+	}
+	rm.bs.applyCoreEvent(engine.RecoveryProgressObserved{
+		ID:          volumeID,
+		ReplicaID:   replicaID,
+		AchievedLSN: achievedLSN,
+	})
+}
+
 func (rm *RecoveryManager) OnCatchUpCompleted(volumeID, replicaID string, achievedLSN uint64) {
 	glog.V(0).Infof("recovery: catch-up completed for %s via %s (achievedLSN=%d)", volumeID, replicaID, achievedLSN)
 	if rm.bs != nil && rm.bs.v2Core != nil {
 		rm.bs.applyCoreEvent(engine.CatchUpCompleted{ID: volumeID, ReplicaID: replicaID, AchievedLSN: achievedLSN})
 	}
+}
+
+func (rm *RecoveryManager) OnCatchUpFailed(volumeID, replicaID, reason string) {
+	if rm.bs == nil || rm.bs.v2Core == nil || reason == "" {
+		return
+	}
+	glog.V(0).Infof("recovery: catch-up failed for %s via %s (%s)", volumeID, replicaID, reason)
+	rm.bs.applyCoreEvent(engine.NeedsRebuildObserved{
+		ID:        volumeID,
+		ReplicaID: replicaID,
+		Reason:    reason,
+	})
 }
 
 func (rm *RecoveryManager) OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan) {

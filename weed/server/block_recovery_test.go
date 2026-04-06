@@ -220,6 +220,11 @@ func TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID == volPath && pending != nil && pending.Plan != nil {
+			pending.CatchUpIO = fakeCatchUpIO{transferredTo: pending.Plan.CatchUpTarget}
+		}
+	}
 	rm.runCatchUp(context.Background(), replicaID, nil)
 
 	proj, ok := bs.CoreProjection(volPath)

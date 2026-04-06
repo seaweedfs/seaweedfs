@@ -27,6 +27,7 @@ import (
 type Executor struct {
 	vol         *blockvol.BlockVol
 	rebuildAddr string // primary's rebuild server address
+	replicaID   string // bounded catch-up target on the primary path
 }
 
 // NewExecutor creates an executor.
@@ -35,8 +36,12 @@ type Executor struct {
 //     For rebuild:  the replica's vol (receives and installs data).
 //   - rebuildAddr: primary's rebuild server address.
 //     Required for rebuild operations. May be empty for catch-up only.
-func NewExecutor(vol *blockvol.BlockVol, rebuildAddr string) *Executor {
-	return &Executor{vol: vol, rebuildAddr: rebuildAddr}
+func NewExecutor(vol *blockvol.BlockVol, rebuildAddr string, replicaID ...string) *Executor {
+	exec := &Executor{vol: vol, rebuildAddr: rebuildAddr}
+	if len(replicaID) > 0 {
+		exec.replicaID = replicaID[0]
+	}
+	return exec
 }
 
 // StreamWALEntries reads WAL entries from startExclusive+1 to endInclusive.
@@ -57,6 +62,11 @@ func (e *Executor) StreamWALEntries(startExclusive, endInclusive uint64) (uint64
 	if e.rebuildAddr != "" {
 		// Rebuild tail-replay: TCP → apply to local vol.
 		return e.streamAndApplyRemote(startExclusive, endInclusive)
+	}
+	if e.replicaID != "" {
+		// Primary catch-up: replay retained WAL directly to the targeted replica
+		// before live-tail shipping is allowed for this session.
+		return e.vol.CatchUpReplicaTo(e.replicaID, endInclusive)
 	}
 
 	// Catch-up: local WAL scan.

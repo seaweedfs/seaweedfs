@@ -1,20 +1,86 @@
 # Phase 20 Product Acceptance Checklist
 
 Date: 2026-04-06
-Status: active
+Status: closure implemented; tester validation pending
 
 ## Reading
 
-`Phase 20` is now architecture-complete but not yet product-complete.
+`Phase 20` is now architecture-complete and the targeted host/runtime closure
+slice has been implemented for the bounded `RF=2 sync_all` acceptance path.
 
 The V2 engine already has a product-shaped semantic contract. The remaining
-acceptance gap is host/runtime closure:
+acceptance work in this document was host/runtime closure:
 
-1. `write` vs `flush` vs `durability` is not fully explicit
-2. fresh replica bootstrap is not fully protocol-aware
-3. host observations are not yet a complete protocol seam
-4. serving/publish boundaries are not yet derived from one closed contract
-5. some adapter and test paths still reflect pre-product assumptions
+1. make `write` vs `flush` vs `durability` explicit
+2. close fresh replica bootstrap as a bounded protocol session
+3. centralize host observations back into one protocol seam
+4. derive serving/publish boundaries from one closed contract
+5. remove pre-product assumptions from adapter and proof paths
+
+As of this update, the hard-blocker closure set below has been implemented and
+retested on the bounded acceptance subset named by this checklist. This does
+not automatically mean every broader `weed/server` or master/integration suite
+outside the bounded `Phase 20` acceptance scope has been reclassified yet.
+
+Interpret the current state in two layers:
+
+1. implementation closure: the bounded host/runtime contract is now wired and developer-validated on the named proof subset
+2. acceptance closure: still requires tester validation and regression-grade test case freezing before the strongest product claim should be made
+
+## Closure Update
+
+The following closure points are now in place on the bounded acceptance path:
+
+1. `WriteLBA()` is documented and used as write-back admission only
+2. `SyncCache()` is the explicit durability fence for `sync_all`
+3. fresh and late-attached replicas replay retained WAL backlog before live tail
+4. catch-up progress and classified failure now re-enter the core event seam
+5. `publish_healthy` and serving gates remain derived from core-owned protocol truth
+6. scalar identity paths now fail closed instead of synthesizing address-derived replica IDs
+
+Focused verification used for this closure pass:
+
+1. `go test ./weed/storage/blockvol/test/component -run "TestBootstrap_|TestPublishHealthy_|TestReplicaReadAfterShip"`
+2. `go test ./weed/server -run "TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery|TestBlockService_(CollectBlockVolumeHeartbeat_PrimaryPublishHealthyUsesCoreTruth|ReadinessSnapshot_PrefersCorePublicationHealth|ApplyAssignments_PrimaryScalarReplicaAddrWithoutServerID|ApplyAssignments_PrimaryRole_UsesCoreStartRecoveryTaskForCatchUp|NeedsRebuildObserved_InvalidatesOnlyTargetReplica)|TestP10P1_"`
+
+## Validation Status
+
+Use the following interpretation for every row in this checklist:
+
+1. `Implemented`: code path is present and intended semantics are enforced
+2. `Developer-validated`: targeted unit/component/server proof exists and passed in this closure pass
+3. `Tester-validated`: named acceptance case has been run by tester or runner and is frozen as regression evidence
+
+Current `Phase 20` reading:
+
+1. the hard-blocker closure set is `Implemented`
+2. the hard-blocker closure set is `Developer-validated` on the bounded acceptance subset
+3. the hard-blocker closure set is not yet globally `Tester-validated` just because the developer proof passed
+4. tester automation now has a metadata-driven suite entry for `Stage 0`, but the current hardware run still fails at the known first-write `dd_write` / `sync_all` barrier issue, so acceptance remains pending
+
+## Tester Validation Still Required
+
+Even for rows that are already closed by implementation, tester validation is
+still required before treating the closure as durable acceptance evidence.
+
+Minimum tester-side acceptance cases to freeze:
+
+1. `WriteLBA != durability`: plain write return must not be used as commit proof; `SyncCache()` / `sync_all` remains the durability fence
+2. fresh replica bounded catch-up: `freeze -> replay -> target reached -> live enable`
+3. late attach no-gap path: retained WAL backlog must be shipped before current live tail
+4. catch-up fail-closed classification: timeout and retention loss must stop catch-up and re-enter rebuild escalation semantics
+5. `publish_healthy` contract: transport contact alone must not produce healthy publication without recovery and durability closure
+6. stable identity fail-closed: missing `ServerID` must reject or degrade identity closure rather than deriving identity from address shape
+
+Tester evidence should be recorded as named cases in `phase-20-test.md`,
+testrunner scenarios, or equivalent acceptance artifacts so the closure is not
+only "currently believed" but regression-frozen.
+
+Current tester status:
+
+1. the metadata-driven suite pipeline now runs end-to-end: build, deploy, remote scenario execution, and evidence collection
+2. `P20-H0` currently starts and runs remotely, but the first hardware run still fails in `record-before` on the known first-write `dd_write` path
+3. this means tester infrastructure is now real and reusable, but `Stage 0` is not yet a passing acceptance artifact
 
 This checklist is intentionally concrete. Each row should answer:
 
@@ -28,45 +94,47 @@ This checklist is intentionally concrete. Each row should answer:
 
 | Area | Current state | Required for product | Blocks T6/T7? | Best test level |
 |---|---|---|---|---|
-| `WriteLBA()` external guarantee | implicit `WAL append + ShipAll`; returns before `groupCommit.Submit()` | must be explicitly documented and enforced as write-back admission, not durability completion | Yes | design doc + unit |
-| `SyncCache()` durability boundary | durability lives in `groupCommit.Submit()` and distributed sync path | must be the clear durability commit point for `sync_all` proofs and operator reasoning | Yes | component |
-| `sync_all` observable truth | barrier result is in distributed sync path, not plain write path | success must mean "all required replicas durable before return" at the chosen commit boundary | Yes | component |
-| `write` vs `replicated` vs `durable` contract | currently easy to misread; some tests still treat write as commit | must be a closed contract used consistently by code, docs, and tests | Yes | design doc + component |
+| `WriteLBA()` external guarantee | explicit write-back admission only; documented in `blockvol.go` | keep as non-durability API unless product contract changes | Yes | design doc + unit |
+| `SyncCache()` durability boundary | explicit durability fence through `groupCommit.Submit()` / distributed sync path | keep as the clear durability commit point for `sync_all` proofs and operator reasoning | Yes | component |
+| `sync_all` observable truth | success is tied to the barrier-backed durability boundary, not plain write return | keep success meaning "all required replicas durable before return" at the chosen commit boundary | Yes | component |
+| `write` vs `replicated` vs `durable` contract | closed on the bounded acceptance path; focused tests no longer treat write as commit | preserve one contract across code, docs, and tests | Yes | design doc + component |
 | FUA / fsync / flush fence meaning | fence exists in runtime pieces but product statement is incomplete | must say exactly which operation is the durability fence for clients | No | unit + docs |
-| Fresh replica entry condition | shipper can be created from assignment / `SetReplicaAddrs()` without a completed bounded session | fresh replica must enter an explicit session before consuming live tail | Yes | component |
-| Frozen catch-up target | engine has `FrozenTargetLSN`; host execution does not yet fully enforce it end-to-end | host must freeze target before replay and must not drift target during bounded catch-up | Yes | component |
-| Live-tail enable condition | phase gate now blocks live shipping during active session | must additionally prove gate clears only after bounded catch-up reaches its target | Yes | component |
-| LSN gap prevention on late attach | current live-tail gate prevents one illegal path, but backlog is not yet moved | must perform bounded WAL catch-up before allowing current live tail | Yes | component |
-| Timeout outcome during catch-up | no full retry vs rebuild classification closure yet | must distinguish replan/continue from escalate-to-build | Yes | component |
-| Retention loss during catch-up | some low-level signals exist, but end-to-end protocol handling is incomplete | if pinned WAL is lost, host must emit escalation and stop pretending catch-up is possible | Yes | component |
+| Fresh replica entry condition | fresh / late-attached replicas now enter bounded catch-up before live tail | keep every fresh replica on the explicit session path before live shipping | Yes | component |
+| Frozen catch-up target | host execution now uses the bounded target path and does not clear live gate early | keep target frozen through replay completion on the acceptance path | Yes | component |
+| Live-tail enable condition | live-tail gate remains blocked during active session and clears only after bounded catch-up completion | preserve "no live tail before target reached" semantics | Yes | component |
+| LSN gap prevention on late attach | retained backlog is now replayed before post-attach live entries are sent | preserve bounded WAL catch-up before allowing current live tail | Yes | component |
+| Timeout outcome during catch-up | classified failure now re-enters one observation seam; broader retry/replan policy remains bounded by current runtime behavior | preserve explicit classification and fail-closed escalation on the acceptance path | Yes | component |
+| Retention loss during catch-up | classified as fail-closed rebuild escalation on the acceptance path | preserve "retention lost => stop catch-up and escalate" behavior | Yes | component |
 | `ShipperConfiguredObserved` seam | implemented and usable | keep as protocol observation, not as semantic shortcut | No | component |
 | `ShipperConnectedObserved` seam | implemented but only part of the lifecycle | must remain distinct from barrier durability and target reached | Yes | component |
-| Replay progress observation | not yet centralized as a first-class protocol observation | must emit bounded progress facts for catch-up sessions | No | component |
-| Catch-up target reached observation | currently implied by completion path, not exposed as its own acceptance item | must emit and consume a clear "target reached / catch-up completed" observation | Yes | component |
-| Timeout classification observation | not centralized | must feed runtime timeout outcomes back through one protocol seam | Yes | component |
-| Retention-loss observation | partially local, partially implicit | must re-enter engine truth through one observation seam | No | component |
+| Replay progress observation | centralized as `RecoveryProgressObserved` on the bounded live path | keep emitting bounded progress facts for catch-up sessions | No | component |
+| Catch-up target reached observation | explicit completion event now closes bounded catch-up on the live path | keep a clear "target reached / catch-up completed" observation | Yes | component |
+| Timeout classification observation | routed back through the recovery/runtime seam on the bounded path | keep timeout outcomes in one protocol seam | Yes | component |
+| Retention-loss observation | routed back as fail-closed rebuild escalation on the bounded path | keep retention-loss outcomes re-entering engine truth through one seam | No | component |
 | Transport contact vs session completion | partly separated now | must stay strictly separate: contact is weaker than durable completion | Yes | component |
-| `publish_healthy` contract | currently depends on multiple readiness signals and durability hints | must be derived from one protocol contract: no active recovery, valid transport, required barrier durability, accepted mode | Yes | component |
-| Frontend serving gate | `T4` gate exists and enforces degraded / rebuild fail-closed | must be aligned with the same protocol contract that governs publish/readiness | Partially | integration |
-| `bootstrap_pending -> publish_healthy` closure | now closer, but not fully closed under bounded catch-up semantics | must require catch-up completion and durability proof, not just partial transport success | Yes | component |
+| `publish_healthy` contract | derived from core-owned readiness / recovery / durability truth on the bounded path | keep it derived from one protocol contract: no active recovery, valid transport, required barrier durability, accepted mode | Yes | component |
+| Frontend serving gate | `T4` gate remains fail-closed and is aligned to core projection mode on the bounded path | keep serving aligned with the same contract that governs publish/readiness | Partially | integration |
+| `bootstrap_pending -> publish_healthy` closure | bounded path now requires catch-up completion plus durability proof, not partial contact alone | preserve closure before publication and serving | Yes | component |
 | Replica durable boundary surface | `MinReplicaFlushedLSNAll()` exists | must be the same boundary used by publish and operator surfaces | No | unit + component |
 | Rebuild entry condition | engine emits rebuild commands | must stay session-owned, not become an ad-hoc host decision | No | component |
 | Rebuild completion host convergence | completion path exists | host must clear recovery state, align publication state, and re-enter normal protocol flow | No | integration |
 | WAL catch-up to snapshot/build escalation | not yet fully closed as one runtime contract | must have explicit, testable boundary for "continue WAL catch-up" vs "switch to build" | No | component |
 | Snapshot/build under same protocol model | still partly separate from WAL-first path | should converge into the same session-aware host execution pattern | No | design doc + component |
-| RF=2 single-replica stable identity | some server paths still drop `ServerID` | every adapter path must preserve stable replica identity | Yes | component |
-| ReplicaID derivation consistency | convention exists (`path/serverID`) | must stay identical across `v2bridge`, registry, dispatcher, host runtime, and shippers | No | unit |
-| Assignment conversion edge cases | mostly covered but not yet treated as product acceptance rows | must fail closed on empty/missing/mismatched identity data | No | unit |
-| Tests that treat `WriteLBA()` as commit | still present in some component tests | must be audited and corrected so `WriteLBA != durability` unless contract changes | Yes | test audit |
-| Tests that treat `SyncCache()` as barrier path | mostly correct today | preserve this as the main durability acceptance seam | No | component |
-| Bootstrap tests for bounded catch-up | current coverage proves gate behavior more than full closure | must prove `freeze -> replay -> target reached -> live enable` | Yes | component |
-| Contract matrix coverage | partial and distributed | need one acceptance-oriented test per boundary: write / ship / flush / barrier / catch-up / publish | Yes | component + integration |
+| RF=2 single-replica stable identity | scalar and slice paths now preserve explicit identity; missing identity fails closed | keep every adapter path on stable replica identity | Yes | component |
+| ReplicaID derivation consistency | bounded path uses the same `path/serverID` convention across bridge, registry, host runtime, and shippers | preserve one identity rule across the stack | No | unit |
+| Assignment conversion edge cases | missing / mismatched identity data now fails closed on the bounded path | keep empty/missing identity from silently degrading to address shape | No | unit |
+| Tests that treat `WriteLBA()` as commit | focused component tests updated away from that assumption | keep `WriteLBA != durability` unless contract changes | Yes | test audit |
+| Tests that treat `SyncCache()` as barrier path | focused component tests preserve `SyncCache()` as the acceptance durability seam | preserve this as the main durability acceptance seam | No | component |
+| Bootstrap tests for bounded catch-up | acceptance subset now proves `freeze -> replay -> target reached -> live enable` behavior | keep the bounded catch-up acceptance chain explicit | Yes | component |
+| Contract matrix coverage | first closure set exists for write / barrier / catch-up / publish / identity | continue broadening the matrix beyond the first acceptance subset as hardening | Yes | component + integration |
 
 ## Signoff Reading
 
 ### Must close before `T6/T7` signoff
 
-These rows are hard blockers:
+These rows were the hard blockers for the bounded `Phase 20` closure pass and
+are now closed on the named acceptance subset at the `Implemented +
+Developer-validated` level:
 
 1. `WriteLBA()` / `SyncCache()` / `sync_all` contract closure
 2. fresh replica bounded catch-up before live tail
@@ -77,8 +145,8 @@ These rows are hard blockers:
 
 ### Important but not immediate hard blockers
 
-These should be closed as product hardening, but do not necessarily block the
-first `T6/T7` signoff if the bounded scope is explicit:
+These remain useful product hardening follow-ups, but do not block the bounded
+`Phase 20` closure statement if the scope remains explicit:
 
 1. replay progress observation
 2. snapshot/build convergence into the same host-side protocol model
@@ -86,14 +154,18 @@ first `T6/T7` signoff if the bounded scope is explicit:
 
 ## Recommended Exit Rule
 
-`Phase 20` should not be called product-complete until every row marked
+For the bounded acceptance path, `Phase 20` may be treated as implementation-closed once every row marked
 `Blocks T6/T7? = Yes` is either:
 
 1. closed by implementation plus the named proof tier, or
 2. explicitly scoped out with a written non-product claim
 
+For stronger product acceptance wording, those same rows should additionally
+have tester-owned acceptance cases or runner scenarios frozen as regression
+evidence.
+
 ## One-Sentence Gap
 
-The engine already knows the protocol. `Phase 20` becomes product-complete only
-when the host/runtime and data plane obey that protocol all the way through
-`write`, `flush`, `catch-up`, `barrier`, `publish`, and `serve`.
+The engine already knew the protocol; this closure pass brings the bounded
+host/runtime and data plane into that protocol through `write`, `SyncCache`,
+`catch-up`, `barrier`, `publish`, and `serve`.

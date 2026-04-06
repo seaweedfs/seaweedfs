@@ -475,6 +475,18 @@ func (v *BlockVol) appendWithRetry(entry *WALEntry) (uint64, error) {
 
 // WriteLBA writes data at the given logical block address.
 // Data length must be a multiple of BlockSize.
+//
+// Product contract: WriteLBA is write-back admission only. It appends to the
+// local WAL and may start shipping the entry to replicas, but it returns
+// BEFORE the group commit sync and BEFORE any replica barrier confirms
+// durability. A successful return means the data is in the local WAL write
+// buffer, NOT that it is durable on any node.
+//
+// For durability, callers must use SyncCache() (or the equivalent flush/FUA
+// path). For sync_all mode, SyncCache triggers the distributed barrier and
+// only returns success when all required replicas have durably confirmed.
+//
+// Do not treat WriteLBA returning nil as a durability or replication guarantee.
 func (v *BlockVol) WriteLBA(lba uint64, data []byte) error {
 	if err := v.beginOp(); err != nil {
 		return err
@@ -792,6 +804,15 @@ func (v *BlockVol) DirtyMapLen() int {
 
 // SyncCache ensures all previously written WAL entries are durable on disk.
 // It submits a sync request to the group committer, which batches fsyncs.
+//
+// Product contract: SyncCache is the durability fence. For sync_all mode,
+// the group committer's sync function calls MakeDistributedSync, which runs
+// BarrierAll on all configured replicas in parallel with local fsync. Success
+// means: local WAL is fsync'd AND all required replicas have durably
+// confirmed via barrier response.
+//
+// This is the correct point for durability assertions and product guarantees.
+// WriteLBA is write-back admission; SyncCache is the commit boundary.
 func (v *BlockVol) SyncCache() error {
 	if err := v.beginOp(); err != nil {
 		return err
@@ -871,8 +892,24 @@ func (v *BlockVol) GetShipperGroup() *ShipperGroup {
 	return v.shipperGroup
 }
 
+// CatchUpReplicaTo replays retained WAL to the named replica up to targetLSN.
+// It is the host/runtime entry point for bounded catch-up before live tail.
+func (v *BlockVol) CatchUpReplicaTo(replicaID string, targetLSN uint64) (uint64, error) {
+	if v == nil || v.shipperGroup == nil {
+		return 0, fmt.Errorf("blockvol: shipper group not configured")
+	}
+	if replicaID == "" {
+		return 0, fmt.Errorf("blockvol: replica identity required for bounded catch-up")
+	}
+	return v.shipperGroup.CatchUpReplica(replicaID, targetLSN)
+}
+
 // SetReplicaAddr configures a single replica endpoint. Backward-compatible wrapper
 // around SetReplicaAddrs for RF=2 callers.
+//
+// WARNING: This drops ServerID because it only takes dataAddr/ctrlAddr.
+// Production code should use SetReplicaAddrs with explicit ReplicaAddr.ServerID
+// to preserve stable replica identity for protocol-aware gating.
 func (v *BlockVol) SetReplicaAddr(dataAddr, ctrlAddr string) {
 	v.SetReplicaAddrs([]ReplicaAddr{{DataAddr: dataAddr, CtrlAddr: ctrlAddr}})
 }

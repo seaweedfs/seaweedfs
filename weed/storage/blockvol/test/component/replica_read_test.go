@@ -12,16 +12,19 @@ import (
 // TestReplicaReadAfterShip verifies that data shipped from primary to replica
 // via WAL replication is readable on the replica via ReadLBA.
 //
-// This reproduces the CP13-8 bug: replica iSCSI reads zeros despite
-// replicated data in WAL (sync_all barrier confirmed).
+// Product contract: WriteLBA is write-back admission only. The durability
+// fence is SyncCache(). For sync_all, SyncCache triggers BarrierAll, and
+// success means all replicas have durably confirmed. We use SyncCache as the
+// commit boundary before asserting replica state.
 func TestReplicaReadAfterShip(t *testing.T) {
 	primaryPath := t.TempDir() + "/primary.blk"
 	replicaPath := t.TempDir() + "/replica.blk"
 
 	primary, err := blockvol.CreateBlockVol(primaryPath, blockvol.CreateOptions{
-		VolumeSize: 4 * 1024 * 1024,
-		BlockSize:  4096,
-		WALSize:    1 * 1024 * 1024,
+		VolumeSize:     4 * 1024 * 1024,
+		BlockSize:      4096,
+		WALSize:        1 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -29,9 +32,10 @@ func TestReplicaReadAfterShip(t *testing.T) {
 	defer primary.Close()
 
 	replica, err := blockvol.CreateBlockVol(replicaPath, blockvol.CreateOptions{
-		VolumeSize: 4 * 1024 * 1024,
-		BlockSize:  4096,
-		WALSize:    1 * 1024 * 1024,
+		VolumeSize:     4 * 1024 * 1024,
+		BlockSize:      4096,
+		WALSize:        1 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -55,29 +59,99 @@ func TestReplicaReadAfterShip(t *testing.T) {
 	// Wire shipper from primary to replica.
 	primary.SetReplicaAddr(recvAddr.DataAddr, recvAddr.CtrlAddr)
 
-	// Write on primary — should ship to replica.
+	// WriteLBA — write-back admission only (not durability).
 	writeData := bytes.Repeat([]byte{0xAB}, 4096)
 	if err := primary.WriteLBA(0, writeData); err != nil {
 		t.Fatalf("primary WriteLBA(0): %v", err)
 	}
 
-	// Give shipping + apply time.
-	time.Sleep(2 * time.Second)
+	// SyncCache — durability fence. For sync_all this triggers BarrierAll.
+	// Success means replica has durably confirmed.
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("primary SyncCache (durability fence): %v", err)
+	}
 
-	// Read from REPLICA.
+	// After SyncCache success on sync_all, replica MUST have the data.
 	replicaData, err := replica.ReadLBA(0, 4096)
 	if err != nil {
 		t.Fatalf("replica ReadLBA(0): %v", err)
 	}
 
 	if replicaData[0] == 0x00 {
-		t.Fatalf("BUG REPRODUCED: replica ReadLBA returns zeros (first byte=0x%02x, want 0xAB)"+
-			"\nData is in replica WAL but ReadLBA returns zeros", replicaData[0])
+		t.Fatalf("BUG: replica ReadLBA returns zeros after SyncCache success (first byte=0x%02x, want 0xAB)"+
+			"\nsync_all barrier claimed durability but replica has no data", replicaData[0])
 	}
 	if !bytes.Equal(replicaData, writeData) {
 		t.Fatalf("replica data mismatch: first byte=0x%02x, want 0xAB", replicaData[0])
 	}
-	t.Log("replica ReadLBA after ship: OK (data matches primary)")
+	t.Log("replica ReadLBA after SyncCache: OK (data matches primary)")
+}
+
+// TestWriteLBAWithoutSyncCache_DoesNotAdvanceDurableBoundary locks the client
+// contract used by Phase 20 A1: WriteLBA is write-back admission only.
+// Even if transport contact or replica-visible data appears quickly, the
+// durable boundary must remain unset until SyncCache() runs.
+func TestWriteLBAWithoutSyncCache_DoesNotAdvanceDurableBoundary(t *testing.T) {
+	primaryPath := t.TempDir() + "/primary.blk"
+	replicaPath := t.TempDir() + "/replica.blk"
+
+	primary, err := blockvol.CreateBlockVol(primaryPath, blockvol.CreateOptions{
+		VolumeSize:     4 * 1024 * 1024,
+		BlockSize:      4096,
+		WALSize:        1 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer primary.Close()
+
+	replica, err := blockvol.CreateBlockVol(replicaPath, blockvol.CreateOptions{
+		VolumeSize:     4 * 1024 * 1024,
+		BlockSize:      4096,
+		WALSize:        1 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer replica.Close()
+
+	primary.HandleAssignment(1, blockvol.RolePrimary, 30*time.Second)
+	replica.HandleAssignment(1, blockvol.RoleReplica, 30*time.Second)
+
+	if err := replica.StartReplicaReceiver(":0", ":0"); err != nil {
+		t.Fatal(err)
+	}
+	recvAddr := replica.ReplicaReceiverAddr()
+	if recvAddr == nil {
+		t.Fatal("replica receiver not started")
+	}
+	primary.SetReplicaAddr(recvAddr.DataAddr, recvAddr.CtrlAddr)
+
+	writeData := bytes.Repeat([]byte{0xCD}, 4096)
+	if err := primary.WriteLBA(0, writeData); err != nil {
+		t.Fatalf("primary WriteLBA(0): %v", err)
+	}
+
+	time.Sleep(500 * time.Millisecond)
+
+	states := primary.ReplicaShipperStates()
+	if len(states) == 0 {
+		t.Fatal("expected shipper state after WriteLBA")
+	}
+	if states[0].FlushedLSN != 0 {
+		t.Fatalf("FlushedLSN=%d after WriteLBA without SyncCache; durable boundary advanced early", states[0].FlushedLSN)
+	}
+
+	replicaData, err := replica.ReadLBA(0, 4096)
+	if err != nil {
+		t.Fatalf("replica ReadLBA(0): %v", err)
+	}
+	if bytes.Equal(replicaData, writeData) {
+		t.Log("replica can already observe the write, but this is still not durability proof without SyncCache")
+	}
+	t.Logf("shipperStates=%+v", states)
 }
 
 // TestReplicaReadDirectApply bypasses the shipper entirely and manually

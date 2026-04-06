@@ -23,11 +23,11 @@ type RecoveryBundle struct {
 //
 // The host shell (block_recovery.go) calls this inside WithVolume and
 // does not need to know about Reader/Pinner/StorageAdapter construction.
-func BuildRecoveryBundle(vol *blockvol.BlockVol, rebuildAddr string) *RecoveryBundle {
+func BuildRecoveryBundle(vol *blockvol.BlockVol, rebuildAddr, replicaID string) *RecoveryBundle {
 	reader := NewReader(vol)
 	pinner := NewPinner(vol)
 	sa := bridge.NewStorageAdapter(reader, pinner)
-	executor := NewExecutor(vol, rebuildAddr)
+	executor := NewExecutor(vol, rebuildAddr, replicaID)
 	return &RecoveryBundle{
 		Storage:  sa,
 		Executor: executor,

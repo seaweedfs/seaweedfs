@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -32,6 +34,8 @@ func RegisterDevOpsActions(r *tr.Registry) {
 	r.RegisterFunc("block_promote", tr.TierDevOps, blockPromote)
 	r.RegisterFunc("wait_volume_healthy", tr.TierDevOps, waitVolumeHealthy)
 	r.RegisterFunc("discover_primary", tr.TierDevOps, discoverPrimary)
+	r.RegisterFunc("collect_glog", tr.TierDevOps, collectGlog)
+	r.RegisterFunc("collect_debug", tr.TierDevOps, collectDebug)
 }
 
 // setISCSIVars sets the save_as_iscsi_host/port/addr/iqn vars from a VolumeInfo.
@@ -950,4 +954,92 @@ func clusterStatus(ctx context.Context, actx *tr.ActionContext, act tr.Action) (
 	}
 
 	return map[string]string{"value": strings.TrimSpace(stdout)}, nil
+}
+
+// collectGlog downloads glog files from a remote node matching a pattern.
+//
+//	- action: collect_glog
+//	  node: m01
+//	  pattern: "/tmp/weed.*.INFO.*"
+//	  save_dir: glog/m01
+//	  max_files: "5"
+func collectGlog(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	node, err := GetNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+	pattern := act.Params["pattern"]
+	if pattern == "" {
+		pattern = "/tmp/weed.*.INFO.*"
+	}
+	saveDir := act.Params["save_dir"]
+	if saveDir == "" {
+		saveDir = "glog/" + act.Node
+	}
+	maxFiles := act.Params["max_files"]
+	if maxFiles == "" {
+		maxFiles = "5"
+	}
+
+	// List matching files (newest first).
+	stdout, _, _, err := node.Run(ctx, fmt.Sprintf("ls -t %s 2>/dev/null | head -%s", pattern, maxFiles))
+	if err != nil {
+		return nil, fmt.Errorf("collect_glog: list: %v", err)
+	}
+
+	files := strings.Split(strings.TrimSpace(stdout), "\n")
+	collected := 0
+	for _, f := range files {
+		f = strings.TrimSpace(f)
+		if f == "" {
+			continue
+		}
+		localPath := saveDir + "/" + act.Node + "-" + filepath.Base(f)
+		if err := node.Download(f, localPath); err != nil {
+			actx.Log("  collect_glog: download %s: %v (skipping)", f, err)
+			continue
+		}
+		collected++
+	}
+
+	actx.Log("  collected %d glog files from %s", collected, act.Node)
+	return map[string]string{"count": strconv.Itoa(collected)}, nil
+}
+
+// collectDebug fetches a debug endpoint via curl from a node and saves to file.
+//
+//	- action: collect_debug
+//	  node: m02
+//	  url: "http://10.0.0.3:18480/debug/block/shipper"
+//	  save_as: debug-m02-18480.json
+func collectDebug(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
+	node, err := GetNode(actx, act.Node)
+	if err != nil {
+		return nil, err
+	}
+	url := act.Params["url"]
+	if url == "" {
+		return nil, fmt.Errorf("collect_debug: url param required")
+	}
+	savePath := act.Params["save_as"]
+	if savePath == "" {
+		savePath = "debug.json"
+	}
+
+	stdout, _, code, err := node.Run(ctx, fmt.Sprintf("curl -s --max-time 3 %s 2>/dev/null", url))
+	if err != nil || code != 0 || len(stdout) < 2 {
+		actx.Log("  collect_debug: %s unavailable (code=%d)", url, code)
+		return nil, nil // not an error — endpoint may be down after test
+	}
+
+	// Write to local file.
+	if err := os.MkdirAll(filepath.Dir(savePath), 0755); err != nil {
+		return nil, fmt.Errorf("collect_debug: mkdir %s: %v", filepath.Dir(savePath), err)
+	}
+	if err := os.WriteFile(savePath, []byte(stdout), 0644); err != nil {
+		return nil, fmt.Errorf("collect_debug: write %s: %v", savePath, err)
+	}
+
+	actx.Log("  captured debug from %s → %s", url, savePath)
+	return map[string]string{"path": savePath}, nil
 }

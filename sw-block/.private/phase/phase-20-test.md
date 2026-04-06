@@ -1,7 +1,7 @@
 # Phase 20 Test Matrix
 
 Date: 2026-04-06
-Status: active
+Status: active; acceptance overlay added
 
 ## Purpose
 
@@ -242,6 +242,41 @@ regression.
 - P20-T3-H1: failover under disturbance
 - P20-T4-H1: v2-failover-gate scenario
 - P20-T5-H1: real disturbance cluster judgment
+
+## Acceptance Retest Overlay
+
+The `T1-T5` roster above proves capability closure by layer.
+
+`Phase 20` also needs a tester-owned acceptance overlay so the final product
+claim is not based only on developer proof. These acceptance cases do not
+replace the `T1-T5` roster; they freeze the product contract across the most
+important cross-layer seams.
+
+Current tester automation status:
+
+1. metadata-driven suite execution now exists for `Stage 0` and `Stage 1`
+2. one command can now build, deploy, run remote scenarios, and collect evidence
+3. the current `Stage 0` pipeline is operational but not yet passing end-to-end because the run still fails at the known first-write `dd_write` / `sync_all` barrier issue during `record-before`
+
+Naming convention for this overlay:
+
+1. `P20-Ax` = cross-task acceptance case
+2. each `P20-Ax` should map back to one or more `T1-T5` roster items
+3. each `P20-Ax` should eventually exist as tester evidence in `phase-20-test.md`, runner scenarios, or equivalent acceptance artifacts
+
+### Acceptance Cases Required For Stronger Signoff
+
+| ID | Acceptance contract | Developer proof anchor | Tester validation target | Current status |
+|---|---|---|---|---|
+| `P20-A1` | `WriteLBA != durability`; only `SyncCache()` / `sync_all` closes durability | `TestWriteLBAWithoutSyncCache_DoesNotAdvanceDurableBoundary`, `TestPublishHealthy_Gate4_RequiresDurability`, updated `blockvol` contract | rerun on real RF=2 path and prove plain write return is not treated as commit | developer-validated; tester pending |
+| `P20-A2` | fresh replica bounded catch-up closes as `freeze -> replay -> target reached -> live enable` | `TestBootstrap_SyncCacheIsDurabilityFence_NotWriteLBA`, `TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery` | rerun via `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage0.yaml` with tester timeline capture and freeze the exact acceptance chain | developer-validated; tester pending |
+| `P20-A3` | late attach cannot create LSN gap; retained WAL backlog ships before live tail | `TestBootstrap_LateAttach_ReplaysBacklogBeforeLiveTail`, `TestReplicaReadAfterShip` | rerun with delayed replica attach on real or runner path | developer-validated; tester pending |
+| `P20-A4` | catch-up timeout / retention loss fail closed into rebuild semantics | `TestExecuteCatchUpPlan_CallsbackOnFailureWithClassification`, `TestClassifyCatchUpFailure`, `NeedsRebuildObserved` closure subset | rerun with disturbance or retention-loss injection and freeze observed escalation | developer-validated; tester pending |
+| `P20-A5` | `publish_healthy` requires recovery + durability + accepted mode, not mere transport contact | `TestPublishHealthy_WholeChain_FreshRF2`, `TestBlockService_PrimaryPublicationChain_BootstrapPendingUntilBarrierThenHealthy`, server readiness/publication tests | rerun via `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage0.yaml` and prove contact alone never produces healthy publication | developer-validated; tester pending |
+| `P20-A6` | stable identity is explicit and fail closed; missing `ServerID` must not degrade to address-derived identity | `TestP10P1_*`, `TestBlockService_ApplyAssignments_PrimaryMultiReplicaMissingServerID_SkipsOnlyInvalidReplica`, assignment conversion tests | rerun with malformed or missing identity inputs and freeze fail-closed behavior | developer-validated; tester pending |
+
+These six cases are the minimum acceptance overlay for the current bounded
+`Phase 20` closure statement.
 
 ## Detailed Test Roster
 
@@ -942,6 +977,18 @@ Required hardware proof:
 Recommended scenario:
 
 1. `P20-H0 RF2BootstrapReplicaMembershipCloses`
+2. `P20-A2` fresh replica bounded catch-up closure
+3. `P20-A5` `publish_healthy` requires real recovery closure
+
+Preferred suite entry:
+
+1. `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage0.yaml`
+
+Current reading:
+
+1. the suite pipeline itself now works end-to-end: build, deploy, remote execution, and evidence collection
+2. the current `Stage 0` run is still red at `record-before` because of the known first-write `dd_write` / `sync_all` barrier issue
+3. therefore `Stage 0` automation is real, but `Stage 0` acceptance is not yet closed
 
 ### Stage 1: V1 Failover + V2 Observation
 
@@ -966,6 +1013,12 @@ Must prove:
 Recommended scenario:
 
 1. `P20-T6-H1 V1Failover_V2Observation_SurfacesCoherent`
+2. `P20-A5` `publish_healthy` is not granted by transport contact alone
+
+Preferred suite entry:
+
+1. `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage1.yaml`
+2. `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage1.yaml --skip-deploy`
 
 ### Stage 2: V2 Failover + V2 Decision
 
@@ -991,6 +1044,8 @@ Recommended scenarios:
 1. `P20-T6-H2 V2Failover_DurabilityFirstSelection`
 2. `P20-T6-H3 V2Failover_FailClosedOnAmbiguousEvidence`
 3. `P20-T6-H4 V2Failover_GatedPromotionRequiresRecovery`
+4. `P20-A4` catch-up timeout / retention-loss escalates fail closed
+5. `P20-A6` missing identity fails closed under real assignment flow
 
 ### Stage 3: Side-By-Side Behavioral Comparison
 
@@ -1008,6 +1063,8 @@ Must prove:
 Recommended scenario:
 
 1. `P20-T7-H1 Compare_V1AndV2_OnSameFailoverMatrix`
+2. `P20-A1` compare write return vs durability boundary under the same workload
+3. `P20-A3` compare late-attach backlog replay behavior under disturbance
 
 ## Minimum Phase 20 Closure Gate
 
@@ -1018,9 +1075,10 @@ Before `Phase 20` can be called fully closed, require:
 3. at least one integrated scenario proves `T1 + T5` surfaces remain distinct
 4. real hardware shows the promoted primary can learn replica membership and
    reach non-empty `ReplicaIDs` on the healthy RF=2 path
-5. `sw-test-runner run --all` passes on m01/M02 with V2 promotion active
+5. the required metadata-driven suite packs pass on m01/M02 with the intended promotion mode for that stage
 6. one explicit `v2-failover-gate` or equivalent hardware scenario passes
 7. full `weed/server`, `weed/storage/blockvol`, `weed/storage/blockvol/csi`, and `sw-block/engine/replication` regression suites are green
+8. acceptance overlay cases `P20-A1..A6` are frozen as tester evidence or runner scenarios for the bounded path
 
 ## Full Roster Status (post-Tier-1)
 
@@ -1118,11 +1176,22 @@ Tier 1 component tests are implemented and passing. The current reading is:
    roster items are missing. These require real `MasterServer` + `BlockService`
    interaction but can still run in `go test`.
 
-3. **Hardware layer is deferred to T6/T7.** Requires m01/M02 and follows
-   the staged validation plan above.
+3. **Tester acceptance overlay is now explicit.** `P20-A1..A6` define the
+   minimum tester-owned cases needed to freeze the bounded product contract.
+
+4. **Hardware automation is now real, but Stage 0 is still red.** The
+   metadata-driven suite can build, deploy, execute, and collect evidence, but
+   the current Stage 0 run still fails at the known first-write `dd_write` /
+   `sync_all` barrier issue.
+
+5. **Hardware layer still follows the staged T6/T7 plan.** The automation
+   path is better, but passing acceptance evidence still has to be earned on
+   real hosts.
 
 Recommended next actions:
 
 1. implement Tier 2 integration tests (3 tests, one new `qa_*` file)
-2. proceed to Stage 0 of T6/T7 (bootstrap closure prerequisite on hardware)
-3. run full regression on hardware with V2 observation active
+2. close the known first-write `dd_write` / `sync_all` barrier blocker in `Stage 0`
+3. rerun `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage0.yaml`
+4. freeze tester-owned acceptance overlay `P20-A1..A6`
+5. run the stage suites on hardware with V2 observation active

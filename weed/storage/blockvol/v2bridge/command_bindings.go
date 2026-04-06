@@ -83,11 +83,9 @@ func (b *CommandBindings) ConfigurePrimaryReplication(path string, addrs []block
 	}
 	rebuildAddr := rebuildListenAddr(path, b.listenAddr)
 	if err := b.volumes.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		if len(addrs) == 1 {
-			vol.SetReplicaAddr(addrs[0].DataAddr, addrs[0].CtrlAddr)
-		} else {
-			vol.SetReplicaAddrs(addrs)
-		}
+		// Always use SetReplicaAddrs to preserve ServerID on all paths,
+		// including RF=2 single-replica. SetReplicaAddr drops ServerID.
+		vol.SetReplicaAddrs(addrs)
 		if err := vol.StartRebuildServer(rebuildAddr); err != nil {
 			glog.Warningf("v2bridge: start rebuild server %s on %s: %v", path, rebuildAddr, err)
 		}

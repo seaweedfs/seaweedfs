@@ -35,6 +35,19 @@ func (sg *ShipperGroup) ShipAll(entry *WALEntry) {
 	}
 }
 
+// CatchUpReplica replays retained WAL to one configured replica up to targetLSN.
+// It uses the shipper's stable ReplicaID to select the bounded recovery target.
+func (sg *ShipperGroup) CatchUpReplica(replicaID string, targetLSN uint64) (uint64, error) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		if s.replicaID == replicaID {
+			return s.CatchUpTo(targetLSN)
+		}
+	}
+	return 0, ErrReplicaDegraded
+}
+
 // BarrierAll sends barriers to all shippers in parallel.
 // Returns a per-shipper error slice (nil entry = success).
 func (sg *ShipperGroup) BarrierAll(lsnMax uint64) []error {

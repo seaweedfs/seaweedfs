@@ -1,0 +1,45 @@
+name: phase20-t6-stage1
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+    m02:
+      host: 192.168.1.184
+      user: testdev
+      key: "C:/work/dev_server/testdev_key"
+
+deploy:
+  build:
+    goos: linux
+    goarch: amd64
+    targets: [weed, sw-test-runner]
+    repo_dir: /c/work/seaweedfs
+  kill_ports: [9433, 18480, 3295]
+  clean_dirs: ["/tmp/sw-fo-*"]
+  binaries:
+    - local: /c/work/seaweedfs/weed-linux
+      remote: /tmp/sw-test-runner/weed
+    - local: /c/work/seaweedfs/weed-linux
+      remote: /opt/work/weed
+    - local: /c/work/seaweedfs/sw-test-runner-linux
+      remote: /opt/work/sw-test-runner
+
+scenarios:
+  - path: weed/storage/blockvol/testrunner/scenarios/internal/recovery-baseline-failover.yaml
+    id: P20-T6-H1A
+  - path: weed/storage/blockvol/testrunner/scenarios/internal/suite-ha-failover.yaml
+    id: P20-T6-H1B
+  - path: weed/storage/blockvol/testrunner/scenarios/cp11b3-manual-promote.yaml
+    id: P20-T6-H1C
+  - path: weed/storage/blockvol/testrunner/scenarios/lease-expiry-write-gate.yaml
+    id: P20-T6-H1D
+
+evidence:
+  glog_patterns: ["/tmp/weed.*.INFO.*"]
+  debug_endpoints:
+    - "http://10.0.0.1:18480/debug/block/shipper"
+    - "http://10.0.0.3:18480/debug/block/shipper"
+  save_to: results/phase20-t6/stage1

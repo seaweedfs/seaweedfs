@@ -330,10 +330,57 @@ func TestBlockService_ApplyAssignments_PrimaryScalarReplicaAddrWithoutServerID(t
 		t.Fatal("expected core projection to be cached on narrow live path")
 	}
 	if !proj.Readiness.RoleApplied {
-		t.Fatalf("role_applied should be observed even on scalar fallback path, projection=%+v", proj)
+		t.Fatalf("role_applied should still be observed on fail-closed scalar path, projection=%+v", proj)
+	}
+	if proj.Readiness.ShipperConfigured {
+		t.Fatalf("shipper_configured should stay false without explicit ReplicaServerID, projection=%+v", proj)
+	}
+	if len(proj.ReplicaIDs) != 0 {
+		t.Fatalf("replica_ids=%v, want empty fail-closed set", proj.ReplicaIDs)
+	}
+	if proj.Mode.Name != engine.ModeAllocatedOnly {
+		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+}
+
+func TestBlockService_ApplyAssignments_PrimaryMultiReplicaMissingServerID_SkipsOnlyInvalidReplica(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-core-primary-multi-missing-id")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:       path,
+			Epoch:      1,
+			Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs: 30000,
+			ReplicaAddrs: []blockvol.ReplicaAddr{
+				{ServerID: "vs-2", DataAddr: "10.0.0.2:4260", CtrlAddr: "10.0.0.2:4261"},
+				{ServerID: "", DataAddr: "10.0.0.3:4260", CtrlAddr: "10.0.0.3:4261"},
+			},
+		},
+	})
+	if len(errs) != 1 {
+		t.Fatalf("errs len=%d", len(errs))
+	}
+	if errs[0] != nil {
+		t.Fatalf("apply assignment: %v", errs[0])
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection to be cached on narrow live path")
+	}
+	if !proj.Readiness.RoleApplied {
+		t.Fatalf("role_applied should remain true, projection=%+v", proj)
+	}
+	if !proj.Readiness.ShipperConfigured {
+		t.Fatalf("shipper_configured should stay true when at least one replica has valid identity, projection=%+v", proj)
 	}
 	if len(proj.ReplicaIDs) != 1 {
-		t.Fatalf("replica_ids=%v", proj.ReplicaIDs)
+		t.Fatalf("replica_ids=%v, want exactly one valid replica", proj.ReplicaIDs)
+	}
+	if !strings.HasSuffix(proj.ReplicaIDs[0], "/vs-2") {
+		t.Fatalf("replica_id=%q, want suffix %q", proj.ReplicaIDs[0], "/vs-2")
 	}
 	if proj.Mode.Name != engine.ModeBootstrapPending {
 		t.Fatalf("mode=%s", proj.Mode.Name)
@@ -1094,7 +1141,7 @@ func TestBlockService_BarrierRejected_ExecutesCoreInvalidateSession(t *testing.T
 	if sender.HasActiveSession() {
 		t.Fatal("sender session should be invalidated by core command")
 	}
-	if got := bs.ExecutedCoreCommands(path); !reflect.DeepEqual(got, []string{"apply_role", "configure_shipper", "invalidate_session"}) {
+	if got := bs.ExecutedCoreCommands(path); !reflect.DeepEqual(got, []string{"apply_role", "configure_shipper", "start_recovery_task", "invalidate_session"}) {
 		t.Fatalf("executed commands=%v", got)
 	}
 }
@@ -1123,7 +1170,7 @@ func TestBlockService_BarrierRejected_DoesNotReexecuteInvalidateOnSameReason(t *
 	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: "timeout"})
 	second := bs.ExecutedCoreCommands(path)
 
-	if !reflect.DeepEqual(first, []string{"apply_role", "configure_shipper", "invalidate_session"}) {
+	if !reflect.DeepEqual(first, []string{"apply_role", "configure_shipper", "start_recovery_task", "invalidate_session"}) {
 		t.Fatalf("first executed commands=%v", first)
 	}
 	if !reflect.DeepEqual(second, first) {
@@ -1490,6 +1537,83 @@ func TestBlockService_ReadinessSnapshot_PrefersCorePublicationHealth(t *testing.
 	}
 	if mismatches := bs.CoreProjectionMismatches(path); len(mismatches) != 0 {
 		t.Fatalf("readiness/core mismatches=%v", mismatches)
+	}
+}
+
+func TestBlockService_PrimaryPublicationChain_BootstrapPendingUntilBarrierThenHealthy(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-publication-chain")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	initial, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected initial core projection")
+	}
+	if initial.Mode.Name != engine.ModeBootstrapPending {
+		t.Fatalf("initial mode=%s", initial.Mode.Name)
+	}
+	if initial.Publication.Reason != "awaiting_shipper_connected" {
+		t.Fatalf("initial publication_reason=%q", initial.Publication.Reason)
+	}
+
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+
+	connected, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected connected projection")
+	}
+	if connected.Publication.Healthy {
+		t.Fatalf("shipper contact alone must not publish healthy, projection=%+v", connected.Publication)
+	}
+	if connected.Publication.Reason != "awaiting_barrier_durability" {
+		t.Fatalf("connected publication_reason=%q", connected.Publication.Reason)
+	}
+	connectedMsg := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if connectedMsg == nil {
+		t.Fatal("volume missing from heartbeat after shipper connect")
+	}
+	if connectedMsg.PublishHealthy {
+		t.Fatalf("heartbeat must not claim publish_healthy before barrier, msg=%+v", connectedMsg)
+	}
+	if connectedMsg.VolumeMode != "bootstrap_pending" {
+		t.Fatalf("heartbeat mode before barrier=%q, want bootstrap_pending", connectedMsg.VolumeMode)
+	}
+
+	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: 12})
+
+	healthy, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected healthy projection")
+	}
+	if healthy.Mode.Name != engine.ModePublishHealthy {
+		t.Fatalf("healthy mode=%s", healthy.Mode.Name)
+	}
+	if !healthy.Publication.Healthy {
+		t.Fatalf("expected healthy publication after barrier, projection=%+v", healthy.Publication)
+	}
+	healthyMsg := findHeartbeatMsg(bs.CollectBlockVolumeHeartbeat(), path)
+	if healthyMsg == nil {
+		t.Fatal("volume missing from heartbeat after barrier")
+	}
+	if !healthyMsg.PublishHealthy {
+		t.Fatalf("heartbeat must claim publish_healthy after barrier, msg=%+v", healthyMsg)
+	}
+	if healthyMsg.VolumeMode != "publish_healthy" {
+		t.Fatalf("heartbeat mode after barrier=%q, want publish_healthy", healthyMsg.VolumeMode)
 	}
 }
 

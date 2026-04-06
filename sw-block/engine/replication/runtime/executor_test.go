@@ -1,12 +1,17 @@
 package runtime
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 )
 
 type fakeCallbacks struct {
+	progressCalled bool
+	progressLSN    uint64
+
 	catchUpCalled  bool
 	catchUpVol     string
 	catchUpReplica string
@@ -16,6 +21,14 @@ type fakeCallbacks struct {
 	rebuildVol     string
 	rebuildReplica string
 	rebuildPlan    *engine.RecoveryPlan
+
+	catchUpFailedCalled bool
+	catchUpFailedReason string
+}
+
+func (f *fakeCallbacks) OnRecoveryProgress(volumeID, replicaID string, achievedLSN uint64) {
+	f.progressCalled = true
+	f.progressLSN = achievedLSN
 }
 
 func (f *fakeCallbacks) OnCatchUpCompleted(volumeID, replicaID string, achievedLSN uint64) {
@@ -23,6 +36,11 @@ func (f *fakeCallbacks) OnCatchUpCompleted(volumeID, replicaID string, achievedL
 	f.catchUpVol = volumeID
 	f.catchUpReplica = replicaID
 	f.catchUpLSN = achievedLSN
+}
+
+func (f *fakeCallbacks) OnCatchUpFailed(volumeID, replicaID, reason string) {
+	f.catchUpFailedCalled = true
+	f.catchUpFailedReason = reason
 }
 
 func (f *fakeCallbacks) OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan) {
@@ -60,6 +78,9 @@ func TestExecuteCatchUpPlan_CallsbackOnSuccess(t *testing.T) {
 	}
 	if !cb.catchUpCalled {
 		t.Fatal("callback not called")
+	}
+	if !cb.progressCalled || cb.progressLSN != cb.catchUpLSN {
+		t.Fatalf("progress callback mismatch: called=%v progress=%d catchup=%d", cb.progressCalled, cb.progressLSN, cb.catchUpLSN)
 	}
 	if cb.catchUpVol != "vol1" {
 		t.Fatalf("vol=%s", cb.catchUpVol)
@@ -137,12 +158,67 @@ func TestExecuteCatchUpPlan_NilCallbacksSafe(t *testing.T) {
 	}
 }
 
+func TestExecuteCatchUpPlan_CallsbackOnFailureWithClassification(t *testing.T) {
+	cb := &fakeCallbacks{}
+	driver := setupDriver(t, "vol1/vs2")
+	plan, err := driver.PlanRecovery("vol1/vs2", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ExecuteCatchUpPlan(driver, plan, failingCatchUpIO{err: errors.New("WAL recycled before catch-up could complete")}, "vol1", "vol1/vs2", cb)
+	if err == nil {
+		t.Fatal("expected catch-up failure")
+	}
+	if !cb.catchUpFailedCalled {
+		t.Fatal("expected failure callback")
+	}
+	if cb.catchUpFailedReason != "retention_lost" {
+		t.Fatalf("failure reason=%q, want retention_lost", cb.catchUpFailedReason)
+	}
+	if cb.progressCalled {
+		t.Fatal("progress callback should not fire on failure")
+	}
+	if cb.catchUpCalled {
+		t.Fatal("completion callback should not fire on failure")
+	}
+}
+
+func TestClassifyCatchUpFailure(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "nil", err: nil, want: ""},
+		{name: "truncation unsafe", err: fmt.Errorf("wrapped: %w", engine.ErrTruncationUnsafe), want: "truncation_unsafe"},
+		{name: "retention lost", err: errors.New("WAL recycled while replaying"), want: "retention_lost"},
+		{name: "duration exceeded", err: errors.New("duration_exceeded"), want: "catchup_duration_exceeded"},
+		{name: "progress stalled", err: errors.New("progress_stalled"), want: "catchup_progress_stalled"},
+		{name: "entries limit", err: errors.New("entries_limit_exceeded"), want: "catchup_entries_limit_exceeded"},
+		{name: "budget exceeded", err: errors.New("budget violation"), want: "catchup_budget_exceeded"},
+		{name: "unknown", err: errors.New("boom"), want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := classifyCatchUpFailure(tt.err); got != tt.want {
+				t.Fatalf("classifyCatchUpFailure(%v)=%q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
+
 // --- test helpers ---
 
 type noopCatchUpIO struct{}
 
 func (noopCatchUpIO) StreamWALEntries(start, end uint64) (uint64, error) { return end, nil }
 func (noopCatchUpIO) TruncateWAL(lsn uint64) error                       { return nil }
+
+type failingCatchUpIO struct{ err error }
+
+func (f failingCatchUpIO) StreamWALEntries(start, end uint64) (uint64, error) { return 0, f.err }
+func (f failingCatchUpIO) TruncateWAL(lsn uint64) error                        { return nil }
 
 type noopRebuildIO struct{}
 

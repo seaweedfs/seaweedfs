@@ -28,6 +28,10 @@ Historical planning/review documents were moved to `../docs/archive/design/` to 
 - `protocol-development-process.md`
 - `agent_dev_process.md`
 
+## Engine implementation (code maintainers)
+
+- `v2-engine-maintainer-tutorial.md` — how to read `sw-block/engine/replication`, where to add rules, host wiring checklist
+
 ## Active Supporting Design
 
 - `v2-acceptance-criteria.md`

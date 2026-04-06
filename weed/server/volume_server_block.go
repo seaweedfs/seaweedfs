@@ -641,6 +641,15 @@ func (bs *BlockService) isLeaseOnlyPrimaryRefresh(a blockvol.BlockVolumeAssignme
 // (active sessions terminated, volume removed). When ungated, the volume is
 // re-registered with the iSCSI target.
 func (bs *BlockService) evaluateActivationGate(path string) {
+	if bs == nil {
+		return
+	}
+	bs.activationGateMu.Lock()
+	if bs.activationGated == nil {
+		bs.activationGated = make(map[string]string)
+	}
+	bs.activationGateMu.Unlock()
+
 	proj, ok := bs.CoreProjection(path)
 	if !ok {
 		// Fail-closed: if V2 core is active but projection is missing for
@@ -747,6 +756,9 @@ func (bs *BlockService) ClearActivationGate(path string) {
 	}
 	bs.activationGateMu.Lock()
 	defer bs.activationGateMu.Unlock()
+	if bs.activationGated == nil {
+		bs.activationGated = make(map[string]string)
+	}
 	delete(bs.activationGated, path)
 }
 
@@ -875,14 +887,11 @@ func (ops coreCommandBackend) ConfigureShipper(volumeID string, replicas []engin
 	if len(addrs) == 0 {
 		return false, false, nil
 	}
-	if len(addrs) == 1 {
-		if err := ops.bs.setupPrimaryReplication(volumeID, addrs[0].DataAddr, addrs[0].CtrlAddr); err != nil {
-			return false, false, err
-		}
-	} else {
-		if err := ops.bs.setupPrimaryReplicationMulti(volumeID, addrs); err != nil {
-			return false, false, err
-		}
+	// Always use setupPrimaryReplicationMulti to preserve ServerID on all
+	// paths, including RF=2 single-replica. setupPrimaryReplication (scalar)
+	// drops ServerID because it only takes dataAddr/ctrlAddr.
+	if err := ops.bs.setupPrimaryReplicationMulti(volumeID, addrs); err != nil {
+		return false, false, err
 	}
 	return true, ops.bs.isPrimaryShipperConnected(volumeID), nil
 }
@@ -967,18 +976,13 @@ func (bs *BlockService) coreAssignmentEvent(a blockvol.BlockVolumeAssignment) (e
 	}
 }
 
-// legacyReplicaServerID keeps the V2 core wired even when a legacy scalar
-// assignment path does not carry explicit ReplicaServerID. Prefer the stable
-// server identity when present; otherwise fall back to transport identity so
-// the primary still models replica membership and configures shippers.
+// legacyReplicaServerID preserves the stable identity rule on the remaining
+// server-local path: ReplicaID must come from an explicit ServerID and must
+// never be synthesized from transport addresses.
 func legacyReplicaServerID(serverID, dataAddr, ctrlAddr string) string {
-	if serverID != "" {
-		return serverID
-	}
-	if dataAddr != "" {
-		return dataAddr
-	}
-	return ctrlAddr
+	_ = dataAddr
+	_ = ctrlAddr
+	return serverID
 }
 
 func (bs *BlockService) isPrimaryShipperConnected(path string) bool {

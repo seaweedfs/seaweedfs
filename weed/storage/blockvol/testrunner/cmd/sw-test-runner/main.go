@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -35,6 +36,8 @@ func main() {
 	switch os.Args[1] {
 	case "run":
 		runCmd(os.Args[2:])
+	case "suite":
+		suiteCmd(os.Args[2:])
 	case "coordinator":
 		coordinatorCmd(os.Args[2:])
 	case "agent":
@@ -59,6 +62,7 @@ func usage() {
 
 Usage:
   sw-test-runner run [flags] <scenario.yaml>           Run a test scenario (SSH mode)
+  sw-test-runner suite [flags] <suite.yaml>            Deploy once, run N scenarios
   sw-test-runner coordinator [flags] <scenario.yaml>   Run as coordinator (multi-node)
   sw-test-runner agent [flags]                         Run as agent on test node
   sw-test-runner console [flags]                       Start web console server
@@ -260,6 +264,284 @@ func collectArtifacts(actx *tr.ActionContext, dir string, logger *log.Logger) {
 		if lc, ok := tgt.(infra.LogCollector); ok {
 			collector.CollectLabeled(lc, name)
 		}
+	}
+}
+
+func suiteCmd(args []string) {
+	fs := flag.NewFlagSet("suite", flag.ExitOnError)
+	resultsDir := fs.String("results-dir", "", "Override suite evidence.save_to")
+	skipDeploy := fs.Bool("skip-deploy", false, "Skip the deploy stage (assume binaries pre-deployed)")
+	tiers := fs.String("tiers", "", "Comma-separated list of enabled tiers")
+	fs.Parse(args)
+
+	if fs.NArg() < 1 {
+		fmt.Fprintln(os.Stderr, "error: suite YAML file required")
+		os.Exit(1)
+	}
+	suiteFile := fs.Arg(0)
+
+	logger := log.New(os.Stderr, "", log.LstdFlags)
+
+	suite, err := tr.ParseSuiteFile(suiteFile)
+	if err != nil {
+		logger.Fatalf("parse suite: %v", err)
+	}
+
+	saveDir := suite.Evidence.SaveTo
+	if *resultsDir != "" {
+		saveDir = *resultsDir
+	}
+	if saveDir == "" {
+		saveDir = "results/" + suite.Name
+	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer cancel()
+
+	registry := tr.NewRegistry()
+	registerAll(registry)
+	if *tiers != "" {
+		registry.EnableTiers(parseTiers(*tiers))
+	}
+
+	// Build a temporary scenario just for the topology (node connections).
+	topoScenario := &tr.Scenario{
+		Name:     suite.Name + "-deploy",
+		Topology: suite.Topology,
+		Env:      suite.Env,
+	}
+
+	logFunc := func(format string, args ...interface{}) {
+		logger.Printf(format, args...)
+	}
+
+	actx, err := setupActionContext(topoScenario, logFunc)
+	if err != nil {
+		logger.Fatalf("setup nodes: %v", err)
+	}
+	defer cleanupNodes(actx)
+
+	// Merge suite env into actx vars.
+	for k, v := range suite.Env {
+		actx.Vars[k] = v
+	}
+
+	logger.Printf("=== SUITE: %s (%d scenarios) ===", suite.Name, len(suite.Scenarios))
+
+	// --- Deploy stage ---
+	if !*skipDeploy && len(suite.Deploy.Binaries) > 0 {
+		logger.Printf("[deploy] killing stale processes...")
+		for _, port := range suite.Deploy.KillPorts {
+			for _, nodeRunner := range actx.Nodes {
+				nodeRunner.Run(ctx, fmt.Sprintf("sudo fuser -k %d/tcp 2>/dev/null; true", port))
+			}
+		}
+		time.Sleep(2 * time.Second)
+
+		logger.Printf("[deploy] cleaning directories...")
+		for _, dir := range suite.Deploy.CleanDirs {
+			for _, nodeRunner := range actx.Nodes {
+				nodeRunner.Run(ctx, fmt.Sprintf("sudo rm -rf %s; true", dir))
+			}
+		}
+
+		// Build if configured.
+		if suite.Deploy.Build != nil {
+			logger.Printf("[deploy] building...")
+			repoDir := suite.Deploy.Build.RepoDir
+			if repoDir == "" {
+				repoDir = actx.Vars["repo_dir"]
+			}
+			if repoDir == "" {
+				repoDir = "."
+			}
+			for _, target := range suite.Deploy.Build.Targets {
+				var buildPkg string
+				var outputName string
+				switch target {
+				case "weed":
+					buildPkg = "./weed"
+					outputName = "weed-linux"
+				case "sw-test-runner":
+					buildPkg = "./weed/storage/blockvol/testrunner/cmd/sw-test-runner/"
+					outputName = "sw-test-runner-linux"
+				default:
+					logger.Fatalf("[deploy] unknown build target: %s", target)
+				}
+				goos := suite.Deploy.Build.GOOS
+				if goos == "" {
+					goos = "linux"
+				}
+				goarch := suite.Deploy.Build.GOARCH
+				if goarch == "" {
+					goarch = "amd64"
+				}
+				buildCmd := fmt.Sprintf("cd %s && GOOS=%s GOARCH=%s CGO_ENABLED=0 go build -o %s %s",
+					repoDir, goos, goarch, outputName, buildPkg)
+				logger.Printf("[deploy] building %s...", target)
+				ln := tr.NewLocalNode("build-host")
+				_, stderr, code, err := ln.Run(ctx, buildCmd)
+				if err != nil || code != 0 {
+					logger.Fatalf("[deploy] build %s failed: code=%d stderr=%s err=%v", target, code, stderr, err)
+				}
+			}
+		}
+
+		// Deploy binaries.
+		deployNodes := suite.Deploy.Nodes
+		if len(deployNodes) == 0 {
+			for name := range actx.Nodes {
+				deployNodes = append(deployNodes, name)
+			}
+		}
+		for _, bin := range suite.Deploy.Binaries {
+			for _, nodeName := range deployNodes {
+				nodeRunner, ok := actx.Nodes[nodeName]
+				if !ok {
+					logger.Fatalf("[deploy] node %s not found", nodeName)
+				}
+				logger.Printf("[deploy] uploading %s → %s:%s", bin.Local, nodeName, bin.Remote)
+				nodeRunner.Run(ctx, fmt.Sprintf("mkdir -p %s", filepath.Dir(bin.Remote)))
+				if err := nodeRunner.Upload(bin.Local, bin.Remote); err != nil {
+					logger.Fatalf("[deploy] upload %s to %s: %v", bin.Local, nodeName, err)
+				}
+				nodeRunner.Run(ctx, fmt.Sprintf("chmod +x %s", bin.Remote))
+			}
+		}
+		logger.Printf("[deploy] complete")
+	}
+
+	// --- Test stage: run each scenario ---
+	suiteResult := &tr.SuiteResult{
+		Name:   suite.Name,
+		Status: "PASS",
+	}
+
+	for i, sc := range suite.Scenarios {
+		scenarioFile := sc.Path
+		scenarioID := sc.ID
+		if scenarioID == "" {
+			scenarioID = fmt.Sprintf("scenario-%d", i+1)
+		}
+
+		logger.Printf("")
+		logger.Printf("=== [%d/%d] %s: %s ===", i+1, len(suite.Scenarios), scenarioID, scenarioFile)
+
+		scenario, err := tr.ParseFile(scenarioFile)
+		if err != nil {
+			logger.Printf("SKIP %s: parse error: %v", scenarioID, err)
+			suiteResult.Scenarios = append(suiteResult.Scenarios, tr.SuiteScenarioResult{
+				ID:   scenarioID,
+				Path: scenarioFile,
+				Result: &tr.ScenarioResult{
+					Name:   scenarioID,
+					Status: tr.StatusFail,
+				},
+			})
+			suiteResult.Status = "FAIL"
+			continue
+		}
+
+		// Create a per-scenario run bundle.
+		bundleDir := filepath.Join(saveDir, scenarioID)
+		bundle, err := tr.CreateRunBundle(bundleDir, scenarioFile, os.Args)
+		if err != nil {
+			logger.Printf("warning: create run bundle for %s: %v", scenarioID, err)
+		}
+		if bundle != nil && scenario.Env == nil {
+			scenario.Env = make(map[string]string)
+		}
+		if bundle != nil {
+			scenario.Env["run_id"] = bundle.Manifest.RunID
+		}
+
+		// Run scenario on the first node via SSH. This is necessary because
+		// scenarios make direct HTTP calls to cluster IPs (e.g. RDMA 10.0.0.x)
+		// which are not reachable from the local Windows build host.
+		// The runner binary must already be deployed to the node.
+		runNode := "m01"
+		if suite.Deploy.Nodes != nil && len(suite.Deploy.Nodes) > 0 {
+			runNode = suite.Deploy.Nodes[0]
+		}
+		nodeRunner, ok := actx.Nodes[runNode]
+		if !ok {
+			logger.Printf("SKIP %s: run node %s not found in topology", scenarioID, runNode)
+			suiteResult.Status = "FAIL"
+			continue
+		}
+
+		// Upload scenario YAML to the run node.
+		remoteScenario := "/opt/work/suite-scenario.yaml"
+		if err := nodeRunner.Upload(scenarioFile, remoteScenario); err != nil {
+			logger.Printf("SKIP %s: upload scenario: %v", scenarioID, err)
+			suiteResult.Status = "FAIL"
+			continue
+		}
+
+		// Execute sw-test-runner on the remote node.
+		remoteRunner := "/opt/work/sw-test-runner"
+		remoteResultsDir := fmt.Sprintf("results/%s/%s", suite.Name, scenarioID)
+		runCmd := fmt.Sprintf("%s run %s --results-dir %s", remoteRunner, remoteScenario, remoteResultsDir)
+		logger.Printf("[run] %s on %s", scenarioID, runNode)
+		stdout, stderr, code, err := nodeRunner.Run(ctx, runCmd)
+		if err != nil {
+			logger.Printf("SKIP %s: run error: %v", scenarioID, err)
+			suiteResult.Status = "FAIL"
+			continue
+		}
+
+		// Print remote output.
+		if stdout != "" {
+			fmt.Print(stdout)
+		}
+		if stderr != "" {
+			fmt.Fprint(os.Stderr, stderr)
+		}
+
+		status := tr.StatusPass
+		if code != 0 {
+			status = tr.StatusFail
+			suiteResult.Status = "FAIL"
+		}
+
+		// Download results from remote node.
+		if bundle != nil {
+			if sshNode, ok := nodeRunner.(*infra.Node); ok {
+				remoteResultDir := fmt.Sprintf("%s/", remoteResultsDir)
+				latestCmd := fmt.Sprintf("ls -td %s*/ 2>/dev/null | head -1", remoteResultDir)
+				latestDir, _, _, _ := nodeRunner.Run(ctx, latestCmd)
+				latestDir = strings.TrimSpace(latestDir)
+				if latestDir != "" {
+					for _, fname := range []string{"result.json", "result.xml", "result.html", "manifest.json"} {
+						remotePath := latestDir + fname
+						localPath := filepath.Join(bundle.Dir, fname)
+						if err := sshNode.Download(remotePath, localPath); err != nil {
+							logger.Printf("  download %s: %v (skipping)", fname, err)
+						}
+					}
+				}
+			}
+		}
+
+		suiteResult.Scenarios = append(suiteResult.Scenarios, tr.SuiteScenarioResult{
+			ID:   scenarioID,
+			Path: scenarioFile,
+			Result: &tr.ScenarioResult{
+				Name:   scenarioID,
+				Status: status,
+			},
+		})
+	}
+
+	// --- Summary ---
+	logger.Printf("")
+	logger.Printf("=== SUITE RESULT: %s ===", suiteResult.Status)
+	for _, sc := range suiteResult.Scenarios {
+		logger.Printf("  [%s] %s: %s", sc.Result.Status, sc.ID, sc.Path)
+	}
+
+	if suiteResult.Status == "FAIL" {
+		os.Exit(1)
 	}
 }
 
