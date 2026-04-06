@@ -249,17 +249,30 @@ func (pr *partitionReader) readRecords(ctx context.Context, fromOffset int64, ma
 	glog.Warningf("[%s] Multi-batch fetch failed for %s[%d] offset=%d after %v, falling back to single-batch (err: %v)",
 		pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, fromOffset, fetchDuration, err)
 
-	// Use a fresh timeout for the fallback to prevent unbounded blocking.
-	// The original ctx (connection context) has no deadline, so passing it
-	// directly could block the data-plane goroutine indefinitely.
-	// Tie the budget to the client's MaxWaitTime so one slow partition
-	// doesn't hold the reader longer than the request allows. Use a
-	// floor of 2s because the fallback typically reads from disk via gRPC,
-	// and anything shorter would almost certainly fail.
-	fallbackTimeout := time.Duration(maxWaitMs) * time.Millisecond
+	// Compute the remaining time budget for the fallback. If the parent
+	// context carries a deadline, honour it; otherwise derive remaining
+	// from maxWaitMs minus elapsed time. This prevents the fallback from
+	// restarting the full budget after the multi-batch fetch already
+	// consumed part of it.
+	var remaining time.Duration
+	if deadline, ok := ctx.Deadline(); ok {
+		remaining = time.Until(deadline)
+	} else {
+		remaining = time.Duration(maxWaitMs)*time.Millisecond - time.Since(fetchStartTime)
+	}
+	if remaining <= 0 {
+		// Budget exhausted — skip the fallback entirely.
+		glog.V(2).Infof("[%s] No remaining budget for fallback on %s[%d] (maxWait=%dms, elapsed=%v)",
+			pr.connCtx.ConnectionID, pr.topicName, pr.partitionID, maxWaitMs, time.Since(fetchStartTime))
+		return []byte{}, fromOffset
+	}
+	// Clamp: floor of 2s so disk reads via gRPC have a realistic chance,
+	// but never exceed 10s to bound data-plane blocking.
+	fallbackTimeout := remaining
 	if fallbackTimeout < 2*time.Second {
 		fallbackTimeout = 2 * time.Second
-	} else if fallbackTimeout > 10*time.Second {
+	}
+	if fallbackTimeout > 10*time.Second {
 		fallbackTimeout = 10 * time.Second
 	}
 	fallbackCtx, fallbackCancel := context.WithTimeout(ctx, fallbackTimeout)
