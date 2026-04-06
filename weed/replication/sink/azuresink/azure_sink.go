@@ -186,13 +186,17 @@ func (g *AzureSink) CreateEntry(key string, entry *filer_pb.Entry, signatures []
 	}
 
 	if len(entry.Content) > 0 {
-		if err := writeFunc(entry.Content); err != nil {
+		content, err := repl_util.MaybeDecryptContent(entry.Content, entry)
+		if err != nil {
+			return cleanupOnError(fmt.Errorf("decrypt inline SSE content: %w", err))
+		}
+		if err := writeFunc(content); err != nil {
 			return cleanupOnError(err)
 		}
 		return nil
 	}
 
-	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc); err != nil {
+	if err := repl_util.CopyFromChunkViews(chunkViews, g.filerSource, writeFunc, entry); err != nil {
 		return cleanupOnError(err)
 	}
 

@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -143,6 +144,10 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		sourceFiler.ToGrpcAddress(),
 		sourcePath,
 		*backupOption.proxyByFiler)
+
+	if err := repl_util.InitializeSSEForReplication(filerSource); err != nil {
+		return fmt.Errorf("SSE initialization failed: %v", err)
+	}
 	dataSink.SetSourceFiler(filerSource)
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error

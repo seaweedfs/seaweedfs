@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -161,6 +162,14 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 
 	reader := filer.NewFileReader(s3sink.filerSource, entry)
 
+	// Decrypt SSE-encrypted objects so the destination receives plaintext
+	decryptedReader, err := repl_util.MaybeDecryptReader(reader, entry)
+	if err != nil {
+		repl_util.CloseReader(reader)
+		return fmt.Errorf("decrypt SSE object: %w", err)
+	}
+	defer repl_util.CloseMaybeDecryptedReader(reader, decryptedReader)
+
 	// Create an uploader with the session and custom options
 	uploader := s3manager.NewUploaderWithClient(s3sink.conn, func(u *s3manager.Uploader) {
 		u.PartSize = int64(s3sink.uploaderPartSizeMb * 1024 * 1024)
@@ -195,7 +204,7 @@ func (s3sink *S3Sink) CreateEntry(key string, entry *filer_pb.Entry, signatures 
 	uploadInput := s3manager.UploadInput{
 		Bucket: aws.String(s3sink.bucket),
 		Key:    aws.String(key),
-		Body:   reader,
+		Body:   decryptedReader,
 	}
 	if tags != "" {
 		uploadInput.Tagging = aws.String(tags)
