@@ -1,8 +1,6 @@
 package shell
 
 import (
-	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -13,11 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
-	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
@@ -47,8 +44,12 @@ func (c *commandVolumeTierMove) Help() string {
 
 	volume.tier.move -fromDiskType=hdd -toDiskType=ssd [-collectionPattern=""] [-fullPercent=95] [-quietFor=1h] [-parallelLimit=4] [-toReplication=XYZ]
 
-	Even if the volume is replicated, only one replica will be changed and the rest replicas will be dropped.
-	So "volume.fix.replication" and "volume.balance" should be followed.
+	When -toReplication is specified, the command ensures the target replication is fully
+	achieved on the destination tier before deleting old replicas. This prevents data loss
+	if a destination disk fails before replication repair completes.
+
+	If -toReplication is not specified, only one replica will be moved and the rest will be
+	dropped. In that case, "volume.fix.replication" and "volume.balance" should be run afterward.
 
 	Note:
 		Use -collectionPattern="_default" to match only the default collection (volumes with no collection name).
@@ -271,21 +272,21 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 
 	// If move is successful and replication is not empty, alter moved volume's replication setting
 	if *replicationString != "" {
-		err = operation.WithVolumeServerClient(false, newAddress, commandEnv.option.GrpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
-			resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
-				VolumeId:    uint32(vid),
-				Replication: *replicationString,
-			})
-			if configureErr != nil {
-				return configureErr
-			}
-			if resp.Error != "" {
-				return errors.New(resp.Error)
-			}
-			return nil
-		})
-		if err != nil {
+		if err = configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
 			glog.Errorf("update volume %d replication on %s: %v", vid, locations[0].Url, err)
+		}
+	}
+
+	// If a target replication is specified, ensure the required number of replicas
+	// exist on the target tier BEFORE deleting old replicas to avoid data-loss risk.
+	if *replicationString != "" {
+		if replicateErr := c.ensureReplicationFulfilled(commandEnv, writer, vid, toDiskType, dst, *replicationString); replicateErr != nil {
+			// Replication not fully achieved — do NOT delete old replicas.
+			// Mark replicas writable again so the volume remains accessible.
+			if markErr := markVolumeReplicasWritable(commandEnv.option.GrpcDialOption, vid, locations, true, false); markErr != nil {
+				glog.Errorf("mark volume %d as writable on old replicas: %v", vid, markErr)
+			}
+			return fmt.Errorf("volume %d moved to %s but failed to fulfill replication %s, old replicas preserved: %v", vid, dst.dataNode.Id, *replicationString, replicateErr)
 		}
 	}
 
@@ -295,9 +296,100 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 			if err = deleteVolume(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), false); err != nil {
 				fmt.Fprintf(writer, "failed to delete volume %d on %s: %v\n", vid, loc.Url, err)
 			}
-			// reduce volume count? Not really necessary since they are "more" full and will not be a candidate to move to
 		}
 	}
+	return nil
+}
+
+// ensureReplicationFulfilled creates additional replicas of the volume on the target tier
+// to satisfy the requested replication placement. It re-collects topology after the initial
+// move so it can see the newly placed volume and find suitable destinations for additional copies.
+func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, movedDst location, replicationString string) error {
+	replicaPlacement, err := super_block.NewReplicaPlacementFromString(replicationString)
+	if err != nil {
+		return fmt.Errorf("parse replication %s: %v", replicationString, err)
+	}
+
+	requiredCopies := replicaPlacement.GetCopyCount()
+	if requiredCopies <= 1 {
+		// No additional replicas needed (e.g., replication "000")
+		return nil
+	}
+
+	sourceAddress := pb.NewServerAddressFromDataNode(movedDst.dataNode)
+
+	// We need to create (requiredCopies - 1) additional replicas.
+	// Re-collect topology to get the current state after the move.
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	if err != nil {
+		return fmt.Errorf("collect topology: %v", err)
+	}
+
+	volumeReplicas, allLocations := collectVolumeReplicaLocations(topologyInfo)
+	allLocations = filterLocationsByDiskType(allLocations, toDiskType)
+	keepDataNodesSorted(allLocations, toDiskType)
+
+	// Build the current replica list for this volume on the target tier.
+	// This should include the just-moved copy.
+	existingReplicas := volumeReplicas[uint32(vid)]
+	if len(existingReplicas) == 0 {
+		return fmt.Errorf("volume %d not found in topology after move", vid)
+	}
+
+	// Filter to only replicas on the target disk type (the newly moved one).
+	var targetTierReplicas []*VolumeReplica
+	for _, r := range existingReplicas {
+		if types.ToDiskType(r.info.DiskType) == toDiskType {
+			targetTierReplicas = append(targetTierReplicas, r)
+		}
+	}
+
+	additionalCopiesNeeded := requiredCopies - len(targetTierReplicas)
+	if additionalCopiesNeeded <= 0 {
+		return nil
+	}
+
+	fmt.Fprintf(writer, "volume %d: creating %d additional replica(s) for replication %s\n", vid, additionalCopiesNeeded, replicationString)
+
+	fn := capacityByFreeVolumeCount(toDiskType)
+	copiesMade := 0
+	for _, candidateDst := range allLocations {
+		if copiesMade >= additionalCopiesNeeded {
+			break
+		}
+		if fn(candidateDst.dataNode) <= 0 {
+			continue
+		}
+		if !satisfyReplicaPlacement(replicaPlacement, targetTierReplicas, candidateDst) {
+			continue
+		}
+
+		candidateAddress := pb.NewServerAddressFromDataNode(candidateDst.dataNode)
+		fmt.Fprintf(writer, "volume %d: replicating from %s to %s\n", vid, sourceAddress, candidateDst.dataNode.Id)
+
+		if copyErr := replicateVolumeToServer(commandEnv.option.GrpcDialOption, writer, vid, sourceAddress, candidateAddress, toDiskType.ReadableString()); copyErr != nil {
+			return fmt.Errorf("replicate volume %d to %s: %v", vid, candidateDst.dataNode.Id, copyErr)
+		}
+
+		// Also configure replication on the new replica
+		if configErr := configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, candidateAddress, replicationString); configErr != nil {
+			glog.Warningf("volume %d: failed to configure replication on %s: %v", vid, candidateDst.dataNode.Id, configErr)
+		}
+
+		// Track the new replica for placement decisions
+		targetTierReplicas = append(targetTierReplicas, &VolumeReplica{
+			location: &candidateDst,
+			info:     targetTierReplicas[0].info,
+		})
+		addVolumeCount(candidateDst.dataNode.DiskInfos[string(toDiskType)], 1)
+		copiesMade++
+	}
+
+	if copiesMade < additionalCopiesNeeded {
+		return fmt.Errorf("could only create %d of %d additional replicas for volume %d (replication %s): not enough eligible destinations", copiesMade, additionalCopiesNeeded, vid, replicationString)
+	}
+
+	fmt.Fprintf(writer, "volume %d: replication %s fulfilled with %d total copies\n", vid, replicationString, requiredCopies)
 	return nil
 }
 

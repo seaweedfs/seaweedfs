@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -239,4 +240,48 @@ func markVolumeReplicasWritable(grpcDialOption grpc.DialOption, volumeId needle.
 		}
 	}
 	return nil
+}
+
+// replicateVolumeToServer copies a volume from sourceAddress to targetAddress via the VolumeCopy gRPC stream.
+func replicateVolumeToServer(grpcDialOption grpc.DialOption, writer io.Writer, volumeId needle.VolumeId, sourceAddress, targetAddress pb.ServerAddress, diskType string) error {
+	return operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		stream, replicateErr := volumeServerClient.VolumeCopy(context.Background(), &volume_server_pb.VolumeCopyRequest{
+			VolumeId:       uint32(volumeId),
+			SourceDataNode: string(sourceAddress),
+			DiskType:       diskType,
+		})
+		if replicateErr != nil {
+			return replicateErr
+		}
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr != nil {
+				if recvErr == io.EOF {
+					break
+				}
+				return recvErr
+			}
+			if resp.ProcessedBytes > 0 {
+				fmt.Fprintf(writer, "volume %d processed %s bytes\n", volumeId, util.BytesToHumanReadable(uint64(resp.ProcessedBytes)))
+			}
+		}
+		return nil
+	})
+}
+
+// configureVolumeReplication sets the replication setting on a volume at the given server.
+func configureVolumeReplication(grpcDialOption grpc.DialOption, volumeId needle.VolumeId, targetAddress pb.ServerAddress, replicationString string) error {
+	return operation.WithVolumeServerClient(false, targetAddress, grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
+		resp, configureErr := volumeServerClient.VolumeConfigure(context.Background(), &volume_server_pb.VolumeConfigureRequest{
+			VolumeId:    uint32(volumeId),
+			Replication: replicationString,
+		})
+		if configureErr != nil {
+			return configureErr
+		}
+		if resp.Error != "" {
+			return errors.New(resp.Error)
+		}
+		return nil
+	})
 }
