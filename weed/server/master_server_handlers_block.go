@@ -432,8 +432,10 @@ func entryToVolumeInfo(e *BlockVolumeEntry, primaryAlive bool) blockapi.VolumeIn
 		NvmeAddr:         e.NvmeAddr,
 		NQN:              e.NQN,
 		HealthState:      surface.HealthState,
-		VolumeMode:       surface.VolumeMode,
-		VolumeModeReason: surface.VolumeModeReason,
+		VolumeMode:             surface.VolumeMode,
+		VolumeModeReason:       surface.VolumeModeReason,
+		EngineProjectionMode:   e.EngineProjectionMode,
+		ClusterReplicationMode: e.ClusterReplicationMode,
 	}
 	for _, ri := range e.Replicas {
 		info.Replicas = append(info.Replicas, blockapi.ReplicaDetail{

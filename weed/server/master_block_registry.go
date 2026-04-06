@@ -188,11 +188,26 @@ func (e *BlockVolumeEntry) recomputeReplicaState() {
 //
 // Monotonic: worst replica state dominates the cluster mode.
 func (e *BlockVolumeEntry) computeClusterReplicationMode() string {
-	if len(e.Replicas) == 0 {
+	rf := e.ReplicaFactor
+	if rf == 0 {
+		rf = 1
+	}
+	// RF=1: no replication configured — not an RF2 judgment.
+	if rf <= 1 && len(e.Replicas) == 0 {
 		return "no_replicas"
+	}
+	// RF>1 but no replicas registered: the set is degraded (missing replica).
+	if len(e.Replicas) == 0 {
+		return "degraded"
 	}
 
 	worst := "keepup"
+
+	// Incorporate master-observed transport degradation signal.
+	if e.TransportDegraded {
+		worst = worseClusterMode(worst, "degraded")
+	}
+
 	for _, ri := range e.Replicas {
 		replicaMode := evaluateReplicaHealth(ri, e.WALHeadLSN)
 		worst = worseClusterMode(worst, replicaMode)

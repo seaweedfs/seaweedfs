@@ -119,19 +119,58 @@ func TestT5_RebuildingRole_NeedsRebuild(t *testing.T) {
 	}
 }
 
-func TestT5_NoReplicas_NoReplicasMode(t *testing.T) {
+func TestT5_RF1_NoReplicas(t *testing.T) {
 	r := NewBlockVolumeRegistry()
 	if err := r.Register(&BlockVolumeEntry{
-		Name: "vol-crm-none", VolumeServer: "primary:8080",
-		Path: "/data/vol-crm-none.blk", Status: StatusActive,
+		Name: "vol-crm-rf1", VolumeServer: "primary:8080",
+		Path: "/data/vol-crm-rf1.blk", Status: StatusActive,
 		Role: blockvol.RoleToWire(blockvol.RolePrimary), ReplicaFactor: 1,
 	}); err != nil {
 		t.Fatalf("register: %v", err)
 	}
 
-	entry, _ := r.Lookup("vol-crm-none")
+	entry, _ := r.Lookup("vol-crm-rf1")
 	if entry.ClusterReplicationMode != "no_replicas" {
-		t.Fatalf("ClusterReplicationMode=%q, want %q", entry.ClusterReplicationMode, "no_replicas")
+		t.Fatalf("ClusterReplicationMode=%q, want %q for RF=1", entry.ClusterReplicationMode, "no_replicas")
+	}
+}
+
+func TestT5_RF2_MissingReplica_Degraded(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name: "vol-crm-missing", VolumeServer: "primary:8080",
+		Path: "/data/vol-crm-missing.blk", Status: StatusActive,
+		Role: blockvol.RoleToWire(blockvol.RolePrimary), ReplicaFactor: 2,
+		// RF=2 but no replicas registered → degraded, not "no_replicas"
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	entry, _ := r.Lookup("vol-crm-missing")
+	if entry.ClusterReplicationMode != "degraded" {
+		t.Fatalf("ClusterReplicationMode=%q, want %q for RF=2 with missing replica", entry.ClusterReplicationMode, "degraded")
+	}
+}
+
+func TestT5_TransportDegraded_Degraded(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	if err := r.Register(&BlockVolumeEntry{
+		Name: "vol-crm-transport", VolumeServer: "primary:8080",
+		Path: "/data/vol-crm-transport.blk", Status: StatusActive,
+		Role: blockvol.RoleToWire(blockvol.RolePrimary), ReplicaFactor: 2,
+		WALHeadLSN: 100, TransportDegraded: true,
+		Replicas: []ReplicaInfo{{
+			Server: "replica:8080", Path: "/data/vol-crm-transport.blk",
+			HealthScore: 1.0, WALHeadLSN: 100, Ready: true,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	entry, _ := r.Lookup("vol-crm-transport")
+	if entry.ClusterReplicationMode != "degraded" {
+		t.Fatalf("ClusterReplicationMode=%q, want %q for transport-degraded", entry.ClusterReplicationMode, "degraded")
 	}
 }
 
@@ -233,5 +272,46 @@ func TestT5_WorstReplicaDominates(t *testing.T) {
 	// One replica is keepup, one is needs_rebuild → worst dominates.
 	if entry.ClusterReplicationMode != "needs_rebuild" {
 		t.Fatalf("ClusterReplicationMode=%q, want needs_rebuild (worst dominates)", entry.ClusterReplicationMode)
+	}
+}
+
+func TestT5_APISurface_DistinctNaming(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("primary:8080")
+	if err := r.Register(&BlockVolumeEntry{
+		Name: "vol-crm-api", VolumeServer: "primary:8080",
+		Path: "/data/vol-crm-api.blk", Status: StatusActive,
+		Role: blockvol.RoleToWire(blockvol.RolePrimary), ReplicaFactor: 2,
+		WALHeadLSN:              100,
+		EngineProjectionMode:    "publish_healthy",
+		HasEngineProjectionMode: true,
+		Replicas: []ReplicaInfo{{
+			Server: "replica:8080", Path: "/data/vol-crm-api.blk",
+			HealthScore: 1.0, WALHeadLSN: 80, Ready: true,
+			Role: blockvol.RoleToWire(blockvol.RoleReplica), LastHeartbeat: time.Now(),
+		}},
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	entry, _ := r.Lookup("vol-crm-api")
+	info := entryToVolumeInfo(&entry, true)
+
+	// All three mode fields must be present and distinct.
+	if info.VolumeMode == "" {
+		t.Fatal("VolumeMode missing from API surface")
+	}
+	if info.EngineProjectionMode == "" {
+		t.Fatal("EngineProjectionMode missing from API surface")
+	}
+	if info.ClusterReplicationMode == "" {
+		t.Fatal("ClusterReplicationMode missing from API surface")
+	}
+	// EngineProjectionMode is VS-local (publish_healthy).
+	// ClusterReplicationMode is master-computed (catching_up because replica behind).
+	// They must differ in this scenario.
+	if info.EngineProjectionMode == info.ClusterReplicationMode {
+		t.Fatalf("EngineProjectionMode=%q should differ from ClusterReplicationMode=%q on API surface",
+			info.EngineProjectionMode, info.ClusterReplicationMode)
 	}
 }
