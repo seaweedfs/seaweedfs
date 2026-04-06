@@ -33,6 +33,8 @@ type BlockVolumeInfoMessage struct {
 	NQN                  string                 // NVMe subsystem NQN, empty if NVMe disabled
 	ReplicaShipperStates []ReplicaShipperStatus // CP13-7: per-replica state from primary's shipper group
 	EngineProjectionMode string                 // T1: pure V2 engine-derived local projection mode (distinct from VolumeMode)
+	ActivationGated      bool                   // T4: true if this volume is gated from serving after promotion
+	ActivationGateReason string                 // T4: reason for activation gate (empty if not gated)
 }
 
 // BlockVolumeShortInfoMessage is used for delta heartbeats

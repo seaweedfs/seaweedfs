@@ -84,6 +84,11 @@ type BlockService struct {
 	coreExecMu     sync.RWMutex
 	coreExec       map[string][]string
 
+	// T4: activation gate — promoted primaries that have not passed
+	// reconstruction quality check are gated from serving.
+	activationGateMu sync.RWMutex
+	activationGated  map[string]string // path → reason (non-empty = gated)
+
 	// P3: last-applied assignment per volume path for idempotence.
 	lastAssignMu sync.RWMutex
 	lastAssign   map[string]lastAppliedAssignment
@@ -234,6 +239,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		v2Core:                      engine.NewCoreEngine(),
 		localServerID:               listenAddr, // INTERIM: transport-shaped, see field doc
 		coreProj:                    make(map[string]engine.PublicationProjection),
+		activationGated:             make(map[string]string),
 		blockInventoryAuthoritative: false,
 	}
 	bs.v2Recovery = NewRecoveryManager(bs)
@@ -560,7 +566,62 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 		return nil
 	}
 	result := bs.coreApplyAndLog(ev)
-	return bs.applyCoreCommandsWithAssignment(result.Commands, &a)
+	if err := bs.applyCoreCommandsWithAssignment(result.Commands, &a); err != nil {
+		return err
+	}
+	// T4: After assignment execution, check the resulting V2 core projection
+	// and gate activation locally if the mode indicates the node should not
+	// serve. This is the enforcement point — it happens immediately after
+	// assignment, before the next heartbeat round-trip.
+	bs.evaluateActivationGate(a.Path)
+	return nil
+}
+
+// evaluateActivationGate checks the current V2 core projection for a volume
+// and gates or clears activation accordingly. This is the local enforcement
+// point for T4 — the promoted node decides locally whether reconstruction
+// quality allows serving.
+func (bs *BlockService) evaluateActivationGate(path string) {
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		return // no V2 core, no gate enforcement
+	}
+	bs.activationGateMu.Lock()
+	defer bs.activationGateMu.Unlock()
+	switch proj.Mode.Name {
+	case "publish_healthy", "replica_ready":
+		delete(bs.activationGated, path)
+	default:
+		reason := fmt.Sprintf("engine_projection_mode=%s", proj.Mode.Name)
+		if proj.Mode.Reason != "" {
+			reason += ": " + proj.Mode.Reason
+		}
+		bs.activationGated[path] = reason
+		glog.V(0).Infof("activation gated: %s — %s", path, reason)
+	}
+}
+
+// IsActivationGated returns whether a volume is currently gated from serving
+// and the reason. Used by iSCSI/NVMe adapter and heartbeat surface.
+func (bs *BlockService) IsActivationGated(path string) (bool, string) {
+	if bs == nil {
+		return false, ""
+	}
+	bs.activationGateMu.RLock()
+	defer bs.activationGateMu.RUnlock()
+	reason, gated := bs.activationGated[path]
+	return gated, reason
+}
+
+// ClearActivationGate removes the activation gate for a volume. Called when
+// recovery completes and the projection reaches a serving-allowed state.
+func (bs *BlockService) ClearActivationGate(path string) {
+	if bs == nil {
+		return
+	}
+	bs.activationGateMu.Lock()
+	defer bs.activationGateMu.Unlock()
+	delete(bs.activationGated, path)
 }
 
 func (bs *BlockService) applyCoreEvent(ev engine.Event) {
@@ -1018,6 +1079,10 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 		}
 		msgs[i].ReplicaDegraded = bs.heartbeatReplicaDegraded(msgs[i].Path, msgs[i].ReplicaDegraded)
 		msgs[i].EngineProjectionMode = bs.heartbeatEngineProjectionMode(msgs[i].Path)
+		if gated, reason := bs.IsActivationGated(msgs[i].Path); gated {
+			msgs[i].ActivationGated = true
+			msgs[i].ActivationGateReason = reason
+		}
 		// NVMe publication: report nvme_addr and nqn if NVMe target is running.
 		if bs.nvmeListenAddr != "" {
 			msgs[i].NvmeAddr = bs.nvmeListenAddr

@@ -76,8 +76,9 @@ func newTestBlockServiceDirect(t *testing.T) *BlockService {
 		iqnPrefix:     "iqn.2024-01.com.seaweedfs:vol.",
 		replStates:    make(map[string]*volReplState),
 		v2Core:        engine.NewCoreEngine(),
-		coreProj:      make(map[string]engine.PublicationProjection),
-		localServerID: "vs-test",
+		coreProj:        make(map[string]engine.PublicationProjection),
+		activationGated: make(map[string]string),
+		localServerID:   "vs-test",
 	}
 }
 
