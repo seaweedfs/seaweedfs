@@ -273,7 +273,7 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 	// If move is successful and replication is not empty, alter moved volume's replication setting
 	if *replicationString != "" {
 		if err = configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, newAddress, *replicationString); err != nil {
-			glog.Errorf("update volume %d replication on %s: %v", vid, locations[0].Url, err)
+			return fmt.Errorf("configure replication %s on volume %d at %s: %v", *replicationString, vid, newAddress, err)
 		}
 	}
 
@@ -353,6 +353,18 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 	}
 	if len(targetTierReplicas) == 0 {
 		return fmt.Errorf("volume %d not found on target tier %s in topology after move", vid, toDiskType)
+	}
+
+	// Ensure all existing target-tier replicas have the correct replication metadata.
+	// The primary moved replica is already configured in doMoveOneVolume, but there may
+	// be pre-existing replicas on the target tier that need updating.
+	if replicationString != "" {
+		for _, r := range targetTierReplicas {
+			addr := pb.NewServerAddressFromDataNode(r.location.dataNode)
+			if configErr := configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, addr, replicationString); configErr != nil {
+				return fmt.Errorf("volume %d: failed to configure replication on existing replica %s: %v", vid, r.location.dataNode.Id, configErr)
+			}
+		}
 	}
 
 	additionalCopiesNeeded := requiredCopies - len(targetTierReplicas)
