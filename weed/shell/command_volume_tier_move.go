@@ -307,8 +307,9 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEnv, writer io.Writer, vid needle.VolumeId, toDiskType types.DiskType, movedDst location, replicationString string) error {
 	sourceAddress := pb.NewServerAddressFromDataNode(movedDst.dataNode)
 
-	// Re-collect topology to get the current state after the move.
-	topologyInfo, _, err := collectTopologyInfo(commandEnv, 0)
+	// Wait briefly for the master to receive heartbeats reflecting the move,
+	// then re-collect topology to get the current state.
+	topologyInfo, _, err := collectTopologyInfo(commandEnv, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("collect topology: %v", err)
 	}
@@ -350,6 +351,9 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 			targetTierReplicas = append(targetTierReplicas, r)
 		}
 	}
+	if len(targetTierReplicas) == 0 {
+		return fmt.Errorf("volume %d not found on target tier %s in topology after move", vid, toDiskType)
+	}
 
 	additionalCopiesNeeded := requiredCopies - len(targetTierReplicas)
 	if additionalCopiesNeeded <= 0 {
@@ -382,7 +386,7 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 		// Without it, VolumeCopy already preserves the source's replication from the super block.
 		if replicationString != "" {
 			if configErr := configureVolumeReplication(commandEnv.option.GrpcDialOption, vid, candidateAddress, replicationString); configErr != nil {
-				glog.Warningf("volume %d: failed to configure replication on %s: %v", vid, candidateDst.dataNode.Id, configErr)
+				return fmt.Errorf("volume %d: failed to configure replication on %s: %v", vid, candidateDst.dataNode.Id, configErr)
 			}
 		}
 
