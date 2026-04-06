@@ -291,6 +291,17 @@ func (c *commandVolumeTierMove) doMoveOneVolume(commandEnv *CommandEnv, writer i
 		return fmt.Errorf("volume %d moved to %s but failed to fulfill replication, old replicas preserved: %v", vid, dst.dataNode.Id, replicateErr)
 	}
 
+	// Mark preserved pre-existing target-tier replicas as writable.
+	// They were marked read-only at the start of the move and would otherwise
+	// stay read-only since we're keeping rather than deleting them.
+	for _, loc := range locations {
+		if preserveServers[loc.Url] {
+			if markErr := markVolumeWritable(commandEnv.option.GrpcDialOption, vid, loc.ServerAddress(), true, false); markErr != nil {
+				glog.Errorf("mark volume %d as writable on preserved replica %s: %v", vid, loc.Url, markErr)
+			}
+		}
+	}
+
 	// Remove old replicas that are NOT needed by the fulfilled replication.
 	// Skip the move destination, the already-deleted source, and any pre-existing
 	// target-tier replicas that were counted toward replication fulfillment.
@@ -344,6 +355,13 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 	existingReplicas := volumeReplicas[uint32(vid)]
 	if len(existingReplicas) == 0 {
 		return nil, fmt.Errorf("volume %d not found in topology after move", vid)
+	}
+
+	// Build a set of all data nodes that already host this volume (any disk type)
+	// so we don't try to VolumeCopy to a server that already has it.
+	nodesWithVolume := make(map[string]bool)
+	for _, r := range existingReplicas {
+		nodesWithVolume[r.location.dataNode.Id] = true
 	}
 
 	// Determine the target replication: use explicit -toReplication if given,
@@ -406,6 +424,11 @@ func (c *commandVolumeTierMove) ensureReplicationFulfilled(commandEnv *CommandEn
 			break
 		}
 		if fn(candidateDst.dataNode) <= 0 {
+			continue
+		}
+		// Skip nodes that already host this volume on any disk type to avoid
+		// VolumeCopy conflicts (e.g., same volume on source tier and target tier).
+		if nodesWithVolume[candidateDst.dataNode.Id] {
 			continue
 		}
 		if !satisfyReplicaPlacement(replicaPlacement, targetTierReplicas, candidateDst) {
