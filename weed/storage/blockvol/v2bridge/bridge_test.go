@@ -67,6 +67,37 @@ func TestReader_RealBlockVol_StatusSnapshot(t *testing.T) {
 	}
 }
 
+func TestReader_RealBlockVol_SyncAllNoReplicaProgressCommittedZero(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "syncall.blockvol")
+	vol, err := blockvol.CreateBlockVol(path, blockvol.CreateOptions{
+		VolumeSize:     1 * 1024 * 1024,
+		BlockSize:      4096,
+		WALSize:        256 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+	defer vol.Close()
+
+	vol.SetReplicaAddrs([]blockvol.ReplicaAddr{{
+		DataAddr: "127.0.0.1:65530",
+		CtrlAddr: "127.0.0.1:65531",
+	}})
+	if err := vol.WriteLBA(0, makeBlock('Z')); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+
+	state := NewReader(vol).ReadState()
+	if state.WALHeadLSN == 0 {
+		t.Fatal("precondition failed: WALHeadLSN should advance after local write")
+	}
+	if state.CommittedLSN != 0 {
+		t.Fatalf("CommittedLSN=%d, want 0 before replica durable progress exists", state.CommittedLSN)
+	}
+}
+
 func TestReader_RealBlockVol_HeadAdvancesWithWrites(t *testing.T) {
 	vol := createTestVol(t)
 	defer vol.Close()

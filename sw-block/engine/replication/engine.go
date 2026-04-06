@@ -332,7 +332,7 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 	st.Readiness.Assigned = true
 	st.Mode.Authority = RuntimeAuthorityConstrainedV1
 
-	if epochChanged || roleChanged || recoveryTargetChanged {
+	if epochChanged || roleChanged {
 		st.Readiness.RoleApplied = false
 	}
 

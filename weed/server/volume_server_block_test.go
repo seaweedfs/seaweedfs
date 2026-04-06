@@ -3,6 +3,7 @@ package weed_server
 import (
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/v2bridge"
 )
 
 func createTestBlockVolFile(t *testing.T, dir, name string) string {
@@ -69,17 +71,22 @@ func newTestBlockServiceDirect(t *testing.T) *BlockService {
 	dir := t.TempDir()
 	store := storage.NewBlockVolumeStore()
 	t.Cleanup(func() { store.Close() })
-	return &BlockService{
-		blockStore:    store,
-		blockDir:      dir,
-		listenAddr:    "0.0.0.0:3260",
-		iqnPrefix:     "iqn.2024-01.com.seaweedfs:vol.",
-		replStates:    make(map[string]*volReplState),
-		v2Core:        engine.NewCoreEngine(),
+	bs := &BlockService{
+		blockStore:      store,
+		blockDir:        dir,
+		listenAddr:      "0.0.0.0:3260",
+		iqnPrefix:       "iqn.2024-01.com.seaweedfs:vol.",
+		replStates:      make(map[string]*volReplState),
+		v2Bridge:        v2bridge.NewControlBridge(),
+		v2Orchestrator:  engine.NewRecoveryOrchestrator(),
+		v2Core:          engine.NewCoreEngine(),
 		coreProj:        make(map[string]engine.PublicationProjection),
+		protocolExec:    make(map[string]volumeProtocolExecutionState),
 		activationGated: make(map[string]string),
 		localServerID:   "vs-test",
 	}
+	bs.v2Recovery = NewRecoveryManager(bs)
+	return bs
 }
 
 func createTestVolDirect(t *testing.T, bs *BlockService, name string) string {
@@ -330,6 +337,123 @@ func TestBlockService_ApplyAssignments_PrimaryScalarReplicaAddrWithoutServerID(t
 	}
 	if proj.Mode.Name != engine.ModeBootstrapPending {
 		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+}
+
+func TestBlockService_ApplyAssignments_PrimaryRefreshSameEpochPreservesRoleApplied(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-core-primary-refresh")
+
+	initial := blockvol.BlockVolumeAssignment{
+		Path:       path,
+		Epoch:      1,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+	}
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{initial})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("initial apply errs=%v", errs)
+	}
+	first, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after initial apply")
+	}
+	if !first.Readiness.RoleApplied {
+		t.Fatalf("initial projection should report role applied, got %+v", first.Readiness)
+	}
+	if len(first.ReplicaIDs) != 0 {
+		t.Fatalf("initial replica_ids=%v, want empty", first.ReplicaIDs)
+	}
+
+	refresh := blockvol.BlockVolumeAssignment{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}
+	errs = bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{refresh})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("refresh apply errs=%v", errs)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after refresh apply")
+	}
+	if !proj.Readiness.RoleApplied {
+		t.Fatalf("same-epoch refresh should preserve role_applied, got %+v", proj.Readiness)
+	}
+	if !proj.Readiness.ShipperConfigured {
+		t.Fatalf("same-epoch refresh should configure shipper, got %+v", proj.Readiness)
+	}
+	if len(proj.ReplicaIDs) != 1 {
+		t.Fatalf("replica_ids=%v", proj.ReplicaIDs)
+	}
+	if !strings.HasSuffix(proj.ReplicaIDs[0], "/vs-2") {
+		t.Fatalf("replica_id=%q, want suffix %q", proj.ReplicaIDs[0], "/vs-2")
+	}
+	if proj.Mode.Name != engine.ModeBootstrapPending {
+		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+}
+
+func TestBlockService_ApplyAssignments_PrimaryLeaseRefreshDoesNotWipeReplicaMembership(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-core-primary-lease-refresh")
+
+	withReplica := blockvol.BlockVolumeAssignment{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: "10.0.0.2:4260",
+		ReplicaCtrlAddr: "10.0.0.2:4261",
+	}
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{withReplica})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("initial apply errs=%v", errs)
+	}
+	before, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after initial assignment")
+	}
+	if !before.Readiness.RoleApplied || !before.Readiness.ShipperConfigured {
+		t.Fatalf("expected role_applied + shipper_configured before lease refresh, got %+v", before.Readiness)
+	}
+	if len(before.ReplicaIDs) != 1 {
+		t.Fatalf("before replica_ids=%v", before.ReplicaIDs)
+	}
+
+	leaseRefresh := blockvol.BlockVolumeAssignment{
+		Path:       path,
+		Epoch:      1,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 60000,
+	}
+	errs = bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{leaseRefresh})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("lease refresh errs=%v", errs)
+	}
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after lease refresh")
+	}
+	if !after.Readiness.RoleApplied || !after.Readiness.ShipperConfigured {
+		t.Fatalf("lease refresh should preserve role_applied + shipper_configured, got %+v", after.Readiness)
+	}
+	if len(after.ReplicaIDs) != 1 {
+		t.Fatalf("after replica_ids=%v", after.ReplicaIDs)
+	}
+	if !reflect.DeepEqual(before.ReplicaIDs, after.ReplicaIDs) {
+		t.Fatalf("lease refresh wiped replica membership: before=%v after=%v", before.ReplicaIDs, after.ReplicaIDs)
+	}
+	if after.Mode.Name != engine.ModeBootstrapPending {
+		t.Fatalf("lease refresh should keep bootstrap_pending while waiting for shipper connection, got %s", after.Mode.Name)
 	}
 }
 
@@ -710,6 +834,101 @@ func TestBlockService_ApplyAssignments_RemovedReplica_UsesCoreDrainRecoveryTask(
 	}
 	if got := countCommandName(cmds, "drain_recovery_task"); got != 1 {
 		t.Fatalf("drain_recovery_task count=%d cmds=%v", got, cmds)
+	}
+}
+
+func TestBlockService_ProtocolExecutionState_ActiveCatchUpBlocksLiveShipping(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-protocol-catchup")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15060",
+			CtrlAddr: "127.0.0.1:15061",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	state, ok := bs.ProtocolExecutionState(path)
+	if !ok {
+		t.Fatal("missing protocol execution state")
+	}
+	replicaID := path + "/vs-2"
+	replica, ok := state.Replicas[replicaID]
+	if !ok {
+		t.Fatalf("missing replica state for %s", replicaID)
+	}
+	if replica.SessionKind != engine.SessionCatchUp {
+		t.Fatalf("SessionKind=%s, want %s", replica.SessionKind, engine.SessionCatchUp)
+	}
+	if !replica.SessionActive {
+		t.Fatal("SessionActive=false, want true")
+	}
+	if replica.LiveEligible {
+		t.Fatal("LiveEligible=true, want false during active catch-up")
+	}
+
+	allow, reason := bs.protocolLiveShippingAllowed(path, replicaID, 12)
+	if allow {
+		t.Fatal("live shipping should be blocked while catch-up session is active")
+	}
+	if !strings.Contains(reason, "active_catchup_session") {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestBlockService_ProtocolExecutionState_InSyncSenderAllowsLiveShipping(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-protocol-live")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15070",
+			CtrlAddr: "127.0.0.1:15071",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatalf("missing sender for %s", replicaID)
+	}
+	sender.InvalidateSession("test_complete", engine.StateInSync)
+	bs.syncProtocolExecutionState(path)
+
+	state, ok := bs.ProtocolExecutionState(path)
+	if !ok {
+		t.Fatal("missing protocol execution state")
+	}
+	replica, ok := state.Replicas[replicaID]
+	if !ok {
+		t.Fatalf("missing replica state for %s", replicaID)
+	}
+	if replica.SessionActive {
+		t.Fatal("SessionActive=true, want false after session completion")
+	}
+	if !replica.LiveEligible {
+		t.Fatal("LiveEligible=false, want true after session completion")
+	}
+
+	allow, reason := bs.protocolLiveShippingAllowed(path, replicaID, 12)
+	if !allow {
+		t.Fatalf("live shipping blocked after completion: %q", reason)
 	}
 }
 
@@ -1312,6 +1531,99 @@ func TestBlockService_ReadinessSnapshot_PrefersCoreProjectionReplicaFields(t *te
 	}
 	if snap.PublishHealthy {
 		t.Fatalf("publish_healthy should follow core publication truth on replica path, got %+v", snap)
+	}
+}
+
+func TestBlockService_ShipperStateChange_InSyncEmitsCoreConnectedObservation(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-shipper-connected-callback")
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	before, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection before shipper state change")
+	}
+	if before.Publication.Reason != "awaiting_shipper_connected" {
+		t.Fatalf("before reason=%q, want awaiting_shipper_connected", before.Publication.Reason)
+	}
+
+	bs.handleShipperStateChange(path, blockvol.ReplicaDisconnected, blockvol.ReplicaInSync, ch)
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("expected immediate heartbeat notification")
+	}
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after shipper state change")
+	}
+	if !after.Readiness.ShipperConnected {
+		t.Fatalf("expected shipper_connected=true after callback, projection=%+v", after)
+	}
+	if after.Publication.Reason != "awaiting_barrier_durability" {
+		t.Fatalf("after reason=%q, want awaiting_barrier_durability", after.Publication.Reason)
+	}
+	if after.Publication.Healthy {
+		t.Fatalf("shipper connect alone must not publish healthy, projection=%+v", after)
+	}
+}
+
+func TestBlockService_ObservePrimaryShipperConnectivityStatus_EmitsCoreConnectedObservation(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-shipper-connected-recheck")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	before, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection before connectivity observation")
+	}
+	if before.Publication.Reason != "awaiting_shipper_connected" {
+		t.Fatalf("before reason=%q, want awaiting_shipper_connected", before.Publication.Reason)
+	}
+
+	bs.observePrimaryShipperConnectivityStatus(path, true)
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after connectivity observation")
+	}
+	if !after.Readiness.ShipperConnected {
+		t.Fatalf("expected shipper_connected=true after recheck, projection=%+v", after)
+	}
+	if after.Publication.Reason != "awaiting_barrier_durability" {
+		t.Fatalf("after reason=%q, want awaiting_barrier_durability", after.Publication.Reason)
 	}
 }
 

@@ -106,6 +106,37 @@ func TestShipperGroup_DegradedCount(t *testing.T) {
 	}
 }
 
+func TestShipperGroup_AllHaveTransportContact(t *testing.T) {
+	s1 := newTestShipper()
+	s2 := newTestShipper()
+	sg := NewShipperGroup([]*WALShipper{s1, s2})
+	if sg.AllHaveTransportContact() {
+		t.Fatal("fresh disconnected shippers should not report transport contact")
+	}
+
+	s1.shippedLSN.Store(10)
+	if sg.AllHaveTransportContact() {
+		t.Fatal("partial transport contact should not satisfy full-set readiness")
+	}
+
+	s2.shippedLSN.Store(12)
+	if !sg.AllHaveTransportContact() {
+		t.Fatal("all shippers with shipped LSN should report transport contact")
+	}
+}
+
+func TestShipperGroup_AllHaveTransportContact_RejectsDegraded(t *testing.T) {
+	s1 := newTestShipper()
+	s2 := newTestShipper()
+	s1.shippedLSN.Store(10)
+	s2.shippedLSN.Store(12)
+	s2.state.Store(uint32(ReplicaDegraded))
+	sg := NewShipperGroup([]*WALShipper{s1, s2})
+	if sg.AllHaveTransportContact() {
+		t.Fatal("degraded shipper must not count as transport-connected")
+	}
+}
+
 // newTestShipper creates a WALShipper with a fixed epoch, not connected to anything.
 func newTestShipper() *WALShipper {
 	var epoch atomic.Uint64

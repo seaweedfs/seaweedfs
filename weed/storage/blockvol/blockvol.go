@@ -92,6 +92,11 @@ type BlockVol struct {
 	// Shipper state change callback — triggers immediate heartbeat.
 	onShipperStateChange func(from, to ReplicaState)
 
+	// liveShippingPolicy gates whether configured shippers may consume current
+	// live-tail WAL entries. The host uses this to keep replicas in bounded
+	// catch-up until their active protocol session reaches a live-eligible phase.
+	liveShippingPolicy func(replicaID string, entryLSN uint64) (allow bool, reason string)
+
 	// Snapshot fields (Phase 5 CP5-2).
 	snapMu    sync.RWMutex
 	snapshots map[uint32]*activeSnapshot
@@ -168,13 +173,13 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 	v.nextLSN.Store(1)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       v.fd.Sync,
-		MaxDelay:       cfg.GroupCommitMaxDelay,
-		MaxBatch:       cfg.GroupCommitMaxBatch,
-		LowWatermark:   cfg.GroupCommitLowWatermark,
-		OnDegraded:     func() { v.healthy.Store(false) },
-		PostSyncCheck:  v.writeGate,
-		Metrics:        v.Metrics,
+		SyncFunc:      v.fd.Sync,
+		MaxDelay:      cfg.GroupCommitMaxDelay,
+		MaxBatch:      cfg.GroupCommitMaxBatch,
+		LowWatermark:  cfg.GroupCommitLowWatermark,
+		OnDegraded:    func() { v.healthy.Store(false) },
+		PostSyncCheck: v.writeGate,
+		Metrics:       v.Metrics,
 	})
 	go v.groupCommit.Run()
 	bio, _, err := newBatchIO(cfg.IOBackend, log.Default())
@@ -298,13 +303,13 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 	v.epoch.Store(sb.Epoch)
 	v.healthy.Store(true)
 	v.groupCommit = NewGroupCommitter(GroupCommitterConfig{
-		SyncFunc:       v.fd.Sync,
-		MaxDelay:       cfg.GroupCommitMaxDelay,
-		MaxBatch:       cfg.GroupCommitMaxBatch,
-		LowWatermark:   cfg.GroupCommitLowWatermark,
-		OnDegraded:     func() { v.healthy.Store(false) },
-		PostSyncCheck:  v.writeGate,
-		Metrics:        v.Metrics,
+		SyncFunc:      v.fd.Sync,
+		MaxDelay:      cfg.GroupCommitMaxDelay,
+		MaxBatch:      cfg.GroupCommitMaxBatch,
+		LowWatermark:  cfg.GroupCommitLowWatermark,
+		OnDegraded:    func() { v.healthy.Store(false) },
+		PostSyncCheck: v.writeGate,
+		Metrics:       v.Metrics,
 	})
 	go v.groupCommit.Run()
 	bio, _, err := newBatchIO(cfg.IOBackend, log.Default())
@@ -850,6 +855,16 @@ func (v *BlockVol) SetOnShipperStateChange(fn func(from, to ReplicaState)) {
 	v.onShipperStateChange = fn
 }
 
+// SetLiveShippingPolicy installs a host-provided gate for current live-tail
+// shipping. The callback is applied to the current shipper group and remembered
+// for future SetReplicaAddrs() replacements.
+func (v *BlockVol) SetLiveShippingPolicy(fn func(replicaID string, entryLSN uint64) (allow bool, reason string)) {
+	v.liveShippingPolicy = fn
+	if v.shipperGroup != nil {
+		v.shipperGroup.SetLiveShippingPolicy(fn)
+	}
+}
+
 // GetShipperGroup returns the shipper group for debug/observability.
 // Returns nil if no replication is configured.
 func (v *BlockVol) GetShipperGroup() *ShipperGroup {
@@ -884,6 +899,7 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 		shippers[i] = NewWALShipper(a.DataAddr, a.CtrlAddr, func() uint64 {
 			return v.epoch.Load()
 		}, wa, v.Metrics)
+		shippers[i].SetReplicaID(a.ServerID)
 		// CP13-5: Seed new shippers with prior progress so reconnect
 		// path is used instead of bootstrap.
 		if hadPriorProgress {
@@ -895,6 +911,9 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 	// Wire state change callback so shipper degradation triggers immediate heartbeat.
 	if v.onShipperStateChange != nil {
 		v.shipperGroup.SetOnStateChange(v.onShipperStateChange)
+	}
+	if v.liveShippingPolicy != nil {
+		v.shipperGroup.SetLiveShippingPolicy(v.liveShippingPolicy)
 	}
 
 	// Replace the group committer's sync function with a distributed version.
@@ -919,6 +938,16 @@ func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
 	return v.shipperGroup.ShipperStates()
 }
 
+// PrimaryShipperConnected reports whether all configured replica shippers have
+// established transport contact for bootstrap/recovery observation. This is a
+// transport-level signal only; barrier durability still gates publish_healthy.
+func (v *BlockVol) PrimaryShipperConnected() bool {
+	if v == nil || v.shipperGroup == nil {
+		return false
+	}
+	return v.shipperGroup.AllHaveTransportContact()
+}
+
 // V2StatusSnapshot holds the storage state fields needed by the V2 engine bridge.
 type V2StatusSnapshot struct {
 	WALHeadLSN        uint64
@@ -933,7 +962,7 @@ type V2StatusSnapshot struct {
 //
 //   WALHeadLSN        ← nextLSN - 1 (last written LSN)
 //   WALTailLSN        ← super.WALCheckpointLSN (LSN boundary, not byte offset)
-//   CommittedLSN      ← nextLSN - 1 (for sync_all: every write is barrier-confirmed)
+//   CommittedLSN      ← lineage-safe durable boundary
 //   CheckpointLSN     ← super.WALCheckpointLSN (durable base image)
 //   CheckpointTrusted ← super.Validate() == nil (superblock integrity)
 func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
@@ -946,11 +975,19 @@ func (v *BlockVol) StatusSnapshot() V2StatusSnapshot {
 	// Entries with LSN > WALTailLSN are guaranteed in the WAL.
 	walTailLSN := v.super.WALCheckpointLSN
 
-	// CommittedLSN: for sync_all mode, every write is barrier-confirmed
-	// before returning. So WALHeadLSN (nextLSN-1) IS the committed boundary.
-	// This separates CommittedLSN from CheckpointLSN — entries between
-	// checkpoint and head are committed but not yet flushed to extent.
 	committedLSN := headLSN
+	if v.DurabilityMode() == DurabilitySyncAll && v.shipperGroup != nil && v.shipperGroup.Len() > 0 {
+		// For sync_all, local WAL head is not enough: writes may have reached
+		// the primary WAL before the replica bootstrap barrier succeeds. Report
+		// only the all-replica durable lower bound as lineage-safe committed.
+		if minReplicaFlushed, ok := v.shipperGroup.MinReplicaFlushedLSNAll(); ok {
+			if minReplicaFlushed < committedLSN {
+				committedLSN = minReplicaFlushed
+			}
+		} else {
+			committedLSN = 0
+		}
+	}
 
 	return V2StatusSnapshot{
 		WALHeadLSN:        headLSN,
@@ -1386,7 +1423,6 @@ func (v *BlockVol) Status() BlockVolumeStatus {
 	}
 }
 
-
 // WALStatus is a point-in-time snapshot of WAL pressure and admission metrics.
 type WALStatus struct {
 	UsedFraction        float64 // current WAL usage 0.0–1.0
@@ -1805,7 +1841,7 @@ func (v *BlockVol) Expand(newSize uint64) error {
 
 	// Update superblock: direct-commit.
 	v.super.VolumeSize = newSize
-	v.super.PreparedSize = 0  // defensive clear
+	v.super.PreparedSize = 0 // defensive clear
 	v.super.ExpandEpoch = 0
 	return v.persistSuperblock()
 }

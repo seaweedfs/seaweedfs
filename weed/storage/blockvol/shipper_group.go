@@ -97,6 +97,24 @@ func (sg *ShipperGroup) AnyDegraded() bool {
 	return false
 }
 
+// AllHaveTransportContact returns true only when every configured shipper has
+// established transport contact strong enough for bootstrap observability.
+// This is intentionally weaker than InSync: it allows the V2 core to observe
+// "shipper connected" before barrier durability has completed.
+func (sg *ShipperGroup) AllHaveTransportContact() bool {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	if len(sg.shippers) == 0 {
+		return false
+	}
+	for _, s := range sg.shippers {
+		if !s.HasTransportContact() {
+			return false
+		}
+	}
+	return true
+}
+
 // DegradedCount returns the number of degraded shippers.
 func (sg *ShipperGroup) DegradedCount() int {
 	sg.mu.RLock()
@@ -150,6 +168,30 @@ func (sg *ShipperGroup) MinReplicaFlushedLSN() (uint64, bool) {
 	return min, found
 }
 
+// MinReplicaFlushedLSNAll returns the minimum durable progress across the
+// full configured replica set, but only when EVERY shipper has reported valid
+// flushed progress. This is the safe committed boundary for sync_all
+// observability: if any replica has not established durable progress yet, the
+// cluster does not have a lineage-safe committed point for the full set.
+func (sg *ShipperGroup) MinReplicaFlushedLSNAll() (uint64, bool) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	if len(sg.shippers) == 0 {
+		return 0, false
+	}
+	var min uint64
+	for i, s := range sg.shippers {
+		if !s.HasFlushedProgress() {
+			return 0, false
+		}
+		lsn := s.ReplicaFlushedLSN()
+		if i == 0 || lsn < min {
+			min = lsn
+		}
+	}
+	return min, true
+}
+
 // MinRecoverableFlushedLSN returns the minimum replicaFlushedLSN across
 // shippers that are catch-up candidates (not NeedsRebuild, have flushed progress).
 // Pure read — does not mutate state. Returns (0, false) if no recoverable
@@ -177,10 +219,10 @@ func (sg *ShipperGroup) MinRecoverableFlushedLSN() (uint64, bool) {
 
 // RetentionBudgetParams holds the inputs for retention budget evaluation.
 type RetentionBudgetParams struct {
-	Timeout       time.Duration
-	MaxBytes      uint64
+	Timeout        time.Duration
+	MaxBytes       uint64
 	PrimaryHeadLSN uint64
-	BlockSize     uint32 // from volume config, for lag byte estimation
+	BlockSize      uint32 // from volume config, for lag byte estimation
 }
 
 // EvaluateRetentionBudgets checks each recoverable replica against timeout
@@ -239,6 +281,16 @@ func (sg *ShipperGroup) SetOnStateChange(fn func(from, to ReplicaState)) {
 	defer sg.mu.RUnlock()
 	for _, s := range sg.shippers {
 		s.SetOnStateChange(fn)
+	}
+}
+
+// SetLiveShippingPolicy installs a host-provided gate on all current shippers.
+// The policy is evaluated before a live-tail WAL entry is dialed or sent.
+func (sg *ShipperGroup) SetLiveShippingPolicy(fn func(replicaID string, entryLSN uint64) (allow bool, reason string)) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		s.SetLiveShippingPolicy(fn)
 	}
 }
 

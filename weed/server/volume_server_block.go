@@ -83,6 +83,8 @@ type BlockService struct {
 	coreProj       map[string]engine.PublicationProjection
 	coreExecMu     sync.RWMutex
 	coreExec       map[string][]string
+	protocolExecMu sync.RWMutex
+	protocolExec   map[string]volumeProtocolExecutionState
 
 	// T4: activation gate — promoted primaries that have not passed
 	// reconstruction quality check are gated from serving.
@@ -203,12 +205,26 @@ func (bs *BlockService) SetAdvertisedHost(host string) {
 func (bs *BlockService) WireStateChangeNotify(ch chan bool) {
 	bs.blockStore.IterateBlockVolumes(func(path string, vol *blockvol.BlockVol) {
 		vol.SetOnShipperStateChange(func(from, to blockvol.ReplicaState) {
-			select {
-			case ch <- true:
-			default: // already pending
-			}
+			bs.handleShipperStateChange(path, from, to, ch)
 		})
 	})
+}
+
+func (bs *BlockService) handleShipperStateChange(path string, from, to blockvol.ReplicaState, ch chan bool) {
+	if ch != nil {
+		select {
+		case ch <- true:
+		default: // already pending
+		}
+	}
+	if bs == nil || bs.v2Core == nil || to != blockvol.ReplicaInSync {
+		return
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok || proj.Role != engine.RolePrimary {
+		return
+	}
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -239,6 +255,7 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		v2Core:                      engine.NewCoreEngine(),
 		localServerID:               listenAddr, // INTERIM: transport-shaped, see field doc
 		coreProj:                    make(map[string]engine.PublicationProjection),
+		protocolExec:                make(map[string]volumeProtocolExecutionState),
 		activationGated:             make(map[string]string),
 		blockInventoryAuthoritative: false,
 	}
@@ -496,12 +513,14 @@ func (bs *BlockService) ProcessAssignments(assignments []blockvol.BlockVolumeAss
 func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssignment) []error {
 	errs := make([]error, len(assignments))
 	var legacyRecoveryResults []engine.AssignmentResult
+	changedPaths := make(map[string]struct{}, len(assignments))
 
 	// V2 bridge: convert and deliver to engine orchestrator (Phase 08 P1).
 	// P3: skip V2 processing for repeated unchanged assignments.
 	// P4: RecoveryManager starts/cancels recovery goroutines based on results.
 	if bs.v2Bridge != nil && bs.v2Orchestrator != nil {
 		for _, a := range assignments {
+			changedPaths[a.Path] = struct{}{}
 			// P3 idempotence: skip V2 processing if this assignment is
 			// materially unchanged from the last one applied for this path.
 			if bs.isAssignmentUnchanged(a) {
@@ -528,9 +547,13 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 
 	// V1 processing (requires blockStore).
 	if bs.blockStore == nil {
+		for path := range changedPaths {
+			bs.syncProtocolExecutionState(path)
+		}
 		return errs
 	}
 	for i, a := range assignments {
+		changedPaths[a.Path] = struct{}{}
 		role := blockvol.RoleFromWire(a.Role)
 		bs.recordAppliedAssignment(a)
 		if err := bs.applyCoreAssignmentEvent(a); err != nil {
@@ -554,11 +577,17 @@ func (bs *BlockService) ApplyAssignments(assignments []blockvol.BlockVolumeAssig
 			bs.v2Recovery.HandleAssignmentResult(result, assignments)
 		}
 	}
+	for path := range changedPaths {
+		bs.syncProtocolExecutionState(path)
+	}
 	return errs
 }
 
 func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignment) error {
 	if bs == nil || bs.v2Core == nil {
+		return bs.applyRoleAssignment(a)
+	}
+	if bs.isLeaseOnlyPrimaryRefresh(a) {
 		return bs.applyRoleAssignment(a)
 	}
 	ev, ok := bs.coreAssignmentEvent(a)
@@ -577,10 +606,36 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 	return nil
 }
 
+func (bs *BlockService) isLeaseOnlyPrimaryRefresh(a blockvol.BlockVolumeAssignment) bool {
+	if bs == nil || bs.v2Core == nil {
+		return false
+	}
+	if blockvol.RoleFromWire(a.Role) != blockvol.RolePrimary {
+		return false
+	}
+	if a.ReplicaDataAddr != "" || a.ReplicaCtrlAddr != "" || len(a.ReplicaAddrs) > 0 {
+		return false
+	}
+	proj, ok := bs.CoreProjection(a.Path)
+	if !ok {
+		return false
+	}
+	return proj.Epoch == a.Epoch && proj.Role == engine.RolePrimary
+}
+
 // evaluateActivationGate checks the current V2 core projection for a volume
 // and gates or clears activation accordingly. This is the local enforcement
 // point for T4 — the promoted node decides locally whether reconstruction
 // quality allows serving.
+//
+// Gate matrix (Phase 20 contract):
+//   - Gate:  degraded, needs_rebuild, missing_engine_projection
+//   - Allow: publish_healthy, replica_ready, bootstrap_pending, allocated_only
+//
+// bootstrap_pending and allocated_only are allowed because they represent
+// fresh bootstrap or normal bring-up states with no stale-data risk. Gating
+// them creates a deadlock: iSCSI removed → no writes → shipper never
+// connects → mode never advances to publish_healthy.
 //
 // Enforcement: when gated, the volume is disconnected from the iSCSI target
 // (active sessions terminated, volume removed). When ungated, the volume is
@@ -606,23 +661,25 @@ func (bs *BlockService) evaluateActivationGate(path string) {
 	bs.activationGateMu.Lock()
 	_, wasGated := bs.activationGated[path]
 	switch proj.Mode.Name {
-	case "publish_healthy", "replica_ready":
-		delete(bs.activationGated, path)
-		bs.activationGateMu.Unlock()
-		// Ungate: re-register with iSCSI target if transitioning from gated.
-		if wasGated {
-			bs.ungateServing(path)
-		}
-	default:
+	case "degraded", "needs_rebuild":
+		// Unsafe reconstruction states — hard gate.
 		reason := fmt.Sprintf("engine_projection_mode=%s", proj.Mode.Name)
 		if proj.Mode.Reason != "" {
 			reason += ": " + proj.Mode.Reason
 		}
 		bs.activationGated[path] = reason
 		bs.activationGateMu.Unlock()
-		// Gate: disconnect from iSCSI target if not already gated.
 		if !wasGated {
 			bs.gateServing(path, reason)
+		}
+	default:
+		// All other modes (publish_healthy, replica_ready, bootstrap_pending,
+		// allocated_only) are allowed. Fresh bootstrap must remain
+		// discoverable so the shipper can complete first closure.
+		delete(bs.activationGated, path)
+		bs.activationGateMu.Unlock()
+		if wasGated {
+			bs.ungateServing(path)
 		}
 	}
 }
@@ -704,6 +761,7 @@ func (bs *BlockService) applyCoreEvent(ev engine.Event) {
 	// projection transitions to a serving-allowed state, the gate clears
 	// and the volume is re-registered with the iSCSI target.
 	bs.evaluateActivationGate(ev.VolumeID())
+	bs.syncProtocolExecutionState(ev.VolumeID())
 }
 
 // coreApplyAndLog applies an event to the V2 core and logs the transition.
@@ -1143,6 +1201,7 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 	bs.replMu.RLock()
 	defer bs.replMu.RUnlock()
 	for i := range msgs {
+		bs.observePrimaryShipperConnectivity(msgs[i].Path)
 		if s, ok := bs.replStates[msgs[i].Path]; ok {
 			msgs[i].ReplicaDataAddr, msgs[i].ReplicaCtrlAddr = bs.heartbeatReplicaAddrs(msgs[i].Path, s)
 			msgs[i].ReplicaReady = bs.heartbeatReplicaReady(msgs[i].Path, s)
@@ -1167,6 +1226,31 @@ func (bs *BlockService) CollectBlockVolumeHeartbeat() []blockvol.BlockVolumeInfo
 		}
 	}
 	return msgs
+}
+
+func (bs *BlockService) observePrimaryShipperConnectivity(path string) {
+	if bs == nil || bs.v2Core == nil {
+		return
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok || proj.Role != engine.RolePrimary || proj.Readiness.ShipperConnected {
+		return
+	}
+	connected := bs.isPrimaryShipperConnected(path)
+	glog.V(0).Infof("block service: recheck shipper connectivity %s connected=%v mode=%s reason=%q",
+		path, connected, proj.Mode.Name, proj.Publication.Reason)
+	bs.observePrimaryShipperConnectivityStatus(path, connected)
+}
+
+func (bs *BlockService) observePrimaryShipperConnectivityStatus(path string, connected bool) {
+	if bs == nil || bs.v2Core == nil || !connected {
+		return
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok || proj.Role != engine.RolePrimary || proj.Readiness.ShipperConnected {
+		return
+	}
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
 }
 
 // heartbeatReplicaAddrs returns the scalar replica transport addresses that

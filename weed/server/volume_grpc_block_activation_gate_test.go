@@ -156,16 +156,8 @@ func TestT4_ApplyCoreAssignment_GatesDegradedPrimary(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	path := createTestVolDirect(t, bs, "gate-assignment")
 
-	// Pre-inject degraded projection so that after assignment processing
-	// the gate is evaluated.
-	bs.coreProjMu.Lock()
-	bs.coreProj[path] = engine.PublicationProjection{
-		VolumeID: path,
-		Mode:     engine.ModeView{Name: engine.ModeDegraded, Reason: "incomplete_reconstruction"},
-	}
-	bs.coreProjMu.Unlock()
-
-	// Process primary assignment through the core path.
+	// Process primary assignment through the core path. The V2 core will
+	// compute the projection (allocated_only for a no-replica assignment).
 	bs.applyCoreAssignmentEvent(blockvol.BlockVolumeAssignment{
 		Path:       path,
 		Epoch:      5,
@@ -173,13 +165,94 @@ func TestT4_ApplyCoreAssignment_GatesDegradedPrimary(t *testing.T) {
 		LeaseTtlMs: 30000,
 	})
 
-	// The gate should have been evaluated after assignment.
+	// Fresh assignment with no replicas → allocated_only. This must NOT
+	// be gated (no stale data risk on fresh bootstrap).
+	if gated, reason := bs.IsActivationGated(path); gated {
+		t.Fatalf("fresh primary assignment must not be gated, got reason=%q", reason)
+	}
+
+	// Now inject degraded projection (simulating barrier failure) and
+	// re-evaluate. THIS must gate.
+	bs.coreProjMu.Lock()
+	bs.coreProj[path] = engine.PublicationProjection{
+		VolumeID: path,
+		Mode:     engine.ModeView{Name: engine.ModeDegraded, Reason: "incomplete_reconstruction"},
+	}
+	bs.coreProjMu.Unlock()
+	bs.evaluateActivationGate(path)
+
 	gated, reason := bs.IsActivationGated(path)
 	if !gated {
-		t.Fatal("expected activation gated after primary assignment with degraded projection")
+		t.Fatal("expected activation gated after projection transitions to degraded")
 	}
 	if reason == "" {
 		t.Fatal("expected non-empty gate reason")
+	}
+}
+
+// bootstrap_pending must NOT be gated — gating it creates the Stage 0B
+// chicken-and-egg deadlock (iSCSI removed → no writes → shipper never
+// connects → mode never advances).
+func TestT4_BootstrapPending_NotGated(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "gate-bootstrap")
+
+	bs.coreProjMu.Lock()
+	bs.coreProj[path] = engine.PublicationProjection{
+		Mode: engine.ModeView{Name: engine.ModeBootstrapPending, Reason: "awaiting_shipper_connected"},
+	}
+	bs.coreProjMu.Unlock()
+
+	bs.evaluateActivationGate(path)
+
+	if gated, reason := bs.IsActivationGated(path); gated {
+		t.Fatalf("bootstrap_pending must NOT be gated, got reason=%q", reason)
+	}
+}
+
+// allocated_only must NOT be gated — fresh volume with no replicas yet.
+func TestT4_AllocatedOnly_NotGated(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "gate-allocated")
+
+	bs.coreProjMu.Lock()
+	bs.coreProj[path] = engine.PublicationProjection{
+		Mode: engine.ModeView{Name: engine.ModeAllocatedOnly},
+	}
+	bs.coreProjMu.Unlock()
+
+	bs.evaluateActivationGate(path)
+
+	if gated, reason := bs.IsActivationGated(path); gated {
+		t.Fatalf("allocated_only must NOT be gated, got reason=%q", reason)
+	}
+}
+
+// Transition from gated (degraded) to bootstrap_pending must clear the gate.
+func TestT4_DegradedToBootstrapPending_ClearsGate(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "gate-degrade-bootstrap")
+
+	// Start gated.
+	bs.coreProjMu.Lock()
+	bs.coreProj[path] = engine.PublicationProjection{
+		Mode: engine.ModeView{Name: engine.ModeDegraded, Reason: "barrier_timeout"},
+	}
+	bs.coreProjMu.Unlock()
+	bs.evaluateActivationGate(path)
+	if gated, _ := bs.IsActivationGated(path); !gated {
+		t.Fatal("expected gated for degraded")
+	}
+
+	// Transition to bootstrap_pending (recovery started).
+	bs.coreProjMu.Lock()
+	bs.coreProj[path] = engine.PublicationProjection{
+		Mode: engine.ModeView{Name: engine.ModeBootstrapPending, Reason: "recovery_in_progress"},
+	}
+	bs.coreProjMu.Unlock()
+	bs.evaluateActivationGate(path)
+	if gated, reason := bs.IsActivationGated(path); gated {
+		t.Fatalf("bootstrap_pending should clear gate, got reason=%q", reason)
 	}
 }
 

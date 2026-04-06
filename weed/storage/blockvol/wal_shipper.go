@@ -54,8 +54,9 @@ func (s ReplicaState) String() string {
 type WALShipper struct {
 	dataAddr    string
 	controlAddr string
+	replicaID   string
 	epochFn     func() uint64
-	wal         WALAccess      // primary WAL access for reconnect catch-up
+	wal         WALAccess // primary WAL access for reconnect catch-up
 	metrics     *EngineMetrics
 
 	mu       sync.Mutex // protects dataConn
@@ -76,12 +77,30 @@ type WALShipper struct {
 	// Used to trigger immediate heartbeat on degradation/recovery.
 	// Set via SetOnStateChange. Nil = no callback.
 	onStateChange func(from, to ReplicaState)
+
+	// liveShippingPolicy gates whether this shipper may accept current live-tail
+	// WAL entries. The host uses this to keep a replica in bounded catch-up until
+	// the active session contract allows live streaming again.
+	liveShippingPolicy func(replicaID string, entryLSN uint64) (allow bool, reason string)
 }
 
 // SetOnStateChange registers a callback for shipper state transitions.
 // The callback is invoked synchronously from markDegraded/markInSync.
 func (s *WALShipper) SetOnStateChange(fn func(from, to ReplicaState)) {
 	s.onStateChange = fn
+}
+
+// SetReplicaID sets the stable replica identity carried from the host-side
+// session contract. When empty, transport-level behavior still works but
+// protocol-aware gating cannot make per-replica decisions.
+func (s *WALShipper) SetReplicaID(replicaID string) {
+	s.replicaID = replicaID
+}
+
+// SetLiveShippingPolicy installs a host-provided gate for current live-tail
+// shipping. The callback is consulted before any network dial or send occurs.
+func (s *WALShipper) SetLiveShippingPolicy(fn func(replicaID string, entryLSN uint64) (allow bool, reason string)) {
+	s.liveShippingPolicy = fn
 }
 
 const maxCatchupRetries = 3
@@ -114,6 +133,20 @@ func (s *WALShipper) Ship(entry *WALEntry) error {
 	if s.stopped.Load() || (st != ReplicaInSync && st != ReplicaDisconnected) {
 		return nil
 	}
+	if s.liveShippingPolicy != nil {
+		if allow, reason := s.liveShippingPolicy(s.replicaID, entry.LSN); !allow {
+			if reason == "" {
+				reason = "live_shipping_blocked"
+			}
+			log.Printf("wal_shipper: live ship gated (replica=%s data=%s ctrl=%s lsn=%d reason=%s)",
+				s.replicaID, s.dataAddr, s.controlAddr, entry.LSN, reason)
+			return nil
+		}
+	}
+	if st == ReplicaDisconnected && s.shippedLSN.Load() == 0 {
+		log.Printf("wal_shipper: bootstrap ship attempt (data=%s, ctrl=%s, lsn=%d, epoch=%d)",
+			s.dataAddr, s.controlAddr, entry.LSN, entry.Epoch)
+	}
 
 	// Validate epoch: drop stale entries.
 	if entry.Epoch != s.epochFn() {
@@ -131,6 +164,8 @@ func (s *WALShipper) Ship(entry *WALEntry) error {
 	defer s.mu.Unlock()
 
 	if err := s.ensureDataConn(); err != nil {
+		log.Printf("wal_shipper: data channel connect failed (data=%s, ctrl=%s, lsn=%d): %v",
+			s.dataAddr, s.controlAddr, entry.LSN, err)
 		s.markDegraded()
 		return nil
 	}
@@ -290,6 +325,22 @@ func (s *WALShipper) HasFlushedProgress() bool {
 	return s.hasFlushedProgress.Load()
 }
 
+// HasTransportContact reports whether this shipper has established enough
+// transport contact to treat the replication path as connected for bootstrap
+// observability, even before barrier durability is proven.
+func (s *WALShipper) HasTransportContact() bool {
+	switch s.State() {
+	case ReplicaDegraded, ReplicaNeedsRebuild:
+		return false
+	case ReplicaConnecting, ReplicaCatchingUp, ReplicaInSync:
+		return true
+	}
+	if s.ShippedLSN() > 0 {
+		return true
+	}
+	return !s.LastContactTime().IsZero()
+}
+
 // State returns the current replica state machine state.
 func (s *WALShipper) State() ReplicaState {
 	return ReplicaState(s.state.Load())
@@ -346,6 +397,7 @@ func (s *WALShipper) ensureDataConn() error {
 		return err
 	}
 	s.dataConn = conn
+	log.Printf("wal_shipper: data channel connected (data=%s, ctrl=%s)", s.dataAddr, s.controlAddr)
 	return nil
 }
 

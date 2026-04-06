@@ -196,6 +196,8 @@ func TestBlockVol(t *testing.T) {
 		// Phase 4A CP4a: Status tests.
 		{name: "status_primary_with_lease", run: testStatusPrimaryWithLease},
 		{name: "status_stale_no_lease", run: testStatusStaleNoLease},
+		{name: "status_snapshot_sync_all_no_replica_progress_keeps_committed_at_zero", run: testStatusSnapshotSyncAllNoReplicaProgressKeepsCommittedAtZero},
+		{name: "status_snapshot_sync_all_committed_uses_replica_flushed_floor", run: testStatusSnapshotSyncAllCommittedUsesReplicaFlushedFloor},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1023,10 +1025,10 @@ func testBlockvolCustomConfigCreate(t *testing.T) {
 		GroupCommitMaxDelay:     2 * time.Millisecond,
 		GroupCommitMaxBatch:     32,
 		GroupCommitLowWatermark: 2,
-		WALPressureThreshold:   0.5,
-		WALFullTimeout:         1 * time.Second,
-		FlushInterval:          50 * time.Millisecond,
-		DirtyMapShards:         64,
+		WALPressureThreshold:    0.5,
+		WALFullTimeout:          1 * time.Second,
+		FlushInterval:           50 * time.Millisecond,
+		DirtyMapShards:          64,
 	}
 
 	v, err := CreateBlockVol(path, CreateOptions{
@@ -1064,10 +1066,10 @@ func testBlockvolCustomConfigOpen(t *testing.T) {
 		GroupCommitMaxDelay:     2 * time.Millisecond,
 		GroupCommitMaxBatch:     32,
 		GroupCommitLowWatermark: 2,
-		WALPressureThreshold:   0.6,
-		WALFullTimeout:         2 * time.Second,
-		FlushInterval:          50 * time.Millisecond,
-		DirtyMapShards:         128,
+		WALPressureThreshold:    0.6,
+		WALFullTimeout:          2 * time.Second,
+		FlushInterval:           50 * time.Millisecond,
+		DirtyMapShards:          128,
 	}
 
 	// Create with default config, close, reopen with custom config.
@@ -1762,8 +1764,8 @@ func testCloseTimeoutIfOpStuck(t *testing.T) {
 	path := filepath.Join(dir, "stuck.blockvol")
 
 	cfg := DefaultConfig()
-	cfg.FlushInterval = 1 * time.Hour      // no background flush
-	cfg.WALFullTimeout = 30 * time.Second   // writer will be stuck waiting
+	cfg.FlushInterval = 1 * time.Hour     // no background flush
+	cfg.WALFullTimeout = 30 * time.Second // writer will be stuck waiting
 
 	entrySize := uint64(walEntryHeaderSize + 4096)
 	walSize := entrySize * 3 // tiny WAL
@@ -2483,6 +2485,64 @@ func testShipDegradedOnError(t *testing.T) {
 	// If barrier succeeded, shipper should be InSync now.
 	if s.State() == ReplicaInSync {
 		return // correct: recovery worked
+	}
+}
+
+func TestWALShipper_LiveShippingPolicyBlocksBeforeDial(t *testing.T) {
+	dataAddr, frames, _ := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 1 }, nil)
+	s.SetReplicaID("vol/r1")
+	s.SetLiveShippingPolicy(func(replicaID string, entryLSN uint64) (bool, string) {
+		if replicaID != "vol/r1" {
+			t.Fatalf("replicaID=%q", replicaID)
+		}
+		if entryLSN != 1 {
+			t.Fatalf("entryLSN=%d", entryLSN)
+		}
+		return false, "active_catchup_session"
+	})
+	defer s.Stop()
+
+	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if err := s.Ship(entry); err != nil {
+		t.Fatalf("Ship: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if got := len(*frames); got != 0 {
+		t.Fatalf("frames=%d, want 0 when live shipping is gated", got)
+	}
+	if got := s.ShippedLSN(); got != 0 {
+		t.Fatalf("ShippedLSN=%d, want 0 when live shipping is gated", got)
+	}
+}
+
+func TestWALShipper_LiveShippingPolicyAllowsShip(t *testing.T) {
+	dataAddr, frames, done := mockDataServer(t)
+	ctrlAddr, _ := mockCtrlServer(t, BarrierOK)
+
+	s := NewWALShipper(dataAddr, ctrlAddr, func() uint64 { return 1 }, nil)
+	s.SetReplicaID("vol/r1")
+	s.SetLiveShippingPolicy(func(replicaID string, entryLSN uint64) (bool, string) {
+		return true, ""
+	})
+
+	entry := &WALEntry{LSN: 1, Epoch: 1, Type: EntryTypeWrite, LBA: 0, Length: 4096, Data: make([]byte, 4096)}
+	if err := s.Ship(entry); err != nil {
+		t.Fatalf("Ship: %v", err)
+	}
+
+	s.Stop()
+	<-done
+
+	if got := s.ShippedLSN(); got != 1 {
+		t.Fatalf("ShippedLSN=%d, want 1", got)
+	}
+	if got := len(*frames); got != 1 {
+		t.Fatalf("frames=%d, want 1", got)
 	}
 }
 
@@ -4946,6 +5006,55 @@ func testStatusStaleNoLease(t *testing.T) {
 	}
 	if st.Epoch != 2 {
 		t.Errorf("Epoch: got %d, want 2", st.Epoch)
+	}
+}
+
+func testStatusSnapshotSyncAllNoReplicaProgressKeepsCommittedAtZero(t *testing.T) {
+	v, _ := newTestVolWithMode(t, DurabilitySyncAll)
+	defer v.Close()
+
+	shipper := NewWALShipper("127.0.0.1:9901", "127.0.0.1:9902", func() uint64 {
+		return v.epoch.Load()
+	}, nil, v.Metrics)
+	v.shipperGroup = NewShipperGroup([]*WALShipper{shipper})
+
+	snap := v.StatusSnapshot()
+	if snap.WALHeadLSN == 0 {
+		t.Fatal("precondition failed: WALHeadLSN should be > 0 after seed write")
+	}
+	if snap.CommittedLSN != 0 {
+		t.Fatalf("CommittedLSN=%d, want 0 until all replicas report durable progress", snap.CommittedLSN)
+	}
+}
+
+func testStatusSnapshotSyncAllCommittedUsesReplicaFlushedFloor(t *testing.T) {
+	v, _ := newTestVolWithMode(t, DurabilitySyncAll)
+	defer v.Close()
+
+	for i := 1; i < 8; i++ {
+		if err := v.WriteLBA(uint64(i), makeBlock(byte('a'+i))); err != nil {
+			t.Fatalf("seed write %d: %v", i, err)
+		}
+	}
+
+	s1 := NewWALShipper("127.0.0.1:9911", "127.0.0.1:9912", func() uint64 {
+		return v.epoch.Load()
+	}, nil, v.Metrics)
+	s2 := NewWALShipper("127.0.0.1:9921", "127.0.0.1:9922", func() uint64 {
+		return v.epoch.Load()
+	}, nil, v.Metrics)
+	s1.hasFlushedProgress.Store(true)
+	s1.replicaFlushedLSN.Store(10)
+	s2.hasFlushedProgress.Store(true)
+	s2.replicaFlushedLSN.Store(5)
+	v.shipperGroup = NewShipperGroup([]*WALShipper{s1, s2})
+
+	snap := v.StatusSnapshot()
+	if snap.WALHeadLSN < 8 {
+		t.Fatalf("precondition failed: WALHeadLSN=%d, want >= 8", snap.WALHeadLSN)
+	}
+	if snap.CommittedLSN != 5 {
+		t.Fatalf("CommittedLSN=%d, want min replica flushed LSN 5", snap.CommittedLSN)
 	}
 }
 

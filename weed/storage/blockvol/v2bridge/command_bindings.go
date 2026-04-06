@@ -104,7 +104,7 @@ func (b *CommandBindings) IsPrimaryShipperConnected(path string) bool {
 	}
 	connected := false
 	_ = b.volumes.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		connected = len(vol.ReplicaShipperStates()) > 0 && !vol.Status().ReplicaDegraded
+		connected = vol.PrimaryShipperConnected()
 		return nil
 	})
 	return connected

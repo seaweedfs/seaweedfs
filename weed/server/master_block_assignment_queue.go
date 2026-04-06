@@ -119,6 +119,16 @@ func assignmentConfirmedByHeartbeat(a blockvol.BlockVolumeAssignment, infos []bl
 			return true
 		}
 		if info.ReplicaDataAddr == expectedData && info.ReplicaCtrlAddr == expectedCtrl {
+			// A primary refresh assignment that carries replica transport should not
+			// be confirmed while the local V2 core still projects allocated_only.
+			// Otherwise the master can drop the refresh based only on legacy
+			// transport fields before the VS actually re-applies the assignment to
+			// the core and grows replica membership.
+			if blockvol.RoleFromWire(a.Role) == blockvol.RolePrimary &&
+				info.EngineProjectionMode != "" &&
+				info.EngineProjectionMode == "allocated_only" {
+				return false
+			}
 			return true
 		}
 	}

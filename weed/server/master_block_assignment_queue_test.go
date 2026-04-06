@@ -187,6 +187,47 @@ func TestQueue_ConfirmFromHeartbeat_SameEpochRefreshWaitsForReplicaTransport(t *
 	}
 }
 
+func TestQueue_ConfirmFromHeartbeat_PrimaryRefreshWaitsForCoreProjectionTransition(t *testing.T) {
+	q := NewBlockAssignmentQueue()
+	refresh := mkAssign("/a.blk", 5, 1)
+	refresh.ReplicaAddrs = []blockvol.ReplicaAddr{{
+		DataAddr: "10.0.0.2:14260",
+		CtrlAddr: "10.0.0.2:14261",
+		ServerID: "vs2",
+	}}
+	refresh.ReplicaDataAddr = "10.0.0.2:14260"
+	refresh.ReplicaCtrlAddr = "10.0.0.2:14261"
+	refresh.ReplicaServerID = "vs2"
+	q.Enqueue("s1", refresh)
+
+	// Legacy transport fields alone are not enough for a primary refresh if the
+	// local core still projects allocated_only. Otherwise the refresh can be
+	// dropped before the VS actually re-applies replica membership to the core.
+	q.ConfirmFromHeartbeat("s1", []blockvol.BlockVolumeInfoMessage{{
+		Path:                 "/a.blk",
+		Epoch:                5,
+		ReplicaDataAddr:      "10.0.0.2:14260",
+		ReplicaCtrlAddr:      "10.0.0.2:14261",
+		EngineProjectionMode: "allocated_only",
+	}})
+	if q.Pending("s1") != 1 {
+		t.Fatalf("allocated_only primary should not confirm refresh early, pending=%d", q.Pending("s1"))
+	}
+
+	// Once the local core leaves allocated_only, the same heartbeat transport
+	// now proves the refresh reached the V2 projection layer.
+	q.ConfirmFromHeartbeat("s1", []blockvol.BlockVolumeInfoMessage{{
+		Path:                 "/a.blk",
+		Epoch:                5,
+		ReplicaDataAddr:      "10.0.0.2:14260",
+		ReplicaCtrlAddr:      "10.0.0.2:14261",
+		EngineProjectionMode: "bootstrap_pending",
+	}})
+	if q.Pending("s1") != 0 {
+		t.Fatalf("expected refresh assignment to confirm after projection transition, pending=%d", q.Pending("s1"))
+	}
+}
+
 func TestQueue_PeekPrunesStaleEpochs(t *testing.T) {
 	q := NewBlockAssignmentQueue()
 	q.Enqueue("s1", mkAssign("/a.blk", 1, 1)) // stale
