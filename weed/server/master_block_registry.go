@@ -95,6 +95,12 @@ type BlockVolumeEntry struct {
 	VolumeMode string // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
 	WALHeadLSN uint64 // primary WAL head LSN from heartbeat
 
+	// T5: Master-owned cluster-level replication health judgment.
+	// Distinct from EngineProjectionMode (VS-local) and VolumeMode (legacy).
+	// Computed from multi-replica facts: replica LSN lag, heartbeat freshness,
+	// role state, and recovery phase. Monotonic: worst replica state dominates.
+	ClusterReplicationMode string // "keepup", "catching_up", "degraded", "needs_rebuild", "no_replicas"
+
 	// CP8-3-1: Durability mode.
 	DurabilityMode string // "best_effort", "sync_all", "sync_quorum"
 
@@ -164,6 +170,96 @@ func (e *BlockVolumeEntry) recomputeReplicaState() {
 
 	// CP13-9: compute normalized VolumeMode for external surfaces.
 	e.VolumeMode = e.computeVolumeMode()
+
+	// T5: compute cluster-level replication mode from multi-replica facts.
+	e.ClusterReplicationMode = e.computeClusterReplicationMode()
+}
+
+// computeClusterReplicationMode returns the master-owned cluster-level
+// replication health judgment for the RF2 set. This is distinct from
+// EngineProjectionMode (VS-local engine truth) and VolumeMode (legacy).
+//
+// Mode meanings:
+//   - "no_replicas": RF=1 or no replicas configured (not an RF2 judgment)
+//   - "keepup": all replicas healthy, LSN within tolerance, heartbeat fresh
+//   - "catching_up": at least one replica is behind but recoverable
+//   - "degraded": at least one replica has barrier failure or impaired state
+//   - "needs_rebuild": at least one replica has unrecoverable gap
+//
+// Monotonic: worst replica state dominates the cluster mode.
+func (e *BlockVolumeEntry) computeClusterReplicationMode() string {
+	if len(e.Replicas) == 0 {
+		return "no_replicas"
+	}
+
+	worst := "keepup"
+	for _, ri := range e.Replicas {
+		replicaMode := evaluateReplicaHealth(ri, e.WALHeadLSN)
+		worst = worseClusterMode(worst, replicaMode)
+	}
+	return worst
+}
+
+// evaluateReplicaHealth returns the cluster-level health classification for
+// one replica. Does NOT use EngineProjectionMode — computes from registry-
+// observed facts only (heartbeat freshness, LSN lag, role).
+func evaluateReplicaHealth(ri ReplicaInfo, primaryWALHeadLSN uint64) string {
+	// Rebuilding role is needs_rebuild.
+	if blockvol.RoleFromWire(ri.Role) == blockvol.RoleRebuilding {
+		return "needs_rebuild"
+	}
+
+	// Stale heartbeat (>60s) is degraded.
+	if !ri.LastHeartbeat.IsZero() && time.Since(ri.LastHeartbeat) > 60*time.Second {
+		return "degraded"
+	}
+
+	// No heartbeat ever received — catching up.
+	if ri.LastHeartbeat.IsZero() {
+		return "catching_up"
+	}
+
+	// LSN lag check: if primary has progress and replica is behind.
+	if primaryWALHeadLSN > 0 && ri.WALHeadLSN < primaryWALHeadLSN {
+		lag := primaryWALHeadLSN - ri.WALHeadLSN
+		if lag > 1000 {
+			return "needs_rebuild"
+		}
+		if lag > 0 {
+			return "catching_up"
+		}
+	}
+
+	// Not ready is catching_up.
+	if !ri.Ready {
+		return "catching_up"
+	}
+
+	return "keepup"
+}
+
+// worseClusterMode returns the more severe of two cluster modes.
+// Severity order: needs_rebuild > degraded > catching_up > keepup.
+func worseClusterMode(a, b string) string {
+	if clusterModeRank(b) > clusterModeRank(a) {
+		return b
+	}
+	return a
+}
+
+func clusterModeRank(mode string) int {
+	switch mode {
+	case "keepup":
+		return 0
+	case "catching_up":
+		return 1
+	case "degraded":
+		return 2
+	case "needs_rebuild":
+		return 3
+	default:
+		return 0
+	}
 }
 
 // computeVolumeMode returns the normalized mode string for CP13-9.
