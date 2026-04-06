@@ -5,122 +5,95 @@ Status: active
 
 ## Reading
 
-The system is architecture-complete but execution-incomplete. The V2
-engine thinks like a product. The data plane still behaves partly like
-a prototype. The gap is not features — it is end-to-end contract closure
-from engine through write/flush/catch-up/barrier to data serve.
+`Phase 20` is now architecture-complete but not yet product-complete.
+
+The V2 engine already has a product-shaped semantic contract. The remaining
+acceptance gap is host/runtime closure:
+
+1. `write` vs `flush` vs `durability` is not fully explicit
+2. fresh replica bootstrap is not fully protocol-aware
+3. host observations are not yet a complete protocol seam
+4. serving/publish boundaries are not yet derived from one closed contract
+5. some adapter and test paths still reflect pre-product assumptions
+
+This checklist is intentionally concrete. Each row should answer:
+
+1. what area is being judged
+2. what the system does today
+3. what must be true before product signoff
+4. whether it blocks `T6/T7`
+5. what the cheapest valid proof tier is
 
 ## Acceptance Matrix
 
-### 1. Write / Durability Contract
+| Area | Current state | Required for product | Blocks T6/T7? | Best test level |
+|---|---|---|---|---|
+| `WriteLBA()` external guarantee | implicit `WAL append + ShipAll`; returns before `groupCommit.Submit()` | must be explicitly documented and enforced as write-back admission, not durability completion | Yes | design doc + unit |
+| `SyncCache()` durability boundary | durability lives in `groupCommit.Submit()` and distributed sync path | must be the clear durability commit point for `sync_all` proofs and operator reasoning | Yes | component |
+| `sync_all` observable truth | barrier result is in distributed sync path, not plain write path | success must mean "all required replicas durable before return" at the chosen commit boundary | Yes | component |
+| `write` vs `replicated` vs `durable` contract | currently easy to misread; some tests still treat write as commit | must be a closed contract used consistently by code, docs, and tests | Yes | design doc + component |
+| FUA / fsync / flush fence meaning | fence exists in runtime pieces but product statement is incomplete | must say exactly which operation is the durability fence for clients | No | unit + docs |
+| Fresh replica entry condition | shipper can be created from assignment / `SetReplicaAddrs()` without a completed bounded session | fresh replica must enter an explicit session before consuming live tail | Yes | component |
+| Frozen catch-up target | engine has `FrozenTargetLSN`; host execution does not yet fully enforce it end-to-end | host must freeze target before replay and must not drift target during bounded catch-up | Yes | component |
+| Live-tail enable condition | phase gate now blocks live shipping during active session | must additionally prove gate clears only after bounded catch-up reaches its target | Yes | component |
+| LSN gap prevention on late attach | current live-tail gate prevents one illegal path, but backlog is not yet moved | must perform bounded WAL catch-up before allowing current live tail | Yes | component |
+| Timeout outcome during catch-up | no full retry vs rebuild classification closure yet | must distinguish replan/continue from escalate-to-build | Yes | component |
+| Retention loss during catch-up | some low-level signals exist, but end-to-end protocol handling is incomplete | if pinned WAL is lost, host must emit escalation and stop pretending catch-up is possible | Yes | component |
+| `ShipperConfiguredObserved` seam | implemented and usable | keep as protocol observation, not as semantic shortcut | No | component |
+| `ShipperConnectedObserved` seam | implemented but only part of the lifecycle | must remain distinct from barrier durability and target reached | Yes | component |
+| Replay progress observation | not yet centralized as a first-class protocol observation | must emit bounded progress facts for catch-up sessions | No | component |
+| Catch-up target reached observation | currently implied by completion path, not exposed as its own acceptance item | must emit and consume a clear "target reached / catch-up completed" observation | Yes | component |
+| Timeout classification observation | not centralized | must feed runtime timeout outcomes back through one protocol seam | Yes | component |
+| Retention-loss observation | partially local, partially implicit | must re-enter engine truth through one observation seam | No | component |
+| Transport contact vs session completion | partly separated now | must stay strictly separate: contact is weaker than durable completion | Yes | component |
+| `publish_healthy` contract | currently depends on multiple readiness signals and durability hints | must be derived from one protocol contract: no active recovery, valid transport, required barrier durability, accepted mode | Yes | component |
+| Frontend serving gate | `T4` gate exists and enforces degraded / rebuild fail-closed | must be aligned with the same protocol contract that governs publish/readiness | Partially | integration |
+| `bootstrap_pending -> publish_healthy` closure | now closer, but not fully closed under bounded catch-up semantics | must require catch-up completion and durability proof, not just partial transport success | Yes | component |
+| Replica durable boundary surface | `MinReplicaFlushedLSNAll()` exists | must be the same boundary used by publish and operator surfaces | No | unit + component |
+| Rebuild entry condition | engine emits rebuild commands | must stay session-owned, not become an ad-hoc host decision | No | component |
+| Rebuild completion host convergence | completion path exists | host must clear recovery state, align publication state, and re-enter normal protocol flow | No | integration |
+| WAL catch-up to snapshot/build escalation | not yet fully closed as one runtime contract | must have explicit, testable boundary for "continue WAL catch-up" vs "switch to build" | No | component |
+| Snapshot/build under same protocol model | still partly separate from WAL-first path | should converge into the same session-aware host execution pattern | No | design doc + component |
+| RF=2 single-replica stable identity | some server paths still drop `ServerID` | every adapter path must preserve stable replica identity | Yes | component |
+| ReplicaID derivation consistency | convention exists (`path/serverID`) | must stay identical across `v2bridge`, registry, dispatcher, host runtime, and shippers | No | unit |
+| Assignment conversion edge cases | mostly covered but not yet treated as product acceptance rows | must fail closed on empty/missing/mismatched identity data | No | unit |
+| Tests that treat `WriteLBA()` as commit | still present in some component tests | must be audited and corrected so `WriteLBA != durability` unless contract changes | Yes | test audit |
+| Tests that treat `SyncCache()` as barrier path | mostly correct today | preserve this as the main durability acceptance seam | No | component |
+| Bootstrap tests for bounded catch-up | current coverage proves gate behavior more than full closure | must prove `freeze -> replay -> target reached -> live enable` | Yes | component |
+| Contract matrix coverage | partial and distributed | need one acceptance-oriented test per boundary: write / ship / flush / barrier / catch-up / publish | Yes | component + integration |
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| WriteLBA() guarantee is explicit | implicit (WAL append + maybe ship) | must document: write-back only, not durable | yes | contract doc + unit |
-| SyncCache() = durability boundary | partially (barrier in group commit) | must be the single durability commit point | yes | component |
-| sync_all observable truth | barrier in distributed sync path | barrier success = all replicas durable before return | yes | component |
-| FUA / fdatasync boundary | exists in flusher | must be explicit in contract: which fsync is the commit fence | no | unit |
-| WriteLBA returns before replication | yes (fire-and-forget ship) | must document: write != replicated, sync = replicated | yes | contract doc |
+## Signoff Reading
 
-### 2. Fresh Replica Bootstrap
+### Must close before `T6/T7` signoff
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| Fresh replica entry condition | SetReplicaAddrs creates shipper | must have explicit session before live tail | yes | component |
-| Catch-up target frozen | engine has FrozenTargetLSN | host must freeze target before live streaming | yes | component |
-| Live stream start condition | phase gate blocks during active session | must verify: gate clears only after catch-up complete | yes | component |
-| LSN gap prevention | phase gate prevents live tail | must also move backlog (bounded WAL catch-up) | yes | component |
-| Timeout → replan or rebuild | not implemented | must classify: retry catch-up vs escalate to rebuild | yes | component |
-| Retention loss → rebuild | not implemented | if WAL recycled during catch-up, must escalate | yes | component |
+These rows are hard blockers:
 
-### 3. Host Observation Completeness
+1. `WriteLBA()` / `SyncCache()` / `sync_all` contract closure
+2. fresh replica bounded catch-up before live tail
+3. timeout / retention-loss classification for catch-up
+4. `publish_healthy` alignment with the same protocol contract
+5. RF=2 stable identity on all shipping paths
+6. test audit for incorrect `WriteLBA == commit` assumptions
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| ShipperConfiguredObserved | implemented | — | no | — |
-| ShipperConnectedObserved | implemented | — | no | — |
-| CatchUpCompleted | implemented | — | no | — |
-| NeedsRebuildObserved | implemented | — | no | — |
-| Replay progress observation | not centralized | must feed back as bounded progress events | no | component |
-| Target reached observation | not implemented | must emit when catch-up reaches frozen target | yes | component |
-| Timeout classification | not implemented | must distinguish "retry" from "must rebuild" | yes | component |
-| Retention loss detection | exists in shipper (NeedsRebuild) | must feed back through protocol observation seam | no | component |
-| Transport contact vs session complete | partially separated | must be strictly distinct in observation path | yes | component |
+### Important but not immediate hard blockers
 
-### 4. Serving / Publish / Durability Alignment
+These should be closed as product hardening, but do not necessarily block the
+first `T6/T7` signoff if the bounded scope is explicit:
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| publish_healthy requires | role + shipper + connected + durable>0 | must also require: no active recovery session, barrier confirmed | yes | component |
-| Frontend serving requires | activation gate (T4) | must be derived from one protocol contract, not mixed signals | partially | integration |
-| Replica durability observable | MinReplicaFlushedLSN on shipper group | must be the same boundary that publish_healthy reads | no | unit |
-| bootstrap_pending → publish_healthy | requires ShipperConnected + barrier | must require: catch-up complete + barrier durable + no recovery active | yes | component |
+1. replay progress observation
+2. snapshot/build convergence into the same host-side protocol model
+3. full acceptance-oriented contract matrix beyond the first closure set
 
-### 5. Snapshot / Rebuild Convergence
+## Recommended Exit Rule
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| Rebuild entry condition | engine has StartRebuild | must match session contract (not ad-hoc) | no | component |
-| Rebuild completion → host convergence | engine has RebuildCommitted | host must clear recovery state and re-enter normal protocol | no | integration |
-| WAL catch-up → snapshot escalation | not implemented | must have explicit timeout/retention boundary | no | component |
-| Snapshot/build under same protocol model | separate paths | should converge into same session kind dispatch | no | design doc |
+`Phase 20` should not be called product-complete until every row marked
+`Blocks T6/T7? = Yes` is either:
 
-### 6. Adapter Consistency
+1. closed by implementation plus the named proof tier, or
+2. explicitly scoped out with a written non-product claim
 
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| RF=2 single-replica ServerID | missing in some paths | must carry stable identity in all adapter paths | yes | component |
-| ReplicaID derivation | path/serverID convention | must be consistent across v2bridge, blockcmd, registry | no | unit |
-| Assignment conversion edge cases | mostly covered | must handle: empty ReplicaAddrs, missing ServerID, role mismatch | no | unit |
+## One-Sentence Gap
 
-### 7. Test Contract Alignment
-
-| Item | Current state | Required for product | Blocks T6/T7? | Best test level |
-|------|--------------|---------------------|---------------|-----------------|
-| Tests treat WriteLBA as commit | some do | must not — WriteLBA is write-back only | yes | audit |
-| Tests treat SyncCache as barrier | most do | correct — preserve this | no | — |
-| Bootstrap tests cover bounded catch-up | partial (phase gate only) | must cover: freeze → catch-up → gate clear → live | yes | component |
-| Contract matrix test | missing | one test per contract boundary: write / ship / flush / barrier / catch-up / publish | yes | component |
-
-## Priority Order
-
-### Must close before Stage 1 hardware validation
-
-1. **Fresh bootstrap bounded catch-up** — the biggest execution gap.
-   Move backlog under the phase gate contract. Freeze target, stream
-   WAL, clear gate on completion.
-
-2. **Write/durability contract doc** — make WriteLBA vs SyncCache
-   guarantees explicit so tests and callers align.
-
-3. **RF=2 adapter ServerID** — fix the identity leak so assignments
-   carry complete replica identity.
-
-4. **Test contract audit** — find and fix tests that treat WriteLBA
-   as a commit boundary.
-
-### Should close before Stage 2 hardware validation
-
-5. **Timeout / retention-loss / escalation** — runtime failures feed
-   back as explicit protocol observations.
-
-6. **Target reached observation** — catch-up completion emits a
-   distinct observation event.
-
-7. **publish_healthy alignment** — derive from one protocol contract
-   (catch-up complete + barrier durable + no recovery active).
-
-### Can close after T6/T7
-
-8. **Snapshot/build convergence** — fold into same protocol model.
-
-9. **Replay progress observation** — bounded progress events for
-   operator visibility during long catch-ups.
-
-10. **Full contract matrix test** — one test per boundary.
-
-## The One-Sentence Gap
-
-The engine already knows the protocol. The execution body does not yet
-fully obey it. Closing that gap is the difference between
-"architecture-complete" and "product-complete."
+The engine already knows the protocol. `Phase 20` becomes product-complete only
+when the host/runtime and data plane obey that protocol all the way through
+`write`, `flush`, `catch-up`, `barrier`, `publish`, and `serve`.
