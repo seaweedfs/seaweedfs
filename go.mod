@@ -107,10 +107,9 @@ require (
 	google.golang.org/protobuf v1.36.11
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	modernc.org/b v1.0.0 // indirect
-	modernc.org/mathutil v1.7.1
+	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.46.1
-	modernc.org/strutil v1.2.1
 )
 
 require (
@@ -136,10 +135,9 @@ require (
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
-	github.com/hashicorp/vault/api v1.22.0
+	github.com/hashicorp/vault/api v1.23.0
 	github.com/jhump/protoreflect v1.18.0
 	github.com/linkedin/goavro/v2 v2.15.0
-	github.com/mattn/go-sqlite3 v1.14.34
 	github.com/minio/crc64nvme v1.1.1
 	github.com/orcaman/concurrent-map/v2 v2.0.1
 	github.com/parquet-go/parquet-go v0.28.0
