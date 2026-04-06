@@ -268,7 +268,10 @@ separate cluster-level concept.
   - Any replica `needs_rebuild` → `"needs_rebuild"`
   - Monotonic: worst replica state dominates
 - Store as `entry.ClusterReplicationMode` (NOT `entry.VolumeMode`)
-- Expose in `/vol/status` API and heartbeat diagnostics
+- Expose in block volume API: `GET /block/volume/{name}` and
+  `GET /block/volumes` return `cluster_replication_mode` and
+  `engine_projection_mode` as distinct JSON fields alongside
+  existing `volume_mode`
 
 **Truth rule**: `ClusterReplicationMode` is the master's cluster-level
 replication health judgment. It is distinct from `EngineProjectionMode`

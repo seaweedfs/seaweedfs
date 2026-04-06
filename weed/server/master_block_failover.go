@@ -40,12 +40,14 @@ type blockFailoverState struct {
 
 // FailoverVolumeState is one volume's failover diagnosis entry.
 type FailoverVolumeState struct {
-	VolumeName       string
-	CurrentPrimary   string
-	AffectedServer   string // dead server that triggered the failover/rebuild
-	DeferredPromotion bool  // true if a deferred promotion timer is pending
-	PendingRebuild   bool  // true if a rebuild is pending for this volume
-	Reason           string // "lease_wait", "rebuild_pending", or ""
+	VolumeName             string
+	CurrentPrimary         string
+	AffectedServer         string // dead server that triggered the failover/rebuild
+	DeferredPromotion      bool   // true if a deferred promotion timer is pending
+	PendingRebuild         bool   // true if a rebuild is pending for this volume
+	Reason                 string // "lease_wait", "rebuild_pending", or ""
+	ClusterReplicationMode string // T5: cluster-level RF2 health at diagnosis time
+	EngineProjectionMode   string // T1: VS-local engine projection at diagnosis time
 }
 
 // FailoverDiagnostic is a bounded read-only snapshot of failover state
@@ -105,6 +107,15 @@ func (ms *MasterServer) FailoverDiagnosticSnapshot() FailoverDiagnostic {
 		diag.V2PromotionMode = "transport_ready"
 	default:
 		diag.V2PromotionMode = "placeholder_fail_closed"
+	}
+	// T5: enrich each volume entry with cluster/engine mode from registry.
+	if ms.blockRegistry != nil {
+		for i := range diag.Volumes {
+			if entry, ok := ms.blockRegistry.Lookup(diag.Volumes[i].VolumeName); ok {
+				diag.Volumes[i].ClusterReplicationMode = entry.ClusterReplicationMode
+				diag.Volumes[i].EngineProjectionMode = entry.EngineProjectionMode
+			}
+		}
 	}
 	return diag
 }
