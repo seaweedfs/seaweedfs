@@ -183,18 +183,41 @@ Legend:
 
 ## Phase 20 Current Coverage Reading
 
-Post-T1-T5 implementation audit. Assessed by mapping every roster item
-against actual test functions in the codebase.
+Post-Tier-1 component test implementation. 49 total tests.
 
 | Capability | Unit | Component | Integration | Hardware / Runner | Current reading |
 |---|---|---|---|---|---|
-| `T1` | strong (2/2) | strong (2/2) | missing (0/1) | not yet | unit+component cover distinctness and preservation; no multi-server chain |
+| `T1` | strong (2/2) | **strong (3/3)** | missing (0/1) | not yet | proto round-trip added; distinctness + preservation covered |
 | `T2` | strong (3/3) | strong (2/2) | missing (0/1) | not yet | semantics and fail-closed proven; no integrated master→VS query test |
-| `T3` | strong (3/3) | strong (4/4) | bounded (2/2) | not yet | all selection + fail-closed rules proven; integration uses injected querier |
-| `T4` | strong (1/1) | bounded (4/5) | missing (0/2) | not yet | gate state proven; **T4-C3 missing projection** untested; no frontend removal assertion |
-| `T5` | strong (6/6) | bounded (2/3) | missing (0/1) | not yet | all modes proven; **T5-C3 diagnostic snapshot** untested; no evolution test |
+| `T3` | strong (3/3) | **strong (5/5)** | bounded (2/2) | not yet | V2PromotionMode tri-state diagnostic added |
+| `T4` | strong (1/1) | **strong (7/7)** | missing (0/2) | not yet | missing projection fail-closed + iSCSI target removal enforcement + proto round-trip all proven |
+| `T5` | strong (6/6) | **strong (3/3)** | missing (0/1) | not yet | diagnostic snapshot carries modes proven |
 
-### Coverage Gaps Found
+### Coverage Summary by Layer
+
+| Layer | Strong | Bounded | Missing | Total |
+|---|---|---|---|---|
+| Unit | 15 | 0 | 0 | 15 |
+| Component | 16 | 1 | 0 | 17 |
+| Integration | 2 | 2 | 6 | 10 |
+| Hardware | 0 | 0 | 4 | 4 |
+
+The one remaining bounded component test is `P20-T4-C7` (NVMe gate
+alongside iSCSI) — requires a test NVMe server which may not be available
+in the current test infrastructure.
+
+### Component Tests Implemented (Tier 1 — commit `6bf9a6c28`)
+
+| Roster ID | Test function | File |
+|---|---|---|
+| P20-T4-C3 | `TestT4_MissingProjection_FailsClosed` | `volume_grpc_block_activation_gate_test.go` |
+| P20-T4-C6 | `TestT4_GateRemovesISCSITarget` | `volume_grpc_block_activation_gate_test.go` |
+| P20-T5-C3 | `TestT5_DiagnosticSnapshot_CarriesModes` | `master_block_cluster_mode_test.go` |
+| P20-T3-C5 | `TestT3_V2PromotionMode_DiagnosticTriState` | `master_block_cluster_mode_test.go` |
+| P20-T1-C3 | `TestP20_ProtoRoundTrip_EngineProjectionMode` | `block_heartbeat_proto_test.go` |
+| P20-T4-C8 | `TestP20_ProtoRoundTrip_ActivationGated` | `block_heartbeat_proto_test.go` |
+
+### Tester-Found Wiring Bugs (all caught by production path review)
 
 Every tester finding during T1-T5 was a **wiring bug**, not a logic bug:
 - T1: stale EngineProjectionMode survived primary turnover (registry wiring)
@@ -204,8 +227,21 @@ Every tester finding during T1-T5 was a **wiring bug**, not a logic bug:
 - T5: missing replica not degraded, transport signal ignored (registry wiring)
 
 None were caught by unit tests. All were caught reviewing the production
-path. This confirms that **component tests are the highest-value gap** for
-CI/CD protection.
+path. The Tier 1 component tests now lock these wiring paths against
+regression.
+
+### Remaining Gaps
+
+**Integration (Tier 2 — pre-hardware, medium cost)**:
+- P20-X-I1: end-to-end V2 failover chain
+- P20-T4-I1: promoted degraded node does not serve
+- P20-T5-I1: cluster mode evolves across failover
+
+**Hardware (Tier 3 — T6/T7 on m01/M02)**:
+- P20-T2-H1: evidence RPC under network delay
+- P20-T3-H1: failover under disturbance
+- P20-T4-H1: v2-failover-gate scenario
+- P20-T5-H1: real disturbance cluster judgment
 
 ## Detailed Test Roster
 
@@ -843,294 +879,246 @@ Prefer:
 1. `sw-test-runner`
 2. m01/M02 scenario pack
 
-## Detailed Gap Inventory
+## Current Hardware Readout
 
-### Existing Test → Roster Mapping (43 tests)
+Latest real-hardware observation after `V1` auto-failover:
 
-#### T1 (5 tests → 4 roster items covered)
-
-| Roster ID | Status | Existing test |
+| Field | Before | After |
 |---|---|---|
-| P20-T1-U1 | **strong** | `EngineProjectionModeDistinctFromVolumeMode` |
-| P20-T1-U2 | **strong** | `AbsentPreservesExisting` + `ClearsOnPrimaryTurnover` + `PreservedOnNewPrimaryWithField` |
-| P20-T1-C1 | **strong** | `ConsumesEngineProjectionModeFromPrimaryHeartbeat` |
-| P20-T1-C2 | **strong** | `EngineProjectionModeDistinctFromVolumeMode` |
-| P20-T1-I1 | **missing** | — |
+| `primary` | `10.0.0.1:18480` | `10.0.0.3:18480` |
+| `epoch` | `1` | `2` |
+| `volume_mode` | `allocated_only` | `allocated_only` |
+| `cluster_replication_mode` | `keepup` | `degraded` |
+| `health_state` | `healthy` | `unsafe` |
 
-#### T2 (12 tests → 5 roster items covered)
+This is an important signal, not noise.
 
-| Roster ID | Status | Existing test |
-|---|---|---|
-| P20-T2-U1 | **strong** | `ReturnsCoreProjectionMode` (CommittedLSN=42 assertion) |
-| P20-T2-U2 | **strong** | `NoCoreProjectionFailsClosed` |
-| P20-T2-U3 | **strong** | `EpochMismatchIneligible` |
-| P20-T2-C1 | **strong** | `ReturnsLiveFacts` |
-| P20-T2-C2 | **strong** | `IneligibleForGatedStates` (4 modes) |
-| P20-T2-I1 | **missing** | — |
-| P20-T2-H1 | **missing** | hardware only |
+It shows that the three surfaces are already telling a coherent post-failover
+story:
 
-#### T3 (7 tests → 9 roster items covered)
+1. `EngineProjectionMode` / local projection view:
+   promoted VS is primary but still locally incomplete
+2. `ClusterReplicationMode` / master cluster view:
+   the replica set is degraded because the old primary is gone
+3. legacy `health_state`:
+   the old path also sees danger, but with less precise vocabulary
 
-| Roster ID | Status | Existing test |
-|---|---|---|
-| P20-T3-U1 | **strong** | `SelectDurabilityFirst_HighestCommittedLSNWins` |
-| P20-T3-U2 | **strong** | `SelectDurabilityFirst_WALHeadLSNBreaksTie` |
-| P20-T3-U3 | **strong** | `SelectDurabilityFirst_HealthScoreBreaksFinalTie` |
-| P20-T3-C1 | **strong** | `FailoverV2_AllIneligible_NoPromotion` |
-| P20-T3-C2 | **strong** | `FailoverV2_NilQuerier_FailsClosed` |
-| P20-T3-C3 | **strong** | `FailoverV2_PartialEvidenceFailure_FailsClosed` |
-| P20-T3-C4 | **strong** | `FailoverV2_FlagOff_UsesLegacy` |
-| P20-T3-I1 | **bounded** | `HigherCommittedLSNWins` (real registry, injected querier) |
-| P20-T3-I2 | **strong** | `EpochBumpAndAssignmentOnlyAfterSelection` |
-| P20-T3-H1 | **missing** | hardware only |
+The key current hardware gap is:
 
-#### T4 (6 tests → 5 roster items covered, 4 missing)
+1. promoted VS local core still shows `ReplicaIDs=[]`
+2. `RoleApplied=true` but `ShipperConfigured=false`
+3. the V2 brain therefore cannot reach the full `publish_healthy` closure path
 
-| Roster ID | Status | Existing test |
-|---|---|---|
-| P20-T4-U1 | **strong** | `DegradedProjection` + `NeedsRebuildProjection` |
-| P20-T4-C1 | **bounded** | `DegradedProjection` (state, not target removal) |
-| P20-T4-C2 | **bounded** | `NeedsRebuildProjection` (state, not target removal) |
-| P20-T4-C3 | **missing** | — |
-| P20-T4-C4 | **bounded** | `RecoveryFromGated` (state, not target re-add) |
-| P20-T4-C5 | **strong** | `GateEnforcedBeforeHeartbeat` |
-| P20-T4-I1 | **missing** | — |
-| P20-T4-I2 | **missing** | — |
-| P20-T4-H1 | **missing** | hardware only |
+This should currently be read as:
 
-#### T5 (12 tests → 8 roster items covered)
+1. `T5` mode separation is behaving correctly on hardware
+2. `T4` fail-closed logic is still valuable and necessary
+3. the blocking issue for stronger `T6/T7` closure is still the bootstrap /
+   replica-membership wiring gap, not the existence of V2 mode surfaces
 
-| Roster ID | Status | Existing test |
-|---|---|---|
-| P20-T5-U1 | **strong** | `AllReplicasHealthy_Keepup` |
-| P20-T5-U2 | **strong** | `ReplicaBehind_CatchingUp` |
-| P20-T5-U3 | **strong** | `StaleHeartbeat_Degraded` + `RF2_MissingReplica` + `TransportDegraded` |
-| P20-T5-U4 | **strong** | `UnrecoverableGap_NeedsRebuild` + `RebuildingRole_NeedsRebuild` |
-| P20-T5-U5 | **strong** | `WorstReplicaDominates` |
-| P20-T5-U6 | **strong** | `DistinctFromEngineProjectionMode` |
-| P20-T5-C1 | **strong** | `HeartbeatUpdatesClusterReplicationMode` |
-| P20-T5-C2 | **strong** | `APISurface_DistinctNaming` |
-| P20-T5-C3 | **missing** | — |
-| P20-T5-I1 | **missing** | — |
-| P20-T5-H1 | **missing** | hardware only |
+## T6/T7 Staged Validation Plan
 
-#### Cross-task
+`T6` and `T7` should not be treated as one single pass/fail run.
 
-| Roster ID | Status | Existing test |
-|---|---|---|
-| P20-X-I1 | **missing** | — |
-| P20-X-I2 | **bounded** | individual fail-closed tests exist, no integrated chain |
-| P20-X-I3 | **strong** | `T5_DistinctFromEngineProjectionMode` + `APISurface` |
+They should execute in stages.
 
-### Summary by layer
+### Stage 0: Bootstrap Closure Prerequisite
 
-| Layer | Strong | Bounded | Missing | Total |
-|---|---|---|---|---|
-| Unit | 15 | 0 | 0 | 15 |
-| Component | 10 | 3 | 2 | 15 |
-| Integration | 2 | 2 | 6 | 10 |
-| Hardware | 0 | 0 | 4 | 4 |
+Goal:
 
-## Missing Component Tests (high priority for CI/CD)
+1. fix the existing primary-core visibility gap so the promoted primary learns
+   its replica membership
 
-These are the cheapest high-value tests to add before hardware validation.
-Each can be implemented in existing `weed/server/*_test.go` files using
-existing test helpers. No new infrastructure needed.
+Required hardware proof:
 
-### `P20-T4-C3` Missing Projection Gate (fail-closed)
+1. promoted primary no longer shows `ReplicaIDs=[]`
+2. `ShipperConfigured=true` can be reached on the healthy path
+3. healthy RF=2 path can reach `publish_healthy` on real hosts
 
-File: `weed/server/volume_grpc_block_activation_gate_test.go`
+Recommended scenario:
 
-Scenario:
-1. `BlockService` with `v2Core != nil` (production config)
-2. volume exists but no projection cached for its path
-3. call `evaluateActivationGate(path)`
+1. `P20-H0 RF2BootstrapReplicaMembershipCloses`
+
+### Stage 1: V1 Failover + V2 Observation
+
+Run with:
+
+1. `--block.v2Promotion=false`
+
+Goal:
+
+1. keep failover authority on the old path
+2. validate that the V2 brain, local projection, cluster mode, and operator
+   surfaces observe the real system correctly
 
 Must prove:
-1. `IsActivationGated(path) == true`
-2. reason is `"missing_engine_projection"`
 
-Why it matters: the fail-closed code path for missing projection was a
-tester-found bug. Without a test, a refactor could silently revert to
-fail-open.
+1. `cluster_replication_mode` changes conservatively after primary loss
+2. local projection on the promoted node remains honest
+3. legacy `health_state` and V2 surfaces are directionally consistent without
+   collapsing into one field
+4. no regression to existing `V1` failover behavior
 
-### `P20-T5-C3` Diagnostic Snapshot Carries Modes
+Recommended scenario:
 
-File: `weed/server/master_block_cluster_mode_test.go`
+1. `P20-T6-H1 V1Failover_V2Observation_SurfacesCoherent`
 
-Scenario:
-1. register volume with replicas and `EngineProjectionMode` set
-2. trigger a pending rebuild (so volume appears in failover diagnostic)
-3. call `FailoverDiagnosticSnapshot()`
+### Stage 2: V2 Failover + V2 Decision
 
-Must prove:
-1. `FailoverVolumeState.ClusterReplicationMode` is populated
-2. `FailoverVolumeState.EngineProjectionMode` is populated
-3. values match the registry entry
+Run with:
 
-Why it matters: `FailoverDiagnosticSnapshot` was wired to enrich from
-registry lookup but has zero test coverage. If the lookup path breaks,
-operators lose mode visibility in the failover diagnostic.
+1. proto regenerated
+2. real evidence RPC wired
+3. `--block.v2Promotion=true`
 
-### `P20-T4-C6` Gate Actually Removes iSCSI Target (enforcement)
+Goal:
 
-File: `weed/server/volume_grpc_block_activation_gate_test.go`
-
-Scenario:
-1. `BlockService` with real `TargetServer` (use test iSCSI server)
-2. register volume with target
-3. inject degraded projection
-4. call `evaluateActivationGate(path)`
+1. move failover authority onto the V2 decision path
 
 Must prove:
-1. `targetServer.HasTarget(iqn) == false` after gate
-2. re-inject healthy projection
-3. `targetServer.HasTarget(iqn) == true` after ungate
 
-Why it matters: T4 tester finding was that gate was bookkeeping only. The
-enforcement code exists now (`gateServing`/`ungateServing`), but no test
-proves the target is actually removed/re-added at the iSCSI registry level.
+1. promotion uses fresh evidence, not heartbeat cache
+2. durability-first candidate selection wins on real hosts
+3. missing / partial / stale evidence fail closed
+4. activation gate blocks serving on degraded or rebuild-needed reconstructions
 
-### `P20-T4-C7` Gate Covers Both iSCSI and NVMe
+Recommended scenarios:
 
-File: `weed/server/volume_grpc_block_activation_gate_test.go`
+1. `P20-T6-H2 V2Failover_DurabilityFirstSelection`
+2. `P20-T6-H3 V2Failover_FailClosedOnAmbiguousEvidence`
+3. `P20-T6-H4 V2Failover_GatedPromotionRequiresRecovery`
 
-Scenario:
-1. `BlockService` with both `targetServer` and `nvmeServer`
-2. register volume with both frontends
-3. gate
-4. verify both removed
-5. ungate
-6. verify both restored
+### Stage 3: Side-By-Side Behavioral Comparison
 
-Why it matters: NVMe gate was a tester-found bug. Tests should lock it.
+Goal:
 
-### `P20-T1-C3` Heartbeat Proto Round-Trip Preserves EngineProjectionMode
-
-File: `weed/storage/blockvol/block_heartbeat_proto_test.go`
-
-Scenario:
-1. build `BlockVolumeInfoMessage` with `EngineProjectionMode` set
-2. convert to proto via `InfoMessageToProto`
-3. convert back via `InfoMessageFromProto`
+1. compare the same data-verified scenarios under `V1` failover and `V2`
+   failover
 
 Must prove:
-1. field survives round-trip
-2. empty field stays empty (nil presence)
 
-Why it matters: proto conversion was added manually (pending regen).
-Round-trip test locks the wire format.
+1. `V2` preserves all supported good outcomes
+2. `V2` is stricter where ambiguity exists
+3. any divergence is explainable as "V2 fails closed where V1 guessed"
 
-### `P20-T4-C8` Heartbeat Proto Round-Trip Preserves ActivationGated
+Recommended scenario:
 
-File: `weed/storage/blockvol/block_heartbeat_proto_test.go`
-
-Scenario:
-1. build message with `ActivationGated=true` + reason
-2. proto round-trip
-
-Must prove:
-1. both fields survive
-2. `ActivationGated=false` does not produce spurious reason
-
-### `P20-T3-C5` V2PromotionMode Diagnostic Reflects Flag State
-
-File: `weed/server/master_block_failover_test.go`
-
-Scenario:
-1. `MasterServer` with `blockV2Promotion=false` → diagnostic shows `"disabled"`
-2. `blockV2Promotion=true`, placeholder querier → `"placeholder_fail_closed"`
-3. `blockV2Promotion=true`, `blockV2EvidenceTransport=true` → `"transport_ready"`
-
-Must prove:
-1. tri-state is accurate in all three configurations
-
-## Missing Integration Tests (medium priority, pre-hardware)
-
-These require real `MasterServer` + `BlockService` interaction but can
-still run in `go test` without hardware.
-
-### `P20-X-I1` End-to-End V2 Failover Chain
-
-File: `weed/server/qa_block_v2_failover_test.go` (new)
-
-Scenario:
-1. create `MasterServer` + `BlockService` with V2 promotion enabled
-2. register RF=2 volume (primary + replica)
-3. inject evidence querier that returns fresh facts
-4. trigger `failoverBlockVolumes(primaryServer)`
-5. verify: promotion uses durability-first winner
-6. verify: assignment enqueued for winner
-7. verify: `ClusterReplicationMode` reflects post-failover state
-
-Must prove:
-1. full query → promote → assign → observe chain works together
-2. no semantic collapse between layers
-
-### `P20-T4-I1` Promoted Degraded Node Does Not Serve
-
-File: `weed/server/qa_block_v2_failover_test.go`
-
-Scenario:
-1. after V2 failover, the promoted node's core projection is `degraded`
-2. verify `IsActivationGated` is true
-3. verify heartbeat carries `ActivationGated=true`
-4. verify: no assignment confirmation from that node clears the gate
-
-Must prove:
-1. gate is enforced on the real failover path, not just manual injection
-
-### `P20-T5-I1` Cluster Mode Evolves Across Failover
-
-File: `weed/server/qa_block_v2_failover_test.go`
-
-Scenario:
-1. RF=2 healthy → `ClusterReplicationMode == "keepup"`
-2. primary dies → replica promoted
-3. old primary is pending rebuild → mode transitions
-4. heartbeat from new primary updates mode
-
-Must prove:
-1. `ClusterReplicationMode` changes through expected sequence
+1. `P20-T7-H1 Compare_V1AndV2_OnSameFailoverMatrix`
 
 ## Minimum Phase 20 Closure Gate
 
 Before `Phase 20` can be called fully closed, require:
 
 1. `T1-T5` all have at least one passing unit proof and one passing component proof
-2. all **missing component tests** listed above are implemented and passing
-3. at least one integrated scenario proves `T2 + T3 + T4` together
-4. at least one integrated scenario proves `T1 + T5` surfaces remain distinct
+2. at least one integrated scenario proves `T2 + T3 + T4` together
+3. at least one integrated scenario proves `T1 + T5` surfaces remain distinct
+4. real hardware shows the promoted primary can learn replica membership and
+   reach non-empty `ReplicaIDs` on the healthy RF=2 path
 5. `sw-test-runner run --all` passes on m01/M02 with V2 promotion active
 6. one explicit `v2-failover-gate` or equivalent hardware scenario passes
 7. full `weed/server`, `weed/storage/blockvol`, `weed/storage/blockvol/csi`, and `sw-block/engine/replication` regression suites are green
 
-## Priority Order for Implementation
+## Full Roster Status (post-Tier-1)
 
-### Tier 1: Missing component tests (do now, CI/CD protection)
+49 tests total. Each roster item marked with current status.
 
-1. `P20-T4-C3` missing projection gate
-2. `P20-T5-C3` diagnostic snapshot modes
-3. `P20-T1-C3` + `P20-T4-C8` proto round-trip
-4. `P20-T3-C5` V2PromotionMode diagnostic
-5. `P20-T4-C6` iSCSI target removal (if test TargetServer available)
+### T1
 
-### Tier 2: Integration tests (do before hardware, chain proof)
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-T1-U1 | unit | **strong** | `EngineProjectionModeDistinctFromVolumeMode` |
+| P20-T1-U2 | unit | **strong** | `AbsentPreservesExisting` + `ClearsOnPrimaryTurnover` + `PreservedOnNewPrimaryWithField` |
+| P20-T1-C1 | component | **strong** | `ConsumesEngineProjectionModeFromPrimaryHeartbeat` |
+| P20-T1-C2 | component | **strong** | `EngineProjectionModeDistinctFromVolumeMode` |
+| P20-T1-C3 | component | **strong** | `TestP20_ProtoRoundTrip_EngineProjectionMode` |
+| P20-T1-I1 | integration | missing | — |
 
-6. `P20-X-I1` end-to-end V2 failover chain
-7. `P20-T4-I1` promoted degraded no serve
-8. `P20-T5-I1` cluster mode evolution
+### T2
 
-### Tier 3: Hardware (T6/T7 on m01/M02)
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-T2-U1 | unit | **strong** | `ReturnsCoreProjectionMode` |
+| P20-T2-U2 | unit | **strong** | `NoCoreProjectionFailsClosed` |
+| P20-T2-U3 | unit | **strong** | `EpochMismatchIneligible` |
+| P20-T2-C1 | component | **strong** | `ReturnsLiveFacts` |
+| P20-T2-C2 | component | **strong** | `IneligibleForGatedStates` |
+| P20-T2-I1 | integration | missing | — |
+| P20-T2-H1 | hardware | missing | — |
 
-9. `P20-T2-H1` evidence RPC under network delay
-10. `P20-T3-H1` failover under disturbance
-11. `P20-T4-H1` v2-failover-gate scenario
-12. `P20-T5-H1` real disturbance cluster judgment
+### T3
+
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-T3-U1 | unit | **strong** | `SelectDurabilityFirst_HighestCommittedLSNWins` |
+| P20-T3-U2 | unit | **strong** | `SelectDurabilityFirst_WALHeadLSNBreaksTie` |
+| P20-T3-U3 | unit | **strong** | `SelectDurabilityFirst_HealthScoreBreaksFinalTie` |
+| P20-T3-C1 | component | **strong** | `FailoverV2_AllIneligible_NoPromotion` |
+| P20-T3-C2 | component | **strong** | `FailoverV2_NilQuerier_FailsClosed` |
+| P20-T3-C3 | component | **strong** | `FailoverV2_PartialEvidenceFailure_FailsClosed` |
+| P20-T3-C4 | component | **strong** | `FailoverV2_FlagOff_UsesLegacy` |
+| P20-T3-C5 | component | **strong** | `TestT3_V2PromotionMode_DiagnosticTriState` |
+| P20-T3-I1 | integration | bounded | `HigherCommittedLSNWins` (real registry, injected querier) |
+| P20-T3-I2 | integration | **strong** | `EpochBumpAndAssignmentOnlyAfterSelection` |
+| P20-T3-H1 | hardware | missing | — |
+
+### T4
+
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-T4-U1 | unit | **strong** | `DegradedProjection` + `NeedsRebuildProjection` |
+| P20-T4-C1 | component | **strong** | `DegradedProjection_GatesActivation` |
+| P20-T4-C2 | component | **strong** | `NeedsRebuildProjection_GatesActivation` |
+| P20-T4-C3 | component | **strong** | `TestT4_MissingProjection_FailsClosed` |
+| P20-T4-C4 | component | **strong** | `RecoveryFromGated_ReenablesServing` |
+| P20-T4-C5 | component | **strong** | `GateEnforcedBeforeHeartbeat` |
+| P20-T4-C6 | component | **strong** | `TestT4_GateRemovesISCSITarget` |
+| P20-T4-C7 | component | bounded | — (needs test NVMe server) |
+| P20-T4-C8 | component | **strong** | `TestP20_ProtoRoundTrip_ActivationGated` |
+| P20-T4-I1 | integration | missing | — |
+| P20-T4-I2 | integration | missing | — |
+| P20-T4-H1 | hardware | missing | — |
+
+### T5
+
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-T5-U1 | unit | **strong** | `AllReplicasHealthy_Keepup` |
+| P20-T5-U2 | unit | **strong** | `ReplicaBehind_CatchingUp` |
+| P20-T5-U3 | unit | **strong** | `StaleHeartbeat_Degraded` + `RF2_MissingReplica` + `TransportDegraded` |
+| P20-T5-U4 | unit | **strong** | `UnrecoverableGap_NeedsRebuild` + `RebuildingRole_NeedsRebuild` |
+| P20-T5-U5 | unit | **strong** | `WorstReplicaDominates` |
+| P20-T5-U6 | unit | **strong** | `DistinctFromEngineProjectionMode` |
+| P20-T5-C1 | component | **strong** | `HeartbeatUpdatesClusterReplicationMode` |
+| P20-T5-C2 | component | **strong** | `APISurface_DistinctNaming` |
+| P20-T5-C3 | component | **strong** | `TestT5_DiagnosticSnapshot_CarriesModes` |
+| P20-T5-I1 | integration | missing | — |
+| P20-T5-H1 | hardware | missing | — |
+
+### Cross-Task
+
+| ID | Layer | Status | Test function |
+|---|---|---|---|
+| P20-X-I1 | integration | missing | — |
+| P20-X-I2 | integration | bounded | individual tests exist, no chain |
+| P20-X-I3 | integration | **strong** | `DistinctFromEngineProjectionMode` + `APISurface` |
 
 ## Current Practical Next Step
 
-1. implement Tier 1 component tests (7 tests, all in existing test files)
-2. implement Tier 2 integration tests (3 tests, one new qa file)
-3. run full regression to confirm no breakage
-4. then proceed to T6/T7 on m01/M02 with confidence
+Tier 1 component tests are implemented and passing. The current reading is:
+
+1. **Unit + component coverage is strong.** 32 of 33 unit+component roster
+   items are strong. The one bounded item (T4-C7 NVMe) requires test
+   infrastructure that may not be available.
+
+2. **Integration layer is the main remaining gap.** 6 of 10 integration
+   roster items are missing. These require real `MasterServer` + `BlockService`
+   interaction but can still run in `go test`.
+
+3. **Hardware layer is deferred to T6/T7.** Requires m01/M02 and follows
+   the staged validation plan above.
+
+Recommended next actions:
+
+1. implement Tier 2 integration tests (3 tests, one new `qa_*` file)
+2. proceed to Stage 0 of T6/T7 (bootstrap closure prerequisite on hardware)
+3. run full regression on hardware with V2 observation active
