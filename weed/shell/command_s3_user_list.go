@@ -2,10 +2,9 @@ package shell
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"io"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -29,12 +28,19 @@ func (c *commandS3UserList) Help() string {
 
 	s3.user.list
 
-	Lists all users with their status, attached policies, and credential count.
+	Output: JSON array of users with status, policies, and credential count.
 `
 }
 
 func (c *commandS3UserList) HasTag(CommandTag) bool {
 	return false
+}
+
+type s3UserListEntry struct {
+	Name     string   `json:"name"`
+	Status   string   `json:"status"`
+	Policies []string `json:"policies"`
+	Keys     int      `json:"keys"`
 }
 
 func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
@@ -48,27 +54,27 @@ func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.
 			return err
 		}
 
-		identities := resp.Configuration.GetIdentities()
-		if len(identities) == 0 {
-			fmt.Fprintln(writer, "No users found.")
-			return nil
-		}
-
-		tw := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tSTATUS\tPOLICIES\tKEYS")
-
-		for _, id := range identities {
+		var result []s3UserListEntry
+		for _, id := range resp.Configuration.GetIdentities() {
 			status := "enabled"
 			if id.Disabled {
 				status = "disabled"
 			}
-			policies := "-"
-			if len(id.PolicyNames) > 0 {
-				policies = joinMax(id.PolicyNames, 3)
+			policies := id.PolicyNames
+			if policies == nil {
+				policies = []string{}
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%d\n", id.Name, status, policies, len(id.Credentials))
+			result = append(result, s3UserListEntry{
+				Name:     id.Name,
+				Status:   status,
+				Policies: policies,
+				Keys:     len(id.Credentials),
+			})
 		}
-		return tw.Flush()
+		if result == nil {
+			result = []s3UserListEntry{}
+		}
+		return json.NewEncoder(writer).Encode(result)
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
 

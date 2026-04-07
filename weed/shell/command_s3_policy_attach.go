@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -74,8 +75,7 @@ func (c *commandS3PolicyAttach) Do(args []string, commandEnv *CommandEnv, writer
 		// Check if already attached
 		for _, p := range resp.Identity.PolicyNames {
 			if p == *policy {
-				fmt.Fprintf(writer, "Policy %q is already attached to user %q.\n", *policy, *user)
-				return nil
+				return json.NewEncoder(writer).Encode(map[string]string{"policy": *policy, "user": *user})
 			}
 		}
 
@@ -88,7 +88,6 @@ func (c *commandS3PolicyAttach) Do(args []string, commandEnv *CommandEnv, writer
 			return err
 		}
 
-		fmt.Fprintf(writer, "Attached policy %q to user %q\n", *policy, *user)
-		return nil
+		return json.NewEncoder(writer).Encode(map[string]string{"policy": *policy, "user": *user})
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }

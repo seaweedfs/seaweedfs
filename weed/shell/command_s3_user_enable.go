@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -59,8 +60,7 @@ func (c *commandS3UserEnable) Do(args []string, commandEnv *CommandEnv, writer i
 		}
 
 		if !resp.Identity.Disabled {
-			fmt.Fprintf(writer, "User %q is already enabled.\n", *name)
-			return nil
+			return json.NewEncoder(writer).Encode(map[string]string{"name": *name, "status": "enabled"})
 		}
 
 		resp.Identity.Disabled = false
@@ -74,6 +74,5 @@ func (c *commandS3UserEnable) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 
-	fmt.Fprintf(writer, "Enabled user %q\n", *name)
-	return nil
+	return json.NewEncoder(writer).Encode(map[string]string{"name": *name, "status": "enabled"})
 }

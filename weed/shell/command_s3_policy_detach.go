@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -84,7 +85,6 @@ func (c *commandS3PolicyDetach) Do(args []string, commandEnv *CommandEnv, writer
 			return err
 		}
 
-		fmt.Fprintf(writer, "Detached policy %q from user %q\n", *policy, *user)
-		return nil
+		return json.NewEncoder(writer).Encode(map[string]string{"policy": *policy, "user": *user})
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }
