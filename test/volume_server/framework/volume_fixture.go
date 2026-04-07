@@ -80,19 +80,14 @@ func EnableMaintenanceMode(t testing.TB, ctx context.Context, client volume_serv
 	}
 }
 
-// CorruptDatFile overwrites a portion of a volume's .dat file with garbage
-// bytes so that needle data verification fails during a full scrub.
+// CorruptDatFile truncates a volume's .dat file to just the superblock (8 bytes)
+// so that needle reads fail during a full scrub due to data file size mismatch.
 func CorruptDatFile(t testing.TB, baseDir string, volumeID uint32) {
 	t.Helper()
 	datPath := filepath.Join(baseDir, "volume", fmt.Sprintf("%d.dat", volumeID))
-	f, err := os.OpenFile(datPath, os.O_WRONLY, 0644)
-	if err != nil {
-		t.Fatalf("open dat file for corruption: %v", err)
-	}
-	defer f.Close()
-	// Write garbage past the superblock (8 bytes) to corrupt needle data.
-	if _, err := f.WriteAt([]byte{0xDE, 0xAD, 0xBE, 0xEF, 0xDE, 0xAD, 0xBE, 0xEF}, 8); err != nil {
-		t.Fatalf("corrupt dat file: %v", err)
+	// Truncate to superblock size only, removing all needle data.
+	if err := os.Truncate(datPath, 8); err != nil {
+		t.Fatalf("truncate dat file for corruption: %v", err)
 	}
 }
 

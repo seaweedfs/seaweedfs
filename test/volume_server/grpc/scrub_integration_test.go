@@ -369,14 +369,44 @@ func TestScrubEcVolumeIndexCorruptEcx(t *testing.T) {
 	defer conn.Close()
 
 	const volumeID = uint32(216)
-	httpClient := framework.NewHTTPClient()
-	ecSetup(t, grpcClient, httpClient, clusterHarness.VolumeAdminURL(), volumeID)
+	framework.AllocateVolume(t, grpcClient, volumeID, "")
 
-	// Corrupt the .ecx index file by appending garbage.
-	framework.CorruptEcxFile(t, clusterHarness.BaseDir(), volumeID)
+	httpClient := framework.NewHTTPClient()
+	fid := framework.NewFileID(volumeID, 1, 0xABCD0001)
+	uploadResp := framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), fid, []byte("ec-ecx-corrupt-test"))
+	_ = framework.ReadAllAndClose(t, uploadResp)
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload expected 201, got %d", uploadResp.StatusCode)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+
+	// Generate EC shards (this creates the .ecx file on disk).
+	_, err := grpcClient.VolumeEcShardsGenerate(ctx, &volume_server_pb.VolumeEcShardsGenerateRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsGenerate failed: %v", err)
+	}
+
+	// Corrupt the .ecx file BEFORE mounting, so the corrupted size is loaded.
+	framework.CorruptEcxFile(t, clusterHarness.BaseDir(), volumeID)
+
+	// Now mount shards - the ecx file size will reflect the corruption.
+	allShards := make([]uint32, erasure_coding.TotalShardsCount)
+	for i := range allShards {
+		allShards[i] = uint32(i)
+	}
+	_, err = grpcClient.VolumeEcShardsMount(ctx, &volume_server_pb.VolumeEcShardsMountRequest{
+		VolumeId:   volumeID,
+		Collection: "",
+		ShardIds:   allShards,
+	})
+	if err != nil {
+		t.Fatalf("VolumeEcShardsMount failed: %v", err)
+	}
 
 	resp, err := grpcClient.ScrubEcVolume(ctx, &volume_server_pb.ScrubEcVolumeRequest{
 		VolumeIds: []uint32{volumeID},
