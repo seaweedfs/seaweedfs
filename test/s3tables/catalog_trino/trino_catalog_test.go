@@ -104,7 +104,7 @@ func TestTrinoMultiLevelNamespace(t *testing.T) {
 	tableBucket := "iceberg-tables"
 	createTableBucket(t, env, tableBucket)
 
-	configDir := env.writeTrinoConfig(t, tableBucket)
+	configDir := env.writeTrinoNestedNamespaceConfig(t, tableBucket)
 	env.startTrinoContainer(t, configDir)
 	waitForTrino(t, env.trinoContainer, 60*time.Second)
 
@@ -422,6 +422,43 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 	t.Helper()
 
 	configDir := filepath.Join(env.dataDir, "trino")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("Failed to create Trino config dir: %v", err)
+	}
+
+	config := fmt.Sprintf(`connector.name=iceberg
+iceberg.catalog.type=rest
+iceberg.rest-catalog.uri=http://host.docker.internal:%d
+iceberg.rest-catalog.warehouse=s3://%s
+iceberg.file-format=PARQUET
+iceberg.unique-table-location=true
+
+# S3 storage config
+fs.native-s3.enabled=true
+s3.endpoint=http://host.docker.internal:%d
+s3.path-style-access=true
+s3.signer-type=AwsS3V4Signer
+s3.aws-access-key=%s
+s3.aws-secret-key=%s
+s3.region=us-west-2
+
+# REST catalog authentication
+iceberg.rest-catalog.security=SIGV4
+`, env.icebergPort, warehouseBucket, env.s3Port, env.accessKey, env.secretKey)
+
+	if err := os.WriteFile(filepath.Join(configDir, "iceberg.properties"), []byte(config), 0644); err != nil {
+		t.Fatalf("Failed to write Trino config: %v", err)
+	}
+
+	return configDir
+}
+
+// writeTrinoNestedNamespaceConfig writes a Trino Iceberg catalog config with
+// nested-namespace-enabled=true, required for multi-level namespace tests.
+func (env *TestEnvironment) writeTrinoNestedNamespaceConfig(t *testing.T, warehouseBucket string) string {
+	t.Helper()
+
+	configDir := filepath.Join(env.dataDir, "trino-nested")
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		t.Fatalf("Failed to create Trino config dir: %v", err)
 	}
