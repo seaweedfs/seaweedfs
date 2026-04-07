@@ -392,7 +392,19 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 	addr := fmt.Sprintf(":%d", *options.port)
 	var handler http.Handler = r
 	if urlPrefix != "" {
-		handler = http.StripPrefix(urlPrefix, r)
+		stripped := http.StripPrefix(urlPrefix, r)
+		handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			// Redirect /prefix (no trailing slash) to /prefix/
+			if req.URL.Path == urlPrefix {
+				target := urlPrefix + "/"
+				if req.URL.RawQuery != "" {
+					target += "?" + req.URL.RawQuery
+				}
+				http.Redirect(w, req, target, http.StatusFound)
+				return
+			}
+			stripped.ServeHTTP(w, req)
+		})
 	}
 	server := &http.Server{
 		Addr:    addr,
