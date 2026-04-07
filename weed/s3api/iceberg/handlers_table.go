@@ -324,7 +324,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
-		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, flattenNamespacePath(namespace), tableName)
+		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
