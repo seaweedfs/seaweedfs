@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -56,6 +57,5 @@ func (c *commandS3UserDelete) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 
-	fmt.Fprintf(writer, "Deleted user %q\n", *name)
-	return nil
+	return json.NewEncoder(writer).Encode(map[string]string{"name": *name})
 }

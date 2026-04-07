@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -62,7 +63,6 @@ func (c *commandS3UserDisable) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 
 		if resp.Identity.Disabled {
-			fmt.Fprintf(writer, "User %q is already disabled.\n", *name)
 			return nil
 		}
 
@@ -77,6 +77,5 @@ func (c *commandS3UserDisable) Do(args []string, commandEnv *CommandEnv, writer 
 		return err
 	}
 
-	fmt.Fprintf(writer, "Disabled user %q\n", *name)
-	return nil
+	return json.NewEncoder(writer).Encode(map[string]string{"name": *name, "status": "disabled"})
 }
