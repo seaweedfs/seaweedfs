@@ -186,6 +186,9 @@ func printGenericHelp() {
 	fmt.Print(msg)
 
 	for _, c := range Commands {
+		if c.HasTag(Hidden) {
+			continue
+		}
 		helpTexts := strings.SplitN(c.Help(), "\n", 2)
 		fmt.Printf("  %-30s\t# %s \n", c.Name(), helpTexts[0])
 	}
