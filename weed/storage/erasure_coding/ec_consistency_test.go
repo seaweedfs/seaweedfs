@@ -14,16 +14,20 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
-// TestEcConsistency_WritesBetweenEncodeAndEcx demonstrates the data consistency
-// problem that occurs when data is written to the .dat/.idx files between
-// EC shard generation and .ecx generation.
+// TestEcConsistency_WritesBetweenEncodeAndEcx reproduces a race condition that
+// existed in VolumeEcShardsGenerate before the fix in this PR.
 //
-// In VolumeEcShardsGenerate, the order is:
-//   1. WriteEcFilesWithContext(baseFileName, ecCtx)  — EC shards from .dat
-//   2. WriteSortedFileFromIdx(v.IndexFileName(), ".ecx") — .ecx from .idx
+// Previously, the order was:
+//   1. WriteEcFilesWithContext(baseFileName, ecCtx)        — EC shards from .dat
+//   2. WriteSortedFileFromIdx(v.IndexFileName(), ".ecx")   — .ecx from .idx
 //
-// If a write appends data to .dat/.idx between steps 1 and 2, the .ecx will
+// If a write appended data to .dat/.idx between steps 1 and 2, the .ecx would
 // have entries pointing to data that doesn't exist in the EC shards.
+//
+// The fix reverses the order (write .ecx first, then generate EC shards), so
+// that .ecx is always a subset of what the EC shards contain.
+//
+// This test simulates the old buggy sequence to validate that the problem is real.
 func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	dir := t.TempDir()
 	baseFileName := dir + "/consistency"
@@ -48,7 +52,7 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	require.NoError(t, err, "EC encoding")
 
 	// Phase 3: SIMULATE a write between EC encoding and .ecx generation
-	// Append new data to .dat and add entry to .idx
+	// (reproducing the old buggy order where .ecx was generated after EC shards)
 	extraData := make([]byte, 5000)
 	rand.Read(extraData)
 
@@ -64,7 +68,7 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 		{id: 2, offset: datSize, size: types.Size(len(extraData))},
 	})
 
-	// Phase 4: Generate .ecx from the UPDATED .idx (as the code does)
+	// Phase 4: Generate .ecx from the UPDATED .idx (as the old buggy code did)
 	err = WriteSortedFileFromIdx(baseFileName, ".ecx")
 	require.NoError(t, err, "WriteSortedFileFromIdx")
 
@@ -123,16 +127,13 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	}
 }
 
-// TestEcConsistency_DatFileGrowsDuringEncoding simulates the .dat file growing
-// while EC encoding reads it. The encoder reads the .dat sequentially; if the
-// file grows during encoding, the last EC shard block might contain data that
-// wasn't accounted for in the original file size.
-func TestEcConsistency_DatFileGrowsDuringEncoding(t *testing.T) {
-	// This test documents the behavior — the encoder reads the .dat file size
-	// at the start and encodes exactly that much data. Data appended after
-	// the size is read would be in the file but not encoded.
+// TestEcConsistency_ExactLargeRowEncoding verifies that generateEcFiles correctly
+// encodes a .dat file whose size is exactly one large row (DataShardsCount *
+// largeBlockSize), producing shards of exactly largeBlockSize each, and that
+// every chunk of the encoded data can be read back correctly via LocateData.
+func TestEcConsistency_ExactLargeRowEncoding(t *testing.T) {
 	dir := t.TempDir()
-	baseFileName := dir + "/growing"
+	baseFileName := dir + "/exact"
 	ctx := NewDefaultECContext("", 0)
 
 	datSize := int64(largeBlockSize * DataShardsCount) // exactly 1 large row
@@ -151,15 +152,16 @@ func TestEcConsistency_DatFileGrowsDuringEncoding(t *testing.T) {
 	defer closeEcFiles(ecFiles)
 
 	for i := 0; i < ctx.DataShards; i++ {
-		stat, _ := ecFiles[i].Stat()
+		stat, err := ecFiles[i].Stat()
+		require.NoError(t, err, "stat shard %d", i)
 		assert.Equal(t, int64(largeBlockSize), stat.Size(),
 			"data shard %d should be exactly largeBlockSize", i)
 	}
 
-	// Verify all data reads correctly via LocateData
+	// Verify data reads correctly at every smallBlockSize offset via LocateData
 	shardDatSize := datSize / int64(ctx.DataShards)
 	readSize := types.Size(smallBlockSize)
-	for offset := int64(0); offset+int64(readSize) <= datSize; offset += int64(largeBlockSize) {
+	for offset := int64(0); offset+int64(readSize) <= datSize; offset += int64(readSize) {
 		intervals := LocateData(largeBlockSize, smallBlockSize, shardDatSize, offset, readSize)
 		ecData, err := assembleFromIntervalsAllowError(ecFiles, intervals, largeBlockSize, smallBlockSize)
 		require.NoError(t, err, "reading at offset %d", offset)
@@ -198,7 +200,10 @@ func assembleFromIntervalsAllowError(ecFiles []*os.File, intervals []Interval, l
 		if int(shardId) >= len(ecFiles) {
 			return nil, fmt.Errorf("shard %d out of range (have %d files)", shardId, len(ecFiles))
 		}
-		stat, _ := ecFiles[shardId].Stat()
+		stat, err := ecFiles[shardId].Stat()
+		if err != nil {
+			return nil, fmt.Errorf("stat shard %d: %v", shardId, err)
+		}
 		if shardOffset+int64(interval.Size) > stat.Size() {
 			return nil, fmt.Errorf("read past end of shard %d: offset %d + size %d > fileSize %d",
 				shardId, shardOffset, interval.Size, stat.Size())

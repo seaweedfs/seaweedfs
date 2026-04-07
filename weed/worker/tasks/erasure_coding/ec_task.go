@@ -401,14 +401,17 @@ func (t *ErasureCodingTask) generateEcShardsLocally(localFiles map[string]string
 
 	glog.V(1).Infof("Generating EC shards from local files: dat=%s, idx=%s", datFile, idxFile)
 
+	// Generate .ecx file from .idx BEFORE EC shards to prevent inconsistency.
+	// If .ecx were generated after EC shards and the .idx had more entries than
+	// the .dat (e.g., from a non-atomic copy), the .ecx would reference data
+	// not present in the EC shards.
+	if err := erasure_coding.WriteSortedFileFromIdx(baseName, ".ecx"); err != nil {
+		return nil, fmt.Errorf("failed to generate .ecx file: %v", err)
+	}
+
 	// Generate EC shard files (.ec00 ~ .ec13)
 	if err := erasure_coding.WriteEcFiles(baseName); err != nil {
 		return nil, fmt.Errorf("failed to generate EC shard files: %v", err)
-	}
-
-	// Generate .ecx file from .idx (use baseName, not full idx path)
-	if err := erasure_coding.WriteSortedFileFromIdx(baseName, ".ecx"); err != nil {
-		return nil, fmt.Errorf("failed to generate .ecx file: %v", err)
 	}
 
 	// Collect generated shard file paths and log details
