@@ -39,8 +39,8 @@ func (c *commandS3Configure) Help() string {
 	`
 }
 
-func (c *commandS3Configure) HasTag(CommandTag) bool {
-	return false
+func (c *commandS3Configure) HasTag(tag CommandTag) bool {
+	return tag == Hidden
 }
 
 func (c *commandS3Configure) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
