@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Effect represents the policy evaluation result
@@ -21,10 +21,7 @@ const (
 	EffectDeny  Effect = "Deny"
 )
 
-// Package-level regex cache for performance optimization
 var (
-	regexCache            = make(map[string]*regexp.Regexp)
-	regexCacheMu          sync.RWMutex
 	policyVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 	safePolicyVariables   = map[string]bool{
 		// AWS standard identity variables
@@ -1064,8 +1061,7 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
@@ -1106,13 +1102,11 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
 					} else {
-						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
 						if expandedExpected == contextValue {
 							contextValueMatchedSet = true
 							break
@@ -1229,7 +1223,7 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 
 	// Step 4: Handle AWS-style wildcards (case-insensitive)
 	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-		return AwsWildcardMatch(expandedPattern, value)
+		return wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(value))
 	}
 
 	return false
@@ -1263,44 +1257,6 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 	})
 
 	return result
-}
-
-// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
-func AwsWildcardMatch(pattern, value string) bool {
-	// Create regex pattern key for caching
-	// First escape all regex metacharacters, then replace wildcards
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
-	regexPattern = "^" + regexPattern + "$"
-	regexKey := "(?i)" + regexPattern
-
-	// Try to get compiled regex from cache
-	regexCacheMu.RLock()
-	regex, found := regexCache[regexKey]
-	regexCacheMu.RUnlock()
-
-	if !found {
-		// Compile and cache the regex
-		compiledRegex, err := regexp.Compile(regexKey)
-		if err != nil {
-			// Fallback to simple case-insensitive comparison if regex fails
-			return strings.EqualFold(pattern, value)
-		}
-
-		// Store in cache with write lock
-		regexCacheMu.Lock()
-		// Double-check in case another goroutine added it
-		if existingRegex, exists := regexCache[regexKey]; exists {
-			regex = existingRegex
-		} else {
-			regexCache[regexKey] = compiledRegex
-			regex = compiledRegex
-		}
-		regexCacheMu.Unlock()
-	}
-
-	return regex.MatchString(value)
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
@@ -1347,7 +1303,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1369,7 +1325,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}
@@ -1409,7 +1365,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1431,7 +1387,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}

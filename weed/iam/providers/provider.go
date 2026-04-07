@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/mail"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
-	"github.com/seaweedfs/seaweedfs/weed/iam/policy"
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // IdentityProvider defines the interface for external identity providers
@@ -225,7 +226,7 @@ func (r *MappingRule) Matches(claims *TokenClaims) bool {
 // matchValue checks if a value matches the rule value (with wildcard support)
 // Uses AWS IAM-compliant case-insensitive wildcard matching for consistency with policy engine
 func (r *MappingRule) matchValue(value string) bool {
-	matched := policy.AwsWildcardMatch(r.Value, value)
+	matched := wildcard.MatchesWildcard(strings.ToLower(r.Value), strings.ToLower(value))
 	glog.V(3).Infof("AWS IAM pattern match result: '%s' matches '%s' = %t", value, r.Value, matched)
 	return matched
 }

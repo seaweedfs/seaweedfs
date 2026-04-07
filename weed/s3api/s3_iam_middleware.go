@@ -250,19 +250,27 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrAccessDenied
 	}
 
-	// Build resource ARN for the S3 operation
-	resourceArn := buildS3ResourceArn(bucket, objectKey)
-
 	// Extract request context for policy conditions
 	requestContext := extractRequestContext(r)
 
-	// Add s3:prefix to request context based on object key
-	// This ensures that policy conditions referencing s3:prefix (like StringLike)
-	// work correctly for both ListObjects (where objectKey is the prefix) and
-	// object operations (where we treat the object key as the prefix for matching)
-	if objectKey != "" && objectKey != "/" {
-		requestContext["s3:prefix"] = objectKey
+	// For list operations, populate the s3:prefix condition key and ensure the
+	// resource ARN stays at bucket level (matching AWS ListBucket semantics).
+	// See https://github.com/seaweedfs/seaweedfs/issues/8969
+	resourceObjectKey := objectKey
+	if action == "List" {
+		listPrefix := r.URL.Query().Get("prefix")
+		if listPrefix != "" {
+			requestContext["s3:prefix"] = listPrefix
+		} else if objectKey != "" && objectKey != "/" {
+			requestContext["s3:prefix"] = objectKey
+		} else {
+			requestContext["s3:prefix"] = ""
+		}
+		resourceObjectKey = ""
 	}
+
+	// Build resource ARN for the S3 operation
+	resourceArn := buildS3ResourceArn(bucket, resourceObjectKey)
 
 	// Add identity claims to request context for policy variables
 	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
