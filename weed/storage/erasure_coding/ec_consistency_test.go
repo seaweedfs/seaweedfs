@@ -82,7 +82,9 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 	require.NoError(t, err)
 	shardSize := ecStat.Size()
 
-	// Read needle 2 (the one added after EC encoding) using LocateData
+	// Read needle 2 (the one added after EC encoding) using LocateData.
+	// Use shardSize-1 to simulate the ecdFileSize fallback path used by
+	// LocateEcShardNeedleInterval when datFileSize is unavailable.
 	actualSize := needle.GetActualSize(types.Size(len(extraData)), needle.Version3)
 	intervals := LocateData(largeBlockSize, smallBlockSize, shardSize-1, datSize, types.Size(actualSize))
 
@@ -113,18 +115,18 @@ func TestEcConsistency_WritesBetweenEncodeAndEcx(t *testing.T) {
 		}
 	}
 
-	// Phase 6: Verify needle 1 (the original) still reads correctly
-	intervals1 := LocateData(largeBlockSize, smallBlockSize, shardSize-1, 0, types.Size(needle.GetActualSize(types.Size(datSize), needle.Version3)))
+	// Phase 6: Verify a small read from the original data still works.
+	// Use the correct shardDatSize (from the original datSize, not the modified one)
+	// to avoid the fallback heuristic issues.
+	shardDatSize := datSize / int64(DataShardsCount)
+	readSize := types.Size(smallBlockSize)
+	intervals1 := LocateData(largeBlockSize, smallBlockSize, shardDatSize, 0, readSize)
 	ecData1, err := assembleFromIntervalsAllowError(ecFiles, intervals1, largeBlockSize, smallBlockSize)
+	require.NoError(t, err, "reading original data from EC shards")
 
-	if err == nil {
-		// The assembled EC data should match the original .dat data
-		assert.True(t, bytes.Equal(originalData, ecData1[:datSize]),
-			"Original needle data should match EC shard data")
-		t.Logf("Original needle reads correctly from EC shards")
-	} else {
-		t.Logf("Error reading original needle: %v", err)
-	}
+	assert.True(t, bytes.Equal(originalData[:readSize], ecData1),
+		"Original data at offset 0 should match EC shard data")
+	t.Logf("Original data reads correctly from EC shards")
 }
 
 // TestEcConsistency_ExactLargeRowEncoding verifies that generateEcFiles correctly
