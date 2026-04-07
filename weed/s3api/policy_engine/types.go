@@ -43,6 +43,7 @@ var (
 	multipartActionSet = map[string]bool{
 		s3const.S3_ACTION_CREATE_MULTIPART:       true,
 		s3const.S3_ACTION_UPLOAD_PART:            true,
+		s3const.S3_ACTION_UPLOAD_PART_COPY:       true,
 		s3const.S3_ACTION_COMPLETE_MULTIPART:     true,
 		s3const.S3_ACTION_ABORT_MULTIPART:        true,
 		s3const.S3_ACTION_LIST_PARTS:             true,

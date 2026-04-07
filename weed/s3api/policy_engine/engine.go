@@ -162,6 +162,16 @@ func (engine *PolicyEngine) evaluateStatement(stmt *CompiledStatement, args *Pol
 	if !matchedAction {
 		matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, args.Action, args)
 	}
+	// Multipart upload actions (CreateMultipartUpload, UploadPart, CompleteMultipartUpload, etc.)
+	// are implicitly allowed by s3:PutObject, since multipart upload is an implementation
+	// detail of putting objects. Check if this is a multipart action and the statement
+	// grants s3:PutObject.
+	if !matchedAction && multipartActionSet[args.Action] {
+		matchedAction = engine.matchesPatterns(stmt.ActionPatterns, "s3:PutObject")
+		if !matchedAction {
+			matchedAction = engine.matchesDynamicPatterns(stmt.DynamicActionPatterns, "s3:PutObject", args)
+		}
+	}
 	if !matchedAction {
 		return false
 	}

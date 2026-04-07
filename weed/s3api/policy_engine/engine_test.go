@@ -981,3 +981,80 @@ func TestExistingObjectTagDenyPolicy(t *testing.T) {
 		})
 	}
 }
+
+// TestMultipartUploadInheritsPutObjectPermission verifies that granting s3:PutObject
+// in a bucket policy implicitly allows multipart upload operations.
+// See https://github.com/seaweedfs/seaweedfs/discussions/8751
+func TestMultipartUploadInheritsPutObjectPermission(t *testing.T) {
+	engine := NewPolicyEngine()
+
+	policyJSON := `{
+		"Version": "2012-10-17",
+		"Statement": [
+			{
+				"Effect": "Allow",
+				"Principal": "*",
+				"Action": "s3:PutObject",
+				"Resource": "arn:aws:s3:::test-bucket/*"
+			}
+		]
+	}`
+
+	if err := engine.SetBucketPolicy("test-bucket", policyJSON); err != nil {
+		t.Fatalf("Failed to set policy: %v", err)
+	}
+
+	multipartActions := []string{
+		"s3:CreateMultipartUpload",
+		"s3:UploadPart",
+		"s3:UploadPartCopy",
+		"s3:CompleteMultipartUpload",
+		"s3:AbortMultipartUpload",
+		"s3:ListMultipartUploadParts",
+		"s3:ListBucketMultipartUploads",
+	}
+
+	for _, action := range multipartActions {
+		t.Run(action, func(t *testing.T) {
+			args := &PolicyEvaluationArgs{
+				Action:    action,
+				Resource:  "arn:aws:s3:::test-bucket/myfile.dat",
+				Principal: "*",
+				Conditions: map[string][]string{
+					"aws:SourceIp": {"10.0.0.1"},
+				},
+			}
+			result := engine.EvaluatePolicy("test-bucket", args)
+			if result != PolicyResultAllow {
+				t.Errorf("Expected s3:PutObject to implicitly allow %s, got %v", action, result)
+			}
+		})
+	}
+
+	// ListBucketMultipartUploads is a bucket-level action; the object-only
+	// resource "arn:aws:s3:::test-bucket/*" should NOT match the bucket ARN.
+	t.Run("s3:ListBucketMultipartUploads bucket ARN", func(t *testing.T) {
+		args := &PolicyEvaluationArgs{
+			Action:    "s3:ListBucketMultipartUploads",
+			Resource:  "arn:aws:s3:::test-bucket",
+			Principal: "*",
+		}
+		result := engine.EvaluatePolicy("test-bucket", args)
+		if result == PolicyResultAllow {
+			t.Error("Object-only resource should not match bucket ARN for ListBucketMultipartUploads")
+		}
+	})
+
+	// s3:PutObject must NOT implicitly grant unrelated actions
+	t.Run("s3:DeleteObject not inherited", func(t *testing.T) {
+		args := &PolicyEvaluationArgs{
+			Action:    "s3:DeleteObject",
+			Resource:  "arn:aws:s3:::test-bucket/myfile.dat",
+			Principal: "*",
+		}
+		result := engine.EvaluatePolicy("test-bucket", args)
+		if result == PolicyResultAllow {
+			t.Error("s3:PutObject should NOT implicitly allow s3:DeleteObject")
+		}
+	})
+}
