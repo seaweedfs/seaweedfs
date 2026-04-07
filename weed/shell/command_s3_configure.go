@@ -31,8 +31,13 @@ func (c *commandS3Configure) Name() string {
 func (c *commandS3Configure) Help() string {
 	return `configure and apply s3 options for each bucket
 
-	# see the current configuration file content
-	s3.configure
+		# for workflow-oriented user management, prefer:
+		s3.user.create -name=username -generate_credentials
+		s3.user.show -name=username
+		s3.policy.attach -user=username -name=mypolicy
+
+		# see the current configuration file content
+		s3.configure
 
 	# create a new identity with account information
 	s3.configure -user=username -actions=Read,Write,List,Tagging -buckets=bucket-name -policies=policy1,policy2 -access_key=key -secret_key=secret -account_id=id -account_display_name=name -account_email=email@example.com -apply

@@ -29,10 +29,18 @@ func (c *commandS3Policy) Name() string {
 func (c *commandS3Policy) Help() string {
 	return `manage s3 policies
 
-	# create or update a policy
-	s3.policy -put -name=mypolicy -file=policy.json
+		# preferred exact commands
+		s3.policy.create -name=mypolicy -file=policy.json
+		s3.policy.show -name=mypolicy
+		s3.policy.list
+		s3.policy.delete -name=mypolicy
+		s3.policy.attach -user=alice -name=mypolicy
+		s3.policy.detach -user=alice -name=mypolicy
 
-	# list all policies
+		# create or update a policy
+		s3.policy -put -name=mypolicy -file=policy.json
+
+		# list all policies
 	s3.policy -list
 
 	# get a policy
