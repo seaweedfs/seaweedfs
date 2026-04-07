@@ -82,6 +82,80 @@ func TestTrinoIcebergCatalog(t *testing.T) {
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SHOW TABLES FROM iceberg.%s", schemaName))
 }
 
+// TestTrinoMultiLevelNamespace tests that multi-level namespaces (dot-separated)
+// produce correct S3 paths so Trino can read back data it writes.
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/8959
+func TestTrinoMultiLevelNamespace(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	env := NewTestEnvironment(t)
+	defer env.Cleanup(t)
+
+	if !env.dockerAvailable {
+		t.Skip("Docker not available, skipping Trino integration test")
+	}
+
+	t.Logf(">>> Starting SeaweedFS...")
+	env.StartSeaweedFS(t)
+
+	tableBucket := "iceberg-tables"
+	createTableBucket(t, env, tableBucket)
+
+	configDir := env.writeTrinoConfig(t, tableBucket)
+	env.startTrinoContainer(t, configDir)
+	waitForTrino(t, env.trinoContainer, 60*time.Second)
+
+	// Use a two-level namespace: "analytics.daily"
+	nsLevel1 := "analytics_" + randomString(4)
+	nsLevel2 := "daily_" + randomString(4)
+	// Trino uses double-quoted schema names for multi-level namespaces
+	multiNs := fmt.Sprintf(`"%s.%s"`, nsLevel1, nsLevel2)
+	tableName := "events_" + randomString(4)
+
+	// Create multi-level namespace (schema)
+	t.Logf(">>> Creating multi-level schema: %s.%s", nsLevel1, nsLevel2)
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", multiNs))
+
+	// Verify the schema shows up
+	output := runTrinoSQL(t, env.trinoContainer, "SHOW SCHEMAS FROM iceberg")
+	expectedSchema := fmt.Sprintf("%s.%s", nsLevel1, nsLevel2)
+	if !strings.Contains(output, expectedSchema) {
+		t.Fatalf("Expected schema %s in output:\n%s", expectedSchema, output)
+	}
+
+	// Create table under multi-level namespace
+	t.Logf(">>> Creating table under multi-level schema")
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(`
+		CREATE TABLE iceberg.%s.%s (
+			id INTEGER,
+			event VARCHAR,
+			ts TIMESTAMP(6)
+		)
+	`, multiNs, tableName))
+
+	// Insert data
+	t.Logf(">>> Inserting data into multi-level namespace table")
+	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(`
+		INSERT INTO iceberg.%s.%s VALUES
+			(1, 'click', TIMESTAMP '2025-01-01 00:00:00'),
+			(2, 'view',  TIMESTAMP '2025-01-01 01:00:00'),
+			(3, 'click', TIMESTAMP '2025-01-02 00:00:00')
+	`, multiNs, tableName))
+
+	// Query data back — if the namespace path separator was wrong,
+	// Trino would not find the data files at the S3 location.
+	t.Logf(">>> Querying data from multi-level namespace table")
+	output = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(
+		`SELECT COUNT(*) FROM iceberg.%s.%s`, multiNs, tableName))
+	if !strings.Contains(output, "3") {
+		t.Errorf("expected count 3 from multi-level namespace table, got output: %s", output)
+	}
+
+	t.Logf(">>> Trino multi-level namespace test passed")
+}
+
 func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	t.Helper()
 
