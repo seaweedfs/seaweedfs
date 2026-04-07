@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
@@ -21,7 +22,12 @@ func WriteTestVolumeFiles(t *testing.T, baseDir string, volumeID uint32, datSize
 	datPath := filepath.Join(baseDir, volumeFilename(volumeID, ".dat"))
 	idxPath := filepath.Join(baseDir, volumeFilename(volumeID, ".idx"))
 
-	data := make([]byte, datSize)
+	// The idx entry records the needle's data size. The actual on-disk size
+	// includes header + checksum + timestamp (GetActualSize). The .dat must
+	// be large enough to hold the full needle.
+	needleDataSize := types.Size(datSize)
+	actualSize := needle.GetActualSize(needleDataSize, needle.Version3)
+	data := make([]byte, actualSize)
 	rng := rand.New(rand.NewSource(99))
 	_, _ = rng.Read(data)
 	if err := os.WriteFile(datPath, data, 0644); err != nil {
@@ -35,7 +41,7 @@ func WriteTestVolumeFiles(t *testing.T, baseDir string, volumeID uint32, datSize
 
 	types.NeedleIdToBytes(entry[:idEnd], types.NeedleId(1))
 	types.OffsetToBytes(entry[idEnd:offsetEnd], types.ToOffset(0))
-	types.SizeToBytes(entry[offsetEnd:sizeEnd], types.Size(datSize))
+	types.SizeToBytes(entry[offsetEnd:sizeEnd], needleDataSize)
 
 	if err := os.WriteFile(idxPath, entry, 0644); err != nil {
 		t.Fatalf("write idx file: %v", err)
