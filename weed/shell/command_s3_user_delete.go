@@ -38,7 +38,7 @@ func (c *commandS3UserDelete) Do(args []string, commandEnv *CommandEnv, writer i
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	name := f.String("name", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *name == "" {

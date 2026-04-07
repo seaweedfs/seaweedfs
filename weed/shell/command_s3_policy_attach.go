@@ -41,7 +41,7 @@ func (c *commandS3PolicyAttach) Do(args []string, commandEnv *CommandEnv, writer
 	policy := f.String("policy", "", "policy name")
 	user := f.String("user", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *policy == "" {
@@ -59,7 +59,7 @@ func (c *commandS3PolicyAttach) Do(args []string, commandEnv *CommandEnv, writer
 		// Verify the policy exists
 		_, err := client.GetPolicy(ctx, &iam_pb.GetPolicyRequest{Name: *policy})
 		if err != nil {
-			return fmt.Errorf("policy %q not found: %v", *policy, err)
+			return fmt.Errorf("get policy %q: %w", *policy, err)
 		}
 
 		// Get the user

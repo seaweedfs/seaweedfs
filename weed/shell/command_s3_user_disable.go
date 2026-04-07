@@ -41,7 +41,7 @@ func (c *commandS3UserDisable) Do(args []string, commandEnv *CommandEnv, writer 
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	name := f.String("name", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *name == "" {

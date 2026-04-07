@@ -47,7 +47,7 @@ func (c *commandS3UserCreate) Do(args []string, commandEnv *CommandEnv, writer i
 	accessKey := f.String("access_key", "", "access key (generated if omitted)")
 	secretKey := f.String("secret_key", "", "secret key (generated if omitted)")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *name == "" {

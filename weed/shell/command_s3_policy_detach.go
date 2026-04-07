@@ -39,7 +39,7 @@ func (c *commandS3PolicyDetach) Do(args []string, commandEnv *CommandEnv, writer
 	policy := f.String("policy", "", "policy name")
 	user := f.String("user", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *policy == "" {

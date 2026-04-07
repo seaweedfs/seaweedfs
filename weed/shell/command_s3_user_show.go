@@ -39,7 +39,7 @@ func (c *commandS3UserShow) Do(args []string, commandEnv *CommandEnv, writer io.
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	name := f.String("name", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *name == "" {
@@ -56,6 +56,9 @@ func (c *commandS3UserShow) Do(args []string, commandEnv *CommandEnv, writer io.
 			return err
 		}
 		id := resp.Identity
+		if id == nil {
+			return fmt.Errorf("user %q returned empty identity", *name)
+		}
 
 		status := "enabled"
 		if id.Disabled {

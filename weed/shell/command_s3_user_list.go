@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -42,12 +43,13 @@ func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 
-		listResp, err := client.ListUsers(ctx, &iam_pb.ListUsersRequest{})
+		resp, err := client.GetConfiguration(ctx, &iam_pb.GetConfigurationRequest{})
 		if err != nil {
 			return err
 		}
 
-		if len(listResp.Usernames) == 0 {
+		identities := resp.Configuration.GetIdentities()
+		if len(identities) == 0 {
 			fmt.Fprintln(writer, "No users found.")
 			return nil
 		}
@@ -55,13 +57,7 @@ func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.
 		tw := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "NAME\tSTATUS\tPOLICIES\tKEYS")
 
-		for _, username := range listResp.Usernames {
-			resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: username})
-			if err != nil {
-				fmt.Fprintf(tw, "%s\t<error>\t\t\n", username)
-				continue
-			}
-			id := resp.Identity
+		for _, id := range identities {
 			status := "enabled"
 			if id.Disabled {
 				status = "disabled"
@@ -79,21 +75,7 @@ func (c *commandS3UserList) Do(args []string, commandEnv *CommandEnv, writer io.
 // joinMax joins up to max strings with ", " and appends "..." if truncated.
 func joinMax(items []string, max int) string {
 	if len(items) <= max {
-		result := ""
-		for i, s := range items {
-			if i > 0 {
-				result += ", "
-			}
-			result += s
-		}
-		return result
+		return strings.Join(items, ", ")
 	}
-	result := ""
-	for i := 0; i < max; i++ {
-		if i > 0 {
-			result += ", "
-		}
-		result += items[i]
-	}
-	return result + "..."
+	return strings.Join(items[:max], ", ") + "..."
 }
