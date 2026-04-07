@@ -103,6 +103,9 @@ func RunShell(options ShellOptions) {
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Fprintf(os.Stderr, "error reading stdin: %v\n", err)
+		}
 	}
 }
 
@@ -245,10 +248,10 @@ func loadHistory() {
 
 func saveHistory() {
 	if f, err := os.Create(historyPath); err != nil {
-		fmt.Printf("Error creating history file: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Error creating history file: %v\n", err)
 	} else {
 		if _, err = line.WriteHistory(f); err != nil {
-			fmt.Printf("Error writing history file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Error writing history file: %v\n", err)
 		}
 		f.Close()
 	}

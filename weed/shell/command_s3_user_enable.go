@@ -59,16 +59,15 @@ func (c *commandS3UserEnable) Do(args []string, commandEnv *CommandEnv, writer i
 			return fmt.Errorf("user %q returned empty identity", *name)
 		}
 
-		if !resp.Identity.Disabled {
-			return nil
+		if resp.Identity.Disabled {
+			resp.Identity.Disabled = false
+			_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
+				Username: *name,
+				Identity: resp.Identity,
+			})
+			return err
 		}
-
-		resp.Identity.Disabled = false
-		_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
-			Username: *name,
-			Identity: resp.Identity,
-		})
-		return err
+		return nil
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 	if err != nil {
 		return err
