@@ -28,12 +28,12 @@ func (c *commandS3IAMImport) Name() string {
 func (c *commandS3IAMImport) Help() string {
 	return `import S3 IAM configuration from a JSON file
 
-	s3.iam.import -file backup.json -force
+	s3.iam.import -file backup.json -apply
 
 	Replaces the entire IAM configuration (users, credentials, policies,
 	service accounts, groups) with the contents of the file.
 
-	Requires -force to confirm, since this overwrites the current configuration.
+	Requires -apply to confirm, since this overwrites the current configuration.
 `
 }
 
@@ -44,7 +44,7 @@ func (c *commandS3IAMImport) HasTag(CommandTag) bool {
 func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	file := f.String("file", "", "input JSON file")
-	force := f.Bool("force", false, "confirm overwrite of the entire IAM configuration")
+	apply := f.Bool("apply", false, "confirm overwrite of the entire IAM configuration")
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -52,8 +52,8 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 	if *file == "" {
 		return fmt.Errorf("-file is required")
 	}
-	if !*force {
-		return fmt.Errorf("this overwrites the entire IAM configuration; use -force to confirm")
+	if !*apply {
+		return fmt.Errorf("this overwrites the entire IAM configuration; use -apply to confirm")
 	}
 
 	data, err := os.ReadFile(*file)
