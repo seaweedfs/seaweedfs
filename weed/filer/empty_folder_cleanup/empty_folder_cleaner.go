@@ -18,8 +18,8 @@ const (
 	DefaultMaxCountCheck  = 1000
 	DefaultCacheExpiry    = 5 * time.Minute
 	DefaultQueueMaxSize   = 1000
-	DefaultQueueMaxAge    = 5 * time.Second
-	DefaultProcessorSleep = 10 * time.Second // How often to check queue
+	DefaultQueueMaxAge    = 2 * time.Minute
+	DefaultProcessorSleep = 30 * time.Second // How often to check queue
 )
 
 // FilerOperations defines the filer operations needed by EmptyFolderCleaner
@@ -70,15 +70,20 @@ type EmptyFolderCleaner struct {
 	stopCh  chan struct{}
 }
 
-// NewEmptyFolderCleaner creates a new EmptyFolderCleaner
-func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string) *EmptyFolderCleaner {
+// NewEmptyFolderCleaner creates a new EmptyFolderCleaner.
+// cleanupDelay controls how long an empty folder must remain in the queue before deletion.
+// If zero, DefaultQueueMaxAge is used.
+func NewEmptyFolderCleaner(filer FilerOperations, lockRing *lock_manager.LockRing, host pb.ServerAddress, bucketPath string, cleanupDelay time.Duration) *EmptyFolderCleaner {
+	if cleanupDelay <= 0 {
+		cleanupDelay = DefaultQueueMaxAge
+	}
 	efc := &EmptyFolderCleaner{
 		filer:                 filer,
 		lockRing:              lockRing,
 		host:                  host,
 		folderCounts:          make(map[string]*folderState),
 		bucketCleanupPolicies: make(map[string]*bucketCleanupPolicyState),
-		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, DefaultQueueMaxAge),
+		cleanupQueue:          NewCleanupQueue(DefaultQueueMaxSize, cleanupDelay),
 		maxCountCheck:         DefaultMaxCountCheck,
 		cacheExpiry:           DefaultCacheExpiry,
 		processorSleep:        DefaultProcessorSleep,
@@ -207,27 +212,22 @@ func (efc *EmptyFolderCleaner) cleanupProcessor() {
 
 // processCleanupQueue processes items from the cleanup queue
 func (efc *EmptyFolderCleaner) processCleanupQueue() {
-	// Check if we should process
-	if !efc.cleanupQueue.ShouldProcess() {
-		if efc.cleanupQueue.Len() > 0 {
-			glog.Infof("EmptyFolderCleaner: pending queue not processed yet (len=%d, oldest_age=%v, max_size=%d, max_age=%v)",
-				efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge(), efc.cleanupQueue.maxSize, efc.cleanupQueue.maxAge)
-		}
+	if efc.cleanupQueue.Len() == 0 {
 		return
 	}
 
-	glog.V(3).Infof("EmptyFolderCleaner: processing cleanup queue (len=%d, age=%v)",
+	glog.V(3).Infof("EmptyFolderCleaner: processing cleanup queue (len=%d, oldest_age=%v)",
 		efc.cleanupQueue.Len(), efc.cleanupQueue.OldestAge())
 
-	// Process all items that are ready
-	for efc.cleanupQueue.Len() > 0 {
+	// Only process items that have been queued longer than maxAge
+	for {
 		// Check if still enabled
 		if !efc.IsEnabled() {
 			return
 		}
 
-		// Pop the oldest item
-		folder, triggeredBy, ok := efc.cleanupQueue.Pop()
+		// Only pop items old enough — newer items stay in the queue
+		folder, triggeredBy, ok := efc.cleanupQueue.PopOlderThan(efc.cleanupQueue.maxAge)
 		if !ok {
 			break
 		}
