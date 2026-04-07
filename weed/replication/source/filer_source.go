@@ -15,6 +15,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
 type FilerSource struct {
@@ -25,6 +26,7 @@ type FilerSource struct {
 	proxyByFiler   bool
 	dataCenter     string
 	signature      int32
+	httpClient     *util_http_client.HTTPClient
 }
 
 func (fs *FilerSource) Initialize(configuration util.Configuration, prefix string) error {
@@ -52,6 +54,10 @@ func (fs *FilerSource) DoInitialize(address, grpcAddress string, dir string, rea
 
 func (fs *FilerSource) SetGrpcDialOption(option grpc.DialOption) {
 	fs.grpcDialOption = option
+}
+
+func (fs *FilerSource) SetHttpClient(client *util_http_client.HTTPClient) {
+	fs.httpClient = client
 }
 
 func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls []string, err error) {
@@ -104,9 +110,15 @@ func (fs *FilerSource) LookupFileId(ctx context.Context, part string) (fileUrls 
 }
 
 func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, header http.Header, resp *http.Response, err error) {
+	downloadFn := util_http.DownloadFile
+	if fs.httpClient != nil {
+		downloadFn = func(fileUrl string, jwt string, offset ...int64) (string, http.Header, *http.Response, error) {
+			return util_http.DownloadFileWithClient(fs.httpClient, fileUrl, jwt, offset...)
+		}
+	}
 
 	if fs.proxyByFiler {
-		filename, header, resp, err = util_http.DownloadFile("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
+		filename, header, resp, err = downloadFn("http://"+fs.address+"/?proxyChunkId="+fileId, "", offset)
 		if err != nil {
 			glog.V(0).Infof("read part %s via filer proxy %s offset %d: %v", fileId, fs.address, offset, err)
 		} else {
@@ -121,7 +133,7 @@ func (fs *FilerSource) ReadPart(fileId string, offset int64) (filename string, h
 	}
 
 	for _, fileUrl := range fileUrls {
-		filename, header, resp, err = util_http.DownloadFile(fileUrl, "", offset)
+		filename, header, resp, err = downloadFn(fileUrl, "", offset)
 		if err != nil {
 			glog.V(0).Infof("fail to read part %s from %s offset %d: %v", fileId, fileUrl, offset, err)
 		} else {

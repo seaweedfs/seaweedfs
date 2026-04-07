@@ -16,6 +16,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -207,6 +208,39 @@ func LoadClientTLS(config *util.ViperProxy, component string) grpc.DialOption {
 	}
 	wrapped := &SNIStrippingTransportCredentials{creds: ta}
 	return grpc.WithTransportCredentials(wrapped)
+}
+
+// LoadHTTPClientFromFile creates an HTTP client using the https.client TLS
+// settings from the given security config file. Returns nil if HTTPS is not
+// enabled in the config. This is used by filer.sync to create per-cluster
+// HTTP clients when clusters use different certificates.
+func LoadHTTPClientFromFile(configFile string) (*util_http_client.HTTPClient, error) {
+	v := viper.New()
+	v.SetConfigFile(configFile)
+	if err := v.ReadInConfig(); err != nil {
+		return nil, fmt.Errorf("failed to read security config %s: %v", configFile, err)
+	}
+
+	if !v.GetBool("https.client.enabled") {
+		return nil, nil
+	}
+
+	configDir := filepath.Dir(configFile)
+	resolvePath := func(key string) string {
+		p := v.GetString(key)
+		if p != "" && !filepath.IsAbs(p) {
+			return filepath.Join(configDir, p)
+		}
+		return p
+	}
+
+	return util_http_client.NewHttpClientWithTLS(
+		resolvePath("https.client.cert"),
+		resolvePath("https.client.key"),
+		resolvePath("https.client.ca"),
+		v.GetBool("https.client.insecure_skip_verify"),
+		util_http_client.AddDialContext,
+	)
 }
 
 func LoadClientTLSHTTP(clientCertFile string) *tls.Config {

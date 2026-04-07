@@ -178,7 +178,7 @@ func (fs *FilerSink) replicateOneManifestChunk(ctx context.Context, sourceChunk 
 }
 
 func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceFileId string, manifestData []byte) (fileId string, err error) {
-	uploader, err := operation.NewUploader()
+	uploader, err := fs.getUploader()
 	if err != nil {
 		glog.V(0).Infof("upload manifest data %v: %v", sourceFileId, err)
 		return "", fmt.Errorf("upload manifest data: %w", err)
@@ -235,7 +235,7 @@ func (fs *FilerSink) uploadManifestChunk(path string, sourceMtime int64, sourceF
 }
 
 func (fs *FilerSink) fetchAndWrite(sourceChunk *filer_pb.FileChunk, path string, sourceMtime int64) (fileId string, err error) {
-	uploader, err := operation.NewUploader()
+	uploader, err := fs.getUploader()
 	if err != nil {
 		glog.V(0).Infof("upload source data %v: %v", sourceChunk.GetFileIdString(), err)
 		return "", fmt.Errorf("upload data: %w", err)

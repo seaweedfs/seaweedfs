@@ -6,6 +6,7 @@ import (
 	"math"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 
@@ -50,6 +51,7 @@ type FilerSink struct {
 	executor          *util.LimitedConcurrentExecutor
 	signature         int32
 	activeTransfers   sync.Map // chunkFileId -> *ChunkTransferStatus
+	uploader          *operation.Uploader
 }
 
 func init() {
@@ -86,6 +88,21 @@ func (fs *FilerSink) Initialize(configuration util.Configuration, prefix string)
 
 func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 	fs.filerSource = s
+}
+
+// SetUploader sets a custom uploader for this sink, used when the target
+// cluster requires different TLS certificates than the global config.
+// Must be called during initialization, before any replication goroutines
+// start, since it writes fs.uploader without synchronization.
+func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
+	fs.uploader = uploader
+}
+
+func (fs *FilerSink) getUploader() (*operation.Uploader, error) {
+	if fs.uploader != nil {
+		return fs.uploader, nil
+	}
+	return operation.NewUploader()
 }
 
 func (fs *FilerSink) DoInitialize(address, grpcAddress string, dir string,

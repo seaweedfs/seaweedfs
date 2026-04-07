@@ -21,6 +21,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 )
 
 var ErrNotFound = fmt.Errorf("not found")
@@ -202,6 +203,16 @@ func GetUrlStream(url string, values url.Values, readFn func(io.Reader) error) e
 }
 
 func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
+	return DownloadFileWithClient(GetGlobalHttpClient(), fileUrl, jwt, offset...)
+}
+
+// DownloadFileWithClient is like DownloadFile but uses the provided HTTP client
+// instead of the global one. This is used by filer.sync to download from
+// remote clusters that use different TLS certificates.
+func DownloadFileWithClient(client *util_http_client.HTTPClient, fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
+	if client == nil {
+		return "", nil, nil, fmt.Errorf("nil HTTP client in DownloadFileWithClient")
+	}
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return "", nil, nil, err
@@ -217,7 +228,7 @@ func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string,
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", rangeOffset))
 	}
 
-	response, err := GetGlobalHttpClient().Do(req)
+	response, err := client.Do(req)
 	if err != nil {
 		return "", nil, nil, err
 	}
