@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam"
@@ -68,6 +69,9 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 	if *bucket == "" {
 		return fmt.Errorf("-bucket is required")
 	}
+	if strings.ContainsAny(*bucket, "*?") {
+		return fmt.Errorf("-bucket must be a literal bucket name, not a wildcard pattern")
+	}
 	if *role == "" {
 		return fmt.Errorf("-role is required (readonly, readwrite, admin)")
 	}
@@ -118,6 +122,11 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
+
+		// Step 0: Check if user already exists
+		if resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *name}); getErr == nil && resp.Identity != nil {
+			return fmt.Errorf("user %q already exists", *name)
+		}
 
 		// Step 1: Create policy
 		_, err := client.PutPolicy(ctx, &iam_pb.PutPolicyRequest{

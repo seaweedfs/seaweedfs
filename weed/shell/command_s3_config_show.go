@@ -48,6 +48,10 @@ func (c *commandS3ConfigShow) Do(args []string, commandEnv *CommandEnv, writer i
 			return err
 		}
 		cfg := resp.Configuration
+		if cfg == nil {
+			fmt.Fprintln(writer, "No S3 IAM configuration found.")
+			return nil
+		}
 
 		fmt.Fprintf(writer, "S3 IAM Configuration Summary\n")
 		fmt.Fprintf(writer, "============================\n\n")
