@@ -348,6 +348,23 @@ Current MVP implementation choices:
 3. reuse the existing rebuild TCP path for `sessionData` rather than inventing
    a new transport first
 
+Current server-layer skeleton:
+
+1. `BlockService.StartReplicaRebuildSession(path, config)`
+2. `BlockService.ApplyReplicaRebuildWALEntry(path, session_id, entry)`
+3. `BlockService.ApplyReplicaRebuildBaseBlock(path, session_id, lba, data)`
+4. `BlockService.MarkReplicaRebuildBaseComplete(path, session_id, total_blocks)`
+5. `BlockService.TryCompleteReplicaRebuildSession(path, session_id)`
+6. `BlockService.CancelReplicaRebuildSession(path, session_id, reason)`
+7. `BlockService.ReplicaRebuildSession(path)`
+
+Server-layer responsibility:
+
+1. decode incoming `sessionControl` / `walData` / `sessionData`
+2. map them onto the local volume path
+3. route them into the `BlockService` skeleton above
+4. build `sessionAck` from `ReplicaRebuildSession(path)`
+
 ## Replica State Machine
 
 ```mermaid

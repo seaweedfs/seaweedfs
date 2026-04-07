@@ -1109,6 +1109,107 @@ func TestBlockService_ApplyAssignments_RebuildingRole_PreservesLegacyFallbackWit
 	}
 }
 
+func TestBlockService_ReplicaRebuildSessionSkeleton_RoutesToVolume(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-rebuild-session-skeleton")
+
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: 7,
+		Epoch:     1,
+		BaseLSN:   1,
+		TargetLSN: 1,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+
+	snap, ok, err := bs.ReplicaRebuildSession(path)
+	if err != nil {
+		t.Fatalf("read rebuild session: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected active rebuild session")
+	}
+	if snap.Config.SessionID != 7 {
+		t.Fatalf("session_id=%d, want 7", snap.Config.SessionID)
+	}
+	if snap.Progress.Phase != blockvol.RebuildPhaseRunning {
+		t.Fatalf("phase=%s, want running", snap.Progress.Phase)
+	}
+
+	if err := bs.ApplyReplicaRebuildWALEntry(path, 7, &blockvol.WALEntry{
+		LSN:    1,
+		Epoch:  1,
+		Type:   blockvol.EntryTypeWrite,
+		LBA:    0,
+		Length: 4096,
+		Data:   bytes.Repeat([]byte{0xAB}, 4096),
+	}); err != nil {
+		t.Fatalf("apply rebuild WAL entry: %v", err)
+	}
+
+	applied, err := bs.ApplyReplicaRebuildBaseBlock(path, 7, 0, bytes.Repeat([]byte{0xCD}, 4096))
+	if err != nil {
+		t.Fatalf("apply rebuild base block: %v", err)
+	}
+	if applied {
+		t.Fatal("expected base block to be skipped after WAL apply")
+	}
+
+	if err := bs.MarkReplicaRebuildBaseComplete(path, 7, 1); err != nil {
+		t.Fatalf("mark base complete: %v", err)
+	}
+	achieved, completed, err := bs.TryCompleteReplicaRebuildSession(path, 7)
+	if err != nil {
+		t.Fatalf("try complete: %v", err)
+	}
+	if !completed || achieved != 1 {
+		t.Fatalf("achieved=%d completed=%v, want achieved=1 completed=true", achieved, completed)
+	}
+
+	snap, ok, err = bs.ReplicaRebuildSession(path)
+	if err != nil {
+		t.Fatalf("read completed session: %v", err)
+	}
+	if !ok || !snap.Progress.Completed() {
+		t.Fatalf("session completed=%v ok=%v", snap.Progress.Completed(), ok)
+	}
+
+	if err := bs.CancelReplicaRebuildSession(path, 7, "test_done"); err != nil {
+		t.Fatalf("cancel rebuild session: %v", err)
+	}
+	if _, ok, err := bs.ReplicaRebuildSession(path); err != nil {
+		t.Fatalf("read cleared session: %v", err)
+	} else if ok {
+		t.Fatal("expected no active rebuild session after cancel")
+	}
+}
+
+func TestBlockService_ReplicaRebuildSessionSkeleton_RejectsStaleSessionID(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-rebuild-session-stale")
+
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: 9,
+		Epoch:     1,
+		BaseLSN:   1,
+		TargetLSN: 1,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+
+	err := bs.ApplyReplicaRebuildWALEntry(path, 8, &blockvol.WALEntry{
+		LSN:    1,
+		Epoch:  1,
+		Type:   blockvol.EntryTypeWrite,
+		LBA:    0,
+		Length: 4096,
+		Data:   bytes.Repeat([]byte{0xEF}, 4096),
+	})
+	if err == nil {
+		t.Fatal("expected stale session ID to be rejected")
+	}
+}
+
 func TestBlockService_BarrierRejected_ExecutesCoreInvalidateSession(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
 	bs.v2Bridge = newTestControlBridge()
