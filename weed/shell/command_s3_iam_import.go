@@ -58,12 +58,12 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 
 	data, err := os.ReadFile(*file)
 	if err != nil {
-		return fmt.Errorf("read file: %v", err)
+		return fmt.Errorf("read file: %w", err)
 	}
 
 	config := &iam_pb.S3ApiConfiguration{}
 	if err := filer.ParseS3ConfigurationFromBytes(data, config); err != nil {
-		return fmt.Errorf("parse configuration: %v", err)
+		return fmt.Errorf("parse configuration: %w", err)
 	}
 
 	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
@@ -76,7 +76,7 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 		return err
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 	if err != nil {
-		return err
+		return fmt.Errorf("put IAM configuration: %w", err)
 	}
 
 	fmt.Fprintf(writer, "Imported IAM configuration from %s\n", *file)

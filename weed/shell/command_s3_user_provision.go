@@ -13,6 +13,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func init() {
@@ -126,6 +128,8 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		// Step 0: Check if user already exists
 		if resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *name}); getErr == nil && resp.Identity != nil {
 			return fmt.Errorf("user %q already exists", *name)
+		} else if getErr != nil && status.Code(getErr) != codes.NotFound {
+			return fmt.Errorf("check user existence: %w", getErr)
 		}
 
 		// Step 1: Create policy
