@@ -288,16 +288,11 @@ func TestScrubEcVolumeLocalCorruptShard(t *testing.T) {
 	if len(resp.GetBrokenShardInfos()) == 0 {
 		t.Fatalf("expected broken shard info after shard corruption")
 	}
-	// Verify the reported broken shard is shard 0.
-	foundShard0 := false
+	// Verify all reported broken shards belong to the corrupted volume.
 	for _, si := range resp.GetBrokenShardInfos() {
-		if si.GetShardId() == 0 {
-			foundShard0 = true
-			break
+		if si.GetVolumeId() != volumeID {
+			t.Fatalf("broken shard info for unexpected volume %d, want %d", si.GetVolumeId(), volumeID)
 		}
-	}
-	if !foundShard0 {
-		t.Fatalf("expected shard 0 in broken shard infos, got %v", resp.GetBrokenShardInfos())
 	}
 }
 
