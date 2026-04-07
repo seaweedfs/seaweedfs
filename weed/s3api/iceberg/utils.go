@@ -32,9 +32,17 @@ func parseNamespace(encoded string) []string {
 	return result
 }
 
-// encodeNamespace encodes namespace parts for response.
+// encodeNamespace encodes namespace parts using the Iceberg REST protocol's
+// unit separator (0x1F) convention. This is only appropriate for protocol-level
+// encoding (e.g. URL path parameters), NOT for filesystem/S3 paths.
 func encodeNamespace(parts []string) string {
 	return strings.Join(parts, "\x1F")
+}
+
+// flattenNamespacePath joins namespace parts with "." for use in S3 location
+// and filer paths, matching the S3 Tables storage layer convention.
+func flattenNamespacePath(parts []string) string {
+	return strings.Join(parts, ".")
 }
 
 func parseS3Location(location string) (bucketName, tablePath string, err error) {

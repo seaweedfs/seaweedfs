@@ -200,7 +200,7 @@ func (s *Server) finalizeCreateOnCommit(ctx context.Context, input createOnCommi
 		markerBucket = metadataBucket
 	}
 	if markerErr := s.deleteStageCreateMarkers(ctx, markerBucket, input.namespace, input.tableName); markerErr != nil {
-		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after finalize: %v", encodeNamespace(input.namespace), input.tableName, markerErr)
+		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after finalize: %v", flattenNamespacePath(input.namespace), input.tableName, markerErr)
 	}
 
 	return &CommitTableResponse{

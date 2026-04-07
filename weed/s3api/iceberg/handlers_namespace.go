@@ -39,10 +39,21 @@ func (s *Server) handleListNamespaces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The Iceberg REST spec allows a "parent" query parameter for hierarchical
+	// namespace listing. Convert it to the dot-separated prefix used by S3 Tables.
+	var prefix string
+	if parent := r.URL.Query().Get("parent"); parent != "" {
+		parentParts := parseNamespace(parent)
+		if len(parentParts) > 0 {
+			prefix = flattenNamespacePath(parentParts) + "."
+		}
+	}
+
 	// Use S3 Tables manager to list namespaces
 	var resp s3tables.ListNamespacesResponse
 	req := &s3tables.ListNamespacesRequest{
 		TableBucketARN:    bucketARN,
+		Prefix:            prefix,
 		ContinuationToken: pageToken,
 		MaxNamespaces:     pageSize,
 	}

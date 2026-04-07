@@ -120,7 +120,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	tablePath := path.Join(encodeNamespace(namespace), req.Name)
+	tablePath := path.Join(flattenNamespacePath(namespace), req.Name)
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
 		if req.Properties != nil {
@@ -179,7 +179,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		}
 		stagedMetadataLocation := fmt.Sprintf("s3://%s/%s/metadata/%s", metadataBucket, stagedTablePath, metadataFileName)
 		if markerErr := s.writeStageCreateMarker(r.Context(), bucketName, namespace, tableName, tableUUID, location, stagedMetadataLocation); markerErr != nil {
-			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", encodeNamespace(namespace), tableName, markerErr)
+			glog.V(1).Infof("Iceberg: failed to persist stage-create marker for %s.%s: %v", flattenNamespacePath(namespace), tableName, markerErr)
 		}
 		result := LoadTableResult{
 			MetadataLocation: metadataLocation,
@@ -266,7 +266,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		finalLocation = metadataLocation
 	}
 	if markerErr := s.deleteStageCreateMarkers(r.Context(), bucketName, namespace, tableName); markerErr != nil {
-		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", encodeNamespace(namespace), tableName, markerErr)
+		glog.V(1).Infof("Iceberg: failed to cleanup stage-create markers for %s.%s after create: %v", flattenNamespacePath(namespace), tableName, markerErr)
 	}
 
 	result := LoadTableResult{
@@ -324,7 +324,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
-		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
 	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
