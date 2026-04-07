@@ -244,7 +244,7 @@ func TestQA_CP831_SyncAll_RF3_PartialReplica_OneOfTwo_Fails(t *testing.T) {
 	// First call succeeds (primary), second succeeds (replica 1),
 	// third fails (replica 2).
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount == 3 {
 			return nil, fmt.Errorf("disk full on third server")
@@ -300,7 +300,7 @@ func TestQA_CP831_SyncQuorum_RF3_OneReplicaOK_Succeeds(t *testing.T) {
 	ctx := context.Background()
 
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount == 3 {
 			return nil, fmt.Errorf("disk full on third server")
@@ -345,7 +345,7 @@ func TestQA_CP831_SyncQuorum_RF3_AllReplicasFail_Fails(t *testing.T) {
 	ctx := context.Background()
 
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount > 1 { // primary succeeds, all replicas fail
 			return nil, fmt.Errorf("disk full")
@@ -395,7 +395,7 @@ func TestQA_CP831_ConcurrentCreate_SameName_DifferentModes(t *testing.T) {
 	ctx := context.Background()
 
 	// Slow down allocation to increase race window.
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		time.Sleep(10 * time.Millisecond)
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
@@ -593,7 +593,7 @@ func TestQA_CP831_BestEffort_NoReplicaCreate_StillSucceeds(t *testing.T) {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 		blockFailover:        newBlockFailoverState(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
 			IQN:               fmt.Sprintf("iqn.2024.test:%s", name),
@@ -627,7 +627,7 @@ func TestQA_CP831_SyncAll_SingleServer_Fails(t *testing.T) {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 		blockFailover:        newBlockFailoverState(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
 			IQN:               fmt.Sprintf("iqn.2024.test:%s", name),
@@ -668,7 +668,7 @@ func TestQA_CP831_CleanupPartialCreate_DeletesFails_NoRegistryLeak(t *testing.T)
 	ctx := context.Background()
 
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount > 1 { // all replicas fail
 			return nil, fmt.Errorf("no space")

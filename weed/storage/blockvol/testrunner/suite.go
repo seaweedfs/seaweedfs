@@ -88,6 +88,7 @@ type SuiteEvidence struct {
 	GlogPatterns   []string `yaml:"glog_patterns"`
 	DebugEndpoints []string `yaml:"debug_endpoints"`
 	SaveTo         string   `yaml:"save_to"`
+	RunNode        string   `yaml:"run_node"` // node where scenarios run (for result pull)
 }
 
 // ParseSuiteFile reads and parses a suite YAML file.

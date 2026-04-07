@@ -1,6 +1,7 @@
 package weed_server
 
 import (
+	"bytes"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -1707,6 +1708,209 @@ func TestBlockService_ShipperStateChange_InSyncEmitsCoreConnectedObservation(t *
 	}
 	if after.Publication.Healthy {
 		t.Fatalf("shipper connect alone must not publish healthy, projection=%+v", after)
+	}
+}
+
+func TestBlockService_BarrierRejectedCallback_UpdatesCoreProjection(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-barrier-rejected-callback")
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.handleBarrierRejected(path, "barrier_timeout", ch)
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("expected immediate heartbeat notification")
+	}
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after barrier rejection")
+	}
+	if after.Mode.Name != engine.ModeDegraded {
+		t.Fatalf("mode=%s, want %s", after.Mode.Name, engine.ModeDegraded)
+	}
+	if after.Publication.Reason != "barrier_timeout" {
+		t.Fatalf("reason=%q, want %q", after.Publication.Reason, "barrier_timeout")
+	}
+	if after.Boundary.LastBarrierOK {
+		t.Fatalf("last_barrier_ok=%v, want false", after.Boundary.LastBarrierOK)
+	}
+	if after.Boundary.LastBarrierReason != "barrier_timeout" {
+		t.Fatalf("last_barrier_reason=%q, want %q", after.Boundary.LastBarrierReason, "barrier_timeout")
+	}
+}
+
+func TestBlockService_CreateBlockVol_WiresStateChangeCallbackForNewVolumes(t *testing.T) {
+	dir := t.TempDir()
+	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.", "127.0.0.1:3260,1", NVMeConfig{})
+	if bs == nil {
+		t.Fatal("expected non-nil BlockService")
+	}
+	defer bs.Shutdown()
+
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	path, _, _, err := bs.CreateBlockVol("vol-new-callback", 4*1024*1024, "", "sync_all")
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	primary, ok := bs.blockStore.GetBlockVolume(path)
+	if !ok {
+		t.Fatalf("created volume %s not found", path)
+	}
+
+	replicaPath := filepath.Join(t.TempDir(), "replica.blockvol")
+	replica, err := blockvol.CreateBlockVol(replicaPath, blockvol.CreateOptions{
+		VolumeSize:     4 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol replica: %v", err)
+	}
+	defer replica.Close()
+	replica.SetRole(blockvol.RoleReplica)
+	if err := replica.SetEpoch(1); err != nil {
+		t.Fatalf("replica SetEpoch: %v", err)
+	}
+	replica.SetMasterEpoch(1)
+
+	if err := replica.StartReplicaReceiver("127.0.0.1:0", "127.0.0.1:0"); err != nil {
+		t.Fatalf("StartReplicaReceiver: %v", err)
+	}
+	recv := replica.ReplicaReceiverAddr()
+	if recv == nil {
+		t.Fatal("ReplicaReceiverAddr returned nil")
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: recv.DataAddr,
+		ReplicaCtrlAddr: recv.CtrlAddr,
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("ApplyAssignments errs=%v", errs)
+	}
+
+	if err := primary.WriteLBA(0, bytes.Repeat([]byte{'N'}, 4096)); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected immediate heartbeat notification for newly created volume")
+	}
+}
+
+func TestBlockService_CreateBlockVol_SyncCacheSuccessEmitsBarrierAccepted(t *testing.T) {
+	dir := t.TempDir()
+	bs := StartBlockService("127.0.0.1:0", dir, "iqn.2024-01.com.test:vol.", "127.0.0.1:3260,1", NVMeConfig{})
+	if bs == nil {
+		t.Fatal("expected non-nil BlockService")
+	}
+	defer bs.Shutdown()
+
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	path, _, _, err := bs.CreateBlockVol("vol-new-barrier-callback", 4*1024*1024, "", "sync_all")
+	if err != nil {
+		t.Fatalf("CreateBlockVol: %v", err)
+	}
+
+	primary, ok := bs.blockStore.GetBlockVolume(path)
+	if !ok {
+		t.Fatalf("created volume %s not found", path)
+	}
+
+	replicaPath := filepath.Join(t.TempDir(), "replica-barrier.blockvol")
+	replica, err := blockvol.CreateBlockVol(replicaPath, blockvol.CreateOptions{
+		VolumeSize:     4 * 1024 * 1024,
+		DurabilityMode: blockvol.DurabilitySyncAll,
+	})
+	if err != nil {
+		t.Fatalf("CreateBlockVol replica: %v", err)
+	}
+	defer replica.Close()
+	replica.SetRole(blockvol.RoleReplica)
+	if err := replica.SetEpoch(1); err != nil {
+		t.Fatalf("replica SetEpoch: %v", err)
+	}
+	replica.SetMasterEpoch(1)
+
+	if err := replica.StartReplicaReceiver("127.0.0.1:0", "127.0.0.1:0"); err != nil {
+		t.Fatalf("StartReplicaReceiver: %v", err)
+	}
+	recv := replica.ReplicaReceiverAddr()
+	if recv == nil {
+		t.Fatal("ReplicaReceiverAddr returned nil")
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           1,
+		Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs:      30000,
+		ReplicaServerID: "vs-2",
+		ReplicaDataAddr: recv.DataAddr,
+		ReplicaCtrlAddr: recv.CtrlAddr,
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("ApplyAssignments errs=%v", errs)
+	}
+
+	if err := primary.WriteLBA(0, bytes.Repeat([]byte{'B'}, 4096)); err != nil {
+		t.Fatalf("WriteLBA: %v", err)
+	}
+	if err := primary.SyncCache(); err != nil {
+		t.Fatalf("SyncCache: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		proj, ok := bs.CoreProjection(path)
+		if ok && proj.Boundary.DurableLSN > 0 && proj.Publication.Healthy {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after SyncCache success")
+	}
+	if proj.Boundary.DurableLSN == 0 {
+		t.Fatalf("durable_lsn=%d after SyncCache success", proj.Boundary.DurableLSN)
+	}
+	if !proj.Publication.Healthy {
+		t.Fatalf("expected publish_healthy after SyncCache success, projection=%+v", proj)
 	}
 }
 

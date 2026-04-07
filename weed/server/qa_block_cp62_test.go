@@ -319,7 +319,7 @@ func TestQA_Master_AllVSFailNoOrphan(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 	ms.blockRegistry.MarkBlockCapable("vs3:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return nil, fmt.Errorf("disk full on %s", server)
 	}
 
@@ -348,7 +348,7 @@ func TestQA_Master_SlowAllocateBlocksSecond(t *testing.T) {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 
 	var allocCount atomic.Int32
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocCount.Add(1)
 		time.Sleep(100 * time.Millisecond) // simulate slow VS
 		return &blockAllocResult{

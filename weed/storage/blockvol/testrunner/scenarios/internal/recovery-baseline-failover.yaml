@@ -3,16 +3,22 @@ timeout: 10m
 
 # Robust dimension: automatic failover after primary death.
 #
-# Flow:
-#   1. Create RF=2 sync_all volume on the natural primary
-#   2. Bootstrap first barrier with a real write, then record primary
-#   3. Kill primary VS (SIGKILL)
-#   4. Wait for lease expiry (30s TTL + margin)
-#   5. Verify: master auto-promotes replica to primary (no manual promote)
-#   6. Reconnect iSCSI to new primary, verify I/O works
+# Stage 1 runtime scenario:
+#   1. Create RF=2 sync_all volume
+#   2. Bootstrap: small write + explicit fsync = first durability fence
+#   3. wait_volume_healthy (now valid: barrier established durable truth)
+#   4. Sustained workload: fio + large dd_write with checksum
+#   5. Kill primary VS (SIGKILL)
+#   6. Wait for lease expiry (30s TTL + margin)
+#   7. Verify: master auto-promotes replica to primary
+#   8. Reconnect iSCSI to new primary, verify data continuity + I/O
 #
-# This tests the master's automatic failover path via
-# evaluatePromotionLocked() in master_block_failover.go.
+# Stage 0 closure now lives in `recovery-bootstrap-closure.yaml`. This file keeps
+# the heavier workload and failover path together as the next-stage scenario.
+#
+# Key contract rule: publish_healthy requires DurableLSN > 0, which
+# requires at least one successful barrier. So wait_volume_healthy
+# must come AFTER the first durability fence, not before any writes.
 
 env:
   master_url: "http://10.0.0.3:9433"
@@ -90,7 +96,10 @@ phases:
         replica_factor: "2"
         durability_mode: "sync_all"
 
-  - name: record-before
+  # Phase 1: Bootstrap — establish first durability fence.
+  # A fresh sync_all volume needs one successful barrier before
+  # publish_healthy can be reached (DurableLSN > 0 gate).
+  - name: bootstrap-fence
     actions:
       - action: discover_primary
         name: "{{ volume_name }}"
@@ -99,12 +108,14 @@ phases:
       - action: print
         msg: "Before: primary={{ before }} ({{ before_server }}), replica={{ before_replica_node }}"
 
-      # Bootstrap sync_all with a real write before requiring publish_healthy.
-      # Fresh RF=2 volumes do not become publish_healthy until the first
-      # barrier succeeds and establishes durable truth.
       - action: lookup_block_volume
         name: "{{ volume_name }}"
         save_as: vol
+
+      # Wait for shipper to be configured (assignment delivered + shipper wired).
+      # 10s is enough for heartbeat cycle + assignment delivery + shipper setup.
+      - action: sleep
+        duration: 10s
 
       - action: iscsi_login_direct
         node: m01
@@ -113,6 +124,31 @@ phases:
         iqn: "{{ vol_iqn }}"
         save_as: device
 
+      # Bootstrap write: small, explicit fsync = first durability fence.
+      # This is NOT the main workload — it's the minimal write needed to
+      # establish barrier truth so publish_healthy becomes reachable.
+      - action: dd_write
+        node: m01
+        device: "{{ device }}"
+        bs: 4k
+        count: "1"
+        sync_mode: fsync
+        save_as: bootstrap_md5
+
+      - action: print
+        msg: "Bootstrap fence passed — first barrier confirmed (md5={{ bootstrap_md5 }})"
+
+      # NOW wait_volume_healthy is valid: barrier has established DurableLSN > 0.
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: print
+        msg: "Volume healthy — bootstrap closure complete"
+
+  # Phase 2: Main workload — fio + dd_write with checksum for data continuity.
+  - name: record-before
+    actions:
       - action: fio_json
         node: m01
         device: "{{ device }}"
@@ -129,6 +165,7 @@ phases:
         bs: 1M
         count: "2"
         seek: "16"
+        sync_mode: fsync
         save_as: pre_failover_md5
 
       - action: dd_read_md5
@@ -143,10 +180,6 @@ phases:
         actual: "{{ pre_failover_verify }}"
         expected: "{{ pre_failover_md5 }}"
 
-      - action: wait_volume_healthy
-        name: "{{ volume_name }}"
-        timeout: 60s
-
       - action: iscsi_cleanup
         node: m01
         ignore_error: true
@@ -156,9 +189,6 @@ phases:
       - action: print
         msg: "=== Killing primary ({{ before_server }}) ==="
 
-      # The cluster starts m02 before m01, so the natural initial primary is
-      # the first server (m02 / vs1_pid). Keep the kill target fixed here and
-      # use discover_primary only as an evidence check.
       - action: exec
         node: m02
         cmd: "kill -9 {{ vs1_pid }}"
@@ -168,14 +198,11 @@ phases:
       - action: print
         msg: "Primary killed. Waiting for lease expiry (45s)..."
 
-      # Lease TTL is 30s. Wait 45s for expiry + master failover cycle.
       - action: sleep
         duration: 45s
 
   - name: verify-auto-failover
     actions:
-      # Master should auto-promote m01 (the surviving replica) to primary.
-      # Wait for primary to change from m02 to something else.
       - action: wait_block_primary
         name: "{{ volume_name }}"
         not: "{{ before_server }}"
@@ -198,8 +225,6 @@ phases:
 
   - name: verify-io-after
     actions:
-      # Reconnect iSCSI to the new primary (m01, which is local).
-      # Use the original lookup vars — iSCSI addr is on the VS, not from registry.
       - action: iscsi_login_direct
         node: m01
         host: "10.0.0.1"

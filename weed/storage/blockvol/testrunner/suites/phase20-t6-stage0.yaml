@@ -28,7 +28,7 @@ deploy:
       remote: /opt/work/sw-test-runner
 
 scenarios:
-  - path: weed/storage/blockvol/testrunner/scenarios/internal/recovery-baseline-failover.yaml
+  - path: weed/storage/blockvol/testrunner/scenarios/internal/recovery-bootstrap-closure.yaml
     id: P20-H0
 
 evidence:
@@ -36,4 +36,5 @@ evidence:
   debug_endpoints:
     - "http://10.0.0.1:18480/debug/block/shipper"
     - "http://10.0.0.3:18480/debug/block/shipper"
-  save_to: results/phase20-t6/stage0
+  save_to: V:/share/sw-block-evidence/phase20-t6
+  run_node: m01

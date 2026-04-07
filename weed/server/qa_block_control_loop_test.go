@@ -61,7 +61,7 @@ func newP4Setup(t *testing.T) *p4Setup {
 	setup := &p4Setup{ms: ms, bs: bs, store: store, dir: dir}
 
 	// Wire allocator to create REAL block volumes at per-server paths.
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		// Per-server subdir (sanitize colons for Windows).
 		sanitized := strings.ReplaceAll(server, ":", "_")
 		serverDir := filepath.Join(dir, sanitized)

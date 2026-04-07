@@ -22,7 +22,7 @@ func blockTestServer(t *testing.T) (*MasterServer, *httptest.Server) {
 		blockRegistry:        NewBlockVolumeRegistry(),
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:      fmt.Sprintf("/data/%s.blk", name),
 			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
@@ -72,6 +72,37 @@ func TestBlockVolumeCreateHandler(t *testing.T) {
 	}
 	if info.VolumeServer == "" {
 		t.Error("expected non-empty volume server")
+	}
+}
+
+func TestBlockVolumeCreateHandler_ForwardsWALSizeBytes(t *testing.T) {
+	ms, ts := blockTestServer(t)
+
+	var capturedWalSize uint64
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+		capturedWalSize = walSizeBytes
+		return &blockAllocResult{
+			Path:      fmt.Sprintf("/data/%s.blk", name),
+			IQN:       fmt.Sprintf("iqn.2024.test:%s", name),
+			ISCSIAddr: server + ":3260",
+		}, nil
+	}
+
+	body, _ := json.Marshal(blockapi.CreateVolumeRequest{
+		Name:         "vol-wal",
+		SizeBytes:    1 << 30,
+		WALSizeBytes: 256 << 20,
+	})
+	resp, err := http.Post(ts.URL+"/block/volume", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if capturedWalSize != 256<<20 {
+		t.Fatalf("wal_size_bytes=%d, want %d", capturedWalSize, 256<<20)
 	}
 }
 

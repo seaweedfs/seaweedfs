@@ -297,6 +297,16 @@ func (sg *ShipperGroup) SetOnStateChange(fn func(from, to ReplicaState)) {
 	}
 }
 
+// SetOnBarrierFailure registers a callback on all current shippers for failed
+// barrier attempts.
+func (sg *ShipperGroup) SetOnBarrierFailure(fn func(reason string)) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	for _, s := range sg.shippers {
+		s.SetOnBarrierFailure(fn)
+	}
+}
+
 // SetLiveShippingPolicy installs a host-provided gate on all current shippers.
 // The policy is evaluated before a live-tail WAL entry is dialed or sent.
 func (sg *ShipperGroup) SetLiveShippingPolicy(fn func(replicaID string, entryLSN uint64) (allow bool, reason string)) {

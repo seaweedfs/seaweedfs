@@ -54,18 +54,18 @@ type MasterOption struct {
 	VolumePreallocate          bool
 	MaxParallelVacuumPerServer int
 	// PulseSeconds            int
-	DefaultReplicaPlacement string
-	GarbageThreshold        float64
-	WhiteList               []string
-	DisableHttp             bool
-	MetricsAddress          string
-	MetricsIntervalSec      int
-	IsFollower              bool
-	TelemetryUrl                string
-	TelemetryEnabled            bool
-	VolumeGrowthDisabled        bool
-	BlockPromotionLSNTolerance  int
-	BlockV2Promotion            bool // T3: enable durability-first V2 promotion
+	DefaultReplicaPlacement    string
+	GarbageThreshold           float64
+	WhiteList                  []string
+	DisableHttp                bool
+	MetricsAddress             string
+	MetricsIntervalSec         int
+	IsFollower                 bool
+	TelemetryUrl               string
+	TelemetryEnabled           bool
+	VolumeGrowthDisabled       bool
+	BlockPromotionLSNTolerance int
+	BlockV2Promotion           bool // T3: enable durability-first V2 promotion
 }
 
 type MasterServer struct {
@@ -97,23 +97,23 @@ type MasterServer struct {
 	telemetryCollector *telemetry.Collector
 
 	// block volume support
-	blockRegistry        *BlockVolumeRegistry
-	blockAssignmentQueue *BlockAssignmentQueue
-	blockFailover        *blockFailoverState
-	blockVSAllocate  func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error)
-	blockVSDelete    func(ctx context.Context, server string, name string) error
-	blockVSSnapshot  func(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error)
-	blockVSDeleteSnap func(ctx context.Context, server string, name string, snapID uint32) error
-	blockVSListSnaps func(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error)
-	blockVSRestore   func(ctx context.Context, server string, name string, snapID uint32) error
-	blockVSExpand    func(ctx context.Context, server string, name string, newSize uint64) (uint64, error)
-	blockVSPrepareExpand func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error
-	blockVSCommitExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error)
-	blockVSCancelExpand  func(ctx context.Context, server string, name string, expandEpoch uint64) error
-	blockVSQueryEvidence      BlockPromotionEvidenceQuerier // T2: fresh on-demand promotion evidence
-	blockV2EvidenceTransport  bool                          // T3: true only when real gRPC querier is installed (not placeholder)
-	nextExpandEpoch           atomic.Uint64
-	blockV2Promotion          bool // T3: when true, use durability-first V2 promotion; when false, legacy V1
+	blockRegistry            *BlockVolumeRegistry
+	blockAssignmentQueue     *BlockAssignmentQueue
+	blockFailover            *blockFailoverState
+	blockVSAllocate          func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error)
+	blockVSDelete            func(ctx context.Context, server string, name string) error
+	blockVSSnapshot          func(ctx context.Context, server string, name string, snapID uint32) (int64, uint64, error)
+	blockVSDeleteSnap        func(ctx context.Context, server string, name string, snapID uint32) error
+	blockVSListSnaps         func(ctx context.Context, server string, name string) ([]*volume_server_pb.BlockSnapshotInfo, error)
+	blockVSRestore           func(ctx context.Context, server string, name string, snapID uint32) error
+	blockVSExpand            func(ctx context.Context, server string, name string, newSize uint64) (uint64, error)
+	blockVSPrepareExpand     func(ctx context.Context, server string, name string, newSize, expandEpoch uint64) error
+	blockVSCommitExpand      func(ctx context.Context, server string, name string, expandEpoch uint64) (uint64, error)
+	blockVSCancelExpand      func(ctx context.Context, server string, name string, expandEpoch uint64) error
+	blockVSQueryEvidence     BlockPromotionEvidenceQuerier // T2: fresh on-demand promotion evidence
+	blockV2EvidenceTransport bool                          // T3: true only when real gRPC querier is installed (not placeholder)
+	nextExpandEpoch          atomic.Uint64
+	blockV2Promotion         bool // T3: when true, use durability-first V2 promotion; when false, legacy V1
 
 	// Test-only hook: called after AcquireExpandInflight but before the
 	// re-read Lookup in coordinated expand. Nil in production.
@@ -571,23 +571,24 @@ func (ms *MasterServer) Reload() {
 
 // blockAllocResult holds the result of a block volume allocation.
 type blockAllocResult struct {
-	Path             string
-	IQN              string
-	ISCSIAddr        string
-	ReplicaDataAddr  string
-	ReplicaCtrlAddr  string
+	Path              string
+	IQN               string
+	ISCSIAddr         string
+	ReplicaDataAddr   string
+	ReplicaCtrlAddr   string
 	RebuildListenAddr string
-	NvmeAddr         string
-	NQN              string
+	NvmeAddr          string
+	NQN               string
 }
 
 // defaultBlockVSAllocate calls a volume server's AllocateBlockVolume RPC.
-func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+func (ms *MasterServer) defaultBlockVSAllocate(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 	var result blockAllocResult
 	err := operation.WithVolumeServerClient(false, pb.ServerAddress(server), ms.grpcDialOption, func(client volume_server_pb.VolumeServerClient) error {
 		resp, rerr := client.AllocateBlockVolume(ctx, &volume_server_pb.AllocateBlockVolumeRequest{
 			Name:           name,
 			SizeBytes:      sizeBytes,
+			WalSizeBytes:   walSizeBytes,
 			DiskType:       diskType,
 			DurabilityMode: durabilityMode,
 		})

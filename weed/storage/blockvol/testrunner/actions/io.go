@@ -21,6 +21,19 @@ func RegisterIOActions(r *tr.Registry) {
 	r.RegisterFunc("stop_bg", tr.TierBlock, stopBg)
 }
 
+func ddSyncConv(mode string) (string, error) {
+	switch mode {
+	case "", "fsync":
+		return "fsync", nil
+	case "fdatasync":
+		return "fdatasync", nil
+	case "none":
+		return "", nil
+	default:
+		return "", fmt.Errorf("unsupported sync_mode %q", mode)
+	}
+}
+
 // ddWrite writes random data using dd, returns the md5 checksum.
 func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
 	device := act.Params["device"]
@@ -39,6 +52,10 @@ func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 	if oflag == "" {
 		oflag = "direct"
 	}
+	syncConv, err := ddSyncConv(act.Params["sync_mode"])
+	if err != nil {
+		return nil, fmt.Errorf("dd_write: %w", err)
+	}
 
 	node, err := GetNode(actx, act.Node)
 	if err != nil {
@@ -50,20 +67,30 @@ func ddWrite(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[st
 	if err := ensureTempRoot(ctx, node, actx); err != nil {
 		return nil, fmt.Errorf("dd_write: %w", err)
 	}
-	genCmd := fmt.Sprintf("dd if=/dev/urandom of=%s bs=%s count=%s 2>/dev/null", tmpFile, bs, count)
+	genCmd := fmt.Sprintf("dd if=/dev/urandom of=%s bs=%s count=%s status=none", tmpFile, bs, count)
 	_, stderr, code, err := node.RunRoot(ctx, genCmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("dd_write gen: code=%d stderr=%s err=%v", code, stderr, err)
 	}
 
-	writeCmd := fmt.Sprintf("dd if=%s of=%s bs=%s oflag=%s conv=fsync", tmpFile, device, bs, oflag)
+	writeCmd := fmt.Sprintf("dd if=%s of=%s bs=%s oflag=%s", tmpFile, device, bs, oflag)
+	if syncConv != "" {
+		writeCmd += fmt.Sprintf(" conv=%s", syncConv)
+	}
 	if seek := act.Params["seek"]; seek != "" {
 		writeCmd += fmt.Sprintf(" seek=%s", seek)
 	}
-	writeCmd += " 2>/dev/null"
+	writeCmd += " status=none"
+	if actx.Log != nil {
+		if syncConv == "" {
+			actx.Log("  dd_write: device=%s bs=%s count=%s oflag=%s sync_mode=none", device, bs, count, oflag)
+		} else {
+			actx.Log("  dd_write: device=%s bs=%s count=%s oflag=%s sync_mode=%s", device, bs, count, oflag, syncConv)
+		}
+	}
 	_, stderr, code, err = node.RunRoot(ctx, writeCmd)
 	if err != nil || code != 0 {
-		return nil, fmt.Errorf("dd_write: code=%d stderr=%s err=%v", code, stderr, err)
+		return nil, fmt.Errorf("dd_write: code=%d sync_mode=%s stderr=%s err=%v", code, syncConvOrNone(syncConv), stderr, err)
 	}
 
 	md5Cmd := fmt.Sprintf("md5sum %s | cut -d' ' -f1", tmpFile)
@@ -105,11 +132,10 @@ func ddReadMD5(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 	if err := ensureTempRoot(ctx, node, actx); err != nil {
 		return nil, fmt.Errorf("dd_read_md5: %w", err)
 	}
-	readCmd := fmt.Sprintf("dd if=%s of=%s bs=%s count=%s iflag=direct", device, tmpFile, bs, count)
+	readCmd := fmt.Sprintf("dd if=%s of=%s bs=%s count=%s iflag=direct status=none", device, tmpFile, bs, count)
 	if skip := act.Params["skip"]; skip != "" {
 		readCmd += fmt.Sprintf(" skip=%s", skip)
 	}
-	readCmd += " 2>/dev/null"
 	_, stderr, code, err := node.RunRoot(ctx, readCmd)
 	if err != nil || code != 0 {
 		return nil, fmt.Errorf("dd_read_md5 read: code=%d stderr=%s err=%v", code, stderr, err)
@@ -128,6 +154,13 @@ func ddReadMD5(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[
 	}
 
 	return map[string]string{"value": md5}, nil
+}
+
+func syncConvOrNone(syncConv string) string {
+	if syncConv == "" {
+		return "none"
+	}
+	return syncConv
 }
 
 func fioAction(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {

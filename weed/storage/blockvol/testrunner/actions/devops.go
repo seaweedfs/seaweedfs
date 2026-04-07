@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/internal/blockapi"
 	tr "github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol/testrunner/internal/blockapi"
 )
 
 // RegisterDevOpsActions registers SeaweedFS cluster management actions.
@@ -297,7 +297,8 @@ func waitClusterReady(ctx context.Context, actx *tr.ActionContext, act tr.Action
 }
 
 // createBlockVolume creates a block volume via the master block API.
-// Params: name, size (human e.g. "50M") or size_bytes, replica_factor (default 1).
+// Params: name, size (human e.g. "50M") or size_bytes, wal_size (human) or
+// wal_size_bytes, replica_factor (default 1).
 // Sets save_as=JSON, save_as_capacity, save_as_iscsi_addr, save_as_iqn.
 func createBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Action) (map[string]string, error) {
 	client, err := blockAPIClient(actx, act)
@@ -327,6 +328,19 @@ func createBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 		}
 	}
 
+	var walSizeBytes uint64
+	if wsb := act.Params["wal_size_bytes"]; wsb != "" {
+		walSizeBytes, err = strconv.ParseUint(wsb, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("create_block_volume: invalid wal_size_bytes: %w", err)
+		}
+	} else if ws := act.Params["wal_size"]; ws != "" {
+		walSizeBytes, err = ParseSizeBytes(ws)
+		if err != nil {
+			return nil, fmt.Errorf("create_block_volume: invalid wal_size: %w", err)
+		}
+	}
+
 	rf := ParseInt(act.Params["replica_factor"], 1)
 
 	durMode := act.Params["durability_mode"]
@@ -334,6 +348,7 @@ func createBlockVolume(ctx context.Context, actx *tr.ActionContext, act tr.Actio
 	info, err := client.CreateVolume(ctx, blockapi.CreateVolumeRequest{
 		Name:           name,
 		SizeBytes:      sizeBytes,
+		WALSizeBytes:   walSizeBytes,
 		ReplicaFactor:  rf,
 		DurabilityMode: durMode,
 	})

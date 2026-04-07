@@ -16,30 +16,27 @@ deploy:
     goos: linux
     goarch: amd64
     targets: [weed, sw-test-runner]
-    repo_dir: /c/work/seaweedfs
+    repo_dir: C:/work/seaweedfs
   kill_ports: [9433, 18480, 3295]
   clean_dirs: ["/tmp/sw-fo-*"]
   binaries:
-    - local: /c/work/seaweedfs/weed-linux
+    - local: C:/work/seaweedfs/weed-linux
       remote: /tmp/sw-test-runner/weed
-    - local: /c/work/seaweedfs/weed-linux
+    - local: C:/work/seaweedfs/weed-linux
       remote: /opt/work/weed
-    - local: /c/work/seaweedfs/sw-test-runner-linux
+    - local: C:/work/seaweedfs/sw-test-runner-linux
       remote: /opt/work/sw-test-runner
 
+# Stage 1: Start with just recovery-baseline-failover (now with 256M WAL).
+# Add remaining scenarios after H1A passes.
 scenarios:
   - path: weed/storage/blockvol/testrunner/scenarios/internal/recovery-baseline-failover.yaml
     id: P20-T6-H1A
-  - path: weed/storage/blockvol/testrunner/scenarios/internal/suite-ha-failover.yaml
-    id: P20-T6-H1B
-  - path: weed/storage/blockvol/testrunner/scenarios/cp11b3-manual-promote.yaml
-    id: P20-T6-H1C
-  - path: weed/storage/blockvol/testrunner/scenarios/lease-expiry-write-gate.yaml
-    id: P20-T6-H1D
 
 evidence:
   glog_patterns: ["/tmp/weed.*.INFO.*"]
   debug_endpoints:
     - "http://10.0.0.1:18480/debug/block/shipper"
     - "http://10.0.0.3:18480/debug/block/shipper"
-  save_to: results/phase20-t6/stage1
+  save_to: V:/share/sw-block-evidence/phase20-t6
+  run_node: m01

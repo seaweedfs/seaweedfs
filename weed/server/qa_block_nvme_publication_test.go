@@ -455,7 +455,7 @@ func nvmeIntegrationMaster(t *testing.T) *MasterServer {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 		blockFailover:        newBlockFailoverState(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		// Simulate volume servers with NVMe enabled.
 		// Each server has NVMe on :4420 and a deterministic NQN.
 		host := server[:strings.Index(server, ":")]
@@ -680,7 +680,7 @@ func TestIntegration_NVMe_MixedCluster(t *testing.T) {
 		blockFailover:        newBlockFailoverState(),
 	}
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		host := server[:strings.Index(server, ":")]
 		result := &blockAllocResult{

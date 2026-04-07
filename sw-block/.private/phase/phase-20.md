@@ -21,6 +21,70 @@ The V1 blockvol engine (`weed/storage/blockvol/`) — WAL, flusher, shipper,
 rebuild, iSCSI — stays untouched. Phase 20 changes who makes the *decision*
 (master failover logic, VS activation logic), not who *executes* it.
 
+## Current Slice Replan
+
+Date: 2026-04-06
+
+The current `Stage 1` hardware investigation changed one important assumption:
+the remaining blocker is no longer "wire the existing V2 truth into the
+production binary and leave `blockvol` semantics alone."
+
+The bounded bootstrap closure (`Stage 0`) is now closed. The active red case is
+the post-bootstrap sustained-async-write path, where the current `CP13` runtime
+still lets `1.5`-style local recovery autonomy interfere with the intended `v2`
+control model.
+
+Current slice reading:
+
+1. `sync` / `fsync` / `SyncCache()` should be treated as control-plane durability fences, not as the data-plane replication mechanism
+2. the replica may continue receiving and applying live-tail writes without any new durability confirmation being established
+3. the current `CP13-6` retention max-bytes path uses `replicaFlushedLSN` (durability truth) as if it were the recoverability truth
+4. this lets a local runtime budget transition the shipper into `needs_rebuild` before primary/replica negotiation has actually proven recoverability loss
+5. that behavior matches a `1.5` local-autonomy assumption, not the intended `v2` ownership model
+
+Therefore the current slice plan is:
+
+1. remove `1.5` semantic ownership from local replica/shipper autonomy paths
+2. preserve local execution machinery (`live shipping`, local flush, local catch-up executor, local rebuild executor) as host capabilities only
+3. re-establish `catchup` and `rebuild` as negotiated `v2` control-plane outcomes between primary and replica
+4. treat replica-local measurements as facts (`durable`, `received`, `applied`, `checkpoint`, `local pressure`, `local error`), not as final recovery decisions
+5. require primary-visible negotiation before the system enters `catchup` or `needs_rebuild` as a semantic state
+
+This slice intentionally supersedes the earlier narrower assumption that
+`Phase 20` would not need to change `blockvol` internals. The current blocker is
+inside the recovery/control seam, so bounded `blockvol` changes are now in
+scope when they are required to remove `1.5` semantic ownership and restore the
+intended `v2` negotiated model.
+
+### Current Slice Goals
+
+1. separate durability truth from recoverability truth
+2. stop using local retention-budget heuristics as autonomous rebuild authority
+3. make `sync` the place where the primary learns whether the replica is in `keepup`, `catchup`, or `rebuild_required`
+4. ensure `needs_rebuild` is reached only after recoverability loss is proven, not just inferred from missing barrier progress during async writes
+5. keep local pressure protection and fail-closed durability semantics intact while moving recovery-state ownership back to negotiated `v2` control flow
+
+### Current Slice Non-Goals
+
+1. do not redefine `WriteLBA()` as a durability API
+2. do not remove local flush, WAL pressure handling, or other host protection mechanisms
+3. do not silently relax `sync_all` durability guarantees
+4. do not let replica-local heuristics directly set outward semantic truth
+5. do not broaden this slice into a full new transport or a broad rebuild redesign before the control ownership is corrected
+
+### Current Slice Exit Criteria
+
+This slice is complete only when:
+
+1. local replica/shipper code reports facts and bounded hints, but no longer unilaterally owns semantic `catchup` / `needs_rebuild` transitions
+2. primary/replica recovery progression is explicit enough that `catchup` can be entered and pinned without immediately collapsing into rebuild from a local budget threshold alone
+3. `needs_rebuild` is reached only after negotiated evidence shows the recoverable envelope is actually lost
+4. `Stage 1` failures can be read as either:
+   - real recoverability loss proved by negotiated evidence, or
+   - bounded `catchup` not yet sufficient,
+   but not as a local-autonomy side effect hidden behind `1.5` logic
+5. the phase log carries the concrete technical design and implementation slice boundaries for this replan
+
 ## V2 Promise (Non-Negotiable)
 
 These constraints govern every task in this phase and every future phase.
@@ -113,7 +177,7 @@ name. Code and API must make the distinction explicit.
 1. Every task must change code in `weed/server/` or `weed/storage/blockvol/`
 2. No new files in `sw-block/runtime/volumev2/` unless adapter stubs
 3. Validation is `sw-test-runner` on m01/M02, not new POC tests
-4. The V1 blockvol engine must not change and must not regress
+4. Broad `blockvol` behavior must not regress; only bounded ownership/recovery-seam changes are allowed in the current slice replan
 5. Fresh promotion evidence is mandatory for V2-mode failover
 6. Durability-first candidate selection is mandatory
 7. Local activation gate is mandatory before serving
@@ -364,7 +428,7 @@ T1 and T2 can run in parallel. T3, T4, T5 can partially overlap.
 1. Replace heartbeat gRPC transport — it stays
 2. Replace WAL shipper — it stays (V1 execution, V2 orchestrated)
 3. Replace assignment queue — it stays
-4. Change blockvol engine internals — WAL/flusher/rebuild untouched
+4. Broaden changes beyond the bounded ownership/recovery seam now required by the current slice replan
 5. Build new simulation tests — sw-test-runner is the oracle
 6. Add new files to `sw-block/runtime/volumev2/`
 

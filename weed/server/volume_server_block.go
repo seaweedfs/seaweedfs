@@ -111,6 +111,8 @@ type BlockService struct {
 
 	// TestHook: if set, invoked when the legacy direct rebuild starter is used.
 	onLegacyStartRebuild func(path, rebuildAddr string, epoch uint64)
+
+	blockStateNotifyCh chan bool
 }
 
 // V2Orchestrator returns the V2 engine orchestrator for inspection/testing.
@@ -199,14 +201,30 @@ func (bs *BlockService) SetAdvertisedHost(host string) {
 	bs.advertisedHost = host
 }
 
-// WireStateChangeNotify sets up shipper state change callbacks on all
-// registered volumes so that degradation/recovery triggers an immediate
-// heartbeat via the provided channel. Non-blocking send (buffered chan 1).
+// WireStateChangeNotify sets up volume state callbacks on all registered
+// volumes so that shipper transitions and durable-boundary advances trigger an
+// immediate heartbeat via the provided channel. Non-blocking send (buffered
+// chan 1).
 func (bs *BlockService) WireStateChangeNotify(ch chan bool) {
+	bs.blockStateNotifyCh = ch
 	bs.blockStore.IterateBlockVolumes(func(path string, vol *blockvol.BlockVol) {
-		vol.SetOnShipperStateChange(func(from, to blockvol.ReplicaState) {
-			bs.handleShipperStateChange(path, from, to, ch)
-		})
+		bs.attachVolumeStateCallbacks(path, vol)
+	})
+}
+
+func (bs *BlockService) attachVolumeStateCallbacks(path string, vol *blockvol.BlockVol) {
+	if bs == nil || vol == nil {
+		return
+	}
+	ch := bs.blockStateNotifyCh
+	vol.SetOnShipperStateChange(func(from, to blockvol.ReplicaState) {
+		bs.handleShipperStateChange(path, from, to, ch)
+	})
+	vol.SetOnBarrierAccepted(func(flushedLSN uint64) {
+		bs.handleBarrierAccepted(path, flushedLSN, ch)
+	})
+	vol.SetOnBarrierRejected(func(reason string) {
+		bs.handleBarrierRejected(path, reason, ch)
 	})
 }
 
@@ -217,14 +235,58 @@ func (bs *BlockService) handleShipperStateChange(path string, from, to blockvol.
 		default: // already pending
 		}
 	}
-	if bs == nil || bs.v2Core == nil || to != blockvol.ReplicaInSync {
+	glog.V(0).Infof("block service: shipper state change path=%s from=%s to=%s", path, from, to)
+	if bs == nil || bs.v2Core == nil {
 		return
 	}
 	proj, ok := bs.CoreProjection(path)
 	if !ok || proj.Role != engine.RolePrimary {
 		return
 	}
-	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+	if to == blockvol.ReplicaInSync {
+		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+	}
+}
+
+func (bs *BlockService) handleBarrierAccepted(path string, flushedLSN uint64, ch chan bool) {
+	if ch != nil {
+		select {
+		case ch <- true:
+		default: // already pending
+		}
+	}
+	if bs == nil || bs.v2Core == nil || flushedLSN == 0 {
+		return
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok || proj.Role != engine.RolePrimary || proj.Boundary.DurableLSN >= flushedLSN {
+		return
+	}
+	if !proj.Readiness.ShipperConnected && bs.isPrimaryShipperConnected(path) {
+		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+		proj, ok = bs.CoreProjection(path)
+		if !ok || proj.Role != engine.RolePrimary || proj.Boundary.DurableLSN >= flushedLSN {
+			return
+		}
+	}
+	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: flushedLSN})
+}
+
+func (bs *BlockService) handleBarrierRejected(path string, reason string, ch chan bool) {
+	if ch != nil {
+		select {
+		case ch <- true:
+		default: // already pending
+		}
+	}
+	if bs == nil || bs.v2Core == nil || reason == "" {
+		return
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok || proj.Role != engine.RolePrimary {
+		return
+	}
+	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: reason})
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -397,6 +459,12 @@ func (bs *BlockService) NQN(name string) string {
 // and iSCSI TargetServer. Returns path, IQN, iSCSI addr.
 // Idempotent: if volume already exists with same or larger size, returns existing info.
 func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType string, durabilityMode string) (path, iqn, iscsiAddr string, err error) {
+	return bs.CreateBlockVolWithOptions(name, sizeBytes, 0, diskType, durabilityMode)
+}
+
+// CreateBlockVolWithOptions creates a new .blk file with the requested geometry,
+// including an optional WAL size override.
+func (bs *BlockService) CreateBlockVolWithOptions(name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (path, iqn, iscsiAddr string, err error) {
 	sanitized := blockvol.SanitizeFilename(name)
 	path = filepath.Join(bs.blockDir, sanitized+".blk")
 	iqn = bs.iqnPrefix + blockvol.SanitizeIQN(name)
@@ -404,6 +472,7 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 
 	// Check if already registered.
 	if vol, ok := bs.blockStore.GetBlockVolume(path); ok {
+		bs.attachVolumeStateCallbacks(path, vol)
 		info := vol.Info()
 		if info.VolumeSize < sizeBytes {
 			return "", "", "", fmt.Errorf("block volume %q exists with size %d (requested %d)",
@@ -437,6 +506,7 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 	}
 	created, err := blockvol.CreateBlockVol(path, blockvol.CreateOptions{
 		VolumeSize:     sizeBytes,
+		WALSize:        walSizeBytes,
 		DurabilityMode: durMode,
 	})
 	if err != nil {
@@ -450,6 +520,7 @@ func (bs *BlockService) CreateBlockVol(name string, sizeBytes uint64, diskType s
 		os.Remove(path)
 		return "", "", "", fmt.Errorf("register block volume: %w", err)
 	}
+	bs.attachVolumeStateCallbacks(path, vol)
 
 	adapter := blockvol.NewBlockVolAdapter(vol)
 	bs.targetServer.AddVolume(iqn, adapter)
@@ -781,12 +852,13 @@ func (bs *BlockService) applyCoreEvent(ev engine.Event) {
 // so the VS log contains a complete trace for post-run diagnosis.
 func (bs *BlockService) coreApplyAndLog(ev engine.Event) engine.ApplyResult {
 	result := bs.v2Core.ApplyEvent(ev)
-	glog.V(0).Infof("core [%s]: event=%T mode=%s pub=%v reason=%q readiness={applied=%v shipper_cfg=%v shipper_conn=%v recv=%v} boundary={durable=%d committed=%d} cmds=%d",
+	glog.V(0).Infof("core [%s]: event=%T mode=%s pub=%v reason=%q readiness={applied=%v shipper_cfg=%v shipper_conn=%v recv=%v} boundary={durable=%d committed=%d last_barrier_ok=%v last_barrier_reason=%q} cmds=%d",
 		ev.VolumeID(), ev, result.Projection.Mode.Name,
 		result.Projection.Publication.Healthy, result.Projection.Publication.Reason,
 		result.Projection.Readiness.RoleApplied, result.Projection.Readiness.ShipperConfigured,
 		result.Projection.Readiness.ShipperConnected, result.Projection.Readiness.ReceiverReady,
 		result.Projection.Boundary.DurableLSN, result.Projection.Boundary.CommittedLSN,
+		result.Projection.Boundary.LastBarrierOK, result.Projection.Boundary.LastBarrierReason,
 		len(result.Commands))
 	return result
 }

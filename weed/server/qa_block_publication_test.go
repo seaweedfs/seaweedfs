@@ -40,7 +40,7 @@ func newPublicationMaster(t *testing.T, nvmeEnabled bool) *MasterServer {
 	ms.blockRegistry.MarkBlockCapable("vs1:9333")
 	ms.blockRegistry.MarkBlockCapable("vs2:9333")
 
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		sanitized := strings.ReplaceAll(server, ":", "_")
 		serverDir := filepath.Join(dir, sanitized)
 		os.MkdirAll(serverDir, 0755)

@@ -1,7 +1,7 @@
 # Phase 20 Test Matrix
 
 Date: 2026-04-06
-Status: active; acceptance overlay added
+Status: active; Stage 0 bootstrap closure split and frozen, Stage 1 workload follow-up pending
 
 ## Purpose
 
@@ -256,7 +256,8 @@ Current tester automation status:
 
 1. metadata-driven suite execution now exists for `Stage 0` and `Stage 1`
 2. one command can now build, deploy, run remote scenarios, and collect evidence
-3. the current `Stage 0` pipeline is operational but not yet passing end-to-end because the run still fails at the known first-write `dd_write` / `sync_all` barrier issue during `record-before`
+3. `Stage 0` now has a clean bootstrap-only scenario and has passed on real hosts: `create -> 10s wait -> 4k fsync -> publish_healthy`
+4. the remaining red hardware case is now isolated to `Stage 1`, where sustained `fio` plus large `dd_write` on the default `64MB` WAL budget reproduces the expected WAL-pressure workload failure
 
 Naming convention for this overlay:
 
@@ -965,8 +966,8 @@ Execution details, scenario packs, and observation checklists live in:
 
 Goal:
 
-1. fix the existing primary-core visibility gap so the promoted primary learns
-   its replica membership
+1. prove the bootstrap membership gap is closed on real hosts
+2. freeze the first-fence-to-`publish_healthy` chain as a standalone acceptance artifact
 
 Required hardware proof:
 
@@ -987,8 +988,9 @@ Preferred suite entry:
 Current reading:
 
 1. the suite pipeline itself now works end-to-end: build, deploy, remote execution, and evidence collection
-2. the current `Stage 0` run is still red at `record-before` because of the known first-write `dd_write` / `sync_all` barrier issue
-3. therefore `Stage 0` automation is real, but `Stage 0` acceptance is not yet closed
+2. the clean `Stage 0` scenario now passes on real hosts: `create -> 10s wait -> 4k fsync -> wait_volume_healthy`
+3. the observed bootstrap closure is `bootstrap-fence PASS` plus `wait_volume_healthy PASS after 5 polls (~10s)` which proves the `BarrierAccepted -> DurableLSN > 0 -> publish_healthy` chain
+4. `Stage 0` should now be treated as closed bootstrap evidence, not as a carrier for sustained-workload failures
 
 ### Stage 1: V1 Failover + V2 Observation
 
@@ -1019,6 +1021,12 @@ Preferred suite entry:
 
 1. `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage1.yaml`
 2. `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage1.yaml --skip-deploy`
+
+Current reading:
+
+1. `Stage 1` is now intentionally separate from `Stage 0` and owns the sustained-I/O-under-established-replication question
+2. the current failure is no longer bootstrap or protocol closure; it is the workload path after `fio` where the large `dd_write` hits `Input/output error`
+3. the most likely current cause is default `64MB` WAL budget pressure on the master-managed create path under `sync_all`, so `Stage 1` should be rerun only after WAL-size plumbing exists
 
 ### Stage 2: V2 Failover + V2 Decision
 
@@ -1179,10 +1187,9 @@ Tier 1 component tests are implemented and passing. The current reading is:
 3. **Tester acceptance overlay is now explicit.** `P20-A1..A6` define the
    minimum tester-owned cases needed to freeze the bounded product contract.
 
-4. **Hardware automation is now real, but Stage 0 is still red.** The
-   metadata-driven suite can build, deploy, execute, and collect evidence, but
-   the current Stage 0 run still fails at the known first-write `dd_write` /
-   `sync_all` barrier issue.
+4. **Hardware automation is now real, and Stage 0 is green.** The
+   metadata-driven suite can build, deploy, execute, and collect evidence, and
+   the bootstrap-only `Stage 0` scenario is now a passing real-host artifact.
 
 5. **Hardware layer still follows the staged T6/T7 plan.** The automation
    path is better, but passing acceptance evidence still has to be earned on
@@ -1191,7 +1198,7 @@ Tier 1 component tests are implemented and passing. The current reading is:
 Recommended next actions:
 
 1. implement Tier 2 integration tests (3 tests, one new `qa_*` file)
-2. close the known first-write `dd_write` / `sync_all` barrier blocker in `Stage 0`
-3. rerun `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage0.yaml`
+2. add WAL size plumbing to the master-managed create path so `Stage 1` can request `256MB+` WAL
+3. rerun `sw-test-runner suite weed/storage/blockvol/testrunner/suites/phase20-t6-stage1.yaml`
 4. freeze tester-owned acceptance overlay `P20-A1..A6`
 5. run the stage suites on hardware with V2 observation active

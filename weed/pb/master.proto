@@ -554,6 +554,7 @@ message CreateBlockVolumeRequest {
   string disk_type = 3;
   uint32 replica_factor = 4;
   string durability_mode = 5;
+  uint64 wal_size_bytes = 6;
 }
 message CreateBlockVolumeResponse {
   string volume_id = 1;

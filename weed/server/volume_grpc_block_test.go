@@ -1,10 +1,14 @@
 package weed_server
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
+	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
 func newTestBlockServiceWithDir(t *testing.T) (*BlockService, string) {
@@ -43,6 +47,31 @@ func TestVS_AllocateBlockVolume(t *testing.T) {
 	// IQN should contain sanitized name.
 	if !strings.Contains(iqn, "test-vol") {
 		t.Fatalf("IQN %q should contain 'test-vol'", iqn)
+	}
+}
+
+func TestVS_AllocateBlockVolume_WithWalSize(t *testing.T) {
+	bs, _ := newTestBlockServiceWithDir(t)
+	vs := &VolumeServer{blockService: bs}
+
+	resp, err := vs.AllocateBlockVolume(context.Background(), &volume_server_pb.AllocateBlockVolumeRequest{
+		Name:         "test-vol-wal",
+		SizeBytes:    4 * 1024 * 1024,
+		WalSizeBytes: 8 * 1024 * 1024,
+		DiskType:     "ssd",
+	})
+	if err != nil {
+		t.Fatalf("AllocateBlockVolume: %v", err)
+	}
+
+	vol, err := blockvol.OpenBlockVol(resp.Path)
+	if err != nil {
+		t.Fatalf("OpenBlockVol: %v", err)
+	}
+	defer vol.Close()
+
+	if got := vol.Info().WALSize; got != 8*1024*1024 {
+		t.Fatalf("wal_size=%d, want %d", got, 8*1024*1024)
 	}
 }
 

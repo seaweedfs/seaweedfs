@@ -78,6 +78,10 @@ type WALShipper struct {
 	// Set via SetOnStateChange. Nil = no callback.
 	onStateChange func(from, to ReplicaState)
 
+	// onBarrierFailure reports the semantic reason for a failed barrier attempt.
+	// Used by the host to surface bounded durability failures into diagnostics/core.
+	onBarrierFailure func(reason string)
+
 	// liveShippingPolicy gates whether this shipper may accept current live-tail
 	// WAL entries. The host uses this to keep a replica in bounded catch-up until
 	// the active session contract allows live streaming again.
@@ -88,6 +92,11 @@ type WALShipper struct {
 // The callback is invoked synchronously from markDegraded/markInSync.
 func (s *WALShipper) SetOnStateChange(fn func(from, to ReplicaState)) {
 	s.onStateChange = fn
+}
+
+// SetOnBarrierFailure registers a callback for failed barrier attempts.
+func (s *WALShipper) SetOnBarrierFailure(fn func(reason string)) {
+	s.onBarrierFailure = fn
 }
 
 // SetReplicaID sets the stable replica identity carried from the host-side
@@ -213,10 +222,16 @@ func (s *WALShipper) CatchUpTo(targetLSN uint64) (uint64, error) {
 		return 0, nil
 	}
 
+	log.Printf("wal_shipper: catch-up start replica=%s target_lsn=%d state=%s flushed_lsn=%d data=%s ctrl=%s",
+		s.replicaID, targetLSN, s.State(), s.replicaFlushedLSN.Load(), s.dataAddr, s.controlAddr)
+
 	targetState, replicaFlushedLSN, err := s.reconnectWithHandshake()
 	switch targetState {
 	case ReplicaInSync:
 		s.markInSync()
+		s.resetCtrlConn()
+		log.Printf("wal_shipper: catch-up not needed replica=%s handshake_state=%s replica_flushed=%d target_lsn=%d",
+			s.replicaID, targetState, replicaFlushedLSN, targetLSN)
 		if replicaFlushedLSN > targetLSN {
 			return targetLSN, nil
 		}
@@ -224,6 +239,8 @@ func (s *WALShipper) CatchUpTo(targetLSN uint64) (uint64, error) {
 	case ReplicaCatchingUp:
 		achievedLSN, catchErr := s.runCatchUpTo(replicaFlushedLSN, targetLSN)
 		if catchErr != nil {
+			log.Printf("wal_shipper: catch-up failed replica=%s from_lsn=%d target_lsn=%d err=%v",
+				s.replicaID, replicaFlushedLSN, targetLSN, catchErr)
 			s.catchupFailures++
 			if s.catchupFailures >= maxCatchupRetries {
 				s.state.Store(uint32(ReplicaNeedsRebuild))
@@ -233,12 +250,19 @@ func (s *WALShipper) CatchUpTo(targetLSN uint64) (uint64, error) {
 			return achievedLSN, ErrReplicaDegraded
 		}
 		s.markInSync()
+		s.resetCtrlConn()
+		log.Printf("wal_shipper: catch-up complete replica=%s achieved_lsn=%d target_lsn=%d",
+			s.replicaID, achievedLSN, targetLSN)
 		return achievedLSN, nil
 	case ReplicaNeedsRebuild:
 		s.state.Store(uint32(ReplicaNeedsRebuild))
+		log.Printf("wal_shipper: catch-up escalated to rebuild replica=%s target_lsn=%d err=%v",
+			s.replicaID, targetLSN, err)
 		return replicaFlushedLSN, fmt.Errorf("reconnect: %w", err)
 	default:
 		s.markDegraded()
+		log.Printf("wal_shipper: catch-up left replica degraded replica=%s target_lsn=%d err=%v",
+			s.replicaID, targetLSN, err)
 		if err != nil {
 			return replicaFlushedLSN, err
 		}
@@ -257,21 +281,42 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 	}
 
 	st := s.State()
+	log.Printf("wal_shipper: barrier start replica=%s state=%s target_lsn=%d flushed_lsn=%d has_progress=%v data=%s ctrl=%s",
+		s.replicaID, st, lsnMax, s.replicaFlushedLSN.Load(), s.hasFlushedProgress.Load(), s.dataAddr, s.controlAddr)
 	switch st {
 	case ReplicaInSync:
 		// proceed normally to barrier
 	case ReplicaDisconnected, ReplicaDegraded:
-		if s.hasFlushedProgress.Load() && s.wal != nil {
+		if s.wal != nil && lsnMax > 0 {
+			// Integrated bootstrap case: writes may have accumulated before the
+			// shipper was configured. Replaying the retained prefix up to the
+			// barrier target closes the "late-configured first fsync" gap.
+			log.Printf("wal_shipper: barrier recovery via bounded catch-up replica=%s state=%s target_lsn=%d",
+				s.replicaID, st, lsnMax)
+			if _, err := s.CatchUpTo(lsnMax); err != nil {
+				log.Printf("wal_shipper: barrier recovery catch-up failed replica=%s target_lsn=%d err=%v",
+					s.replicaID, lsnMax, err)
+				return err
+			}
+		} else if s.hasFlushedProgress.Load() && s.wal != nil {
 			// Previously synced — reconnect handshake + catch-up path.
+			log.Printf("wal_shipper: barrier recovery via reconnect replica=%s state=%s target_lsn=%d",
+				s.replicaID, st, lsnMax)
 			if err := s.doReconnectAndCatchUp(); err != nil {
+				log.Printf("wal_shipper: barrier reconnect failed replica=%s target_lsn=%d err=%v",
+					s.replicaID, lsnMax, err)
 				return err
 			}
 		} else {
-			// Fresh bootstrap or no WAL access — reset connections for bare retry.
+			// Fresh bootstrap with no retained target — reset connections for bare retry.
+			log.Printf("wal_shipper: barrier reset connections for bootstrap retry replica=%s state=%s",
+				s.replicaID, st)
 			s.resetConnections()
 		}
 	default:
 		// Connecting, CatchingUp, NeedsRebuild — reject immediately
+		log.Printf("wal_shipper: barrier rejected replica=%s state=%s target_lsn=%d reason=state_not_ready",
+			s.replicaID, st, lsnMax)
 		return ErrReplicaDegraded
 	}
 
@@ -286,30 +331,22 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 	defer s.ctrlMu.Unlock()
 
 	if err := s.ensureCtrlConn(); err != nil {
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return ErrReplicaDegraded
+		return s.failBarrier("barrier_ctrl_connect_failed", barrierStart, ErrReplicaDegraded)
 	}
 
 	s.ctrlConn.SetDeadline(time.Now().Add(barrierTimeout))
 
 	if err := WriteFrame(s.ctrlConn, MsgBarrierReq, req); err != nil {
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return ErrReplicaDegraded
+		return s.failBarrier("barrier_req_write_failed", barrierStart, ErrReplicaDegraded)
 	}
 
 	msgType, payload, err := ReadFrame(s.ctrlConn)
 	if err != nil {
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return ErrReplicaDegraded
+		return s.failBarrier("barrier_resp_read_failed", barrierStart, ErrReplicaDegraded)
 	}
 
 	if msgType != MsgBarrierResp || len(payload) < 1 {
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return ErrReplicaDegraded
+		return s.failBarrier("barrier_bad_response", barrierStart, ErrReplicaDegraded)
 	}
 
 	resp := DecodeBarrierResponse(payload)
@@ -321,8 +358,8 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 		// response). This must NOT count as successful sync_all durability because
 		// no authoritative durable progress was established.
 		if resp.FlushedLSN == 0 {
-			s.recordBarrierMetric(barrierStart, true)
-			return fmt.Errorf("wal_shipper: barrier OK but no FlushedLSN reported (legacy response)")
+			return s.failBarrier("barrier_missing_flushed_lsn", barrierStart,
+				fmt.Errorf("wal_shipper: barrier OK but no FlushedLSN reported (legacy response)"))
 		}
 		// Barrier success with durable progress — transition to InSync.
 		s.markInSync()
@@ -338,23 +375,21 @@ func (s *WALShipper) Barrier(lsnMax uint64) error {
 			}
 		}
 		s.recordBarrierMetric(barrierStart, false)
+		log.Printf("wal_shipper: barrier success replica=%s target_lsn=%d flushed_lsn=%d",
+			s.replicaID, lsnMax, resp.FlushedLSN)
 		return nil
 	case BarrierEpochMismatch:
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return fmt.Errorf("wal_shipper: barrier epoch mismatch")
+		return s.failBarrier("barrier_epoch_mismatch", barrierStart,
+			fmt.Errorf("wal_shipper: barrier epoch mismatch"))
 	case BarrierTimeout:
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return fmt.Errorf("wal_shipper: barrier timeout on replica")
+		return s.failBarrier("barrier_timeout", barrierStart,
+			fmt.Errorf("wal_shipper: barrier timeout on replica"))
 	case BarrierFsyncFailed:
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return fmt.Errorf("wal_shipper: barrier fsync failed on replica")
+		return s.failBarrier("barrier_fsync_failed", barrierStart,
+			fmt.Errorf("wal_shipper: barrier fsync failed on replica"))
 	default:
-		s.markDegraded()
-		s.recordBarrierMetric(barrierStart, true)
-		return fmt.Errorf("wal_shipper: unknown barrier status %d", payload[0])
+		return s.failBarrier("barrier_unknown_status", barrierStart,
+			fmt.Errorf("wal_shipper: unknown barrier status %d", payload[0]))
 	}
 }
 
@@ -362,6 +397,21 @@ func (s *WALShipper) recordBarrierMetric(start time.Time, failed bool) {
 	if s.metrics != nil {
 		s.metrics.RecordWALBarrier(time.Since(start), failed)
 	}
+}
+
+func (s *WALShipper) notifyBarrierFailure(reason string) {
+	if s.onBarrierFailure != nil {
+		s.onBarrierFailure(reason)
+	}
+}
+
+func (s *WALShipper) failBarrier(reason string, start time.Time, err error) error {
+	s.markDegraded()
+	s.recordBarrierMetric(start, true)
+	s.notifyBarrierFailure(reason)
+	log.Printf("wal_shipper: barrier failed replica=%s reason=%s target_flushed=%d err=%v data=%s ctrl=%s",
+		s.replicaID, reason, s.replicaFlushedLSN.Load(), err, s.dataAddr, s.controlAddr)
+	return err
 }
 
 // ShippedLSN returns the highest LSN successfully sent to the replica (diagnostic only).
@@ -496,18 +546,33 @@ func (s *WALShipper) resetConnections() {
 	s.ctrlMu.Unlock()
 }
 
+func (s *WALShipper) resetCtrlConn() {
+	s.ctrlMu.Lock()
+	if s.ctrlConn != nil {
+		s.ctrlConn.Close()
+		s.ctrlConn = nil
+	}
+	s.ctrlMu.Unlock()
+}
+
 // doReconnectAndCatchUp runs the full reconnect handshake + catch-up protocol.
 // On success, transitions to InSync and resets ctrl connection for barrier.
 func (s *WALShipper) doReconnectAndCatchUp() error {
+	log.Printf("wal_shipper: reconnect start replica=%s state=%s flushed_lsn=%d data=%s ctrl=%s",
+		s.replicaID, s.State(), s.replicaFlushedLSN.Load(), s.dataAddr, s.controlAddr)
 	targetState, replicaFlushed, err := s.reconnectWithHandshake()
 	switch targetState {
 	case ReplicaInSync:
 		s.markInSync()
+		log.Printf("wal_shipper: reconnect complete replica=%s state=%s replica_flushed=%d",
+			s.replicaID, targetState, replicaFlushed)
 	case ReplicaCatchingUp:
 		// Use the handshake-reported flushedLSN as catch-up start point,
 		// NOT the shipper's cached value. The replica may have lost progress
 		// since the shipper last heard from it.
 		if catchErr := s.runCatchUp(replicaFlushed); catchErr != nil {
+			log.Printf("wal_shipper: reconnect catch-up failed replica=%s from_lsn=%d err=%v",
+				s.replicaID, replicaFlushed, catchErr)
 			s.catchupFailures++
 			if s.catchupFailures >= maxCatchupRetries {
 				s.state.Store(uint32(ReplicaNeedsRebuild))
@@ -517,20 +582,21 @@ func (s *WALShipper) doReconnectAndCatchUp() error {
 			return ErrReplicaDegraded
 		}
 		s.markInSync()
+		log.Printf("wal_shipper: reconnect catch-up complete replica=%s from_lsn=%d",
+			s.replicaID, replicaFlushed)
 	case ReplicaNeedsRebuild:
 		s.state.Store(uint32(ReplicaNeedsRebuild))
+		log.Printf("wal_shipper: reconnect escalated to needs_rebuild replica=%s err=%v",
+			s.replicaID, err)
 		return fmt.Errorf("reconnect: %w", err)
 	default:
 		s.markDegraded()
+		log.Printf("wal_shipper: reconnect left replica degraded replica=%s err=%v",
+			s.replicaID, err)
 		return ErrReplicaDegraded
 	}
 	// Reset ctrl connection so barrier creates a fresh one.
-	s.ctrlMu.Lock()
-	if s.ctrlConn != nil {
-		s.ctrlConn.Close()
-		s.ctrlConn = nil
-	}
-	s.ctrlMu.Unlock()
+	s.resetCtrlConn()
 	return nil
 }
 

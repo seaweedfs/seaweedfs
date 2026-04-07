@@ -77,6 +77,7 @@ const (
 	VolumeServer_PrepareExpandBlockVolume_FullMethodName      = "/volume_server_pb.VolumeServer/PrepareExpandBlockVolume"
 	VolumeServer_CommitExpandBlockVolume_FullMethodName       = "/volume_server_pb.VolumeServer/CommitExpandBlockVolume"
 	VolumeServer_CancelExpandBlockVolume_FullMethodName       = "/volume_server_pb.VolumeServer/CancelExpandBlockVolume"
+	VolumeServer_QueryBlockPromotionEvidence_FullMethodName   = "/volume_server_pb.VolumeServer/QueryBlockPromotionEvidence"
 )
 
 // VolumeServerClient is the client API for VolumeServer service.
@@ -149,6 +150,7 @@ type VolumeServerClient interface {
 	PrepareExpandBlockVolume(ctx context.Context, in *PrepareExpandBlockVolumeRequest, opts ...grpc.CallOption) (*PrepareExpandBlockVolumeResponse, error)
 	CommitExpandBlockVolume(ctx context.Context, in *CommitExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CommitExpandBlockVolumeResponse, error)
 	CancelExpandBlockVolume(ctx context.Context, in *CancelExpandBlockVolumeRequest, opts ...grpc.CallOption) (*CancelExpandBlockVolumeResponse, error)
+	QueryBlockPromotionEvidence(ctx context.Context, in *QueryBlockPromotionEvidenceRequest, opts ...grpc.CallOption) (*QueryBlockPromotionEvidenceResponse, error)
 }
 
 type volumeServerClient struct {
@@ -832,6 +834,16 @@ func (c *volumeServerClient) CancelExpandBlockVolume(ctx context.Context, in *Ca
 	return out, nil
 }
 
+func (c *volumeServerClient) QueryBlockPromotionEvidence(ctx context.Context, in *QueryBlockPromotionEvidenceRequest, opts ...grpc.CallOption) (*QueryBlockPromotionEvidenceResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(QueryBlockPromotionEvidenceResponse)
+	err := c.cc.Invoke(ctx, VolumeServer_QueryBlockPromotionEvidence_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // VolumeServerServer is the server API for VolumeServer service.
 // All implementations must embed UnimplementedVolumeServerServer
 // for forward compatibility.
@@ -902,6 +914,7 @@ type VolumeServerServer interface {
 	PrepareExpandBlockVolume(context.Context, *PrepareExpandBlockVolumeRequest) (*PrepareExpandBlockVolumeResponse, error)
 	CommitExpandBlockVolume(context.Context, *CommitExpandBlockVolumeRequest) (*CommitExpandBlockVolumeResponse, error)
 	CancelExpandBlockVolume(context.Context, *CancelExpandBlockVolumeRequest) (*CancelExpandBlockVolumeResponse, error)
+	QueryBlockPromotionEvidence(context.Context, *QueryBlockPromotionEvidenceRequest) (*QueryBlockPromotionEvidenceResponse, error)
 	mustEmbedUnimplementedVolumeServerServer()
 }
 
@@ -1085,6 +1098,9 @@ func (UnimplementedVolumeServerServer) CommitExpandBlockVolume(context.Context, 
 }
 func (UnimplementedVolumeServerServer) CancelExpandBlockVolume(context.Context, *CancelExpandBlockVolumeRequest) (*CancelExpandBlockVolumeResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CancelExpandBlockVolume not implemented")
+}
+func (UnimplementedVolumeServerServer) QueryBlockPromotionEvidence(context.Context, *QueryBlockPromotionEvidenceRequest) (*QueryBlockPromotionEvidenceResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method QueryBlockPromotionEvidence not implemented")
 }
 func (UnimplementedVolumeServerServer) mustEmbedUnimplementedVolumeServerServer() {}
 func (UnimplementedVolumeServerServer) testEmbeddedByValue()                      {}
@@ -2070,6 +2086,24 @@ func _VolumeServer_CancelExpandBlockVolume_Handler(srv interface{}, ctx context.
 	return interceptor(ctx, in, info, handler)
 }
 
+func _VolumeServer_QueryBlockPromotionEvidence_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBlockPromotionEvidenceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VolumeServerServer).QueryBlockPromotionEvidence(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: VolumeServer_QueryBlockPromotionEvidence_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VolumeServerServer).QueryBlockPromotionEvidence(ctx, req.(*QueryBlockPromotionEvidenceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // VolumeServer_ServiceDesc is the grpc.ServiceDesc for VolumeServer service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2264,6 +2298,10 @@ var VolumeServer_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CancelExpandBlockVolume",
 			Handler:    _VolumeServer_CancelExpandBlockVolume_Handler,
+		},
+		{
+			MethodName: "QueryBlockPromotionEvidence",
+			Handler:    _VolumeServer_QueryBlockPromotionEvidence_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

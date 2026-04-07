@@ -533,6 +533,89 @@ func suiteCmd(args []string) {
 		})
 	}
 
+	// --- Evidence collection ---
+	if saveDir != "" {
+		timestamp := time.Now().Format("20060102-150405")
+		evidenceDir := filepath.Join(saveDir, fmt.Sprintf("%s-%s", suite.Name, timestamp))
+		if err := os.MkdirAll(evidenceDir, 0755); err != nil {
+			logger.Printf("warning: create evidence dir: %v", err)
+		} else {
+			logger.Printf("[evidence] collecting to %s", evidenceDir)
+
+			// Pull glog from all nodes — only files created during this suite run.
+			glogDir := filepath.Join(evidenceDir, "glog")
+			os.MkdirAll(glogDir, 0755)
+			for nodeName, nodeRunner := range actx.Nodes {
+				sshNode, ok := nodeRunner.(*infra.Node)
+				if !ok {
+					continue
+				}
+				for _, pattern := range suite.Evidence.GlogPatterns {
+					// Only files modified in the last 10 minutes (covers the run window).
+					cmd := fmt.Sprintf("find /tmp -maxdepth 1 -name 'weed.*.INFO.*' -mmin -10 2>/dev/null | sort")
+					if !strings.Contains(pattern, "weed") {
+						cmd = fmt.Sprintf("ls -t %s 2>/dev/null | head -3", pattern)
+					}
+					stdout, _, _, err := nodeRunner.Run(ctx, cmd)
+					if err != nil {
+						continue
+					}
+					collected := 0
+					for _, f := range strings.Split(strings.TrimSpace(stdout), "\n") {
+						f = strings.TrimSpace(f)
+						if f == "" {
+							continue
+						}
+						localPath := filepath.Join(glogDir, nodeName+"-"+filepath.Base(f))
+						sshNode.Download(f, localPath)
+						collected++
+					}
+					if collected > 0 {
+						logger.Printf("[evidence] %d glog files from %s", collected, nodeName)
+					}
+				}
+			}
+
+			// Pull debug endpoints via SSH to the run node.
+			runNodeName := suite.Evidence.RunNode
+			if runNodeName == "" {
+				runNodeName = "m01"
+			}
+			if runNode, ok := actx.Nodes[runNodeName]; ok {
+				for _, ep := range suite.Evidence.DebugEndpoints {
+					stdout, _, _, err := runNode.Run(ctx, fmt.Sprintf("curl -s --max-time 3 %s 2>/dev/null", ep))
+					if err != nil || len(stdout) < 2 {
+						continue
+					}
+					// Derive filename from endpoint URL.
+					epName := strings.ReplaceAll(ep, "http://", "")
+					epName = strings.ReplaceAll(epName, "/", "_")
+					epName = strings.ReplaceAll(epName, ":", "-")
+					localPath := filepath.Join(evidenceDir, "debug-"+epName+".json")
+					os.WriteFile(localPath, []byte(stdout), 0644)
+					logger.Printf("[evidence] debug: %s", localPath)
+				}
+			}
+
+			// Pull result bundle from run node.
+			if runNode, ok := actx.Nodes[runNodeName]; ok {
+				if sshNode, ok := runNode.(*infra.Node); ok {
+					latestCmd := "ls -td results/*/ 2>/dev/null | head -1"
+					latestDir, _, _, _ := runNode.Run(ctx, latestCmd)
+					latestDir = strings.TrimSpace(latestDir)
+					if latestDir != "" {
+						for _, fname := range []string{"result.json", "result.xml", "result.html", "manifest.json", "scenario.yaml"} {
+							sshNode.Download(latestDir+fname, filepath.Join(evidenceDir, fname))
+						}
+					}
+				}
+			}
+
+			// Copy console log.
+			logger.Printf("[evidence] saved to %s", evidenceDir)
+		}
+	}
+
 	// --- Summary ---
 	logger.Printf("")
 	logger.Printf("=== SUITE RESULT: %s ===", suiteResult.Status)

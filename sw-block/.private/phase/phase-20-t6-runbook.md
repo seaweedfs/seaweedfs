@@ -85,7 +85,8 @@ No promotion-mode toggle required.
 
 Goal:
 
-1. close the bootstrap membership gap on real hosts
+1. prove the bootstrap membership gap is closed on real hosts
+2. freeze `create -> first fsync fence -> publish_healthy` as the standalone `P20-H0` artifact
 
 #### Stage 1
 
@@ -127,10 +128,10 @@ Keep the toggle visible in scenario source or in a wrapper-generated temp copy.
 
 ## Stage 0 Bootstrap Closure Checklist
 
-`Stage 0` is the current hard gate before meaningful `V2` failover hardware
-validation.
+`Stage 0` is now the bounded bootstrap artifact that must stay green before
+interpreting broader failover runs.
 
-The blocker observed on hardware is:
+The blocker that originally motivated this checklist was:
 
 1. promoted primary still shows `ReplicaIDs=[]`
 2. `RoleApplied=true`
@@ -210,6 +211,12 @@ Healthy RF2 path must show all of the following:
 6. master `cluster_replication_mode` returns to a healthy cluster judgment
 7. no persistent `projection_mismatches` remain for the healthy path
 
+Current reading:
+
+1. the dedicated bootstrap-only scenario now passes on hardware
+2. `P20-H0` should therefore be treated as the closed `Stage 0` case
+3. sustained `fio + dd_write` failure after bootstrap belongs to `Stage 1`, not to this checklist
+
 ### Stage 0 Fail Criteria
 
 Any one of the following keeps `Stage 0` open:
@@ -225,7 +232,7 @@ Any one of the following keeps `Stage 0` open:
 
 ### Minimum Operator Loop
 
-When iterating on the fix, record this sequence each run:
+When validating or rechecking the bootstrap closure, record this sequence each run:
 
 1. before failure: `block/volume/<name>` and `/debug/block/shipper`
 2. immediately after failover: same two surfaces
@@ -256,6 +263,7 @@ Stage 1 means:
 2. do not enable `--block.v2Promotion=true`
 3. capture `block/volume/<name>` before and after failover
 4. capture `/debug/block/shipper` on both candidate servers during the run
+5. read sustained post-bootstrap write failures as `Stage 1` workload issues unless bootstrap itself regresses
 
 ### Stage 1 Must Prove
 
@@ -300,6 +308,12 @@ One scenario at a time:
 ```bash
 sw-test-runner run weed/storage/blockvol/testrunner/scenarios/internal/recovery-baseline-failover.yaml --results-dir results/phase20-t6/stage1/recovery-baseline-failover
 ```
+
+Current reading:
+
+1. bootstrap closure inside `P20-T6-H1A` is now a prerequisite/setup step, not the pass/fail signal
+2. the current red case is the sustained-workload path after `fio`, where large `dd_write` reproduces the default `64MB` WAL budget limitation
+3. `Stage 1` should be rerun after WAL-size plumbing allows the master-managed create path to request a larger WAL budget
 
 Preferred suite pack:
 
@@ -394,9 +408,9 @@ It keeps semantic guardrails pinned while hardware work proceeds.
 ## Immediate Start Order
 
 1. run `Stage 0` observation loop on the current baseline
-2. start fixing the replica-membership wiring gap until `Stage 0` closes
-3. run the `Stage 1` pack on existing YAMLs
-4. only after `Stage 0` is closed and evidence transport is real, prepare Stage 2 YAML copies
+2. keep the dedicated `P20-H0` bootstrap scenario green as a regression check
+3. add WAL-size plumbing for the master-managed create path, then rerun the `Stage 1` pack
+4. only after `Stage 1` has a valid WAL budget and evidence transport is real, prepare Stage 2 YAML copies
 
 ## What Not To Do
 

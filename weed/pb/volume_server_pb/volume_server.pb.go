@@ -6191,6 +6191,7 @@ type AllocateBlockVolumeRequest struct {
 	SizeBytes      uint64                 `protobuf:"varint,2,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	DiskType       string                 `protobuf:"bytes,3,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	DurabilityMode string                 `protobuf:"bytes,4,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	WalSizeBytes   uint64                 `protobuf:"varint,5,opt,name=wal_size_bytes,json=walSizeBytes,proto3" json:"wal_size_bytes,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -6251,6 +6252,13 @@ func (x *AllocateBlockVolumeRequest) GetDurabilityMode() string {
 		return x.DurabilityMode
 	}
 	return ""
+}
+
+func (x *AllocateBlockVolumeRequest) GetWalSizeBytes() uint64 {
+	if x != nil {
+		return x.WalSizeBytes
+	}
+	return 0
 }
 
 type AllocateBlockVolumeResponse struct {
@@ -7245,6 +7253,168 @@ func (*CancelExpandBlockVolumeResponse) Descriptor() ([]byte, []int) {
 	return file_volume_server_proto_rawDescGZIP(), []int{127}
 }
 
+// T2: Fresh on-demand promotion evidence. Master queries VS at failover
+// time. Returns live local facts, not cached/stale heartbeat data.
+type QueryBlockPromotionEvidenceRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Path          string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`                                         // volume file path on queried VS
+	ExpectedEpoch uint64                 `protobuf:"varint,2,opt,name=expected_epoch,json=expectedEpoch,proto3" json:"expected_epoch,omitempty"` // caller's expected epoch for staleness check
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *QueryBlockPromotionEvidenceRequest) Reset() {
+	*x = QueryBlockPromotionEvidenceRequest{}
+	mi := &file_volume_server_proto_msgTypes[128]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryBlockPromotionEvidenceRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryBlockPromotionEvidenceRequest) ProtoMessage() {}
+
+func (x *QueryBlockPromotionEvidenceRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[128]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryBlockPromotionEvidenceRequest.ProtoReflect.Descriptor instead.
+func (*QueryBlockPromotionEvidenceRequest) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{128}
+}
+
+func (x *QueryBlockPromotionEvidenceRequest) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *QueryBlockPromotionEvidenceRequest) GetExpectedEpoch() uint64 {
+	if x != nil {
+		return x.ExpectedEpoch
+	}
+	return 0
+}
+
+type QueryBlockPromotionEvidenceResponse struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Path                 string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	Epoch                uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	CommittedLsn         uint64                 `protobuf:"varint,3,opt,name=committed_lsn,json=committedLsn,proto3" json:"committed_lsn,omitempty"`
+	WalHeadLsn           uint64                 `protobuf:"varint,4,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
+	CheckpointLsn        uint64                 `protobuf:"varint,5,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
+	EngineProjectionMode string                 `protobuf:"bytes,6,opt,name=engine_projection_mode,json=engineProjectionMode,proto3" json:"engine_projection_mode,omitempty"` // pure V2 engine local projection, empty if no core
+	Eligible             bool                   `protobuf:"varint,7,opt,name=eligible,proto3" json:"eligible,omitempty"`
+	Reason               string                 `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"` // why ineligible, or empty
+	HealthScore          float64                `protobuf:"fixed64,9,opt,name=health_score,json=healthScore,proto3" json:"health_score,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) Reset() {
+	*x = QueryBlockPromotionEvidenceResponse{}
+	mi := &file_volume_server_proto_msgTypes[129]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QueryBlockPromotionEvidenceResponse) ProtoMessage() {}
+
+func (x *QueryBlockPromotionEvidenceResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_volume_server_proto_msgTypes[129]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QueryBlockPromotionEvidenceResponse.ProtoReflect.Descriptor instead.
+func (*QueryBlockPromotionEvidenceResponse) Descriptor() ([]byte, []int) {
+	return file_volume_server_proto_rawDescGZIP(), []int{129}
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetPath() string {
+	if x != nil {
+		return x.Path
+	}
+	return ""
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetEpoch() uint64 {
+	if x != nil {
+		return x.Epoch
+	}
+	return 0
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetCommittedLsn() uint64 {
+	if x != nil {
+		return x.CommittedLsn
+	}
+	return 0
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetWalHeadLsn() uint64 {
+	if x != nil {
+		return x.WalHeadLsn
+	}
+	return 0
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetCheckpointLsn() uint64 {
+	if x != nil {
+		return x.CheckpointLsn
+	}
+	return 0
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetEngineProjectionMode() string {
+	if x != nil {
+		return x.EngineProjectionMode
+	}
+	return ""
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetEligible() bool {
+	if x != nil {
+		return x.Eligible
+	}
+	return false
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *QueryBlockPromotionEvidenceResponse) GetHealthScore() float64 {
+	if x != nil {
+		return x.HealthScore
+	}
+	return 0
+}
+
 type FetchAndWriteNeedleRequest_Replica struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Url           string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
@@ -7256,7 +7426,7 @@ type FetchAndWriteNeedleRequest_Replica struct {
 
 func (x *FetchAndWriteNeedleRequest_Replica) Reset() {
 	*x = FetchAndWriteNeedleRequest_Replica{}
-	mi := &file_volume_server_proto_msgTypes[128]
+	mi := &file_volume_server_proto_msgTypes[130]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7268,7 +7438,7 @@ func (x *FetchAndWriteNeedleRequest_Replica) String() string {
 func (*FetchAndWriteNeedleRequest_Replica) ProtoMessage() {}
 
 func (x *FetchAndWriteNeedleRequest_Replica) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[128]
+	mi := &file_volume_server_proto_msgTypes[130]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7316,7 +7486,7 @@ type QueryRequest_Filter struct {
 
 func (x *QueryRequest_Filter) Reset() {
 	*x = QueryRequest_Filter{}
-	mi := &file_volume_server_proto_msgTypes[129]
+	mi := &file_volume_server_proto_msgTypes[131]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7328,7 +7498,7 @@ func (x *QueryRequest_Filter) String() string {
 func (*QueryRequest_Filter) ProtoMessage() {}
 
 func (x *QueryRequest_Filter) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[129]
+	mi := &file_volume_server_proto_msgTypes[131]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7378,7 +7548,7 @@ type QueryRequest_InputSerialization struct {
 
 func (x *QueryRequest_InputSerialization) Reset() {
 	*x = QueryRequest_InputSerialization{}
-	mi := &file_volume_server_proto_msgTypes[130]
+	mi := &file_volume_server_proto_msgTypes[132]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7390,7 +7560,7 @@ func (x *QueryRequest_InputSerialization) String() string {
 func (*QueryRequest_InputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[130]
+	mi := &file_volume_server_proto_msgTypes[132]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7444,7 +7614,7 @@ type QueryRequest_OutputSerialization struct {
 
 func (x *QueryRequest_OutputSerialization) Reset() {
 	*x = QueryRequest_OutputSerialization{}
-	mi := &file_volume_server_proto_msgTypes[131]
+	mi := &file_volume_server_proto_msgTypes[133]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7456,7 +7626,7 @@ func (x *QueryRequest_OutputSerialization) String() string {
 func (*QueryRequest_OutputSerialization) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[131]
+	mi := &file_volume_server_proto_msgTypes[133]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7502,7 +7672,7 @@ type QueryRequest_InputSerialization_CSVInput struct {
 
 func (x *QueryRequest_InputSerialization_CSVInput) Reset() {
 	*x = QueryRequest_InputSerialization_CSVInput{}
-	mi := &file_volume_server_proto_msgTypes[132]
+	mi := &file_volume_server_proto_msgTypes[134]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7514,7 +7684,7 @@ func (x *QueryRequest_InputSerialization_CSVInput) String() string {
 func (*QueryRequest_InputSerialization_CSVInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_CSVInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[132]
+	mi := &file_volume_server_proto_msgTypes[134]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7588,7 +7758,7 @@ type QueryRequest_InputSerialization_JSONInput struct {
 
 func (x *QueryRequest_InputSerialization_JSONInput) Reset() {
 	*x = QueryRequest_InputSerialization_JSONInput{}
-	mi := &file_volume_server_proto_msgTypes[133]
+	mi := &file_volume_server_proto_msgTypes[135]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7600,7 +7770,7 @@ func (x *QueryRequest_InputSerialization_JSONInput) String() string {
 func (*QueryRequest_InputSerialization_JSONInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_JSONInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[133]
+	mi := &file_volume_server_proto_msgTypes[135]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7631,7 +7801,7 @@ type QueryRequest_InputSerialization_ParquetInput struct {
 
 func (x *QueryRequest_InputSerialization_ParquetInput) Reset() {
 	*x = QueryRequest_InputSerialization_ParquetInput{}
-	mi := &file_volume_server_proto_msgTypes[134]
+	mi := &file_volume_server_proto_msgTypes[136]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7643,7 +7813,7 @@ func (x *QueryRequest_InputSerialization_ParquetInput) String() string {
 func (*QueryRequest_InputSerialization_ParquetInput) ProtoMessage() {}
 
 func (x *QueryRequest_InputSerialization_ParquetInput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[134]
+	mi := &file_volume_server_proto_msgTypes[136]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7672,7 +7842,7 @@ type QueryRequest_OutputSerialization_CSVOutput struct {
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_CSVOutput{}
-	mi := &file_volume_server_proto_msgTypes[135]
+	mi := &file_volume_server_proto_msgTypes[137]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7684,7 +7854,7 @@ func (x *QueryRequest_OutputSerialization_CSVOutput) String() string {
 func (*QueryRequest_OutputSerialization_CSVOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_CSVOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[135]
+	mi := &file_volume_server_proto_msgTypes[137]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -7744,7 +7914,7 @@ type QueryRequest_OutputSerialization_JSONOutput struct {
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) Reset() {
 	*x = QueryRequest_OutputSerialization_JSONOutput{}
-	mi := &file_volume_server_proto_msgTypes[136]
+	mi := &file_volume_server_proto_msgTypes[138]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -7756,7 +7926,7 @@ func (x *QueryRequest_OutputSerialization_JSONOutput) String() string {
 func (*QueryRequest_OutputSerialization_JSONOutput) ProtoMessage() {}
 
 func (x *QueryRequest_OutputSerialization_JSONOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_volume_server_proto_msgTypes[136]
+	mi := &file_volume_server_proto_msgTypes[138]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -8282,13 +8452,14 @@ const file_volume_server_proto_rawDesc = "" +
 	"\rstart_time_ns\x18\x01 \x01(\x03R\vstartTimeNs\x12$\n" +
 	"\x0eremote_time_ns\x18\x02 \x01(\x03R\fremoteTimeNs\x12 \n" +
 	"\fstop_time_ns\x18\x03 \x01(\x03R\n" +
-	"stopTimeNs\"\x95\x01\n" +
+	"stopTimeNs\"\xbb\x01\n" +
 	"\x1aAllocateBlockVolumeRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x02 \x01(\x04R\tsizeBytes\x12\x1b\n" +
 	"\tdisk_type\x18\x03 \x01(\tR\bdiskType\x12'\n" +
-	"\x0fdurability_mode\x18\x04 \x01(\tR\x0edurabilityMode\"\x99\x02\n" +
+	"\x0fdurability_mode\x18\x04 \x01(\tR\x0edurabilityMode\x12$\n" +
+	"\x0ewal_size_bytes\x18\x05 \x01(\x04R\fwalSizeBytes\"\x99\x02\n" +
 	"\x1bAllocateBlockVolumeResponse\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x10\n" +
 	"\x03iqn\x18\x02 \x01(\tR\x03iqn\x12\x1d\n" +
@@ -8351,12 +8522,26 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x1eCancelExpandBlockVolumeRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\fexpand_epoch\x18\x02 \x01(\x04R\vexpandEpoch\"!\n" +
-	"\x1fCancelExpandBlockVolumeResponse*>\n" +
+	"\x1fCancelExpandBlockVolumeResponse\"_\n" +
+	"\"QueryBlockPromotionEvidenceRequest\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12%\n" +
+	"\x0eexpected_epoch\x18\x02 \x01(\x04R\rexpectedEpoch\"\xca\x02\n" +
+	"#QueryBlockPromotionEvidenceResponse\x12\x12\n" +
+	"\x04path\x18\x01 \x01(\tR\x04path\x12\x14\n" +
+	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12#\n" +
+	"\rcommitted_lsn\x18\x03 \x01(\x04R\fcommittedLsn\x12 \n" +
+	"\fwal_head_lsn\x18\x04 \x01(\x04R\n" +
+	"walHeadLsn\x12%\n" +
+	"\x0echeckpoint_lsn\x18\x05 \x01(\x04R\rcheckpointLsn\x124\n" +
+	"\x16engine_projection_mode\x18\x06 \x01(\tR\x14engineProjectionMode\x12\x1a\n" +
+	"\beligible\x18\a \x01(\bR\beligible\x12\x16\n" +
+	"\x06reason\x18\b \x01(\tR\x06reason\x12!\n" +
+	"\fhealth_score\x18\t \x01(\x01R\vhealthScore*>\n" +
 	"\x0fVolumeScrubMode\x12\v\n" +
 	"\aUNKNOWN\x10\x00\x12\t\n" +
 	"\x05INDEX\x10\x01\x12\b\n" +
 	"\x04FULL\x10\x02\x12\t\n" +
-	"\x05LOCAL\x10\x032\xda2\n" +
+	"\x05LOCAL\x10\x032\xe93\n" +
 	"\fVolumeServer\x12\\\n" +
 	"\vBatchDelete\x12$.volume_server_pb.BatchDeleteRequest\x1a%.volume_server_pb.BatchDeleteResponse\"\x00\x12n\n" +
 	"\x11VacuumVolumeCheck\x12*.volume_server_pb.VacuumVolumeCheckRequest\x1a+.volume_server_pb.VacuumVolumeCheckResponse\"\x00\x12v\n" +
@@ -8416,7 +8601,8 @@ const file_volume_server_proto_rawDesc = "" +
 	"\x11ExpandBlockVolume\x12*.volume_server_pb.ExpandBlockVolumeRequest\x1a+.volume_server_pb.ExpandBlockVolumeResponse\"\x00\x12\x83\x01\n" +
 	"\x18PrepareExpandBlockVolume\x121.volume_server_pb.PrepareExpandBlockVolumeRequest\x1a2.volume_server_pb.PrepareExpandBlockVolumeResponse\"\x00\x12\x80\x01\n" +
 	"\x17CommitExpandBlockVolume\x120.volume_server_pb.CommitExpandBlockVolumeRequest\x1a1.volume_server_pb.CommitExpandBlockVolumeResponse\"\x00\x12\x80\x01\n" +
-	"\x17CancelExpandBlockVolume\x120.volume_server_pb.CancelExpandBlockVolumeRequest\x1a1.volume_server_pb.CancelExpandBlockVolumeResponse\"\x00B9Z7github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pbb\x06proto3"
+	"\x17CancelExpandBlockVolume\x120.volume_server_pb.CancelExpandBlockVolumeRequest\x1a1.volume_server_pb.CancelExpandBlockVolumeResponse\"\x00\x12\x8c\x01\n" +
+	"\x1bQueryBlockPromotionEvidence\x124.volume_server_pb.QueryBlockPromotionEvidenceRequest\x1a5.volume_server_pb.QueryBlockPromotionEvidenceResponse\"\x00B9Z7github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pbb\x06proto3"
 
 var (
 	file_volume_server_proto_rawDescOnce sync.Once
@@ -8431,7 +8617,7 @@ func file_volume_server_proto_rawDescGZIP() []byte {
 }
 
 var file_volume_server_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 137)
+var file_volume_server_proto_msgTypes = make([]protoimpl.MessageInfo, 139)
 var file_volume_server_proto_goTypes = []any{
 	(VolumeScrubMode)(0),                                 // 0: volume_server_pb.VolumeScrubMode
 	(*VolumeServerState)(nil),                            // 1: volume_server_pb.VolumeServerState
@@ -8562,17 +8748,19 @@ var file_volume_server_proto_goTypes = []any{
 	(*CommitExpandBlockVolumeResponse)(nil),              // 126: volume_server_pb.CommitExpandBlockVolumeResponse
 	(*CancelExpandBlockVolumeRequest)(nil),               // 127: volume_server_pb.CancelExpandBlockVolumeRequest
 	(*CancelExpandBlockVolumeResponse)(nil),              // 128: volume_server_pb.CancelExpandBlockVolumeResponse
-	(*FetchAndWriteNeedleRequest_Replica)(nil),           // 129: volume_server_pb.FetchAndWriteNeedleRequest.Replica
-	(*QueryRequest_Filter)(nil),                          // 130: volume_server_pb.QueryRequest.Filter
-	(*QueryRequest_InputSerialization)(nil),              // 131: volume_server_pb.QueryRequest.InputSerialization
-	(*QueryRequest_OutputSerialization)(nil),             // 132: volume_server_pb.QueryRequest.OutputSerialization
-	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 133: volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 134: volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 135: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 136: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 137: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
-	(*remote_pb.RemoteConf)(nil),                         // 138: remote_pb.RemoteConf
-	(*remote_pb.RemoteStorageLocation)(nil),              // 139: remote_pb.RemoteStorageLocation
+	(*QueryBlockPromotionEvidenceRequest)(nil),           // 129: volume_server_pb.QueryBlockPromotionEvidenceRequest
+	(*QueryBlockPromotionEvidenceResponse)(nil),          // 130: volume_server_pb.QueryBlockPromotionEvidenceResponse
+	(*FetchAndWriteNeedleRequest_Replica)(nil),           // 131: volume_server_pb.FetchAndWriteNeedleRequest.Replica
+	(*QueryRequest_Filter)(nil),                          // 132: volume_server_pb.QueryRequest.Filter
+	(*QueryRequest_InputSerialization)(nil),              // 133: volume_server_pb.QueryRequest.InputSerialization
+	(*QueryRequest_OutputSerialization)(nil),             // 134: volume_server_pb.QueryRequest.OutputSerialization
+	(*QueryRequest_InputSerialization_CSVInput)(nil),     // 135: volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	(*QueryRequest_InputSerialization_JSONInput)(nil),    // 136: volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	(*QueryRequest_InputSerialization_ParquetInput)(nil), // 137: volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	(*QueryRequest_OutputSerialization_CSVOutput)(nil),   // 138: volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	(*QueryRequest_OutputSerialization_JSONOutput)(nil),  // 139: volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	(*remote_pb.RemoteConf)(nil),                         // 140: remote_pb.RemoteConf
+	(*remote_pb.RemoteStorageLocation)(nil),              // 141: remote_pb.RemoteStorageLocation
 }
 var file_volume_server_proto_depIdxs = []int32{
 	4,   // 0: volume_server_pb.BatchDeleteResponse.results:type_name -> volume_server_pb.DeleteResult
@@ -8588,21 +8776,21 @@ var file_volume_server_proto_depIdxs = []int32{
 	82,  // 10: volume_server_pb.VolumeServerStatusResponse.disk_statuses:type_name -> volume_server_pb.DiskStatus
 	83,  // 11: volume_server_pb.VolumeServerStatusResponse.memory_status:type_name -> volume_server_pb.MemStatus
 	1,   // 12: volume_server_pb.VolumeServerStatusResponse.state:type_name -> volume_server_pb.VolumeServerState
-	129, // 13: volume_server_pb.FetchAndWriteNeedleRequest.replicas:type_name -> volume_server_pb.FetchAndWriteNeedleRequest.Replica
-	138, // 14: volume_server_pb.FetchAndWriteNeedleRequest.remote_conf:type_name -> remote_pb.RemoteConf
-	139, // 15: volume_server_pb.FetchAndWriteNeedleRequest.remote_location:type_name -> remote_pb.RemoteStorageLocation
+	131, // 13: volume_server_pb.FetchAndWriteNeedleRequest.replicas:type_name -> volume_server_pb.FetchAndWriteNeedleRequest.Replica
+	140, // 14: volume_server_pb.FetchAndWriteNeedleRequest.remote_conf:type_name -> remote_pb.RemoteConf
+	141, // 15: volume_server_pb.FetchAndWriteNeedleRequest.remote_location:type_name -> remote_pb.RemoteStorageLocation
 	0,   // 16: volume_server_pb.ScrubVolumeRequest.mode:type_name -> volume_server_pb.VolumeScrubMode
 	0,   // 17: volume_server_pb.ScrubEcVolumeRequest.mode:type_name -> volume_server_pb.VolumeScrubMode
 	79,  // 18: volume_server_pb.ScrubEcVolumeResponse.broken_shard_infos:type_name -> volume_server_pb.EcShardInfo
-	130, // 19: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
-	131, // 20: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
-	132, // 21: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
+	132, // 19: volume_server_pb.QueryRequest.filter:type_name -> volume_server_pb.QueryRequest.Filter
+	133, // 20: volume_server_pb.QueryRequest.input_serialization:type_name -> volume_server_pb.QueryRequest.InputSerialization
+	134, // 21: volume_server_pb.QueryRequest.output_serialization:type_name -> volume_server_pb.QueryRequest.OutputSerialization
 	120, // 22: volume_server_pb.ListBlockSnapshotsResponse.snapshots:type_name -> volume_server_pb.BlockSnapshotInfo
-	133, // 23: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
-	134, // 24: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
-	135, // 25: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
-	136, // 26: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
-	137, // 27: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
+	135, // 23: volume_server_pb.QueryRequest.InputSerialization.csv_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.CSVInput
+	136, // 24: volume_server_pb.QueryRequest.InputSerialization.json_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.JSONInput
+	137, // 25: volume_server_pb.QueryRequest.InputSerialization.parquet_input:type_name -> volume_server_pb.QueryRequest.InputSerialization.ParquetInput
+	138, // 26: volume_server_pb.QueryRequest.OutputSerialization.csv_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.CSVOutput
+	139, // 27: volume_server_pb.QueryRequest.OutputSerialization.json_output:type_name -> volume_server_pb.QueryRequest.OutputSerialization.JSONOutput
 	2,   // 28: volume_server_pb.VolumeServer.BatchDelete:input_type -> volume_server_pb.BatchDeleteRequest
 	6,   // 29: volume_server_pb.VolumeServer.VacuumVolumeCheck:input_type -> volume_server_pb.VacuumVolumeCheckRequest
 	8,   // 30: volume_server_pb.VolumeServer.VacuumVolumeCompact:input_type -> volume_server_pb.VacuumVolumeCompactRequest
@@ -8661,66 +8849,68 @@ var file_volume_server_proto_depIdxs = []int32{
 	123, // 83: volume_server_pb.VolumeServer.PrepareExpandBlockVolume:input_type -> volume_server_pb.PrepareExpandBlockVolumeRequest
 	125, // 84: volume_server_pb.VolumeServer.CommitExpandBlockVolume:input_type -> volume_server_pb.CommitExpandBlockVolumeRequest
 	127, // 85: volume_server_pb.VolumeServer.CancelExpandBlockVolume:input_type -> volume_server_pb.CancelExpandBlockVolumeRequest
-	3,   // 86: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
-	7,   // 87: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
-	9,   // 88: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
-	11,  // 89: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
-	13,  // 90: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
-	15,  // 91: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
-	17,  // 92: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
-	19,  // 93: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
-	21,  // 94: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
-	23,  // 95: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
-	25,  // 96: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
-	27,  // 97: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
-	29,  // 98: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
-	31,  // 99: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
-	33,  // 100: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
-	35,  // 101: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
-	37,  // 102: volume_server_pb.VolumeServer.GetState:output_type -> volume_server_pb.GetStateResponse
-	39,  // 103: volume_server_pb.VolumeServer.SetState:output_type -> volume_server_pb.SetStateResponse
-	41,  // 104: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
-	81,  // 105: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
-	43,  // 106: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
-	46,  // 107: volume_server_pb.VolumeServer.ReceiveFile:output_type -> volume_server_pb.ReceiveFileResponse
-	48,  // 108: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
-	50,  // 109: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
-	52,  // 110: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
-	54,  // 111: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
-	56,  // 112: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
-	58,  // 113: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
-	60,  // 114: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
-	62,  // 115: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
-	64,  // 116: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
-	66,  // 117: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
-	68,  // 118: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
-	70,  // 119: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
-	72,  // 120: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
-	74,  // 121: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
-	76,  // 122: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
-	78,  // 123: volume_server_pb.VolumeServer.VolumeEcShardsInfo:output_type -> volume_server_pb.VolumeEcShardsInfoResponse
-	89,  // 124: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
-	91,  // 125: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
-	93,  // 126: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
-	95,  // 127: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
-	97,  // 128: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
-	99,  // 129: volume_server_pb.VolumeServer.ScrubVolume:output_type -> volume_server_pb.ScrubVolumeResponse
-	101, // 130: volume_server_pb.VolumeServer.ScrubEcVolume:output_type -> volume_server_pb.ScrubEcVolumeResponse
-	103, // 131: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
-	105, // 132: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
-	107, // 133: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
-	109, // 134: volume_server_pb.VolumeServer.AllocateBlockVolume:output_type -> volume_server_pb.AllocateBlockVolumeResponse
-	111, // 135: volume_server_pb.VolumeServer.VolumeServerDeleteBlockVolume:output_type -> volume_server_pb.VolumeServerDeleteBlockVolumeResponse
-	113, // 136: volume_server_pb.VolumeServer.SnapshotBlockVolume:output_type -> volume_server_pb.SnapshotBlockVolumeResponse
-	115, // 137: volume_server_pb.VolumeServer.DeleteBlockSnapshot:output_type -> volume_server_pb.DeleteBlockSnapshotResponse
-	119, // 138: volume_server_pb.VolumeServer.ListBlockSnapshots:output_type -> volume_server_pb.ListBlockSnapshotsResponse
-	117, // 139: volume_server_pb.VolumeServer.RestoreBlockSnapshot:output_type -> volume_server_pb.RestoreBlockSnapshotResponse
-	122, // 140: volume_server_pb.VolumeServer.ExpandBlockVolume:output_type -> volume_server_pb.ExpandBlockVolumeResponse
-	124, // 141: volume_server_pb.VolumeServer.PrepareExpandBlockVolume:output_type -> volume_server_pb.PrepareExpandBlockVolumeResponse
-	126, // 142: volume_server_pb.VolumeServer.CommitExpandBlockVolume:output_type -> volume_server_pb.CommitExpandBlockVolumeResponse
-	128, // 143: volume_server_pb.VolumeServer.CancelExpandBlockVolume:output_type -> volume_server_pb.CancelExpandBlockVolumeResponse
-	86,  // [86:144] is the sub-list for method output_type
-	28,  // [28:86] is the sub-list for method input_type
+	129, // 86: volume_server_pb.VolumeServer.QueryBlockPromotionEvidence:input_type -> volume_server_pb.QueryBlockPromotionEvidenceRequest
+	3,   // 87: volume_server_pb.VolumeServer.BatchDelete:output_type -> volume_server_pb.BatchDeleteResponse
+	7,   // 88: volume_server_pb.VolumeServer.VacuumVolumeCheck:output_type -> volume_server_pb.VacuumVolumeCheckResponse
+	9,   // 89: volume_server_pb.VolumeServer.VacuumVolumeCompact:output_type -> volume_server_pb.VacuumVolumeCompactResponse
+	11,  // 90: volume_server_pb.VolumeServer.VacuumVolumeCommit:output_type -> volume_server_pb.VacuumVolumeCommitResponse
+	13,  // 91: volume_server_pb.VolumeServer.VacuumVolumeCleanup:output_type -> volume_server_pb.VacuumVolumeCleanupResponse
+	15,  // 92: volume_server_pb.VolumeServer.DeleteCollection:output_type -> volume_server_pb.DeleteCollectionResponse
+	17,  // 93: volume_server_pb.VolumeServer.AllocateVolume:output_type -> volume_server_pb.AllocateVolumeResponse
+	19,  // 94: volume_server_pb.VolumeServer.VolumeSyncStatus:output_type -> volume_server_pb.VolumeSyncStatusResponse
+	21,  // 95: volume_server_pb.VolumeServer.VolumeIncrementalCopy:output_type -> volume_server_pb.VolumeIncrementalCopyResponse
+	23,  // 96: volume_server_pb.VolumeServer.VolumeMount:output_type -> volume_server_pb.VolumeMountResponse
+	25,  // 97: volume_server_pb.VolumeServer.VolumeUnmount:output_type -> volume_server_pb.VolumeUnmountResponse
+	27,  // 98: volume_server_pb.VolumeServer.VolumeDelete:output_type -> volume_server_pb.VolumeDeleteResponse
+	29,  // 99: volume_server_pb.VolumeServer.VolumeMarkReadonly:output_type -> volume_server_pb.VolumeMarkReadonlyResponse
+	31,  // 100: volume_server_pb.VolumeServer.VolumeMarkWritable:output_type -> volume_server_pb.VolumeMarkWritableResponse
+	33,  // 101: volume_server_pb.VolumeServer.VolumeConfigure:output_type -> volume_server_pb.VolumeConfigureResponse
+	35,  // 102: volume_server_pb.VolumeServer.VolumeStatus:output_type -> volume_server_pb.VolumeStatusResponse
+	37,  // 103: volume_server_pb.VolumeServer.GetState:output_type -> volume_server_pb.GetStateResponse
+	39,  // 104: volume_server_pb.VolumeServer.SetState:output_type -> volume_server_pb.SetStateResponse
+	41,  // 105: volume_server_pb.VolumeServer.VolumeCopy:output_type -> volume_server_pb.VolumeCopyResponse
+	81,  // 106: volume_server_pb.VolumeServer.ReadVolumeFileStatus:output_type -> volume_server_pb.ReadVolumeFileStatusResponse
+	43,  // 107: volume_server_pb.VolumeServer.CopyFile:output_type -> volume_server_pb.CopyFileResponse
+	46,  // 108: volume_server_pb.VolumeServer.ReceiveFile:output_type -> volume_server_pb.ReceiveFileResponse
+	48,  // 109: volume_server_pb.VolumeServer.ReadNeedleBlob:output_type -> volume_server_pb.ReadNeedleBlobResponse
+	50,  // 110: volume_server_pb.VolumeServer.ReadNeedleMeta:output_type -> volume_server_pb.ReadNeedleMetaResponse
+	52,  // 111: volume_server_pb.VolumeServer.WriteNeedleBlob:output_type -> volume_server_pb.WriteNeedleBlobResponse
+	54,  // 112: volume_server_pb.VolumeServer.ReadAllNeedles:output_type -> volume_server_pb.ReadAllNeedlesResponse
+	56,  // 113: volume_server_pb.VolumeServer.VolumeTailSender:output_type -> volume_server_pb.VolumeTailSenderResponse
+	58,  // 114: volume_server_pb.VolumeServer.VolumeTailReceiver:output_type -> volume_server_pb.VolumeTailReceiverResponse
+	60,  // 115: volume_server_pb.VolumeServer.VolumeEcShardsGenerate:output_type -> volume_server_pb.VolumeEcShardsGenerateResponse
+	62,  // 116: volume_server_pb.VolumeServer.VolumeEcShardsRebuild:output_type -> volume_server_pb.VolumeEcShardsRebuildResponse
+	64,  // 117: volume_server_pb.VolumeServer.VolumeEcShardsCopy:output_type -> volume_server_pb.VolumeEcShardsCopyResponse
+	66,  // 118: volume_server_pb.VolumeServer.VolumeEcShardsDelete:output_type -> volume_server_pb.VolumeEcShardsDeleteResponse
+	68,  // 119: volume_server_pb.VolumeServer.VolumeEcShardsMount:output_type -> volume_server_pb.VolumeEcShardsMountResponse
+	70,  // 120: volume_server_pb.VolumeServer.VolumeEcShardsUnmount:output_type -> volume_server_pb.VolumeEcShardsUnmountResponse
+	72,  // 121: volume_server_pb.VolumeServer.VolumeEcShardRead:output_type -> volume_server_pb.VolumeEcShardReadResponse
+	74,  // 122: volume_server_pb.VolumeServer.VolumeEcBlobDelete:output_type -> volume_server_pb.VolumeEcBlobDeleteResponse
+	76,  // 123: volume_server_pb.VolumeServer.VolumeEcShardsToVolume:output_type -> volume_server_pb.VolumeEcShardsToVolumeResponse
+	78,  // 124: volume_server_pb.VolumeServer.VolumeEcShardsInfo:output_type -> volume_server_pb.VolumeEcShardsInfoResponse
+	89,  // 125: volume_server_pb.VolumeServer.VolumeTierMoveDatToRemote:output_type -> volume_server_pb.VolumeTierMoveDatToRemoteResponse
+	91,  // 126: volume_server_pb.VolumeServer.VolumeTierMoveDatFromRemote:output_type -> volume_server_pb.VolumeTierMoveDatFromRemoteResponse
+	93,  // 127: volume_server_pb.VolumeServer.VolumeServerStatus:output_type -> volume_server_pb.VolumeServerStatusResponse
+	95,  // 128: volume_server_pb.VolumeServer.VolumeServerLeave:output_type -> volume_server_pb.VolumeServerLeaveResponse
+	97,  // 129: volume_server_pb.VolumeServer.FetchAndWriteNeedle:output_type -> volume_server_pb.FetchAndWriteNeedleResponse
+	99,  // 130: volume_server_pb.VolumeServer.ScrubVolume:output_type -> volume_server_pb.ScrubVolumeResponse
+	101, // 131: volume_server_pb.VolumeServer.ScrubEcVolume:output_type -> volume_server_pb.ScrubEcVolumeResponse
+	103, // 132: volume_server_pb.VolumeServer.Query:output_type -> volume_server_pb.QueriedStripe
+	105, // 133: volume_server_pb.VolumeServer.VolumeNeedleStatus:output_type -> volume_server_pb.VolumeNeedleStatusResponse
+	107, // 134: volume_server_pb.VolumeServer.Ping:output_type -> volume_server_pb.PingResponse
+	109, // 135: volume_server_pb.VolumeServer.AllocateBlockVolume:output_type -> volume_server_pb.AllocateBlockVolumeResponse
+	111, // 136: volume_server_pb.VolumeServer.VolumeServerDeleteBlockVolume:output_type -> volume_server_pb.VolumeServerDeleteBlockVolumeResponse
+	113, // 137: volume_server_pb.VolumeServer.SnapshotBlockVolume:output_type -> volume_server_pb.SnapshotBlockVolumeResponse
+	115, // 138: volume_server_pb.VolumeServer.DeleteBlockSnapshot:output_type -> volume_server_pb.DeleteBlockSnapshotResponse
+	119, // 139: volume_server_pb.VolumeServer.ListBlockSnapshots:output_type -> volume_server_pb.ListBlockSnapshotsResponse
+	117, // 140: volume_server_pb.VolumeServer.RestoreBlockSnapshot:output_type -> volume_server_pb.RestoreBlockSnapshotResponse
+	122, // 141: volume_server_pb.VolumeServer.ExpandBlockVolume:output_type -> volume_server_pb.ExpandBlockVolumeResponse
+	124, // 142: volume_server_pb.VolumeServer.PrepareExpandBlockVolume:output_type -> volume_server_pb.PrepareExpandBlockVolumeResponse
+	126, // 143: volume_server_pb.VolumeServer.CommitExpandBlockVolume:output_type -> volume_server_pb.CommitExpandBlockVolumeResponse
+	128, // 144: volume_server_pb.VolumeServer.CancelExpandBlockVolume:output_type -> volume_server_pb.CancelExpandBlockVolumeResponse
+	130, // 145: volume_server_pb.VolumeServer.QueryBlockPromotionEvidence:output_type -> volume_server_pb.QueryBlockPromotionEvidenceResponse
+	87,  // [87:146] is the sub-list for method output_type
+	28,  // [28:87] is the sub-list for method input_type
 	28,  // [28:28] is the sub-list for extension type_name
 	28,  // [28:28] is the sub-list for extension extendee
 	0,   // [0:28] is the sub-list for field type_name
@@ -8741,7 +8931,7 @@ func file_volume_server_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_volume_server_proto_rawDesc), len(file_volume_server_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   137,
+			NumMessages:   139,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

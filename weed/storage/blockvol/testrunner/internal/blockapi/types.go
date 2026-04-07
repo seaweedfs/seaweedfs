@@ -7,6 +7,7 @@ package blockapi
 type CreateVolumeRequest struct {
 	Name             string `json:"name"`
 	SizeBytes        uint64 `json:"size_bytes"`
+	WALSizeBytes     uint64 `json:"wal_size_bytes,omitempty"`
 	ReplicaPlacement string `json:"replica_placement"`
 	DiskType         string `json:"disk_type"`
 	DurabilityMode   string `json:"durability_mode,omitempty"`

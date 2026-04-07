@@ -24,6 +24,9 @@ func TestClientCreateVolume(t *testing.T) {
 		if req.Name != "test-vol" {
 			t.Errorf("expected name test-vol, got %s", req.Name)
 		}
+		if req.WALSizeBytes != 256<<20 {
+			t.Errorf("expected wal_size_bytes %d, got %d", 256<<20, req.WALSizeBytes)
+		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(VolumeInfo{
 			Name:         req.Name,
@@ -38,8 +41,9 @@ func TestClientCreateVolume(t *testing.T) {
 
 	client := NewClient(ts.URL)
 	info, err := client.CreateVolume(context.Background(), CreateVolumeRequest{
-		Name:      "test-vol",
-		SizeBytes: 1 << 30,
+		Name:         "test-vol",
+		SizeBytes:    1 << 30,
+		WALSizeBytes: 256 << 20,
 	})
 	if err != nil {
 		t.Fatal(err)

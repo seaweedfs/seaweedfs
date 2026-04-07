@@ -92,6 +92,14 @@ type BlockVol struct {
 	// Shipper state change callback — triggers immediate heartbeat.
 	onShipperStateChange func(from, to ReplicaState)
 
+	// Barrier acceptance callback — reports authoritative durable progress after
+	// a successful SyncCache/group-commit fence.
+	onBarrierAccepted func(flushedLSN uint64)
+
+	// Barrier rejection callback — reports the semantic reason for a failed
+	// distributed durability fence.
+	onBarrierRejected func(reason string)
+
 	// liveShippingPolicy gates whether configured shippers may consume current
 	// live-tail WAL entries. The host uses this to keep replicas in bounded
 	// catch-up until their active protocol session reaches a live-eligible phase.
@@ -208,7 +216,7 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 			if v.shipperGroup != nil {
 				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
 					Timeout:        walRetentionTimeout,
-					MaxBytes:       walRetentionMaxBytes,
+					MaxBytes:       0, // CP13-6 max-bytes disabled: uses replicaFlushedLSN which can't advance without barrier; v2 will replace with negotiated recovery protocol
 					PrimaryHeadLSN: v.nextLSN.Load() - 1,
 					BlockSize:      v.super.BlockSize,
 				})
@@ -336,7 +344,7 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 			if v.shipperGroup != nil {
 				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
 					Timeout:        walRetentionTimeout,
-					MaxBytes:       walRetentionMaxBytes,
+					MaxBytes:       0, // CP13-6 max-bytes disabled: uses replicaFlushedLSN which can't advance without barrier; v2 will replace with negotiated recovery protocol
 					PrimaryHeadLSN: v.nextLSN.Load() - 1,
 					BlockSize:      v.super.BlockSize,
 				})
@@ -820,7 +828,15 @@ func (v *BlockVol) SyncCache() error {
 	defer v.endOp()
 	v.ioMu.RLock()
 	defer v.ioMu.RUnlock()
-	return v.groupCommit.Submit()
+	if err := v.groupCommit.Submit(); err != nil {
+		return err
+	}
+	if v.onBarrierAccepted != nil {
+		if flushedLSN, ok := v.currentDurableBoundary(); ok && flushedLSN > 0 {
+			v.onBarrierAccepted(flushedLSN)
+		}
+	}
+	return nil
 }
 
 // ReplicaAddr holds the data and control addresses for one replica.
@@ -874,6 +890,38 @@ func (a *walAccess) StreamEntries(fromLSN uint64, fn func(*WALEntry) error) erro
 // Called by the volume server to trigger immediate heartbeat on degradation/recovery.
 func (v *BlockVol) SetOnShipperStateChange(fn func(from, to ReplicaState)) {
 	v.onShipperStateChange = fn
+	if v != nil && v.shipperGroup != nil {
+		v.shipperGroup.SetOnStateChange(fn)
+	}
+}
+
+// SetOnBarrierAccepted registers a callback invoked after SyncCache returns
+// success with a positive durable boundary.
+func (v *BlockVol) SetOnBarrierAccepted(fn func(flushedLSN uint64)) {
+	v.onBarrierAccepted = fn
+}
+
+// SetOnBarrierRejected registers a callback invoked when a distributed barrier
+// fails and reports a stable semantic reason.
+func (v *BlockVol) SetOnBarrierRejected(fn func(reason string)) {
+	v.onBarrierRejected = fn
+	if v != nil && v.shipperGroup != nil {
+		v.shipperGroup.SetOnBarrierFailure(fn)
+	}
+}
+
+func (v *BlockVol) currentDurableBoundary() (uint64, bool) {
+	if v == nil {
+		return 0, false
+	}
+	if v.DurabilityMode() == DurabilitySyncAll && v.shipperGroup != nil && v.shipperGroup.Len() > 0 {
+		return v.shipperGroup.MinReplicaFlushedLSNAll()
+	}
+	headLSN := v.nextLSN.Load()
+	if headLSN == 0 {
+		return 0, false
+	}
+	return headLSN - 1, true
 }
 
 // SetLiveShippingPolicy installs a host-provided gate for current live-tail
@@ -948,6 +996,9 @@ func (v *BlockVol) SetReplicaAddrs(addrs []ReplicaAddr) {
 	// Wire state change callback so shipper degradation triggers immediate heartbeat.
 	if v.onShipperStateChange != nil {
 		v.shipperGroup.SetOnStateChange(v.onShipperStateChange)
+	}
+	if v.onBarrierRejected != nil {
+		v.shipperGroup.SetOnBarrierFailure(v.onBarrierRejected)
 	}
 	if v.liveShippingPolicy != nil {
 		v.shipperGroup.SetLiveShippingPolicy(v.liveShippingPolicy)

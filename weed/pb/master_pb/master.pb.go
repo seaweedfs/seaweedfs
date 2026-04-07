@@ -1781,7 +1781,9 @@ func (x *StatisticsResponse) GetFileCount() uint64 {
 	return 0
 }
 
+//
 // collection related
+//
 type Collection struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -2002,7 +2004,9 @@ func (*CollectionDeleteResponse) Descriptor() ([]byte, []int) {
 	return file_master_proto_rawDescGZIP(), []int{24}
 }
 
+//
 // volume related
+//
 type DiskInfo struct {
 	state             protoimpl.MessageState             `protogen:"open.v1"`
 	Type              string                             `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
@@ -3900,35 +3904,35 @@ func (*VolumeGrowResponse) Descriptor() ([]byte, []int) {
 }
 
 type BlockVolumeInfoMessage struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	Path             string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
-	VolumeSize       uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
-	BlockSize        uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
-	Epoch            uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	Role             uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
-	WalHeadLsn       uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
-	CheckpointLsn    uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
-	HasLease         bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
-	DiskType         string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
-	ReplicaDataAddr  string                 `protobuf:"bytes,10,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
-	ReplicaCtrlAddr  string                 `protobuf:"bytes,11,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
-	HealthScore      float64                `protobuf:"fixed64,12,opt,name=health_score,json=healthScore,proto3" json:"health_score,omitempty"`
-	ScrubErrors      int64                  `protobuf:"varint,13,opt,name=scrub_errors,json=scrubErrors,proto3" json:"scrub_errors,omitempty"`
-	LastScrubTime    int64                  `protobuf:"varint,14,opt,name=last_scrub_time,json=lastScrubTime,proto3" json:"last_scrub_time,omitempty"`
-	ReplicaDegraded  bool                   `protobuf:"varint,15,opt,name=replica_degraded,json=replicaDegraded,proto3" json:"replica_degraded,omitempty"`
-	DurabilityMode   string                 `protobuf:"bytes,16,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
-	NvmeAddr         string                 `protobuf:"bytes,17,opt,name=nvme_addr,json=nvmeAddr,proto3" json:"nvme_addr,omitempty"`
-	Nqn              string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
-	ReplicaReady     *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
-	NeedsRebuild     *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
-	PublishHealthy   *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
-	VolumeMode             *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
-	VolumeModeReason       *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
-	EngineProjectionMode   *string                `protobuf:"bytes,24,opt,name=engine_projection_mode,json=engineProjectionMode,proto3,oneof" json:"engine_projection_mode,omitempty"`
-	ActivationGated        *bool                  `protobuf:"varint,25,opt,name=activation_gated,json=activationGated,proto3,oneof" json:"activation_gated,omitempty"`
-	ActivationGateReason   *string                `protobuf:"bytes,26,opt,name=activation_gate_reason,json=activationGateReason,proto3,oneof" json:"activation_gate_reason,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Path                 string                 `protobuf:"bytes,1,opt,name=path,proto3" json:"path,omitempty"`
+	VolumeSize           uint64                 `protobuf:"varint,2,opt,name=volume_size,json=volumeSize,proto3" json:"volume_size,omitempty"`
+	BlockSize            uint32                 `protobuf:"varint,3,opt,name=block_size,json=blockSize,proto3" json:"block_size,omitempty"`
+	Epoch                uint64                 `protobuf:"varint,4,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	Role                 uint32                 `protobuf:"varint,5,opt,name=role,proto3" json:"role,omitempty"`
+	WalHeadLsn           uint64                 `protobuf:"varint,6,opt,name=wal_head_lsn,json=walHeadLsn,proto3" json:"wal_head_lsn,omitempty"`
+	CheckpointLsn        uint64                 `protobuf:"varint,7,opt,name=checkpoint_lsn,json=checkpointLsn,proto3" json:"checkpoint_lsn,omitempty"`
+	HasLease             bool                   `protobuf:"varint,8,opt,name=has_lease,json=hasLease,proto3" json:"has_lease,omitempty"`
+	DiskType             string                 `protobuf:"bytes,9,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
+	ReplicaDataAddr      string                 `protobuf:"bytes,10,opt,name=replica_data_addr,json=replicaDataAddr,proto3" json:"replica_data_addr,omitempty"`
+	ReplicaCtrlAddr      string                 `protobuf:"bytes,11,opt,name=replica_ctrl_addr,json=replicaCtrlAddr,proto3" json:"replica_ctrl_addr,omitempty"`
+	HealthScore          float64                `protobuf:"fixed64,12,opt,name=health_score,json=healthScore,proto3" json:"health_score,omitempty"`
+	ScrubErrors          int64                  `protobuf:"varint,13,opt,name=scrub_errors,json=scrubErrors,proto3" json:"scrub_errors,omitempty"`
+	LastScrubTime        int64                  `protobuf:"varint,14,opt,name=last_scrub_time,json=lastScrubTime,proto3" json:"last_scrub_time,omitempty"`
+	ReplicaDegraded      bool                   `protobuf:"varint,15,opt,name=replica_degraded,json=replicaDegraded,proto3" json:"replica_degraded,omitempty"`
+	DurabilityMode       string                 `protobuf:"bytes,16,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	NvmeAddr             string                 `protobuf:"bytes,17,opt,name=nvme_addr,json=nvmeAddr,proto3" json:"nvme_addr,omitempty"`
+	Nqn                  string                 `protobuf:"bytes,18,opt,name=nqn,proto3" json:"nqn,omitempty"`
+	ReplicaReady         *bool                  `protobuf:"varint,19,opt,name=replica_ready,json=replicaReady,proto3,oneof" json:"replica_ready,omitempty"`
+	NeedsRebuild         *bool                  `protobuf:"varint,20,opt,name=needs_rebuild,json=needsRebuild,proto3,oneof" json:"needs_rebuild,omitempty"`
+	PublishHealthy       *bool                  `protobuf:"varint,21,opt,name=publish_healthy,json=publishHealthy,proto3,oneof" json:"publish_healthy,omitempty"`
+	VolumeMode           *string                `protobuf:"bytes,22,opt,name=volume_mode,json=volumeMode,proto3,oneof" json:"volume_mode,omitempty"`
+	VolumeModeReason     *string                `protobuf:"bytes,23,opt,name=volume_mode_reason,json=volumeModeReason,proto3,oneof" json:"volume_mode_reason,omitempty"`
+	EngineProjectionMode *string                `protobuf:"bytes,24,opt,name=engine_projection_mode,json=engineProjectionMode,proto3,oneof" json:"engine_projection_mode,omitempty"` // V2: pure engine-derived local projection mode
+	ActivationGated      *bool                  `protobuf:"varint,25,opt,name=activation_gated,json=activationGated,proto3,oneof" json:"activation_gated,omitempty"`                 // T4: true if activation-gated from serving
+	ActivationGateReason *string                `protobuf:"bytes,26,opt,name=activation_gate_reason,json=activationGateReason,proto3,oneof" json:"activation_gate_reason,omitempty"` // T4: reason for activation gate
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
 }
 
 func (x *BlockVolumeInfoMessage) Reset() {
@@ -4386,6 +4390,7 @@ type CreateBlockVolumeRequest struct {
 	DiskType       string                 `protobuf:"bytes,3,opt,name=disk_type,json=diskType,proto3" json:"disk_type,omitempty"`
 	ReplicaFactor  uint32                 `protobuf:"varint,4,opt,name=replica_factor,json=replicaFactor,proto3" json:"replica_factor,omitempty"`
 	DurabilityMode string                 `protobuf:"bytes,5,opt,name=durability_mode,json=durabilityMode,proto3" json:"durability_mode,omitempty"`
+	WalSizeBytes   uint64                 `protobuf:"varint,6,opt,name=wal_size_bytes,json=walSizeBytes,proto3" json:"wal_size_bytes,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4453,6 +4458,13 @@ func (x *CreateBlockVolumeRequest) GetDurabilityMode() string {
 		return x.DurabilityMode
 	}
 	return ""
+}
+
+func (x *CreateBlockVolumeRequest) GetWalSizeBytes() uint64 {
+	if x != nil {
+		return x.WalSizeBytes
+	}
+	return 0
 }
 
 type CreateBlockVolumeResponse struct {
@@ -6032,7 +6044,7 @@ const file_master_proto_rawDesc = "" +
 	"\x0fprevious_leader\x18\x01 \x01(\tR\x0epreviousLeader\x12\x1d\n" +
 	"\n" +
 	"new_leader\x18\x02 \x01(\tR\tnewLeader\"\x14\n" +
-	"\x12VolumeGrowResponse\"\x9c\a\n" +
+	"\x12VolumeGrowResponse\"\x8d\t\n" +
 	"\x16BlockVolumeInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6061,12 +6073,18 @@ const file_master_proto_rawDesc = "" +
 	"\x0fpublish_healthy\x18\x15 \x01(\bH\x02R\x0epublishHealthy\x88\x01\x01\x12$\n" +
 	"\vvolume_mode\x18\x16 \x01(\tH\x03R\n" +
 	"volumeMode\x88\x01\x01\x121\n" +
-	"\x12volume_mode_reason\x18\x17 \x01(\tH\x04R\x10volumeModeReason\x88\x01\x01B\x10\n" +
+	"\x12volume_mode_reason\x18\x17 \x01(\tH\x04R\x10volumeModeReason\x88\x01\x01\x129\n" +
+	"\x16engine_projection_mode\x18\x18 \x01(\tH\x05R\x14engineProjectionMode\x88\x01\x01\x12.\n" +
+	"\x10activation_gated\x18\x19 \x01(\bH\x06R\x0factivationGated\x88\x01\x01\x129\n" +
+	"\x16activation_gate_reason\x18\x1a \x01(\tH\aR\x14activationGateReason\x88\x01\x01B\x10\n" +
 	"\x0e_replica_readyB\x10\n" +
 	"\x0e_needs_rebuildB\x12\n" +
 	"\x10_publish_healthyB\x0e\n" +
 	"\f_volume_modeB\x15\n" +
-	"\x13_volume_mode_reason\"\x8e\x01\n" +
+	"\x13_volume_mode_reasonB\x19\n" +
+	"\x17_engine_projection_modeB\x13\n" +
+	"\x11_activation_gatedB\x19\n" +
+	"\x17_activation_gate_reason\"\x8e\x01\n" +
 	"\x1bBlockVolumeShortInfoMessage\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x1f\n" +
 	"\vvolume_size\x18\x02 \x01(\x04R\n" +
@@ -6088,14 +6106,15 @@ const file_master_proto_rawDesc = "" +
 	"\x12ReplicaAddrMessage\x12\x1b\n" +
 	"\tdata_addr\x18\x01 \x01(\tR\bdataAddr\x12\x1b\n" +
 	"\tctrl_addr\x18\x02 \x01(\tR\bctrlAddr\x12\x1b\n" +
-	"\tserver_id\x18\x03 \x01(\tR\bserverId\"\xba\x01\n" +
+	"\tserver_id\x18\x03 \x01(\tR\bserverId\"\xe0\x01\n" +
 	"\x18CreateBlockVolumeRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1d\n" +
 	"\n" +
 	"size_bytes\x18\x02 \x01(\x04R\tsizeBytes\x12\x1b\n" +
 	"\tdisk_type\x18\x03 \x01(\tR\bdiskType\x12%\n" +
 	"\x0ereplica_factor\x18\x04 \x01(\rR\rreplicaFactor\x12'\n" +
-	"\x0fdurability_mode\x18\x05 \x01(\tR\x0edurabilityMode\"\xb4\x02\n" +
+	"\x0fdurability_mode\x18\x05 \x01(\tR\x0edurabilityMode\x12$\n" +
+	"\x0ewal_size_bytes\x18\x06 \x01(\x04R\fwalSizeBytes\"\xb4\x02\n" +
 	"\x19CreateBlockVolumeResponse\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\tR\bvolumeId\x12#\n" +
 	"\rvolume_server\x18\x02 \x01(\tR\fvolumeServer\x12\x1d\n" +

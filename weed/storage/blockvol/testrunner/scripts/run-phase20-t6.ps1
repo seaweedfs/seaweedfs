@@ -84,7 +84,7 @@ function Invoke-Pack {
 }
 
 $stage0Pack = @(
-    (New-Scenario -Id "P20-H0" -Path "weed/storage/blockvol/testrunner/scenarios/internal/recovery-baseline-failover.yaml" -Purpose "Stage 0 bootstrap closure: promoted primary learns replica membership and can reach publish_healthy on the healthy RF=2 sync_all path")
+    (New-Scenario -Id "P20-H0" -Path "weed/storage/blockvol/testrunner/scenarios/internal/recovery-bootstrap-closure.yaml" -Purpose "Stage 0 bootstrap closure: create -> first fsync fence -> publish_healthy on the healthy RF=2 sync_all path")
 )
 
 $stage1Pack = @(

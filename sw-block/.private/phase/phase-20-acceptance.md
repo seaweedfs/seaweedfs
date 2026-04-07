@@ -56,7 +56,9 @@ Current `Phase 20` reading:
 1. the hard-blocker closure set is `Implemented`
 2. the hard-blocker closure set is `Developer-validated` on the bounded acceptance subset
 3. the hard-blocker closure set is not yet globally `Tester-validated` just because the developer proof passed
-4. tester automation now has a metadata-driven suite entry for `Stage 0`, but the current hardware run still fails at the known first-write `dd_write` / `sync_all` barrier issue, so acceptance remains pending
+4. tester automation now has metadata-driven suite entries for both `Stage 0` and `Stage 1`
+5. `Stage 0` bootstrap closure is now proven on real hosts: `create -> 10s wait -> 4k fsync -> publish_healthy`
+6. the remaining hardware failure has been isolated to `Stage 1` sustained workload under the default `64MB` WAL budget, so overall acceptance still remains pending
 
 ## Tester Validation Still Required
 
@@ -79,8 +81,9 @@ only "currently believed" but regression-frozen.
 Current tester status:
 
 1. the metadata-driven suite pipeline now runs end-to-end: build, deploy, remote scenario execution, and evidence collection
-2. `P20-H0` currently starts and runs remotely, but the first hardware run still fails in `record-before` on the known first-write `dd_write` path
-3. this means tester infrastructure is now real and reusable, but `Stage 0` is not yet a passing acceptance artifact
+2. `P20-H0` is now a passing hardware artifact for the bounded bootstrap claim and should be treated as the `Stage 0` closure case
+3. the failing `record-before` workload has been moved conceptually into `Stage 1`, where it now reads as a WAL-budget / sustained-I/O issue rather than a bootstrap protocol gap
+4. this means tester infrastructure is real and reusable, `Stage 0` is closed, and the next hardware blocker is the master-managed WAL-size gap for `Stage 1`
 
 This checklist is intentionally concrete. Each row should answer:
 

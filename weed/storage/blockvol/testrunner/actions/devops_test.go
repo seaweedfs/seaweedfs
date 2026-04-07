@@ -1,6 +1,10 @@
 package actions
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
@@ -31,6 +35,8 @@ func TestDevOpsActions_Registration(t *testing.T) {
 		"block_promote",
 		"wait_volume_healthy",
 		"discover_primary",
+		"collect_glog",
+		"collect_debug",
 	}
 
 	for _, name := range expected {
@@ -47,8 +53,8 @@ func TestDevOpsActions_Tier(t *testing.T) {
 	byTier := registry.ListByTier()
 	devopsActions := byTier[tr.TierDevOps]
 
-	if len(devopsActions) != 17 {
-		t.Errorf("devops tier has %d actions, want 17", len(devopsActions))
+	if len(devopsActions) != 19 {
+		t.Errorf("devops tier has %d actions, want 19", len(devopsActions))
 	}
 
 	// Verify all are in devops tier.
@@ -104,8 +110,8 @@ func TestAllActions_Registration(t *testing.T) {
 	if n := len(byTier[tr.TierBlock]); n != 64 {
 		t.Errorf("block: %d, want 64", n)
 	}
-	if n := len(byTier[tr.TierDevOps]); n != 17 {
-		t.Errorf("devops: %d, want 17", n)
+	if n := len(byTier[tr.TierDevOps]); n != 19 {
+		t.Errorf("devops: %d, want 19", n)
 	}
 	if n := len(byTier[tr.TierChaos]); n != 5 {
 		t.Errorf("chaos: %d, want 5", n)
@@ -114,13 +120,65 @@ func TestAllActions_Registration(t *testing.T) {
 		t.Errorf("k8s: %d, want 14", n)
 	}
 
-	// Total should be 116 (115 prev + 1 recovery: measure_rebuild).
+	// Total should reflect the currently registered cross-tier action set.
 	total := 0
 	for _, actions := range byTier {
 		total += len(actions)
 	}
-	if total != 117 {
-		t.Errorf("total actions: %d, want 117", total)
+	if total != 119 {
+		t.Errorf("total actions: %d, want 119", total)
+	}
+}
+
+func TestCreateBlockVolume_ParsesAndForwardsWALSize(t *testing.T) {
+	var captured blockapi.CreateVolumeRequest
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/block/volume" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&captured); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(blockapi.VolumeInfo{
+			Name:         captured.Name,
+			VolumeServer: "vs1:9333",
+			SizeBytes:    captured.SizeBytes,
+			ISCSIAddr:    "127.0.0.1:3260",
+			IQN:          "iqn.2024.test:vol",
+		})
+	}))
+	defer ts.Close()
+
+	actx := &tr.ActionContext{
+		Vars: map[string]string{
+			"master_url": ts.URL,
+		},
+		Log: func(string, ...interface{}) {},
+	}
+	act := tr.Action{
+		Action: "create_block_volume",
+		Params: map[string]string{
+			"name":            "wal-sized-vol",
+			"size":            "1G",
+			"wal_size":        "256M",
+			"replica_factor":  "2",
+			"durability_mode": "sync_all",
+		},
+		SaveAs: "vol",
+	}
+
+	if _, err := createBlockVolume(context.Background(), actx, act); err != nil {
+		t.Fatalf("createBlockVolume: %v", err)
+	}
+	if captured.Name != "wal-sized-vol" {
+		t.Fatalf("name=%q", captured.Name)
+	}
+	if captured.WALSizeBytes != 256<<20 {
+		t.Fatalf("wal_size_bytes=%d, want %d", captured.WALSizeBytes, 256<<20)
+	}
+	if actx.Vars["vol_iqn"] == "" || actx.Vars["vol_iscsi_addr"] == "" {
+		t.Fatalf("expected save_as vars to be populated, vars=%v", actx.Vars)
 	}
 }
 
@@ -216,9 +274,9 @@ func TestVolumeHealthyReady_AllowsSyncAllOnlyAfterPublishHealthy(t *testing.T) {
 			wantReady: true,
 		},
 		{
-			name: "nil_info_rejected",
-			info: nil,
-			wantReady: false,
+			name:       "nil_info_rejected",
+			info:       nil,
+			wantReady:  false,
 			wantReason: "missing",
 		},
 	}

@@ -10,6 +10,7 @@ import (
 type CreateVolumeRequest struct {
 	Name             string `json:"name"`
 	SizeBytes        uint64 `json:"size_bytes"`
+	WALSizeBytes     uint64 `json:"wal_size_bytes,omitempty"`
 	ReplicaPlacement string `json:"replica_placement"`         // SeaweedFS placement string: "000", "001", "010", "100"
 	DiskType         string `json:"disk_type"`                 // e.g. "ssd", "hdd"
 	DurabilityMode   string `json:"durability_mode,omitempty"` // "best_effort", "sync_all", "sync_quorum"
@@ -46,10 +47,10 @@ type VolumeInfo struct {
 	// CP11B-4: Operator-facing health state.
 	HealthState string `json:"health_state"` // "healthy", "degraded", "rebuilding", "unsafe"
 	// CP13-9: Normalized volume mode for constrained-runtime surfaces.
-	VolumeMode              string `json:"volume_mode,omitempty"`               // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
-	VolumeModeReason        string `json:"volume_mode_reason,omitempty"`
-	EngineProjectionMode    string `json:"engine_projection_mode,omitempty"`    // T1: VS-local V2 engine projection
-	ClusterReplicationMode  string `json:"cluster_replication_mode,omitempty"`  // T5: master-owned cluster RF2 health
+	VolumeMode             string `json:"volume_mode,omitempty"` // "allocated_only", "bootstrap_pending", "publish_healthy", "degraded", "needs_rebuild"
+	VolumeModeReason       string `json:"volume_mode_reason,omitempty"`
+	EngineProjectionMode   string `json:"engine_projection_mode,omitempty"`   // T1: VS-local V2 engine projection
+	ClusterReplicationMode string `json:"cluster_replication_mode,omitempty"` // T5: master-owned cluster RF2 health
 }
 
 // ResolvedPolicyResponse is the response for POST /block/volume/resolve.

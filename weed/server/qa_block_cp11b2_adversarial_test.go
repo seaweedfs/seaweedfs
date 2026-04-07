@@ -150,7 +150,7 @@ func TestQA_CP11B2_PlanThenCreate_OrderedCandidateParity(t *testing.T) {
 
 	// Record which servers create tries, in order.
 	var createAttempts []string
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		createAttempts = append(createAttempts, server)
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
@@ -198,7 +198,7 @@ func TestQA_CP11B2_PlanThenCreate_ReplicaOrderParity(t *testing.T) {
 	ms := qaPlanMaster(t)
 
 	var allocOrder []string
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocOrder = append(allocOrder, server)
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
@@ -252,7 +252,7 @@ func TestQA_CP11B2_Create_FallbackOnRPCFailure(t *testing.T) {
 	ms := qaPlanMaster(t)
 
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount == 1 {
 			return nil, fmt.Errorf("simulated RPC failure")
@@ -574,7 +574,7 @@ func TestQA_CP11B2_FailedPrimary_TriedAsReplica(t *testing.T) {
 	ms := qaPlanMaster(t)
 	var allocLog []string
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		allocLog = append(allocLog, server)
 		callCount++
 		if callCount == 1 {

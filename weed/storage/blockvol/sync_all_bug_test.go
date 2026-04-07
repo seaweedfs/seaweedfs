@@ -371,6 +371,59 @@ func TestSyncAll_MultipleFlush_NoWritesBetween(t *testing.T) {
 	}
 }
 
+// TestSyncAll_LateConfiguredShipper_FirstBarrierReplaysBacklog captures the
+// integrated Stage 0 shape: writes can land before the VS finishes shipper
+// configuration, and the first fsync-triggered barrier must replay that
+// retained backlog instead of failing with a remote I/O error.
+func TestSyncAll_LateConfiguredShipper_FirstBarrierReplaysBacklog(t *testing.T) {
+	primary, replica := createSyncAllPair(t)
+	defer primary.Close()
+	defer replica.Close()
+
+	// Writes happen before any replica transport is configured.
+	for i := 0; i < 4; i++ {
+		if err := primary.WriteLBA(uint64(i), makeBlock(byte('a'+i))); err != nil {
+			t.Fatalf("pre-config write %d: %v", i, err)
+		}
+	}
+
+	recv, err := NewReplicaReceiver(replica, "127.0.0.1:0", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv.Serve()
+	defer recv.Stop()
+
+	// Configure the shipper after backlog already exists.
+	primary.SetReplicaAddr(recv.DataAddr(), recv.CtrlAddr())
+
+	syncDone := make(chan error, 1)
+	go func() {
+		syncDone <- primary.SyncCache()
+	}()
+
+	select {
+	case err := <-syncDone:
+		if err != nil {
+			t.Fatalf("SyncCache after late shipper config failed: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("SyncCache after late shipper config hung")
+	}
+
+	replica.flusher.FlushOnce()
+	for i := 0; i < 4; i++ {
+		got, err := replica.ReadLBA(uint64(i), 4096)
+		if err != nil {
+			t.Fatalf("replica ReadLBA(%d): %v", i, err)
+		}
+		expected := byte('a' + i)
+		if got[0] != expected {
+			t.Fatalf("replica LBA %d: expected %c, got %c", i, expected, got[0])
+		}
+	}
+}
+
 // --- Helpers ---
 
 func createSyncAllPair(t *testing.T) (primary *BlockVol, replica *BlockVol) {

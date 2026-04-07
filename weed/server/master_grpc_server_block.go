@@ -86,7 +86,7 @@ func (ms *MasterServer) CreateBlockVolume(ctx context.Context, req *master_pb.Cr
 	for attempt := 0; attempt < len(placement.Candidates); attempt++ {
 		server := placement.Candidates[attempt]
 
-		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
+		result, err := ms.blockVSAllocate(ctx, server, req.Name, req.SizeBytes, req.WalSizeBytes, req.DiskType, req.DurabilityMode)
 		if err != nil {
 			lastErr = fmt.Errorf("server %s: %w", server, err)
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: attempt %d on %s failed: %v", blockReqID(ctx), req.Name, attempt+1, server, err)
@@ -281,7 +281,7 @@ func lookupResponseFromEntry(entry *BlockVolumeEntry) *master_pb.LookupBlockVolu
 // Returns the replica server address on success, or empty string on failure (F4).
 func (ms *MasterServer) tryCreateOneReplica(ctx context.Context, req *master_pb.CreateBlockVolumeRequest, entry *BlockVolumeEntry, primaryResult *blockAllocResult, candidates []string) string {
 	for _, replicaServerStr := range candidates {
-		replicaResult, err := ms.blockVSAllocate(ctx, replicaServerStr, req.Name, req.SizeBytes, req.DiskType, req.DurabilityMode)
+		replicaResult, err := ms.blockVSAllocate(ctx, replicaServerStr, req.Name, req.SizeBytes, req.WalSizeBytes, req.DiskType, req.DurabilityMode)
 		if err != nil {
 			glog.V(0).Infof("[reqID=%s] CreateBlockVolume %q: replica on %s failed: %v", blockReqID(ctx), req.Name, replicaServerStr, err)
 			continue

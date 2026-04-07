@@ -27,7 +27,7 @@ func qaDurabilityMaster(t *testing.T) *MasterServer {
 		blockAssignmentQueue: NewBlockAssignmentQueue(),
 		blockFailover:        newBlockFailoverState(),
 	}
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		return &blockAllocResult{
 			Path:              fmt.Sprintf("/data/%s.blk", name),
 			IQN:               fmt.Sprintf("iqn.2024.test:%s", name),
@@ -389,7 +389,7 @@ func TestDurability_SyncAll_PartialReplicaFails(t *testing.T) {
 
 	// Make replica allocation always fail.
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount > 1 {
 			// Replica calls fail.
@@ -442,7 +442,7 @@ func TestDurability_BestEffort_PartialReplicaOK(t *testing.T) {
 
 	// Make replica allocation fail.
 	callCount := 0
-	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
+	ms.blockVSAllocate = func(ctx context.Context, server string, name string, sizeBytes uint64, walSizeBytes uint64, diskType string, durabilityMode string) (*blockAllocResult, error) {
 		callCount++
 		if callCount > 1 {
 			return nil, fmt.Errorf("disk full")
