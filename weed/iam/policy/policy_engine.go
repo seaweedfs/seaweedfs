@@ -1061,7 +1061,7 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatchCaseSensitive(expandedExpected, contextValue) {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
@@ -1102,7 +1102,7 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatchCaseSensitive(expandedExpected, contextValue) {
+						if wildcard.MatchesWildcard(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
@@ -1223,7 +1223,7 @@ func awsIAMMatch(pattern, value string, evalCtx *EvaluationContext) bool {
 
 	// Step 4: Handle AWS-style wildcards (case-insensitive)
 	if strings.Contains(expandedPattern, "*") || strings.Contains(expandedPattern, "?") {
-		return AwsWildcardMatch(expandedPattern, value)
+		return wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(value))
 	}
 
 	return false
@@ -1257,16 +1257,6 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 	})
 
 	return result
-}
-
-// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
-func AwsWildcardMatch(pattern, value string) bool {
-	return wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(value))
-}
-
-// AwsWildcardMatchCaseSensitive performs case-sensitive wildcard matching like AWS IAM StringLike
-func AwsWildcardMatchCaseSensitive(pattern, value string) bool {
-	return wildcard.MatchesWildcard(pattern, value)
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
@@ -1313,7 +1303,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1335,7 +1325,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}
@@ -1375,7 +1365,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 				case string:
 					expandedPattern := expandPolicyVariables(v, evalCtx)
 					if useWildcard {
-						if AwsWildcardMatch(expandedPattern, ctxStr) {
+						if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 							itemMatchedSet = true
 						}
 					} else {
@@ -1397,7 +1387,7 @@ func (e *PolicyEngine) evaluateStringConditionIgnoreCase(block map[string]interf
 					for _, valStr := range slice {
 						expandedPattern := expandPolicyVariables(valStr, evalCtx)
 						if useWildcard {
-							if AwsWildcardMatch(expandedPattern, ctxStr) {
+							if wildcard.MatchesWildcard(strings.ToLower(expandedPattern), strings.ToLower(ctxStr)) {
 								itemMatchedSet = true
 								break
 							}

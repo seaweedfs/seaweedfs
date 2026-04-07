@@ -1,8 +1,10 @@
 package policy
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -286,7 +288,7 @@ func TestAWSWildcardMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := AwsWildcardMatch(tt.pattern, tt.value)
+			result := wildcard.MatchesWildcard(strings.ToLower(tt.pattern), strings.ToLower(tt.value))
 			assert.Equal(t, tt.expected, result, "AWS wildcard match should match expected")
 		})
 	}
