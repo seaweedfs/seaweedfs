@@ -248,6 +248,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 			glog.Fatalf("%s bootstrap from %+v: %v", option.Host, existingNodes, err)
 		}
 	}
+	v.SetDefault("filer.options.s3.empty_folder_cleanup_delay", "2m")
+	if d, err := time.ParseDuration(v.GetString("filer.options.s3.empty_folder_cleanup_delay")); err == nil {
+		fs.filer.EmptyFolderCleanupDelay = d
+	}
 	fs.filer.AggregateFromPeers(option.Host, existingNodes, startFromTime)
 
 	fs.filer.LoadFilerConf()

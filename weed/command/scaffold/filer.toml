@@ -13,6 +13,9 @@
 # recursive_delete will delete all sub folders and files, similar to "rm -Rf"
 recursive_delete = false
 #max_file_name_length = 255
+# for S3: how long to wait before deleting an empty folder.
+# increase this if using tools like Spark that create temporary directories.
+#s3.empty_folder_cleanup_delay = "2m"
 
 ####################################################
 # The following are filer store options
