@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"text/tabwriter"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -322,13 +323,14 @@ func runS3UserList(ctx context.Context, store s3ShellStore, writer io.Writer) er
 	}
 	sort.Strings(usernames)
 
-	fmt.Fprintln(writer, "NAME\tSOURCE\tSTATUS\tACCESS KEYS\tPOLICIES")
+	tw := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tSOURCE\tSTATUS\tACCESS KEYS\tPOLICIES")
 	for _, username := range usernames {
 		identity, err := store.GetUser(ctx, username)
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%d\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%d\n",
 			identity.Name,
 			s3IdentitySource(identity),
 			s3IdentityStatus(identity),
@@ -336,7 +338,7 @@ func runS3UserList(ctx context.Context, store s3ShellStore, writer io.Writer) er
 			len(identity.PolicyNames),
 		)
 	}
-	return nil
+	return tw.Flush()
 }
 
 func runS3UserShow(ctx context.Context, store s3ShellStore, username string, writer io.Writer) error {
@@ -441,14 +443,15 @@ func runS3UserAccessKeyList(ctx context.Context, store s3ShellStore, username st
 		return err
 	}
 
-	fmt.Fprintf(writer, "USER\tACCESS KEY\tSTATUS\n")
+	tw := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "USER\tACCESS KEY\tSTATUS")
 	for _, credential := range sortedCredentials(identity.Credentials) {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", username, credential.AccessKey, s3CredentialStatus(credential))
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", username, credential.AccessKey, s3CredentialStatus(credential))
 	}
 	if len(identity.Credentials) == 0 {
-		fmt.Fprintf(writer, "%s\t%s\t%s\n", username, "-", "-")
+		fmt.Fprintf(tw, "%s\t%s\t%s\n", username, "-", "-")
 	}
-	return nil
+	return tw.Flush()
 }
 
 func runS3UserAccessKeyCreate(ctx context.Context, store s3ShellStore, opts s3AccessKeyCreateOptions, writer io.Writer) error {
@@ -685,7 +688,7 @@ func s3ShellIsNotFound(err error) bool {
 	if st, ok := status.FromError(err); ok && st.Code() == codes.NotFound {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "not found")
+	return false
 }
 
 func s3ShellIsAlreadyExists(err error) bool {
@@ -698,7 +701,7 @@ func s3ShellIsAlreadyExists(err error) bool {
 	if st, ok := status.FromError(err); ok && st.Code() == codes.AlreadyExists {
 		return true
 	}
-	return strings.Contains(strings.ToLower(err.Error()), "already exists")
+	return false
 }
 
 func ternary[T any](cond bool, onTrue, onFalse T) T {

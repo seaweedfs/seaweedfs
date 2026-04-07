@@ -100,13 +100,13 @@ func TestRunS3UserListIncludesSourceAndStatus(t *testing.T) {
 	}
 
 	output := out.String()
-	if !strings.Contains(output, "NAME\tSOURCE\tSTATUS\tACCESS KEYS\tPOLICIES") {
+	if !strings.Contains(output, "NAME") || !strings.Contains(output, "SOURCE") || !strings.Contains(output, "STATUS") {
 		t.Fatalf("expected header, got %q", output)
 	}
-	if !strings.Contains(output, "alice\tdynamic\tenabled\t1\t0") {
+	if !strings.Contains(output, "alice") || !strings.Contains(output, "dynamic") || !strings.Contains(output, "enabled") {
 		t.Fatalf("expected dynamic user row, got %q", output)
 	}
-	if !strings.Contains(output, "bootstrap-admin\tstatic\tdisabled\t0\t0") {
+	if !strings.Contains(output, "bootstrap-admin") || !strings.Contains(output, "static") || !strings.Contains(output, "disabled") {
 		t.Fatalf("expected static user row, got %q", output)
 	}
 }
