@@ -65,7 +65,10 @@ func (c *commandS3PolicyAttach) Do(args []string, commandEnv *CommandEnv, writer
 		// Get the user
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *user})
 		if err != nil {
-			return err
+			return fmt.Errorf("get user %q: %w", *user, err)
+		}
+		if resp.Identity == nil {
+			return fmt.Errorf("user %q returned empty identity", *user)
 		}
 
 		// Check if already attached

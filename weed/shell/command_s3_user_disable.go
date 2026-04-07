@@ -55,7 +55,10 @@ func (c *commandS3UserDisable) Do(args []string, commandEnv *CommandEnv, writer 
 
 		resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *name})
 		if err != nil {
-			return err
+			return fmt.Errorf("get user %q: %w", *name, err)
+		}
+		if resp.Identity == nil {
+			return fmt.Errorf("user %q returned empty identity", *name)
 		}
 
 		if resp.Identity.Disabled {
