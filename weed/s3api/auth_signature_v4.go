@@ -194,6 +194,8 @@ func buildPathWithForwardedPrefix(forwardedPrefix, urlPath string) string {
 	var joined string
 	if strings.HasSuffix(forwardedPrefix, "/") && strings.HasPrefix(urlPath, "/") {
 		joined = forwardedPrefix + urlPath[1:]
+	} else if urlPath == "" {
+		joined = forwardedPrefix
 	} else if !strings.HasSuffix(forwardedPrefix, "/") && !strings.HasPrefix(urlPath, "/") {
 		joined = forwardedPrefix + "/" + urlPath
 	} else {
