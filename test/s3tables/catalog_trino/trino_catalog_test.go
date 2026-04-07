@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -149,8 +150,19 @@ func TestTrinoMultiLevelNamespace(t *testing.T) {
 	t.Logf(">>> Querying data from multi-level namespace table")
 	output = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf(
 		`SELECT COUNT(*) FROM iceberg.%s.%s`, multiNs, tableName))
-	if !strings.Contains(output, "3") {
-		t.Errorf("expected count 3 from multi-level namespace table, got output: %s", output)
+	countStr := strings.TrimSpace(output)
+	// Extract last non-empty line (Trino CSV output may have header noise)
+	if lines := strings.Split(countStr, "\n"); len(lines) > 0 {
+		countStr = strings.TrimSpace(lines[len(lines)-1])
+	}
+	// Strip CSV quotes if present
+	countStr = strings.Trim(countStr, "\"")
+	rowCount, err := strconv.Atoi(countStr)
+	if err != nil {
+		t.Fatalf("failed to parse row count from Trino output %q: %v", output, err)
+	}
+	if rowCount != 3 {
+		t.Errorf("expected row count 3 from multi-level namespace table, got %d (raw output: %s)", rowCount, output)
 	}
 
 	t.Logf(">>> Trino multi-level namespace test passed")
