@@ -79,6 +79,7 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		"tagging": "Tagging", "admin": "Admin",
 	}
 	if *actions != "" {
+		seen := make(map[string]struct{})
 		for _, a := range strings.Split(*actions, ",") {
 			a = strings.TrimSpace(a)
 			if a != "" {
@@ -86,11 +87,18 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 				if !ok {
 					return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", a)
 				}
+				if _, dup := seen[canonical]; dup {
+					continue
+				}
+				seen[canonical] = struct{}{}
 				sa.Actions = append(sa.Actions, canonical)
 			}
 		}
 	}
 
+	if *expiry < 0 {
+		return fmt.Errorf("-expiry must be >= 0")
+	}
 	if *expiry > 0 {
 		sa.Expiration = time.Now().Add(*expiry).Unix()
 	}
