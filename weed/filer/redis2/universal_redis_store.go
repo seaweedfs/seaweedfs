@@ -208,6 +208,7 @@ func (store *UniversalRedis2Store) ListDirectoryEntries(ctx context.Context, dir
 				err = nil
 				continue
 			}
+			break
 		} else {
 			if entry.TtlSec > 0 {
 				if entry.Attr.Crtime.Add(time.Duration(entry.TtlSec) * time.Second).Before(time.Now()) {
