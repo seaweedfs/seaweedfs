@@ -1007,6 +1007,7 @@ func TestMultipartUploadInheritsPutObjectPermission(t *testing.T) {
 	multipartActions := []string{
 		"s3:CreateMultipartUpload",
 		"s3:UploadPart",
+		"s3:UploadPartCopy",
 		"s3:CompleteMultipartUpload",
 		"s3:AbortMultipartUpload",
 		"s3:ListMultipartUploadParts",
@@ -1029,6 +1030,20 @@ func TestMultipartUploadInheritsPutObjectPermission(t *testing.T) {
 			}
 		})
 	}
+
+	// ListBucketMultipartUploads is a bucket-level action; the object-only
+	// resource "arn:aws:s3:::test-bucket/*" should NOT match the bucket ARN.
+	t.Run("s3:ListBucketMultipartUploads bucket ARN", func(t *testing.T) {
+		args := &PolicyEvaluationArgs{
+			Action:    "s3:ListBucketMultipartUploads",
+			Resource:  "arn:aws:s3:::test-bucket",
+			Principal: "*",
+		}
+		result := engine.EvaluatePolicy("test-bucket", args)
+		if result == PolicyResultAllow {
+			t.Error("Object-only resource should not match bucket ARN for ListBucketMultipartUploads")
+		}
+	})
 
 	// s3:PutObject must NOT implicitly grant unrelated actions
 	t.Run("s3:DeleteObject not inherited", func(t *testing.T) {
