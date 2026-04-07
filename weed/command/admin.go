@@ -396,7 +396,11 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 		handler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			// Redirect /prefix (no trailing slash) to /prefix/
 			if req.URL.Path == urlPrefix {
-				http.Redirect(w, req, urlPrefix+"/", http.StatusMovedPermanently)
+				target := urlPrefix + "/"
+				if req.URL.RawQuery != "" {
+					target += "?" + req.URL.RawQuery
+				}
+				http.Redirect(w, req, target, http.StatusFound)
 				return
 			}
 			stripped.ServeHTTP(w, req)
