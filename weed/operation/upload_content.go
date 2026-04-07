@@ -135,6 +135,15 @@ func newUploader(httpClient HTTPClient) *Uploader {
 	}
 }
 
+// NewUploaderWithHttpClient creates an Uploader that uses the provided HTTP
+// client instead of the global one. This is used by filer.sync to upload to
+// remote clusters that use different TLS certificates.
+func NewUploaderWithHttpClient(httpClient HTTPClient) *Uploader {
+	return &Uploader{
+		httpClient: httpClient,
+	}
+}
+
 func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, host string, auth security.EncodedJwt, err error), uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, data []byte) (fileId string, uploadResult *UploadResult, err error) {
 	doUploadFunc := func() error {
 		var host string

@@ -15,12 +15,14 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink/filersink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	statsCollect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
+	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
 	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 	"google.golang.org/grpc"
 )
@@ -164,6 +166,21 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 		}
 	}
 
+	// per-cluster HTTPS clients for volume server connections
+	var httpClientA, httpClientB *util_http_client.HTTPClient
+	if *syncOptions.aSecurity != "" {
+		var err error
+		if httpClientA, err = security.LoadHTTPClientFromFile(*syncOptions.aSecurity); err != nil {
+			glog.Fatalf("load HTTPS client config for filer A: %v", err)
+		}
+	}
+	if *syncOptions.bSecurity != "" {
+		var err error
+		if httpClientB, err = security.LoadHTTPClientFromFile(*syncOptions.bSecurity); err != nil {
+			glog.Fatalf("load HTTPS client config for filer B: %v", err)
+		}
+	}
+
 	grace.SetupProfiling(*syncCpuProfile, *syncMemProfile)
 
 	filerA := pb.ServerAddress(*syncOptions.filerA)
@@ -238,7 +255,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 				*syncOptions.bDoDeleteFiles,
 				aFilerSignature,
 				bFilerSignature,
-				&syncStateA2B)
+				&syncStateA2B,
+				httpClientA,
+				httpClientB)
 			if err != nil {
 				glog.Errorf("sync from %s to %s: %v", *syncOptions.filerA, *syncOptions.filerB, err)
 				time.Sleep(1747 * time.Millisecond)
@@ -279,7 +298,9 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 					*syncOptions.aDoDeleteFiles,
 					bFilerSignature,
 					aFilerSignature,
-					&syncStateB2A)
+					&syncStateB2A,
+					httpClientB,
+					httpClientA)
 				if err != nil {
 					glog.Errorf("sync from %s to %s: %v", *syncOptions.filerB, *syncOptions.filerA, err)
 					time.Sleep(2147 * time.Millisecond)
@@ -308,7 +329,8 @@ func initOffsetFromTsMs(grpcDialOption grpc.DialOption, targetFiler pb.ServerAdd
 }
 
 func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sourcePath string, sourceExcludePaths []string, sourceReadChunkFromFiler bool, targetGrpcDialOption grpc.DialOption, targetFiler pb.ServerAddress, targetPath string,
-	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, chunkConcurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState]) error {
+	replicationStr, collection string, ttlSec int, sinkWriteChunkByFiler bool, diskType string, debug bool, concurrency int, chunkConcurrency int, doDeleteFiles bool, sourceFilerSignature int32, targetFilerSignature int32, statePtr *atomic.Pointer[syncState],
+	sourceHttpClient *util_http_client.HTTPClient, sinkHttpClient *util_http_client.HTTPClient) error {
 
 	// if first time, start from now
 	// if has previously synced, resume from that point of time
@@ -323,9 +345,15 @@ func doSubscribeFilerMetaChanges(clientId int32, clientEpoch int32, sourceGrpcDi
 	filerSource := &source.FilerSource{}
 	filerSource.DoInitialize(sourceFiler.ToHttpAddress(), sourceFiler.ToGrpcAddress(), sourcePath, sourceReadChunkFromFiler)
 	filerSource.SetGrpcDialOption(sourceGrpcDialOption)
+	if sourceHttpClient != nil {
+		filerSource.SetHttpClient(sourceHttpClient)
+	}
 	filerSink := &filersink.FilerSink{}
 	filerSink.DoInitialize(targetFiler.ToHttpAddress(), targetFiler.ToGrpcAddress(), targetPath, replicationStr, collection, ttlSec, diskType, targetGrpcDialOption, sinkWriteChunkByFiler)
 	filerSink.SetChunkConcurrency(chunkConcurrency)
+	if sinkHttpClient != nil {
+		filerSink.SetUploader(operation.NewUploaderWithHttpClient(sinkHttpClient))
+	}
 	filerSink.SetSourceFiler(filerSource)
 
 	persistEventFn := genProcessFunction(sourcePath, targetPath, sourceExcludePaths, nil, nil, nil, filerSink, doDeleteFiles, debug)

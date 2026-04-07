@@ -195,6 +195,62 @@ func getClientCaCert(clientName ClientName) ([]byte, string, error) {
 	return getFileContentFromSecurityConfiguration(clientName, "ca")
 }
 
+// NewHttpClientWithTLS creates an HTTPClient with explicit TLS certificate
+// parameters instead of reading from the global security configuration.
+// This is used by filer.sync to create per-cluster HTTP clients when clusters
+// use different certificates.
+func NewHttpClientWithTLS(certFile, keyFile, caFile string, opts ...HttpClientOpt) (*HTTPClient, error) {
+	httpClient := HTTPClient{}
+	httpClient.expectHttpsScheme = true
+	var tlsConfig *tls.Config
+
+	var clientCert *tls.Certificate
+	if certFile != "" && keyFile != "" {
+		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
+		}
+		clientCert = &cert
+	}
+
+	var caCertPool *x509.CertPool
+	if caFile != "" {
+		caCert, err := os.ReadFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("error reading CA cert %s: %s", caFile, err)
+		}
+		caCertPool, err = createHTTPClientCertPool(caCert, caFile)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	if clientCert != nil || caCertPool != nil {
+		tlsConfig = &tls.Config{
+			Certificates:   []tls.Certificate{},
+			RootCAs:        caCertPool,
+			InsecureSkipVerify: false,
+		}
+		if clientCert != nil {
+			tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)
+		}
+	}
+
+	httpClient.Transport = &http.Transport{
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 1024,
+		TLSClientConfig:     tlsConfig,
+	}
+	httpClient.Client = &http.Client{
+		Transport: httpClient.Transport,
+	}
+
+	for _, opt := range opts {
+		opt(&httpClient)
+	}
+	return &httpClient, nil
+}
+
 func createHTTPClientCertPool(certContent []byte, fileName string) (*x509.CertPool, error) {
 	certPool := x509.NewCertPool()
 	if len(certContent) == 0 {
