@@ -73,24 +73,28 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		// Remove existing actions for this bucket
-		suffix := ":" + *bucket
 		var kept []string
 		for _, a := range identity.Actions {
-			if !strings.HasSuffix(a, suffix) {
+			parts := strings.SplitN(a, ":", 2)
+			if len(parts) != 2 || parts[1] != *bucket {
 				kept = append(kept, a)
 			}
 		}
 
 		// Add new actions unless "none"
-		validActions := map[string]bool{"Read": true, "Write": true, "List": true, "Tagging": true, "Admin": true}
+		canonicalActions := map[string]string{
+			"read": "Read", "write": "Write", "list": "List",
+			"tagging": "Tagging", "admin": "Admin",
+		}
 		if strings.ToLower(strings.TrimSpace(*access)) != "none" {
 			for _, action := range strings.Split(*access, ",") {
 				action = strings.TrimSpace(action)
 				if action != "" {
-					if !validActions[action] {
+					canonical, ok := canonicalActions[strings.ToLower(action)]
+					if !ok {
 						return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", action)
 					}
-					kept = append(kept, action+suffix)
+					kept = append(kept, canonical+":"+*bucket)
 				}
 			}
 		}

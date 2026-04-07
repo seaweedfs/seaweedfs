@@ -64,11 +64,11 @@ func (c *commandS3AnonymousGet) Do(args []string, commandEnv *CommandEnv, writer
 			return err
 		}
 
-		suffix := ":" + *bucket
 		var actions []string
 		for _, a := range resp.Identity.Actions {
-			if strings.HasSuffix(a, suffix) {
-				actions = append(actions, strings.TrimSuffix(a, suffix))
+			parts := strings.SplitN(a, ":", 2)
+			if len(parts) == 2 && parts[1] == *bucket {
+				actions = append(actions, parts[0])
 			}
 		}
 
