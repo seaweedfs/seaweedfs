@@ -8,8 +8,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/weed/util/wildcard"
 )
 
 // Effect represents the policy evaluation result
@@ -20,10 +21,7 @@ const (
 	EffectDeny  Effect = "Deny"
 )
 
-// Package-level regex cache for performance optimization
 var (
-	regexCache            = make(map[string]*regexp.Regexp)
-	regexCacheMu          sync.RWMutex
 	policyVariablePattern = regexp.MustCompile(`\$\{([^}]+)\}`)
 	safePolicyVariables   = map[string]bool{
 		// AWS standard identity variables
@@ -1261,47 +1259,14 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 	return result
 }
 
-// awsWildcardMatchWithKey performs wildcard matching using a prebuilt regex key.
-func awsWildcardMatchWithKey(regexKey, pattern, value string) bool {
-	regexCacheMu.RLock()
-	regex, found := regexCache[regexKey]
-	regexCacheMu.RUnlock()
-
-	if !found {
-		compiledRegex, err := regexp.Compile(regexKey)
-		if err != nil {
-			return strings.EqualFold(pattern, value)
-		}
-
-		regexCacheMu.Lock()
-		if existingRegex, exists := regexCache[regexKey]; exists {
-			regex = existingRegex
-		} else {
-			regexCache[regexKey] = compiledRegex
-			regex = compiledRegex
-		}
-		regexCacheMu.Unlock()
-	}
-
-	return regex.MatchString(value)
-}
-
 // AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
 func AwsWildcardMatch(pattern, value string) bool {
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
-	regexKey := "(?i)^" + regexPattern + "$"
-	return awsWildcardMatchWithKey(regexKey, pattern, value)
+	return wildcard.MatchesWildcard(strings.ToLower(pattern), strings.ToLower(value))
 }
 
 // AwsWildcardMatchCaseSensitive performs case-sensitive wildcard matching like AWS IAM StringLike
 func AwsWildcardMatchCaseSensitive(pattern, value string) bool {
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
-	regexKey := "^" + regexPattern + "$"
-	return awsWildcardMatchWithKey(regexKey, pattern, value)
+	return wildcard.MatchesWildcard(pattern, value)
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
