@@ -92,6 +92,8 @@ func (fs *FilerSink) SetSourceFiler(s *source.FilerSource) {
 
 // SetUploader sets a custom uploader for this sink, used when the target
 // cluster requires different TLS certificates than the global config.
+// Must be called during initialization, before any replication goroutines
+// start, since it writes fs.uploader without synchronization.
 func (fs *FilerSink) SetUploader(uploader *operation.Uploader) {
 	fs.uploader = uploader
 }

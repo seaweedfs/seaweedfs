@@ -238,6 +238,7 @@ func LoadHTTPClientFromFile(configFile string) (*util_http_client.HTTPClient, er
 		resolvePath("https.client.cert"),
 		resolvePath("https.client.key"),
 		resolvePath("https.client.ca"),
+		v.GetBool("https.client.insecure_skip_verify"),
 		util_http_client.AddDialContext,
 	)
 }

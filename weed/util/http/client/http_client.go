@@ -199,10 +199,14 @@ func getClientCaCert(clientName ClientName) ([]byte, string, error) {
 // parameters instead of reading from the global security configuration.
 // This is used by filer.sync to create per-cluster HTTP clients when clusters
 // use different certificates.
-func NewHttpClientWithTLS(certFile, keyFile, caFile string, opts ...HttpClientOpt) (*HTTPClient, error) {
+func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify bool, opts ...HttpClientOpt) (*HTTPClient, error) {
 	httpClient := HTTPClient{}
 	httpClient.expectHttpsScheme = true
 	var tlsConfig *tls.Config
+
+	if (certFile == "") != (keyFile == "") {
+		return nil, fmt.Errorf("both cert and key are required for mTLS, got cert=%q key=%q", certFile, keyFile)
+	}
 
 	var clientCert *tls.Certificate
 	if certFile != "" && keyFile != "" {
@@ -225,11 +229,11 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, opts ...HttpClientOp
 		}
 	}
 
-	if clientCert != nil || caCertPool != nil {
+	if clientCert != nil || caCertPool != nil || insecureSkipVerify {
 		tlsConfig = &tls.Config{
-			Certificates:   []tls.Certificate{},
-			RootCAs:        caCertPool,
-			InsecureSkipVerify: false,
+			Certificates:       []tls.Certificate{},
+			RootCAs:            caCertPool,
+			InsecureSkipVerify: insecureSkipVerify,
 		}
 		if clientCert != nil {
 			tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)

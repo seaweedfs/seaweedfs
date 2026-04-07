@@ -210,6 +210,9 @@ func DownloadFile(fileUrl string, jwt string, offset ...int64) (filename string,
 // instead of the global one. This is used by filer.sync to download from
 // remote clusters that use different TLS certificates.
 func DownloadFileWithClient(client *util_http_client.HTTPClient, fileUrl string, jwt string, offset ...int64) (filename string, header http.Header, resp *http.Response, e error) {
+	if client == nil {
+		return "", nil, nil, fmt.Errorf("nil HTTP client in DownloadFileWithClient")
+	}
 	req, err := http.NewRequest(http.MethodGet, fileUrl, nil)
 	if err != nil {
 		return "", nil, nil, err
