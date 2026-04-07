@@ -418,6 +418,7 @@ func (env *TestEnvironment) writeTrinoConfig(t *testing.T, warehouseBucket strin
 iceberg.catalog.type=rest
 iceberg.rest-catalog.uri=http://host.docker.internal:%d
 iceberg.rest-catalog.warehouse=s3://%s
+iceberg.rest-catalog.nested-namespace-enabled=true
 iceberg.file-format=PARQUET
 iceberg.unique-table-location=true
 
