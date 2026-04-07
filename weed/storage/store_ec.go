@@ -169,7 +169,7 @@ func (s *Store) ReadEcShardNeedle(vid needle.VolumeId, n *needle.Needle, onReadS
 
 			err = n.ReadBytes(bytes, 0, size, localEcVolume.Version)
 			if err != nil {
-				return 0, fmt.Errorf("readbytes: %w", err)
+				return 0, fmt.Errorf("ec volume %d needle %s offset %d size %d: %w", vid, n.String(), offset.ToActualOffset(), size, err)
 			}
 
 			return len(bytes), nil
