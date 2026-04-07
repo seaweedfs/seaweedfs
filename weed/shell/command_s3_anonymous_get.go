@@ -63,6 +63,10 @@ func (c *commandS3AnonymousGet) Do(args []string, commandEnv *CommandEnv, writer
 			}
 			return err
 		}
+		if resp.Identity == nil {
+			fmt.Fprintf(writer, "Bucket: %s\nAccess: none\n", *bucket)
+			return nil
+		}
 
 		var actions []string
 		for _, a := range resp.Identity.Actions {

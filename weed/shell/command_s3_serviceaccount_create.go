@@ -74,11 +74,19 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		CreatedAt: time.Now().Unix(),
 	}
 
+	validActions := map[string]string{
+		"read": "Read", "write": "Write", "list": "List",
+		"tagging": "Tagging", "admin": "Admin",
+	}
 	if *actions != "" {
 		for _, a := range strings.Split(*actions, ",") {
 			a = strings.TrimSpace(a)
 			if a != "" {
-				sa.Actions = append(sa.Actions, a)
+				canonical, ok := validActions[strings.ToLower(a)]
+				if !ok {
+					return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", a)
+				}
+				sa.Actions = append(sa.Actions, canonical)
 			}
 		}
 	}

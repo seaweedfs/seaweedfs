@@ -87,6 +87,7 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 			"tagging": "Tagging", "admin": "Admin",
 		}
 		if strings.ToLower(strings.TrimSpace(*access)) != "none" {
+			seen := make(map[string]struct{})
 			for _, action := range strings.Split(*access, ",") {
 				action = strings.TrimSpace(action)
 				if action != "" {
@@ -94,6 +95,10 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 					if !ok {
 						return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", action)
 					}
+					if _, dup := seen[canonical]; dup {
+						continue
+					}
+					seen[canonical] = struct{}{}
 					kept = append(kept, canonical+":"+*bucket)
 				}
 			}
@@ -120,17 +125,20 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 
 func getOrCreateAnonymousUser(ctx context.Context, client iam_pb.SeaweedIdentityAccessManagementClient) (*iam_pb.Identity, bool, error) {
 	resp, err := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: anonymousUserName})
-	if err == nil && resp.Identity != nil {
+	if err == nil {
+		if resp.Identity == nil {
+			return nil, false, fmt.Errorf("anonymous user returned nil identity")
+		}
 		return resp.Identity, false, nil
 	}
 
 	st, ok := status.FromError(err)
-	if ok && st.Code() == codes.NotFound {
+	if ok && st != nil && st.Code() == codes.NotFound {
 		return &iam_pb.Identity{
 			Name:    anonymousUserName,
 			Actions: []string{},
 		}, true, nil
 	}
 
-	return nil, false, fmt.Errorf("failed to get anonymous user: %v", err)
+	return nil, false, fmt.Errorf("failed to get anonymous user: %w", err)
 }

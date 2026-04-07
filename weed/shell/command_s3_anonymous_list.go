@@ -53,6 +53,10 @@ func (c *commandS3AnonymousList) Do(args []string, commandEnv *CommandEnv, write
 			}
 			return err
 		}
+		if resp.Identity == nil {
+			fmt.Fprintln(writer, "No anonymous access configured.")
+			return nil
+		}
 
 		// Group actions by bucket
 		bucketActions := map[string][]string{}
