@@ -1,6 +1,7 @@
 package shell
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -72,22 +73,34 @@ func RunShell(options ShellOptions) {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	for {
-		cmd, err := line.Prompt("> ")
-		if err != nil {
-			if err != io.EOF {
-				fmt.Printf("%v\n", err)
-			}
-			return
-		}
-
-		if strings.TrimSpace(cmd) != "" {
-			line.AppendHistory(cmd)
-		}
-
-		for _, c := range util.StringSplit(cmd, ";") {
-			if processEachCmd(c, commandEnv) {
+	if liner.TerminalSupported() {
+		for {
+			cmd, err := line.Prompt("> ")
+			if err != nil {
+				if err != io.EOF {
+					fmt.Fprintf(os.Stderr, "%v\n", err)
+				}
 				return
+			}
+
+			if strings.TrimSpace(cmd) != "" {
+				line.AppendHistory(cmd)
+			}
+
+			for _, c := range util.StringSplit(cmd, ";") {
+				if processEachCmd(c, commandEnv) {
+					return
+				}
+			}
+		}
+	} else {
+		scanner := bufio.NewScanner(os.Stdin)
+		for scanner.Scan() {
+			cmd := scanner.Text()
+			for _, c := range util.StringSplit(cmd, ";") {
+				if processEachCmd(c, commandEnv) {
+					return
+				}
 			}
 		}
 	}

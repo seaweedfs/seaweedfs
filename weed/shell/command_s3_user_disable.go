@@ -63,7 +63,7 @@ func (c *commandS3UserDisable) Do(args []string, commandEnv *CommandEnv, writer 
 		}
 
 		if resp.Identity.Disabled {
-			return json.NewEncoder(writer).Encode(map[string]string{"name": *name, "status": "disabled"})
+			return nil
 		}
 
 		resp.Identity.Disabled = true

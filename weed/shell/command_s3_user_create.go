@@ -60,8 +60,10 @@ func (c *commandS3UserCreate) Do(args []string, commandEnv *CommandEnv, writer i
 
 	ak := *accessKey
 	sk := *secretKey
+	generated := false
 
 	if ak == "" && sk == "" {
+		generated = true
 		var err error
 		ak, err = iam.GenerateRandomString(iam.AccessKeyIdLength, iam.CharsetUpper)
 		if err != nil {
@@ -97,8 +99,10 @@ func (c *commandS3UserCreate) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Secret Key: %s\n", sk)
-	fmt.Fprintf(os.Stderr, "Save this secret key - it cannot be retrieved later.\n")
+	if generated {
+		fmt.Fprintf(os.Stderr, "Secret Key: %s\n", sk)
+		fmt.Fprintf(os.Stderr, "Save this secret key - it cannot be retrieved later.\n")
+	}
 
 	return json.NewEncoder(writer).Encode(map[string]string{
 		"name":       *name,
