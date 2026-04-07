@@ -322,9 +322,18 @@ func (efc *EmptyFolderCleaner) executeCleanup(folder string, triggeredBy string)
 	delete(efc.folderCounts, folder)
 	efc.mu.Unlock()
 
-	// Note: No need to recursively check parent folder here.
-	// The deletion of this folder will generate a metadata event,
-	// which will trigger OnDeleteEvent for the parent folder.
+	// After deleting this folder, immediately try to clean the parent.
+	// Relying solely on cascading metadata events would re-enter the full
+	// delay queue for each ancestor level, causing multi-minute cascading
+	// waits (e.g. 3 levels × 2m = 6m+).  Instead, walk up eagerly.
+	parentDir, _ := util.FullPath(folder).DirAndName()
+	if parentDir != "" && parentDir != folder &&
+		efc.bucketPath != "" && isUnderBucketPath(parentDir, efc.bucketPath) {
+		// Remove any pending queue entry for the parent so we don't
+		// double-process it later from a stale event.
+		efc.cleanupQueue.Remove(parentDir)
+		efc.executeCleanup(parentDir, triggeredBy)
+	}
 }
 
 // countItems counts items in a folder (up to maxCountCheck)
