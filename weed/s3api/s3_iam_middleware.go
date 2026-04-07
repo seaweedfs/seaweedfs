@@ -250,19 +250,30 @@ func (s3iam *S3IAMIntegration) AuthorizeAction(ctx context.Context, identity *IA
 		return s3err.ErrAccessDenied
 	}
 
-	// Build resource ARN for the S3 operation
-	resourceArn := buildS3ResourceArn(bucket, objectKey)
-
 	// Extract request context for policy conditions
 	requestContext := extractRequestContext(r)
 
-	// Add s3:prefix to request context based on object key
-	// This ensures that policy conditions referencing s3:prefix (like StringLike)
-	// work correctly for both ListObjects (where objectKey is the prefix) and
-	// object operations (where we treat the object key as the prefix for matching)
-	if objectKey != "" && objectKey != "/" {
+	// Populate s3:prefix from the query parameter for list operations (ListObjectsV1/V2).
+	// In AWS, ListBucket is a bucket-level action: the resource ARN is the bucket
+	// (e.g. arn:aws:s3:::my-bucket) and the prefix is a condition key, not part of
+	// the resource. When the auth middleware propagates the prefix as objectKey we
+	// must strip it back out so that the resource ARN stays at bucket level.
+	// See https://github.com/seaweedfs/seaweedfs/issues/8969
+	listPrefix := r.URL.Query().Get("prefix")
+	resourceObjectKey := objectKey
+	if listPrefix != "" {
+		requestContext["s3:prefix"] = listPrefix
+		// If objectKey was set to the prefix by authRequestWithAuthType, reset it
+		// so the resource ARN uses the bucket-level ARN (matching AWS semantics).
+		if objectKey == listPrefix {
+			resourceObjectKey = ""
+		}
+	} else if objectKey != "" && objectKey != "/" {
 		requestContext["s3:prefix"] = objectKey
 	}
+
+	// Build resource ARN for the S3 operation
+	resourceArn := buildS3ResourceArn(bucket, resourceObjectKey)
 
 	// Add identity claims to request context for policy variables
 	// Only add claim keys if they don't already exist (to avoid overwriting request-derived context)
