@@ -44,7 +44,7 @@ func (c *commandS3IAMExport) Do(args []string, commandEnv *CommandEnv, writer io
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	file := f.String("file", "", "output file path (stdout if omitted)")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {

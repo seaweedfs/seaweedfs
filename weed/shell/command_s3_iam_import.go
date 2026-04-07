@@ -45,7 +45,7 @@ func (c *commandS3IAMImport) Do(args []string, commandEnv *CommandEnv, writer io
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	file := f.String("file", "", "input JSON file")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *file == "" {

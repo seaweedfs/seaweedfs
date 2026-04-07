@@ -48,8 +48,8 @@ func (c *commandS3UserProvision) HasTag(CommandTag) bool {
 }
 
 var rolePolicies = map[string][]string{
-	"readonly":  {"s3:GetObject", "s3:ListBucket"},
-	"readwrite": {"s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket"},
+	"readonly":  {"s3:GetObject"},
+	"readwrite": {"s3:GetObject", "s3:PutObject", "s3:DeleteObject"},
 	"admin":     {"s3:*"},
 }
 
@@ -59,7 +59,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 	bucket := f.String("bucket", "", "bucket name")
 	role := f.String("role", "", "role: readonly, readwrite, or admin")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *name == "" {
@@ -80,6 +80,10 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 	policyName := fmt.Sprintf("%s-%s-%s", *bucket, *name, *role)
 
 	// Build the policy document
+	bucketActions := []string{"s3:ListBucket"}
+	if *role == "admin" {
+		bucketActions = []string{"s3:*"}
+	}
 	policyDoc := map[string]interface{}{
 		"Version": "2012-10-17",
 		"Statement": []map[string]interface{}{
@@ -90,7 +94,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 			},
 			{
 				"Effect":   "Allow",
-				"Action":   []string{"s3:ListBucket"},
+				"Action":   bucketActions,
 				"Resource": []string{fmt.Sprintf("arn:aws:s3:::%s", *bucket)},
 			},
 		},
