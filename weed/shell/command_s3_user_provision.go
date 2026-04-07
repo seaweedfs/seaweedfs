@@ -156,7 +156,11 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		}
 		_, err = client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity})
 		if err != nil {
-			return fmt.Errorf("create user: %v", err)
+			// Rollback: remove the policy we just created
+			if _, delErr := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{Name: policyName}); delErr != nil {
+				fmt.Fprintf(writer, "Warning: failed to rollback policy %q: %v\n", policyName, delErr)
+			}
+			return fmt.Errorf("create user: %w", err)
 		}
 		fmt.Fprintf(writer, "Created user %q with policy %q attached\n", *name, policyName)
 

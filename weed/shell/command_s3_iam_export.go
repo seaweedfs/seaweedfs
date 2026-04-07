@@ -59,7 +59,7 @@ func (c *commandS3IAMExport) Do(args []string, commandEnv *CommandEnv, writer io
 
 		var out io.Writer = writer
 		if *file != "" {
-			fp, err := os.Create(*file)
+			fp, err := os.OpenFile(*file, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 			if err != nil {
 				return fmt.Errorf("create file: %v", err)
 			}
