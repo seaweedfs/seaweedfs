@@ -120,7 +120,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Generate UUID for the new table
 	tableUUID := uuid.New()
-	tablePath := path.Join(encodeNamespace(namespace), req.Name)
+	tablePath := path.Join(flattenNamespacePath(namespace), req.Name)
 	location := strings.TrimSuffix(req.Location, "/")
 	if location == "" {
 		if req.Properties != nil {
@@ -324,7 +324,7 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
-		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, encodeNamespace(namespace), tableName)
+		location = fmt.Sprintf("s3://%s/%s/%s", bucketName, flattenNamespacePath(namespace), tableName)
 	}
 	tableUUID := uuid.Nil
 	if getResp.Metadata != nil && getResp.Metadata.Iceberg != nil && getResp.Metadata.Iceberg.TableUUID != "" {
