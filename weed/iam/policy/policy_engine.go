@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -1064,8 +1063,7 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if AwsWildcardMatchCaseSensitive(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
@@ -1106,13 +1104,11 @@ func (e *PolicyEngine) EvaluateStringCondition(block map[string]interface{}, eva
 				for _, expected := range expectedStrings {
 					expandedExpected := expandPolicyVariables(expected, evalCtx)
 					if useWildcard {
-						// Use filepath.Match for case-sensitive wildcard matching, as required by StringLike
-						if matched, _ := filepath.Match(expandedExpected, contextValue); matched {
+						if AwsWildcardMatchCaseSensitive(expandedExpected, contextValue) {
 							contextValueMatchedSet = true
 							break
 						}
 					} else {
-						// For StringEquals/StringNotEquals, also support policy variables but be case-sensitive
 						if expandedExpected == contextValue {
 							contextValueMatchedSet = true
 							break
@@ -1265,32 +1261,19 @@ func expandPolicyVariables(pattern string, evalCtx *EvaluationContext) string {
 	return result
 }
 
-// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
-func AwsWildcardMatch(pattern, value string) bool {
-	// Create regex pattern key for caching
-	// First escape all regex metacharacters, then replace wildcards
-	regexPattern := regexp.QuoteMeta(pattern)
-	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
-	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
-	regexPattern = "^" + regexPattern + "$"
-	regexKey := "(?i)" + regexPattern
-
-	// Try to get compiled regex from cache
+// awsWildcardMatchWithKey performs wildcard matching using a prebuilt regex key.
+func awsWildcardMatchWithKey(regexKey, pattern, value string) bool {
 	regexCacheMu.RLock()
 	regex, found := regexCache[regexKey]
 	regexCacheMu.RUnlock()
 
 	if !found {
-		// Compile and cache the regex
 		compiledRegex, err := regexp.Compile(regexKey)
 		if err != nil {
-			// Fallback to simple case-insensitive comparison if regex fails
 			return strings.EqualFold(pattern, value)
 		}
 
-		// Store in cache with write lock
 		regexCacheMu.Lock()
-		// Double-check in case another goroutine added it
 		if existingRegex, exists := regexCache[regexKey]; exists {
 			regex = existingRegex
 		} else {
@@ -1301,6 +1284,24 @@ func AwsWildcardMatch(pattern, value string) bool {
 	}
 
 	return regex.MatchString(value)
+}
+
+// AwsWildcardMatch performs case-insensitive wildcard matching like AWS IAM
+func AwsWildcardMatch(pattern, value string) bool {
+	regexPattern := regexp.QuoteMeta(pattern)
+	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
+	regexKey := "(?i)^" + regexPattern + "$"
+	return awsWildcardMatchWithKey(regexKey, pattern, value)
+}
+
+// AwsWildcardMatchCaseSensitive performs case-sensitive wildcard matching like AWS IAM StringLike
+func AwsWildcardMatchCaseSensitive(pattern, value string) bool {
+	regexPattern := regexp.QuoteMeta(pattern)
+	regexPattern = strings.ReplaceAll(regexPattern, "\\*", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "\\?", ".")
+	regexKey := "^" + regexPattern + "$"
+	return awsWildcardMatchWithKey(regexKey, pattern, value)
 }
 
 // evaluateStringConditionIgnoreCase evaluates string conditions with case insensitivity
