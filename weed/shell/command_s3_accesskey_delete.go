@@ -39,7 +39,7 @@ func (c *commandS3AccessKeyDelete) Do(args []string, commandEnv *CommandEnv, wri
 	user := f.String("user", "", "user name")
 	accessKey := f.String("access_key", "", "access key to delete")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *user == "" {

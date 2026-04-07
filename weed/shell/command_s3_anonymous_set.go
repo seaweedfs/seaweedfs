@@ -51,7 +51,7 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 	bucket := f.String("bucket", "", "bucket name")
 	access := f.String("access", "", "comma-separated actions: Read,Write,List,Tagging,Admin or none")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucket == "" {
@@ -82,10 +82,14 @@ func (c *commandS3AnonymousSet) Do(args []string, commandEnv *CommandEnv, writer
 		}
 
 		// Add new actions unless "none"
+		validActions := map[string]bool{"Read": true, "Write": true, "List": true, "Tagging": true, "Admin": true}
 		if strings.ToLower(strings.TrimSpace(*access)) != "none" {
 			for _, action := range strings.Split(*access, ",") {
 				action = strings.TrimSpace(action)
 				if action != "" {
+					if !validActions[action] {
+						return fmt.Errorf("invalid action %q: supported actions are Read, Write, List, Tagging, Admin", action)
+					}
 					kept = append(kept, action+suffix)
 				}
 			}

@@ -39,7 +39,7 @@ func (c *commandS3AccessKeyList) Do(args []string, commandEnv *CommandEnv, write
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	user := f.String("user", "", "user name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *user == "" {

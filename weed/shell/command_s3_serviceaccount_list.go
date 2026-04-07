@@ -42,7 +42,7 @@ func (c *commandS3ServiceAccountList) Do(args []string, commandEnv *CommandEnv, 
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	user := f.String("user", "", "filter by parent user (optional)")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	return pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {

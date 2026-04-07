@@ -42,7 +42,7 @@ func (c *commandS3AnonymousGet) Do(args []string, commandEnv *CommandEnv, writer
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	bucket := f.String("bucket", "", "bucket name")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *bucket == "" {

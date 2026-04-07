@@ -47,7 +47,7 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 	actions := f.String("actions", "", "comma-separated actions (subset of parent)")
 	expiry := f.Duration("expiry", 0, "expiration duration (e.g. 24h, 0 = no expiration)")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *user == "" {
@@ -101,9 +101,7 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 	}
 
 	fmt.Fprintf(writer, "Created service account for user %q\n", *user)
-	if sa.Id != "" {
-		fmt.Fprintf(writer, "ID:         %s\n", sa.Id)
-	}
+	fmt.Fprintln(writer, "Note: use s3.serviceaccount.list to find the server-assigned ID.")
 	fmt.Fprintf(writer, "Access Key: %s\n", ak)
 	fmt.Fprintf(writer, "Secret Key: %s\n", sk)
 	if *description != "" {

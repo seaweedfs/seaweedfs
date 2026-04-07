@@ -39,7 +39,7 @@ func (c *commandS3ServiceAccountShow) Do(args []string, commandEnv *CommandEnv, 
 	f := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
 	id := f.String("id", "", "service account ID")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *id == "" {

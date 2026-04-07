@@ -43,7 +43,7 @@ func (c *commandS3AccessKeyRotate) Do(args []string, commandEnv *CommandEnv, wri
 	user := f.String("user", "", "user name")
 	oldKey := f.String("access_key", "", "access key to rotate")
 	if err := f.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *user == "" {
