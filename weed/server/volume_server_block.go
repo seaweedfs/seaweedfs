@@ -269,6 +269,12 @@ func (bs *BlockService) handleBarrierAccepted(path string, flushedLSN uint64, ch
 			return
 		}
 	}
+	bs.applyCoreEvent(engine.SyncAckObserved{
+		ID:         path,
+		AckKind:    engine.SyncAckQuorum,
+		TargetLSN:  flushedLSN,
+		DurableLSN: flushedLSN,
+	})
 	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: flushedLSN})
 }
 
@@ -286,6 +292,11 @@ func (bs *BlockService) handleBarrierRejected(path string, reason string, ch cha
 	if !ok || proj.Role != engine.RolePrimary {
 		return
 	}
+	bs.applyCoreEvent(engine.SyncAckObserved{
+		ID:      path,
+		AckKind: engine.SyncAckTimedOut,
+		Reason:  reason,
+	})
 	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: reason})
 }
 

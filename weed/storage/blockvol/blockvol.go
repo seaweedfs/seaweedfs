@@ -78,6 +78,8 @@ type BlockVol struct {
 	rebuildServer *RebuildServer
 	assignMu      sync.Mutex    // serializes HandleAssignment calls
 	drainTimeout  time.Duration // default 10s, for demote drain
+	rebuildSessMu sync.RWMutex
+	rebuildSess   *RebuildSession
 
 	// Health score and scrub (CP8-2).
 	healthScore *HealthScore

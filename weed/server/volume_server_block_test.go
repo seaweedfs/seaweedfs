@@ -1756,6 +1756,57 @@ func TestBlockService_BarrierRejectedCallback_UpdatesCoreProjection(t *testing.T
 	if after.Boundary.LastBarrierReason != "barrier_timeout" {
 		t.Fatalf("last_barrier_reason=%q, want %q", after.Boundary.LastBarrierReason, "barrier_timeout")
 	}
+	if after.Sync.AckKind != engine.SyncAckTimedOut {
+		t.Fatalf("sync_ack_kind=%s, want %s", after.Sync.AckKind, engine.SyncAckTimedOut)
+	}
+	if after.Sync.Reason != "barrier_timeout" {
+		t.Fatalf("sync_reason=%q, want %q", after.Sync.Reason, "barrier_timeout")
+	}
+}
+
+func TestBlockService_BarrierAcceptedCallback_UpdatesCoreSyncProjection(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	path := createTestVolDirect(t, bs, "vol-barrier-accepted-callback")
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+	bs.handleBarrierAccepted(path, 12, ch)
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("expected immediate heartbeat notification")
+	}
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after barrier acceptance")
+	}
+	if after.Sync.AckKind != engine.SyncAckQuorum {
+		t.Fatalf("sync_ack_kind=%s, want %s", after.Sync.AckKind, engine.SyncAckQuorum)
+	}
+	if after.Sync.Action != engine.SyncActionKeepUp {
+		t.Fatalf("sync_action=%s, want %s", after.Sync.Action, engine.SyncActionKeepUp)
+	}
+	if after.Sync.DurableLSN != 12 {
+		t.Fatalf("sync_durable_lsn=%d, want 12", after.Sync.DurableLSN)
+	}
 }
 
 func TestBlockService_CreateBlockVol_WiresStateChangeCallbackForNewVolumes(t *testing.T) {

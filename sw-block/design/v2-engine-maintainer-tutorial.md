@@ -133,6 +133,8 @@ See `v2-proof-and-retest-pyramid.md`.
 ## 10. Related documents
 
 - `v2-automata-ownership-map.md` — who owns which automaton.
+- `v2-session-protocol-shape.md` — current VS-to-VS sync/session/data surface.
+- `v2-rebuild-mvp-session-protocol.md` — implementation target for the first rebuild MVP.
 - `v2-protocol-aware-execution.md` — host-side execution gating.
 - `wal-replication-v2-state-machine.md` — replica FSM (design-level).
 - `engine/replication/doc.go` — source-level invariant list (always keep in sync when you change semantics).

@@ -86,6 +86,45 @@ type RecoveryView struct {
 	Reason      string
 }
 
+// SyncAckKind captures the transport/control result of one sync request. The
+// primary derives recovery action from this ack plus the attached facts.
+type SyncAckKind string
+
+const (
+	SyncAckUnknown       SyncAckKind = ""
+	SyncAckQuorum        SyncAckKind = "quorum"
+	SyncAckTimedOut      SyncAckKind = "timed_out"
+	SyncAckTransportLost SyncAckKind = "transport_lost"
+	SyncAckEpochMismatch SyncAckKind = "epoch_mismatch"
+)
+
+// SyncAction captures the primary-owned session decision derived from sync ack
+// facts. It is not replica-owned protocol input.
+type SyncAction string
+
+const (
+	SyncActionKeepUp  SyncAction = "keepup"
+	SyncActionCatchUp SyncAction = "catchup"
+	SyncActionRebuild SyncAction = "rebuild"
+)
+
+// SyncView keeps the latest sync ack facts plus the primary-owned session
+// decision derived from those facts. It remains distinct from durable boundary
+// truth and recovery execution progress.
+type SyncView struct {
+	AckKind        SyncAckKind
+	Action         SyncAction
+	TargetLSN      uint64
+	PrimaryTailLSN uint64
+	DurableLSN     uint64
+	AppliedLSN     uint64
+	Reason         string
+}
+
+// ReplicaSyncView stores the latest sync ack facts for each replica the primary
+// is currently tracking.
+type ReplicaSyncView map[string]SyncView
+
 type commandState struct {
 	RoleEpoch             uint64
 	Role                  VolumeRole
@@ -94,20 +133,33 @@ type commandState struct {
 	ShipperConfigReplicas []ReplicaAssignment
 	RecoveryTaskEpoch     uint64
 	RecoveryTaskTargets   map[string]SessionKind
-	CatchUpTargets        map[string]uint64
-	RebuildTargets        map[string]uint64
+	SessionTargets        map[string]sessionCommandTarget
 	InvalidationIssued    bool
 	InvalidationReason    string
 }
 
-type catchUpObservation struct {
+type sessionCommandTarget struct {
+	Kind      SessionKind
+	TargetLSN uint64
+}
+
+type sessionObservation struct {
+	Kind        SessionKind
+	Phase       RecoveryPhase
 	TargetLSN   uint64
 	AchievedLSN uint64
+	Reason      string
 	Completed   bool
 }
 
-// VolumeState is the minimal V2-core-owned state for one volume on the bounded
-// current path.
+// VolumeState is the minimal V2-core-owned state for one volume.
+//
+// Ownership split:
+//   - Assignment fields normalize master-owned identity truth.
+//   - Sync/ReplicaSync plus catch-up observations normalize primary-owned
+//     session truth.
+//   - Mode/Publication are derived projection only; they are never assigned by
+//     master or replica.
 type VolumeState struct {
 	VolumeID string
 	Epoch    uint64
@@ -119,14 +171,14 @@ type VolumeState struct {
 	Mode            ModeView
 	Publication     PublicationView
 	Recovery        RecoveryView
+	Sync            SyncView
+	ReplicaSync     ReplicaSyncView
 
 	degraded       bool
 	degradeReason  string
-	needsRebuild   bool
-	rebuildReason  string
 	recoveryTarget SessionKind
 	commands       commandState
-	catchUps       map[string]catchUpObservation
+	sessions       map[string]sessionObservation
 }
 
 func newVolumeState(volumeID string) *VolumeState {
@@ -158,22 +210,22 @@ func (s *VolumeState) Snapshot() VolumeState {
 			out.commands.RecoveryTaskTargets[replicaID] = kind
 		}
 	}
-	if s.commands.CatchUpTargets != nil {
-		out.commands.CatchUpTargets = make(map[string]uint64, len(s.commands.CatchUpTargets))
-		for replicaID, target := range s.commands.CatchUpTargets {
-			out.commands.CatchUpTargets[replicaID] = target
+	if s.commands.SessionTargets != nil {
+		out.commands.SessionTargets = make(map[string]sessionCommandTarget, len(s.commands.SessionTargets))
+		for replicaID, target := range s.commands.SessionTargets {
+			out.commands.SessionTargets[replicaID] = target
 		}
 	}
-	if s.commands.RebuildTargets != nil {
-		out.commands.RebuildTargets = make(map[string]uint64, len(s.commands.RebuildTargets))
-		for replicaID, target := range s.commands.RebuildTargets {
-			out.commands.RebuildTargets[replicaID] = target
+	if s.sessions != nil {
+		out.sessions = make(map[string]sessionObservation, len(s.sessions))
+		for replicaID, obs := range s.sessions {
+			out.sessions[replicaID] = obs
 		}
 	}
-	if s.catchUps != nil {
-		out.catchUps = make(map[string]catchUpObservation, len(s.catchUps))
-		for replicaID, obs := range s.catchUps {
-			out.catchUps[replicaID] = obs
+	if s.ReplicaSync != nil {
+		out.ReplicaSync = make(ReplicaSyncView, len(s.ReplicaSync))
+		for replicaID, syncView := range s.ReplicaSync {
+			out.ReplicaSync[replicaID] = syncView
 		}
 	}
 	return out

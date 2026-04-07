@@ -6,7 +6,8 @@ type Event interface {
 	VolumeID() string
 }
 
-// AssignmentDelivered carries the desired local role and replica set.
+// AssignmentDelivered carries master-owned assignment truth: local role, epoch,
+// and replica membership for one volume.
 type AssignmentDelivered struct {
 	ID             string
 	Epoch          uint64
@@ -78,6 +79,21 @@ type BarrierRejected struct {
 
 func (e BarrierRejected) VolumeID() string { return e.ID }
 
+// SyncAckObserved records one sync ack plus the bounded facts the primary needs
+// to decide the next session step (keep-up, catch-up, or rebuild).
+type SyncAckObserved struct {
+	ReplicaID      string
+	ID             string
+	AckKind        SyncAckKind
+	TargetLSN      uint64
+	PrimaryTailLSN uint64
+	DurableLSN     uint64
+	AppliedLSN     uint64
+	Reason         string
+}
+
+func (e SyncAckObserved) VolumeID() string { return e.ID }
+
 // CheckpointAdvanced updates the durable base-image boundary.
 type CheckpointAdvanced struct {
 	ID            string
@@ -85,6 +101,50 @@ type CheckpointAdvanced struct {
 }
 
 func (e CheckpointAdvanced) VolumeID() string { return e.ID }
+
+// SessionStarted begins one primary-owned session contract for a replica.
+type SessionStarted struct {
+	ReplicaID string
+	ID        string
+	Kind      SessionKind
+	TargetLSN uint64
+	Reason    string
+}
+
+func (e SessionStarted) VolumeID() string { return e.ID }
+
+// SessionProgressObserved updates bounded progress for one running session.
+type SessionProgressObserved struct {
+	ReplicaID   string
+	ID          string
+	Kind        SessionKind
+	AchievedLSN uint64
+}
+
+func (e SessionProgressObserved) VolumeID() string { return e.ID }
+
+// SessionCompleted closes one session contract at an explicit achieved boundary.
+type SessionCompleted struct {
+	ReplicaID     string
+	ID            string
+	Kind          SessionKind
+	AchievedLSN   uint64
+	FlushedLSN    uint64
+	CheckpointLSN uint64
+}
+
+func (e SessionCompleted) VolumeID() string { return e.ID }
+
+// SessionFailed reports one failed session attempt without independently choosing
+// the next semantic recovery path.
+type SessionFailed struct {
+	ReplicaID string
+	ID        string
+	Kind      SessionKind
+	Reason    string
+}
+
+func (e SessionFailed) VolumeID() string { return e.ID }
 
 // CatchUpPlanned freezes the current replay target as bounded recovery truth.
 type CatchUpPlanned struct {

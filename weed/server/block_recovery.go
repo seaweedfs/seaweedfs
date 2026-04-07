@@ -316,6 +316,10 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 	}
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
+		if plan.Proof == nil {
+			glog.Warningf("recovery: missing recoverability proof for catch-up plan %s", replicaID)
+			return
+		}
 		if bs.v2Core == nil {
 			rm.executeLegacyCatchUp(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
 			return
@@ -331,17 +335,40 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 		if rm.OnPendingExecution != nil {
 			rm.OnPendingExecution(rctx.volPath, rm.coord.Peek(replicaID))
 		}
+		bs.applyCoreEvent(engine.SyncAckObserved{
+			ID:             rctx.volPath,
+			ReplicaID:      replicaID,
+			AckKind:        engine.SyncAckTimedOut,
+			TargetLSN:      plan.CatchUpTarget,
+			PrimaryTailLSN: plan.Proof.TailLSN,
+			DurableLSN:     rctx.replicaFlushedLSN,
+			AppliedLSN:     plan.Proof.ReplicaFlushedLSN,
+			Reason:         plan.Proof.Reason,
+		})
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(replicaID) {
 			rm.coord.Cancel(replicaID, "start_catchup_not_emitted")
 			return
 		}
 	case engine.OutcomeNeedsRebuild:
+		if plan.Proof == nil {
+			glog.Warningf("recovery: missing recoverability proof for rebuild plan %s", replicaID)
+			return
+		}
 		reason := "needs_rebuild"
 		if plan.Proof != nil && plan.Proof.Reason != "" {
 			reason = plan.Proof.Reason
 		}
-		bs.applyCoreEvent(engine.NeedsRebuildObserved{ID: rctx.volPath, ReplicaID: replicaID, Reason: reason})
+		bs.applyCoreEvent(engine.SyncAckObserved{
+			ID:             rctx.volPath,
+			ReplicaID:      replicaID,
+			AckKind:        engine.SyncAckTimedOut,
+			TargetLSN:      plan.Proof.CommittedLSN,
+			PrimaryTailLSN: plan.Proof.TailLSN,
+			DurableLSN:     plan.Proof.ReplicaFlushedLSN,
+			AppliedLSN:     plan.Proof.ReplicaFlushedLSN,
+			Reason:         reason,
+		})
 		return
 	}
 
@@ -434,9 +461,10 @@ func (rm *RecoveryManager) OnCatchUpFailed(volumeID, replicaID, reason string) {
 		return
 	}
 	glog.V(0).Infof("recovery: catch-up failed for %s via %s (%s)", volumeID, replicaID, reason)
-	rm.bs.applyCoreEvent(engine.NeedsRebuildObserved{
+	rm.bs.applyCoreEvent(engine.SyncAckObserved{
 		ID:        volumeID,
 		ReplicaID: replicaID,
+		AckKind:   engine.SyncAckTransportLost,
 		Reason:    reason,
 	})
 }

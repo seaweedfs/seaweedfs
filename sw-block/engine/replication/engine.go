@@ -8,6 +8,11 @@ import (
 // CoreEngine is the first explicit Phase 14 V2 core shell.
 // It is deterministic and side-effect free: one event in, updated state and
 // commands/projection out.
+//
+// Ownership model:
+//   - master-owned assignment truth enters as assignment events
+//   - primary-owned per-replica session truth enters as sync/recovery events
+//   - outward mode/publication is always derived projection
 type CoreEngine struct {
 	volumes map[string]*VolumeState
 }
@@ -79,160 +84,69 @@ func (e *CoreEngine) ApplyEvent(ev Event) ApplyResult {
 			st.commands.InvalidationReason = v.Reason
 		}
 
+	case SyncAckObserved:
+		cmds = append(cmds, e.applySyncAckObserved(st, v)...)
+
 	case CheckpointAdvanced:
 		if v.CheckpointLSN > st.Boundary.CheckpointLSN {
 			st.Boundary.CheckpointLSN = v.CheckpointLSN
 		}
 
+	case SessionStarted:
+		cmds = append(cmds, e.applySessionStarted(st, v)...)
+
+	case SessionProgressObserved:
+		e.applySessionProgressObserved(st, v)
+
+	case SessionCompleted:
+		e.applySessionCompleted(st, v)
+
+	case SessionFailed:
+		cmds = append(cmds, e.applySessionFailed(st, v)...)
+
 	case CatchUpPlanned:
-		replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID)
-		if ok {
-			st.recordCatchUpPlan(replicaID, v.TargetLSN)
-			targetLSN, achievedLSN, _ := st.catchUpAggregate()
-			st.Recovery.Phase = RecoveryCatchingUp
-			st.Recovery.AchievedLSN = achievedLSN
-			st.Recovery.TargetLSN = targetLSN
-			st.Boundary.TargetLSN = targetLSN
-			st.Boundary.AchievedLSN = achievedLSN
-		} else {
-			st.Recovery.Phase = RecoveryCatchingUp
-			st.Recovery.AchievedLSN = 0
-			if v.TargetLSN > st.Recovery.TargetLSN {
-				st.Recovery.TargetLSN = v.TargetLSN
-			}
-			if v.TargetLSN > st.Boundary.TargetLSN {
-				st.Boundary.TargetLSN = v.TargetLSN
-			}
-		}
-		st.Recovery.Reason = ""
-		if ok && st.shouldStartCatchUp(replicaID, v.TargetLSN) {
-			cmds = append(cmds, StartCatchUpCommand{
-				VolumeID:  st.VolumeID,
-				ReplicaID: replicaID,
-				TargetLSN: v.TargetLSN,
-			})
-			if st.commands.CatchUpTargets == nil {
-				st.commands.CatchUpTargets = make(map[string]uint64)
-			}
-			st.commands.CatchUpTargets[replicaID] = v.TargetLSN
-		}
+		cmds = append(cmds, e.applySessionStarted(st, SessionStarted{
+			ID:        v.ID,
+			ReplicaID: v.ReplicaID,
+			Kind:      SessionCatchUp,
+			TargetLSN: v.TargetLSN,
+		})...)
 
 	case RecoveryProgressObserved:
-		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.observeCatchUpProgress(replicaID, v.AchievedLSN) {
-			_, achievedLSN, _ := st.catchUpAggregate()
-			st.Recovery.AchievedLSN = achievedLSN
-			st.Boundary.AchievedLSN = achievedLSN
-		} else {
-			if v.AchievedLSN > st.Recovery.AchievedLSN {
-				st.Recovery.AchievedLSN = v.AchievedLSN
-			}
-			if v.AchievedLSN > st.Boundary.AchievedLSN {
-				st.Boundary.AchievedLSN = v.AchievedLSN
-			}
-		}
+		e.applySessionProgressObserved(st, SessionProgressObserved{
+			ID:          v.ID,
+			ReplicaID:   v.ReplicaID,
+			AchievedLSN: v.AchievedLSN,
+		})
 
 	case CatchUpCompleted:
-		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.completeCatchUp(replicaID, v.AchievedLSN) {
-			targetLSN, achievedLSN, allDone := st.catchUpAggregate()
-			st.Recovery.TargetLSN = targetLSN
-			st.Recovery.AchievedLSN = achievedLSN
-			st.Boundary.TargetLSN = targetLSN
-			st.Boundary.AchievedLSN = achievedLSN
-			if allDone {
-				if achievedLSN > st.Boundary.DurableLSN {
-					st.Boundary.DurableLSN = achievedLSN
-				}
-				st.Recovery.Phase = RecoveryIdle
-				st.Recovery.Reason = ""
-				st.commands.CatchUpTargets = nil
-				st.catchUps = nil
-			} else {
-				st.Recovery.Phase = RecoveryCatchingUp
-				st.Recovery.Reason = ""
-			}
-		} else {
-			if v.AchievedLSN > st.Recovery.AchievedLSN {
-				st.Recovery.AchievedLSN = v.AchievedLSN
-			}
-			if v.AchievedLSN > st.Boundary.AchievedLSN {
-				st.Boundary.AchievedLSN = v.AchievedLSN
-			}
-			if v.AchievedLSN > st.Boundary.DurableLSN {
-				st.Boundary.DurableLSN = v.AchievedLSN
-			}
-			st.Recovery.Phase = RecoveryIdle
-			st.Recovery.Reason = ""
-			st.commands.CatchUpTargets = nil
-		}
+		e.applySessionCompleted(st, SessionCompleted{
+			ID:          v.ID,
+			ReplicaID:   v.ReplicaID,
+			Kind:        SessionCatchUp,
+			AchievedLSN: v.AchievedLSN,
+		})
 
 	case NeedsRebuildObserved:
-		st.catchUps = nil
-		st.commands.CatchUpTargets = nil
-		st.needsRebuild = true
-		st.rebuildReason = v.Reason
-		st.degraded = false
-		st.degradeReason = ""
-		st.Recovery.Phase = RecoveryNeedsRebuild
-		st.Recovery.Reason = v.Reason
-		if st.shouldInvalidate(v.Reason) {
-			replicaID, _ := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID)
-			cmds = append(cmds, InvalidateSessionCommand{
-				VolumeID:  st.VolumeID,
-				ReplicaID: replicaID,
-				Reason:    v.Reason,
-			})
-			st.commands.InvalidationIssued = true
-			st.commands.InvalidationReason = v.Reason
-		}
+		cmds = append(cmds, e.applyNeedsRebuildObserved(st, v)...)
 
 	case RebuildStarted:
-		st.needsRebuild = true
-		st.Recovery.Phase = RecoveryRebuilding
-		st.Recovery.Reason = st.rebuildReason
-		st.Recovery.AchievedLSN = 0
-		if v.TargetLSN > st.Recovery.TargetLSN {
-			st.Recovery.TargetLSN = v.TargetLSN
-		}
-		if v.TargetLSN > st.Boundary.TargetLSN {
-			st.Boundary.TargetLSN = v.TargetLSN
-		}
-		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(v.ReplicaID); ok && st.shouldStartRebuild(replicaID, v.TargetLSN) {
-			cmds = append(cmds, StartRebuildCommand{
-				VolumeID:  st.VolumeID,
-				ReplicaID: replicaID,
-				TargetLSN: v.TargetLSN,
-			})
-			if st.commands.RebuildTargets == nil {
-				st.commands.RebuildTargets = make(map[string]uint64)
-			}
-			st.commands.RebuildTargets[replicaID] = v.TargetLSN
-		}
+		cmds = append(cmds, e.applySessionStarted(st, SessionStarted{
+			ID:        v.ID,
+			ReplicaID: v.ReplicaID,
+			Kind:      SessionRebuild,
+			TargetLSN: v.TargetLSN,
+		})...)
 
 	case RebuildCommitted:
-		st.needsRebuild = false
-		st.rebuildReason = ""
-		st.degraded = false
-		st.degradeReason = ""
-		st.resetInvalidation()
-		st.Recovery.Phase = RecoveryIdle
-		st.Recovery.Reason = ""
-		if v.FlushedLSN > st.Boundary.DurableLSN {
-			st.Boundary.DurableLSN = v.FlushedLSN
-		}
-		if v.CheckpointLSN > st.Boundary.CheckpointLSN {
-			st.Boundary.CheckpointLSN = v.CheckpointLSN
-		}
-		achievedLSN := v.AchievedLSN
-		if achievedLSN == 0 {
-			achievedLSN = maxUint64(v.FlushedLSN, v.CheckpointLSN)
-		}
-		if achievedLSN > st.Recovery.AchievedLSN {
-			st.Recovery.AchievedLSN = achievedLSN
-		}
-		if achievedLSN > st.Boundary.AchievedLSN {
-			st.Boundary.AchievedLSN = achievedLSN
-		}
-		st.commands.RebuildTargets = nil
+		e.applySessionCompleted(st, SessionCompleted{
+			ID:            v.ID,
+			ReplicaID:     v.ReplicaID,
+			Kind:          SessionRebuild,
+			AchievedLSN:   v.AchievedLSN,
+			FlushedLSN:    v.FlushedLSN,
+			CheckpointLSN: v.CheckpointLSN,
+		})
 	}
 
 	e.recompute(st)
@@ -279,6 +193,7 @@ func (e *CoreEngine) mustState(volumeID string) *VolumeState {
 }
 
 func (e *CoreEngine) recompute(st *VolumeState) {
+	st.refreshRecoveryAggregate()
 	st.Readiness.ReplicaReady = st.Role == RoleReplica &&
 		st.Readiness.RoleApplied &&
 		st.Readiness.ReceiverReady
@@ -287,8 +202,8 @@ func (e *CoreEngine) recompute(st *VolumeState) {
 	st.Publication = PublicationView{}
 
 	switch {
-	case st.needsRebuild:
-		st.Publication.Reason = defaultReason(st.rebuildReason, "needs_rebuild")
+	case st.hasRebuilds():
+		st.Publication.Reason = defaultReason(st.aggregateRebuildReason(), "needs_rebuild")
 		st.Mode.Name = ModeNeedsRebuild
 		st.Mode.Reason = st.Publication.Reason
 	case st.degraded:
@@ -360,13 +275,14 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 		st.degradeReason = ""
 		st.resetInvalidation()
 		st.Recovery = RecoveryView{Phase: RecoveryIdle}
+		st.Sync = SyncView{}
+		st.ReplicaSync = nil
 		st.Boundary.TargetLSN = 0
 		st.Boundary.AchievedLSN = 0
-		st.catchUps = nil
+		st.sessions = nil
 		st.commands.RecoveryTaskEpoch = 0
 		st.commands.RecoveryTaskTargets = nil
-		st.commands.CatchUpTargets = nil
-		st.commands.RebuildTargets = nil
+		st.commands.SessionTargets = nil
 	}
 
 	var cmds []Command
@@ -416,6 +332,182 @@ func (e *CoreEngine) applyAssignment(st *VolumeState, ev AssignmentDelivered) []
 	return cmds
 }
 
+func (e *CoreEngine) applySessionStarted(st *VolumeState, ev SessionStarted) []Command {
+	replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	switch ev.Kind {
+	case SessionRebuild:
+		reason := ev.Reason
+		if reason == "" {
+			reason = st.rebuildReasonForReplica(replicaID)
+		}
+		st.recordRebuild(replicaID, RecoveryRebuilding, reason, ev.TargetLSN)
+		st.Recovery.AchievedLSN = 0
+		if ev.TargetLSN > st.Recovery.TargetLSN {
+			st.Recovery.TargetLSN = ev.TargetLSN
+		}
+		if ev.TargetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = ev.TargetLSN
+		}
+		if !ok {
+			return nil
+		}
+		return st.startSessionCommand(st.VolumeID, replicaID, SessionRebuild, ev.TargetLSN)
+
+	case SessionCatchUp:
+	default:
+		return nil
+	}
+	if ok {
+		st.recordCatchUpPlan(replicaID, ev.TargetLSN)
+		targetLSN, achievedLSN, _ := st.catchUpAggregate()
+		st.Recovery.Phase = RecoveryCatchingUp
+		st.Recovery.AchievedLSN = achievedLSN
+		st.Recovery.TargetLSN = targetLSN
+		st.Boundary.TargetLSN = targetLSN
+		st.Boundary.AchievedLSN = achievedLSN
+	} else {
+		st.Recovery.Phase = RecoveryCatchingUp
+		st.Recovery.AchievedLSN = 0
+		if ev.TargetLSN > st.Recovery.TargetLSN {
+			st.Recovery.TargetLSN = ev.TargetLSN
+		}
+		if ev.TargetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = ev.TargetLSN
+		}
+	}
+	st.Recovery.Reason = ""
+	if !ok {
+		return nil
+	}
+	return st.startSessionCommand(st.VolumeID, replicaID, SessionCatchUp, ev.TargetLSN)
+}
+
+func (e *CoreEngine) applySessionProgressObserved(st *VolumeState, ev SessionProgressObserved) {
+	if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID); ok && st.observeCatchUpProgress(replicaID, ev.AchievedLSN) {
+		_, achievedLSN, _ := st.catchUpAggregate()
+		st.Recovery.AchievedLSN = achievedLSN
+		st.Boundary.AchievedLSN = achievedLSN
+		return
+	}
+	if ev.AchievedLSN > st.Recovery.AchievedLSN {
+		st.Recovery.AchievedLSN = ev.AchievedLSN
+	}
+	if ev.AchievedLSN > st.Boundary.AchievedLSN {
+		st.Boundary.AchievedLSN = ev.AchievedLSN
+	}
+}
+
+func (e *CoreEngine) applySessionCompleted(st *VolumeState, ev SessionCompleted) {
+	if ev.Kind == SessionRebuild {
+		st.degraded = false
+		st.degradeReason = ""
+		replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+		st.clearRebuild(replicaID)
+		if !st.hasRebuilds() {
+			st.resetInvalidation()
+		}
+		st.Recovery.Phase = RecoveryIdle
+		st.Recovery.Reason = ""
+		if ev.FlushedLSN > st.Boundary.DurableLSN {
+			st.Boundary.DurableLSN = ev.FlushedLSN
+		}
+		if ev.CheckpointLSN > st.Boundary.CheckpointLSN {
+			st.Boundary.CheckpointLSN = ev.CheckpointLSN
+		}
+		achievedLSN := ev.AchievedLSN
+		if achievedLSN == 0 {
+			achievedLSN = maxUint64(ev.FlushedLSN, ev.CheckpointLSN)
+		}
+		if achievedLSN > st.Recovery.AchievedLSN {
+			st.Recovery.AchievedLSN = achievedLSN
+		}
+		if achievedLSN > st.Boundary.AchievedLSN {
+			st.Boundary.AchievedLSN = achievedLSN
+		}
+		st.clearSessionCommand(replicaID, SessionRebuild)
+		return
+	}
+
+	if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID); ok && st.completeCatchUp(replicaID, ev.AchievedLSN) {
+		targetLSN, achievedLSN, allDone := st.catchUpAggregate()
+		st.Recovery.TargetLSN = targetLSN
+		st.Recovery.AchievedLSN = achievedLSN
+		st.Boundary.TargetLSN = targetLSN
+		st.Boundary.AchievedLSN = achievedLSN
+		if allDone {
+			if achievedLSN > st.Boundary.DurableLSN {
+				st.Boundary.DurableLSN = achievedLSN
+			}
+			st.Recovery.Phase = RecoveryIdle
+			st.Recovery.Reason = ""
+		} else {
+			st.Recovery.Phase = RecoveryCatchingUp
+			st.Recovery.Reason = ""
+		}
+		return
+	}
+	if ev.AchievedLSN > st.Recovery.AchievedLSN {
+		st.Recovery.AchievedLSN = ev.AchievedLSN
+	}
+	if ev.AchievedLSN > st.Boundary.AchievedLSN {
+		st.Boundary.AchievedLSN = ev.AchievedLSN
+	}
+	if ev.AchievedLSN > st.Boundary.DurableLSN {
+		st.Boundary.DurableLSN = ev.AchievedLSN
+	}
+	st.Recovery.Phase = RecoveryIdle
+	st.Recovery.Reason = ""
+	st.clearSessionCommand("", SessionCatchUp)
+}
+
+func (e *CoreEngine) applyNeedsRebuildObserved(st *VolumeState, ev NeedsRebuildObserved) []Command {
+	replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	st.clearCatchUp(replicaID)
+	st.recordRebuild(replicaID, RecoveryNeedsRebuild, ev.Reason, 0)
+	st.degraded = false
+	st.degradeReason = ""
+	if !st.shouldInvalidate(ev.Reason) {
+		return nil
+	}
+	st.commands.InvalidationIssued = true
+	st.commands.InvalidationReason = ev.Reason
+	return []Command{InvalidateSessionCommand{
+		VolumeID:  st.VolumeID,
+		ReplicaID: replicaID,
+		Reason:    ev.Reason,
+	}}
+}
+
+func (e *CoreEngine) applySessionFailed(st *VolumeState, ev SessionFailed) []Command {
+	replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	switch ev.Kind {
+	case SessionRebuild:
+		st.clearRebuild(replicaID)
+		if !st.hasRebuilds() {
+			st.resetInvalidation()
+		}
+	case SessionCatchUp:
+		st.clearCatchUp(replicaID)
+	}
+	st.clearSessionCommand(replicaID, ev.Kind)
+	st.Recovery.Phase = RecoveryIdle
+	st.Recovery.Reason = ev.Reason
+	st.degraded = true
+	st.degradeReason = defaultReason(ev.Reason, "session_failed")
+	st.Boundary.LastBarrierOK = false
+	st.Boundary.LastBarrierReason = st.degradeReason
+	if !st.shouldInvalidate(st.degradeReason) {
+		return nil
+	}
+	st.commands.InvalidationIssued = true
+	st.commands.InvalidationReason = st.degradeReason
+	return []Command{InvalidateSessionCommand{
+		VolumeID:  st.VolumeID,
+		ReplicaID: replicaID,
+		Reason:    st.degradeReason,
+	}}
+}
+
 func (e *CoreEngine) projectionFor(st *VolumeState) PublicationProjection {
 	replicaIDs := make([]string, 0, len(st.DesiredReplicas))
 	for _, replica := range st.DesiredReplicas {
@@ -428,6 +520,8 @@ func (e *CoreEngine) projectionFor(st *VolumeState) PublicationProjection {
 		Mode:        st.Mode,
 		Publication: st.Publication,
 		Recovery:    st.Recovery,
+		Sync:        st.Sync,
+		ReplicaSync: cloneReplicaSyncView(st.ReplicaSync),
 		Readiness:   st.Readiness,
 		Boundary:    st.Boundary,
 		ReplicaIDs:  replicaIDs,
@@ -478,24 +572,72 @@ func (st *VolumeState) shouldInvalidate(reason string) bool {
 	return !st.commands.InvalidationIssued || st.commands.InvalidationReason != reason
 }
 
-func (st *VolumeState) shouldStartCatchUp(replicaID string, targetLSN uint64) bool {
+func (st *VolumeState) shouldStartSessionCommand(replicaID string, kind SessionKind, targetLSN uint64) bool {
 	if targetLSN == 0 || replicaID == "" {
 		return false
 	}
-	if st.commands.CatchUpTargets == nil {
+	if obs, ok := st.sessions[replicaID]; ok &&
+		obs.Kind == kind &&
+		obs.Completed &&
+		obs.TargetLSN == targetLSN &&
+		obs.AchievedLSN >= targetLSN {
+		return false
+	}
+	if st.commands.SessionTargets == nil {
 		return true
 	}
-	return st.commands.CatchUpTargets[replicaID] != targetLSN
+	target, ok := st.commands.SessionTargets[replicaID]
+	if !ok {
+		return true
+	}
+	return target.Kind != kind || target.TargetLSN != targetLSN
 }
 
-func (st *VolumeState) shouldStartRebuild(replicaID string, targetLSN uint64) bool {
-	if targetLSN == 0 || replicaID == "" {
-		return false
+func (st *VolumeState) startSessionCommand(volumeID, replicaID string, kind SessionKind, targetLSN uint64) []Command {
+	if !st.shouldStartSessionCommand(replicaID, kind, targetLSN) {
+		return nil
 	}
-	if st.commands.RebuildTargets == nil {
-		return true
+	if st.commands.SessionTargets == nil {
+		st.commands.SessionTargets = make(map[string]sessionCommandTarget)
 	}
-	return st.commands.RebuildTargets[replicaID] != targetLSN
+	st.commands.SessionTargets[replicaID] = sessionCommandTarget{
+		Kind:      kind,
+		TargetLSN: targetLSN,
+	}
+	switch kind {
+	case SessionCatchUp:
+		return []Command{StartCatchUpCommand{
+			VolumeID:  volumeID,
+			ReplicaID: replicaID,
+			TargetLSN: targetLSN,
+		}}
+	case SessionRebuild:
+		return []Command{StartRebuildCommand{
+			VolumeID:  volumeID,
+			ReplicaID: replicaID,
+			TargetLSN: targetLSN,
+		}}
+	default:
+		return nil
+	}
+}
+
+func (st *VolumeState) clearSessionCommand(replicaID string, kind SessionKind) {
+	if st.commands.SessionTargets == nil {
+		return
+	}
+	if replicaID == "" {
+		for id, target := range st.commands.SessionTargets {
+			if target.Kind == kind {
+				delete(st.commands.SessionTargets, id)
+			}
+		}
+	} else if target, ok := st.commands.SessionTargets[replicaID]; ok && target.Kind == kind {
+		delete(st.commands.SessionTargets, replicaID)
+	}
+	if len(st.commands.SessionTargets) == 0 {
+		st.commands.SessionTargets = nil
+	}
 }
 
 func (st *VolumeState) resetInvalidation() {
@@ -577,39 +719,62 @@ func (st *VolumeState) recordCatchUpPlan(replicaID string, targetLSN uint64) {
 	if replicaID == "" || targetLSN == 0 {
 		return
 	}
-	if st.catchUps == nil {
-		st.catchUps = make(map[string]catchUpObservation)
+	if st.sessions == nil {
+		st.sessions = make(map[string]sessionObservation)
 	}
-	obs := st.catchUps[replicaID]
+	obs := st.sessions[replicaID]
+	if obs.Kind != SessionCatchUp {
+		obs = sessionObservation{Kind: SessionCatchUp, Phase: RecoveryCatchingUp}
+	}
+	if obs.Completed && obs.TargetLSN == targetLSN && obs.AchievedLSN >= targetLSN {
+		return
+	}
 	if obs.TargetLSN != targetLSN {
 		obs.AchievedLSN = 0
 	}
+	obs.Kind = SessionCatchUp
+	obs.Phase = RecoveryCatchingUp
 	obs.TargetLSN = targetLSN
+	obs.Reason = ""
 	obs.Completed = false
-	st.catchUps[replicaID] = obs
+	st.sessions[replicaID] = obs
+}
+
+func (st *VolumeState) clearCatchUp(replicaID string) {
+	if replicaID == "" || st.sessions == nil {
+		return
+	}
+	if obs, ok := st.sessions[replicaID]; ok && obs.Kind == SessionCatchUp {
+		delete(st.sessions, replicaID)
+	}
+	if len(st.sessions) == 0 {
+		st.sessions = nil
+	}
+	st.clearSessionCommand(replicaID, SessionCatchUp)
 }
 
 func (st *VolumeState) observeCatchUpProgress(replicaID string, achievedLSN uint64) bool {
-	if replicaID == "" || st.catchUps == nil {
+	if replicaID == "" || st.sessions == nil {
 		return false
 	}
-	obs, ok := st.catchUps[replicaID]
-	if !ok {
+	obs, ok := st.sessions[replicaID]
+	if !ok || obs.Kind != SessionCatchUp {
 		return false
 	}
 	if achievedLSN > obs.AchievedLSN {
 		obs.AchievedLSN = achievedLSN
 	}
-	st.catchUps[replicaID] = obs
+	obs.Phase = RecoveryCatchingUp
+	st.sessions[replicaID] = obs
 	return true
 }
 
 func (st *VolumeState) completeCatchUp(replicaID string, achievedLSN uint64) bool {
-	if replicaID == "" || st.catchUps == nil {
+	if replicaID == "" || st.sessions == nil {
 		return false
 	}
-	obs, ok := st.catchUps[replicaID]
-	if !ok {
+	obs, ok := st.sessions[replicaID]
+	if !ok || obs.Kind != SessionCatchUp {
 		return false
 	}
 	if achievedLSN > obs.AchievedLSN {
@@ -618,18 +783,24 @@ func (st *VolumeState) completeCatchUp(replicaID string, achievedLSN uint64) boo
 	if obs.TargetLSN > obs.AchievedLSN {
 		obs.AchievedLSN = obs.TargetLSN
 	}
+	obs.Phase = RecoveryIdle
 	obs.Completed = true
-	st.catchUps[replicaID] = obs
+	st.sessions[replicaID] = obs
 	return true
 }
 
 func (st *VolumeState) catchUpAggregate() (targetLSN uint64, achievedLSN uint64, allDone bool) {
-	if len(st.catchUps) == 0 {
+	if len(st.sessions) == 0 {
 		return 0, 0, true
 	}
 	allDone = true
 	first := true
-	for _, obs := range st.catchUps {
+	found := false
+	for _, obs := range st.sessions {
+		if obs.Kind != SessionCatchUp {
+			continue
+		}
+		found = true
 		if obs.TargetLSN > targetLSN {
 			targetLSN = obs.TargetLSN
 		}
@@ -641,7 +812,120 @@ func (st *VolumeState) catchUpAggregate() (targetLSN uint64, achievedLSN uint64,
 			allDone = false
 		}
 	}
+	if !found {
+		return 0, 0, true
+	}
 	return targetLSN, achievedLSN, allDone
+}
+
+func (st *VolumeState) recordRebuild(replicaID string, phase RecoveryPhase, reason string, targetLSN uint64) {
+	if replicaID == "" {
+		return
+	}
+	if st.sessions == nil {
+		st.sessions = make(map[string]sessionObservation)
+	}
+	if phase == "" {
+		phase = RecoveryNeedsRebuild
+	}
+	obs := st.sessions[replicaID]
+	obs.Kind = SessionRebuild
+	obs.Phase = phase
+	obs.Reason = reason
+	obs.TargetLSN = targetLSN
+	obs.Completed = false
+	st.sessions[replicaID] = obs
+}
+
+func (st *VolumeState) clearRebuild(replicaID string) {
+	if replicaID == "" || st.sessions == nil {
+		return
+	}
+	if obs, ok := st.sessions[replicaID]; ok && obs.Kind == SessionRebuild {
+		delete(st.sessions, replicaID)
+	}
+	if len(st.sessions) == 0 {
+		st.sessions = nil
+	}
+}
+
+func (st *VolumeState) hasRebuilds() bool {
+	for _, obs := range st.sessions {
+		if obs.Kind == SessionRebuild {
+			return true
+		}
+	}
+	return false
+}
+
+func (st *VolumeState) rebuildReasonForReplica(replicaID string) string {
+	if replicaID == "" || st.sessions == nil {
+		return ""
+	}
+	obs, ok := st.sessions[replicaID]
+	if !ok || obs.Kind != SessionRebuild {
+		return ""
+	}
+	return obs.Reason
+}
+
+func (st *VolumeState) aggregateRebuildReason() string {
+	for _, obs := range st.sessions {
+		if obs.Kind == SessionRebuild && obs.Reason != "" {
+			return obs.Reason
+		}
+	}
+	return ""
+}
+
+func (st *VolumeState) refreshRecoveryAggregate() {
+	if st.hasRebuilds() {
+		phase := RecoveryNeedsRebuild
+		reason := ""
+		targetLSN := st.Recovery.TargetLSN
+		for _, obs := range st.sessions {
+			if obs.Kind != SessionRebuild {
+				continue
+			}
+			if obs.Phase == RecoveryRebuilding {
+				phase = RecoveryRebuilding
+			}
+			if reason == "" && obs.Reason != "" {
+				reason = obs.Reason
+			}
+			if obs.TargetLSN > targetLSN {
+				targetLSN = obs.TargetLSN
+			}
+		}
+		st.Recovery.Phase = phase
+		st.Recovery.Reason = reason
+		st.Recovery.TargetLSN = targetLSN
+		if targetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = targetLSN
+		}
+		return
+	}
+	if targetLSN, achievedLSN, allDone := st.catchUpAggregate(); targetLSN > 0 {
+		if allDone {
+			st.Recovery.Phase = RecoveryIdle
+		} else {
+			st.Recovery.Phase = RecoveryCatchingUp
+		}
+		st.Recovery.Reason = ""
+		st.Recovery.TargetLSN = targetLSN
+		st.Recovery.AchievedLSN = achievedLSN
+		if targetLSN > st.Boundary.TargetLSN {
+			st.Boundary.TargetLSN = targetLSN
+		}
+		if achievedLSN > st.Boundary.AchievedLSN {
+			st.Boundary.AchievedLSN = achievedLSN
+		}
+		return
+	}
+	if st.Recovery.Phase == RecoveryNeedsRebuild || st.Recovery.Phase == RecoveryRebuilding || st.Recovery.Phase == RecoveryCatchingUp {
+		st.Recovery.Phase = RecoveryIdle
+		st.Recovery.Reason = ""
+	}
 }
 
 func (st *VolumeState) bootstrapReason() string {
@@ -667,11 +951,172 @@ func (st *VolumeState) recoveryActive() bool {
 	return st.Recovery.Phase == RecoveryCatchingUp || st.Recovery.Phase == RecoveryRebuilding
 }
 
+func (e *CoreEngine) applySyncAckObserved(st *VolumeState, ev SyncAckObserved) []Command {
+	syncView := SyncView{
+		AckKind:        ev.AckKind,
+		TargetLSN:      ev.TargetLSN,
+		PrimaryTailLSN: ev.PrimaryTailLSN,
+		DurableLSN:     ev.DurableLSN,
+		AppliedLSN:     ev.AppliedLSN,
+		Reason:         ev.Reason,
+	}
+	st.Sync = syncView
+	if ev.ReplicaID != "" {
+		if st.ReplicaSync == nil {
+			st.ReplicaSync = make(ReplicaSyncView)
+		}
+		st.ReplicaSync[ev.ReplicaID] = syncView
+	}
+	if ev.DurableLSN > st.Boundary.DurableLSN {
+		st.Boundary.DurableLSN = ev.DurableLSN
+	}
+	switch ev.AckKind {
+	case SyncAckEpochMismatch:
+		st.Boundary.LastBarrierOK = false
+		st.Boundary.LastBarrierReason = defaultReason(ev.Reason, "epoch_mismatch")
+		return nil
+	}
+
+	action, achievedLSN, ok := decideSyncAction(ev)
+	if !ok {
+		if ev.AckKind == SyncAckTimedOut {
+			st.Boundary.LastBarrierOK = false
+			st.Boundary.LastBarrierReason = defaultReason(ev.Reason, string(ev.AckKind))
+		}
+		return nil
+	}
+
+	switch action {
+	case SyncActionKeepUp:
+		st.Boundary.LastBarrierOK = true
+		st.Boundary.LastBarrierReason = ""
+		st.degraded = false
+		st.degradeReason = ""
+		st.Sync.Action = SyncActionKeepUp
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID); ok {
+			st.clearRebuild(replicaID)
+		}
+		if ev.ReplicaID != "" && st.ReplicaSync != nil {
+			st.ReplicaSync[ev.ReplicaID] = st.Sync
+		}
+		return nil
+
+	case SyncActionCatchUp:
+		st.Boundary.LastBarrierOK = false
+		st.Boundary.LastBarrierReason = defaultReason(ev.Reason, string(ev.AckKind))
+		st.degraded = false
+		st.degradeReason = ""
+		st.Sync.Action = SyncActionCatchUp
+		if ev.ReplicaID != "" && st.ReplicaSync != nil {
+			st.ReplicaSync[ev.ReplicaID] = st.Sync
+		}
+		if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID); ok {
+			st.recordCatchUpPlan(replicaID, ev.TargetLSN)
+			if achievedLSN > 0 {
+				st.observeCatchUpProgress(replicaID, achievedLSN)
+			}
+			targetLSN, aggregateAchievedLSN, _ := st.catchUpAggregate()
+			st.Recovery.Phase = RecoveryCatchingUp
+			st.Recovery.TargetLSN = targetLSN
+			st.Recovery.AchievedLSN = aggregateAchievedLSN
+			st.Recovery.Reason = ""
+			st.Boundary.TargetLSN = targetLSN
+			st.Boundary.AchievedLSN = aggregateAchievedLSN
+			return st.startSessionCommand(st.VolumeID, replicaID, SessionCatchUp, ev.TargetLSN)
+		}
+		st.Recovery.Phase = RecoveryCatchingUp
+		st.Recovery.TargetLSN = maxUint64(st.Recovery.TargetLSN, ev.TargetLSN)
+		st.Recovery.AchievedLSN = maxUint64(st.Recovery.AchievedLSN, achievedLSN)
+		st.Recovery.Reason = ""
+		st.Boundary.TargetLSN = maxUint64(st.Boundary.TargetLSN, ev.TargetLSN)
+		st.Boundary.AchievedLSN = maxUint64(st.Boundary.AchievedLSN, achievedLSN)
+		return nil
+
+	case SyncActionRebuild:
+		return e.applySyncNeedsRebuild(st, ev)
+	}
+
+	return nil
+}
+
 func defaultReason(reason, fallback string) string {
 	if reason != "" {
 		return reason
 	}
 	return fallback
+}
+
+func syncAckAchievedLSN(ev SyncAckObserved) uint64 {
+	return maxUint64(ev.DurableLSN, ev.AppliedLSN)
+}
+
+func syncAckSupportsCatchUp(ev SyncAckObserved) bool {
+	if ev.TargetLSN == 0 {
+		return false
+	}
+	return maxUint64(ev.AppliedLSN, ev.DurableLSN) >= ev.PrimaryTailLSN
+}
+
+func syncAckNeedsRebuild(ev SyncAckObserved) bool {
+	if ev.TargetLSN == 0 {
+		return false
+	}
+	return !syncAckSupportsCatchUp(ev)
+}
+
+func decideSyncAction(ev SyncAckObserved) (SyncAction, uint64, bool) {
+	switch ev.AckKind {
+	case SyncAckQuorum:
+		return SyncActionKeepUp, 0, true
+	case SyncAckTimedOut:
+		if syncAckNeedsRebuild(ev) {
+			return SyncActionRebuild, 0, true
+		}
+		if syncAckSupportsCatchUp(ev) {
+			return SyncActionCatchUp, syncAckAchievedLSN(ev), true
+		}
+		return "", 0, false
+	case SyncAckTransportLost:
+		return SyncActionRebuild, 0, true
+	default:
+		return "", 0, false
+	}
+}
+
+func (e *CoreEngine) applySyncNeedsRebuild(st *VolumeState, ev SyncAckObserved) []Command {
+	reason := defaultReason(ev.Reason, "needs_rebuild")
+	replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	st.Sync.Action = SyncActionRebuild
+	if ev.ReplicaID != "" && st.ReplicaSync != nil {
+		st.ReplicaSync[ev.ReplicaID] = st.Sync
+	}
+	st.clearCatchUp(replicaID)
+	st.recordRebuild(replicaID, RecoveryNeedsRebuild, reason, ev.TargetLSN)
+	st.degraded = false
+	st.degradeReason = ""
+	st.Boundary.LastBarrierOK = false
+	st.Boundary.LastBarrierReason = reason
+	if st.shouldInvalidate(reason) {
+		st.commands.InvalidationIssued = true
+		st.commands.InvalidationReason = reason
+		return []Command{InvalidateSessionCommand{
+			VolumeID:  st.VolumeID,
+			ReplicaID: replicaID,
+			Reason:    reason,
+		}}
+	}
+	return nil
+}
+
+func cloneReplicaSyncView(in ReplicaSyncView) ReplicaSyncView {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(ReplicaSyncView, len(in))
+	for replicaID, syncView := range in {
+		out[replicaID] = syncView
+	}
+	return out
 }
 
 func sameReplicaAssignments(left, right []ReplicaAssignment) bool {

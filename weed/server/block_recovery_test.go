@@ -243,6 +243,16 @@ func TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery(t *testing.T) {
 	if proj.Recovery.Phase != engine.RecoveryIdle {
 		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
 	}
+	replicaSync, ok := proj.ReplicaSync[replicaID]
+	if !ok {
+		t.Fatalf("missing replica sync for %s", replicaID)
+	}
+	if replicaSync.AckKind != engine.SyncAckTimedOut {
+		t.Fatalf("sync_ack_kind=%s", replicaSync.AckKind)
+	}
+	if replicaSync.Action != engine.SyncActionCatchUp {
+		t.Fatalf("sync_action=%s", replicaSync.Action)
+	}
 	if got := bs.ExecutedCoreCommands(volPath); len(got) == 0 || got[len(got)-1] != "start_catchup" {
 		t.Fatalf("expected start_catchup execution, got %v", got)
 	}
@@ -296,8 +306,67 @@ func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
 	if proj.Publication.Reason == "" {
 		t.Fatal("expected needs_rebuild reason")
 	}
+	replicaSync, ok := proj.ReplicaSync[replicaID]
+	if !ok {
+		t.Fatalf("missing replica sync for %s", replicaID)
+	}
+	if replicaSync.AckKind != engine.SyncAckTimedOut {
+		t.Fatalf("sync_ack_kind=%s", replicaSync.AckKind)
+	}
+	if replicaSync.Action != engine.SyncActionRebuild {
+		t.Fatalf("sync_action=%s", replicaSync.Action)
+	}
 	if got := bs.ExecutedCoreCommands(volPath); len(got) != 3 {
 		t.Fatalf("needs_rebuild path should not execute start_catchup, got %v", got)
+	}
+}
+
+func TestP16B_OnCatchUpFailed_UsesSyncAckForNeedsRebuild(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            volPath,
+			Epoch:           1,
+			Role:            uint32(blockvol.RolePrimary),
+			ReplicaServerID: "vs2",
+			ReplicaDataAddr: "10.0.0.2:9333",
+			ReplicaCtrlAddr: "10.0.0.2:9334",
+		},
+	})
+
+	replicaID := volPath + "/vs2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil || !sender.HasActiveSession() {
+		t.Fatal("expected active sender session before catch-up failure")
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.OnCatchUpFailed(volPath, replicaID, "recoverability_lost")
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected cached core projection after catch-up failure")
+	}
+	if proj.Mode.Name != engine.ModeNeedsRebuild {
+		t.Fatalf("mode=%s", proj.Mode.Name)
+	}
+	if proj.Recovery.Phase != engine.RecoveryNeedsRebuild {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	replicaSync, ok := proj.ReplicaSync[replicaID]
+	if !ok {
+		t.Fatalf("missing replica sync for %s", replicaID)
+	}
+	if replicaSync.AckKind != engine.SyncAckTransportLost {
+		t.Fatalf("sync_ack_kind=%s", replicaSync.AckKind)
+	}
+	if replicaSync.Reason != "recoverability_lost" {
+		t.Fatalf("sync_reason=%q", replicaSync.Reason)
+	}
+	if sender.HasActiveSession() {
+		t.Fatal("target replica session should be invalidated by sync-negotiated rebuild transition")
 	}
 }
 

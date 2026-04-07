@@ -33,6 +33,8 @@ type StartRecoveryTaskCommand struct {
 	Kind      SessionKind
 }
 
+// StartRecoveryTaskCommand realizes the primary-owned session executor for one
+// replica after assignment has established membership.
 func (StartRecoveryTaskCommand) commandName() string { return "start_recovery_task" }
 
 type DrainRecoveryTaskCommand struct {
@@ -72,4 +74,5 @@ type PublishProjectionCommand struct {
 	Projection PublicationProjection
 }
 
+// PublishProjectionCommand emits the derived outward summary for the volume.
 func (PublishProjectionCommand) commandName() string { return "publish_projection" }
