@@ -1,11 +1,14 @@
 package iamapi
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 
 	"github.com/aws/aws-sdk-go/service/iam"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -39,6 +42,14 @@ func (iama *IamApiServer) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 			}
 			if len(g.PolicyNames) > 0 {
 				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d attached policy(ies)", groupName, len(g.PolicyNames))}
+			}
+			// Check for inline policies
+			policies := Policies{}
+			if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+			}
+			if gp := policies.GroupInlinePolicies[groupName]; len(gp) > 0 {
+				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d inline policy(ies)", groupName, len(gp))}
 			}
 			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
 			return resp, nil
@@ -325,4 +336,162 @@ func buildUserGroupsIndex(s3cfg *iam_pb.S3ApiConfiguration) map[string][]string 
 		}
 	}
 	return index
+}
+
+// PutGroupPolicy attaches an inline policy to a group.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_PutGroupPolicy.html
+func (iama *IamApiServer) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*PutGroupPolicyResponse, *IamError) {
+	resp := &PutGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyName := values.Get("PolicyName")
+	policyDocumentString := values.Get("PolicyDocument")
+	policyDocument, err := GetPolicyDocument(&policyDocumentString)
+	if err != nil {
+		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+	if _, err := GetActions(&policyDocument); err != nil {
+		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
+	}
+
+	// Verify group exists
+	found := false
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+
+	// Persist inline policy
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+	groupPolicies := policies.getOrCreateGroupPolicies(groupName)
+	groupPolicies[policyName] = policyDocument
+	if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+	return resp, nil
+}
+
+// GetGroupPolicy gets an inline policy attached to a group.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_GetGroupPolicy.html
+func (iama *IamApiServer) GetGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*GetGroupPolicyResponse, *IamError) {
+	resp := &GetGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyName := values.Get("PolicyName")
+
+	// Verify group exists
+	found := false
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+
+	if groupPolicies := policies.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		if policyDocument, exists := groupPolicies[policyName]; exists {
+			policyDocumentJSON, err := json.Marshal(policyDocument)
+			if err != nil {
+				return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+			}
+			resp.GetGroupPolicyResult.GroupName = groupName
+			resp.GetGroupPolicyResult.PolicyName = policyName
+			resp.GetGroupPolicyResult.PolicyDocument = string(policyDocumentJSON)
+			return resp, nil
+		}
+	}
+	return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found on group %s", policyName, groupName)}
+}
+
+// DeleteGroupPolicy removes an inline policy from a group.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_DeleteGroupPolicy.html
+func (iama *IamApiServer) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*DeleteGroupPolicyResponse, *IamError) {
+	resp := &DeleteGroupPolicyResponse{}
+	groupName := values.Get("GroupName")
+	policyName := values.Get("PolicyName")
+
+	// Verify group exists
+	found := false
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+	if groupPolicies := policies.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		delete(groupPolicies, policyName)
+		if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+		}
+	}
+	return resp, nil
+}
+
+// ListGroupPolicies lists the names of inline policies attached to a group.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListGroupPolicies.html
+func (iama *IamApiServer) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*ListGroupPoliciesResponse, *IamError) {
+	resp := &ListGroupPoliciesResponse{}
+	groupName := values.Get("GroupName")
+
+	// Verify group exists
+	found := false
+	for _, g := range s3cfg.Groups {
+		if g.Name == groupName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	}
+
+	policies := Policies{}
+	if pErr := iama.s3ApiConfig.GetPolicies(&policies); pErr != nil && !errors.Is(pErr, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
+	}
+	if groupPolicies := policies.GroupInlinePolicies[groupName]; groupPolicies != nil {
+		for policyName := range groupPolicies {
+			resp.ListGroupPoliciesResult.PolicyNames = append(resp.ListGroupPoliciesResult.PolicyNames, policyName)
+		}
+		sort.Strings(resp.ListGroupPoliciesResult.PolicyNames)
+	}
+	resp.ListGroupPoliciesResult.IsTruncated = false
+	return resp, nil
+}
+
+// cleanupGroupInlinePolicies removes all inline policies for a group from persistent storage.
+func cleanupGroupInlinePolicies(iama *IamApiServer, groupName string) {
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil {
+		glog.Warningf("Failed to get policies during group %s cleanup: %v", groupName, err)
+		return
+	}
+	if _, exists := policies.GroupInlinePolicies[groupName]; exists {
+		delete(policies.GroupInlinePolicies, groupName)
+		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+			glog.Warningf("Failed to cleanup inline policies for group %s: %v", groupName, err)
+		}
+	}
 }

@@ -371,6 +371,40 @@ type ListAttachedGroupPoliciesResponse struct {
 	CommonResponse
 }
 
+// PutGroupPolicyResponse is the response for PutGroupPolicy action.
+type PutGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ PutGroupPolicyResponse"`
+	CommonResponse
+}
+
+// GetGroupPolicyResponse is the response for GetGroupPolicy action.
+type GetGroupPolicyResponse struct {
+	XMLName              xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetGroupPolicyResponse"`
+	GetGroupPolicyResult struct {
+		GroupName      string `xml:"GroupName"`
+		PolicyName     string `xml:"PolicyName"`
+		PolicyDocument string `xml:"PolicyDocument"`
+	} `xml:"GetGroupPolicyResult"`
+	CommonResponse
+}
+
+// DeleteGroupPolicyResponse is the response for DeleteGroupPolicy action.
+type DeleteGroupPolicyResponse struct {
+	XMLName xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ DeleteGroupPolicyResponse"`
+	CommonResponse
+}
+
+// ListGroupPoliciesResponse is the response for ListGroupPolicies action.
+type ListGroupPoliciesResponse struct {
+	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupPoliciesResponse"`
+	ListGroupPoliciesResult struct {
+		PolicyNames []string `xml:"PolicyNames>member"`
+		IsTruncated bool     `xml:"IsTruncated"`
+		Marker      string   `xml:"Marker,omitempty"`
+	} `xml:"ListGroupPoliciesResult"`
+	CommonResponse
+}
+
 // ListGroupsForUserResponse is the response for ListGroupsForUser action.
 type ListGroupsForUserResponse struct {
 	XMLName                 xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListGroupsForUserResponse"`

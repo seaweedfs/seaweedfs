@@ -70,6 +70,17 @@ func (p *Policies) getOrCreateUserPolicies(userName string) map[string]policy_en
 	return p.InlinePolicies[userName]
 }
 
+// getOrCreateGroupPolicies returns the policy map for a group, creating it if needed.
+func (p *Policies) getOrCreateGroupPolicies(groupName string) map[string]policy_engine.PolicyDocument {
+	if p.GroupInlinePolicies == nil {
+		p.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+	}
+	if p.GroupInlinePolicies[groupName] == nil {
+		p.GroupInlinePolicies[groupName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	return p.GroupInlinePolicies[groupName]
+}
+
 // computeAggregatedActionsForUser computes the union of actions across all inline policies for a user.
 // Directly accesses user's policies from Policies.InlinePolicies[userName] for O(1) lookup.
 // If policies is non-nil, it uses that instead of fetching from storage (for I/O optimization).
@@ -139,6 +150,10 @@ type Policies struct {
 	// Structure: [userName][policyName] -> PolicyDocument
 	// Enables fast access without iterating all policies
 	InlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"inlinePolicies"`
+
+	// GroupInlinePolicies: group-indexed inline policies for O(1) lookup
+	// Structure: [groupName][policyName] -> PolicyDocument
+	GroupInlinePolicies map[string]map[string]policy_engine.PolicyDocument `json:"groupInlinePolicies,omitempty"`
 }
 
 func Hash(s *string) string {
@@ -1216,6 +1231,38 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 	case "ListAttachedGroupPolicies":
 		var err *IamError
 		response, err = iama.ListAttachedGroupPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "PutGroupPolicy":
+		var err *IamError
+		response, err = iama.PutGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "GetGroupPolicy":
+		var err *IamError
+		response, err = iama.GetGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "DeleteGroupPolicy":
+		var err *IamError
+		response, err = iama.DeleteGroupPolicy(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
+	case "ListGroupPolicies":
+		var err *IamError
+		response, err = iama.ListGroupPolicies(s3cfg, values)
 		if err != nil {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
