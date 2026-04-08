@@ -62,6 +62,49 @@ func (lc *LockClient) NewShortLivedLock(key string, owner string) (lock *LiveLoc
 	return
 }
 
+// NewBlockingLongLivedLock blocks until the lock is acquired, then starts a
+// background renewal goroutine that keeps the lock alive. This combines the
+// synchronous acquisition of NewShortLivedLock with the auto-renewal of
+// StartLongLivedLock. Release with Stop().
+func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.Duration) *LiveLock {
+	if lockTTL == 0 {
+		lockTTL = lock_manager.LiveLockTTL
+	}
+	lock := &LiveLock{
+		key:            key,
+		hostFiler:      lc.seedFiler,
+		cancelCh:       make(chan struct{}),
+		expireAtNs:     time.Now().Add(lockTTL).UnixNano(),
+		grpcDialOption: lc.grpcDialOption,
+		self:           owner,
+		lc:             lc,
+		lockTTL:        lockTTL,
+	}
+	// Block until acquired
+	lock.retryUntilLocked(lockTTL)
+	// Start renewal goroutine
+	renewInterval := lockTTL / 2
+	go func() {
+		for {
+			select {
+			case <-lock.cancelCh:
+				return
+			default:
+				time.Sleep(renewInterval)
+			}
+			select {
+			case <-lock.cancelCh:
+				return
+			default:
+			}
+			if err := lock.AttemptToLock(lockTTL); err != nil {
+				glog.V(0).Infof("lock renewal failed for %s: %v", key, err)
+			}
+		}
+	}()
+	return lock
+}
+
 // StartLongLivedLock starts a goroutine to lock the key and returns immediately.
 // lockTTL specifies how long the lock should be held. The renewal interval is
 // automatically derived as lockTTL / 2 to ensure timely renewals.
