@@ -85,6 +85,10 @@ func (wfs *WFS) flushAllDirtyMetadata() {
 // flushFileMetadata flushes the current file metadata to the filer without
 // flushing dirty pages from memory. This updates chunk references in the filer
 // so volume.fsck can see them, while keeping data in the write buffer.
+//
+// When -dlm is enabled, the distributed lock is already held by the FileHandle
+// from open-for-write through close, so no additional distributed lock is
+// needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 	// Acquire exclusive lock on the file handle
 	fhActiveLock := fh.wfs.fhLockTable.AcquireLock("flushMetadata", fh.fh, util.ExclusiveLock)
