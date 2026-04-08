@@ -118,14 +118,3 @@ type LoggerConfig struct {
 type LoggerFactory interface {
 	CreateLogger(ctx context.Context, config LoggerConfig) (Logger, error)
 }
-
-// BaseTask provides common task functionality
-type UnifiedBaseTask struct {
-	id               string
-	taskType         TaskType
-	progressCallback func(float64, string)
-	logger           Logger
-	cancelled        bool
-	currentStage     string
-	workingDir       string
-}
