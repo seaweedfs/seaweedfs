@@ -149,6 +149,9 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 				return lastTsNs, fmt.Errorf("initial metadata sync from %s: %v", peer, traverseErr)
 			}
 			lastTsNs = traverseStart.UnixNano()
+			if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err != nil {
+				glog.Errorf("failed to save bootstrap offset for peer %s: %v", peer, err)
+			}
 			glog.V(0).Infof("completed full metadata sync from peer %s, will stream changes from %v", peer, traverseStart)
 		}
 		defer func(prevTsNs int64) {
@@ -322,7 +325,14 @@ func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) 
 			}
 			entry := FromPbEntry(resp.Directory, resp.Entry)
 			if err := f.Store.InsertEntry(context.Background(), entry); err != nil {
-				return fmt.Errorf("insert entry %s: %w", fullpath, err)
+				// Entry may already exist (root dir, or partial previous bootstrap).
+				if _, findErr := f.Store.FindEntry(context.Background(), entry.FullPath); findErr == nil {
+					if updateErr := f.Store.UpdateEntry(context.Background(), entry); updateErr != nil {
+						return fmt.Errorf("update entry %s: %w", fullpath, updateErr)
+					}
+				} else {
+					return fmt.Errorf("insert entry %s: %w", fullpath, err)
+				}
 			}
 			count++
 			if count%10000 == 0 {
