@@ -142,16 +142,21 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 			lastTsNs = prevTsNs
 		} else if errors.Is(err, ErrKvNotFound) {
 			// No stored offset — this is the first time connecting to this peer.
-			// Traverse the peer's full metadata tree so we get pre-existing data,
-			// then start streaming changes from the max entry time observed.
+			// Traverse the peer's full metadata tree so we get pre-existing data.
+			// Record time before traversal and subtract a safety margin to
+			// account for clock skew between this filer and the peer. Any
+			// duplicate events replayed during the overlap are harmless since
+			// Replay does upserts. We use wall-clock time (same domain as the
+			// metadata stream TsNs) rather than entry Mtime which is a
+			// different concept and can be set to arbitrary values.
+			preTraverseTime := time.Now()
 			glog.V(0).Infof("no previous offset for peer %s, starting full metadata sync", peer)
-			maxTsNs, traverseErr := ma.traversePeerMetadata(f, peer)
-			if traverseErr != nil {
+			if traverseErr := ma.traversePeerMetadata(f, peer); traverseErr != nil {
 				return lastTsNs, fmt.Errorf("initial metadata sync from %s: %v", peer, traverseErr)
 			}
-			lastTsNs = maxTsNs
+			lastTsNs = preTraverseTime.Add(-time.Minute).UnixNano()
 			if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err != nil {
-				glog.Errorf("failed to save bootstrap offset for peer %s: %v", peer, err)
+				return lastTsNs, fmt.Errorf("save bootstrap offset for peer %s: %w", peer, err)
 			}
 			glog.V(0).Infof("completed full metadata sync from peer %s, will stream changes from %v", peer, time.Unix(0, lastTsNs))
 		} else {
@@ -299,14 +304,13 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 // traversePeerMetadata does a full BFS traversal of a peer filer's metadata
 // and inserts all entries into the local store. This is used when a filer
 // connects to a peer for the first time and needs to bootstrap pre-existing data.
-// Returns the maximum Mtime (in nanoseconds) observed across all entries,
-// which serves as a peer-side high-water mark for the subsequent change stream.
-func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) (maxTsNs int64, err error) {
-	err = pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) error {
+	return pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.TraverseBfsMetadata(ctx, &filer_pb.TraverseBfsMetadataRequest{
-			Directory: "/",
+			Directory:        "/",
+			ExcludedPrefixes: []string{SystemLogDir},
 		})
 		if err != nil {
 			return fmt.Errorf("traverse bfs metadata: %w", err)
@@ -323,16 +327,8 @@ func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) 
 			if resp.Entry == nil {
 				continue
 			}
-			// skip filer internal meta logs
 			fullpath := util.Join(resp.Directory, resp.Entry.Name)
-			if strings.HasPrefix(fullpath, SystemLogDir) {
-				continue
-			}
 			entry := FromPbEntry(resp.Directory, resp.Entry)
-			// Track the peer-side high-water mark to avoid clock-skew issues.
-			if mtimeNs := entry.Attr.Mtime.UnixNano(); mtimeNs > maxTsNs {
-				maxTsNs = mtimeNs
-			}
 			if insertErr := f.Store.InsertEntry(context.Background(), entry); insertErr != nil {
 				// Entry may already exist (root dir, or partial previous bootstrap).
 				existing, findErr := f.Store.FindEntry(context.Background(), entry.FullPath)
@@ -356,7 +352,6 @@ func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) 
 		glog.V(0).Infof("synced %d entries total from peer %s", count, peer)
 		return nil
 	})
-	return maxTsNs, err
 }
 
 func (ma *MetaAggregator) readFilerStoreSignature(peer pb.ServerAddress) (sig int32, err error) {
