@@ -146,11 +146,19 @@ func (c *dlmTestCluster) Stop() {
 	})
 }
 
+// masterAddress returns the master address in the format that encodes both
+// HTTP and gRPC ports: "host:httpPort.grpcPort". This is the format that
+// SeaweedFS uses to communicate non-default gRPC ports between components.
+func (c *dlmTestCluster) masterAddress() string {
+	return string(pb.NewServerAddress("127.0.0.1", c.masterPort, c.masterGrpcPort))
+}
+
 func (c *dlmTestCluster) startMaster(configDir string) error {
 	c.masterCmd = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"master",
 		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
 		"-port="+strconv.Itoa(c.masterPort),
 		"-port.grpc="+strconv.Itoa(c.masterGrpcPort),
 		"-mdir="+filepath.Join(c.baseDir, "master"),
@@ -165,9 +173,10 @@ func (c *dlmTestCluster) startVolume(configDir string) error {
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"volume",
 		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
 		"-port="+strconv.Itoa(c.volumePort),
 		"-port.grpc="+strconv.Itoa(c.volumeGrpcPort),
-		"-mserver=127.0.0.1:"+strconv.Itoa(c.masterPort),
+		"-master="+c.masterAddress(),
 		"-dir="+volDir,
 		"-max=10",
 	)
@@ -181,13 +190,18 @@ func (c *dlmTestCluster) startFiler(idx int, configDir string) error {
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"filer",
 		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
 		"-port="+strconv.Itoa(c.filerPorts[idx]),
 		"-port.grpc="+strconv.Itoa(c.filerGrpcPorts[idx]),
-		"-master=127.0.0.1:"+strconv.Itoa(c.masterPort),
-		"-filer.group="+filerGroup,
+		"-master="+c.masterAddress(),
+		"-filerGroup="+filerGroup,
 		"-defaultStoreDir="+filerDir,
 	)
 	return c.startCmd(c.filerCmds[idx], fmt.Sprintf("filer%d", idx))
+}
+
+func (c *dlmTestCluster) filerAddress(idx int) string {
+	return string(pb.NewServerAddress("127.0.0.1", c.filerPorts[idx], c.filerGrpcPorts[idx]))
 }
 
 func (c *dlmTestCluster) startMount(idx int, configDir string) error {
@@ -196,7 +210,7 @@ func (c *dlmTestCluster) startMount(idx int, configDir string) error {
 	c.mountCmds[idx] = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"mount",
-		"-filer=127.0.0.1:"+strconv.Itoa(c.filerPorts[idx]),
+		"-filer="+c.filerAddress(idx),
 		"-dir="+c.mountPoints[idx],
 		"-filer.path=/",
 		"-dirAutoCreate",
