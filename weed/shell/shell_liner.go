@@ -29,7 +29,7 @@ func RunShell(options ShellOptions) {
 		return strings.Compare(a.Name(), b.Name())
 	})
 
-	if !options.Verbose {
+	if !options.Debug {
 		flag.Set("alsologtostderr", "false")
 		flag.Set("logtostderr", "false")
 	}
@@ -78,7 +78,7 @@ func RunShell(options ShellOptions) {
 		if len(filers) > 0 {
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		}
-		if options.Verbose {
+		if options.Debug {
 			if len(filers) > 0 {
 				fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *options.Masters, filers)
 			} else {
