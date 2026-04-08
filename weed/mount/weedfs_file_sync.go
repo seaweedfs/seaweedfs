@@ -167,6 +167,10 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 
 // flushMetadataToFiler sends the file's chunk references and attributes to the filer.
 // This is shared between the synchronous doFlush path and the async flush completion.
+//
+// When -dlm is enabled, the distributed lock is already held by the FileHandle
+// from open-for-write through close, so no additional distributed lock is
+// needed here. The local fhLockTable lock below serializes within this mount.
 func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid uint32) error {
 	fileFullPath := fh.FullPath()
 	glog.V(4).Infof("flushMetadataToFiler %s/%s inode %d fh %d", dir, name, fh.inode, fh.fh)

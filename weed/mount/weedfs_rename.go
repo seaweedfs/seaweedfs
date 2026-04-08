@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -233,6 +234,41 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		wfs.waitForPendingAsyncFlush(inode)
 	}
 
+	// Acquire DLM locks on both old and new paths to prevent another mount
+	// from opening either path for writing during the rename. Lock in
+	// sorted order to prevent deadlocks when two mounts rename in opposite
+	// directions (A→B vs B→A).
+	//
+	// Skip the old-path lock if this mount already holds it via an open
+	// file handle (otherwise we'd deadlock trying to re-acquire our own lock).
+	if wfs.lockClient != nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+
+		// Check if the source file handle already holds a DLM lock on oldPath
+		oldPathAlreadyLocked := false
+		if sourceInode, found := wfs.inodeToPath.GetInode(oldPath); found {
+			if fh, ok := wfs.fhMap.FindFileHandle(sourceInode); ok && fh.dlmLock != nil {
+				oldPathAlreadyLocked = true
+			}
+		}
+
+		// Determine which paths need new DLM locks
+		pathsToLock := []string{string(newPath)}
+		if !oldPathAlreadyLocked {
+			pathsToLock = append(pathsToLock, string(oldPath))
+		}
+		// Sort for consistent lock ordering
+		if len(pathsToLock) == 2 && pathsToLock[0] > pathsToLock[1] {
+			pathsToLock[0], pathsToLock[1] = pathsToLock[1], pathsToLock[0]
+		}
+
+		for _, p := range pathsToLock {
+			dlmLock := wfs.lockClient.NewBlockingLongLivedLock(p, owner, lock_manager.LiveLockTTL)
+			defer dlmLock.Stop()
+		}
+		glog.V(1).Infof("DLM locks acquired for rename %s => %s (oldPathAlreadyLocked=%v)", oldPath, newPath, oldPathAlreadyLocked)
+	}
+
 	// update remote filer
 	request := &filer_pb.StreamRenameEntryRequest{
 		OldDirectory: string(oldDir),
@@ -296,6 +332,23 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// Keep the saved handle path current so any flush fallback
 				// after Forget uses the post-rename location, not the old one.
 				fh.RememberPath(newPath)
+
+				// Migrate the DLM lock from old path to new path so the
+				// lock key matches the current file location. Hold the
+				// fhLockTable to prevent ReleaseHandle from concurrently
+				// stopping the lock during migration.
+				if wfs.lockClient != nil {
+					fhActiveLock := wfs.fhLockTable.AcquireLock("renameDLM", fh.fh, util.ExclusiveLock)
+					if fh.dlmLock != nil {
+						owner := fmt.Sprintf("mount-%d", wfs.signature)
+						fh.dlmLock.Stop()
+						fh.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+							string(newPath), owner, lock_manager.LiveLockTTL,
+						)
+						glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+					}
+					wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+				}
 			}
 			// invalidate attr and data
 			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)

@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"google.golang.org/grpc"
 
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
@@ -82,6 +83,12 @@ type Option struct {
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
+	// EnableDistributedLock enables DLM-based write coordination across mounts.
+	// When true, opening a file for write acquires a distributed lock that is
+	// held (with auto-renewal) until the file is closed. Only one mount can
+	// have a file open for writing at a time.
+	EnableDistributedLock bool
+
 	// WritebackCache enables async flush on close for improved small file write performance.
 	// When true, Flush() returns immediately and data upload + metadata flush happen in background.
 	WritebackCache bool
@@ -139,6 +146,10 @@ type WFS struct {
 	// mutations (create, update, delete, rename). All mutations go through one
 	// ordered stream to prevent cross-operation reordering.
 	streamMutate *streamMutateMux
+
+	// lockClient is the DLM client for cross-mount write coordination.
+	// Non-nil only when EnableDistributedLock is true.
+	lockClient *cluster.LockClient
 }
 
 const (
@@ -194,6 +205,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dirHotWindow:      dirHotWindow,
 		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
+	}
+
+	if option.EnableDistributedLock && len(option.FilerAddresses) > 0 {
+		wfs.lockClient = cluster.NewLockClient(option.GrpcDialOption, option.FilerAddresses[0])
+		glog.V(0).Infof("distributed lock manager enabled for mount")
 	}
 
 	wfs.option.filerIndex = int32(rand.IntN(len(option.FilerAddresses)))

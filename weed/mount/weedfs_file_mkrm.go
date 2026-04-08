@@ -2,10 +2,12 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"syscall"
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -110,6 +112,18 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	// Mark dirty so the deferred filer create happens on Flush,
 	// even if the file is closed without any writes.
 	fileHandle.dirtyMetadata = true
+
+	// Acquire DLM lock for new file creation (Create bypasses AcquireHandle
+	// so we must acquire the lock here). Always lock on Create since file
+	// creation is inherently a write operation.
+	if wfs.lockClient != nil && fileHandle.dlmLock == nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+			string(entryFullPath), owner, lock_manager.LiveLockTTL,
+		)
+		glog.V(1).Infof("DLM lock acquired for new file %s", entryFullPath)
+	}
+
 	out.Fh = uint64(fileHandle.fh)
 	out.OpenFlags = 0
 
