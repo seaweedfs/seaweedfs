@@ -22,10 +22,7 @@ import (
 	"golang.org/x/term"
 )
 
-var (
-	line        *liner.State
-	historyPath = path.Join(os.TempDir(), "weed-shell")
-)
+var historyPath = path.Join(os.TempDir(), "weed-shell")
 
 func RunShell(options ShellOptions) {
 	slices.SortFunc(Commands, func(a, b command) int {
@@ -39,25 +36,21 @@ func RunShell(options ShellOptions) {
 
 	interactive := liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 
+	var line *liner.State
 	if interactive {
 		line = liner.NewLiner()
-		defer func() {
-			line.Close()
-			line = nil
-		}()
+		defer line.Close()
 		grace.OnInterrupt(func() {
-			if line != nil {
-				line.Close()
-			}
+			line.Close()
 		})
 
 		line.SetCtrlCAborts(true)
 		line.SetTabCompletionStyle(liner.TabPrints)
 
-		setCompletionHandler()
-		loadHistory()
+		setCompletionHandler(line)
+		loadHistory(line)
 
-		defer saveHistory()
+		defer saveHistory(line)
 	}
 
 	commandEnv := NewCommandEnv(&options)
@@ -249,10 +242,7 @@ func printHelp(cmds []string) {
 	}
 }
 
-func setCompletionHandler() {
-	if line == nil {
-		return
-	}
+func setCompletionHandler(line *liner.State) {
 	line.SetCompleter(func(line string) (c []string) {
 		for _, i := range Commands {
 			if strings.HasPrefix(i.Name(), strings.ToLower(line)) {
@@ -263,20 +253,14 @@ func setCompletionHandler() {
 	})
 }
 
-func loadHistory() {
-	if line == nil {
-		return
-	}
+func loadHistory(line *liner.State) {
 	if f, err := os.Open(historyPath); err == nil {
 		line.ReadHistory(f)
 		f.Close()
 	}
 }
 
-func saveHistory() {
-	if line == nil {
-		return
-	}
+func saveHistory(line *liner.State) {
 	if f, err := os.Create(historyPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating history file: %v\n", err)
 	} else {
