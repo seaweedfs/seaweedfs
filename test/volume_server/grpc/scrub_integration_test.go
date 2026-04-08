@@ -27,9 +27,9 @@ func TestScrubVolumeFullHealthy(t *testing.T) {
 	framework.AllocateVolume(t, grpcClient, volumeID, "")
 
 	httpClient := framework.NewHTTPClient()
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("data-one"))
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 2, 2), []byte("data-two"))
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 3, 3), []byte("data-three"))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("data-one")))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 2, 2), []byte("data-two")))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 3, 3), []byte("data-three")))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -65,7 +65,7 @@ func TestScrubVolumeFullCorruptData(t *testing.T) {
 	framework.AllocateVolume(t, grpcClient, volumeID, "")
 
 	httpClient := framework.NewHTTPClient()
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("important data"))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(volumeID, 1, 1), []byte("important data")))
 
 	framework.CorruptDatFile(t, clusterHarness.BaseDir(), volumeID)
 
@@ -102,8 +102,8 @@ func TestScrubVolumeMixedHealthy(t *testing.T) {
 	framework.AllocateVolume(t, grpcClient, corruptVol, "")
 
 	httpClient := framework.NewHTTPClient()
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(healthyVol, 1, 1), []byte("healthy"))
-	framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(corruptVol, 1, 1), []byte("will corrupt"))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(healthyVol, 1, 1), []byte("healthy")))
+	framework.ReadAllAndClose(t, framework.UploadBytes(t, httpClient, clusterHarness.VolumeAdminURL(), framework.NewFileID(corruptVol, 1, 1), []byte("will corrupt")))
 
 	framework.CorruptIndexFile(t, clusterHarness.BaseDir(), corruptVol)
 
@@ -245,8 +245,8 @@ func TestScrubEcVolumeLocalHealthy(t *testing.T) {
 	if resp.GetTotalVolumes() != 1 {
 		t.Fatalf("expected total_volumes=1, got %d", resp.GetTotalVolumes())
 	}
-	if resp.GetTotalFiles() < 1 {
-		t.Fatalf("expected at least 1 file, got %d", resp.GetTotalFiles())
+	if resp.GetTotalFiles() != 1 {
+		t.Fatalf("expected total_files=1, got %d", resp.GetTotalFiles())
 	}
 	if len(resp.GetBrokenVolumeIds()) != 0 {
 		t.Fatalf("expected no broken volumes, got %v: %v", resp.GetBrokenVolumeIds(), resp.GetDetails())
