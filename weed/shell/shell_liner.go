@@ -76,17 +76,15 @@ func RunShell(options ShellOptions) {
 			}
 			return nil
 		})
-		if options.Verbose {
-			fmt.Fprintf(os.Stderr, "master: %s ", *options.Masters)
-		}
 		if len(filers) > 0 {
-			if options.Verbose {
-				fmt.Fprintf(os.Stderr, "filers: %v", filers)
-			}
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		}
 		if options.Verbose {
-			fmt.Fprintln(os.Stderr)
+			if len(filers) > 0 {
+				fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *options.Masters, filers)
+			} else {
+				fmt.Fprintf(os.Stderr, "master: %s\n", *options.Masters)
+			}
 		}
 	}
 
