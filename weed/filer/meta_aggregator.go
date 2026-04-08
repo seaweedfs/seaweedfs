@@ -139,16 +139,27 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 	if peerSignature != f.Signature {
 		if prevTsNs, err := ma.readOffset(f, peer, peerSignature); err == nil {
 			lastTsNs = prevTsNs
-			defer func(prevTsNs int64) {
-				if lastTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
-					if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err == nil {
-						glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
-					} else {
-						glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
-					}
-				}
-			}(prevTsNs)
+		} else {
+			// No stored offset — this is the first time connecting to this peer.
+			// Traverse the peer's full metadata tree so we get pre-existing data,
+			// then start streaming changes from the traversal start time.
+			traverseStart := time.Now()
+			glog.V(0).Infof("no previous offset for peer %s, starting full metadata sync", peer)
+			if traverseErr := ma.traversePeerMetadata(f, peer); traverseErr != nil {
+				return lastTsNs, fmt.Errorf("initial metadata sync from %s: %v", peer, traverseErr)
+			}
+			lastTsNs = traverseStart.UnixNano()
+			glog.V(0).Infof("completed full metadata sync from peer %s, will stream changes from %v", peer, traverseStart)
 		}
+		defer func(prevTsNs int64) {
+			if lastTsNs != prevTsNs && lastTsNs != lastPersistTime.UnixNano() {
+				if err := ma.updateOffset(f, peer, peerSignature, lastTsNs); err == nil {
+					glog.V(0).Infof("last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+				} else {
+					glog.Errorf("failed to save last sync time with %s at %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
+				}
+			}
+		}(lastTsNs)
 
 		glog.V(0).Infof("follow peer: %v, last %v (%d)", peer, time.Unix(0, lastTsNs), lastTsNs)
 		var counter int64
@@ -277,6 +288,50 @@ func (ma *MetaAggregator) doSubscribeToOneFiler(f *Filer, self pb.ServerAddress,
 		}
 	})
 	return lastTsNs, err
+}
+
+// traversePeerMetadata does a full BFS traversal of a peer filer's metadata
+// and inserts all entries into the local store. This is used when a filer
+// connects to a peer for the first time and needs to bootstrap pre-existing data.
+func (ma *MetaAggregator) traversePeerMetadata(f *Filer, peer pb.ServerAddress) error {
+	return pb.WithFilerClient(true, 0, peer, ma.grpcDialOption, func(client filer_pb.SeaweedFilerClient) error {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		stream, err := client.TraverseBfsMetadata(ctx, &filer_pb.TraverseBfsMetadataRequest{
+			Directory: "/",
+		})
+		if err != nil {
+			return fmt.Errorf("traverse bfs metadata: %w", err)
+		}
+		var count int64
+		for {
+			resp, recvErr := stream.Recv()
+			if recvErr == io.EOF {
+				break
+			}
+			if recvErr != nil {
+				return fmt.Errorf("traverse bfs metadata recv: %w", recvErr)
+			}
+			if resp.Entry == nil {
+				continue
+			}
+			// skip filer internal meta logs
+			fullpath := util.Join(resp.Directory, resp.Entry.Name)
+			if strings.HasPrefix(fullpath, SystemLogDir) {
+				continue
+			}
+			entry := FromPbEntry(resp.Directory, resp.Entry)
+			if err := f.Store.InsertEntry(context.Background(), entry); err != nil {
+				return fmt.Errorf("insert entry %s: %w", fullpath, err)
+			}
+			count++
+			if count%10000 == 0 {
+				glog.V(0).Infof("synced %d entries from peer %s", count, peer)
+			}
+		}
+		glog.V(0).Infof("synced %d entries total from peer %s", count, peer)
+		return nil
+	})
 }
 
 func (ma *MetaAggregator) readFilerStoreSignature(peer pb.ServerAddress) (sig int32, err error) {
