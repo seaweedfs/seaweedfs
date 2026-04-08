@@ -1775,67 +1775,29 @@ func (e *EmbeddedIamApi) ListGroupsForUser(s3cfg *iam_pb.S3ApiConfiguration, val
 	return resp, nil
 }
 
-// PutGroupPolicy attaches an inline policy to a group.
+// notImplementedError returns a NotImplemented IAM error for the embedded server.
+func notImplementedGroupInlineError() *iamError {
+	return &iamError{Code: s3err.GetAPIError(s3err.ErrNotImplemented).Code, Error: fmt.Errorf("group inline policies are not supported in embedded IAM mode; use the standalone IAM server or managed policies (AttachGroupPolicy)")}
+}
+
+// PutGroupPolicy is not supported in embedded IAM mode.
 func (e *EmbeddedIamApi) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamPutGroupPolicyResponse, *iamError) {
-	resp := &iamPutGroupPolicyResponse{}
-	groupName := values.Get("GroupName")
-	policyDocumentString := values.Get("PolicyDocument")
-	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
-	if err != nil {
-		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
-	}
-	if _, err := e.getActions(&policyDocument); err != nil {
-		return resp, &iamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
-	}
-	for _, g := range s3cfg.Groups {
-		if g.Name == groupName {
-			return resp, nil
-		}
-	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	return &iamPutGroupPolicyResponse{}, notImplementedGroupInlineError()
 }
 
-// GetGroupPolicy gets an inline policy attached to a group.
-// In the embedded IAM, group inline policies use a synthetic name ({groupName}_policy).
+// GetGroupPolicy is not supported in embedded IAM mode.
 func (e *EmbeddedIamApi) GetGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamGetGroupPolicyResponse, *iamError) {
-	resp := &iamGetGroupPolicyResponse{}
-	groupName := values.Get("GroupName")
-	policyName := values.Get("PolicyName")
-	for _, g := range s3cfg.Groups {
-		if g.Name != groupName {
-			continue
-		}
-		// The embedded IAM doesn't store group inline policies separately.
-		// Return NotFound since there's no inline policy storage in this model.
-		return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("policy %s not found on group %s", policyName, groupName)}
-	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	return &iamGetGroupPolicyResponse{}, notImplementedGroupInlineError()
 }
 
-// DeleteGroupPolicy removes an inline policy from a group.
+// DeleteGroupPolicy is not supported in embedded IAM mode.
 func (e *EmbeddedIamApi) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDeleteGroupPolicyResponse, *iamError) {
-	resp := &iamDeleteGroupPolicyResponse{}
-	groupName := values.Get("GroupName")
-	for _, g := range s3cfg.Groups {
-		if g.Name == groupName {
-			return resp, nil
-		}
-	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	return &iamDeleteGroupPolicyResponse{}, notImplementedGroupInlineError()
 }
 
-// ListGroupPolicies lists the names of inline policies attached to a group.
+// ListGroupPolicies is not supported in embedded IAM mode.
 func (e *EmbeddedIamApi) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamListGroupPoliciesResponse, *iamError) {
-	resp := &iamListGroupPoliciesResponse{}
-	groupName := values.Get("GroupName")
-	for _, g := range s3cfg.Groups {
-		if g.Name == groupName {
-			// Embedded IAM doesn't store group inline policies separately
-			resp.ListGroupPoliciesResult.IsTruncated = false
-			return resp, nil
-		}
-	}
-	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
+	return &iamListGroupPoliciesResponse{}, notImplementedGroupInlineError()
 }
 
 // handleImplicitUsername adds username who signs the request to values if 'username' is not specified.

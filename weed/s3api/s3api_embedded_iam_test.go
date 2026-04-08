@@ -534,68 +534,37 @@ func TestEmbeddedIamListUserPolicies(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr3.Code)
 }
 
-// TestEmbeddedIamGroupInlinePolicies tests group inline policy operations directly.
-func TestEmbeddedIamGroupInlinePolicies(t *testing.T) {
+// TestEmbeddedIamGroupInlinePoliciesNotImplemented tests that group inline policies
+// return NotImplemented in embedded IAM mode.
+func TestEmbeddedIamGroupInlinePoliciesNotImplemented(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Groups: []*iam_pb.Group{
 			{Name: "developers", Members: []string{"alice"}},
 		},
-		Identities: []*iam_pb.Identity{
-			{Name: "alice", Credentials: []*iam_pb.Credential{{AccessKey: UserAccessKeyPrefix + "ALICE1234", SecretKey: "secret"}}},
-		},
 	}
 
-	// ListGroupPolicies on existing group (empty)
-	resp, iamErr := api.ListGroupPolicies(s3cfg, url.Values{"GroupName": {"developers"}})
-	assert.Nil(t, iamErr)
-	assert.Empty(t, resp.ListGroupPoliciesResult.PolicyNames)
-	assert.False(t, resp.ListGroupPoliciesResult.IsTruncated)
+	notImpl := s3err.GetAPIError(s3err.ErrNotImplemented).Code
 
-	// ListGroupPolicies on nonexistent group
-	_, iamErr = api.ListGroupPolicies(s3cfg, url.Values{"GroupName": {"nonexistent"}})
-	assert.NotNil(t, iamErr)
-	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
-
-	// PutGroupPolicy on existing group
-	_, iamErr = api.PutGroupPolicy(s3cfg, url.Values{
+	_, iamErr := api.PutGroupPolicy(s3cfg, url.Values{
 		"GroupName":      {"developers"},
 		"PolicyName":     {"DevPolicy"},
 		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`},
 	})
-	assert.Nil(t, iamErr)
-
-	// PutGroupPolicy on nonexistent group
-	_, iamErr = api.PutGroupPolicy(s3cfg, url.Values{
-		"GroupName":      {"nonexistent"},
-		"PolicyName":     {"DevPolicy"},
-		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`},
-	})
 	assert.NotNil(t, iamErr)
-	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+	assert.Equal(t, notImpl, iamErr.Code)
 
-	// DeleteGroupPolicy on existing group
-	_, iamErr = api.DeleteGroupPolicy(s3cfg, url.Values{
-		"GroupName":  {"developers"},
-		"PolicyName": {"DevPolicy"},
-	})
-	assert.Nil(t, iamErr)
-
-	// DeleteGroupPolicy on nonexistent group
-	_, iamErr = api.DeleteGroupPolicy(s3cfg, url.Values{
-		"GroupName":  {"nonexistent"},
-		"PolicyName": {"DevPolicy"},
-	})
+	_, iamErr = api.GetGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
 	assert.NotNil(t, iamErr)
-	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+	assert.Equal(t, notImpl, iamErr.Code)
 
-	// GetGroupPolicy on nonexistent group
-	_, iamErr = api.GetGroupPolicy(s3cfg, url.Values{
-		"GroupName":  {"nonexistent"},
-		"PolicyName": {"DevPolicy"},
-	})
+	_, iamErr = api.DeleteGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
 	assert.NotNil(t, iamErr)
-	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
+	assert.Equal(t, notImpl, iamErr.Code)
+
+	_, iamErr = api.ListGroupPolicies(s3cfg, url.Values{"GroupName": {"developers"}})
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, notImpl, iamErr.Code)
 }
 
 // TestEmbeddedIamAttachUserPolicy tests attaching a managed policy to a user.

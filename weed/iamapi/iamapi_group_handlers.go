@@ -11,6 +11,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy_engine"
 )
 
 func (iama *IamApiServer) CreateGroup(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*CreateGroupResponse, *IamError) {
@@ -52,6 +53,8 @@ func (iama *IamApiServer) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d inline policy(ies)", groupName, len(gp))}
 			}
 			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
+			// Clean up any empty inline policy entries
+			cleanupGroupInlinePolicies(iama, groupName)
 			return resp, nil
 		}
 	}
@@ -78,7 +81,9 @@ func (iama *IamApiServer) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 						return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("group %s already exists", newName)}
 					}
 				}
+				oldName := g.Name
 				g.Name = newName
+				migrateGroupInlinePolicies(iama, oldName, newName)
 			}
 			return resp, nil
 		}
@@ -343,8 +348,17 @@ func buildUserGroupsIndex(s3cfg *iam_pb.S3ApiConfiguration) map[string][]string 
 func (iama *IamApiServer) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*PutGroupPolicyResponse, *IamError) {
 	resp := &PutGroupPolicyResponse{}
 	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
 	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 	policyDocumentString := values.Get("PolicyDocument")
+	if policyDocumentString == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyDocument is required")}
+	}
 	policyDocument, err := GetPolicyDocument(&policyDocumentString)
 	if err != nil {
 		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
@@ -353,15 +367,15 @@ func (iama *IamApiServer) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, value
 		return resp, &IamError{Code: iam.ErrCodeMalformedPolicyDocumentException, Error: err}
 	}
 
-	// Verify group exists
-	found := false
+	// Find group and get its members for action recomputation
+	var targetGroup *iam_pb.Group
 	for _, g := range s3cfg.Groups {
 		if g.Name == groupName {
-			found = true
+			targetGroup = g
 			break
 		}
 	}
-	if !found {
+	if targetGroup == nil {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 	}
 
@@ -375,6 +389,10 @@ func (iama *IamApiServer) PutGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, value
 	if pErr := iama.s3ApiConfig.PutPolicies(&policies); pErr != nil {
 		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
 	}
+
+	// Recompute actions for all group members
+	recomputeActionsForGroupMembers(iama, s3cfg, targetGroup, &policies)
+
 	return resp, nil
 }
 
@@ -422,17 +440,23 @@ func (iama *IamApiServer) GetGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, value
 func (iama *IamApiServer) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*DeleteGroupPolicyResponse, *IamError) {
 	resp := &DeleteGroupPolicyResponse{}
 	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
 	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 
-	// Verify group exists
-	found := false
+	// Find group for member action recomputation
+	var targetGroup *iam_pb.Group
 	for _, g := range s3cfg.Groups {
 		if g.Name == groupName {
-			found = true
+			targetGroup = g
 			break
 		}
 	}
-	if !found {
+	if targetGroup == nil {
 		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("group %s does not exist", groupName)}
 	}
 
@@ -446,6 +470,10 @@ func (iama *IamApiServer) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, va
 			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: pErr}
 		}
 	}
+
+	// Recompute actions for all group members
+	recomputeActionsForGroupMembers(iama, s3cfg, targetGroup, &policies)
+
 	return resp, nil
 }
 
@@ -454,6 +482,9 @@ func (iama *IamApiServer) DeleteGroupPolicy(s3cfg *iam_pb.S3ApiConfiguration, va
 func (iama *IamApiServer) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*ListGroupPoliciesResponse, *IamError) {
 	resp := &ListGroupPoliciesResponse{}
 	groupName := values.Get("GroupName")
+	if groupName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("GroupName is required")}
+	}
 
 	// Verify group exists
 	found := false
@@ -492,6 +523,42 @@ func cleanupGroupInlinePolicies(iama *IamApiServer, groupName string) {
 		delete(policies.GroupInlinePolicies, groupName)
 		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
 			glog.Warningf("Failed to cleanup inline policies for group %s: %v", groupName, err)
+		}
+	}
+}
+
+// migrateGroupInlinePolicies renames the inline policies key when a group is renamed.
+func migrateGroupInlinePolicies(iama *IamApiServer, oldName, newName string) {
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil {
+		glog.Warningf("Failed to get policies during group rename %s -> %s: %v", oldName, newName, err)
+		return
+	}
+	if oldPolicies, exists := policies.GroupInlinePolicies[oldName]; exists {
+		if policies.GroupInlinePolicies == nil {
+			policies.GroupInlinePolicies = make(map[string]map[string]policy_engine.PolicyDocument)
+		}
+		policies.GroupInlinePolicies[newName] = oldPolicies
+		delete(policies.GroupInlinePolicies, oldName)
+		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
+			glog.Warningf("Failed to migrate inline policies for group rename %s -> %s: %v", oldName, newName, err)
+		}
+	}
+}
+
+// recomputeActionsForGroupMembers recomputes the aggregated actions for all members of a group.
+func recomputeActionsForGroupMembers(iama *IamApiServer, s3cfg *iam_pb.S3ApiConfiguration, group *iam_pb.Group, policies *Policies) {
+	for _, memberName := range group.Members {
+		for _, ident := range s3cfg.Identities {
+			if ident.Name == memberName {
+				aggregatedActions, err := computeAllActionsForUser(iama, memberName, policies, ident)
+				if err != nil {
+					glog.Warningf("Failed to recompute actions for user %s after group policy change: %v", memberName, err)
+				} else {
+					ident.Actions = aggregatedActions
+				}
+				break
+			}
 		}
 	}
 }

@@ -788,11 +788,19 @@ func TestIAMGroupInlinePolicy(t *testing.T) {
 	require.NoError(t, err)
 
 	groupName := "test-group-inline-policy"
+	policyName := "TestInlinePolicy"
 	_, err = iamClient.CreateGroup(&iam.CreateGroupInput{
 		GroupName: aws.String(groupName),
 	})
 	require.NoError(t, err)
-	defer iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+	defer func() {
+		// Clean up inline policies before deleting the group
+		iamClient.DeleteGroupPolicy(&iam.DeleteGroupPolicyInput{
+			GroupName:  aws.String(groupName),
+			PolicyName: aws.String(policyName),
+		})
+		iamClient.DeleteGroup(&iam.DeleteGroupInput{GroupName: aws.String(groupName)})
+	}()
 
 	t.Run("list_empty", func(t *testing.T) {
 		resp, err := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{
@@ -803,7 +811,6 @@ func TestIAMGroupInlinePolicy(t *testing.T) {
 		assert.False(t, *resp.IsTruncated)
 	})
 
-	policyName := "TestInlinePolicy"
 	policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::test-bucket/*"}]}`
 
 	t.Run("put_group_policy", func(t *testing.T) {

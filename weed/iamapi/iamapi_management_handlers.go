@@ -550,6 +550,9 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 func (iama *IamApiServer) ListUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *ListUserPoliciesResponse, iamError *IamError) {
 	resp = &ListUserPoliciesResponse{}
 	userName := values.Get("UserName")
+	if userName == "" {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("UserName is required")}
+	}
 
 	// Verify the user exists
 	found := false
