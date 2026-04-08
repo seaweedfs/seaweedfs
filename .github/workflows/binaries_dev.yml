@@ -18,6 +18,7 @@ jobs:
 
       - name: Delete old release assets
         uses: mknejp/delete-release-assets@v1
+        continue-on-error: true
         with:
           token: ${{ github.token }}
           tag: dev
