@@ -461,6 +461,79 @@ func TestEmbeddedIamDeleteUserPolicyUserNotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr.Code)
 }
 
+// TestEmbeddedIamListUserPolicies tests listing inline policies for a user.
+func TestEmbeddedIamListUserPolicies(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    "UserWithPolicy",
+				Actions: []string{"Read", "Write"},
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: UserAccessKeyPrefix + "TEST12345", SecretKey: "secret"},
+				},
+			},
+			{
+				Name: "UserWithoutPolicy",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: UserAccessKeyPrefix + "TEST67890", SecretKey: "secret"},
+				},
+			},
+		},
+	}
+
+	// List policies for user with actions
+	form := url.Values{}
+	form.Set("Action", "ListUserPolicies")
+	form.Set("UserName", "UserWithPolicy")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "ListUserPoliciesResponse")
+	assert.Contains(t, rr.Body.String(), "PolicyNames")
+	assert.Contains(t, rr.Body.String(), "UserWithPolicy_policy")
+
+	// List policies for user without actions
+	form2 := url.Values{}
+	form2.Set("Action", "ListUserPolicies")
+	form2.Set("UserName", "UserWithoutPolicy")
+
+	req2, _ := http.NewRequest("POST", "/", nil)
+	req2.PostForm = form2
+	req2.Form = form2
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr2 := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr2, req2)
+
+	assert.Equal(t, http.StatusOK, rr2.Code)
+	assert.Contains(t, rr2.Body.String(), "ListUserPoliciesResponse")
+
+	// List policies for nonexistent user
+	form3 := url.Values{}
+	form3.Set("Action", "ListUserPolicies")
+	form3.Set("UserName", "NonExistentUser")
+
+	req3, _ := http.NewRequest("POST", "/", nil)
+	req3.PostForm = form3
+	req3.Form = form3
+	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr3 := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr3, req3)
+
+	assert.Equal(t, http.StatusNotFound, rr3.Code)
+}
+
 // TestEmbeddedIamAttachUserPolicy tests attaching a managed policy to a user.
 func TestEmbeddedIamAttachUserPolicy(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()

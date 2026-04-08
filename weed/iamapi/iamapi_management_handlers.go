@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 
@@ -526,6 +527,40 @@ func (iama *IamApiServer) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, val
 	} else {
 		targetIdent.Actions = aggregatedActions
 	}
+	return resp, nil
+}
+
+// ListUserPolicies lists the names of inline policies attached to a user.
+// https://docs.aws.amazon.com/IAM/latest/APIReference/API_ListUserPolicies.html
+func (iama *IamApiServer) ListUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *ListUserPoliciesResponse, iamError *IamError) {
+	resp = &ListUserPoliciesResponse{}
+	userName := values.Get("UserName")
+
+	// Verify the user exists
+	found := false
+	for _, ident := range s3cfg.Identities {
+		if ident.Name == userName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return resp, &IamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(USER_DOES_NOT_EXIST, userName)}
+	}
+
+	// List inline policy names from persistent storage
+	policies := Policies{}
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+	}
+
+	if userPolicies := policies.InlinePolicies[userName]; userPolicies != nil {
+		for policyName := range userPolicies {
+			resp.ListUserPoliciesResult.PolicyNames = append(resp.ListUserPoliciesResult.PolicyNames, policyName)
+		}
+		sort.Strings(resp.ListUserPoliciesResult.PolicyNames)
+	}
+	resp.ListUserPoliciesResult.IsTruncated = false
 	return resp, nil
 }
 
@@ -1062,6 +1097,15 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
+	case "ListUserPolicies":
+		iama.handleImplicitUsername(r, values)
+		var err *IamError
+		response, err = iama.ListUserPolicies(s3cfg, values)
+		if err != nil {
+			writeIamErrorResponse(w, r, reqID, err)
+			return
+		}
+		changed = false
 	case "GetPolicy":
 		var err *IamError
 		response, err = iama.GetPolicy(s3cfg, values)
