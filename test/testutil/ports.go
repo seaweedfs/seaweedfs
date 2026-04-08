@@ -47,9 +47,11 @@ func MustAllocatePorts(t *testing.T, count int) []int {
 
 // AllocateMiniPorts allocates n free ports where each port and its gRPC
 // counterpart (port + GrpcPortOffset) are available and don't collide
-// with any other allocated port or its gRPC counterpart. Use this when
-// ports will be passed to weed mini without explicit gRPC port flags, so
-// mini will derive gRPC ports as HTTP + 10000.
+// with any other allocated port or its gRPC counterpart. All listeners
+// are held open until the entire batch is allocated, preventing the OS
+// from recycling ports between allocations. Use this when ports will be
+// passed to weed mini without explicit gRPC port flags, so mini will
+// derive gRPC ports as HTTP + 10000.
 func AllocateMiniPorts(count int) ([]int, error) {
 	const (
 		minPort = 10000
@@ -59,6 +61,12 @@ func AllocateMiniPorts(count int) ([]int, error) {
 
 	reserved := make(map[int]bool)
 	ports := make([]int, 0, count)
+	var listeners []net.Listener
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
 
 	for idx := 0; idx < count; idx++ {
 		found := false
@@ -70,18 +78,18 @@ func AllocateMiniPorts(count int) ([]int, error) {
 				continue
 			}
 
-			listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+			l1, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 			if err != nil {
 				continue
 			}
-			_ = listener.Close()
 
-			grpcListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
+			l2, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", grpcPort))
 			if err != nil {
+				l1.Close()
 				continue
 			}
-			_ = grpcListener.Close()
 
+			listeners = append(listeners, l1, l2)
 			reserved[port] = true
 			reserved[grpcPort] = true
 			ports = append(ports, port)
@@ -89,7 +97,7 @@ func AllocateMiniPorts(count int) ([]int, error) {
 			break
 		}
 		if !found {
-			return ports, fmt.Errorf("failed to allocate mini port %d of %d", idx+1, count)
+			return nil, fmt.Errorf("failed to allocate mini port %d of %d", idx+1, count)
 		}
 	}
 

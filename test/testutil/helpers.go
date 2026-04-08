@@ -14,7 +14,9 @@ import (
 const SeaweedMiniStartupTimeout = 45 * time.Second
 
 func HasDocker() bool {
-	cmd := exec.Command("docker", "version")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "version")
 	return cmd.Run() == nil
 }
 
@@ -82,7 +84,9 @@ func WaitForService(url string, timeout time.Duration) bool {
 			resp, err := client.Get(url)
 			if err == nil {
 				resp.Body.Close()
-				return true
+				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+					return true
+				}
 			}
 		}
 	}
