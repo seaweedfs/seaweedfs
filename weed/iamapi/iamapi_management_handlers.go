@@ -1098,6 +1098,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "ListUserPolicies":
+		iama.handleImplicitUsername(r, values)
 		var err *IamError
 		response, err = iama.ListUserPolicies(s3cfg, values)
 		if err != nil {

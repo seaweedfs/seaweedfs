@@ -500,6 +500,7 @@ func TestEmbeddedIamListUserPolicies(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rr.Code)
 	assert.Contains(t, rr.Body.String(), "ListUserPoliciesResponse")
 	assert.Contains(t, rr.Body.String(), "PolicyNames")
+	assert.Contains(t, rr.Body.String(), "UserWithPolicy_policy")
 
 	// List policies for user without actions
 	form2 := url.Values{}

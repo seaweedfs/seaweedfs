@@ -377,8 +377,8 @@ func TestIAMPolicyManagement(t *testing.T) {
 			UserName: aws.String("nonexistent-user-for-list-policies"),
 		})
 		require.Error(t, err)
-		if awsErr, ok := err.(awserr.Error); ok {
-			assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
-		}
+		awsErr, ok := err.(awserr.Error)
+		require.True(t, ok, "Expected AWS error type")
+		assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
 	})
 }

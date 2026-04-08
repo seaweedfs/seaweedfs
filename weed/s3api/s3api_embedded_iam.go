@@ -2223,7 +2223,7 @@ func (e *EmbeddedIamApi) DoActions(w http.ResponseWriter, r *http.Request) {
 
 	// Handle implicit username for HTTP requests
 	switch r.Form.Get("Action") {
-	case "ListAccessKeys", "CreateAccessKey", "DeleteAccessKey", "UpdateAccessKey":
+	case "ListAccessKeys", "CreateAccessKey", "DeleteAccessKey", "UpdateAccessKey", "ListUserPolicies":
 		e.handleImplicitUsername(r, values)
 	case "CreateServiceAccount":
 		createdBy := s3_constants.GetIdentityNameFromContext(r)
