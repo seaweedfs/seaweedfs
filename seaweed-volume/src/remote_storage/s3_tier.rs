@@ -486,6 +486,11 @@ impl S3TierRegistry {
         self.backends.keys().cloned().collect()
     }
 
+    /// Remove a backend by name.
+    pub fn remove(&mut self, name: &str) {
+        self.backends.remove(name);
+    }
+
     pub fn clear(&mut self) {
         self.backends.clear();
     }
