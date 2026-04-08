@@ -554,7 +554,7 @@ func recomputeActionsForGroupMembers(iama *IamApiServer, s3cfg *iam_pb.S3ApiConf
 	for _, memberName := range group.Members {
 		for _, ident := range s3cfg.Identities {
 			if ident.Name == memberName {
-				aggregatedActions, err := computeAllActionsForUser(iama, memberName, policies, ident)
+				aggregatedActions, err := computeAllActionsForUser(iama, memberName, policies, ident, s3cfg)
 				if err != nil {
 					glog.Warningf("Failed to recompute actions for user %s after group policy change: %v", memberName, err)
 				} else {
