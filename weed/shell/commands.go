@@ -28,6 +28,7 @@ type ShellOptions struct {
 	FilerGroup   *string
 	FilerAddress pb.ServerAddress
 	Directory    string
+	Debug        bool
 }
 
 type CommandEnv struct {

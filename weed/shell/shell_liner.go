@@ -18,30 +18,40 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/peterh/liner"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
+	"golang.org/x/term"
 )
 
-var (
-	line        *liner.State
-	historyPath = path.Join(os.TempDir(), "weed-shell")
-)
+var historyPath = path.Join(os.TempDir(), "weed-shell")
 
 func RunShell(options ShellOptions) {
 	slices.SortFunc(Commands, func(a, b command) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
-	line = liner.NewLiner()
-	defer line.Close()
-	grace.OnInterrupt(func() {
-		line.Close()
-	})
 
-	line.SetCtrlCAborts(true)
-	line.SetTabCompletionStyle(liner.TabPrints)
+	if !options.Debug {
+		flag.Set("alsologtostderr", "false")
+		flag.Set("logtostderr", "false")
+	}
 
-	setCompletionHandler()
-	loadHistory()
+	interactive := liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 
-	defer saveHistory()
+	var line *liner.State
+	if interactive {
+		line = liner.NewLiner()
+		defer line.Close()
+		grace.OnInterrupt(func() {
+			line.Close()
+		})
+
+		line.SetCtrlCAborts(true)
+		line.SetTabCompletionStyle(liner.TabPrints)
+
+		setCompletionHandler(line)
+		loadHistory(line)
+
+		defer saveHistory(line)
+	}
 
 	commandEnv := NewCommandEnv(&options)
 
@@ -65,15 +75,19 @@ func RunShell(options ShellOptions) {
 			}
 			return nil
 		})
-		fmt.Fprintf(os.Stderr, "master: %s ", *options.Masters)
 		if len(filers) > 0 {
-			fmt.Fprintf(os.Stderr, "filers: %v", filers)
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		}
-		fmt.Fprintln(os.Stderr)
+		if options.Debug {
+			if len(filers) > 0 {
+				fmt.Fprintf(os.Stderr, "master: %s filers: %v\n", *options.Masters, filers)
+			} else {
+				fmt.Fprintf(os.Stderr, "master: %s\n", *options.Masters)
+			}
+		}
 	}
 
-	if liner.TerminalSupported() {
+	if interactive {
 		for {
 			cmd, err := line.Prompt("> ")
 			if err != nil {
@@ -228,7 +242,7 @@ func printHelp(cmds []string) {
 	}
 }
 
-func setCompletionHandler() {
+func setCompletionHandler(line *liner.State) {
 	line.SetCompleter(func(line string) (c []string) {
 		for _, i := range Commands {
 			if strings.HasPrefix(i.Name(), strings.ToLower(line)) {
@@ -239,14 +253,14 @@ func setCompletionHandler() {
 	})
 }
 
-func loadHistory() {
+func loadHistory(line *liner.State) {
 	if f, err := os.Open(historyPath); err == nil {
 		line.ReadHistory(f)
 		f.Close()
 	}
 }
 
-func saveHistory() {
+func saveHistory(line *liner.State) {
 	if f, err := os.Create(historyPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating history file: %v\n", err)
 	} else {
