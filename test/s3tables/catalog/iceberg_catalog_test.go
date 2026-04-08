@@ -70,7 +70,6 @@ type TestEnvironment struct {
 	dockerAvailable bool
 }
 
-
 // newTestEnvironmentForMain creates a TestEnvironment without calling t.Fatalf so it
 // can be used from TestMain (which has no *testing.T).
 func newTestEnvironmentForMain() (*TestEnvironment, error) {

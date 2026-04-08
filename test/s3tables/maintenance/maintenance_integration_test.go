@@ -201,7 +201,6 @@ func (c *testCluster) filerConn(t *testing.T) (*grpc.ClientConn, filer_pb.Seawee
 	return conn, filer_pb.NewSeaweedFilerClient(conn)
 }
 
-
 func waitReady(endpoint string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 1 * time.Second}
 	deadline := time.Now().Add(timeout)

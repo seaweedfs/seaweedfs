@@ -239,7 +239,6 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	return env
 }
 
-
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
 
@@ -588,7 +587,6 @@ func hasDocker() bool {
 	cmd := exec.Command("docker", "version")
 	return cmd.Run() == nil
 }
-
 
 func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"

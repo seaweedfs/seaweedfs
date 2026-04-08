@@ -590,7 +590,6 @@ func testTargetOperations(t *testing.T, client *S3TablesClient) {
 
 // Helper functions
 
-
 // startMiniClusterInDir starts a weed mini instance using testDir as the data
 // directory. It does not require a *testing.T so it can be called from TestMain.
 // extraArgs are appended to the default mini command flags.
