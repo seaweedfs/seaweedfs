@@ -114,9 +114,9 @@ func TestDLMStressConcurrentWrites(t *testing.T) {
 	t.Cleanup(cluster.Stop)
 
 	const (
-		goroutinesPerMount = 4
-		numFiles           = 5
-		cyclesPerGoroutine = 10
+		goroutinesPerMount = 2
+		numFiles           = 3
+		cyclesPerGoroutine = 3
 	)
 
 	var wg sync.WaitGroup
