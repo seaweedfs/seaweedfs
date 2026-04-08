@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/peterh/liner"
+	flag "github.com/seaweedfs/seaweedfs/weed/util/fla9"
 	"golang.org/x/term"
 )
 
@@ -44,6 +45,10 @@ func RunShell(options ShellOptions) {
 
 	defer saveHistory()
 
+	if !options.Verbose {
+		flag.Set("alsologtostderr", "false")
+	}
+
 	commandEnv := NewCommandEnv(&options)
 
 	ctx := context.Background()
@@ -66,12 +71,18 @@ func RunShell(options ShellOptions) {
 			}
 			return nil
 		})
-		fmt.Fprintf(os.Stderr, "master: %s ", *options.Masters)
+		if options.Verbose {
+			fmt.Fprintf(os.Stderr, "master: %s ", *options.Masters)
+		}
 		if len(filers) > 0 {
-			fmt.Fprintf(os.Stderr, "filers: %v", filers)
+			if options.Verbose {
+				fmt.Fprintf(os.Stderr, "filers: %v", filers)
+			}
 			commandEnv.option.FilerAddress = filers[rand.IntN(len(filers))]
 		}
-		fmt.Fprintln(os.Stderr)
+		if options.Verbose {
+			fmt.Fprintln(os.Stderr)
+		}
 	}
 
 	if liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {

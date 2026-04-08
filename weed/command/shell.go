@@ -15,6 +15,7 @@ var (
 	shellOptions      shell.ShellOptions
 	shellInitialFiler *string
 	shellCluster      *string
+	shellVerbose      *bool
 )
 
 func init() {
@@ -23,6 +24,7 @@ func init() {
 	shellOptions.FilerGroup = cmdShell.Flag.String("filerGroup", "", "filerGroup for the filers")
 	shellInitialFiler = cmdShell.Flag.String("filer", "", "filer host and port for initial connection, e.g. localhost:8888")
 	shellCluster = cmdShell.Flag.String("cluster", "", "cluster defined in shell.toml")
+	shellVerbose = cmdShell.Flag.Bool("verbose", false, "print informational logs to stderr")
 }
 
 var cmdShell = &Command{
@@ -61,7 +63,10 @@ func runShell(command *Command, args []string) bool {
 		filerAddress = viper.GetString("cluster." + cluster + ".filer")
 	}
 	shellOptions.FilerAddress = pb.ServerAddress(filerAddress)
-	fmt.Fprintf(os.Stderr, "master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
+	shellOptions.Verbose = *shellVerbose
+	if shellOptions.Verbose {
+		fmt.Fprintf(os.Stderr, "master: %s filer: %s\n", *shellOptions.Masters, shellOptions.FilerAddress)
+	}
 
 	shell.RunShell(shellOptions)
 
