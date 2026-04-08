@@ -181,19 +181,20 @@ func TestDLMWriteBlocksSecondWriter(t *testing.T) {
 	_, err = f.Write([]byte("mount0-holds-lock"))
 	require.NoError(t, err, "mount0 write")
 
-	// Mount 1 tries to write — should block (we use a goroutine with timeout)
+	// Mount 1 tries to write — should block (we use a goroutine with atomic flag)
+	var mount1Completed atomic.Bool
 	mount1Done := make(chan error, 1)
 	go func() {
-		mount1Done <- os.WriteFile(path1, []byte("mount1-waited"), 0644)
+		err := os.WriteFile(path1, []byte("mount1-waited"), 0644)
+		mount1Completed.Store(true)
+		mount1Done <- err
 	}()
 
 	// Give mount 1 a moment — it should NOT complete while mount 0 holds the file open
-	select {
-	case <-mount1Done:
-		t.Log("WARNING: mount1 write completed while mount0 still held file open (possible TTL expiry)")
-	case <-time.After(3 * time.Second):
-		t.Log("mount1 write is blocked as expected while mount0 holds the file")
-	}
+	time.Sleep(3 * time.Second)
+	require.False(t, mount1Completed.Load(),
+		"mount1 write must not complete while mount0 holds the file open")
+	t.Log("mount1 write is blocked as expected while mount0 holds the file")
 
 	// Mount 0 closes the file — this releases the DLM lock
 	require.NoError(t, f.Close(), "mount0 close")
@@ -242,33 +243,88 @@ func TestDLMRenameWhileWriteOpen(t *testing.T) {
 
 	// Mount 1 tries to rename — should block because mount0 holds the
 	// DLM lock on the old path
+	var renameCompleted atomic.Bool
 	renameDone := make(chan error, 1)
 	go func() {
-		renameDone <- os.Rename(
+		err := os.Rename(
 			filepath.Join(cluster.mountPoints[1], origName),
 			filepath.Join(cluster.mountPoints[1], newName))
+		renameCompleted.Store(true)
+		renameDone <- err
 	}()
 
-	renameCompletedEarly := false
-	select {
-	case renameErr := <-renameDone:
-		renameCompletedEarly = true
-		t.Logf("WARNING: rename completed while mount0 still held file open (err=%v)", renameErr)
-	case <-time.After(3 * time.Second):
-		t.Log("rename is blocked as expected while mount0 holds the file")
-	}
+	// Rename must NOT complete while mount0 holds the file open
+	time.Sleep(3 * time.Second)
+	require.False(t, renameCompleted.Load(),
+		"rename must not complete while mount0 holds the file open")
+	t.Log("rename is blocked as expected while mount0 holds the file")
 
 	// Mount 0 closes → releases DLM lock → rename should proceed
 	require.NoError(t, f.Close(), "mount0 close")
 
-	if !renameCompletedEarly {
-		select {
-		case err := <-renameDone:
-			assert.NoError(t, err, "rename after mount0 close")
-		case <-time.After(30 * time.Second):
-			t.Fatal("rename did not complete within 30s after mount0 closed")
-		}
+	select {
+	case err := <-renameDone:
+		assert.NoError(t, err, "rename after mount0 close")
+	case <-time.After(30 * time.Second):
+		t.Fatal("rename did not complete within 30s after mount0 closed")
 	}
+}
+
+// TestDLMRenameWhileWriteOpenSameMount verifies DLM lock migration on rename
+// within the same mount: mount0 holds a file open for writing, then renames it
+// on the same mount. The rename should block until close, and the DLM lock
+// should migrate from the old path to the new path.
+func TestDLMRenameWhileWriteOpenSameMount(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping DLM integration test in short mode")
+	}
+
+	cluster := startDLMTestCluster(t)
+	t.Cleanup(cluster.Stop)
+
+	origName := "same_mount_rename_src.txt"
+	newName := "same_mount_rename_dst.txt"
+	mp := cluster.mountPoints[0]
+
+	// Create and close the file so it exists on the filer
+	require.NoError(t, os.WriteFile(filepath.Join(mp, origName), []byte("content"), 0644))
+	time.Sleep(1 * time.Second)
+
+	// Re-open for writing and hold open
+	f, err := os.OpenFile(filepath.Join(mp, origName), os.O_WRONLY|os.O_TRUNC, 0644)
+	require.NoError(t, err, "open")
+	_, err = f.Write([]byte("holding-lock"))
+	require.NoError(t, err, "write")
+
+	// Rename on the same mount — should block because the DLM lock on
+	// the old path is held by the write-open
+	var renameCompleted atomic.Bool
+	renameDone := make(chan error, 1)
+	go func() {
+		err := os.Rename(filepath.Join(mp, origName), filepath.Join(mp, newName))
+		renameCompleted.Store(true)
+		renameDone <- err
+	}()
+
+	time.Sleep(3 * time.Second)
+	require.False(t, renameCompleted.Load(),
+		"same-mount rename must not complete while file is held open")
+	t.Log("same-mount rename is blocked as expected")
+
+	// Close releases the DLM lock → rename should proceed
+	require.NoError(t, f.Close(), "close")
+
+	select {
+	case err := <-renameDone:
+		assert.NoError(t, err, "rename after close")
+	case <-time.After(30 * time.Second):
+		t.Fatal("rename did not complete within 30s after close")
+	}
+
+	// Verify destination exists
+	time.Sleep(500 * time.Millisecond)
+	_, err = os.Stat(filepath.Join(mp, newName))
+	assert.NoError(t, err, "renamed file should exist")
 }
 
 // TestDLMConcurrentRenames verifies that two concurrent renames of the same
