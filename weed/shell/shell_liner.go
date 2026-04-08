@@ -34,15 +34,21 @@ func RunShell(options ShellOptions) {
 
 	if !options.Verbose {
 		flag.Set("alsologtostderr", "false")
+		flag.Set("logtostderr", "false")
 	}
 
 	interactive := liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 
 	if interactive {
 		line = liner.NewLiner()
-		defer line.Close()
-		grace.OnInterrupt(func() {
+		defer func() {
 			line.Close()
+			line = nil
+		}()
+		grace.OnInterrupt(func() {
+			if line != nil {
+				line.Close()
+			}
 		})
 
 		line.SetCtrlCAborts(true)
