@@ -2,10 +2,10 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -28,11 +28,35 @@ func (c *commandS3UserShow) Help() string {
 	return `show details of an S3 IAM user
 
 	s3.user.show -name <username>
+
+	Output: JSON object with user details.
 `
 }
 
 func (c *commandS3UserShow) HasTag(CommandTag) bool {
 	return false
+}
+
+type s3CredentialInfo struct {
+	AccessKey string `json:"access_key"`
+	Status    string `json:"status"`
+}
+
+type s3AccountInfo struct {
+	ID          string `json:"id,omitempty"`
+	DisplayName string `json:"display_name,omitempty"`
+	Email       string `json:"email,omitempty"`
+}
+
+type s3UserShowResult struct {
+	Name            string            `json:"name"`
+	Status          string            `json:"status"`
+	Source          string            `json:"source"`
+	Account         *s3AccountInfo    `json:"account,omitempty"`
+	Policies        []string          `json:"policies"`
+	Actions         []string          `json:"actions,omitempty"`
+	Credentials     []s3CredentialInfo `json:"credentials"`
+	ServiceAccounts []string          `json:"service_accounts,omitempty"`
 }
 
 func (c *commandS3UserShow) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {
@@ -69,51 +93,45 @@ func (c *commandS3UserShow) Do(args []string, commandEnv *CommandEnv, writer io.
 			source = "static"
 		}
 
-		fmt.Fprintf(writer, "Name:     %s\n", id.Name)
-		fmt.Fprintf(writer, "Status:   %s\n", status)
-		fmt.Fprintf(writer, "Source:   %s\n", source)
+		result := s3UserShowResult{
+			Name:   id.Name,
+			Status: status,
+			Source: source,
+		}
 
-		if id.Account != nil {
-			if id.Account.Id != "" {
-				fmt.Fprintf(writer, "Account:  %s", id.Account.Id)
-				if id.Account.DisplayName != "" {
-					fmt.Fprintf(writer, " (%s)", id.Account.DisplayName)
-				}
-				fmt.Fprintln(writer)
-			}
-			if id.Account.EmailAddress != "" {
-				fmt.Fprintf(writer, "Email:    %s\n", id.Account.EmailAddress)
+		if id.Account != nil && (id.Account.Id != "" || id.Account.DisplayName != "" || id.Account.EmailAddress != "") {
+			result.Account = &s3AccountInfo{
+				ID:          id.Account.Id,
+				DisplayName: id.Account.DisplayName,
+				Email:       id.Account.EmailAddress,
 			}
 		}
 
-		if len(id.PolicyNames) > 0 {
-			fmt.Fprintf(writer, "Policies: %s\n", strings.Join(id.PolicyNames, ", "))
-		} else {
-			fmt.Fprintln(writer, "Policies: (none)")
+		result.Policies = id.PolicyNames
+		if result.Policies == nil {
+			result.Policies = []string{}
 		}
 
 		if len(id.Actions) > 0 {
-			fmt.Fprintf(writer, "Actions:  %s\n", strings.Join(id.Actions, ", "))
+			result.Actions = id.Actions
 		}
 
-		fmt.Fprintln(writer)
-		if len(id.Credentials) > 0 {
-			fmt.Fprintln(writer, "Credentials:")
-			for _, cred := range id.Credentials {
-				st := cred.Status
-				if st == "" {
-					st = "Active"
-				}
-				fmt.Fprintf(writer, "  %s  %s\n", cred.AccessKey, st)
+		result.Credentials = make([]s3CredentialInfo, 0, len(id.Credentials))
+		for _, cred := range id.Credentials {
+			st := cred.Status
+			if st == "" {
+				st = "Active"
 			}
-		} else {
-			fmt.Fprintln(writer, "Credentials: (none)")
+			result.Credentials = append(result.Credentials, s3CredentialInfo{
+				AccessKey: cred.AccessKey,
+				Status:    st,
+			})
 		}
 
 		if len(id.ServiceAccountIds) > 0 {
-			fmt.Fprintf(writer, "\nService Accounts: %s\n", strings.Join(id.ServiceAccountIds, ", "))
+			result.ServiceAccounts = id.ServiceAccountIds
 		}
 
-		return nil
+		return json.NewEncoder(writer).Encode(result)
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 }

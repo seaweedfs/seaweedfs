@@ -2,9 +2,11 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/iam"
@@ -34,6 +36,8 @@ func (c *commandS3UserCreate) Help() string {
 	are omitted, they are generated automatically.
 
 	After creating a user, attach policies with s3.policy.attach.
+
+	Output: JSON to stdout. Secret key is printed to stderr only.
 `
 }
 
@@ -56,8 +60,10 @@ func (c *commandS3UserCreate) Do(args []string, commandEnv *CommandEnv, writer i
 
 	ak := *accessKey
 	sk := *secretKey
+	generated := false
 
 	if ak == "" && sk == "" {
+		generated = true
 		var err error
 		ak, err = iam.GenerateRandomString(iam.AccessKeyIdLength, iam.CharsetUpper)
 		if err != nil {
@@ -93,10 +99,13 @@ func (c *commandS3UserCreate) Do(args []string, commandEnv *CommandEnv, writer i
 		return err
 	}
 
-	fmt.Fprintf(writer, "Created user %q\n", *name)
-	fmt.Fprintf(writer, "Access Key: %s\n", ak)
-	fmt.Fprintf(writer, "Secret Key: %s\n", sk)
-	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Save these credentials - the secret key cannot be retrieved later.")
-	return nil
+	if generated {
+		fmt.Fprintf(os.Stderr, "Secret Key: %s\n", sk)
+		fmt.Fprintf(os.Stderr, "Save this secret key - it cannot be retrieved later.\n")
+	}
+
+	return json.NewEncoder(writer).Encode(map[string]string{
+		"name":       *name,
+		"access_key": ak,
+	})
 }

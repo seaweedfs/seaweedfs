@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -58,22 +59,19 @@ func (c *commandS3UserEnable) Do(args []string, commandEnv *CommandEnv, writer i
 			return fmt.Errorf("user %q returned empty identity", *name)
 		}
 
-		if !resp.Identity.Disabled {
-			fmt.Fprintf(writer, "User %q is already enabled.\n", *name)
-			return nil
+		if resp.Identity.Disabled {
+			resp.Identity.Disabled = false
+			_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
+				Username: *name,
+				Identity: resp.Identity,
+			})
+			return err
 		}
-
-		resp.Identity.Disabled = false
-		_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{
-			Username: *name,
-			Identity: resp.Identity,
-		})
-		return err
+		return nil
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
 	if err != nil {
 		return err
 	}
 
-	fmt.Fprintf(writer, "Enabled user %q\n", *name)
-	return nil
+	return json.NewEncoder(writer).Encode(map[string]string{"name": *name, "status": "enabled"})
 }
