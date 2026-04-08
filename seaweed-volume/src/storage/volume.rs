@@ -3225,6 +3225,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
 
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -3279,6 +3280,7 @@ mod tests {
                 }));
 
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
                         let _ = shutdown_rx.await;
@@ -3288,6 +3290,8 @@ mod tests {
             });
         });
 
+        // Wait for the server thread to be ready before returning.
+        ready_rx.recv().unwrap();
         (format!("http://{}", addr), shutdown_tx)
     }
 
@@ -3833,7 +3837,7 @@ mod tests {
             let vif = VifVolumeInfo {
                 files: vec![VifRemoteFile {
                     backend_type: "s3".to_string(),
-                    backend_id: "default".to_string(),
+                    backend_id: "vif_rw_test".to_string(),
                     key: "remote-key".to_string(),
                     offset: 0,
                     file_size: v.dat_file_size().unwrap(),
@@ -3848,6 +3852,27 @@ mod tests {
                 serde_json::to_string_pretty(&vif).unwrap(),
             )
             .unwrap();
+
+            // Register a dummy S3 backend so load_remote_dat_file can look it
+            // up.  This test never reads remote data, so a dead endpoint is fine.
+            // Use a test-specific backend_id to avoid racing with other tests
+            // that share the global registry.
+            let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
+                access_key: "access".to_string(),
+                secret_key: "secret".to_string(),
+                region: "us-east-1".to_string(),
+                bucket: "bucket-a".to_string(),
+                endpoint: "http://127.0.0.1:1".to_string(),
+                storage_class: "STANDARD".to_string(),
+                force_path_style: true,
+            };
+            crate::remote_storage::s3_tier::global_s3_tier_registry()
+                .write()
+                .unwrap()
+                .register(
+                    "s3.vif_rw_test".to_string(),
+                    crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
+                );
 
             v.dat_file_size().unwrap()
         };

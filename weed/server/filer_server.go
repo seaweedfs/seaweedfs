@@ -99,7 +99,6 @@ type FilerServer struct {
 
 	filer_pb.UnimplementedSeaweedFilerServer
 	option         *FilerOption
-	secret         security.SigningKey
 	filer          *filer.Filer
 	filerGuard     *security.Guard
 	volumeGuard    *security.Guard
