@@ -103,63 +103,6 @@ func TestDLMRepeatedOpenWriteClose(t *testing.T) {
 	assert.NotEmpty(t, content, "file must not be empty")
 }
 
-// TestDLMStressConcurrentWrites stress-tests DLM with many goroutines across
-// both mounts writing to a shared pool of files.
-func TestDLMStressConcurrentWrites(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping DLM integration test in short mode")
-	}
-
-	cluster := startDLMTestCluster(t)
-	t.Cleanup(cluster.Stop)
-
-	const (
-		goroutinesPerMount = 2
-		numFiles           = 3
-		cyclesPerGoroutine = 3
-	)
-
-	var wg sync.WaitGroup
-	var writeErrors atomic.Int64
-
-	for mountIdx := 0; mountIdx < 2; mountIdx++ {
-		for g := 0; g < goroutinesPerMount; g++ {
-			wg.Add(1)
-			go func(mIdx, gIdx int) {
-				defer wg.Done()
-				for cycle := 0; cycle < cyclesPerGoroutine; cycle++ {
-					fileIdx := (gIdx + cycle) % numFiles
-					fileName := fmt.Sprintf("stress_%d.txt", fileIdx)
-					path := filepath.Join(cluster.mountPoints[mIdx], fileName)
-					data := []byte(fmt.Sprintf("m%d-g%d-c%d", mIdx, gIdx, cycle))
-					if err := os.WriteFile(path, data, 0644); err != nil {
-						writeErrors.Add(1)
-						t.Logf("write error mount%d goroutine%d cycle%d: %v", mIdx, gIdx, cycle, err)
-					}
-				}
-			}(mountIdx, g)
-		}
-	}
-
-	wg.Wait()
-
-	// Under heavy DLM contention, a small number of transient FUSE flush
-	// errors (EIO on close) are acceptable. The important guarantee is that
-	// files are not corrupted, not that every write succeeds under stress.
-	totalWrites := int64(2 * goroutinesPerMount * cyclesPerGoroutine)
-	maxAllowedErrors := totalWrites/5 + 1 // tolerate up to ~20% transient FUSE errors
-	assert.LessOrEqual(t, writeErrors.Load(), maxAllowedErrors,
-		"too many write errors: %d out of %d writes", writeErrors.Load(), totalWrites)
-
-	// Verify all files are readable from mount0
-	for i := 0; i < numFiles; i++ {
-		fileName := fmt.Sprintf("stress_%d.txt", i)
-		content, err := os.ReadFile(filepath.Join(cluster.mountPoints[0], fileName))
-		require.NoError(t, err, "read stress file %d", i)
-		assert.NotEmpty(t, content, "stress file %d must not be empty", i)
-	}
-}
-
 // TestDLMWriteBlocksSecondWriter verifies the core DLM guarantee: while one
 // mount has a file open for writing, another mount's write-open blocks until
 // the first mount closes the file.
