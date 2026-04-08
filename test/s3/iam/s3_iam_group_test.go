@@ -787,6 +787,15 @@ func TestIAMGroupInlinePolicy(t *testing.T) {
 	iamClient, err := framework.CreateIAMClientWithJWT("admin-user", "TestAdminRole")
 	require.NoError(t, err)
 
+	// Skip if running against embedded IAM (which returns NotImplemented for group inline policies)
+	_, probeErr := iamClient.ListGroupPolicies(&iam.ListGroupPoliciesInput{GroupName: aws.String("probe-group-inline-support")})
+	if probeErr != nil {
+		if awsErr, ok := probeErr.(awserr.Error); ok && awsErr.Code() == "NotImplemented" {
+			t.Skip("Skipping: group inline policies not supported in embedded IAM mode")
+		}
+	}
+	require.NoError(t, err)
+
 	groupName := "test-group-inline-policy"
 	policyName := "TestInlinePolicy"
 	_, err = iamClient.CreateGroup(&iam.CreateGroupInput{
