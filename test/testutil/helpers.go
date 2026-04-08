@@ -84,9 +84,7 @@ func WaitForService(url string, timeout time.Duration) bool {
 			resp, err := client.Get(url)
 			if err == nil {
 				resp.Body.Close()
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					return true
-				}
+				return true
 			}
 		}
 	}
