@@ -145,6 +145,10 @@ func (c *dlmTestCluster) Stop() {
 		if !c.t.Failed() {
 			os.RemoveAll(c.baseDir)
 		}
+
+		// Wait for ports to be fully released before the next test
+		// allocates new ports (avoids TIME_WAIT collisions).
+		time.Sleep(2 * time.Second)
 	})
 }
 
@@ -472,12 +476,21 @@ func stopCmd(cmd *exec.Cmd) {
 
 func allocatePorts(t testing.TB, n int) []int {
 	t.Helper()
+	// Hold all listeners open until all ports are collected, then close
+	// them together. This prevents the OS from reassigning a just-freed
+	// port to the next Listen call within the same allocation batch.
+	listeners := make([]net.Listener, 0, n)
 	ports := make([]int, 0, n)
+	defer func() {
+		for _, l := range listeners {
+			l.Close()
+		}
+	}()
 	for i := 0; i < n; i++ {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
+		listeners = append(listeners, l)
 		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
-		l.Close()
 	}
 	return ports
 }
