@@ -4192,6 +4192,7 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         listener.set_nonblocking(true).unwrap();
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<()>();
 
         std::thread::spawn(move || {
             let runtime = tokio::runtime::Builder::new_current_thread()
@@ -4253,6 +4254,7 @@ mod tests {
                 }));
 
                 let listener = tokio::net::TcpListener::from_std(listener).unwrap();
+                let _ = ready_tx.send(());
                 axum::serve(listener, app)
                     .with_graceful_shutdown(async move {
                         let _ = shutdown_rx.await;
@@ -4262,6 +4264,8 @@ mod tests {
             });
         });
 
+        // Wait for the server thread to be ready before returning.
+        ready_rx.recv().unwrap();
         (format!("http://{}", addr), shutdown_tx)
     }
 

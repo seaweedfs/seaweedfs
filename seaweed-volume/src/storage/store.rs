@@ -1158,7 +1158,13 @@ mod tests {
                 Vec::new(),
             )
             .unwrap();
-        store.volume_size_limit.store(1024, Ordering::Relaxed);
+        // Use a large volume_size_limit so the unused-space difference between
+        // preallocate=true (0) and preallocate=false (~2 × limit) is big enough
+        // that integer-division rounding and disk-free fluctuations between the
+        // two get_disk_stats calls cannot make the quotients equal.
+        store
+            .volume_size_limit
+            .store(100 * 1024 * 1024, Ordering::Relaxed);
         store
             .add_volume(
                 VolumeId(61),
