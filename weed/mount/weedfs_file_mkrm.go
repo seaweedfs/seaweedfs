@@ -114,8 +114,9 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 	fileHandle.dirtyMetadata = true
 
 	// Acquire DLM lock for new file creation (Create bypasses AcquireHandle
-	// so we must acquire the lock here).
-	if wfs.lockClient != nil && in.Flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
+	// so we must acquire the lock here). Always lock on Create since file
+	// creation is inherently a write operation.
+	if wfs.lockClient != nil && fileHandle.dlmLock == nil {
 		owner := fmt.Sprintf("mount-%d", wfs.signature)
 		fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
 			string(entryFullPath), owner, lock_manager.LiveLockTTL,

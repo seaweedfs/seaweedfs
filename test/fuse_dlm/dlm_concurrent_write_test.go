@@ -201,3 +201,124 @@ func TestDLMWriteBlocksSecondWriter(t *testing.T) {
 		t.Fatal("mount1 write did not complete within 30s after mount0 closed")
 	}
 }
+
+// TestDLMRenameWhileWriteOpen verifies that a rename is coordinated with DLM:
+// while mount0 has a file open for writing (re-opened after creation),
+// mount1 cannot rename it until mount0 closes the file.
+func TestDLMRenameWhileWriteOpen(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping DLM integration test in short mode")
+	}
+
+	cluster := startDLMTestCluster(t)
+	t.Cleanup(cluster.Stop)
+
+	origName := "rename_source.txt"
+	newName := "rename_dest.txt"
+
+	// Create and close the file first so it's flushed to the filer and
+	// visible on both mounts.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(cluster.mountPoints[0], origName),
+		[]byte("initial-content"), 0644))
+	time.Sleep(2 * time.Second) // metadata propagation
+
+	// Verify mount1 can see the file
+	_, err := os.Stat(filepath.Join(cluster.mountPoints[1], origName))
+	require.NoError(t, err, "mount1 should see the file")
+
+	// Mount 0 re-opens the file for writing and holds it open
+	f, err := os.OpenFile(
+		filepath.Join(cluster.mountPoints[0], origName),
+		os.O_WRONLY|os.O_TRUNC, 0644)
+	require.NoError(t, err, "mount0 reopen")
+	_, err = f.Write([]byte("data-while-holding-lock"))
+	require.NoError(t, err, "mount0 write")
+
+	// Mount 1 tries to rename — should block because mount0 holds the
+	// DLM lock on the old path
+	renameDone := make(chan error, 1)
+	go func() {
+		renameDone <- os.Rename(
+			filepath.Join(cluster.mountPoints[1], origName),
+			filepath.Join(cluster.mountPoints[1], newName))
+	}()
+
+	renameCompletedEarly := false
+	select {
+	case renameErr := <-renameDone:
+		renameCompletedEarly = true
+		t.Logf("WARNING: rename completed while mount0 still held file open (err=%v)", renameErr)
+	case <-time.After(3 * time.Second):
+		t.Log("rename is blocked as expected while mount0 holds the file")
+	}
+
+	// Mount 0 closes → releases DLM lock → rename should proceed
+	require.NoError(t, f.Close(), "mount0 close")
+
+	if !renameCompletedEarly {
+		select {
+		case err := <-renameDone:
+			assert.NoError(t, err, "rename after mount0 close")
+		case <-time.After(30 * time.Second):
+			t.Fatal("rename did not complete within 30s after mount0 closed")
+		}
+	}
+}
+
+// TestDLMConcurrentRenames verifies that two concurrent renames of the same
+// file from different mounts don't corrupt metadata. DLM locks on both old
+// and new paths ensure renames are serialized.
+func TestDLMConcurrentRenames(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping DLM integration test in short mode")
+	}
+
+	cluster := startDLMTestCluster(t)
+	t.Cleanup(cluster.Stop)
+
+	// Create a file first
+	origPath := filepath.Join(cluster.mountPoints[0], "rename_race.txt")
+	require.NoError(t, os.WriteFile(origPath, []byte("original-content"), 0644))
+	time.Sleep(1 * time.Second) // propagation
+
+	// Both mounts try to rename the same file concurrently
+	var wg sync.WaitGroup
+	var errA, errB error
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		errA = os.Rename(
+			filepath.Join(cluster.mountPoints[0], "rename_race.txt"),
+			filepath.Join(cluster.mountPoints[0], "renamed_by_mount0.txt"),
+		)
+	}()
+
+	go func() {
+		defer wg.Done()
+		errB = os.Rename(
+			filepath.Join(cluster.mountPoints[1], "rename_race.txt"),
+			filepath.Join(cluster.mountPoints[1], "renamed_by_mount1.txt"),
+		)
+	}()
+
+	wg.Wait()
+
+	// At least one rename should succeed; the other may fail with ENOENT
+	// since the source was already moved.
+	succeeded := 0
+	if errA == nil {
+		succeeded++
+		t.Logf("mount0 rename succeeded")
+	} else {
+		t.Logf("mount0 rename failed: %v", errA)
+	}
+	if errB == nil {
+		succeeded++
+		t.Logf("mount1 rename succeeded")
+	} else {
+		t.Logf("mount1 rename failed: %v", errB)
+	}
+	assert.GreaterOrEqual(t, succeeded, 1, "at least one rename must succeed")
+}

@@ -10,6 +10,7 @@ import (
 
 	"github.com/seaweedfs/go-fuse/v2/fs"
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -233,6 +234,23 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		wfs.waitForPendingAsyncFlush(inode)
 	}
 
+	// Acquire DLM locks on both old and new paths to prevent another mount
+	// from opening either path for writing during the rename. Lock in
+	// sorted order to prevent deadlocks when two mounts rename in opposite
+	// directions (A→B vs B→A).
+	if wfs.lockClient != nil {
+		owner := fmt.Sprintf("mount-%d", wfs.signature)
+		first, second := string(oldPath), string(newPath)
+		if first > second {
+			first, second = second, first
+		}
+		dlmLock1 := wfs.lockClient.NewBlockingLongLivedLock(first, owner, lock_manager.LiveLockTTL)
+		defer dlmLock1.Stop()
+		dlmLock2 := wfs.lockClient.NewBlockingLongLivedLock(second, owner, lock_manager.LiveLockTTL)
+		defer dlmLock2.Stop()
+		glog.V(1).Infof("DLM locks acquired for rename %s => %s", oldPath, newPath)
+	}
+
 	// update remote filer
 	request := &filer_pb.StreamRenameEntryRequest{
 		OldDirectory: string(oldDir),
@@ -296,6 +314,17 @@ func (wfs *WFS) handleRenameResponse(ctx context.Context, resp *filer_pb.StreamR
 				// Keep the saved handle path current so any flush fallback
 				// after Forget uses the post-rename location, not the old one.
 				fh.RememberPath(newPath)
+
+				// Migrate the DLM lock from old path to new path so the
+				// lock key matches the current file location.
+				if fh.dlmLock != nil && wfs.lockClient != nil {
+					owner := fmt.Sprintf("mount-%d", wfs.signature)
+					fh.dlmLock.Stop()
+					fh.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+						string(newPath), owner, lock_manager.LiveLockTTL,
+					)
+					glog.V(1).Infof("DLM lock migrated from %s to %s", oldPath, newPath)
+				}
 			}
 			// invalidate attr and data
 			// wfs.fuseServer.InodeNotify(sourceInode, 0, -1)
