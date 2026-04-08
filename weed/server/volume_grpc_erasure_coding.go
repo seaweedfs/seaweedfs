@@ -86,14 +86,28 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 		os.Remove(v.IndexFileName() + ".ecx")
 	}()
 
+	// IMPORTANT: Generate .ecx BEFORE EC shards to prevent a race condition.
+	// If .ecx were generated after EC shards, any write (e.g. from WriteNeedleBlob
+	// during replica sync) between the two steps would add entries to .idx that
+	// end up in .ecx but whose data is NOT in the EC shards — causing "shard too
+	// short" and "size mismatch" errors on reads.
+	//
+	// By generating .ecx first, it reflects the .idx state at or before the .dat
+	// is read for EC encoding. If a write sneaks in after .ecx but before/during
+	// EC encoding, the shards contain MORE data than .ecx references, which is
+	// harmless (the extra data is simply not indexed).
+
+	// write .ecx file from the current .idx
+	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
+		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
+	}
+
+	// snapshot .dat file size before encoding — must match what .ecx references
+	datSize, _, _ := v.FileStat()
+
 	// write .ec00 ~ .ec[TotalShards-1] files using context
 	if err := erasure_coding.WriteEcFilesWithContext(baseFileName, ecCtx); err != nil {
 		return nil, fmt.Errorf("WriteEcFilesWithContext %s: %v", baseFileName, err)
-	}
-
-	// write .ecx file
-	if err := erasure_coding.WriteSortedFileFromIdx(v.IndexFileName(), ".ecx"); err != nil {
-		return nil, fmt.Errorf("WriteSortedFileFromIdx %s: %v", v.IndexFileName(), err)
 	}
 
 	// write .vif files
@@ -106,8 +120,6 @@ func (vs *VolumeServer) VolumeEcShardsGenerate(ctx context.Context, req *volume_
 	}
 	volumeInfo := &volume_server_pb.VolumeInfo{Version: uint32(v.Version())}
 	volumeInfo.ExpireAtSec = expireAtSec
-
-	datSize, _, _ := v.FileStat()
 	volumeInfo.DatFileSize = int64(datSize)
 
 	// Validate EC configuration before saving to .vif
