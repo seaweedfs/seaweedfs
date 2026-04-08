@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 type TestEnvironment struct {
@@ -96,29 +97,26 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 
-	bindIP := findBindIP()
+	bindIP := testutil.FindBindIP()
 
-	masterPort, masterGrpcPort := mustFreePortPair(t, "Master")
-	volumePort, volumeGrpcPort := mustFreePortPair(t, "Volume")
-	filerPort, filerGrpcPort := mustFreePortPair(t, "Filer")
-	s3Port, s3GrpcPort := mustFreePortPair(t, "S3")
-	icebergPort := mustFreePort(t, "Iceberg")
+	// 9 ports: master(2), volume(2), filer(2), s3(2), iceberg(1)
+	ports := testutil.MustAllocatePorts(t, 9)
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
 		weedBinary:      weedBinary,
 		dataDir:         dataDir,
 		bindIP:          bindIP,
-		s3Port:          s3Port,
-		s3GrpcPort:      s3GrpcPort,
-		icebergPort:     icebergPort,
-		masterPort:      masterPort,
-		masterGrpcPort:  masterGrpcPort,
-		filerPort:       filerPort,
-		filerGrpcPort:   filerGrpcPort,
-		volumePort:      volumePort,
-		volumeGrpcPort:  volumeGrpcPort,
-		dockerAvailable: hasDocker(),
+		masterPort:      ports[0],
+		masterGrpcPort:  ports[1],
+		volumePort:      ports[2],
+		volumeGrpcPort:  ports[3],
+		filerPort:       ports[4],
+		filerGrpcPort:   ports[5],
+		s3Port:          ports[6],
+		s3GrpcPort:      ports[7],
+		icebergPort:     ports[8],
+		dockerAvailable: testutil.HasDocker(),
 	}
 }
 
@@ -331,73 +329,6 @@ func createObjectBucket(t *testing.T, env *TestEnvironment, bucketName string) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("Failed to create S3 bucket %s, status %d: %s", bucketName, resp.StatusCode, body)
 	}
-}
-
-func hasDocker() bool {
-	cmd := exec.Command("docker", "version")
-	return cmd.Run() == nil
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	port, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for %s: %v", name, err)
-	}
-	return port
-}
-
-func mustFreePortPair(t *testing.T, name string) (int, int) {
-	t.Helper()
-
-	httpPort, grpcPort, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	return httpPort, grpcPort
-}
-
-func findAvailablePortPair() (int, int, error) {
-	httpPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	grpcPort, err := getFreePort()
-	if err != nil {
-		return 0, 0, err
-	}
-	return httpPort, grpcPort, nil
-}
-
-func getFreePort() (int, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	defer listener.Close()
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, nil
-}
-
-func findBindIP() string {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return "127.0.0.1"
-	}
-	for _, addr := range addrs {
-		ipNet, ok := addr.(*net.IPNet)
-		if !ok || ipNet.IP == nil {
-			continue
-		}
-		ip := ipNet.IP.To4()
-		if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-			continue
-		}
-		return ip.String()
-	}
-	return "127.0.0.1"
 }
 
 func randomString(length int) string {

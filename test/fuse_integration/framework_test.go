@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,7 +68,7 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_fuse_test_")
 	require.NoError(t, err)
 
-	filerPort := freePort(t)
+	filerPort := testutil.MustFreeMiniPort(t, "Filer")
 
 	return &FuseTestFramework{
 		t:          t,
@@ -82,30 +83,6 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	}
 }
 
-// freePort asks the OS for a free TCP port.
-func freePort(t *testing.T) int {
-	t.Helper()
-	const (
-		minServicePort = 20000
-		maxServicePort = 55535 // SeaweedFS gRPC service uses httpPort + 10000.
-	)
-
-	portCount := maxServicePort - minServicePort + 1
-	start := minServicePort + int(time.Now().UnixNano()%int64(portCount))
-
-	for attempt := 0; attempt < 512; attempt++ {
-		port := minServicePort + (start-minServicePort+attempt)%portCount
-		l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
-		if err != nil {
-			continue
-		}
-		l.Close()
-		return port
-	}
-
-	t.Fatalf("failed to allocate port <= %d after repeated attempts", maxServicePort)
-	return 0
-}
 
 // Setup starts "weed mini" and mounts the FUSE filesystem.
 func (f *FuseTestFramework) Setup(config *TestConfig) error {

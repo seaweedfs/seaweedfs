@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 )
 
@@ -85,10 +86,12 @@ func StartRustMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCou
 		t.Fatalf("write security config: %v", err)
 	}
 
-	masterPort, masterGrpcPort, err := allocateMasterPortPair()
+	miniPorts, err := testutil.AllocateMiniPorts(1)
 	if err != nil {
 		t.Fatalf("allocate master port pair: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	// Allocate ports for all volume servers (3 ports per server: admin, grpc, public)
 	// If SplitPublicPort is true, we need an additional port per server
@@ -97,7 +100,7 @@ func StartRustMultiVolumeCluster(t testing.TB, profile matrix.Profile, serverCou
 		portsPerServer = 4
 	}
 	totalPorts := serverCount * portsPerServer
-	ports, err := allocatePorts(totalPorts)
+	ports, err := testutil.AllocatePorts(totalPorts)
 	if err != nil {
 		t.Fatalf("allocate volume ports: %v", err)
 	}

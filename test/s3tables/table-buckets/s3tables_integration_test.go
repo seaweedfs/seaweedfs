@@ -3,7 +3,6 @@ package s3tables
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -18,6 +17,7 @@ import (
 
 	"flag"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3tables"
@@ -590,40 +590,13 @@ func testTargetOperations(t *testing.T, client *S3TablesClient) {
 
 // Helper functions
 
-// findAvailablePorts finds n available ports by binding to port 0 multiple times
-// It keeps the listeners open until all ports are found to ensure uniqueness
-func findAvailablePorts(n int) ([]int, error) {
-	listeners := make([]*net.TCPListener, n)
-	ports := make([]int, n)
-
-	// Open all listeners to ensure we get unique ports
-	for i := 0; i < n; i++ {
-		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			// Close valid listeners before returning error
-			for j := 0; j < i; j++ {
-				listeners[j].Close()
-			}
-			return nil, err
-		}
-		listeners[i] = listener.(*net.TCPListener)
-		ports[i] = listeners[i].Addr().(*net.TCPAddr).Port
-	}
-
-	// Close all listeners
-	for _, l := range listeners {
-		l.Close()
-	}
-
-	return ports, nil
-}
 
 // startMiniClusterInDir starts a weed mini instance using testDir as the data
 // directory. It does not require a *testing.T so it can be called from TestMain.
 // extraArgs are appended to the default mini command flags.
 func startMiniClusterInDir(testDir string, extraArgs []string) (*TestCluster, error) {
 	// We need 10 unique ports: Master(2), Volume(2), Filer(2), S3(2), Admin(2)
-	ports, err := findAvailablePorts(10)
+	ports, err := testutil.AllocatePorts(10)
 	if err != nil {
 		return nil, fmt.Errorf("failed to find available ports: %v", err)
 	}

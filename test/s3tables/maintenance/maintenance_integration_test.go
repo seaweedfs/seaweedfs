@@ -16,7 +16,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"path"
@@ -40,6 +39,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/weed/command"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -92,7 +92,7 @@ func TestMain(m *testing.M) {
 }
 
 func startCluster(testDir string, extraArgs []string) (*testCluster, error) {
-	ports, err := findPorts(10)
+	ports, err := testutil.AllocatePorts(10)
 	if err != nil {
 		return nil, err
 	}
@@ -201,25 +201,6 @@ func (c *testCluster) filerConn(t *testing.T) (*grpc.ClientConn, filer_pb.Seawee
 	return conn, filer_pb.NewSeaweedFilerClient(conn)
 }
 
-func findPorts(n int) ([]int, error) {
-	ls := make([]*net.TCPListener, n)
-	ps := make([]int, n)
-	for i := 0; i < n; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			for j := 0; j < i; j++ {
-				ls[j].Close()
-			}
-			return nil, err
-		}
-		ls[i] = l.(*net.TCPListener)
-		ps[i] = ls[i].Addr().(*net.TCPAddr).Port
-	}
-	for _, l := range ls {
-		l.Close()
-	}
-	return ps, nil
-}
 
 func waitReady(endpoint string, timeout time.Duration) error {
 	client := &http.Client{Timeout: 1 * time.Second}

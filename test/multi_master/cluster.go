@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 const (
@@ -73,23 +74,23 @@ func StartMasterCluster(t testing.TB) *MasterCluster {
 	logsDir := filepath.Join(baseDir, "logs")
 	os.MkdirAll(logsDir, 0o755)
 
-	// Allocate 3 port pairs (http, grpc) atomically to prevent reuse.
-	portPairs, err := allocateMultipleMasterPortPairs(3)
+	// Allocate 3 mini-safe ports (each guarantees port+10000 is also free).
+	httpPorts, err := testutil.AllocateMiniPorts(3)
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
 	var nodes [3]*masterNode
 	var peerParts []string
-	for i, pp := range portPairs {
+	for i, hp := range httpPorts {
 		dataDir := filepath.Join(baseDir, fmt.Sprintf("m%d", i))
 		os.MkdirAll(dataDir, 0o755)
 		nodes[i] = &masterNode{
-			port:     pp[0],
-			grpcPort: pp[1],
+			port:     hp,
+			grpcPort: hp + testutil.GrpcPortOffset,
 			dataDir:  dataDir,
 			logFile:  filepath.Join(logsDir, fmt.Sprintf("master%d.log", i)),
 		}
-		peerParts = append(peerParts, fmt.Sprintf("127.0.0.1:%d", pp[0]))
+		peerParts = append(peerParts, fmt.Sprintf("127.0.0.1:%d", hp))
 	}
 
 	mc := &MasterCluster{
@@ -357,41 +358,6 @@ func (mc *MasterCluster) tailLog(i int) string {
 	return strings.Join(lines, "\n")
 }
 
-// --- port and binary helpers (adapted from test/volume_server/framework) ---
-
-// allocateMultipleMasterPortPairs finds n non-overlapping (http, grpc) port
-// pairs, holding all listeners until all are found, then releasing them
-// together to avoid races between consecutive allocations.
-func allocateMultipleMasterPortPairs(n int) ([][2]int, error) {
-	var listeners []net.Listener
-	var pairs [][2]int
-
-	defer func() {
-		for _, l := range listeners {
-			l.Close()
-		}
-	}()
-
-	for masterPort := 10000; masterPort <= 55535 && len(pairs) < n; masterPort++ {
-		grpcPort := masterPort + 10000
-		l1, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(masterPort)))
-		if err != nil {
-			continue
-		}
-		l2, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(grpcPort)))
-		if err != nil {
-			l1.Close()
-			continue
-		}
-		listeners = append(listeners, l1, l2)
-		pairs = append(pairs, [2]int{masterPort, grpcPort})
-	}
-
-	if len(pairs) < n {
-		return nil, fmt.Errorf("could only allocate %d of %d master port pairs", len(pairs), n)
-	}
-	return pairs, nil
-}
 
 func findOrBuildWeedBinary() (string, error) {
 	if fromEnv := os.Getenv("WEED_BINARY"); fromEnv != "" {

@@ -17,7 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/seaweedfs/seaweedfs/test/s3tables/testutil"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 type TestEnvironment struct {
@@ -40,7 +40,6 @@ type TestEnvironment struct {
 	dockerAvailable bool
 	accessKey       string
 	secretKey       string
-	closers         []io.Closer
 }
 
 func TestTrinoIcebergCatalog(t *testing.T) {
@@ -214,19 +213,24 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 
 	bindIP := testutil.FindBindIP()
 
-	env := &TestEnvironment{
-		seaweedDir: seaweedDir,
-		weedBinary: weedBinary,
-		dataDir:    dataDir,
-		bindIP:     bindIP,
-		closers:    []io.Closer{},
-	}
+	// 9 ports: master(2), volume(2), filer(2), s3(2), iceberg(1)
+	ports := testutil.MustAllocatePorts(t, 9)
 
-	env.masterPort, env.masterGrpcPort = env.mustFreePortPair("Master")
-	env.volumePort, env.volumeGrpcPort = env.mustFreePortPair("Volume")
-	env.filerPort, env.filerGrpcPort = env.mustFreePortPair("Filer")
-	env.s3Port, env.s3GrpcPort = env.mustFreePortPair("S3")
-	env.icebergPort = env.mustFreePort("Iceberg")
+	env := &TestEnvironment{
+		seaweedDir:     seaweedDir,
+		weedBinary:     weedBinary,
+		dataDir:        dataDir,
+		bindIP:         bindIP,
+		masterPort:     ports[0],
+		masterGrpcPort: ports[1],
+		volumePort:     ports[2],
+		volumeGrpcPort: ports[3],
+		filerPort:      ports[4],
+		filerGrpcPort:  ports[5],
+		s3Port:         ports[6],
+		s3GrpcPort:     ports[7],
+		icebergPort:    ports[8],
+	}
 
 	env.dockerAvailable = hasDocker()
 	env.accessKey = "AKIAIOSFODNN7EXAMPLE"
@@ -235,46 +239,6 @@ func NewTestEnvironment(t *testing.T) *TestEnvironment {
 	return env
 }
 
-func (env *TestEnvironment) mustFreePort(name string) int {
-	port, closer, err := getFreePort()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get free port for %s: %v", name, err))
-	}
-	env.closers = append(env.closers, closer)
-	return port
-}
-
-func (env *TestEnvironment) mustFreePortPair(name string) (int, int) {
-	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
-	if err != nil {
-		panic(fmt.Sprintf("Failed to get free port pair for %s: %v", name, err))
-	}
-	env.closers = append(env.closers, httpCloser, grpcCloser)
-	return httpPort, grpcPort
-}
-
-func mustFreePort(t *testing.T, name string) int {
-	t.Helper()
-
-	port, closer, err := getFreePort()
-	if err != nil {
-		t.Fatalf("Failed to get free port for %s: %v", name, err)
-	}
-	closer.Close()
-	return port
-}
-
-func mustFreePortPair(t *testing.T, name string) (int, int) {
-	t.Helper()
-
-	httpPort, httpCloser, grpcPort, grpcCloser, err := findAvailablePortPair()
-	if err != nil {
-		t.Fatalf("Failed to get free port pair for %s: %v", name, err)
-	}
-	httpCloser.Close()
-	grpcCloser.Close()
-	return httpPort, grpcPort
-}
 
 func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 	t.Helper()
@@ -292,12 +256,6 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	env.weedCancel = cancel
-
-	// Close all port listeners right before starting the weed process
-	for _, closer := range env.closers {
-		closer.Close()
-	}
-	env.closers = nil
 
 	cmd := exec.CommandContext(ctx, env.weedBinary, "mini",
 		"-master.port", fmt.Sprintf("%d", env.masterPort),
@@ -631,28 +589,6 @@ func hasDocker() bool {
 	return cmd.Run() == nil
 }
 
-func findAvailablePortPair() (int, io.Closer, int, io.Closer, error) {
-	httpPort, httpCloser, err := getFreePort()
-	if err != nil {
-		return 0, nil, 0, nil, err
-	}
-	grpcPort, grpcCloser, err := getFreePort()
-	if err != nil {
-		httpCloser.Close()
-		return 0, nil, 0, nil, err
-	}
-	return httpPort, httpCloser, grpcPort, grpcCloser, nil
-}
-
-func getFreePort() (int, io.Closer, error) {
-	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		return 0, nil, err
-	}
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, listener, nil
-}
 
 func randomString(length int) string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
