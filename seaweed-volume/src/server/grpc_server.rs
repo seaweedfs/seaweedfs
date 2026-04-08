@@ -4311,7 +4311,9 @@ mod tests {
         std::fs::remove_file(&dat_path).unwrap();
 
         let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
-        global_s3_tier_registry().write().unwrap().clear();
+        // Use a test-specific backend_id to avoid racing with other tests
+        // that share the global registry.  Never call clear() — only
+        // register/remove our own entries.
         let tier_config = S3TierConfig {
             access_key: "access".to_string(),
             secret_key: "secret".to_string(),
@@ -4323,14 +4325,16 @@ mod tests {
         };
         {
             let mut registry = global_s3_tier_registry().write().unwrap();
-            registry.register("s3.default".to_string(), S3TierBackend::new(&tier_config));
-            registry.register("s3".to_string(), S3TierBackend::new(&tier_config));
+            registry.register(
+                "s3.incr_copy_test".to_string(),
+                S3TierBackend::new(&tier_config),
+            );
         }
 
         let vif = crate::storage::volume::VifVolumeInfo {
             files: vec![crate::storage::volume::VifRemoteFile {
                 backend_type: "s3".to_string(),
-                backend_id: "default".to_string(),
+                backend_id: "incr_copy_test".to_string(),
                 key: "remote-key".to_string(),
                 offset: 0,
                 file_size: dat_bytes.len() as u64,
@@ -4539,7 +4543,10 @@ mod tests {
         assert_eq!(copied, dat_bytes[super_block_size as usize..]);
 
         let _ = shutdown_tx.send(());
-        global_s3_tier_registry().write().unwrap().clear();
+        global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.incr_copy_test");
     }
 
     #[tokio::test]

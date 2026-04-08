@@ -3917,6 +3917,11 @@ mod tests {
             .unwrap();
         assert!(deleted_size.0 > 0);
         assert_eq!(v.dat_file_size().unwrap(), dat_size_before_reload);
+
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.vif_rw_test");
     }
 
     #[test]
@@ -4079,10 +4084,9 @@ mod tests {
         std::fs::remove_file(&dat_path).unwrap();
 
         let (endpoint, shutdown_tx) = spawn_fake_s3_server(dat_bytes.clone());
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Use a test-specific backend_id to avoid racing with other tests
+        // that share the global registry.  Never call clear() — only
+        // register/remove our own entries.
         let tier_config = crate::remote_storage::s3_tier::S3TierConfig {
             access_key: "access".to_string(),
             secret_key: "secret".to_string(),
@@ -4097,11 +4101,7 @@ mod tests {
                 .write()
                 .unwrap();
             registry.register(
-                "s3.default".to_string(),
-                crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
-            );
-            registry.register(
-                "s3".to_string(),
+                "s3.remote_only_rw".to_string(),
                 crate::remote_storage::s3_tier::S3TierBackend::new(&tier_config),
             );
         }
@@ -4109,7 +4109,7 @@ mod tests {
         let vif = VifVolumeInfo {
             files: vec![VifRemoteFile {
                 backend_type: "s3".to_string(),
-                backend_id: "default".to_string(),
+                backend_id: "remote_only_rw".to_string(),
                 key: "remote-key".to_string(),
                 offset: 0,
                 file_size: dat_bytes.len() as u64,
@@ -4166,6 +4166,10 @@ mod tests {
         assert_eq!(meta.data_size, 11);
 
         let _ = shutdown_tx.send(());
+        crate::remote_storage::s3_tier::global_s3_tier_registry()
+            .write()
+            .unwrap()
+            .remove("s3.remote_only_rw");
     }
 
     /// Volume destroy removes .vif alongside the primary data files.

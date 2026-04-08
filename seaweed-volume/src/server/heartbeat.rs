@@ -1408,10 +1408,8 @@ mod tests {
     #[test]
     fn test_apply_storage_backends_registers_s3_default_aliases() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.  Just register our entries and verify them.
 
         apply_storage_backends(
             &state,
@@ -1443,10 +1441,8 @@ mod tests {
     #[test]
     fn test_apply_storage_backends_ignores_unsupported_types() {
         let state = test_state_with_store(Store::new(NeedleMapKind::InMemory));
-        crate::remote_storage::s3_tier::global_s3_tier_registry()
-            .write()
-            .unwrap()
-            .clear();
+        // Do not call clear() on the global registry — other tests may be
+        // running concurrently.
 
         apply_storage_backends(
             &state,
@@ -1457,12 +1453,17 @@ mod tests {
             }],
         );
 
+        // The per-state registry is freshly created and should have no entries
+        // since "rclone" is unsupported.
         let registry = state.s3_tier_registry.read().unwrap();
         assert!(registry.names().is_empty());
+        // Only check that the unsupported type was not added to the global
+        // registry.  Other tests may have their own entries present.
         let global_registry = crate::remote_storage::s3_tier::global_s3_tier_registry()
             .read()
             .unwrap();
-        assert!(global_registry.names().is_empty());
+        assert!(global_registry.get("rclone.default").is_none());
+        assert!(global_registry.get("rclone").is_none());
     }
 
     #[test]
