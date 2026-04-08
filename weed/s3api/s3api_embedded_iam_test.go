@@ -534,6 +534,39 @@ func TestEmbeddedIamListUserPolicies(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, rr3.Code)
 }
 
+// TestEmbeddedIamGroupInlinePoliciesNotImplemented tests that group inline policies
+// return NotImplemented in embedded IAM mode.
+func TestEmbeddedIamGroupInlinePoliciesNotImplemented(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Groups: []*iam_pb.Group{
+			{Name: "developers", Members: []string{"alice"}},
+		},
+	}
+
+	notImpl := s3err.GetAPIError(s3err.ErrNotImplemented).Code
+
+	_, iamErr := api.PutGroupPolicy(s3cfg, url.Values{
+		"GroupName":      {"developers"},
+		"PolicyName":     {"DevPolicy"},
+		"PolicyDocument": {`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`},
+	})
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, notImpl, iamErr.Code)
+
+	_, iamErr = api.GetGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, notImpl, iamErr.Code)
+
+	_, iamErr = api.DeleteGroupPolicy(s3cfg, url.Values{"GroupName": {"developers"}, "PolicyName": {"DevPolicy"}})
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, notImpl, iamErr.Code)
+
+	_, iamErr = api.ListGroupPolicies(s3cfg, url.Values{"GroupName": {"developers"}})
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, notImpl, iamErr.Code)
+}
+
 // TestEmbeddedIamAttachUserPolicy tests attaching a managed policy to a user.
 func TestEmbeddedIamAttachUserPolicy(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
