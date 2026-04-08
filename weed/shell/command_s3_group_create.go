@@ -57,7 +57,10 @@ func (c *commandS3GroupCreate) Do(args []string, commandEnv *CommandEnv, writer 
 		if err != nil {
 			return err
 		}
-		cfg := resp.Configuration
+		cfg := resp.GetConfiguration()
+		if cfg == nil {
+			return fmt.Errorf("no IAM configuration found")
+		}
 
 		for _, g := range cfg.Groups {
 			if g.Name == *name {
