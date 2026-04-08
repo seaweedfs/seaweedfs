@@ -82,12 +82,13 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 	}
 }
 
-// freePort asks the OS for a free TCP port.
+// freePort asks the OS for a free TCP port in a range where the gRPC
+// offset (port + 10000) won't collide with well-known ports.
 func freePort(t *testing.T) int {
 	t.Helper()
 	const (
 		minServicePort = 20000
-		maxServicePort = 55535 // SeaweedFS gRPC service uses httpPort + 10000.
+		maxServicePort = 55535
 	)
 
 	portCount := maxServicePort - minServicePort + 1

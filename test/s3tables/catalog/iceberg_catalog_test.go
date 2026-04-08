@@ -9,7 +9,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -17,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 // sharedEnv is the single TestEnvironment shared across all tests in this package.
@@ -69,23 +70,6 @@ type TestEnvironment struct {
 	dockerAvailable bool
 }
 
-// hasDocker checks if Docker is available
-func hasDocker() bool {
-	cmd := exec.Command("docker", "version")
-	return cmd.Run() == nil
-}
-
-// getFreePort returns an available ephemeral port and its listener
-func getFreePort() (int, net.Listener, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, nil, err
-	}
-
-	addr := listener.Addr().(*net.TCPAddr)
-	return addr.Port, listener, nil
-}
-
 // newTestEnvironmentForMain creates a TestEnvironment without calling t.Fatalf so it
 // can be used from TestMain (which has no *testing.T).
 func newTestEnvironmentForMain() (*TestEnvironment, error) {
@@ -118,95 +102,27 @@ func newTestEnvironmentForMain() (*TestEnvironment, error) {
 		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 
-	// Allocate free ephemeral ports for each service
-	var listeners []net.Listener
-	closeListeners := func() {
-		for _, l := range listeners {
-			l.Close()
-		}
-	}
-
-	var l net.Listener
-	s3Port, l, err := getFreePort()
+	// Allocate 9 unique ports atomically: s3, iceberg, s3Grpc, master, masterGrpc,
+	// filer, filerGrpc, volume, volumeGrpc
+	ports, err := testutil.AllocatePorts(9)
 	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for S3: %w", err)
+		return nil, fmt.Errorf("allocate ports: %w", err)
 	}
-	listeners = append(listeners, l)
-
-	icebergPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Iceberg: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	s3GrpcPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for S3 gRPC: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	masterPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Master: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	masterGrpcPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Master gRPC: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	filerPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Filer: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	filerGrpcPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Filer gRPC: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	volumePort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Volume: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	volumeGrpcPort, l, err := getFreePort()
-	if err != nil {
-		closeListeners()
-		return nil, fmt.Errorf("get free port for Volume gRPC: %w", err)
-	}
-	listeners = append(listeners, l)
-
-	// Release the port reservations so weed mini can bind to them
-	closeListeners()
 
 	return &TestEnvironment{
 		seaweedDir:      seaweedDir,
 		weedBinary:      weedBinary,
 		dataDir:         dataDir,
-		s3Port:          s3Port,
-		s3GrpcPort:      s3GrpcPort,
-		icebergPort:     icebergPort,
-		masterPort:      masterPort,
-		masterGrpcPort:  masterGrpcPort,
-		filerPort:       filerPort,
-		filerGrpcPort:   filerGrpcPort,
-		volumePort:      volumePort,
-		volumeGrpcPort:  volumeGrpcPort,
-		dockerAvailable: hasDocker(),
+		s3Port:          ports[0],
+		s3GrpcPort:      ports[1],
+		icebergPort:     ports[2],
+		masterPort:      ports[3],
+		masterGrpcPort:  ports[4],
+		filerPort:       ports[5],
+		filerGrpcPort:   ports[6],
+		volumePort:      ports[7],
+		volumeGrpcPort:  ports[8],
+		dockerAvailable: testutil.HasDocker(),
 	}, nil
 }
 

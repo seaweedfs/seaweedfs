@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 )
 
@@ -84,12 +85,14 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		t.Fatalf("write security config: %v", err)
 	}
 
-	masterPort, masterGrpcPort, err := allocateMasterPortPair()
+	miniPorts, err := testutil.AllocateMiniPorts(1)
 	if err != nil {
 		t.Fatalf("allocate master port pair: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
-	ports, err := allocatePorts(3)
+	ports, err := testutil.AllocatePorts(3)
 	if err != nil {
 		t.Fatalf("allocate ports: %v", err)
 	}
@@ -269,44 +272,6 @@ func stopProcess(cmd *exec.Cmd) {
 	}
 }
 
-func allocatePorts(count int) ([]int, error) {
-	listeners := make([]net.Listener, 0, count)
-	ports := make([]int, 0, count)
-	for i := 0; i < count; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			for _, ll := range listeners {
-				_ = ll.Close()
-			}
-			return nil, err
-		}
-		listeners = append(listeners, l)
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
-	}
-	for _, l := range listeners {
-		_ = l.Close()
-	}
-	return ports, nil
-}
-
-func allocateMasterPortPair() (int, int, error) {
-	for masterPort := 10000; masterPort <= 55535; masterPort++ {
-		masterGrpcPort := masterPort + 10000
-		l1, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(masterPort)))
-		if err != nil {
-			continue
-		}
-		l2, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(masterGrpcPort)))
-		if err != nil {
-			_ = l1.Close()
-			continue
-		}
-		_ = l2.Close()
-		_ = l1.Close()
-		return masterPort, masterGrpcPort, nil
-	}
-	return 0, 0, errors.New("unable to find available master port pair")
-}
 
 func newWorkDir() (dir string, keepLogs bool, err error) {
 	keepLogs = os.Getenv("VOLUME_SERVER_IT_KEEP_LOGS") == "1"

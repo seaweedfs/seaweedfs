@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +16,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/s3"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 	"github.com/seaweedfs/seaweedfs/weed/pb/remote_pb"
@@ -24,29 +24,6 @@ import (
 )
 
 // findAvailablePort finds a free TCP port on localhost.
-func findAvailablePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return 0, err
-	}
-	port := l.Addr().(*net.TCPAddr).Port
-	l.Close()
-	return port, nil
-}
-
-// waitForPort waits until a TCP port is listening, up to timeout.
-func waitForPort(port int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 500*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return fmt.Errorf("port %d not listening after %v", port, timeout)
-}
 
 // startWeedMini starts a weed mini subprocess and returns the S3 endpoint and cleanup func.
 func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
@@ -60,10 +37,11 @@ func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
 		}
 	}
 
-	miniMasterPort, _ := findAvailablePort()
-	miniVolumePort, _ := findAvailablePort()
-	miniFilerPort, _ := findAvailablePort()
-	miniS3Port, _ := findAvailablePort()
+	miniPorts := testutil.MustFreeMiniPorts(t, []string{"Master", "Volume", "Filer", "S3"})
+	miniMasterPort := miniPorts[0]
+	miniVolumePort := miniPorts[1]
+	miniFilerPort := miniPorts[2]
+	miniS3Port := miniPorts[3]
 	miniDir := t.TempDir()
 	os.WriteFile(filepath.Join(miniDir, "security.toml"), []byte("# empty\n"), 0644)
 
@@ -89,11 +67,11 @@ func startWeedMini(t *testing.T) (s3Endpoint string, cleanup func()) {
 		t.Fatalf("start weed mini: %v", err)
 	}
 
-	if err := waitForPort(miniS3Port, 30*time.Second); err != nil {
+	if !testutil.WaitForPort(miniS3Port, 30*time.Second) {
 		cancel()
 		miniCmd.Wait()
 		logFile.Close()
-		t.Fatalf("weed mini S3 not ready: %v", err)
+		t.Fatalf("weed mini S3 not ready on port %d", miniS3Port)
 	}
 	t.Logf("weed mini S3 ready on port %d", miniS3Port)
 

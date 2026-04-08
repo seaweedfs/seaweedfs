@@ -20,6 +20,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/framework"
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -115,7 +116,7 @@ func startDistributedLockCluster(t *testing.T) *distributedLockCluster {
 		require.NoError(t, os.MkdirAll(dir, 0o755), "create %s", dir)
 	}
 
-	ports, err := allocatePorts(12)
+	ports, err := testutil.AllocatePorts(12)
 	require.NoError(t, err, "allocate ports")
 	cluster.masterPort = ports[0]
 	cluster.masterGrpcPort = ports[1]
@@ -591,25 +592,6 @@ func (c *distributedLockCluster) tailLog(name string) string {
 	return strings.Join(lines, "\n")
 }
 
-func allocatePorts(count int) ([]int, error) {
-	listeners := make([]net.Listener, 0, count)
-	ports := make([]int, 0, count)
-	for i := 0; i < count; i++ {
-		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			for _, openListener := range listeners {
-				_ = openListener.Close()
-			}
-			return nil, err
-		}
-		listeners = append(listeners, l)
-		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
-	}
-	for _, l := range listeners {
-		_ = l.Close()
-	}
-	return ports, nil
-}
 
 func stopProcess(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {

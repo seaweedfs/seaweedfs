@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/seaweedfs/seaweedfs/test/volume_server/matrix"
 )
 
@@ -92,17 +93,19 @@ func StartMixedVolumeCluster(t testing.TB, profile matrix.Profile, goCount, rust
 		t.Fatalf("write security config: %v", err)
 	}
 
-	masterPort, masterGrpcPort, err := allocateMasterPortPair()
+	miniPorts, err := testutil.AllocateMiniPorts(1)
 	if err != nil {
 		t.Fatalf("allocate master port pair: %v", err)
 	}
+	masterPort := miniPorts[0]
+	masterGrpcPort := masterPort + testutil.GrpcPortOffset
 
 	// 2 ports per server (admin, grpc); add 1 more when public port is split out.
 	portsPerServer := 2
 	if profile.SplitPublicPort {
 		portsPerServer = 3
 	}
-	ports, err := allocatePorts(total * portsPerServer)
+	ports, err := testutil.AllocatePorts(total * portsPerServer)
 	if err != nil {
 		t.Fatalf("allocate volume ports: %v", err)
 	}
