@@ -53,8 +53,10 @@ func (iama *IamApiServer) DeleteGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 				return resp, &IamError{Code: iam.ErrCodeDeleteConflictException, Error: fmt.Errorf("cannot delete group %s: group has %d inline policy(ies)", groupName, len(gp))}
 			}
 			s3cfg.Groups = append(s3cfg.Groups[:i], s3cfg.Groups[i+1:]...)
-			// Clean up any empty inline policy entries
-			cleanupGroupInlinePolicies(iama, groupName)
+			// Clean up any empty inline policy entries, reuse already-fetched policies
+			if err := cleanupGroupInlinePolicies(iama, groupName, &policies); err != nil {
+				glog.Warningf("Failed to cleanup inline policies for group %s: %v", groupName, err)
+			}
 			return resp, nil
 		}
 	}
@@ -83,7 +85,9 @@ func (iama *IamApiServer) UpdateGroup(s3cfg *iam_pb.S3ApiConfiguration, values u
 				}
 				oldName := g.Name
 				g.Name = newName
-				migrateGroupInlinePolicies(iama, oldName, newName)
+				if err := migrateGroupInlinePolicies(iama, oldName, newName); err != nil {
+					glog.Warningf("Failed to migrate inline policies for group rename %s -> %s: %v", oldName, newName, err)
+				}
 			}
 			return resp, nil
 		}
@@ -513,26 +517,26 @@ func (iama *IamApiServer) ListGroupPolicies(s3cfg *iam_pb.S3ApiConfiguration, va
 }
 
 // cleanupGroupInlinePolicies removes all inline policies for a group from persistent storage.
-func cleanupGroupInlinePolicies(iama *IamApiServer, groupName string) {
-	policies := Policies{}
-	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil {
-		glog.Warningf("Failed to get policies during group %s cleanup: %v", groupName, err)
-		return
+// If policies is provided, it uses that to avoid redundant I/O; otherwise fetches from storage.
+func cleanupGroupInlinePolicies(iama *IamApiServer, groupName string, policies *Policies) error {
+	if policies == nil {
+		policies = &Policies{}
+		if err := iama.s3ApiConfig.GetPolicies(policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+			return err
+		}
 	}
 	if _, exists := policies.GroupInlinePolicies[groupName]; exists {
 		delete(policies.GroupInlinePolicies, groupName)
-		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
-			glog.Warningf("Failed to cleanup inline policies for group %s: %v", groupName, err)
-		}
+		return iama.s3ApiConfig.PutPolicies(policies)
 	}
+	return nil
 }
 
 // migrateGroupInlinePolicies renames the inline policies key when a group is renamed.
-func migrateGroupInlinePolicies(iama *IamApiServer, oldName, newName string) {
+func migrateGroupInlinePolicies(iama *IamApiServer, oldName, newName string) error {
 	policies := Policies{}
-	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil {
-		glog.Warningf("Failed to get policies during group rename %s -> %s: %v", oldName, newName, err)
-		return
+	if err := iama.s3ApiConfig.GetPolicies(&policies); err != nil && !errors.Is(err, filer_pb.ErrNotFound) {
+		return err
 	}
 	if oldPolicies, exists := policies.GroupInlinePolicies[oldName]; exists {
 		if policies.GroupInlinePolicies == nil {
@@ -540,10 +544,9 @@ func migrateGroupInlinePolicies(iama *IamApiServer, oldName, newName string) {
 		}
 		policies.GroupInlinePolicies[newName] = oldPolicies
 		delete(policies.GroupInlinePolicies, oldName)
-		if err := iama.s3ApiConfig.PutPolicies(&policies); err != nil {
-			glog.Warningf("Failed to migrate inline policies for group rename %s -> %s: %v", oldName, newName, err)
-		}
+		return iama.s3ApiConfig.PutPolicies(&policies)
 	}
+	return nil
 }
 
 // recomputeActionsForGroupMembers recomputes the aggregated actions for all members of a group.

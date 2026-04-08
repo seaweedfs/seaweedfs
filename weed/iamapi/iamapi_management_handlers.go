@@ -1246,7 +1246,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
-		changed = false
+		// changed = true: PutGroupPolicy recomputes member Identity.Actions
 	case "GetGroupPolicy":
 		var err *IamError
 		response, err = iama.GetGroupPolicy(s3cfg, values)
@@ -1262,7 +1262,7 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 			writeIamErrorResponse(w, r, reqID, err)
 			return
 		}
-		changed = false
+		// changed = true: DeleteGroupPolicy recomputes member Identity.Actions
 	case "ListGroupPolicies":
 		var err *IamError
 		response, err = iama.ListGroupPolicies(s3cfg, values)
