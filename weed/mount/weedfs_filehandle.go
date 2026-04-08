@@ -1,7 +1,10 @@
 package mount
 
 import (
+	"fmt"
+
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -30,6 +33,16 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		// need to AcquireFileHandle again to ensure correct handle counter
 		fileHandle = wfs.fhMap.AcquireFileHandle(wfs, inode, entry)
 		fileHandle.RememberPath(path)
+
+		// Acquire distributed lock for write opens. The lock is held with
+		// auto-renewal until the file handle is released (close).
+		if wfs.lockClient != nil && flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
+			owner := fmt.Sprintf("mount-%d", wfs.signature)
+			fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
+				string(path), owner, lock_manager.LiveLockTTL,
+			)
+			glog.V(1).Infof("DLM lock acquired for %s", path)
+		}
 	}
 	return
 }
