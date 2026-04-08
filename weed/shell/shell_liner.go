@@ -31,22 +31,27 @@ func RunShell(options ShellOptions) {
 	slices.SortFunc(Commands, func(a, b command) int {
 		return strings.Compare(a.Name(), b.Name())
 	})
-	line = liner.NewLiner()
-	defer line.Close()
-	grace.OnInterrupt(func() {
-		line.Close()
-	})
-
-	line.SetCtrlCAborts(true)
-	line.SetTabCompletionStyle(liner.TabPrints)
-
-	setCompletionHandler()
-	loadHistory()
-
-	defer saveHistory()
 
 	if !options.Verbose {
 		flag.Set("alsologtostderr", "false")
+	}
+
+	interactive := liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+
+	if interactive {
+		line = liner.NewLiner()
+		defer line.Close()
+		grace.OnInterrupt(func() {
+			line.Close()
+		})
+
+		line.SetCtrlCAborts(true)
+		line.SetTabCompletionStyle(liner.TabPrints)
+
+		setCompletionHandler()
+		loadHistory()
+
+		defer saveHistory()
 	}
 
 	commandEnv := NewCommandEnv(&options)
@@ -85,7 +90,7 @@ func RunShell(options ShellOptions) {
 		}
 	}
 
-	if liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
+	if interactive {
 		for {
 			cmd, err := line.Prompt("> ")
 			if err != nil {
@@ -241,6 +246,9 @@ func printHelp(cmds []string) {
 }
 
 func setCompletionHandler() {
+	if line == nil {
+		return
+	}
 	line.SetCompleter(func(line string) (c []string) {
 		for _, i := range Commands {
 			if strings.HasPrefix(i.Name(), strings.ToLower(line)) {
@@ -252,6 +260,9 @@ func setCompletionHandler() {
 }
 
 func loadHistory() {
+	if line == nil {
+		return
+	}
 	if f, err := os.Open(historyPath); err == nil {
 		line.ReadHistory(f)
 		f.Close()
@@ -259,6 +270,9 @@ func loadHistory() {
 }
 
 func saveHistory() {
+	if line == nil {
+		return
+	}
 	if f, err := os.Create(historyPath); err != nil {
 		fmt.Fprintf(os.Stderr, "Error creating history file: %v\n", err)
 	} else {
