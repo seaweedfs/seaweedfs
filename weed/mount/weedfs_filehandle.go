@@ -36,15 +36,14 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 
 		// Acquire distributed lock for write opens. The lock is held with
 		// auto-renewal until the file handle is released (close).
-		// Use inode as the lock key instead of file path to avoid race
-		// conditions where a rename changes the path while the lock is held.
+		// Use the filer path as the lock key since inode numbers are
+		// assigned per-mount and differ across mount instances.
 		if wfs.lockClient != nil && flags&fuse.O_ANYWRITE != 0 && fileHandle.dlmLock == nil {
 			owner := fmt.Sprintf("mount-%d", wfs.signature)
-			lockKey := fmt.Sprintf("inode:%d", inode)
 			fileHandle.dlmLock = wfs.lockClient.NewBlockingLongLivedLock(
-				lockKey, owner, lock_manager.LiveLockTTL,
+				string(path), owner, lock_manager.LiveLockTTL,
 			)
-			glog.V(1).Infof("DLM lock acquired for %s (inode %d)", path, inode)
+			glog.V(1).Infof("DLM lock acquired for %s", path)
 		}
 	}
 	return

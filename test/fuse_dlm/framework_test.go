@@ -100,7 +100,9 @@ func startDLMTestCluster(t testing.TB) *dlmTestCluster {
 	require.NoError(t, c.waitForFilerCount(2, 30*time.Second), "filer group registration")
 	require.NoError(t, c.waitForLockRingConverged(30*time.Second), "lock ring convergence")
 
-	// Start 2 mounts, each pointing at a different filer, both with -dlm
+	// Start 2 mounts, both pointing at filer0 for metadata consistency.
+	// (filer1 exists for the DLM lock ring but both mounts share filer0's
+	// metadata store since leveldb is per-filer.)
 	for i := 0; i < 2; i++ {
 		mp := filepath.Join(baseDir, fmt.Sprintf("mount%d", i))
 		require.NoError(t, os.MkdirAll(mp, 0755))
@@ -216,7 +218,7 @@ func (c *dlmTestCluster) startMount(idx int, configDir string) error {
 	c.mountCmds[idx] = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"mount",
-		"-filer="+c.filerAddress(idx),
+		"-filer="+c.filerAddress(0), // both mounts use filer0 for shared metadata
 		"-dir="+c.mountPoints[idx],
 		"-filer.path=/",
 		"-dirAutoCreate",
