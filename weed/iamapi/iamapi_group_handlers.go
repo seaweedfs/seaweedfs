@@ -550,17 +550,20 @@ func migrateGroupInlinePolicies(iama *IamApiServer, oldName, newName string) err
 }
 
 // recomputeActionsForGroupMembers recomputes the aggregated actions for all members of a group.
+// Uses an identity index for O(N+M) complexity instead of O(N*M).
 func recomputeActionsForGroupMembers(iama *IamApiServer, s3cfg *iam_pb.S3ApiConfiguration, group *iam_pb.Group, policies *Policies) {
+	// Build name -> identity index for O(1) lookup
+	identIndex := make(map[string]*iam_pb.Identity, len(s3cfg.Identities))
+	for _, ident := range s3cfg.Identities {
+		identIndex[ident.Name] = ident
+	}
 	for _, memberName := range group.Members {
-		for _, ident := range s3cfg.Identities {
-			if ident.Name == memberName {
-				aggregatedActions, err := computeAllActionsForUser(iama, memberName, policies, ident, s3cfg)
-				if err != nil {
-					glog.Warningf("Failed to recompute actions for user %s after group policy change: %v", memberName, err)
-				} else {
-					ident.Actions = aggregatedActions
-				}
-				break
+		if ident, ok := identIndex[memberName]; ok {
+			aggregatedActions, err := computeAllActionsForUser(iama, memberName, policies, ident, s3cfg)
+			if err != nil {
+				glog.Warningf("Failed to recompute actions for user %s after group policy change: %v", memberName, err)
+			} else {
+				ident.Actions = aggregatedActions
 			}
 		}
 	}
