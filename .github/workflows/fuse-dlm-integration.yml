@@ -3,6 +3,7 @@ name: "FUSE DLM Integration Tests"
 on:
   pull_request:
     paths:
+      - 'weed/command/mount*.go'
       - 'weed/mount/**'
       - 'weed/cluster/**'
       - 'test/fuse_dlm/**'
@@ -10,6 +11,7 @@ on:
   push:
     branches: [master]
     paths:
+      - 'weed/command/mount*.go'
       - 'weed/mount/**'
       - 'weed/cluster/**'
       - 'test/fuse_dlm/**'

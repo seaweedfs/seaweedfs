@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,6 +140,7 @@ func TestDLMStressConcurrentWrites(t *testing.T) {
 	)
 
 	var wg sync.WaitGroup
+	var writeErrors atomic.Int64
 
 	for mountIdx := 0; mountIdx < 2; mountIdx++ {
 		for g := 0; g < goroutinesPerMount; g++ {
@@ -151,7 +153,7 @@ func TestDLMStressConcurrentWrites(t *testing.T) {
 					path := filepath.Join(cluster.mountPoints[mIdx], fileName)
 					data := []byte(fmt.Sprintf("m%d-g%d-c%d", mIdx, gIdx, cycle))
 					if err := os.WriteFile(path, data, 0644); err != nil {
-						// Log but don't fail — transient errors from lock contention are possible
+						writeErrors.Add(1)
 						t.Logf("write error mount%d goroutine%d cycle%d: %v", mIdx, gIdx, cycle, err)
 					}
 				}
@@ -160,6 +162,9 @@ func TestDLMStressConcurrentWrites(t *testing.T) {
 	}
 
 	wg.Wait()
+
+	// All writes should succeed — DLM serializes them, not rejects them
+	assert.Zero(t, writeErrors.Load(), "expected zero write errors, got %d", writeErrors.Load())
 
 	// Wait for metadata propagation
 	time.Sleep(2 * time.Second)

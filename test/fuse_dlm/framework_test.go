@@ -62,6 +62,8 @@ func startDLMTestCluster(t testing.TB) *dlmTestCluster {
 		baseDir:    baseDir,
 		weedBinary: binary,
 	}
+	// Register cleanup early so processes are stopped even if a require fails below.
+	t.Cleanup(c.Stop)
 
 	// Allocate ports: master(2) + volume(2) + filer0(2) + filer1(2) = 8
 	ports := allocatePorts(t, 8)
@@ -116,13 +118,11 @@ func (c *dlmTestCluster) Stop() {
 		return
 	}
 	c.cleanupOnce.Do(func() {
-		// Stop mounts first (triggers flush + DLM unlock)
+		// Stop mounts first (triggers flush + DLM unlock).
+		// Use stopCmd for bounded wait to avoid hanging on wedged FUSE processes.
 		for i := 1; i >= 0; i-- {
-			if c.mountCmds[i] != nil && c.mountCmds[i].Process != nil {
-				c.mountCmds[i].Process.Signal(syscall.SIGTERM)
-				c.mountCmds[i].Wait()
-			}
-			// Backup unmount
+			stopCmd(c.mountCmds[i])
+			// Backup unmount in case FUSE teardown didn't clean up
 			exec.Command("fusermount3", "-u", c.mountPoints[i]).Run()
 			exec.Command("fusermount", "-u", c.mountPoints[i]).Run()
 		}
@@ -276,15 +276,33 @@ func (c *dlmTestCluster) waitForTCP(addr string, timeout time.Duration) error {
 	return fmt.Errorf("service at %s not ready within timeout", addr)
 }
 
+// waitForMount waits for a FUSE filesystem to actually be mounted at
+// mountPoint by comparing the device ID of the mount point against its parent.
+// A plain directory (pre-created before mount) has the same device as its
+// parent; a mounted FUSE filesystem has a different device.
 func (c *dlmTestCluster) waitForMount(mountPoint string, timeout time.Duration) error {
+	parentDir := filepath.Dir(mountPoint)
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if _, err := os.ReadDir(mountPoint); err == nil {
+		parentStat, err := os.Stat(parentDir)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		mountStat, err := os.Stat(mountPoint)
+		if err != nil {
+			time.Sleep(200 * time.Millisecond)
+			continue
+		}
+		parentSys := parentStat.Sys().(*syscall.Stat_t)
+		mountSys := mountStat.Sys().(*syscall.Stat_t)
+		if parentSys.Dev != mountSys.Dev {
+			// Different device = FUSE mounted
 			return nil
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	return fmt.Errorf("mount point %s not ready within timeout", mountPoint)
+	return fmt.Errorf("mount point %s not ready within timeout (FUSE not detected)", mountPoint)
 }
 
 func (c *dlmTestCluster) filerGRPCAddress(idx int) string {
