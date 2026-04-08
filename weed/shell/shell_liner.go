@@ -18,6 +18,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 
 	"github.com/peterh/liner"
+	"golang.org/x/term"
 )
 
 var (
@@ -73,7 +74,7 @@ func RunShell(options ShellOptions) {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	if liner.TerminalSupported() {
+	if liner.TerminalSupported() && term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())) {
 		for {
 			cmd, err := line.Prompt("> ")
 			if err != nil {
