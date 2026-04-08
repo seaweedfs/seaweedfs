@@ -52,6 +52,9 @@ type MountOptions struct {
 
 	dirIdleEvictSec *int
 
+	// Distributed lock for cross-mount write coordination
+	distributedLock *bool
+
 	// FUSE performance options
 	writebackCache *bool
 	asyncDio       *bool
@@ -124,6 +127,9 @@ func init() {
 	mountCpuProfile = cmdMount.Flag.String("cpuprofile", "", "cpu profile output file")
 	mountMemProfile = cmdMount.Flag.String("memprofile", "", "memory profile output file")
 	mountReadRetryTime = cmdMount.Flag.Duration("readRetryTime", 6*time.Second, "maximum read retry wait time")
+
+	// Distributed lock for cross-mount write coordination
+	mountOptions.distributedLock = cmdMount.Flag.Bool("dlm", false, "enable distributed lock for cross-mount write coordination (only one mount can write a file at a time)")
 
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")

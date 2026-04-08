@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -37,6 +38,11 @@ type FileHandle struct {
 
 	isDeleted bool
 	isRenamed bool // set by Rename before waiting for async flush; skips old-path metadata flush
+
+	// dlmLock holds the distributed lock for cross-mount write coordination.
+	// Non-nil only when -dlm is enabled and the file was opened for writing.
+	// Acquired in AcquireHandle, released in ReleaseHandle.
+	dlmLock *cluster.LiveLock
 
 	// RDMA chunk offset cache for performance optimization
 	chunkOffsetCache []int64
