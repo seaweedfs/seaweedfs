@@ -82,23 +82,20 @@ func (lc *LockClient) NewBlockingLongLivedLock(key, owner string, lockTTL time.D
 	}
 	// Block until acquired
 	lock.retryUntilLocked(lockTTL)
-	// Start renewal goroutine
-	renewInterval := lockTTL / 2
+	// Start renewal goroutine using a ticker for interruptible sleep
 	go func() {
+		renewInterval := lockTTL / 2
+		ticker := time.NewTicker(renewInterval)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-lock.cancelCh:
 				return
-			default:
-				time.Sleep(renewInterval)
-			}
-			select {
-			case <-lock.cancelCh:
-				return
-			default:
-			}
-			if err := lock.AttemptToLock(lockTTL); err != nil {
-				glog.V(0).Infof("lock renewal failed for %s: %v", key, err)
+			case <-ticker.C:
+				if err := lock.AttemptToLock(lockTTL); err != nil {
+					glog.V(0).Infof("lock renewal failed for %s: %v", key, err)
+					atomic.StoreInt32(&lock.isLocked, 0)
+				}
 			}
 		}
 	}()
