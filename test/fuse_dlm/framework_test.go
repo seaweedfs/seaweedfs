@@ -168,7 +168,9 @@ func (c *dlmTestCluster) startMaster(configDir string) error {
 
 func (c *dlmTestCluster) startVolume(configDir string) error {
 	volDir := filepath.Join(c.baseDir, "volume")
-	os.MkdirAll(volDir, 0755)
+	if err := os.MkdirAll(volDir, 0755); err != nil {
+		return fmt.Errorf("create volume dir: %w", err)
+	}
 	c.volumeCmd = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"volume",
@@ -185,7 +187,9 @@ func (c *dlmTestCluster) startVolume(configDir string) error {
 
 func (c *dlmTestCluster) startFiler(idx int, configDir string) error {
 	filerDir := filepath.Join(c.baseDir, fmt.Sprintf("filer%d", idx))
-	os.MkdirAll(filerDir, 0755)
+	if err := os.MkdirAll(filerDir, 0755); err != nil {
+		return fmt.Errorf("create filer dir: %w", err)
+	}
 	c.filerCmds[idx] = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"filer",
@@ -206,7 +210,9 @@ func (c *dlmTestCluster) filerAddress(idx int) string {
 
 func (c *dlmTestCluster) startMount(idx int, configDir string) error {
 	cacheDir := filepath.Join(c.baseDir, fmt.Sprintf("cache%d", idx))
-	os.MkdirAll(cacheDir, 0755)
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return fmt.Errorf("create cache dir: %w", err)
+	}
 	c.mountCmds[idx] = exec.Command(c.weedBinary,
 		"-logdir="+filepath.Join(c.baseDir, "logs"),
 		"mount",
@@ -223,7 +229,9 @@ func (c *dlmTestCluster) startMount(idx int, configDir string) error {
 
 func (c *dlmTestCluster) startCmd(cmd *exec.Cmd, name string) error {
 	logPath := filepath.Join(c.baseDir, "logs")
-	os.MkdirAll(logPath, 0755)
+	if err := os.MkdirAll(logPath, 0755); err != nil {
+		return fmt.Errorf("create log dir: %w", err)
+	}
 	logFile, err := os.Create(filepath.Join(logPath, name+".log"))
 	if err != nil {
 		return err
@@ -392,7 +400,8 @@ func (c *dlmTestCluster) checkLockMutualExclusion(key string) (bool, error) {
 	defer conn0.Close()
 
 	client0 := filer_pb.NewSeaweedFilerClient(conn0)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 	resp0, err := client0.DistributedLock(ctx, &filer_pb.LockRequest{
 		Name:          key,
 		SecondsToLock: 5,
