@@ -321,6 +321,13 @@ func TestIAMPolicyManagement(t *testing.T) {
 		require.NoError(t, err)
 		defer iamClient.DeleteUser(&iam.DeleteUserInput{UserName: aws.String(userName)})
 
+		// List user policies before any inline policy is attached
+		listResp, err := iamClient.ListUserPolicies(&iam.ListUserPoliciesInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, listResp.PolicyNames, "New user should have no inline policies")
+
 		policyName := "test-inline-policy"
 		policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":"s3:GetObject","Resource":"arn:aws:s3:::*"}]}`
 
@@ -331,6 +338,14 @@ func TestIAMPolicyManagement(t *testing.T) {
 			PolicyDocument: aws.String(policyDoc),
 		})
 		require.NoError(t, err)
+
+		// List user policies after attaching inline policy
+		listResp, err = iamClient.ListUserPolicies(&iam.ListUserPoliciesInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		assert.NotEmpty(t, listResp.PolicyNames, "User should have inline policies after PutUserPolicy")
+		assert.False(t, *listResp.IsTruncated)
 
 		// Get user policy
 		getResp, err := iamClient.GetUserPolicy(&iam.GetUserPolicyInput{
@@ -348,5 +363,22 @@ func TestIAMPolicyManagement(t *testing.T) {
 			PolicyName: aws.String(policyName),
 		})
 		require.NoError(t, err)
+
+		// List user policies after deletion
+		listResp, err = iamClient.ListUserPolicies(&iam.ListUserPoliciesInput{
+			UserName: aws.String(userName),
+		})
+		require.NoError(t, err)
+		assert.Empty(t, listResp.PolicyNames, "User should have no inline policies after DeleteUserPolicy")
+	})
+
+	t.Run("list_user_policies_nonexistent_user", func(t *testing.T) {
+		_, err := iamClient.ListUserPolicies(&iam.ListUserPoliciesInput{
+			UserName: aws.String("nonexistent-user-for-list-policies"),
+		})
+		require.Error(t, err)
+		if awsErr, ok := err.(awserr.Error); ok {
+			assert.Equal(t, iam.ErrCodeNoSuchEntityException, awsErr.Code())
+		}
 	})
 }

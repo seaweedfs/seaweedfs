@@ -23,6 +23,7 @@ type (
 	PutUserPolicyResponse            = iamlib.PutUserPolicyResponse
 	DeleteUserPolicyResponse         = iamlib.DeleteUserPolicyResponse
 	GetUserPolicyResponse            = iamlib.GetUserPolicyResponse
+	ListUserPoliciesResponse         = iamlib.ListUserPoliciesResponse
 	GetPolicyResponse                = iamlib.GetPolicyResponse
 	DeletePolicyResponse             = iamlib.DeletePolicyResponse
 	ListPoliciesResponse             = iamlib.ListPoliciesResponse

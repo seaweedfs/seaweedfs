@@ -178,6 +178,17 @@ type ListAttachedUserPoliciesResponse struct {
 	CommonResponse
 }
 
+// ListUserPoliciesResponse is the response for ListUserPolicies action.
+type ListUserPoliciesResponse struct {
+	XMLName                xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ ListUserPoliciesResponse"`
+	ListUserPoliciesResult struct {
+		PolicyNames []string `xml:"PolicyNames>member"`
+		IsTruncated bool     `xml:"IsTruncated"`
+		Marker      string   `xml:"Marker,omitempty"`
+	} `xml:"ListUserPoliciesResult"`
+	CommonResponse
+}
+
 // GetUserPolicyResponse is the response for GetUserPolicy action.
 type GetUserPolicyResponse struct {
 	XMLName             xml.Name `xml:"https://iam.amazonaws.com/doc/2010-05-08/ GetUserPolicyResponse"`
