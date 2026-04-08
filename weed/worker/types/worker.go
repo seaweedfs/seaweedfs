@@ -21,12 +21,3 @@ type Worker interface {
 	// Configuration
 	Configure(config WorkerCreationConfig) error
 }
-
-// BaseWorker provides common worker functionality
-type BaseWorker struct {
-	id            string
-	capabilities  []TaskType
-	maxConcurrent int
-	currentTasks  map[string]Task
-	logger        Logger
-}
