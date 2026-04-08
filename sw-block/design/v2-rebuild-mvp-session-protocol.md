@@ -8,7 +8,7 @@ Status: active draft
 Define the smallest reliable VS-to-VS protocol that is sufficient to build a
 working `rebuild` MVP on top of:
 
-1. trusted snapshot/base transfer
+1. trusted flushed-extent base transfer
 2. live WAL ingestion
 3. primary-owned session control
 4. replica-reported session progress
@@ -117,6 +117,44 @@ Rule:
 1. `syncAck` returns facts only
 2. it does not recommend `keepup` / `catchup` / `rebuild`
 
+### Primary-side normalized sync facts
+
+The wire `syncAck` is still the only replica-to-primary sync control message.
+However, the primary/server layer may normalize raw wire facts and local
+control-path observations into a smaller primary-side fact vocabulary before
+feeding them into decision logic.
+
+This normalized vocabulary is not a new wire protocol. It is the primary-owned
+semantic envelope for "what kind of sync fact just arrived?"
+
+Current normalized kinds:
+
+1. `sync_quorum_acked`
+   normal quorum-style sync closure reached through the target boundary
+2. `sync_quorum_timed_out`
+   control-plane sync closure timed out before normal quorum-style completion
+3. `sync_replay_required`
+   fresh facts show the replica is behind but still replay-recoverable
+4. `sync_rebuild_required`
+   fresh facts show the replica is outside retained replay coverage, so rebuild
+   is required
+5. `sync_replay_failed`
+   a replay/catch-up attempt failed and the primary must re-decide from fresh
+   facts
+
+Normalization rules:
+
+1. normalized kinds never recommend an action by themselves
+2. they preserve the same ownership rule: replica reports facts, primary
+   decides the next session
+3. multiple sources may produce the same normalized kind:
+   - raw `syncAck`
+   - barrier timeout / closure callback
+   - catch-up failure callback
+   - planner classification after reading fresh facts
+4. only the primary may turn normalized sync facts into `keepup`, `catchup`, or
+   `rebuild` decisions
+
 ### `sessionControl`
 
 Direction:
@@ -135,17 +173,20 @@ Minimum fields for `start_rebuild`:
 3. `epoch`
 4. `session_id`
 5. `session_kind = rebuild`
-6. `base_kind = snapshot`
+6. `base_kind = flushed_extent`
 7. `base_lsn`
 8. `target_lsn`
-9. `snapshot_id`
-10. `deadline_ms`
+9. `deadline_ms`
 
 Rules:
 
 1. `session_id` must be unique under the current primary authority
 2. a new session may supersede an older one
 3. epoch mismatch must be rejected
+4. `base_lsn` for rebuild is the primary's flushed/checkpoint boundary, not a
+   merely committed boundary
+5. the base lane is allowed to stream the current extent image directly as long
+   as that image is known to represent `base_lsn`
 
 ### `sessionAck`
 
@@ -183,7 +224,7 @@ Direction:
 
 Purpose:
 
-1. send trusted snapshot/base chunks
+1. send trusted flushed-extent base chunks
 
 Minimum fields:
 
@@ -191,11 +232,10 @@ Minimum fields:
 2. `replica_id`
 3. `epoch`
 4. `session_id`
-5. `snapshot_id`
-6. `chunk_id`
-7. `offset_or_lba_range`
-8. `payload`
-9. `is_last_chunk`
+5. `chunk_id`
+6. `offset_or_lba_range`
+7. `payload`
+8. `is_last_chunk`
 
 ### `walData`
 
@@ -226,7 +266,7 @@ Each write should carry:
 
 Rebuild runs as two concurrent lanes:
 
-1. base lane from trusted snapshot/base
+1. base lane from trusted flushed extent at `base_lsn`
 2. live WAL lane from `base_lsn`
 
 ### Bitmap Rule
@@ -291,6 +331,12 @@ After failure:
 
 No local component may self-promote the failure into semantic `needs_rebuild`.
 
+In normalized primary-side vocabulary, this means:
+
+1. session failure may first surface as `sync_replay_failed`
+2. a fresh sync/planner pass may then normalize to `sync_rebuild_required`
+3. only after that fresh re-decision may the primary issue `start_rebuild`
+
 ## Crash Rule
 
 The MVP assumes bitmap may be session-local volatile state.
@@ -301,6 +347,16 @@ Therefore after replica crash or session loss:
 2. restart with a fresh `sync`
 3. let the primary issue a fresh rebuild session
 
+Current contract:
+
+1. crash recovery for rebuild means `restart rebuild`, not `resume rebuild`
+2. the system may reuse only durable facts that survived the crash:
+   - local durable WAL coverage
+   - the fresh rebuild `base_lsn`
+   - fresh primary-side decision after `sync`
+3. the system does not currently reuse prior in-flight base-copy offset,
+   prior in-memory bitmap state, or prior session identity as protocol facts
+
 This means the MVP supports:
 
 1. safe restart from durable WAL facts
@@ -308,6 +364,52 @@ This means the MVP supports:
 But does not support:
 
 1. arbitrary mid-session resume of partial base-copy progress
+2. durable `base_progress`
+3. persistent rebuild bitmap / checkpoint state
+4. CBT-based repair of previously transferred extent ranges
+
+### Issue #3 fix detail: crash restart bitmap hydration
+
+The volatile bitmap itself is not resumed across crashes, but its protection
+surface must be rebuilt before a fresh rebuild session becomes visible.
+
+Required startup rules for a fresh rebuild session:
+
+1. **strict ordering barrier**
+   - before sending or observing `sessionAck(accepted)`, and before opening the
+     base lane for `sessionData`, the replica must finish local bitmap
+     hydration
+   - the fresh session is not externally visible until hydration is complete
+2. **hydration source**
+   - rebuild the bitmap from replica-local durable WAL coverage newer than
+     `base_lsn`
+   - scan only the surviving local WAL coverage after `base_lsn`; older WAL is
+     already represented by the flushed base image
+3. **coverage rule**
+   - every recovered local write/trim record with `lsn > base_lsn` marks its
+     covered LBAs in the bitmap before any base chunk may be applied
+   - this reconstructs the "WAL already wins here" immunity shield after
+     restart
+4. **achieved boundary rule**
+   - initial session progress may start at `base_lsn`
+   - if local durable WAL survives beyond `base_lsn`, the replica may raise its
+     initial `wal_applied_lsn` to that recovered boundary
+5. **silent truncation guard**
+   - if the replica can prove its local durable base is already newer than the
+     claimed `base_lsn`, startup must fail closed
+   - do not start a dual-lane rebuild with a stale base boundary and a partial
+     bitmap
+
+Operational interpretation:
+
+1. the session bitmap remains volatile
+2. the bitmap protection set is deterministically re-derived from local durable
+   WAL before the new session starts
+3. if that re-derivation cannot be trusted, the session must be rejected and
+   the primary must re-decide from fresh facts
+4. this hydration step is required for safe `restart rebuild`; it is not a
+   claim that the MVP can resume an interrupted rebuild session from its prior
+   in-flight base-copy position
 
 ## Primary Decision Rule
 
@@ -318,6 +420,14 @@ The MVP decision rule should stay intentionally simple:
    `rebuild`
 
 The first MVP does not need a full negotiated `catchup` protocol.
+
+Equivalent normalized reading:
+
+1. `sync_quorum_acked` -> remain `keepup`
+2. `sync_replay_required` -> future `catchup` path, not required for rebuild MVP
+3. `sync_rebuild_required` -> issue `start_rebuild`
+4. `sync_replay_failed` or `sync_quorum_timed_out` -> gather fresh facts and
+   re-run the same primary decision rule
 
 ## MVP Implementation Skeleton
 
@@ -344,9 +454,12 @@ Contract:
 Current MVP implementation choices:
 
 1. use a dedicated `RebuildBitmap`, not `DirtyMap`
-2. use snapshot/trusted-base transfer for the base lane
+2. use direct extent transfer from the primary's flushed/checkpoint image for
+   the base lane
 3. reuse the existing rebuild TCP path for `sessionData` rather than inventing
    a new transport first
+4. anchor rebuild start at flushed/checkpoint `base_lsn`, not merely committed
+   LSN, because committed data may still live only in WAL
 
 Current server-layer skeleton:
 
@@ -357,6 +470,7 @@ Current server-layer skeleton:
 5. `BlockService.TryCompleteReplicaRebuildSession(path, session_id)`
 6. `BlockService.CancelReplicaRebuildSession(path, session_id, reason)`
 7. `BlockService.ReplicaRebuildSession(path)`
+8. `BlockService.ObserveReplicaRebuildSessionAck(path, replica_id, ack)`
 
 Server-layer responsibility:
 
@@ -364,6 +478,8 @@ Server-layer responsibility:
 2. map them onto the local volume path
 3. route them into the `BlockService` skeleton above
 4. build `sessionAck` from `ReplicaRebuildSession(path)`
+5. feed received `sessionAck` back into core via
+   `ObserveReplicaRebuildSessionAck(path, replica_id, ack)`
 
 ## Replica State Machine
 
@@ -412,16 +528,25 @@ The rebuild MVP should not be considered ready until these tests exist.
 1. base lane plus live WAL lane converge to target
 2. WAL-applied LBA is never overwritten by later base-copy data
 3. bitmap bit is set on `applied`, not on `received`
+4. a fresh rebuild session must hydrate bitmap coverage from locally recovered
+   WAL before opening the base lane
+5. rebuild start must fail closed if the local durable base is already newer
+   than the claimed `base_lsn`
 
 ### Crash / Failure
 
 1. crash after WAL receive but before apply leaves bitmap clear and base may
    still cover the LBA safely
 2. crash after WAL apply preserves correctness through local WAL replay
-3. transport loss during rebuild yields `failed(reason)` and requires primary
+3. crash restart before fresh base transfer hydrates bitmap from local WAL and
+   skips stale base blocks correctly
+4. stale or truncated base boundary fails closed instead of starting rebuild
+5. transport loss during rebuild yields `failed(reason)` and requires primary
    re-decision
-4. rebuild completion does not restore normal quorum eligibility until the
+6. rebuild completion does not restore normal quorum eligibility until the
    primary accepts completion
+7. crash during rebuild results in a fresh `sync` + fresh rebuild session,
+   not reuse of prior in-flight `base_progress`
 
 ## Follow-On Work
 
@@ -431,3 +556,5 @@ After this MVP is working, the next candidates are:
 2. `rangeBitmap` / delta-block rebuild
 3. durable rebuild checkpoints for safe mid-session resume
 4. richer `sessionDataAck` flow control
+5. resumable rebuild with durable `base_progress`
+6. primary-owned CBT / changed-block repair for previously transferred ranges

@@ -55,6 +55,18 @@ What it owns:
 4. assignment apply loop
 5. convergence/idempotence
 
+What it may normalize but must not own semantically:
+
+1. raw `syncAck` / timeout / callback observations may be normalized into
+   primary-side sync fact kinds such as:
+   - `sync_quorum_acked`
+   - `sync_quorum_timed_out`
+   - `sync_replay_required`
+   - `sync_rebuild_required`
+   - `sync_replay_failed`
+2. this normalization is only a control-plane envelope for "what fact arrived"
+3. it must not become a second decision authority or a second session planner
+
 What it must not own:
 
 1. WAL/extent execution
@@ -217,5 +229,7 @@ The main risk is not iSCSI or local I/O. The main risk is semantic leakage:
 3. rebuilding `weed/server` ownership inside `volumev2`
 4. letting `masterv2` grow from identity authority into a centralized recovery
    planner
+5. letting normalized sync facts drift into a hidden second protocol vocabulary
+   with no explicit review surface
 
-As long as those three are resisted, the kernel can keep expanding cleanly.
+As long as those risks are resisted, the kernel can keep expanding cleanly.

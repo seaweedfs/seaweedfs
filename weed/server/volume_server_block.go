@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	bridgeblockvol "github.com/seaweedfs/seaweedfs/sw-block/bridge/blockvol"
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
@@ -85,6 +86,12 @@ type BlockService struct {
 	coreExec       map[string][]string
 	protocolExecMu sync.RWMutex
 	protocolExec   map[string]volumeProtocolExecutionState
+	rebuildPinMu   sync.RWMutex
+	rebuildPins    map[string]map[string]rebuildProgressPin
+	rebuildPinInit map[string]bool
+	rebuildAckMu   sync.Mutex
+	rebuildAckTimeout time.Duration
+	rebuildAckWatches map[string]map[string]*rebuildAckWatch
 
 	// T4: activation gate — promoted primaries that have not passed
 	// reconstruction quality check are gated from serving.
@@ -269,12 +276,7 @@ func (bs *BlockService) handleBarrierAccepted(path string, flushedLSN uint64, ch
 			return
 		}
 	}
-	bs.applyCoreEvent(engine.SyncAckObserved{
-		ID:         path,
-		AckKind:    engine.SyncAckQuorum,
-		TargetLSN:  flushedLSN,
-		DurableLSN: flushedLSN,
-	})
+	bs.applyRecoverySyncFact(newBarrierAcceptedSyncFact(path, flushedLSN))
 	bs.applyCoreEvent(engine.BarrierAccepted{ID: path, FlushedLSN: flushedLSN})
 }
 
@@ -292,12 +294,15 @@ func (bs *BlockService) handleBarrierRejected(path string, reason string, ch cha
 	if !ok || proj.Role != engine.RolePrimary {
 		return
 	}
-	bs.applyCoreEvent(engine.SyncAckObserved{
-		ID:      path,
-		AckKind: engine.SyncAckTimedOut,
-		Reason:  reason,
-	})
+	fact := newBarrierRejectedSyncFact(path, "", reason)
+	if len(proj.ReplicaIDs) == 1 {
+		fact.ReplicaID = proj.ReplicaIDs[0]
+	}
+	bs.applyRecoverySyncFact(fact)
 	bs.applyCoreEvent(engine.BarrierRejected{ID: path, Reason: reason})
+	if bs.v2Recovery != nil {
+		bs.v2Recovery.ReenterFromSyncTimeout(fact)
+	}
 }
 
 // StartBlockService scans blockDir for .blk files, opens them as block volumes,
@@ -329,6 +334,9 @@ func StartBlockService(listenAddr, blockDir, iqnPrefix, portalAddr string, nvmeC
 		localServerID:               listenAddr, // INTERIM: transport-shaped, see field doc
 		coreProj:                    make(map[string]engine.PublicationProjection),
 		protocolExec:                make(map[string]volumeProtocolExecutionState),
+		rebuildPins:                 make(map[string]map[string]rebuildProgressPin),
+		rebuildPinInit:              make(map[string]bool),
+		rebuildAckWatches:           make(map[string]map[string]*rebuildAckWatch),
 		activationGated:             make(map[string]string),
 		blockInventoryAuthoritative: false,
 	}

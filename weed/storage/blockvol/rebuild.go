@@ -112,6 +112,11 @@ func (s *RebuildServer) handleConn(conn net.Conn) {
 		s.handleWALCatchUp(conn, req)
 	case RebuildFullExtent:
 		s.handleFullExtent(conn)
+	case RebuildSessionBase:
+		server := NewRebuildTransportServer(s.vol, 0, req.Epoch, req.FromLSN, req.FromLSN)
+		if err := server.ServeBaseBlocks(conn); err != nil {
+			WriteFrame(conn, MsgRebuildError, []byte(err.Error()))
+		}
 	case RebuildSnapshot:
 		s.handleSnapshotExport(conn, req)
 	default:

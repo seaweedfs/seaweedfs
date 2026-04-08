@@ -83,6 +83,9 @@ func newTestBlockServiceDirect(t *testing.T) *BlockService {
 		v2Core:          engine.NewCoreEngine(),
 		coreProj:        make(map[string]engine.PublicationProjection),
 		protocolExec:    make(map[string]volumeProtocolExecutionState),
+		rebuildPins:     make(map[string]map[string]rebuildProgressPin),
+		rebuildPinInit:  make(map[string]bool),
+		rebuildAckWatches: make(map[string]map[string]*rebuildAckWatch),
 		activationGated: make(map[string]string),
 		localServerID:   "vs-test",
 	}
@@ -1062,6 +1065,20 @@ func TestBlockService_ApplyAssignments_RebuildingRole_UsesCoreRecoveryPathWithou
 	if sender.State() != engine.StateInSync {
 		t.Fatalf("sender state=%s", sender.State())
 	}
+	state, ok := bs.ProtocolExecutionState(path)
+	if !ok {
+		t.Fatal("expected protocol execution state")
+	}
+	replica, ok := state.Replicas[path+"/vs-test"]
+	if !ok {
+		t.Fatalf("missing protocol state for %s", path+"/vs-test")
+	}
+	if replica.SessionActive {
+		t.Fatal("SessionActive=true, want false after rebuild completion")
+	}
+	if !replica.LiveEligible {
+		t.Fatal("LiveEligible=false, want true after rebuild completion")
+	}
 }
 
 func TestBlockService_ApplyAssignments_RebuildingRole_PreservesLegacyFallbackWithoutCore(t *testing.T) {
@@ -1207,6 +1224,409 @@ func TestBlockService_ReplicaRebuildSessionSkeleton_RejectsStaleSessionID(t *tes
 	})
 	if err == nil {
 		t.Fatal("expected stale session ID to be rejected")
+	}
+}
+
+func TestBlockService_ObserveReplicaRebuildSessionAck_ProgressUpdatesCore(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-rebuild-ack-progress")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15070",
+			CtrlAddr: "127.0.0.1:15071",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+	if err := bs.ObserveReplicaRebuildSessionAck(path, replicaID, blockvol.SessionAckMsg{
+		Epoch:         2,
+		SessionID:     sessionID,
+		Phase:         blockvol.SessionAckRunning,
+		WALAppliedLSN: 80,
+	}); err != nil {
+		t.Fatalf("observe session ack: %v", err)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryRebuilding {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Recovery.AchievedLSN != 80 {
+		t.Fatalf("achieved_lsn=%d, want 80", proj.Recovery.AchievedLSN)
+	}
+}
+
+func TestBlockService_ObserveReplicaRebuildSessionAck_CompletedClearsRecovery(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-rebuild-ack-complete")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15072",
+			CtrlAddr: "127.0.0.1:15073",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+	if err := bs.ObserveReplicaRebuildSessionAck(path, replicaID, blockvol.SessionAckMsg{
+		Epoch:       2,
+		SessionID:   sessionID,
+		Phase:       blockvol.SessionAckCompleted,
+		AchievedLSN: 100,
+	}); err != nil {
+		t.Fatalf("observe session ack: %v", err)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Boundary.AchievedLSN != 100 {
+		t.Fatalf("achieved_lsn=%d, want 100", proj.Boundary.AchievedLSN)
+	}
+	if proj.Mode.Name == engine.ModeNeedsRebuild {
+		t.Fatalf("mode=%s, rebuild should be cleared", proj.Mode.Name)
+	}
+}
+
+func TestBlockService_ObserveReplicaRebuildSessionAck_FailedDegradesCore(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-rebuild-ack-failed")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15074",
+			CtrlAddr: "127.0.0.1:15075",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+	if err := bs.ObserveReplicaRebuildSessionAck(path, replicaID, blockvol.SessionAckMsg{
+		Epoch:     2,
+		SessionID: sessionID,
+		Phase:     blockvol.SessionAckFailed,
+	}); err != nil {
+		t.Fatalf("observe session ack: %v", err)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Mode.Name != engine.ModeDegraded {
+		t.Fatalf("mode=%s, want degraded", proj.Mode.Name)
+	}
+	if proj.Recovery.Reason != "session_ack_failed" {
+		t.Fatalf("recovery_reason=%q", proj.Recovery.Reason)
+	}
+	if got := bs.ExecutedCoreCommands(path); countCommandName(got, "invalidate_session") != 1 {
+		t.Fatalf("expected invalidate_session execution, got %v", got)
+	}
+}
+
+func TestBlockService_WireLocalReplicaRebuildSessionAcks_ProgressUpdatesCoreAndPin(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-rebuild-local-ack-progress")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15076",
+			CtrlAddr: "127.0.0.1:15077",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+
+	if err := bs.WireLocalReplicaRebuildSessionAcks(path, replicaID); err != nil {
+		t.Fatalf("wire local rebuild session acks: %v", err)
+	}
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: sessionID,
+		Epoch:     2,
+		BaseLSN:   50,
+		TargetLSN: 100,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+	if floor, ok := bs.rebuildProgressPinFloor(path); !ok || floor != 50 {
+		t.Fatalf("accepted pin floor=(%d,%v), want (50,true)", floor, ok)
+	}
+
+	if err := bs.ApplyReplicaRebuildWALEntry(path, sessionID, &blockvol.WALEntry{
+		LSN:    80,
+		Epoch:  2,
+		Type:   blockvol.EntryTypeWrite,
+		LBA:    0,
+		Length: 4096,
+		Data:   bytes.Repeat([]byte{0xAB}, 4096),
+	}); err != nil {
+		t.Fatalf("apply rebuild WAL entry: %v", err)
+	}
+
+	if floor, ok := bs.rebuildProgressPinFloor(path); !ok || floor != 80 {
+		t.Fatalf("progress pin floor=(%d,%v), want (80,true)", floor, ok)
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryRebuilding {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Recovery.AchievedLSN != 80 {
+		t.Fatalf("achieved_lsn=%d, want 80", proj.Recovery.AchievedLSN)
+	}
+}
+
+func TestBlockService_WireLocalReplicaRebuildSessionAcks_CompletionClearsPin(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-rebuild-local-ack-complete")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15078",
+			CtrlAddr: "127.0.0.1:15079",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+
+	if err := bs.WireLocalReplicaRebuildSessionAcks(path, replicaID); err != nil {
+		t.Fatalf("wire local rebuild session acks: %v", err)
+	}
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: sessionID,
+		Epoch:     2,
+		BaseLSN:   50,
+		TargetLSN: 100,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+	if err := bs.ApplyReplicaRebuildWALEntry(path, sessionID, &blockvol.WALEntry{
+		LSN:    100,
+		Epoch:  2,
+		Type:   blockvol.EntryTypeWrite,
+		LBA:    0,
+		Length: 4096,
+		Data:   bytes.Repeat([]byte{0xCD}, 4096),
+	}); err != nil {
+		t.Fatalf("apply rebuild WAL entry: %v", err)
+	}
+	if err := bs.MarkReplicaRebuildBaseComplete(path, sessionID, 1); err != nil {
+		t.Fatalf("mark base complete: %v", err)
+	}
+	achieved, completed, err := bs.TryCompleteReplicaRebuildSession(path, sessionID)
+	if err != nil {
+		t.Fatalf("try complete rebuild session: %v", err)
+	}
+	if !completed || achieved != 100 {
+		t.Fatalf("completed=%v achieved=%d, want true/100", completed, achieved)
+	}
+
+	if floor, ok := bs.rebuildProgressPinFloor(path); ok || floor != 0 {
+		t.Fatalf("completion pin floor=(%d,%v), want cleared", floor, ok)
+	}
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
+	}
+	if proj.Boundary.AchievedLSN != 100 {
+		t.Fatalf("achieved_lsn=%d, want 100", proj.Boundary.AchievedLSN)
+	}
+}
+
+func TestBlockService_WireLocalReplicaRebuildSessionAcks_TimeoutFailsClosedAndClearsPin(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	bs.rebuildAckTimeout = 40 * time.Millisecond
+	path := createTestVolDirect(t, bs, "vol-rebuild-local-ack-timeout")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15080",
+			CtrlAddr: "127.0.0.1:15081",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+	if err := bs.WireLocalReplicaRebuildSessionAcks(path, replicaID); err != nil {
+		t.Fatalf("wire local rebuild session acks: %v", err)
+	}
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: sessionID,
+		Epoch:     2,
+		BaseLSN:   50,
+		TargetLSN: 100,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		proj, ok := bs.CoreProjection(path)
+		if ok && proj.Mode.Name == engine.ModeDegraded {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Mode.Name != engine.ModeDegraded {
+		t.Fatalf("mode=%s, want degraded after timeout", proj.Mode.Name)
+	}
+	if floor, ok := bs.rebuildProgressPinFloor(path); ok || floor != 0 {
+		t.Fatalf("timeout pin floor=(%d,%v), want cleared", floor, ok)
+	}
+	if got := bs.ExecutedCoreCommands(path); countCommandName(got, "invalidate_session") != 1 {
+		t.Fatalf("expected invalidate_session execution, got %v", got)
+	}
+}
+
+func TestBlockService_WireLocalReplicaRebuildSessionAcks_ProgressRefreshesWatchdog(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	bs.rebuildAckTimeout = 80 * time.Millisecond
+	path := createTestVolDirect(t, bs, "vol-rebuild-local-ack-refresh")
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:       path,
+		Epoch:      2,
+		Role:       blockvol.RoleToWire(blockvol.RolePrimary),
+		LeaseTtlMs: 30000,
+		ReplicaAddrs: []blockvol.ReplicaAddr{{
+			ServerID: "vs-2",
+			DataAddr: "127.0.0.1:15082",
+			CtrlAddr: "127.0.0.1:15083",
+		}},
+	}})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply errs=%v", errs)
+	}
+
+	replicaID := path + "/vs-2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	bs.applyCoreEvent(engine.RebuildStarted{ID: path, ReplicaID: replicaID, TargetLSN: 100})
+	if err := bs.WireLocalReplicaRebuildSessionAcks(path, replicaID); err != nil {
+		t.Fatalf("wire local rebuild session acks: %v", err)
+	}
+	if err := bs.StartReplicaRebuildSession(path, blockvol.RebuildSessionConfig{
+		SessionID: sessionID,
+		Epoch:     2,
+		BaseLSN:   50,
+		TargetLSN: 100,
+	}); err != nil {
+		t.Fatalf("start rebuild session: %v", err)
+	}
+
+	time.Sleep(40 * time.Millisecond)
+	if err := bs.ApplyReplicaRebuildWALEntry(path, sessionID, &blockvol.WALEntry{
+		LSN:    80,
+		Epoch:  2,
+		Type:   blockvol.EntryTypeWrite,
+		LBA:    0,
+		Length: 4096,
+		Data:   bytes.Repeat([]byte{0xEF}, 4096),
+	}); err != nil {
+		t.Fatalf("apply rebuild WAL entry: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Mode.Name == engine.ModeDegraded {
+		t.Fatalf("mode=%s, watchdog should have been refreshed", proj.Mode.Name)
+	}
+	if floor, ok := bs.rebuildProgressPinFloor(path); !ok || floor != 80 {
+		t.Fatalf("refresh pin floor=(%d,%v), want (80,true)", floor, ok)
+	}
+
+	bs.clearRebuildAckWatch(path, replicaID, sessionID)
+	bs.clearRebuildProgressPin(path, replicaID, sessionID)
+	if err := bs.CancelReplicaRebuildSession(path, sessionID, "test_cleanup"); err != nil {
+		t.Fatalf("cleanup cancel rebuild session: %v", err)
 	}
 }
 
@@ -1814,6 +2234,7 @@ func TestBlockService_ShipperStateChange_InSyncEmitsCoreConnectedObservation(t *
 
 func TestBlockService_BarrierRejectedCallback_UpdatesCoreProjection(t *testing.T) {
 	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
 	path := createTestVolDirect(t, bs, "vol-barrier-rejected-callback")
 	ch := make(chan bool, 1)
 	bs.WireStateChangeNotify(ch)
@@ -1862,6 +2283,85 @@ func TestBlockService_BarrierRejectedCallback_UpdatesCoreProjection(t *testing.T
 	}
 	if after.Sync.Reason != "barrier_timeout" {
 		t.Fatalf("sync_reason=%q, want %q", after.Sync.Reason, "barrier_timeout")
+	}
+}
+
+func TestBlockService_BarrierRejectedCallback_ReentersRecoveryDecision(t *testing.T) {
+	bs := newTestBlockServiceDirect(t)
+	bs.v2Recovery = nil
+	path := createTestVolDirect(t, bs, "vol-barrier-rejected-reenter")
+	ch := make(chan bool, 1)
+	bs.WireStateChangeNotify(ch)
+
+	if err := bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	errs := bs.ApplyAssignments([]blockvol.BlockVolumeAssignment{
+		{
+			Path:            path,
+			Epoch:           1,
+			Role:            blockvol.RoleToWire(blockvol.RolePrimary),
+			LeaseTtlMs:      30000,
+			ReplicaServerID: "vs-2",
+			ReplicaDataAddr: "10.0.0.2:4260",
+			ReplicaCtrlAddr: "10.0.0.2:4261",
+		},
+	})
+	if len(errs) != 1 || errs[0] != nil {
+		t.Fatalf("apply assignment errs=%v", errs)
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != path || pending == nil || pending.Plan == nil {
+			return
+		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+	}
+
+	bs.handleBarrierRejected(path, "barrier_timeout", ch)
+
+	select {
+	case <-ch:
+	default:
+		t.Fatal("expected immediate heartbeat notification")
+	}
+
+	after, ok := bs.CoreProjection(path)
+	if !ok {
+		t.Fatal("expected core projection after barrier rejection")
+	}
+	if after.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", after.Recovery.Phase, engine.RecoveryIdle)
+	}
+	if after.Sync.Action != engine.SyncActionRebuild {
+		t.Fatalf("sync_action=%s, want %s", after.Sync.Action, engine.SyncActionRebuild)
+	}
+	if got := countCommandName(bs.ExecutedCoreCommands(path), "start_rebuild"); got != 1 {
+		t.Fatalf("start_rebuild count=%d, want 1", got)
+	}
+	state, ok := bs.ProtocolExecutionState(path)
+	if !ok {
+		t.Fatal("expected protocol execution state after barrier-driven rebuild")
+	}
+	replicaExec, ok := state.Replicas[path+"/vs-2"]
+	if !ok {
+		t.Fatalf("missing protocol execution state for %s", path+"/vs-2")
+	}
+	if replicaExec.SessionActive {
+		t.Fatal("SessionActive=true, want false after barrier-driven rebuild")
+	}
+	if !replicaExec.LiveEligible {
+		t.Fatal("LiveEligible=false, want true after barrier-driven rebuild")
 	}
 }
 

@@ -105,6 +105,26 @@ func createTestBlockServiceWithVolCoreNoRecovery(t *testing.T) (*BlockService, s
 	return bs, volPath
 }
 
+func installTestSession(t *testing.T, bs *BlockService, replicaID string, kind engine.SessionKind) uint64 {
+	t.Helper()
+	rm := bs.v2Recovery
+	if rm == nil {
+		rm = NewRecoveryManager(bs)
+	}
+	if err := rm.installSession(replicaID, kind); err != nil {
+		t.Fatalf("install %s session for %s: %v", kind, replicaID, err)
+	}
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatalf("sender %s not found after install", replicaID)
+	}
+	snap := sender.SessionSnapshot()
+	if snap == nil || !snap.Active || snap.Kind != kind {
+		t.Fatalf("session=%+v, want active %s", snap, kind)
+	}
+	return snap.ID
+}
+
 type fakeRebuildIO struct {
 	achievedLSN uint64
 }
@@ -256,9 +276,12 @@ func TestP16B_RunCatchUp_UpdatesCoreProjectionFromLiveRecovery(t *testing.T) {
 	if got := bs.ExecutedCoreCommands(volPath); len(got) == 0 || got[len(got)-1] != "start_catchup" {
 		t.Fatalf("expected start_catchup execution, got %v", got)
 	}
+	if got := countCommandName(bs.ExecutedCoreCommands(volPath), "start_rebuild"); got != 0 {
+		t.Fatalf("start_rebuild count=%d, want 0 on catch-up path", got)
+	}
 }
 
-func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
+func TestP16B_RunCatchUp_UsesUnifiedFactEntryToStartRebuild(t *testing.T) {
 	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
 
 	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
@@ -291,20 +314,19 @@ func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
-	rm.runCatchUp(context.Background(), replicaID, nil)
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
+			return
+		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+	}
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+	rm.runCatchUp(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
 
 	proj, ok := bs.CoreProjection(volPath)
 	if !ok {
 		t.Fatal("expected cached core projection after needs_rebuild escalation")
-	}
-	if proj.Mode.Name != engine.ModeNeedsRebuild {
-		t.Fatalf("mode=%s", proj.Mode.Name)
-	}
-	if proj.Recovery.Phase != engine.RecoveryNeedsRebuild {
-		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
-	}
-	if proj.Publication.Reason == "" {
-		t.Fatal("expected needs_rebuild reason")
 	}
 	replicaSync, ok := proj.ReplicaSync[replicaID]
 	if !ok {
@@ -316,13 +338,37 @@ func TestP16B_RunCatchUp_EscalatesNeedsRebuildIntoCoreProjection(t *testing.T) {
 	if replicaSync.Action != engine.SyncActionRebuild {
 		t.Fatalf("sync_action=%s", replicaSync.Action)
 	}
-	if got := bs.ExecutedCoreCommands(volPath); len(got) != 3 {
-		t.Fatalf("needs_rebuild path should not execute start_catchup, got %v", got)
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", proj.Recovery.Phase, engine.RecoveryIdle)
+	}
+	if got := countCommandName(bs.ExecutedCoreCommands(volPath), "start_catchup"); got != 0 {
+		t.Fatalf("start_catchup count=%d, want 0 on rebuild path", got)
+	}
+	if got := countCommandName(bs.ExecutedCoreCommands(volPath), "start_rebuild"); got != 1 {
+		t.Fatalf("start_rebuild count=%d, want 1", got)
+	}
+	sender = bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after rebuild start")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s, want %s", sender.State(), engine.StateInSync)
 	}
 }
 
-func TestP16B_OnCatchUpFailed_UsesSyncAckForNeedsRebuild(t *testing.T) {
+func TestP16B_OnCatchUpFailed_ReentersFactDecisionForRebuild(t *testing.T) {
 	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
 
 	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{
 		{
@@ -343,30 +389,43 @@ func TestP16B_OnCatchUpFailed_UsesSyncAckForNeedsRebuild(t *testing.T) {
 
 	rm := NewRecoveryManager(bs)
 	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
+			return
+		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+	}
 	rm.OnCatchUpFailed(volPath, replicaID, "recoverability_lost")
 
 	proj, ok := bs.CoreProjection(volPath)
 	if !ok {
 		t.Fatal("expected cached core projection after catch-up failure")
 	}
-	if proj.Mode.Name != engine.ModeNeedsRebuild {
-		t.Fatalf("mode=%s", proj.Mode.Name)
-	}
-	if proj.Recovery.Phase != engine.RecoveryNeedsRebuild {
-		t.Fatalf("recovery_phase=%s", proj.Recovery.Phase)
-	}
 	replicaSync, ok := proj.ReplicaSync[replicaID]
 	if !ok {
 		t.Fatalf("missing replica sync for %s", replicaID)
 	}
-	if replicaSync.AckKind != engine.SyncAckTransportLost {
+	if replicaSync.AckKind != engine.SyncAckTimedOut {
 		t.Fatalf("sync_ack_kind=%s", replicaSync.AckKind)
 	}
-	if replicaSync.Reason != "recoverability_lost" {
-		t.Fatalf("sync_reason=%q", replicaSync.Reason)
+	if replicaSync.Action != engine.SyncActionRebuild {
+		t.Fatalf("sync_action=%s", replicaSync.Action)
 	}
-	if sender.HasActiveSession() {
-		t.Fatal("target replica session should be invalidated by sync-negotiated rebuild transition")
+	if replicaSync.Reason == "" {
+		t.Fatal("expected final sync reason after fresh re-decision")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", proj.Recovery.Phase, engine.RecoveryIdle)
+	}
+	sender = bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after failure-driven rebuild")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s, want %s", sender.State(), engine.StateInSync)
+	}
+	if got := countCommandName(bs.ExecutedCoreCommands(volPath), "start_rebuild"); got != 1 {
+		t.Fatalf("start_rebuild count=%d, want 1", got)
 	}
 }
 
@@ -394,17 +453,7 @@ func TestP16B_RunRebuild_UsesCoreStartRebuildCommandOnLivePath(t *testing.T) {
 	}})
 
 	replicaID := volPath + "/vs2"
-	bs.v2Orchestrator.ProcessAssignment(engine.AssignmentIntent{
-		Replicas: []engine.ReplicaAssignment{{
-			ReplicaID: replicaID,
-			Endpoint:  engine.Endpoint{DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334"},
-		}},
-		Epoch: 1,
-		RecoveryTargets: map[string]engine.SessionKind{
-			replicaID: engine.SessionRebuild,
-		},
-	})
-
+	installTestSession(t, bs, replicaID, engine.SessionRebuild)
 	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
 	if sender == nil {
 		t.Fatal("sender not found")
@@ -470,16 +519,7 @@ func TestP16B_RunRebuild_FailClosedWithoutFreshStartRebuildCommand(t *testing.T)
 	}})
 
 	replicaID := volPath + "/vs2"
-	bs.v2Orchestrator.ProcessAssignment(engine.AssignmentIntent{
-		Replicas: []engine.ReplicaAssignment{{
-			ReplicaID: replicaID,
-			Endpoint:  engine.Endpoint{DataAddr: "10.0.0.2:9333", CtrlAddr: "10.0.0.2:9334"},
-		}},
-		Epoch: 1,
-		RecoveryTargets: map[string]engine.SessionKind{
-			replicaID: engine.SessionRebuild,
-		},
-	})
+	installTestSession(t, bs, replicaID, engine.SessionRebuild)
 
 	// Prime the core with the same rebuild target before wiring recovery,
 	// so the subsequent live run does not emit a fresh start_rebuild command.
@@ -502,6 +542,90 @@ func TestP16B_RunRebuild_FailClosedWithoutFreshStartRebuildCommand(t *testing.T)
 	}
 	if sender.State() == engine.StateInSync {
 		t.Fatalf("sender should not become in_sync without executing start_rebuild, state=%s", sender.State())
+	}
+}
+
+func TestP16B_FactTriggeredRebuildCycle_AutoInstallsRebuildAndReachesInSync(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil || !sender.HasActiveSession() {
+		t.Fatal("expected active sender session before timeout-driven rebuild")
+	}
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
+			return
+		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+	}
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+	rm.runCatchUp(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected core projection after rebuild completion")
+	}
+	replicaSync, ok := proj.ReplicaSync[replicaID]
+	if !ok {
+		t.Fatalf("missing replica sync for %s", replicaID)
+	}
+	if replicaSync.AckKind != engine.SyncAckTimedOut {
+		t.Fatalf("sync_ack_kind=%s, want %s", replicaSync.AckKind, engine.SyncAckTimedOut)
+	}
+	if replicaSync.Action != engine.SyncActionRebuild {
+		t.Fatalf("sync_action=%s, want %s", replicaSync.Action, engine.SyncActionRebuild)
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", proj.Recovery.Phase, engine.RecoveryIdle)
+	}
+	sender = bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after auto rebuild cycle")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s, want %s", sender.State(), engine.StateInSync)
+	}
+	state, ok := bs.ProtocolExecutionState(volPath)
+	if !ok {
+		t.Fatal("expected protocol execution state after rebuild completion")
+	}
+	replicaExec, ok := state.Replicas[replicaID]
+	if !ok {
+		t.Fatalf("missing protocol execution state for %s", replicaID)
+	}
+	if replicaExec.SessionActive {
+		t.Fatal("SessionActive=true, want false after rebuild completion")
+	}
+	if !replicaExec.LiveEligible {
+		t.Fatal("LiveEligible=false, want true after rebuild completion")
+	}
+	if got := countCommandName(bs.ExecutedCoreCommands(volPath), "start_rebuild"); got != 1 {
+		t.Fatalf("start_rebuild count=%d, want 1", got)
 	}
 }
 

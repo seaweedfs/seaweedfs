@@ -766,10 +766,14 @@ func (s *WALShipper) runCatchUpTo(fromLSN uint64, targetLSN uint64) (uint64, err
 	}
 	s.mu.Unlock()
 
-	if targetLSN > 0 && lastSent < targetLSN {
+	effectiveLast := lastSent
+	if effectiveLast == 0 {
+		effectiveLast = fromLSN
+	}
+	if targetLSN > 0 && effectiveLast < targetLSN {
 		return lastSent, fmt.Errorf("catch-up: target %d not reached (last=%d)", targetLSN, lastSent)
 	}
 	log.Printf("wal_shipper: catch-up complete %s: from=%d target=%d last=%d",
-		s.dataAddr, fromLSN+1, targetLSN, lastSent)
+		s.dataAddr, fromLSN+1, targetLSN, effectiveLast)
 	return lastSent, nil
 }

@@ -517,3 +517,85 @@ func TestPhase14_SessionFailed_CatchUpFallsBackToDegraded(t *testing.T) {
 		t.Fatalf("last_barrier_reason=%q", result.Projection.Boundary.LastBarrierReason)
 	}
 }
+
+func TestPhase14_SessionProgressObserved_KindMismatchIgnored(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-session-progress-mismatch",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.66:9333", CtrlAddr: "10.0.0.66:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(SessionStarted{
+		ID:        "vol-session-progress-mismatch",
+		ReplicaID: "replica-1",
+		Kind:      SessionCatchUp,
+		TargetLSN: 80,
+	})
+	core.ApplyEvent(SessionProgressObserved{
+		ID:          "vol-session-progress-mismatch",
+		ReplicaID:   "replica-1",
+		Kind:        SessionCatchUp,
+		AchievedLSN: 20,
+	})
+
+	result := core.ApplyEvent(SessionProgressObserved{
+		ID:          "vol-session-progress-mismatch",
+		ReplicaID:   "replica-1",
+		Kind:        SessionRebuild,
+		AchievedLSN: 70,
+	})
+
+	assertCommandNames(t, result.Commands, nil)
+	if result.Projection.Recovery.Phase != RecoveryCatchingUp {
+		t.Fatalf("recovery_phase=%s", result.Projection.Recovery.Phase)
+	}
+	if result.Projection.Recovery.AchievedLSN != 20 {
+		t.Fatalf("achieved_lsn=%d, want 20", result.Projection.Recovery.AchievedLSN)
+	}
+	if result.Projection.Boundary.AchievedLSN != 20 {
+		t.Fatalf("boundary_achieved=%d, want 20", result.Projection.Boundary.AchievedLSN)
+	}
+}
+
+func TestPhase14_SessionFailed_KindMismatchIgnored(t *testing.T) {
+	core := NewCoreEngine()
+
+	core.ApplyEvent(AssignmentDelivered{
+		ID:             "vol-session-failed-mismatch",
+		Epoch:          1,
+		Role:           RolePrimary,
+		RecoveryTarget: SessionCatchUp,
+		Replicas: []ReplicaAssignment{
+			{ReplicaID: "replica-1", Endpoint: Endpoint{DataAddr: "10.0.0.67:9333", CtrlAddr: "10.0.0.67:9334", Version: 1}},
+		},
+	})
+	core.ApplyEvent(SessionStarted{
+		ID:        "vol-session-failed-mismatch",
+		ReplicaID: "replica-1",
+		Kind:      SessionCatchUp,
+		TargetLSN: 90,
+	})
+
+	result := core.ApplyEvent(SessionFailed{
+		ID:        "vol-session-failed-mismatch",
+		ReplicaID: "replica-1",
+		Kind:      SessionRebuild,
+		Reason:    "stale_rebuild_failure",
+	})
+
+	assertCommandNames(t, result.Commands, nil)
+	if result.Projection.Recovery.Phase != RecoveryCatchingUp {
+		t.Fatalf("recovery_phase=%s", result.Projection.Recovery.Phase)
+	}
+	if result.Projection.Mode.Name != ModeBootstrapPending {
+		t.Fatalf("mode=%s", result.Projection.Mode.Name)
+	}
+	if result.Projection.Boundary.LastBarrierReason != "" {
+		t.Fatalf("last_barrier_reason=%q", result.Projection.Boundary.LastBarrierReason)
+	}
+}

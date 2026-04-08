@@ -145,6 +145,26 @@ It should answer:
 4. whether a replica is in `keepup`, `catchup`, `degraded`, or `needs_rebuild`
 5. whether rebuild is currently the only safe path
 
+It may consume one primary-side normalized sync fact envelope, but only as input
+evidence, not as a second truth owner.
+
+Current normalized sync fact kinds are:
+
+1. `sync_quorum_acked`
+2. `sync_quorum_timed_out`
+3. `sync_replay_required`
+4. `sync_rebuild_required`
+5. `sync_replay_failed`
+
+Interpretation:
+
+1. these are primary-owned semantic facts, not new replica-visible wire messages
+2. they are the seam between:
+   - raw `syncAck` / timeout / callback observations
+   - primary-owned recovery/session decisions
+3. only Loop 2 may turn them into `keepup`, `catchup`, `rebuild`, or degraded
+   projection changes
+
 ## Existing V2 Events Mapped To Owners
 
 ### Identity-Control Entry Event

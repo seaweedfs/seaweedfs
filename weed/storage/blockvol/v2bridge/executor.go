@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net"
+	"sync/atomic"
+	"time"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
@@ -28,7 +31,10 @@ type Executor struct {
 	vol         *blockvol.BlockVol
 	rebuildAddr string // primary's rebuild server address
 	replicaID   string // bounded catch-up target on the primary path
+	sessionID   uint64 // local rebuild session ID while session-controlled full-base runs
 }
+
+var executorSessionSeq atomic.Uint64
 
 // NewExecutor creates an executor.
 //   - vol: the blockvol instance this executor operates on.
@@ -110,6 +116,18 @@ func (e *Executor) streamAndApplyRemote(startExclusive, endInclusive uint64) (ui
 
 	var highestLSN uint64
 	var applied, skipped int
+	var dataConn net.Conn
+	if e.sessionID != 0 {
+		recvAddr, err := e.ensureLocalReceiver()
+		if err != nil {
+			return highestLSN, err
+		}
+		dataConn, err = net.Dial("tcp", recvAddr.DataAddr)
+		if err != nil {
+			return highestLSN, fmt.Errorf("WAL replay connect local data %s: %w", recvAddr.DataAddr, err)
+		}
+		defer dataConn.Close()
+	}
 	for {
 		msgType, payload, err := blockvol.ReadFrame(conn)
 		if err != nil {
@@ -126,8 +144,14 @@ func (e *Executor) streamAndApplyRemote(startExclusive, endInclusive uint64) (ui
 					continue
 				}
 			}
-			if err := e.vol.ApplyRebuildEntry(payload); err != nil {
-				return highestLSN, fmt.Errorf("WAL replay apply: %w", err)
+			if dataConn != nil {
+				if err := blockvol.WriteFrame(dataConn, blockvol.MsgWALEntry, payload); err != nil {
+					return highestLSN, fmt.Errorf("WAL replay forward to local receiver: %w", err)
+				}
+			} else {
+				if err := e.vol.ApplyRebuildEntry(payload); err != nil {
+					return highestLSN, fmt.Errorf("WAL replay apply: %w", err)
+				}
 			}
 			if len(payload) >= 8 {
 				highestLSN = binary.LittleEndian.Uint64(payload[:8])
@@ -171,40 +195,62 @@ func (e *Executor) TransferFullBase(committedLSN uint64) (uint64, error) {
 	if e.rebuildAddr == "" {
 		return 0, fmt.Errorf("no rebuild address configured")
 	}
-
-	// Phase 1: extent copy + full state handoff.
-	snapshotLSN, err := e.transferExtent()
+	if committedLSN == 0 {
+		derived, err := e.queryRemoteCommittedLSN()
+		if err != nil {
+			return 0, err
+		}
+		committedLSN = derived
+	}
+	baseLSN := committedLSN
+	ctrl, err := e.beginControlledFullBase(baseLSN, committedLSN)
 	if err != nil {
 		return 0, err
 	}
+	defer ctrl.Close()
+	defer func() { e.sessionID = 0 }()
 
-	// Validate: the server's snapshot must cover the engine's frozen target.
-	if committedLSN > 0 && snapshotLSN > 0 && snapshotLSN <= committedLSN {
-		return 0, fmt.Errorf("rebuild: server snapshot %d does not cover target %d",
-			snapshotLSN, committedLSN)
+	achievedLSN, err := e.transferExtentToSession(baseLSN)
+	if err != nil {
+		_ = e.vol.CancelRebuildSession(ctrl.sessionID, "transfer_full_base_failed")
+		return 0, err
 	}
+	log.Printf("v2bridge: TransferFullBase phase 1 complete: session=%d baseLSN=%d target=%d",
+		ctrl.sessionID, baseLSN, committedLSN)
 
-	log.Printf("v2bridge: TransferFullBase phase 1 complete: extent installed, snapshotLSN=%d target=%d",
-		snapshotLSN, committedLSN)
-
-	// Phase 2: second catch-up — replay WAL entries from snapshotLSN,
-	// bounded to committedLSN. Uses streamAndApplyRemote (same TCP path
-	// as rebuild tail replay).
-	if snapshotLSN > 0 {
-		// startExclusive = snapshotLSN - 1 so FromLSN = snapshotLSN.
-		_, err := e.streamAndApplyRemote(snapshotLSN-1, committedLSN)
+	if committedLSN > baseLSN {
+		_, err := e.streamAndApplyRemote(baseLSN, committedLSN)
 		if err != nil {
+			_ = e.vol.CancelRebuildSession(ctrl.sessionID, "rebuild_second_catchup_failed")
 			return 0, fmt.Errorf("rebuild second catch-up: %w", err)
 		}
-		log.Printf("v2bridge: TransferFullBase phase 2 complete: second catch-up snapshotLSN=%d→target=%d",
-			snapshotLSN, committedLSN)
+	}
+	if achievedLSN < committedLSN {
+		achievedLSN = committedLSN
+	}
+	if err := e.vol.PrepareFullBaseRebuild(achievedLSN); err != nil {
+		_ = e.vol.CancelRebuildSession(ctrl.sessionID, "prepare_full_base_rebuild_failed")
+		return 0, fmt.Errorf("prepare full-base rebuild: %w", err)
+	}
+	if err := e.vol.ObserveRebuildSessionAppliedLSN(ctrl.sessionID, achievedLSN); err != nil {
+		_ = e.vol.CancelRebuildSession(ctrl.sessionID, "observe_rebuild_boundary_failed")
+		return 0, fmt.Errorf("observe rebuild boundary: %w", err)
 	}
 
-	// achievedLSN: the actual boundary after all phases.
-	achievedLSN := e.vol.StatusSnapshot().WALHeadLSN
-	e.vol.SyncReceiverProgress(achievedLSN)
-
-	log.Printf("v2bridge: TransferFullBase done: target=%d achieved=%d", committedLSN, achievedLSN)
+	achievedLSN, completed, err := e.vol.TryCompleteRebuildSession(ctrl.sessionID)
+	if err != nil {
+		_ = e.vol.CancelRebuildSession(ctrl.sessionID, "rebuild_completion_failed")
+		return 0, fmt.Errorf("rebuild completion gate: %w", err)
+	}
+	if !completed {
+		_ = e.vol.CancelRebuildSession(ctrl.sessionID, "rebuild_completion_incomplete")
+		return 0, fmt.Errorf("rebuild completion gate not satisfied")
+	}
+	if _, err := ctrl.waitForPhase(blockvol.SessionAckCompleted, 2 * time.Second); err != nil {
+		return 0, fmt.Errorf("rebuild completion ack: %w", err)
+	}
+	log.Printf("v2bridge: TransferFullBase done: session=%d target=%d achieved=%d",
+		ctrl.sessionID, committedLSN, achievedLSN)
 	return achievedLSN, nil
 }
 
@@ -255,6 +301,187 @@ func (e *Executor) transferExtent() (snapshotLSN uint64, err error) {
 
 		default:
 			return 0, fmt.Errorf("rebuild unexpected message 0x%02x", msgType)
+		}
+	}
+}
+
+func (e *Executor) transferExtentToSession(baseLSN uint64) (uint64, error) {
+	if e.vol == nil {
+		return 0, fmt.Errorf("no blockvol instance")
+	}
+	if e.rebuildAddr == "" {
+		return 0, fmt.Errorf("no rebuild address configured")
+	}
+	if e.sessionID == 0 {
+		return 0, fmt.Errorf("no active rebuild session")
+	}
+	conn, err := net.Dial("tcp", e.rebuildAddr)
+	if err != nil {
+		return 0, fmt.Errorf("rebuild connect %s: %w", e.rebuildAddr, err)
+	}
+	defer conn.Close()
+	req := blockvol.RebuildRequest{
+		Type:    blockvol.RebuildSessionBase,
+		FromLSN: baseLSN,
+		Epoch:   e.vol.Epoch(),
+	}
+	if err := blockvol.WriteFrame(conn, blockvol.MsgRebuildReq, blockvol.EncodeRebuildRequest(req)); err != nil {
+		return 0, fmt.Errorf("rebuild send request: %w", err)
+	}
+	client := blockvol.NewRebuildTransportClient(e.vol, e.sessionID)
+	_, achievedLSN, err := client.ReceiveBaseBlocksWithStatus(conn)
+	if err != nil {
+		return 0, fmt.Errorf("rebuild receive base blocks: %w", err)
+	}
+	return achievedLSN, nil
+}
+
+type rebuildControlClient struct {
+	conn      net.Conn
+	sessionID uint64
+	ackCh     chan blockvol.SessionAckMsg
+	errCh     chan error
+}
+
+func (c *rebuildControlClient) Close() {
+	if c == nil || c.conn == nil {
+		return
+	}
+	_ = c.conn.Close()
+}
+
+func (c *rebuildControlClient) waitForPhase(phase byte, timeout time.Duration) (blockvol.SessionAckMsg, error) {
+	deadline := time.After(timeout)
+	for {
+		select {
+		case ack := <-c.ackCh:
+			if ack.SessionID == c.sessionID && ack.Phase == phase {
+				return ack, nil
+			}
+		case err := <-c.errCh:
+			if err == nil {
+				err = fmt.Errorf("session control closed")
+			}
+			return blockvol.SessionAckMsg{}, err
+		case <-deadline:
+			return blockvol.SessionAckMsg{}, fmt.Errorf("timeout waiting for session ack phase 0x%02x", phase)
+		}
+	}
+}
+
+func (e *Executor) beginControlledFullBase(baseLSN, targetLSN uint64) (*rebuildControlClient, error) {
+	recvAddr, err := e.ensureLocalReceiver()
+	if err != nil {
+		return nil, err
+	}
+	conn, err := net.Dial("tcp", recvAddr.CtrlAddr)
+	if err != nil {
+		return nil, fmt.Errorf("session control connect %s: %w", recvAddr.CtrlAddr, err)
+	}
+	sessionID := e.sessionID
+	if sessionID == 0 {
+		sessionID = executorSessionSeq.Add(1)
+	}
+	client := &rebuildControlClient{
+		conn:      conn,
+		sessionID: sessionID,
+		ackCh:     make(chan blockvol.SessionAckMsg, 32),
+		errCh:     make(chan error, 1),
+	}
+	go func() {
+		for {
+			msgType, payload, err := blockvol.ReadFrame(conn)
+			if err != nil {
+				client.errCh <- err
+				return
+			}
+			if msgType != blockvol.MsgSessionAck {
+				client.errCh <- fmt.Errorf("unexpected session ack message type 0x%02x", msgType)
+				return
+			}
+			ack, err := blockvol.DecodeSessionAck(payload)
+			if err != nil {
+				client.errCh <- err
+				return
+			}
+			client.ackCh <- ack
+		}
+	}()
+	if err := blockvol.SendSessionControl(conn, blockvol.SessionControlMsg{
+		Epoch:     e.vol.Epoch(),
+		SessionID: sessionID,
+		Command:   blockvol.SessionCmdStartRebuild,
+		BaseLSN:   baseLSN,
+		TargetLSN: targetLSN,
+	}); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("send session control: %w", err)
+	}
+	accepted, err := client.waitForPhase(blockvol.SessionAckAccepted, 2*time.Second)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	e.sessionID = sessionID
+	log.Printf("v2bridge: controlled rebuild accepted: session=%d baseLSN=%d target=%d walApplied=%d",
+		sessionID, baseLSN, targetLSN, accepted.WALAppliedLSN)
+	return client, nil
+}
+
+func (e *Executor) ensureLocalReceiver() (*blockvol.ReplicaReceiverAddrInfo, error) {
+	if e.vol == nil {
+		return nil, fmt.Errorf("no blockvol instance")
+	}
+	if e.vol.ReplicaReceiverAddr() == nil {
+		if err := e.vol.StartReplicaReceiver(":0", ":0"); err != nil {
+			return nil, fmt.Errorf("start local replica receiver: %w", err)
+		}
+	}
+	recvAddr := e.vol.ReplicaReceiverAddr()
+	if recvAddr == nil {
+		return nil, fmt.Errorf("local replica receiver not available")
+	}
+	return recvAddr, nil
+}
+
+func (e *Executor) queryRemoteCommittedLSN() (uint64, error) {
+	if e.rebuildAddr == "" {
+		return 0, fmt.Errorf("no rebuild address configured")
+	}
+	conn, err := net.Dial("tcp", e.rebuildAddr)
+	if err != nil {
+		return 0, fmt.Errorf("query remote committed LSN connect %s: %w", e.rebuildAddr, err)
+	}
+	defer conn.Close()
+	req := blockvol.RebuildRequest{
+		Type:    blockvol.RebuildWALCatchUp,
+		FromLSN: math.MaxUint64,
+		Epoch:   e.vol.Epoch(),
+	}
+	if err := blockvol.WriteFrame(conn, blockvol.MsgRebuildReq, blockvol.EncodeRebuildRequest(req)); err != nil {
+		return 0, fmt.Errorf("query remote committed LSN send request: %w", err)
+	}
+	for {
+		msgType, payload, err := blockvol.ReadFrame(conn)
+		if err != nil {
+			return 0, fmt.Errorf("query remote committed LSN read: %w", err)
+		}
+		switch msgType {
+		case blockvol.MsgRebuildDone:
+			if len(payload) < 8 {
+				return 0, fmt.Errorf("query remote committed LSN: short done payload")
+			}
+			nextLSN := binary.BigEndian.Uint64(payload[:8])
+			if nextLSN == 0 {
+				return 0, nil
+			}
+			return nextLSN - 1, nil
+		case blockvol.MsgRebuildEntry:
+			// Ignore any unexpected replay payloads; done carries the authoritative head.
+		case blockvol.MsgRebuildError:
+			return 0, fmt.Errorf("query remote committed LSN server error: %s", string(payload))
+		default:
+			return 0, fmt.Errorf("query remote committed LSN unexpected message 0x%02x", msgType)
 		}
 	}
 }

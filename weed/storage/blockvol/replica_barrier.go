@@ -3,6 +3,7 @@ package blockvol
 import (
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -10,6 +11,12 @@ import (
 // responds with barrier status after ensuring durability.
 func (r *ReplicaReceiver) handleControlConn(conn net.Conn) {
 	defer conn.Close()
+	var writeMu sync.Mutex
+	writeFrame := func(msgType byte, payload []byte) error {
+		writeMu.Lock()
+		defer writeMu.Unlock()
+		return WriteFrame(conn, msgType, payload)
+	}
 	for {
 		select {
 		case <-r.stopCh:
@@ -27,24 +34,69 @@ func (r *ReplicaReceiver) handleControlConn(conn net.Conn) {
 			return
 		}
 
-		if msgType != MsgBarrierReq {
+		switch msgType {
+		case MsgBarrierReq:
+			req, err := DecodeBarrierRequest(payload)
+			if err != nil {
+				log.Printf("replica: decode barrier request: %v", err)
+				continue
+			}
+
+			resp := r.handleBarrier(req)
+
+			respPayload := EncodeBarrierResponse(resp)
+			if err := writeFrame(MsgBarrierResp, respPayload); err != nil {
+				log.Printf("replica: write barrier response: %v", err)
+				return
+			}
+		case MsgSessionControl:
+			if err := r.handleSessionControl(conn, payload, writeFrame); err != nil {
+				log.Printf("replica: session control error: %v", err)
+				return
+			}
+		default:
 			log.Printf("replica: unexpected ctrl message type 0x%02x", msgType)
-			continue
 		}
+	}
+}
 
-		req, err := DecodeBarrierRequest(payload)
-		if err != nil {
-			log.Printf("replica: decode barrier request: %v", err)
-			continue
+func (r *ReplicaReceiver) handleSessionControl(conn net.Conn, payload []byte, writeFrame func(byte, []byte) error) error {
+	ctrl, err := DecodeSessionControl(payload)
+	if err != nil {
+		return err
+	}
+	switch ctrl.Command {
+	case SessionCmdStartRebuild:
+		r.vol.SetOnRebuildSessionAck(func(ack SessionAckMsg) {
+			if ack.SessionID != ctrl.SessionID {
+				return
+			}
+			if err := writeFrame(MsgSessionAck, EncodeSessionAck(ack)); err != nil {
+				log.Printf("replica: write session ack: %v", err)
+			}
+		})
+		if err := r.vol.StartRebuildSession(RebuildSessionConfig{
+			SessionID: ctrl.SessionID,
+			Epoch:     ctrl.Epoch,
+			BaseLSN:   ctrl.BaseLSN,
+			TargetLSN: ctrl.TargetLSN,
+		}); err != nil {
+			_ = writeFrame(MsgSessionAck, EncodeSessionAck(SessionAckMsg{
+				Epoch:         ctrl.Epoch,
+				SessionID:     ctrl.SessionID,
+				Phase:         SessionAckFailed,
+				WALAppliedLSN: ctrl.BaseLSN,
+			}))
+			return err
 		}
-
-		resp := r.handleBarrier(req)
-
-		respPayload := EncodeBarrierResponse(resp)
-		if err := WriteFrame(conn, MsgBarrierResp, respPayload); err != nil {
-			log.Printf("replica: write barrier response: %v", err)
-			return
+		return nil
+	case SessionCmdCancel:
+		if err := r.vol.CancelRebuildSession(ctrl.SessionID, "remote_cancel"); err != nil {
+			return err
 		}
+		return nil
+	default:
+		return net.InvalidAddrError("unsupported session control command")
 	}
 }
 

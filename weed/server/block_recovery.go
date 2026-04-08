@@ -3,6 +3,8 @@ package weed_server
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"sync"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
@@ -44,6 +46,103 @@ type RecoveryManager struct {
 	// TestHook: if set, may adjust a freshly cached pending execution before
 	// the core event is emitted. Used only by focused ownership tests.
 	OnPendingExecution func(volumeID string, pending *rt.PendingExecution)
+}
+
+type recoverySyncFact struct {
+	Source         recoverySyncFactSource
+	Kind           recoverySyncFactKind
+	VolumeID       string
+	ReplicaID      string
+	AckKind        engine.SyncAckKind
+	TargetLSN      uint64
+	PrimaryTailLSN uint64
+	DurableLSN     uint64
+	AppliedLSN     uint64
+	Reason         string
+}
+
+type recoverySyncFactSource string
+
+const (
+	recoverySyncFactSourcePlan     recoverySyncFactSource = "plan"
+	recoverySyncFactSourceCallback recoverySyncFactSource = "callback"
+)
+
+type recoverySyncFactKind string
+
+const (
+	recoverySyncFactKindSyncReplayRequired  recoverySyncFactKind = "sync_replay_required"
+	recoverySyncFactKindSyncRebuildRequired recoverySyncFactKind = "sync_rebuild_required"
+	recoverySyncFactKindSyncReplayFailed    recoverySyncFactKind = "sync_replay_failed"
+	recoverySyncFactKindSyncQuorumAcked     recoverySyncFactKind = "sync_quorum_acked"
+	recoverySyncFactKindSyncQuorumTimedOut  recoverySyncFactKind = "sync_quorum_timed_out"
+)
+
+func newPlanCatchUpSyncFact(volumeID, replicaID string, plan *engine.RecoveryPlan, replicaDurableLSN uint64) recoverySyncFact {
+	return recoverySyncFact{
+		Source:         recoverySyncFactSourcePlan,
+		Kind:           recoverySyncFactKindSyncReplayRequired,
+		VolumeID:       volumeID,
+		ReplicaID:      replicaID,
+		AckKind:        engine.SyncAckTimedOut,
+		TargetLSN:      plan.CatchUpTarget,
+		PrimaryTailLSN: plan.Proof.TailLSN,
+		DurableLSN:     replicaDurableLSN,
+		AppliedLSN:     plan.Proof.ReplicaFlushedLSN,
+		Reason:         plan.Proof.Reason,
+	}
+}
+
+func newPlanNeedsRebuildSyncFact(volumeID, replicaID string, proof *engine.RecoverabilityProof) recoverySyncFact {
+	reason := "needs_rebuild"
+	if proof != nil && proof.Reason != "" {
+		reason = proof.Reason
+	}
+	return recoverySyncFact{
+		Source:         recoverySyncFactSourcePlan,
+		Kind:           recoverySyncFactKindSyncRebuildRequired,
+		VolumeID:       volumeID,
+		ReplicaID:      replicaID,
+		AckKind:        engine.SyncAckTimedOut,
+		TargetLSN:      proof.CommittedLSN,
+		PrimaryTailLSN: proof.TailLSN,
+		DurableLSN:     proof.ReplicaFlushedLSN,
+		AppliedLSN:     proof.ReplicaFlushedLSN,
+		Reason:         reason,
+	}
+}
+
+func newCatchUpFailureSyncFact(volumeID, replicaID, reason string) recoverySyncFact {
+	return recoverySyncFact{
+		Source:    recoverySyncFactSourceCallback,
+		Kind:      recoverySyncFactKindSyncReplayFailed,
+		VolumeID:  volumeID,
+		ReplicaID: replicaID,
+		AckKind:   engine.SyncAckTransportLost,
+		Reason:    reason,
+	}
+}
+
+func newBarrierAcceptedSyncFact(volumeID string, flushedLSN uint64) recoverySyncFact {
+	return recoverySyncFact{
+		Source:     recoverySyncFactSourceCallback,
+		Kind:       recoverySyncFactKindSyncQuorumAcked,
+		VolumeID:   volumeID,
+		AckKind:    engine.SyncAckQuorum,
+		TargetLSN:  flushedLSN,
+		DurableLSN: flushedLSN,
+	}
+}
+
+func newBarrierRejectedSyncFact(volumeID, replicaID, reason string) recoverySyncFact {
+	return recoverySyncFact{
+		Source:    recoverySyncFactSourceCallback,
+		Kind:      recoverySyncFactKindSyncQuorumTimedOut,
+		VolumeID:  volumeID,
+		ReplicaID: replicaID,
+		AckKind:   engine.SyncAckTimedOut,
+		Reason:    reason,
+	}
 }
 
 func NewRecoveryManager(bs *BlockService) *RecoveryManager {
@@ -297,8 +396,6 @@ func (rm *RecoveryManager) resolveRecoveryContext(replicaID string, assignments 
 }
 
 func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, assignments []blockvol.BlockVolumeAssignment) {
-	bs := rm.bs
-
 	rctx, err := rm.resolveRecoveryContext(replicaID, assignments)
 	if err != nil {
 		glog.Warningf("recovery: %v", err)
@@ -314,15 +411,31 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 		glog.Warningf("recovery: plan failed for %s: %v", replicaID, err)
 		return
 	}
+	if rm.applyRecoveryPlanFromFacts(ctx, rctx, replicaID, assignments, plan) {
+		return
+	}
+
+	if ctx.Err() != nil {
+		rctx.driver.CancelPlan(plan, "context_cancelled")
+		return
+	}
+}
+
+func (rm *RecoveryManager) applyRecoveryPlanFromFacts(ctx context.Context, rctx *recoveryContext, replicaID string, assignments []blockvol.BlockVolumeAssignment, plan *engine.RecoveryPlan) bool {
+	if rm == nil || rm.bs == nil || rctx == nil || plan == nil {
+		return false
+	}
+	bs := rm.bs
+
 	switch plan.Outcome {
 	case engine.OutcomeCatchUp:
 		if plan.Proof == nil {
 			glog.Warningf("recovery: missing recoverability proof for catch-up plan %s", replicaID)
-			return
+			return true
 		}
 		if bs.v2Core == nil {
 			rm.executeLegacyCatchUp(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
-			return
+			return true
 		}
 		rm.coord.Store(replicaID, &rt.PendingExecution{
 			VolumeID:      rctx.volPath,
@@ -335,47 +448,68 @@ func (rm *RecoveryManager) runCatchUp(ctx context.Context, replicaID string, ass
 		if rm.OnPendingExecution != nil {
 			rm.OnPendingExecution(rctx.volPath, rm.coord.Peek(replicaID))
 		}
-		bs.applyCoreEvent(engine.SyncAckObserved{
-			ID:             rctx.volPath,
-			ReplicaID:      replicaID,
-			AckKind:        engine.SyncAckTimedOut,
-			TargetLSN:      plan.CatchUpTarget,
-			PrimaryTailLSN: plan.Proof.TailLSN,
-			DurableLSN:     rctx.replicaFlushedLSN,
-			AppliedLSN:     plan.Proof.ReplicaFlushedLSN,
-			Reason:         plan.Proof.Reason,
-		})
+		bs.applyRecoverySyncFact(newPlanCatchUpSyncFact(rctx.volPath, replicaID, plan, rctx.replicaFlushedLSN))
 		bs.applyCoreEvent(engine.CatchUpPlanned{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.CatchUpTarget})
 		if rm.coord.Has(replicaID) {
 			rm.coord.Cancel(replicaID, "start_catchup_not_emitted")
-			return
 		}
+		return true
 	case engine.OutcomeNeedsRebuild:
 		if plan.Proof == nil {
 			glog.Warningf("recovery: missing recoverability proof for rebuild plan %s", replicaID)
-			return
+			return true
 		}
-		reason := "needs_rebuild"
-		if plan.Proof != nil && plan.Proof.Reason != "" {
-			reason = plan.Proof.Reason
+		bs.applyRecoverySyncFact(newPlanNeedsRebuildSyncFact(rctx.volPath, replicaID, plan.Proof))
+		if ctx.Err() != nil {
+			return true
 		}
-		bs.applyCoreEvent(engine.SyncAckObserved{
-			ID:             rctx.volPath,
-			ReplicaID:      replicaID,
-			AckKind:        engine.SyncAckTimedOut,
-			TargetLSN:      plan.Proof.CommittedLSN,
-			PrimaryTailLSN: plan.Proof.TailLSN,
-			DurableLSN:     plan.Proof.ReplicaFlushedLSN,
-			AppliedLSN:     plan.Proof.ReplicaFlushedLSN,
-			Reason:         reason,
-		})
-		return
+		if err := rm.installSession(replicaID, engine.SessionRebuild); err != nil {
+			glog.Warningf("recovery: install rebuild session failed for %s: %v", replicaID, err)
+			return true
+		}
+		rm.runRebuild(ctx, replicaID, assignments)
+		return true
+	default:
+		return false
 	}
+}
 
-	if ctx.Err() != nil {
-		rctx.driver.CancelPlan(plan, "context_cancelled")
-		return
+func (rm *RecoveryManager) installSession(replicaID string, kind engine.SessionKind) error {
+	if rm == nil || rm.bs == nil || rm.bs.v2Orchestrator == nil {
+		return fmt.Errorf("recovery: orchestrator unavailable")
 	}
+	sender := rm.bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		return fmt.Errorf("recovery: sender %s not found", replicaID)
+	}
+	if snap := sender.SessionSnapshot(); snap != nil && snap.Active && snap.Kind == kind {
+		return nil
+	}
+	all := rm.bs.v2Orchestrator.Registry.All()
+	replicas := make([]engine.ReplicaAssignment, 0, len(all))
+	for _, s := range all {
+		replicas = append(replicas, engine.ReplicaAssignment{
+			ReplicaID: s.ReplicaID(),
+			Endpoint:  s.Endpoint(),
+		})
+	}
+	result := rm.bs.v2Orchestrator.ProcessAssignment(engine.AssignmentIntent{
+		Replicas: replicas,
+		Epoch:    sender.Epoch(),
+		RecoveryTargets: map[string]engine.SessionKind{
+			replicaID: kind,
+		},
+	})
+	for _, id := range append(append([]string(nil), result.SessionsCreated...), result.SessionsSuperseded...) {
+		if id == replicaID {
+			return nil
+		}
+	}
+	snap := sender.SessionSnapshot()
+	if snap != nil && snap.Active && snap.Kind == kind {
+		return nil
+	}
+	return fmt.Errorf("recovery: %s session not installed for %s", kind, replicaID)
 }
 
 func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID string, assignments []blockvol.BlockVolumeAssignment) {
@@ -461,12 +595,13 @@ func (rm *RecoveryManager) OnCatchUpFailed(volumeID, replicaID, reason string) {
 		return
 	}
 	glog.V(0).Infof("recovery: catch-up failed for %s via %s (%s)", volumeID, replicaID, reason)
-	rm.bs.applyCoreEvent(engine.SyncAckObserved{
-		ID:        volumeID,
-		ReplicaID: replicaID,
-		AckKind:   engine.SyncAckTransportLost,
-		Reason:    reason,
-	})
+	fact := newCatchUpFailureSyncFact(volumeID, replicaID, reason)
+	rm.bs.applyRecoverySyncFact(fact)
+	rm.reenterFromFact(fact)
+}
+
+func (rm *RecoveryManager) ReenterFromSyncTimeout(fact recoverySyncFact) {
+	rm.reenterFromFact(fact)
 }
 
 func (rm *RecoveryManager) OnRebuildCompleted(volumeID, replicaID string, plan *engine.RecoveryPlan) {
@@ -477,6 +612,22 @@ func (rm *RecoveryManager) OnRebuildCompleted(volumeID, replicaID string, plan *
 	status := rm.readRebuildStatus(volumeID)
 	ev := rt.DeriveRebuildCommitted(volumeID, replicaID, status, plan)
 	rm.bs.applyCoreEvent(ev)
+}
+
+func (bs *BlockService) applyRecoverySyncFact(fact recoverySyncFact) {
+	if bs == nil || bs.v2Core == nil || fact.VolumeID == "" || fact.AckKind == "" {
+		return
+	}
+	bs.applyCoreEvent(engine.SyncAckObserved{
+		ID:             fact.VolumeID,
+		ReplicaID:      fact.ReplicaID,
+		AckKind:        fact.AckKind,
+		TargetLSN:      fact.TargetLSN,
+		PrimaryTailLSN: fact.PrimaryTailLSN,
+		DurableLSN:     fact.DurableLSN,
+		AppliedLSN:     fact.AppliedLSN,
+		Reason:         fact.Reason,
+	})
 }
 
 // readRebuildStatus reads post-rebuild snapshot from the backend.
@@ -529,7 +680,61 @@ func (rm *RecoveryManager) deriveRebuildAddr(replicaID string, assignments []blo
 			return a.RebuildAddr
 		}
 	}
-	return ""
+	if rm == nil || rm.bs == nil || volPath == "" {
+		return ""
+	}
+	host := rm.bs.advertisedHost
+	if host == "" {
+		if parsedHost, _, err := net.SplitHostPort(rm.bs.listenAddr); err == nil {
+			host = parsedHost
+		}
+	}
+	switch host {
+	case "", "0.0.0.0", "::":
+		host = "127.0.0.1"
+	}
+	_, _, rebuildPort := rm.bs.ReplicationPorts(volPath)
+	if rebuildPort <= 0 {
+		return ""
+	}
+	return net.JoinHostPort(host, strconv.Itoa(rebuildPort))
+}
+
+func shouldReenterRecoveryFromFailure(reason string) bool {
+	switch reason {
+	case "recoverability_lost", "retention_lost", "truncation_unsafe":
+		return true
+	default:
+		return false
+	}
+}
+
+func (rm *RecoveryManager) reenterFromFact(fact recoverySyncFact) {
+	if !shouldReenterRecoveryFromFact(fact) || rm == nil || rm.bs == nil || rm.bs.v2Core == nil || fact.ReplicaID == "" {
+		return
+	}
+	sender := rm.bs.v2Orchestrator.Registry.Sender(fact.ReplicaID)
+	if sender != nil {
+		if snap := sender.SessionSnapshot(); snap != nil && snap.Active && snap.Kind == engine.SessionRebuild {
+			return
+		}
+	}
+	if err := rm.installSession(fact.ReplicaID, engine.SessionCatchUp); err != nil {
+		glog.Warningf("recovery: re-enter catchup session install failed for %s (%s): %v", fact.ReplicaID, fact.Reason, err)
+		return
+	}
+	rm.runCatchUp(context.Background(), fact.ReplicaID, nil)
+}
+
+func shouldReenterRecoveryFromFact(fact recoverySyncFact) bool {
+	switch fact.Kind {
+	case recoverySyncFactKindSyncQuorumTimedOut:
+		return true
+	case recoverySyncFactKindSyncReplayFailed:
+		return shouldReenterRecoveryFromFailure(fact.Reason)
+	default:
+		return false
+	}
 }
 
 func (rm *RecoveryManager) volumePathForReplica(replicaID string) string {

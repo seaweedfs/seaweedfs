@@ -10,12 +10,11 @@ import (
 
 func TestRebuildTransport_SessionControlRoundTrip(t *testing.T) {
 	msg := SessionControlMsg{
-		Epoch:      5,
-		SessionID:  42,
-		Command:    SessionCmdStartRebuild,
-		BaseLSN:    1000,
-		TargetLSN:  2000,
-		SnapshotID: 7,
+		Epoch:     5,
+		SessionID: 42,
+		Command:   SessionCmdStartRebuild,
+		BaseLSN:   1000,
+		TargetLSN: 2000,
 	}
 	encoded := EncodeSessionControl(msg)
 	decoded, err := DecodeSessionControl(encoded)

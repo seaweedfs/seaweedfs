@@ -102,6 +102,10 @@ type BlockVol struct {
 	// distributed durability fence.
 	onBarrierRejected func(reason string)
 
+	// Rebuild session ack callback — reports replica-local rebuild session
+	// progress/result facts for host-side routing to the primary.
+	onRebuildSessionAck func(SessionAckMsg)
+
 	// liveShippingPolicy gates whether configured shippers may consume current
 	// live-tail WAL entries. The host uses this to keep replicas in bounded
 	// catch-up until their active protocol session reaches a live-eligible phase.
@@ -912,6 +916,15 @@ func (v *BlockVol) SetOnBarrierRejected(fn func(reason string)) {
 	}
 }
 
+// SetOnRebuildSessionAck registers a callback invoked whenever the local rebuild
+// session produces a new host-visible progress/result fact.
+func (v *BlockVol) SetOnRebuildSessionAck(fn func(SessionAckMsg)) {
+	if v == nil {
+		return
+	}
+	v.onRebuildSessionAck = fn
+}
+
 func (v *BlockVol) currentDurableBoundary() (uint64, bool) {
 	if v == nil {
 		return 0, false
@@ -1284,6 +1297,52 @@ func (v *BlockVol) ReceivedLSN() uint64 {
 // (catch-up entries arrive in order but may have gaps from flushed entries).
 func (v *BlockVol) ApplyRebuildEntry(payload []byte) error {
 	return applyRebuildEntry(v, payload)
+}
+
+// PrepareFullBaseRebuild clears replica-local WAL runtime state ahead of a
+// session-controlled full-base rebuild. The rebuilding replica is not serving
+// frontend I/O, so it is safe to discard stale local WAL/dirty-map state and
+// let the incoming base stream repopulate the extent image from scratch.
+func (v *BlockVol) PrepareFullBaseRebuild(baseLSN uint64) error {
+	if v == nil {
+		return fmt.Errorf("blockvol: nil volume")
+	}
+	if v.flusher != nil {
+		v.flusher.Pause()
+		defer v.flusher.Resume()
+	}
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
+
+	v.dirtyMap.Clear()
+	v.wal.Reset()
+
+	v.mu.Lock()
+	v.super.WALHead = 0
+	v.super.WALTail = 0
+	v.super.WALCheckpointLSN = baseLSN
+	if _, err := v.fd.Seek(0, 0); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: prepare full-base seek superblock: %w", err)
+	}
+	if _, err := v.super.WriteTo(v.fd); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: prepare full-base write superblock: %w", err)
+	}
+	if err := v.fd.Sync(); err != nil {
+		v.mu.Unlock()
+		return fmt.Errorf("blockvol: prepare full-base sync superblock: %w", err)
+	}
+	v.mu.Unlock()
+
+	if v.flusher != nil {
+		v.flusher.SetCheckpointLSN(baseLSN)
+	}
+	v.nextLSN.Store(baseLSN + 1)
+	if baseLSN > 0 {
+		v.SyncReceiverProgress(baseLSN)
+	}
+	return nil
 }
 
 // ErrTruncationUnsafe is returned by TruncateToLSN when the replica's

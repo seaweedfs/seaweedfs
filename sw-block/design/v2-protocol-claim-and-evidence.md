@@ -123,6 +123,7 @@ These are the currently binding constraints that later work must preserve.
 | `K2` | each volume is treated as a micro-cluster whose selected primary owns data-control truth | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md` | active |
 | `K3` | takeover authorization belongs to `masterv2`, but reconstruction and activation gating belong to the new primary | `v2-two-loop-protocol.md`, `v2-automata-ownership-map.md` | active |
 | `K4` | `Loop 1` and `Loop 2` must not collapse into one heartbeat or one state owner | `v2-two-loop-protocol.md` | active |
+| `K5` | primary-side normalized sync facts are an internal semantic envelope, not a second wire protocol or a second decision owner | `v2-sync-recovery-protocol.md`, `v2-rebuild-mvp-session-protocol.md`, `v2-automata-ownership-map.md` | active |
 
 ## Accepted Baselines
 
@@ -175,6 +176,7 @@ These are the claims that may currently be made without overreach.
 | Real-workload package | one bounded workload matrix passes on the corrected chosen path | `CP13-8` scenario/doc | tester validation reports |
 | Assignment/publication closure | assignment does not imply readiness/publication and corrected wiring refreshes replication truth explicitly | `CP13-8A` code/tests/debug evidence | tester investigation, bug docs |
 | Mode normalization | one bounded mode set is explicit and surface-consistent on the constrained current path | `CP13-9` contract/doc/tests | tester validation report |
+| Normalized sync fact vocabulary | raw `syncAck`, timeout, callback, and planner observations are compressed into one primary-owned sync fact envelope without creating a second wire protocol or a second decision owner | `v2-sync-recovery-protocol.md`, `v2-rebuild-mvp-session-protocol.md`, focused `weed/server` sync-fact tests | `v2-automata-ownership-map.md`, `v2-kernel-closure-review.md` |
 | Runtime truth closure under restart/disturbance | accepted explicit truth survives the delivered bounded `Phase 16` heartbeat/restart seams through `16W` | `phase-16-finish-review.md`, `phase-16.md`, focused restart/heartbeat tests in `weed/server` | `v2-product-completion-overview.md`, `v2-protocol-truths.md` |
 | Failover/publication bounded contract | one bounded whole-chain statement is explicit for publication ownership/address coherence after failover completion and winning assignment delivery | `phase-17.md`, `phase-17-checkpoint-review.md`, publication/disturbance tests in `weed/server` | `v2-first-launch-supported-matrix.md` |
 | Disturbance policy table | startup/restart/rejoin/repeated-failover/degraded-sparsity behavior is explicit as runtime rule, temporary inconsistency policy, or non-claim | `phase-17.md`, `phase-17-checkpoint-review.md`, restart/disturbance tests in `weed/server` | `v2-product-completion-overview.md` |

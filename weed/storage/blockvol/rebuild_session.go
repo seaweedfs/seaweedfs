@@ -21,17 +21,16 @@ const (
 // RebuildSessionConfig is the contract for starting one rebuild session.
 // Issued by the primary via sessionControl(start_rebuild).
 type RebuildSessionConfig struct {
-	SessionID  uint64
-	Epoch      uint64
-	BaseLSN    uint64 // snapshot point-in-time LSN
-	TargetLSN  uint64 // WAL must reach this before completion
-	SnapshotID uint32 // snapshot to use as base (0 = use current extent)
+	SessionID uint64
+	Epoch     uint64
+	BaseLSN   uint64 // flushed/checkpoint boundary — base stream anchored at or above this LSN
+	TargetLSN uint64 // WAL must reach this before completion
 }
 
 // RebuildSession manages one replica-side rebuild session with two concurrent
 // data lanes:
 //
-//   - Base lane: trusted snapshot/extent blocks applied with bitmap protection
+//   - Base lane: extent blocks (anchored at or above BaseLSN) with bitmap protection
 //   - WAL lane: live WAL entries applied and marked in bitmap
 //
 // The bitmap ensures WAL-applied data always wins over base data. The session
@@ -64,20 +63,29 @@ func NewRebuildSession(vol *BlockVol, config RebuildSessionConfig) (*RebuildSess
 	if config.TargetLSN == 0 {
 		return nil, fmt.Errorf("rebuild session: target LSN is required")
 	}
-	if config.Epoch == 0 {
-		return nil, fmt.Errorf("rebuild session: epoch is required")
-	}
-
 	info := vol.Info()
 	totalLBAs := info.VolumeSize / uint64(info.BlockSize)
 	bitmap := NewRebuildBitmap(totalLBAs, info.BlockSize)
 
-	return &RebuildSession{
+	session := &RebuildSession{
 		config: config,
 		phase:  RebuildPhaseAccepted,
 		bitmap: bitmap,
 		vol:    vol,
-	}, nil
+		// The trusted base already covers BaseLSN. Hydration may advance this
+		// further if recovered local WAL survives past the base boundary.
+		walAppliedLSN: config.BaseLSN,
+	}
+	// Full-base rebuild intentionally replaces the replica's local runtime
+	// state from scratch, so stale local WAL/dirty-map entries must not be
+	// hydrated into the session. Two-line sessions with a genuine WAL lane
+	// still hydrate recovered WAL newer than BaseLSN before base intake opens.
+	if config.TargetLSN != config.BaseLSN {
+		if err := session.hydrateBitmapFromRecoveredWAL(); err != nil {
+			return nil, err
+		}
+	}
+	return session, nil
 }
 
 // Start transitions the session from Accepted to Running.
@@ -91,6 +99,32 @@ func (s *RebuildSession) Start() error {
 	return nil
 }
 
+func (s *RebuildSession) hydrateBitmapFromRecoveredWAL() error {
+	if s == nil || s.vol == nil {
+		return fmt.Errorf("rebuild session: volume is nil")
+	}
+	// Fail closed if the replica's durable extent is already newer than the
+	// incoming base. Those overwritten ranges can no longer be reconstructed
+	// from retained WAL alone, so a fresh older base is unsafe.
+	if s.vol.super.WALCheckpointLSN > s.config.BaseLSN {
+		return fmt.Errorf("rebuild session: local checkpoint %d is newer than base LSN %d",
+			s.vol.super.WALCheckpointLSN, s.config.BaseLSN)
+	}
+	if s.vol.dirtyMap == nil {
+		return nil
+	}
+	for _, entry := range s.vol.dirtyMap.Snapshot() {
+		if entry.Lsn <= s.config.BaseLSN {
+			continue
+		}
+		s.markBitmapRange(entry.Lba, entry.Length)
+		if entry.Lsn > s.walAppliedLSN {
+			s.walAppliedLSN = entry.Lsn
+		}
+	}
+	return nil
+}
+
 // ApplyWALEntry applies one WAL entry through the WAL lane. The entry is
 // applied to the replica's local WAL, and the bitmap bit is set for each
 // LBA covered by the entry. This ensures base lane data for the same LBA
@@ -100,38 +134,34 @@ func (s *RebuildSession) Start() error {
 // receive. This is the key correctness invariant.
 func (s *RebuildSession) ApplyWALEntry(entry *WALEntry) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.phase != RebuildPhaseRunning && s.phase != RebuildPhaseBaseComplete {
+		s.mu.Unlock()
 		return fmt.Errorf("rebuild session: WAL apply not allowed in phase %s", s.phase)
 	}
 	if entry.Epoch != s.config.Epoch {
+		s.mu.Unlock()
 		return fmt.Errorf("rebuild session: epoch mismatch: entry=%d session=%d", entry.Epoch, s.config.Epoch)
 	}
 
 	// Apply to local WAL via the volume's WAL writer.
 	if err := s.vol.applyRebuildWALEntry(entry); err != nil {
+		s.mu.Unlock()
 		return fmt.Errorf("rebuild session: WAL apply LSN=%d: %w", entry.LSN, err)
 	}
 
-	// AFTER successful apply: mark bitmap for each LBA covered by this entry.
-	if entry.Type == EntryTypeWrite && entry.Length > 0 {
-		blockSize := uint64(s.config.blockSize())
-		if blockSize == 0 {
-			blockSize = uint64(s.vol.Info().BlockSize)
-		}
-		startLBA := entry.LBA
-		blocks := uint64(entry.Length) / blockSize
-		if blocks == 0 {
-			blocks = 1
-		}
-		for i := uint64(0); i < blocks; i++ {
-			s.bitmap.MarkApplied(startLBA + i)
-		}
+	// AFTER successful apply: mark bitmap for each covered LBA. Writes and
+	// trims both define state newer than the trusted base, so the base lane
+	// must never overwrite them after local apply succeeds.
+	if (entry.Type == EntryTypeWrite || entry.Type == EntryTypeTrim) && entry.Length > 0 {
+		s.markBitmapRange(entry.LBA, entry.Length)
 	}
 
 	if entry.LSN > s.walAppliedLSN {
 		s.walAppliedLSN = entry.LSN
 	}
+	ack := s.sessionAckLocked()
+	s.mu.Unlock()
+	s.vol.emitRebuildSessionAck(ack)
 	return nil
 }
 
@@ -143,23 +173,38 @@ func (s *RebuildSession) ApplyWALEntry(entry *WALEntry) error {
 // skipped due to bitmap conflict, which is correct behavior.
 func (s *RebuildSession) ApplyBaseBlock(lba uint64, data []byte) (bool, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if s.phase != RebuildPhaseRunning {
+		s.mu.Unlock()
 		return false, fmt.Errorf("rebuild session: base apply not allowed in phase %s", s.phase)
 	}
 
 	// Bitmap conflict check: WAL-applied LBA wins.
 	if !s.bitmap.ShouldApplyBase(lba) {
 		s.baseBlocksSkipped++
+		s.mu.Unlock()
 		return false, nil
 	}
+	fullBase := s.config.TargetLSN == s.config.BaseLSN
+	baseLSN := s.config.BaseLSN
+	s.mu.Unlock()
 
-	// Apply base block directly to the extent (not through WAL).
-	if err := s.vol.writeExtentDirect(lba, data); err != nil {
+	// Full-base sessions overwrite the extent unconditionally and discard prior
+	// replica-local runtime state after the base lane succeeds. Two-line
+	// sessions that truly race with WAL still honor the newer-than-BaseLSN
+	// dirty-map guard under ioMu.
+	var err error
+	if fullBase {
+		err = s.vol.writeExtentDirectUnconditional(lba, data)
+	} else {
+		err = s.vol.writeExtentDirectForRebuild(lba, data, baseLSN)
+	}
+	if err != nil {
 		return false, fmt.Errorf("rebuild session: base apply LBA=%d: %w", lba, err)
 	}
 
+	s.mu.Lock()
 	s.baseBlocksApplied++
+	s.mu.Unlock()
 	return true, nil
 }
 
@@ -167,12 +212,14 @@ func (s *RebuildSession) ApplyBaseBlock(lba uint64, data []byte) (bool, error) {
 // The session transitions to BaseComplete phase if currently Running.
 func (s *RebuildSession) MarkBaseComplete(totalBlocks uint64) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.baseBlocksTotal = totalBlocks
 	s.baseComplete = true
 	if s.phase == RebuildPhaseRunning {
 		s.phase = RebuildPhaseBaseComplete
 	}
+	ack := s.sessionAckLocked()
+	s.mu.Unlock()
+	s.vol.emitRebuildSessionAck(ack)
 }
 
 // TryComplete checks if both completion conditions are met:
@@ -183,26 +230,44 @@ func (s *RebuildSession) MarkBaseComplete(totalBlocks uint64) {
 // If not ready, returns (0, false).
 func (s *RebuildSession) TryComplete() (uint64, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if !s.baseComplete {
+		s.mu.Unlock()
 		return 0, false
 	}
 	if s.walAppliedLSN < s.config.TargetLSN {
+		s.mu.Unlock()
 		return 0, false
 	}
 	if s.phase == RebuildPhaseCompleted || s.phase == RebuildPhaseFailed {
+		s.mu.Unlock()
 		return 0, false
 	}
 	s.phase = RebuildPhaseCompleted
-	return s.walAppliedLSN, true
+	achieved := s.walAppliedLSN
+	ack := s.sessionAckLocked()
+	s.mu.Unlock()
+	s.vol.emitRebuildSessionAck(ack)
+	return achieved, true
+}
+
+func (s *RebuildSession) ObserveAppliedLSN(appliedLSN uint64) SessionAckMsg {
+	s.mu.Lock()
+	if appliedLSN > s.walAppliedLSN {
+		s.walAppliedLSN = appliedLSN
+	}
+	ack := s.sessionAckLocked()
+	s.mu.Unlock()
+	return ack
 }
 
 // Fail marks the session as failed with a reason.
 func (s *RebuildSession) Fail(reason string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.phase = RebuildPhaseFailed
 	s.failReason = reason
+	ack := s.sessionAckLocked()
+	s.mu.Unlock()
+	s.vol.emitRebuildSessionAck(ack)
 }
 
 // Phase returns the current session phase.
@@ -266,12 +331,61 @@ func (s *RebuildSession) SessionID() uint64 {
 	return s.config.SessionID
 }
 
+func (s *RebuildSession) sessionAckLocked() SessionAckMsg {
+	ack := SessionAckMsg{
+		Epoch:         s.config.Epoch,
+		SessionID:     s.config.SessionID,
+		WALAppliedLSN: s.walAppliedLSN,
+		BaseComplete:  s.baseComplete,
+	}
+	switch s.phase {
+	case RebuildPhaseAccepted:
+		ack.Phase = SessionAckAccepted
+	case RebuildPhaseRunning:
+		ack.Phase = SessionAckRunning
+	case RebuildPhaseBaseComplete:
+		ack.Phase = SessionAckBaseComplete
+	case RebuildPhaseCompleted:
+		ack.Phase = SessionAckCompleted
+		ack.AchievedLSN = s.walAppliedLSN
+	case RebuildPhaseFailed:
+		ack.Phase = SessionAckFailed
+	default:
+		ack.Phase = SessionAckRunning
+	}
+	return ack
+}
+
+func (s *RebuildSession) markBitmapRange(startLBA uint64, length uint32) {
+	blockSize := uint64(s.config.blockSize())
+	if blockSize == 0 {
+		blockSize = uint64(s.vol.Info().BlockSize)
+	}
+	blocks := uint64(length) / blockSize
+	if blocks == 0 {
+		blocks = 1
+	}
+	for i := uint64(0); i < blocks; i++ {
+		s.bitmap.MarkApplied(startLBA + i)
+	}
+}
+
 // StartRebuildSession installs and starts one active rebuild session on the
 // replica. A new session supersedes any previous active rebuild session.
 func (v *BlockVol) StartRebuildSession(config RebuildSessionConfig) error {
 	if config.SessionID == 0 {
 		return fmt.Errorf("rebuild session: session ID is required")
 	}
+	// Strict ordering barrier: freeze local flush/mutation briefly so the bitmap
+	// hydration sees one stable view of recovered WAL coverage before the session
+	// becomes visible to the base or WAL lanes.
+	if v.flusher != nil {
+		v.flusher.Pause()
+		defer v.flusher.Resume()
+	}
+	v.ioMu.Lock()
+	defer v.ioMu.Unlock()
+
 	session, err := NewRebuildSession(v, config)
 	if err != nil {
 		return err
@@ -286,6 +400,23 @@ func (v *BlockVol) StartRebuildSession(config RebuildSessionConfig) error {
 		v.rebuildSess.Fail("superseded")
 	}
 	v.rebuildSess = session
+	// Rebuild's trusted base covers BaseLSN and hydration may discover a more
+	// recent locally recoverable boundary. Let live shipping resume strictly
+	// after the best known boundary.
+	progressLSN := config.BaseLSN
+	if hydrated := session.WALAppliedLSN(); hydrated > progressLSN {
+		progressLSN = hydrated
+	}
+	if progressLSN > 0 {
+		v.SyncReceiverProgress(progressLSN)
+	}
+	v.emitRebuildSessionAck(SessionAckMsg{
+		Epoch:         config.Epoch,
+		SessionID:     config.SessionID,
+		Phase:         SessionAckAccepted,
+		WALAppliedLSN: progressLSN,
+		BaseComplete:  false,
+	})
 	return nil
 }
 
@@ -360,6 +491,16 @@ func (v *BlockVol) TryCompleteRebuildSession(sessionID uint64) (uint64, bool, er
 	return achieved, completed, nil
 }
 
+func (v *BlockVol) ObserveRebuildSessionAppliedLSN(sessionID, appliedLSN uint64) error {
+	sess, err := v.activeRebuildSession(sessionID)
+	if err != nil {
+		return err
+	}
+	ack := sess.ObserveAppliedLSN(appliedLSN)
+	v.emitRebuildSessionAck(ack)
+	return nil
+}
+
 func (v *BlockVol) activeRebuildSession(sessionID uint64) (*RebuildSession, error) {
 	v.rebuildSessMu.RLock()
 	session := v.rebuildSess
@@ -371,6 +512,13 @@ func (v *BlockVol) activeRebuildSession(sessionID uint64) (*RebuildSession, erro
 		return nil, fmt.Errorf("rebuild session: session mismatch: have %d want %d", session.SessionID(), sessionID)
 	}
 	return session, nil
+}
+
+func (v *BlockVol) emitRebuildSessionAck(ack SessionAckMsg) {
+	if v == nil || v.onRebuildSessionAck == nil || ack.SessionID == 0 {
+		return
+	}
+	v.onRebuildSessionAck(ack)
 }
 
 // applyRebuildWALEntry applies a WAL entry during rebuild without going
@@ -387,20 +535,62 @@ func (v *BlockVol) applyRebuildWALEntry(entry *WALEntry) error {
 	if err != nil {
 		return err
 	}
-	// Update dirty map so ReadLBA sees the WAL data.
-	v.dirtyMap.Put(entry.LBA, walOff, entry.LSN, entry.Length)
+	// Update dirty map so ReadLBA sees the WAL data for each covered block.
+	blocks := entry.Length / v.super.BlockSize
+	if blocks == 0 {
+		blocks = 1
+	}
+	for i := uint32(0); i < blocks; i++ {
+		v.dirtyMap.Put(entry.LBA+uint64(i), walOff, entry.LSN, v.super.BlockSize)
+	}
 	return nil
 }
 
 // writeExtentDirect writes data directly to the extent file at the given LBA.
 // Used by the base lane during rebuild when bitmap shows no WAL conflict.
 // This bypasses the WAL — the data goes directly to the extent image.
+//
+// Takes ioMu.Lock (exclusive) to serialize against the flusher's extent
+// writes. Without this, a race exists: WAL lane writes newer data → flusher
+// flushes it to extent and deletes dirty map entry → base lane's older
+// pwrite lands on the same extent offset → stale data becomes visible.
+//
+// Under the exclusive lock, we re-check the dirty map: if a WAL entry
+// exists for this LBA, the base write is skipped (WAL data is newer and
+// will be visible through the dirty map or after flusher flushes it).
+//
+// TODO(perf): Global ioMu.Lock is safe for MVP because the rebuilding
+// replica is not serving frontend I/O. If live reads during rebuild are
+// added later, switch to per-LBA striped locking to prevent flusher
+// starvation and read latency during large rebuilds.
 func (v *BlockVol) writeExtentDirect(lba uint64, data []byte) error {
+	return v.writeExtentDirectForRebuild(lba, data, 0)
+}
+
+func (v *BlockVol) writeExtentDirectUnconditional(lba uint64, data []byte) error {
+	return v.writeExtentDirectWithGuard(lba, data, false, 0)
+}
+
+func (v *BlockVol) writeExtentDirectForRebuild(lba uint64, data []byte, baseLSN uint64) error {
+	return v.writeExtentDirectWithGuard(lba, data, true, baseLSN)
+}
+
+func (v *BlockVol) writeExtentDirectWithGuard(lba uint64, data []byte, guardDirtyMap bool, baseLSN uint64) error {
 	if v == nil {
 		return fmt.Errorf("volume is nil")
 	}
 	v.ioMu.RLock()
 	defer v.ioMu.RUnlock()
+
+	// Re-check dirty map: if WAL lane already wrote this LBA, skip the base
+	// write. RLock is sufficient because pwrite at different file offsets
+	// doesn't conflict, and the dirty map provides the necessary protection
+	// against overwriting WAL-applied data.
+	if guardDirtyMap {
+		if _, lsn, _, ok := v.dirtyMap.Get(lba); ok && lsn > baseLSN {
+			return nil // WAL data is newer, skip base write
+		}
+	}
 
 	extentStart := v.super.WALOffset + v.super.WALSize
 	offset := int64(extentStart) + int64(lba)*int64(v.super.BlockSize)

@@ -102,6 +102,52 @@ func TestP1_TransferFullBase_RealTCP(t *testing.T) {
 	t.Log("P1 component proof: TCP transfer + local install verified — LBA data matches")
 }
 
+func TestP1_TransferFullBase_UsesSessionControlledLoop(t *testing.T) {
+	dir := t.TempDir()
+
+	primaryVol := createTestVolNamed(t, dir, "primary-session.blockvol")
+	defer primaryVol.Close()
+	for i := 0; i < 8; i++ {
+		primaryVol.WriteLBA(uint64(i), makeBlock(byte('a'+i)))
+	}
+	primaryVol.ForceFlush()
+
+	rebuildServer, err := blockvol.NewRebuildServer(primaryVol, "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("NewRebuildServer: %v", err)
+	}
+	rebuildServer.Serve()
+	defer rebuildServer.Stop()
+
+	replicaVol := createTestVolNamed(t, dir, "replica-session.blockvol")
+	defer replicaVol.Close()
+
+	executor := NewExecutor(replicaVol, rebuildServer.Addr())
+	achieved, err := executor.TransferFullBase(primaryVol.StatusSnapshot().CommittedLSN)
+	if err != nil {
+		t.Fatalf("TransferFullBase: %v", err)
+	}
+	if achieved == 0 {
+		t.Fatalf("achieved=%d, want > 0", achieved)
+	}
+	if replicaVol.ReplicaReceiverAddr() == nil {
+		t.Fatal("expected local replica receiver to be started by session-controlled rebuild")
+	}
+	cfg, progress, ok := replicaVol.ActiveRebuildSession()
+	if !ok {
+		t.Fatal("expected rebuild session snapshot after transfer")
+	}
+	if cfg.TargetLSN == 0 {
+		t.Fatalf("target_lsn=%d, want > 0", cfg.TargetLSN)
+	}
+	if progress.Phase != blockvol.RebuildPhaseCompleted {
+		t.Fatalf("phase=%s, want completed", progress.Phase)
+	}
+	if !progress.BaseComplete {
+		t.Fatal("expected baseComplete=true")
+	}
+}
+
 // --- One-Chain Proof: engine → executor → bridge → blockvol → completion ---
 
 // untrustedReaderShim wraps a Reader but reports CheckpointTrusted=false.

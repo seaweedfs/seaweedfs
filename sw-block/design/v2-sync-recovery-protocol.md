@@ -39,7 +39,7 @@ This document is the surrounding context and long-term design.
 | Ceph | PG log replay | Full backfill | Primary OSD (peering) | `last_update >= log_tail` |
 | Mayastor | None | Segment copy | Control plane | Child sync state |
 | Longhorn | None | Snapshot file sync | Controller | Revision counters |
-| **sw-block V2** | WAL replay | Snapshot + live WAL (two-line) | **Primary** | `applied_lsn >= wal_tail` |
+| **sw-block V2** | WAL replay | Flushed extent + live WAL (two-line) | **Primary** | `applied_lsn >= wal_tail` |
 
 ## Protocol Overview
 
@@ -97,13 +97,13 @@ Primary                          Replica
   │  → rebuild                    │
   │                                │
   ├─ sessionControl(start_rebuild  │
-  │    base_lsn=5000,             │
-  │    snapshot_id=snap1) ────────►│
+  │    base_lsn=flushedLSN,       │
+  │    base_kind=flushed_extent) ─►│
   │                                │
-  │  LINE 1: snapshot extent blocks│
+  │  LINE 1: flushed extent blocks │
   ├─ sessionData(chunk...) ──────►│ apply if bitmap clear
   │                                │
-  │  LINE 2: live WAL from 5001+   │
+  │  LINE 2: live WAL from base_lsn+1
   ├─ walData(lsn=5001...) ───────►│ apply, set bitmap bit
   │                                │
   │  Bitmap: WAL-applied LBA wins  │
@@ -137,6 +137,34 @@ func decide(ack SyncAck, walTail, walHead uint64) SessionKind {
 
 This is one function, one threshold. Matches Ceph's `last_update >= log_tail`.
 
+## Normalized Primary-side Sync Facts
+
+The wire protocol still uses `sync` and `syncAck` as the bounded control
+exchange. But inside the primary-owned host/runtime layer, raw wire results and
+local control-path observations may be normalized into one small fact
+vocabulary before the primary re-decides the next step.
+
+This normalization is not a new replica-visible message family. It is the
+primary-owned semantic shape for "what kind of sync fact just arrived?"
+
+Current normalized fact kinds:
+
+| Kind | Meaning | Typical sources |
+|---|---|---|
+| `sync_quorum_acked` | normal sync closure reached | wire `syncAck(ack_kind=quorum)`, accepted barrier |
+| `sync_quorum_timed_out` | control-plane sync closure timed out | wire `syncAck(ack_kind=timed_out)`, rejected barrier |
+| `sync_replay_required` | replica is behind but replay-recoverable | fresh planner classification after sync facts |
+| `sync_rebuild_required` | replica is outside retained replay coverage | fresh planner classification after sync facts |
+| `sync_replay_failed` | a replay/catch-up attempt failed | catch-up failure callback, replay execution failure |
+
+Rules:
+
+1. normalized sync facts are still facts only, never session recommendations
+2. different producers may map to the same normalized fact kind
+3. only the primary may turn these facts into `keepup`, `catchup`, or `rebuild`
+4. this is the bridge between raw protocol input and primary-owned session
+   authority
+
 ## Two-Line Recovery Model
 
 Both catch-up and rebuild use two concurrent data lines:
@@ -149,24 +177,25 @@ Both catch-up and rebuild use two concurrent data lines:
 - **No bitmap needed**: WAL entries are strictly ordered by LSN, no LBA conflict
 - **Completion**: replay cursor reaches target → lines merge → keepup
 
-### Rebuild: snapshot base + live WAL
+### Rebuild: flushed extent base + live WAL
 
-- **Line 1**: copy snapshot/CoW extent blocks to replica
-- **Line 2**: forward live WAL entries from `base_lsn` onward
+- **Line 1**: copy the primary's flushed extent image at `base_lsn`
+- **Line 2**: forward live WAL entries newer than `base_lsn`
 - **Bitmap required**: base blocks and WAL entries may target the same LBA
 - **Bitmap rule**: bit set on WAL `applied` (not received). Base block skipped if bit set.
 - **Completion**: all base blocks transferred AND `wal_applied_lsn >= target_lsn`
+- **Base boundary rule**: `base_lsn` is a flushed/checkpoint boundary, not a merely committed boundary
 
 ### Why two lines instead of sequential (base → then catch-up)
 
 Sequential model:
-1. Copy entire snapshot
-2. Then replay WAL from snapshot LSN to current
+1. Copy entire flushed extent image
+2. Then replay WAL from base LSN to current
 3. Problem: must pin WAL for duration of snapshot copy (hours for large volumes)
 4. Risk: WAL recycled before replay starts → must restart entire rebuild
 
 Two-line model:
-1. Copy snapshot AND receive live WAL simultaneously
+1. Copy flushed extent AND receive live WAL simultaneously
 2. WAL pin pressure = only gap between current replay and live head (small)
 3. If snapshot copy is slow, WAL line keeps replica current
 4. Crash recovery is safe at any point (bitmap + local WAL)
@@ -200,7 +229,28 @@ At any crash point:
 - Bitmap can be volatile (session-local, in memory)
 - Local WAL is durable → replay recovers all applied entries
 - After crash: fresh sync → primary re-decides → new session if needed
+- The bitmap itself need not persist, but its protected coverage must be
+  re-hydrated from local durable WAL before a new rebuild session opens the base lane
 - No need to persist bitmap across crashes in MVP
+
+Current bounded claim:
+- crash during rebuild is handled by `restart rebuild`
+- this is not yet a claim of resumable rebuild with durable `base_progress`
+- hydration of bitmap coverage protects durable WAL facts during the fresh
+  rebuild; it does not by itself resume prior base-copy progress
+
+### Issue #3 restart hydration rule
+
+To close the volatile-bitmap restart hole:
+
+1. a fresh rebuild session must rebuild bitmap coverage from local durable WAL
+   newer than `base_lsn` before `accepted` becomes externally visible
+2. the base lane must remain closed until this hydration completes
+3. if the replica's local durable base is already newer than the claimed
+   `base_lsn`, startup must fail closed instead of accepting a stale rebuild
+4. this is why rebuild starts from a flushed/checkpoint boundary rather than a
+   merely committed boundary: committed data may still live only in WAL, so it
+   is not a safe direct-base image
 
 ## Replica State Machine
 
@@ -242,12 +292,20 @@ No failure auto-escalates. All failures go through:
 2. Primary waits for next `syncAck` from replica
 3. Primary re-decides based on fresh facts
 
+Primary-side normalized reading:
+
+1. failure may first surface as `sync_replay_failed`
+2. fresh sync/planner facts may then normalize to either:
+   - `sync_replay_required`
+   - `sync_rebuild_required`
+3. only then does the primary issue the next session contract
+
 ### Failure scenarios
 
 | Scenario | Replica does | Primary does |
 |---|---|---|
 | Transport lost during session | Reports `failed(transport_lost)` or goes silent | Marks session failed, waits for reconnect |
-| Replica crash | Restarts, recovers local WAL, reports facts via syncAck | Re-decides: if `applied_lsn >= wal_tail` → catch-up, else → new rebuild |
+| Replica crash | Restarts, recovers local WAL, hydrates bitmap coverage before any new rebuild base lane opens, then reports facts via syncAck | Re-decides: if `applied_lsn >= wal_tail` → catch-up, else → new rebuild; current claim is fresh restart, not resume of prior base-copy offset |
 | Primary crash | Nothing (waits for new primary) | New primary elected, fresh epoch, all replicas report via syncAck |
 | Slow progress / timeout | Continues trying | Can cancel session via `cancel_session`, then re-decide |
 | WAL recycled during outage | Reports `applied_lsn` which is now < `wal_tail` | Decides rebuild (gap exceeds retained WAL) |
@@ -266,7 +324,7 @@ No failure auto-escalates. All failures go through:
 ## Catch-up Details (Post-MVP)
 
 Catch-up uses the same session contract shape as rebuild, but without
-snapshot/base copy:
+base copy:
 
 ```
 sessionControl {
@@ -304,9 +362,24 @@ Implementation: persist DirtyMap snapshot at each flusher checkpoint along
 with the checkpoint LSN. On rebuild, union of DirtyMap snapshots from
 `replica_applied_lsn` to `current_checkpoint` = minimal copy set.
 
+## Future: Resumable Rebuild
+
+Current V2/MVP does **not** claim resumable rebuild. After crash during rebuild,
+the protocol restarts from fresh `sync` and a fresh rebuild session.
+
+A future resumable rebuild path may be added only with explicit durable state:
+
+1. durable `base_progress`
+2. durable proof of replica-side applied WAL coverage
+3. primary-side proof that historical change coverage remains reconstructible
+   through retained WAL or primary-owned CBT / changed-block history
+4. a live delta channel for writes that arrive after resume begins
+
+Without those conditions, resume is not a safe current claim.
+
 ## Component Test Requirements
 
-All tests use real BlockVol with real WAL, extent, and snapshot data.
+All tests use real BlockVol with real WAL and extent data.
 No mocks for storage. Network can be in-process (localhost TCP or direct
 function call).
 
@@ -323,14 +396,15 @@ function call).
 
 ### Rebuild correctness (component, real BlockVol)
 
-These tests create real primary + replica volumes with actual WAL,
-extent, and snapshot data:
+These tests create real primary + replica volumes with actual WAL and
+extent data:
 
-1. **Two-line convergence**: primary writes N blocks, takes snapshot,
-   starts rebuild session. Base lane copies snapshot extent. WAL lane
+1. **Two-line convergence**: primary writes N blocks, records a flushed
+   `base_lsn`, starts rebuild session. Base lane copies extent data from that
+   flushed boundary. WAL lane
    ships live entries. Verify replica has all N blocks correct at end.
 
-2. **WAL wins over base**: primary writes block A=1, snapshots, then
+2. **WAL wins over base**: primary writes block A=1, flushes base, then
    writes A=2. Rebuild sends base (A=1) and WAL (A=2). Verify replica
    has A=2 (WAL-applied wins).
 
@@ -381,6 +455,6 @@ extent, and snapshot data:
 1. Protocol engine (`sw-block/protocol/`) — already started, 7 events, 398 lines
 2. Rebuild session on blockvol layer — two-line model, bitmap, completion
 3. Session control wiring on volume server — sessionControl/sessionAck
-4. Snapshot/CoW base transfer — extent read + chunk send
+4. Flushed extent base transfer — extent read + chunk send
 5. Component tests against real BlockVol
 6. Integration test on hardware

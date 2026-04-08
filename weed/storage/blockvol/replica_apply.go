@@ -67,6 +67,11 @@ func NewReplicaReceiver(vol *BlockVol, dataAddr, ctrlAddr string, advertisedHost
 	if vol.nextLSN.Load() > 1 {
 		initReceived = vol.nextLSN.Load() - 1
 	}
+	if cfg, progress, ok := vol.ActiveRebuildSession(); ok &&
+		(progress.Phase == RebuildPhaseRunning || progress.Phase == RebuildPhaseBaseComplete) &&
+		cfg.BaseLSN > initReceived {
+		initReceived = cfg.BaseLSN
+	}
 	initFlushed := uint64(0)
 	if vol.flusher != nil {
 		initFlushed = vol.flusher.CheckpointLSN()
@@ -235,7 +240,7 @@ func (r *ReplicaReceiver) handleResumeShipReq(conn net.Conn, payload []byte) {
 		log.Printf("replica: resume ship epoch mismatch: req=%d local=%d", req.Epoch, localEpoch)
 		resp := EncodeResumeShipResp(ResumeShipResp{
 			Status:            ResumeEpochMismatch,
-			ReplicaFlushedLSN: r.FlushedLSN(),
+			ReplicaFlushedLSN: r.resumeRecoverableLSN(req.Epoch),
 		})
 		WriteFrame(conn, MsgResumeShipResp, resp)
 		return
@@ -243,9 +248,30 @@ func (r *ReplicaReceiver) handleResumeShipReq(conn net.Conn, payload []byte) {
 
 	resp := EncodeResumeShipResp(ResumeShipResp{
 		Status:            ResumeOK,
-		ReplicaFlushedLSN: r.FlushedLSN(),
+		ReplicaFlushedLSN: r.resumeRecoverableLSN(req.Epoch),
 	})
 	WriteFrame(conn, MsgResumeShipResp, resp)
+}
+
+// resumeRecoverableLSN returns the replica boundary the primary may safely use
+// as the reconnect/catch-up starting point.
+//
+// Normally this is the replica's durable flushed boundary. During an active
+// rebuild session, the trusted base already covers BaseLSN and the live WAL
+// lane may continue from max(BaseLSN, WALAppliedLSN).
+func (r *ReplicaReceiver) resumeRecoverableLSN(epoch uint64) uint64 {
+	resumeLSN := r.FlushedLSN()
+	if cfg, progress, ok := r.vol.ActiveRebuildSession(); ok &&
+		cfg.Epoch == epoch &&
+		(progress.Phase == RebuildPhaseRunning || progress.Phase == RebuildPhaseBaseComplete) {
+		if progress.WALAppliedLSN > resumeLSN {
+			resumeLSN = progress.WALAppliedLSN
+		}
+		if cfg.BaseLSN > resumeLSN {
+			resumeLSN = cfg.BaseLSN
+		}
+	}
+	return resumeLSN
 }
 
 // applyEntry decodes and applies a single WAL entry to the local volume.
@@ -281,18 +307,30 @@ func (r *ReplicaReceiver) applyEntry(payload []byte) error {
 		return fmt.Errorf("%w: expected LSN %d, got %d (gap)", ErrDuplicateLSN, r.receivedLSN+1, entry.LSN)
 	}
 
-	// Append to local WAL (with retry on WAL full).
-	walOff, err := r.replicaAppendWithRetry(&entry)
-	if err != nil {
-		return fmt.Errorf("WAL append: %w", err)
+	routedToRebuild := false
+	if cfg, progress, ok := r.vol.ActiveRebuildSession(); ok &&
+		cfg.Epoch == entry.Epoch &&
+		(progress.Phase == RebuildPhaseRunning || progress.Phase == RebuildPhaseBaseComplete) {
+		if err := r.vol.ApplyRebuildSessionWALEntry(cfg.SessionID, &entry); err != nil {
+			return fmt.Errorf("rebuild session WAL apply: %w", err)
+		}
+		routedToRebuild = true
 	}
 
-	// Update dirty map.
-	switch entry.Type {
-	case EntryTypeWrite, EntryTypeTrim:
-		blocks := entry.Length / r.vol.super.BlockSize
-		for i := uint32(0); i < blocks; i++ {
-			r.vol.dirtyMap.Put(entry.LBA+uint64(i), walOff, entry.LSN, r.vol.super.BlockSize)
+	if !routedToRebuild {
+		// Append to local WAL (with retry on WAL full).
+		walOff, err := r.replicaAppendWithRetry(&entry)
+		if err != nil {
+			return fmt.Errorf("WAL append: %w", err)
+		}
+
+		// Update dirty map.
+		switch entry.Type {
+		case EntryTypeWrite, EntryTypeTrim:
+			blocks := entry.Length / r.vol.super.BlockSize
+			for i := uint32(0); i < blocks; i++ {
+				r.vol.dirtyMap.Put(entry.LBA+uint64(i), walOff, entry.LSN, r.vol.super.BlockSize)
+			}
 		}
 	}
 

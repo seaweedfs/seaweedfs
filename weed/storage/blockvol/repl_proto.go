@@ -133,6 +133,7 @@ const (
 	RebuildWALCatchUp  byte = 0x01
 	RebuildFullExtent  byte = 0x02
 	RebuildSnapshot    byte = 0x03 // P2: exact snapshot export at requested BaseLSN
+	RebuildSessionBase byte = 0x04 // V2: per-block base lane for session-controlled rebuild
 )
 
 // RebuildRequest is sent by the rebuilding replica to the primary.

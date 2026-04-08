@@ -180,6 +180,7 @@ too vague.
 
 ## Related References
 
+- `v2-validation-matrix.md`
 - `v2-pure-runtime-rf1-bootstrap.md`
 - `v2-capability-map.md`
 - `v2-reuse-replacement-boundary.md`

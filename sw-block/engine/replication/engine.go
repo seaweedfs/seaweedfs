@@ -383,11 +383,32 @@ func (e *CoreEngine) applySessionStarted(st *VolumeState, ev SessionStarted) []C
 }
 
 func (e *CoreEngine) applySessionProgressObserved(st *VolumeState, ev SessionProgressObserved) {
-	if replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID); ok && st.observeCatchUpProgress(replicaID, ev.AchievedLSN) {
-		_, achievedLSN, _ := st.catchUpAggregate()
-		st.Recovery.AchievedLSN = achievedLSN
-		st.Boundary.AchievedLSN = achievedLSN
+	replicaID, ok := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	if st.sessionKindMismatch(replicaID, ev.Kind) {
 		return
+	}
+	if ok && st.sessions != nil {
+		if obs, found := st.sessions[replicaID]; found {
+			switch obs.Kind {
+			case SessionCatchUp:
+				if st.observeCatchUpProgress(replicaID, ev.AchievedLSN) {
+					_, achievedLSN, _ := st.catchUpAggregate()
+					st.Recovery.AchievedLSN = achievedLSN
+					st.Boundary.AchievedLSN = achievedLSN
+					return
+				}
+			case SessionRebuild:
+				if st.observeRebuildProgress(replicaID, ev.AchievedLSN) {
+					if ev.AchievedLSN > st.Recovery.AchievedLSN {
+						st.Recovery.AchievedLSN = ev.AchievedLSN
+					}
+					if ev.AchievedLSN > st.Boundary.AchievedLSN {
+						st.Boundary.AchievedLSN = ev.AchievedLSN
+					}
+					return
+				}
+			}
+		}
 	}
 	if ev.AchievedLSN > st.Recovery.AchievedLSN {
 		st.Recovery.AchievedLSN = ev.AchievedLSN
@@ -398,10 +419,13 @@ func (e *CoreEngine) applySessionProgressObserved(st *VolumeState, ev SessionPro
 }
 
 func (e *CoreEngine) applySessionCompleted(st *VolumeState, ev SessionCompleted) {
+	replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	if st.sessionKindMismatch(replicaID, ev.Kind) {
+		return
+	}
 	if ev.Kind == SessionRebuild {
 		st.degraded = false
 		st.degradeReason = ""
-		replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
 		st.clearRebuild(replicaID)
 		if !st.hasRebuilds() {
 			st.resetInvalidation()
@@ -480,6 +504,9 @@ func (e *CoreEngine) applyNeedsRebuildObserved(st *VolumeState, ev NeedsRebuildO
 
 func (e *CoreEngine) applySessionFailed(st *VolumeState, ev SessionFailed) []Command {
 	replicaID, _ := st.recoveryCommandReplicaIDFromEvent(ev.ReplicaID)
+	if st.sessionKindMismatch(replicaID, ev.Kind) {
+		return nil
+	}
 	switch ev.Kind {
 	case SessionRebuild:
 		st.clearRebuild(replicaID)
@@ -715,6 +742,17 @@ func (st *VolumeState) recoveryCommandReplicaIDFromEvent(replicaID string) (stri
 	return st.recoveryCommandReplicaID()
 }
 
+func (st *VolumeState) sessionKindMismatch(replicaID string, kind SessionKind) bool {
+	if replicaID == "" || kind == "" || st.sessions == nil {
+		return false
+	}
+	obs, ok := st.sessions[replicaID]
+	if !ok {
+		return false
+	}
+	return obs.Kind != kind
+}
+
 func (st *VolumeState) recordCatchUpPlan(replicaID string, targetLSN uint64) {
 	if replicaID == "" || targetLSN == 0 {
 		return
@@ -765,6 +803,24 @@ func (st *VolumeState) observeCatchUpProgress(replicaID string, achievedLSN uint
 		obs.AchievedLSN = achievedLSN
 	}
 	obs.Phase = RecoveryCatchingUp
+	st.sessions[replicaID] = obs
+	return true
+}
+
+func (st *VolumeState) observeRebuildProgress(replicaID string, achievedLSN uint64) bool {
+	if replicaID == "" || st.sessions == nil {
+		return false
+	}
+	obs, ok := st.sessions[replicaID]
+	if !ok || obs.Kind != SessionRebuild {
+		return false
+	}
+	if achievedLSN > obs.AchievedLSN {
+		obs.AchievedLSN = achievedLSN
+	}
+	if obs.Phase == RecoveryNeedsRebuild {
+		obs.Phase = RecoveryRebuilding
+	}
 	st.sessions[replicaID] = obs
 	return true
 }
