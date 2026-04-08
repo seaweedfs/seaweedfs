@@ -386,10 +386,33 @@ func (v *BlockVol) StartRebuildSession(config RebuildSessionConfig) error {
 	v.ioMu.Lock()
 	defer v.ioMu.Unlock()
 
+	// Safety check first: NewRebuildSession's hydration will fail-closed if
+	// local checkpoint is newer than baseLSN. This must run BEFORE cleanup.
 	session, err := NewRebuildSession(v, config)
 	if err != nil {
 		return err
 	}
+	// Clear stale local runtime state so base blocks written directly to the
+	// extent are visible via ReadLBA. Without this, old WAL replay entries
+	// or stale extent data from a previous lifecycle shadow the rebuild's
+	// new base data. This runs AFTER the hydration safety check but BEFORE
+	// the session accepts any data.
+	if v.dirtyMap != nil {
+		v.dirtyMap.Clear()
+	}
+	if v.wal != nil {
+		v.wal.Reset()
+	}
+	v.mu.Lock()
+	v.super.WALHead = 0
+	v.super.WALTail = 0
+	v.super.WALCheckpointLSN = config.BaseLSN
+	v.mu.Unlock()
+	if v.flusher != nil {
+		v.flusher.SetCheckpointLSN(config.BaseLSN)
+	}
+	v.nextLSN.Store(config.BaseLSN + 1)
+
 	if err := session.Start(); err != nil {
 		return err
 	}
