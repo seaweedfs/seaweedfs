@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"net"
 	"testing"
-	"time"
 )
 
 // GrpcPortOffset is the offset weed mini uses to derive gRPC ports from HTTP ports.
@@ -57,8 +56,6 @@ func AllocateMiniPorts(count int) ([]int, error) {
 		minPort = 10000
 		maxPort = 55000
 	)
-	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-
 	reserved := make(map[int]bool)
 	ports := make([]int, 0, count)
 	var listeners []net.Listener
@@ -71,7 +68,7 @@ func AllocateMiniPorts(count int) ([]int, error) {
 	for idx := 0; idx < count; idx++ {
 		found := false
 		for i := 0; i < 1000; i++ {
-			port := minPort + r.Intn(maxPort-minPort)
+			port := minPort + rand.Intn(maxPort-minPort)
 			grpcPort := port + GrpcPortOffset
 
 			if reserved[port] || reserved[grpcPort] {
