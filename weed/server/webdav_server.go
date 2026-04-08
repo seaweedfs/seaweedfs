@@ -45,8 +45,6 @@ type WebDavOption struct {
 
 type WebDavServer struct {
 	option         *WebDavOption
-	secret         security.SigningKey
-	filer          *filer.Filer
 	grpcDialOption grpc.DialOption
 	Handler        *webdav.Handler
 }
@@ -86,12 +84,10 @@ func NewWebDavServer(option *WebDavOption) (ws *WebDavServer, err error) {
 // adapted from https://github.com/mattn/davfs/blob/master/plugin/mysql/mysql.go
 
 type WebDavFileSystem struct {
-	option         *WebDavOption
-	secret         security.SigningKey
-	grpcDialOption grpc.DialOption
-	chunkCache     *chunk_cache.TieredChunkCache
-	readerCache    *filer.ReaderCache
-	signature      int32
+	option      *WebDavOption
+	chunkCache  *chunk_cache.TieredChunkCache
+	readerCache *filer.ReaderCache
+	signature   int32
 }
 
 type FileInfo struct {
