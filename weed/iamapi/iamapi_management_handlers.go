@@ -466,13 +466,12 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 			resource := "*"
 			if len(act) == 2 {
-				// If the path already refers to objects (contains '/'), use it as-is.
-				// Otherwise it's a bare bucket pattern; append "/*" to scope to objects.
-				if strings.Contains(act[1], "/") {
-					resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
-				} else {
-					resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
-				}
+				// Preserve the stored path verbatim so bucket-level and
+				// object-level resources remain distinguishable. GetActions
+				// stores the path exactly as parsed from the original ARN
+				// (e.g. "b-le*" for the bucket, "b-le*/*" for objects), and
+				// reconstruction should not rewrite one into the other.
+				resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
 			}
 			s3Action := fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0]))
 			// Dedupe actions per resource: the Read/Write/List internal verbs map to

@@ -203,7 +203,8 @@ func TestPutGetUserPolicyIssue9008(t *testing.T) {
     }]
   }`
 
-	iama := &IamApiServer{s3ApiConfig: &mockIamS3ApiConfig{}}
+	mockCfg := &mockIamS3ApiConfig{}
+	iama := &IamApiServer{s3ApiConfig: mockCfg}
 	_, iamErr := iama.PutUserPolicy(s3cfg, url.Values{
 		"UserName":       []string{"steward"},
 		"PolicyName":     []string{"steward_policy"},
@@ -211,6 +212,8 @@ func TestPutGetUserPolicyIssue9008(t *testing.T) {
 	})
 	assert.Nil(t, iamErr)
 
+	// Part 1: verbatim round-trip. GetUserPolicy returns the exact document
+	// that was persisted, with Action and Resource lists intact.
 	resp, iamErr := iama.GetUserPolicy(s3cfg, url.Values{
 		"UserName":   []string{"steward"},
 		"PolicyName": []string{"steward_policy"},
@@ -224,13 +227,34 @@ func TestPutGetUserPolicyIssue9008(t *testing.T) {
 	assert.Equal(t, 1, len(got.Statement))
 	stmt := got.Statement[0]
 	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
-
-	// Actions must match exactly what was submitted: no duplication, no
-	// collapsing to wildcards.
 	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
-
-	// Both resources must be preserved.
 	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+
+	// Part 2: fallback reconstruction. Clear the persisted inline policy so
+	// GetUserPolicy must rebuild the document from ident.Actions. The fallback
+	// is lossy (distinct S3 verbs collapse to wildcards like s3:Get*), but it
+	// must not duplicate actions nor conflate bucket-level and object-level
+	// resources.
+	mockCfg.policies = Policies{}
+
+	resp, iamErr = iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var fallback policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &fallback))
+	assert.Equal(t, 1, len(fallback.Statement), "fallback should merge equal-action statements")
+	fstmt := fallback.Statement[0]
+
+	// Each coarse verb appears exactly once (no duplication from the
+	// Read/Write/List -> s3:Get*/s3:Put*/s3:List* expansion).
+	assert.ElementsMatch(t, []string{"s3:Get*", "s3:Put*", "s3:List*"}, fstmt.Action.Strings())
+
+	// Bucket-level and object-level resources stay distinct — the bare bucket
+	// pattern must not be rewritten to an object ARN.
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, fstmt.Resource.Strings())
 }
 
 func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
