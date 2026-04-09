@@ -110,25 +110,26 @@ func (sg *ShipperGroup) AnyDegraded() bool {
 	return false
 }
 
-// TryReconnectAll attempts the full reconnect protocol on all shippers that
-// are not yet connected. Used by the host-side recheck when the V2 core
-// reports awaiting_shipper_connected but no I/O is triggering Ship().
-// Returns true if all shippers now have transport contact.
-func (sg *ShipperGroup) TryReconnectAll() bool {
+// ProbeReconnectAll probes all shippers that are not yet connected and
+// returns per-replica results. Used by primary onboarding after assignment.
+func (sg *ShipperGroup) ProbeReconnectAll() []ReplicaProbeResult {
 	sg.mu.RLock()
 	defer sg.mu.RUnlock()
-	if len(sg.shippers) == 0 {
-		return false
-	}
-	allConnected := true
+	var results []ReplicaProbeResult
 	for _, s := range sg.shippers {
 		if !s.HasTransportContact() {
-			if !s.TryReconnect() {
-				allConnected = false
-			}
+			results = append(results, s.ProbeReconnect())
+		} else {
+			results = append(results, ReplicaProbeResult{
+				ReplicaID:         s.ReplicaID(),
+				DataAddr:          s.DataAddr(),
+				CtrlAddr:          s.CtrlAddr(),
+				Outcome:           ProbeKeepUp,
+				ReplicaFlushedLSN: s.replicaFlushedLSN.Load(),
+			})
 		}
 	}
-	return allConnected
+	return results
 }
 
 // AllHaveTransportContact returns true only when every configured shipper has

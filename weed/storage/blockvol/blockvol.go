@@ -1037,15 +1037,19 @@ func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
 	return v.shipperGroup.ShipperStates()
 }
 
-// TryReconnectShippers attempts the full reconnect protocol on all configured
-// shippers without requiring foreground I/O. Returns true if all shippers now
-// have transport contact. Used by the host-side recheck on rejoin paths where
-// no writes are happening to trigger Ship().
-func (v *BlockVol) TryReconnectShippers() bool {
+// IsClosed returns true if the volume has been closed.
+func (v *BlockVol) IsClosed() bool {
+	return v == nil || v.closed.Load()
+}
+
+// ProbeReplicaOnboarding probes all configured shippers and returns per-replica
+// results. Used by primary onboarding after assignment to decide
+// keepup/catchup/rebuild for each replica.
+func (v *BlockVol) ProbeReplicaOnboarding() []ReplicaProbeResult {
 	if v == nil || v.shipperGroup == nil {
-		return false
+		return nil
 	}
-	return v.shipperGroup.TryReconnectAll()
+	return v.shipperGroup.ProbeReconnectAll()
 }
 
 // PrimaryShipperConnected reports whether all configured replica shippers have

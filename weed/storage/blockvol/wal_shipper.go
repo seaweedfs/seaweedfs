@@ -507,51 +507,95 @@ func (s *WALShipper) Stop() {
 	s.ctrlMu.Unlock()
 }
 
-// TryReconnect attempts the full reconnect protocol (dial + handshake +
-// bounded catch-up if needed) without requiring a foreground write or barrier.
-// Used by the host-side recheck when the V2 core reports
-// awaiting_shipper_connected but no I/O is triggering Ship().
-//
-// This is Option B from the design: trigger the same reconnect path that
-// Barrier() would use, but proactively instead of waiting for I/O.
-// Returns true if the shipper reached InSync or has transport contact.
-func (s *WALShipper) TryReconnect() bool {
+// ReplicaProbeOutcome classifies the result of a per-replica onboarding probe.
+type ReplicaProbeOutcome int
+
+const (
+	ProbeTemporaryFailure ReplicaProbeOutcome = iota
+	ProbeKeepUp
+	ProbeCatchUpRequired
+	ProbeRebuildRequired
+)
+
+func (o ReplicaProbeOutcome) String() string {
+	switch o {
+	case ProbeKeepUp:
+		return "keepup"
+	case ProbeCatchUpRequired:
+		return "catchup"
+	case ProbeRebuildRequired:
+		return "rebuild"
+	default:
+		return "temporary_failure"
+	}
+}
+
+// ReplicaProbeResult is the outcome of probing one replica during onboarding.
+type ReplicaProbeResult struct {
+	ReplicaID         string
+	DataAddr          string
+	CtrlAddr          string
+	Outcome           ReplicaProbeOutcome
+	ReplicaFlushedLSN uint64
+	Err               error
+}
+
+// ProbeReconnect performs one onboarding probe: dial + handshake to determine
+// the replica's position, then classify as keepup/catchup/rebuild.
+// Does NOT perform catch-up or rebuild — only collects facts for the host
+// to decide what to do next.
+func (s *WALShipper) ProbeReconnect() ReplicaProbeResult {
+	result := ReplicaProbeResult{
+		ReplicaID: s.replicaID,
+		DataAddr:  s.dataAddr,
+		CtrlAddr:  s.controlAddr,
+	}
 	if s.stopped.Load() {
-		return false
+		result.Outcome = ProbeTemporaryFailure
+		result.Err = ErrShipperStopped
+		return result
 	}
 	st := s.State()
 	if st == ReplicaInSync {
-		return true
+		result.Outcome = ProbeKeepUp
+		result.ReplicaFlushedLSN = s.replicaFlushedLSN.Load()
+		return result
 	}
 	if st != ReplicaDisconnected && st != ReplicaDegraded {
-		return false
-	}
-	if s.wal == nil {
-		// No WAL access — try bare connection only.
-		s.mu.Lock()
-		err := s.ensureDataConn()
-		s.mu.Unlock()
-		if err != nil {
-			return false
-		}
-		s.lastContactTime.Store(time.Now())
-		return s.HasTransportContact()
+		result.Outcome = ProbeTemporaryFailure
+		return result
 	}
 
-	// Full reconnect: handshake + bounded catch-up if needed.
-	// Use the primary's WAL head as the catch-up target.
-	_, headLSN := s.wal.RetainedRange()
-	if headLSN == 0 {
-		headLSN = 1
+	// Attempt handshake to collect replica facts. Use a short deadline
+	// (3s) instead of the normal catchupTimeout (30s) since this is a
+	// lightweight probe, not a full catch-up.
+	s.mu.Lock()
+	if s.dataConn != nil {
+		s.dataConn.SetDeadline(time.Now().Add(3 * time.Second))
 	}
-	log.Printf("wal_shipper: proactive reconnect (data=%s ctrl=%s state=%s target=%d)",
-		s.dataAddr, s.controlAddr, st, headLSN)
-	if _, err := s.CatchUpTo(headLSN); err != nil {
-		log.Printf("wal_shipper: proactive reconnect failed (data=%s ctrl=%s): %v",
-			s.dataAddr, s.controlAddr, err)
-		return s.HasTransportContact()
+	s.mu.Unlock()
+	targetState, replicaFlushedLSN, err := s.reconnectWithHandshake()
+	result.ReplicaFlushedLSN = replicaFlushedLSN
+	if err != nil {
+		result.Err = err
 	}
-	return s.State() == ReplicaInSync || s.HasTransportContact()
+
+	switch targetState {
+	case ReplicaInSync:
+		s.markInSync()
+		result.Outcome = ProbeKeepUp
+	case ReplicaCatchingUp:
+		result.Outcome = ProbeCatchUpRequired
+	case ReplicaNeedsRebuild:
+		s.state.Store(uint32(ReplicaNeedsRebuild))
+		result.Outcome = ProbeRebuildRequired
+	default:
+		result.Outcome = ProbeTemporaryFailure
+	}
+
+	log.Printf("wal_shipper: probe result replica=%s data=%s outcome=%s flushedLSN=%d err=%v",
+		s.replicaID, s.dataAddr, result.Outcome, replicaFlushedLSN, err)
+	return result
 }
 
 func (s *WALShipper) ensureDataConn() error {

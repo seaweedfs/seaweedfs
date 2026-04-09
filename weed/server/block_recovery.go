@@ -6,6 +6,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
 	rt "github.com/seaweedfs/seaweedfs/sw-block/engine/replication/runtime"
@@ -236,9 +237,16 @@ func (rm *RecoveryManager) cancelAndDrainWithReason(replicaID string, invalidate
 	doneCh := task.done
 	rm.mu.Unlock()
 
-	// Wait for the old goroutine to exit OUTSIDE the lock.
-	// This serializes replacement: new task cannot start until old is fully drained.
-	<-doneCh
+	// Wait for the old goroutine to exit OUTSIDE the lock, with a bounded
+	// timeout. If the goroutine is stuck on a blocking dial/read that
+	// doesn't respect context cancellation, we abandon it after 5s and
+	// proceed. This prevents a stuck catch-up from blocking a rebuild.
+	select {
+	case <-doneCh:
+		// Clean exit.
+	case <-time.After(5 * time.Second):
+		glog.Warningf("recovery: drain timeout for %s — abandoning stuck goroutine", replicaID)
+	}
 }
 
 // startTask creates and starts a new recovery goroutine. Caller must ensure

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -694,6 +693,14 @@ func (bs *BlockService) applyCoreAssignmentEvent(a blockvol.BlockVolumeAssignmen
 	// serve. This is the enforcement point — it happens immediately after
 	// assignment, before the next heartbeat round-trip.
 	bs.evaluateActivationGate(a.Path)
+
+	// Unified onboarding: if this is a primary assignment with replica
+	// addresses, probe each replica immediately. This is the main trigger
+	// for rejoin, failover promotion, and address refresh.
+	// Onboarding: the probe for new/returning replicas fires immediately
+	// via syncProtocolExecutionState → observePrimaryShipperConnectivity
+	// which runs at the end of this assignment processing path. No
+	// separate timer or delayed trigger needed.
 	return nil
 }
 
@@ -1334,51 +1341,20 @@ func (bs *BlockService) observePrimaryShipperConnectivity(path string) {
 	}
 	connected := bs.isPrimaryShipperConnected(path)
 	if !connected {
-		// Proactive reconnect: the shipper is configured but not connected,
-		// and no I/O is happening to trigger Ship(). This occurs on rejoin
-		// paths where the primary gets a fresh assignment with replica
-		// addresses but no writes are pending. Without this, the shipper
-		// sits at Disconnected and the core stays at
-		// awaiting_shipper_connected indefinitely.
-		//
-		// Uses the full reconnect protocol (handshake + bounded catch-up),
-		// not just a dial probe. This brings the replica current if WAL
-		// entries are available.
+		// Watchdog fallback: if the main onboarding path (assignment-triggered)
+		// didn't run or the shipper dropped after onboarding, probe again.
+		// This is NOT the primary recovery path — just a safety net.
+		var probeResults []blockvol.ReplicaProbeResult
 		_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-			connected = vol.TryReconnectShippers()
-			if !connected {
-				// Bridge 1: check if any shipper reached NeedsRebuild during
-				// the proactive reconnect. Emit per-replica NeedsRebuildObserved
-				// to the core, then initiate primary-direct rebuild for that
-				// specific replica. The master is NOT involved in the rebuild
-				// decision — the primary owns data-control recovery. The master
-				// sees the result via subsequent heartbeat projection.
-				for _, st := range vol.ReplicaShipperStates() {
-					if st.State == "needs_rebuild" && st.DataAddr != "" {
-						replicaID := bs.resolveReplicaIDForShipper(path, st.DataAddr)
-						if replicaID == "" {
-							glog.Warningf("block service: shipper %s needs rebuild but replica ID not resolved — cannot start direct rebuild",
-								st.DataAddr)
-							continue
-						}
-						glog.V(0).Infof("block service: shipper %s (replica=%s) needs rebuild — starting primary-direct rebuild",
-							st.DataAddr, replicaID)
-						bs.applyCoreEvent(engine.NeedsRebuildObserved{
-							ID:        path,
-							ReplicaID: replicaID,
-							Reason:    "gap_exceeds_retained_wal",
-						})
-						// Start the rebuild session directly. Resolve ctrl
-						// address from the shipper (same as data address source).
-						ctrlAddr := bs.resolveCtrlAddrForShipper(path, st.DataAddr)
-						if ctrlAddr != "" {
-							go bs.startDirectRebuild(path, replicaID, st.DataAddr, ctrlAddr)
-						}
-					}
-				}
-			}
+			probeResults = vol.ProbeReplicaOnboarding()
 			return nil
 		})
+		for _, r := range probeResults {
+			bs.handleReplicaProbeResult(path, r)
+			if r.Outcome == blockvol.ProbeKeepUp {
+				connected = true
+			}
+		}
 	}
 	glog.V(0).Infof("block service: recheck shipper connectivity %s connected=%v mode=%s reason=%q",
 		path, connected, proj.Mode.Name, proj.Publication.Reason)
@@ -1410,139 +1386,101 @@ func (bs *BlockService) resolveReplicaIDForShipper(path, dataAddr string) string
 	return replicaID
 }
 
-// resolveCtrlAddrForShipper maps a shipper's data address to its ctrl address.
-func (bs *BlockService) resolveCtrlAddrForShipper(path, dataAddr string) string {
-	if bs == nil || bs.blockStore == nil || dataAddr == "" {
-		return ""
+// handleReplicaProbeResult processes one per-replica onboarding probe result.
+// Routes to the appropriate recovery path without going through the master.
+func (bs *BlockService) handleReplicaProbeResult(path string, r blockvol.ReplicaProbeResult) {
+	if bs == nil {
+		return
 	}
-	var ctrlAddr string
-	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		sg := vol.GetShipperGroup()
-		if sg == nil {
-			return nil
-		}
-		for i := 0; i < sg.Len(); i++ {
-			s := sg.Shipper(i)
-			if s != nil && s.DataAddr() == dataAddr {
-				ctrlAddr = s.CtrlAddr()
-				return nil
+	switch r.Outcome {
+	case blockvol.ProbeKeepUp:
+		glog.V(0).Infof("block service: replica %s keepup (flushedLSN=%d)", r.ReplicaID, r.ReplicaFlushedLSN)
+		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+
+	case blockvol.ProbeCatchUpRequired:
+		glog.V(0).Infof("block service: replica %s needs catch-up (flushedLSN=%d)", r.ReplicaID, r.ReplicaFlushedLSN)
+		// The existing recovery manager handles catch-up via the engine's
+		// session commands. Emit the fact; the engine + recovery path do the rest.
+		bs.applyCoreEvent(engine.ShipperConnectedObserved{ID: path})
+
+	case blockvol.ProbeRebuildRequired:
+		glog.V(0).Infof("block service: replica %s needs rebuild (flushedLSN=%d)", r.ReplicaID, r.ReplicaFlushedLSN)
+		if r.ReplicaID != "" {
+			// Resolve the engine-format replicaID from the core projection.
+			// The engine uses MakeReplicaID(path, serverID) which may differ
+			// from the shipper's raw ServerID. Use the projection's ReplicaIDs
+			// to find the matching one.
+			engineReplicaID := bs.resolveEngineReplicaID(path, r.ReplicaID)
+			if engineReplicaID == "" {
+				engineReplicaID = path + "/" + r.ReplicaID // fallback
+			}
+			glog.V(0).Infof("block service: rebuild replicaID: shipper=%s engine=%s", r.ReplicaID, engineReplicaID)
+			bs.applyCoreEvent(engine.NeedsRebuildObserved{
+				ID:        path,
+				ReplicaID: engineReplicaID,
+				Reason:    "gap_exceeds_retained_wal",
+			})
+			// Start the rebuild through the existing recovery manager.
+			if bs.v2Recovery != nil {
+				bs.v2Recovery.StartRecoveryTask(engineReplicaID, bs.lastAssignmentsForPath(path))
 			}
 		}
-		return nil
-	})
-	return ctrlAddr
+
+	case blockvol.ProbeTemporaryFailure:
+		glog.V(0).Infof("block service: replica %s probe failed: %v", r.ReplicaID, r.Err)
+		// Don't escalate — temporary failure may resolve on next attempt.
+	}
 }
 
-// startDirectRebuild initiates a primary-direct rebuild session for one
-// specific replica. This runs in a goroutine — the primary sends
-// sessionControl(start_rebuild) directly to the replica's control channel
-// and streams the base extent. The master is not involved in the rebuild
-// decision; it observes the result via heartbeat projection.
-func (bs *BlockService) startDirectRebuild(path, replicaID, dataAddr, ctrlAddr string) {
-	if bs == nil || bs.blockStore == nil {
-		return
+// resolveEngineReplicaID finds the engine-format replicaID that contains the
+// given serverID. The engine uses MakeReplicaID(path, serverID) = "path/serverID".
+// The shipper's ReplicaID is just serverID. This function scans the core
+// projection's ReplicaIDs to find the matching full ID.
+func (bs *BlockService) resolveEngineReplicaID(path, shipperReplicaID string) string {
+	if bs == nil || bs.v2Core == nil || shipperReplicaID == "" {
+		return ""
 	}
-	glog.V(0).Infof("block service: starting direct rebuild %s replica=%s data=%s ctrl=%s",
-		path, replicaID, dataAddr, ctrlAddr)
-
-	// Get the primary's current state to determine baseLSN and targetLSN.
-	var baseLSN, targetLSN uint64
-	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		status := vol.Status()
-		baseLSN = status.CheckpointLSN
-		targetLSN = status.WALHeadLSN
-		if baseLSN == 0 {
-			baseLSN = targetLSN
+	proj, ok := bs.CoreProjection(path)
+	if !ok {
+		return ""
+	}
+	for _, rid := range proj.ReplicaIDs {
+		// Check if this engine replicaID ends with the shipper's serverID.
+		if strings.HasSuffix(rid, "/"+shipperReplicaID) {
+			return rid
 		}
+		// Also check exact match in case formats align.
+		if rid == shipperReplicaID {
+			return rid
+		}
+	}
+	return ""
+}
+
+// lastAssignmentsForPath returns the last applied assignment for a volume path
+// as a slice (the recovery manager expects []BlockVolumeAssignment).
+func (bs *BlockService) lastAssignmentsForPath(path string) []blockvol.BlockVolumeAssignment {
+	if bs == nil {
 		return nil
-	})
-	if baseLSN == 0 {
-		glog.Warningf("block service: direct rebuild %s: no baseline LSN, aborting", path)
-		return
 	}
-
-	// Send sessionControl(start_rebuild) to the replica's control channel.
-	sessionID := uint64(time.Now().UnixNano())
-	conn, err := net.DialTimeout("tcp", ctrlAddr, 5*time.Second)
-	if err != nil {
-		glog.Warningf("block service: direct rebuild %s: dial ctrl %s: %v", path, ctrlAddr, err)
-		return
-	}
-	defer conn.Close()
-
-	if err := blockvol.SendSessionControl(conn, blockvol.SessionControlMsg{
-		Epoch:     0, // will be filled by the replica from its local state
-		SessionID: sessionID,
-		Command:   blockvol.SessionCmdStartRebuild,
-		BaseLSN:   baseLSN,
-		TargetLSN: targetLSN,
-	}); err != nil {
-		glog.Warningf("block service: direct rebuild %s: send session control to %s: %v", path, ctrlAddr, err)
-		return
-	}
-
-	// Wait for accepted ack.
-	conn.SetDeadline(time.Now().Add(10 * time.Second))
-	msgType, payload, err := blockvol.ReadFrame(conn)
-	if err != nil || msgType != blockvol.MsgSessionAck {
-		glog.Warningf("block service: direct rebuild %s: accepted ack: err=%v type=0x%02x", path, err, msgType)
-		return
-	}
-	ack, _ := blockvol.DecodeSessionAck(payload)
-	if ack.Phase != blockvol.SessionAckAccepted {
-		glog.Warningf("block service: direct rebuild %s: session not accepted: phase=%d", path, ack.Phase)
-		return
-	}
-
-	glog.V(0).Infof("block service: direct rebuild %s accepted (session=%d baseLSN=%d targetLSN=%d)",
-		path, sessionID, baseLSN, targetLSN)
-
-	// Stream base blocks from primary to replica over the rebuild TCP path.
-	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
-		rebuildServer := blockvol.NewRebuildTransportServer(vol, sessionID, 0, baseLSN, targetLSN)
-		rebuildLn, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			glog.Warningf("block service: direct rebuild %s: listen rebuild: %v", path, err)
-			return nil
-		}
-		defer rebuildLn.Close()
-
-		// Tell the replica where to connect for base data.
-		// For now, the base stream runs on the same ctrl connection
-		// (the replica's receiver handles it) or we serve locally.
-		// Simplest: serve base blocks directly on a temp listener.
-		go func() {
-			c, err := rebuildLn.Accept()
-			if err != nil {
-				return
-			}
-			defer c.Close()
-			rebuildServer.ServeBaseBlocks(c)
-		}()
-
-		// Connect replica to our base server.
-		baseConn, err := net.Dial("tcp", rebuildLn.Addr().String())
-		if err != nil {
-			glog.Warningf("block service: direct rebuild %s: connect base: %v", path, err)
-			return nil
-		}
-		defer baseConn.Close()
-		client := blockvol.NewRebuildTransportClient(vol, sessionID)
-		_, err = client.ReceiveBaseBlocks(baseConn)
-		if err != nil {
-			glog.Warningf("block service: direct rebuild %s: receive base: %v", path, err)
-		}
+	bs.lastAssignMu.RLock()
+	defer bs.lastAssignMu.RUnlock()
+	if bs.lastAssign == nil {
 		return nil
-	})
-
-	// Emit RebuildStarted to engine.
-	bs.applyCoreEvent(engine.RebuildStarted{
-		ID:        path,
-		ReplicaID: replicaID,
-		TargetLSN: targetLSN,
-	})
-
-	glog.V(0).Infof("block service: direct rebuild %s complete for replica=%s", path, replicaID)
+	}
+	last, ok := bs.lastAssign[path]
+	if !ok {
+		return nil
+	}
+	return []blockvol.BlockVolumeAssignment{{
+		Path:            path,
+		Epoch:           last.Epoch,
+		Role:            last.Role,
+		ReplicaServerID: last.ReplicaServerID,
+		ReplicaDataAddr: last.ReplicaDataAddr,
+		ReplicaCtrlAddr: last.ReplicaCtrlAddr,
+		ReplicaAddrs:    last.ReplicaAddrs,
+	}}
 }
 
 func (bs *BlockService) observePrimaryShipperConnectivityStatus(path string, connected bool) {
