@@ -1345,12 +1345,59 @@ func (bs *BlockService) observePrimaryShipperConnectivity(path string) {
 		// entries are available.
 		_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
 			connected = vol.TryReconnectShippers()
+			if !connected {
+				// Bridge 1: check if any shipper reached NeedsRebuild during
+				// the proactive reconnect. Emit per-replica NeedsRebuildObserved
+				// to the core, then initiate primary-direct rebuild for that
+				// specific replica. The master is NOT involved in the rebuild
+				// decision — the primary owns data-control recovery. The master
+				// sees the result via subsequent heartbeat projection.
+				for _, st := range vol.ReplicaShipperStates() {
+					if st.State == "needs_rebuild" && st.DataAddr != "" {
+						replicaID := bs.resolveReplicaIDForShipper(path, st.DataAddr)
+						glog.V(0).Infof("block service: shipper %s (replica=%s) needs rebuild — primary-direct rebuild",
+							st.DataAddr, replicaID)
+						if replicaID != "" {
+							bs.applyCoreEvent(engine.NeedsRebuildObserved{
+								ID:        path,
+								ReplicaID: replicaID,
+								Reason:    "gap_exceeds_retained_wal",
+							})
+						}
+					}
+				}
+			}
 			return nil
 		})
 	}
 	glog.V(0).Infof("block service: recheck shipper connectivity %s connected=%v mode=%s reason=%q",
 		path, connected, proj.Mode.Name, proj.Publication.Reason)
 	bs.observePrimaryShipperConnectivityStatus(path, connected)
+}
+
+// resolveReplicaIDForShipper maps a shipper's data address back to the
+// replica ID. Uses the shipper group's per-shipper ReplicaID which was
+// set via SetReplicaAddrs from the ServerID. Works for RF=2 and RF=3+.
+func (bs *BlockService) resolveReplicaIDForShipper(path, dataAddr string) string {
+	if bs == nil || bs.blockStore == nil || dataAddr == "" {
+		return ""
+	}
+	var replicaID string
+	_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+		sg := vol.GetShipperGroup()
+		if sg == nil {
+			return nil
+		}
+		for i := 0; i < sg.Len(); i++ {
+			s := sg.Shipper(i)
+			if s != nil && s.DataAddr() == dataAddr {
+				replicaID = s.ReplicaID()
+				return nil
+			}
+		}
+		return nil
+	})
+	return replicaID
 }
 
 func (bs *BlockService) observePrimaryShipperConnectivityStatus(path string, connected bool) {
