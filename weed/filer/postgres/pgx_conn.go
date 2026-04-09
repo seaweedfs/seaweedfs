@@ -10,14 +10,14 @@ import (
 )
 
 // OpenPGXDB parses the given DSN into a pgx ConnConfig, applies PgBouncer
-// compatibility settings when requested, registers the config with the
-// pgx/v5 stdlib driver, opens a *sql.DB, and verifies it with Ping.
+// compatibility settings when requested, opens a *sql.DB via
+// stdlib.OpenDB, and verifies it with Ping.
 //
 // In pgx/v5 the prefer_simple_protocol DSN parameter was removed, so simple
 // protocol mode must be configured on the ConnConfig via
-// DefaultQueryExecMode. This helper centralizes that handling and, on any
-// failure after RegisterConnConfig, unregisters the config so we do not leak
-// entries in stdlib's global connection config map.
+// DefaultQueryExecMode. We use stdlib.OpenDB(config) rather than
+// RegisterConnConfig + sql.Open so we don't leak entries in stdlib's global
+// connection config map on either success or failure paths.
 //
 // adaptedSqlUrl is used only for error messages (the caller is expected to
 // have redacted any password).
@@ -36,20 +36,13 @@ func OpenPGXDB(sqlUrl, adaptedSqlUrl string, pgbouncerCompatible bool, maxIdle, 
 		connConfig.DescriptionCacheCapacity = 0
 	}
 
-	registeredConnStr := stdlib.RegisterConnConfig(connConfig)
-	db, dbErr := sql.Open("pgx", registeredConnStr)
-	if dbErr != nil {
-		stdlib.UnregisterConnConfig(registeredConnStr)
-		return nil, fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
-	}
-
+	db := stdlib.OpenDB(*connConfig)
 	db.SetMaxIdleConns(maxIdle)
 	db.SetMaxOpenConns(maxOpen)
 	db.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
 
 	if err := db.Ping(); err != nil {
 		db.Close()
-		stdlib.UnregisterConnConfig(registeredConnStr)
 		return nil, fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
 	}
 
