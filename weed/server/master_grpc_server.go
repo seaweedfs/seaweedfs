@@ -314,6 +314,13 @@ func (ms *MasterServer) SendHeartbeat(stream master_pb.Seaweed_SendHeartbeatServ
 
 			// Pending assignments (role changes, epoch bumps).
 			pending := ms.blockAssignmentQueue.Peek(dn.Url())
+			if len(pending) > 0 {
+				glog.V(0).Infof("block assign: delivering %d assignment(s) to %s", len(pending), dn.Url())
+				for _, p := range pending {
+					glog.V(0).Infof("  assign: path=%s epoch=%d role=%d replicas=%d",
+						p.Path, p.Epoch, p.Role, len(p.ReplicaAddrs))
+				}
+			}
 
 			// Lease grants for confirmed volumes (lightweight: path+epoch+ttl).
 			// Skip volumes that already have a pending assignment.

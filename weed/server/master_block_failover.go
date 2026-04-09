@@ -561,12 +561,16 @@ func (ms *MasterServer) recoverBlockVolumes(reconnectedServer string) {
 			CtrlAddr: ctrlAddr,
 		})
 
+		// Re-lookup entry after AddReplica so the entry copy reflects the
+		// updated replica list. Without this, the stale copy from line 540
+		// has 0 replicas, and the primary refresh assignment gets empty
+		// ReplicaAddrs — the primary never configures its shipper.
+		entry, ok = ms.blockRegistry.Lookup(rb.VolumeName)
+		if !ok {
+			continue
+		}
+
 		// CP13-8: Try catch-up first (Replica assignment), fall back to rebuild.
-		// If the replica can catch up from the primary's retained WAL, this is
-		// much faster than a full rebuild. The shipper's reconnect handshake
-		// (CP13-5) determines whether catch-up or rebuild is actually needed.
-		// If catch-up fails, the shipper marks NeedsRebuild, and the master
-		// sends a Rebuilding assignment on the next heartbeat cycle.
 		if dataAddr != "" {
 			leaseTTLMs := blockvol.LeaseTTLToWire(30 * time.Second)
 			// Send Replica assignment to the reconnected server.
