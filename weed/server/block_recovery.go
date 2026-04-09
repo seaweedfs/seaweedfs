@@ -212,6 +212,20 @@ func (rm *RecoveryManager) StartRebuildFromProbe(replicaID string) {
 		glog.Warningf("recovery: install rebuild session for probe %s: %v", replicaID, err)
 		return
 	}
+	// Diagnostic: verify sender exists after installSession.
+	if s := rm.bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
+		snap := s.SessionSnapshot()
+		glog.V(0).Infof("recovery: post-install sender %s: state=%s session=%+v", replicaID, s.State(), snap)
+	} else {
+		glog.Warningf("recovery: post-install sender %s NOT FOUND in registry", replicaID)
+		// List all senders for diagnosis.
+		all := rm.bs.v2Orchestrator.Registry.All()
+		ids := make([]string, len(all))
+		for i, s := range all {
+			ids[i] = s.ReplicaID()
+		}
+		glog.Warningf("recovery: registry contains: %v", ids)
+	}
 	rm.cancelAndDrain(replicaID, false)
 	rm.startTask(replicaID, nil)
 }
@@ -587,6 +601,10 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID string, ass
 	rm.coord.Store(replicaID, pe)
 	if rm.OnPendingExecution != nil {
 		rm.OnPendingExecution(rctx.volPath, pe)
+	}
+	// Diagnostic: log the engine's DesiredReplicas so we can verify replicaID match.
+	if proj, ok := bs.CoreProjection(rctx.volPath); ok {
+		glog.V(0).Infof("recovery: pre-RebuildStarted replicaID=%q engine_replicas=%v", replicaID, proj.ReplicaIDs)
 	}
 	bs.applyCoreEvent(engine.RebuildStarted{ID: rctx.volPath, ReplicaID: replicaID, TargetLSN: plan.RebuildTargetLSN})
 	if rm.coord.Has(replicaID) {
