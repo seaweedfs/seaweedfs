@@ -51,8 +51,7 @@ func (s3a *S3ApiServer) withFilerClientFailover(streamingMode bool, fn func(file
 	// not a filer health issue. Only record true failures (transport errors, timeouts, etc.)
 	// in the health tracker to avoid poisoning the circuit breaker with normal "not found"
 	// responses in multi-filer setups.
-	isNotFound := errors.Is(err, filer_pb.ErrNotFound)
-	if !isNotFound {
+	if !errors.Is(err, filer_pb.ErrNotFound) {
 		s3a.filerClient.RecordFilerFailure(currentFiler)
 	}
 
