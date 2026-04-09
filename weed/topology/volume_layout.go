@@ -357,12 +357,23 @@ func (vl *VolumeLayout) ShouldGrowVolumes() bool {
 }
 
 func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeId, dcId NodeId, rackId NodeId) bool {
+	// When replication spans multiple racks (DiffRackCount > 0), a writable
+	// volume's replicas only cover some racks in a DC. It is wrong to
+	// require every rack to host a replica — that would create volumes
+	// endlessly in any DC with more racks than the copy count.
+	// Instead, check at the DC level: if the DC already has a non-crowded
+	// writable volume, no growth is needed for uncovered racks.
+	checkDcOnly := vl.rp.DiffRackCount > 0
 	for _, v := range *writables {
 		for _, dn := range vl.Lookup(v) {
-			if dn.GetDataCenter().Id() == dcId && dn.GetRack().Id() == rackId {
-				if info, err := dn.GetVolumesById(v); err == nil && !vl.isCrowdedVolume(&info) {
-					return false
-				}
+			if dn.GetDataCenter().Id() != dcId {
+				continue
+			}
+			if !checkDcOnly && dn.GetRack().Id() != rackId {
+				continue
+			}
+			if info, err := dn.GetVolumesById(v); err == nil && !vl.isCrowdedVolume(&info) {
+				return false
 			}
 		}
 	}
