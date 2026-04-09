@@ -224,8 +224,13 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 		if raftServer == nil {
 			glog.Fatalf("please verify %s is writable, see https://github.com/seaweedfs/seaweedfs/issues/717: %s", *masterOption.metaFolder, err)
 		}
-		// For single-master mode, initialize cluster immediately without waiting
-		if isSingleMaster {
+		// For single-master mode with a fresh log, initialize cluster immediately.
+		// When resuming with existing state, the server is already a member and
+		// will self-elect via fastResume — sending another JoinCommand would block
+		// because goraft's setCommitIndex returns early on JoinCommand entries,
+		// preventing the new entry's event from being notified when old uncommitted
+		// JoinCommands exist in the log.
+		if isSingleMaster && !raftServer.HasExistingState() {
 			glog.V(0).Infof("Single-master mode: initializing cluster immediately")
 			raftServer.DoJoinCommand()
 		}

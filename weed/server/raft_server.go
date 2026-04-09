@@ -290,6 +290,19 @@ func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
 	recoverTopologyIdFromState(snap.State, topo)
 }
 
+// HasExistingState returns true when the raft log already contains entries,
+// indicating this server was previously joined and does not need a new
+// JoinCommand on startup.
+func (s *RaftServer) HasExistingState() bool {
+	if s.raftServer != nil {
+		return !s.raftServer.IsLogEmpty()
+	}
+	if s.RaftHashicorp != nil {
+		return s.RaftHashicorp.LastIndex() > 0
+	}
+	return false
+}
+
 func (s *RaftServer) DoJoinCommand() {
 
 	glog.V(0).Infoln("Initializing new cluster")
