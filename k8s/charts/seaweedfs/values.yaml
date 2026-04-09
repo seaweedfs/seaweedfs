@@ -1340,8 +1340,9 @@ worker:
   adminServer: ""
 
   # Worker job types - comma-separated list
-  # Available: vacuum, volume_balance, erasure_coding
-  jobType: "vacuum,volume_balance,erasure_coding"
+  # Available: vacuum, volume_balance, admin_script, erasure_coding, iceberg_maintenance
+  # Refer: https://github.com/seaweedfs/seaweedfs/wiki/Worker
+  jobType: "vacuum,volume_balance,admin_script,erasure_coding"
 
   # Maximum number of concurrent detection requests
   maxDetect: 1
