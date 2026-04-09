@@ -144,10 +144,15 @@ func (r *RemoteRebuildIO) TransferFullBase(committedLSN uint64) (uint64, error) 
 			return achieved, nil
 
 		case blockvol.SessionAckFailed:
-			// Forward the ack for observation cleanup (pins, watchdog, engine
-			// SessionFailed). Then return the sentinel error so ExecutePendingRebuild
-			// knows NOT to emit a second SessionFailed.
 			r.transitionOnFailure()
+			if ackErr != nil {
+				// Observation rejected the ack (stale session, etc.) — don't use
+				// sentinel. Return a regular error so ExecutePendingRebuild emits
+				// the fallback SessionFailed since observation didn't handle it.
+				return 0, fmt.Errorf("remote rebuild: session %d failed (observation rejected: %w)", r.SessionID, ackErr)
+			}
+			// Observation accepted the ack and already emitted SessionFailed.
+			// Use sentinel so ExecutePendingRebuild doesn't double-emit.
 			return 0, fmt.Errorf("remote rebuild: session %d: %w", r.SessionID, errRebuildAckFailed)
 		}
 	}
