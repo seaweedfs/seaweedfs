@@ -186,6 +186,77 @@ func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
 	assert.True(t, deleteObjectFound, "s3:DeleteObject action was lost")
 }
 
+// TestPutGetUserPolicyIssue9008 is a regression test for
+// https://github.com/seaweedfs/seaweedfs/issues/9008: put-user-policy followed
+// by get-user-policy must return the same policy document that was submitted,
+// with Action and Resource lists intact (no duplication, no collapsing).
+func TestPutGetUserPolicyIssue9008(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	policyJSON := `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"]
+    }]
+  }`
+
+	mockCfg := &mockIamS3ApiConfig{}
+	iama := &IamApiServer{s3ApiConfig: mockCfg}
+	_, iamErr := iama.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"steward_policy"},
+		"PolicyDocument": []string{policyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	// Part 1: verbatim round-trip. GetUserPolicy returns the exact document
+	// that was persisted, with Action and Resource lists intact.
+	resp, iamErr := iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	assert.Equal(t, "2012-10-17", got.Version)
+	assert.Equal(t, 1, len(got.Statement))
+	stmt := got.Statement[0]
+	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
+	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+
+	// Part 2: fallback reconstruction. Clear the persisted inline policy so
+	// GetUserPolicy must rebuild the document from ident.Actions. The fallback
+	// is lossy (distinct S3 verbs collapse to wildcards like s3:Get*), but it
+	// must not duplicate actions nor conflate bucket-level and object-level
+	// resources.
+	mockCfg.policies = Policies{}
+
+	resp, iamErr = iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var fallback policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &fallback))
+	assert.Equal(t, 1, len(fallback.Statement), "fallback should merge equal-action statements")
+	fstmt := fallback.Statement[0]
+
+	// Each coarse verb appears exactly once (no duplication from the
+	// Read/Write/List -> s3:Get*/s3:Put*/s3:List* expansion).
+	assert.ElementsMatch(t, []string{"s3:Get*", "s3:Put*", "s3:List*"}, fstmt.Action.Strings())
+
+	// Bucket-level and object-level resources stay distinct — the bare bucket
+	// pattern must not be rewritten to an object ARN.
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, fstmt.Resource.Strings())
+}
+
 func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{{Name: "alice"}},
