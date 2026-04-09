@@ -8,12 +8,8 @@
 package postgres
 
 import (
-	"database/sql"
-	"fmt"
 	"strconv"
-	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -68,12 +64,6 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 	// pgx-optimized connection string with better timeouts and connection handling
 	sqlUrl := "connect_timeout=30"
 
-	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
-	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
-	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
-	}
-
 	if hostname != "" {
 		sqlUrl += " host=" + hostname
 	}
@@ -113,23 +103,11 @@ func (store *PostgresStore) initialize(upsertQuery string, enableUpsert bool, us
 		sqlUrl += " search_path=" + schema
 		adaptedSqlUrl += " search_path=" + schema
 	}
-	var dbErr error
-	store.DB, dbErr = sql.Open("pgx", sqlUrl)
-	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-		}
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
+	db, openErr := OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	if openErr != nil {
+		return openErr
 	}
-
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
-
-	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
-	}
+	store.DB = db
 
 	return nil
 }
