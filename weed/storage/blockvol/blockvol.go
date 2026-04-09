@@ -1037,6 +1037,17 @@ func (v *BlockVol) ReplicaShipperStates() []ReplicaShipperStatus {
 	return v.shipperGroup.ShipperStates()
 }
 
+// TryReconnectShippers attempts the full reconnect protocol on all configured
+// shippers without requiring foreground I/O. Returns true if all shippers now
+// have transport contact. Used by the host-side recheck on rejoin paths where
+// no writes are happening to trigger Ship().
+func (v *BlockVol) TryReconnectShippers() bool {
+	if v == nil || v.shipperGroup == nil {
+		return false
+	}
+	return v.shipperGroup.TryReconnectAll()
+}
+
 // PrimaryShipperConnected reports whether all configured replica shippers have
 // established transport contact for bootstrap/recovery observation. This is a
 // transport-level signal only; barrier durability still gates publish_healthy.

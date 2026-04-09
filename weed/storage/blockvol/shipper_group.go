@@ -110,6 +110,27 @@ func (sg *ShipperGroup) AnyDegraded() bool {
 	return false
 }
 
+// TryReconnectAll attempts the full reconnect protocol on all shippers that
+// are not yet connected. Used by the host-side recheck when the V2 core
+// reports awaiting_shipper_connected but no I/O is triggering Ship().
+// Returns true if all shippers now have transport contact.
+func (sg *ShipperGroup) TryReconnectAll() bool {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	if len(sg.shippers) == 0 {
+		return false
+	}
+	allConnected := true
+	for _, s := range sg.shippers {
+		if !s.HasTransportContact() {
+			if !s.TryReconnect() {
+				allConnected = false
+			}
+		}
+	}
+	return allConnected
+}
+
 // AllHaveTransportContact returns true only when every configured shipper has
 // established transport contact strong enough for bootstrap observability.
 // This is intentionally weaker than InSync: it allows the V2 core to observe

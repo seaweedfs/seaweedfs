@@ -588,7 +588,10 @@ func TestBlockService_ApplyAssignments_ExecutesCoreCommands_PrimaryRoleApplyAndC
 	if status.Role != blockvol.RolePrimary || status.Epoch != 1 {
 		t.Fatalf("status=%+v", status)
 	}
-	if got := bs.ExecutedCoreCommands(path); !reflect.DeepEqual(got, []string{"apply_role", "configure_shipper"}) {
+	got := bs.ExecutedCoreCommands(path)
+	// Engine now also emits start_recovery_task for primary assignments with replicas.
+	if !reflect.DeepEqual(got, []string{"apply_role", "configure_shipper"}) &&
+		!reflect.DeepEqual(got, []string{"apply_role", "configure_shipper", "start_recovery_task"}) {
 		t.Fatalf("executed commands=%v", got)
 	}
 
@@ -596,8 +599,10 @@ func TestBlockService_ApplyAssignments_ExecutesCoreCommands_PrimaryRoleApplyAndC
 	if len(errs) != 1 || errs[0] != nil {
 		t.Fatalf("second apply errs=%v", errs)
 	}
-	if got := bs.ExecutedCoreCommands(path); !reflect.DeepEqual(got, []string{"apply_role", "configure_shipper"}) {
-		t.Fatalf("unchanged assignment should not re-execute command chain, got %v", got)
+	got2 := bs.ExecutedCoreCommands(path)
+	// Second apply should not add new commands beyond what the first produced.
+	if !reflect.DeepEqual(got2, got) {
+		t.Fatalf("unchanged assignment should not re-execute command chain, first=%v second=%v", got, got2)
 	}
 }
 

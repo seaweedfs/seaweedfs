@@ -1332,6 +1332,22 @@ func (bs *BlockService) observePrimaryShipperConnectivity(path string) {
 		return
 	}
 	connected := bs.isPrimaryShipperConnected(path)
+	if !connected {
+		// Proactive reconnect: the shipper is configured but not connected,
+		// and no I/O is happening to trigger Ship(). This occurs on rejoin
+		// paths where the primary gets a fresh assignment with replica
+		// addresses but no writes are pending. Without this, the shipper
+		// sits at Disconnected and the core stays at
+		// awaiting_shipper_connected indefinitely.
+		//
+		// Uses the full reconnect protocol (handshake + bounded catch-up),
+		// not just a dial probe. This brings the replica current if WAL
+		// entries are available.
+		_ = bs.blockStore.WithVolume(path, func(vol *blockvol.BlockVol) error {
+			connected = vol.TryReconnectShippers()
+			return nil
+		})
+	}
 	glog.V(0).Infof("block service: recheck shipper connectivity %s connected=%v mode=%s reason=%q",
 		path, connected, proj.Mode.Name, proj.Publication.Reason)
 	bs.observePrimaryShipperConnectivityStatus(path, connected)

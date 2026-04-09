@@ -497,6 +497,53 @@ func (s *WALShipper) Stop() {
 	s.ctrlMu.Unlock()
 }
 
+// TryReconnect attempts the full reconnect protocol (dial + handshake +
+// bounded catch-up if needed) without requiring a foreground write or barrier.
+// Used by the host-side recheck when the V2 core reports
+// awaiting_shipper_connected but no I/O is triggering Ship().
+//
+// This is Option B from the design: trigger the same reconnect path that
+// Barrier() would use, but proactively instead of waiting for I/O.
+// Returns true if the shipper reached InSync or has transport contact.
+func (s *WALShipper) TryReconnect() bool {
+	if s.stopped.Load() {
+		return false
+	}
+	st := s.State()
+	if st == ReplicaInSync {
+		return true
+	}
+	if st != ReplicaDisconnected && st != ReplicaDegraded {
+		return false
+	}
+	if s.wal == nil {
+		// No WAL access — try bare connection only.
+		s.mu.Lock()
+		err := s.ensureDataConn()
+		s.mu.Unlock()
+		if err != nil {
+			return false
+		}
+		s.lastContactTime.Store(time.Now())
+		return s.HasTransportContact()
+	}
+
+	// Full reconnect: handshake + bounded catch-up if needed.
+	// Use the primary's WAL head as the catch-up target.
+	_, headLSN := s.wal.RetainedRange()
+	if headLSN == 0 {
+		headLSN = 1
+	}
+	log.Printf("wal_shipper: proactive reconnect (data=%s ctrl=%s state=%s target=%d)",
+		s.dataAddr, s.controlAddr, st, headLSN)
+	if _, err := s.CatchUpTo(headLSN); err != nil {
+		log.Printf("wal_shipper: proactive reconnect failed (data=%s ctrl=%s): %v",
+			s.dataAddr, s.controlAddr, err)
+		return s.HasTransportContact()
+	}
+	return s.State() == ReplicaInSync || s.HasTransportContact()
+}
+
 func (s *WALShipper) ensureDataConn() error {
 	if s.dataConn != nil {
 		return nil
