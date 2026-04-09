@@ -65,6 +65,12 @@ func (rh *RetainedHistory) IsRecoverable(startExclusive, endInclusive uint64) bo
 //   2. The WAL tail from CheckpointLSN to CommittedLSN is replayable
 //      (i.e., CheckpointLSN >= TailLSN and CommittedLSN <= HeadLSN)
 func (rh *RetainedHistory) RebuildSourceDecision() (source RebuildSource, snapshotLSN uint64) {
+	// CommittedLSN=0 means no lineage-safe boundary exists (e.g., replica is
+	// degraded in sync_all mode). Snapshot-tail requires a valid committed
+	// endpoint for the tail-replay range. Without it, fall back to full-base.
+	if rh.CommittedLSN == 0 {
+		return RebuildFullBase, 0
+	}
 	if rh.CheckpointTrusted && rh.CheckpointLSN > 0 &&
 		rh.IsRecoverable(rh.CheckpointLSN, rh.CommittedLSN) {
 		return RebuildSnapshotTail, rh.CheckpointLSN
