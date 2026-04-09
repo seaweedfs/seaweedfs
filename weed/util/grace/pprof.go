@@ -34,6 +34,7 @@ func SetupProfiling(cpuProfile, memProfile string) {
 		pprof.StartCPUProfile(f)
 		OnInterrupt(func() {
 			pprof.StopCPUProfile()
+			f.Close()
 
 			// write block pprof
 			blockF, err := os.Create(cpuProfile + ".block")
