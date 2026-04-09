@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strconv"
@@ -35,10 +36,11 @@ type recoveryTask struct {
 type RecoveryManager struct {
 	bs *BlockService
 
-	mu    sync.Mutex
-	tasks map[string]*recoveryTask
-	coord *rt.PendingCoordinator
-	wg    sync.WaitGroup
+	mu                    sync.Mutex
+	tasks                 map[string]*recoveryTask
+	remoteRebuildAchieved map[string]uint64 // replicaID → achievedLSN from remote rebuild
+	coord                 *rt.PendingCoordinator
+	wg                    sync.WaitGroup
 
 	// TestHook: if set, called before execution starts. Tests use this
 	// to hold the goroutine alive for serialized-replacement proofs.
@@ -198,6 +200,20 @@ func (rm *RecoveryManager) HandleRemovedAssignments(result engine.AssignmentResu
 func (rm *RecoveryManager) StartRecoveryTask(replicaID string, assignments []blockvol.BlockVolumeAssignment) {
 	rm.cancelAndDrain(replicaID, false)
 	rm.startTask(replicaID, assignments)
+}
+
+// StartRebuildFromProbe is the primary-direct rebuild entry point.
+// Called when ProbeReconnect determines a replica needs a full rebuild.
+// It installs a rebuild session on the orchestrator, then starts the
+// recovery task. No fake assignment needed — deriveRebuildAddr computes
+// the primary's rebuild server address from ReplicationPorts.
+func (rm *RecoveryManager) StartRebuildFromProbe(replicaID string) {
+	if err := rm.installSession(replicaID, engine.SessionRebuild); err != nil {
+		glog.Warningf("recovery: install rebuild session for probe %s: %v", replicaID, err)
+		return
+	}
+	rm.cancelAndDrain(replicaID, false)
+	rm.startTask(replicaID, nil)
 }
 
 // DrainRecoveryTask drains removed recovery work from an explicit core-owned
@@ -362,8 +378,8 @@ type recoveryContext struct {
 	volPath           string
 	rebuildAddr       string
 	driver            *engine.RecoveryDriver
-	executor          *v2bridge.Executor
-	replicaFlushedLSN uint64 // catch-up start point (0 if no session)
+	executor          *v2bridge.Executor // catch-up IO (reads primary WAL, ships to replica)
+	replicaFlushedLSN uint64            // catch-up start point (0 if no session)
 }
 
 // resolveRecoveryContext resolves everything needed for recovery execution:
@@ -542,13 +558,29 @@ func (rm *RecoveryManager) runRebuild(ctx context.Context, replicaID string, ass
 		rm.executeLegacyRebuild(ctx, rctx.volPath, replicaID, rctx.driver, plan, rctx.executor)
 		return
 	}
+
+	// Single rebuild route: always use RemoteRebuildIO on the core-present path.
+	// Primary coordinates, replica installs. Tests can override pe.RebuildIO
+	// via OnPendingExecution hook after the pending is stored.
+	//
+	// Rule 3: RemoteRebuildIO is full-base-only in V1. If the plan requests
+	// snapshot/tail-replay, RemoteRebuildIO.TransferSnapshot will return an error
+	// at execution time. Tests that need snapshot plans inject fakeRebuildIO
+	// via OnPendingExecution.
+	remote := rm.buildRemoteRebuildIO(replicaID, rctx.volPath, rctx.rebuildAddr)
+	if remote == nil {
+		glog.Warningf("recovery: cannot build remote rebuild IO for %s — no reachable replica", replicaID)
+		return
+	}
+	var rebuildIO engine.RebuildIO = remote
+
 	pe := &rt.PendingExecution{
 		VolumeID:         rctx.volPath,
 		ReplicaID:        replicaID,
 		RebuildTargetLSN: plan.RebuildTargetLSN,
 		Driver:           rctx.driver,
 		Plan:             plan,
-		RebuildIO:        rctx.executor,
+		RebuildIO:        rebuildIO,
 	}
 	rm.coord.Store(replicaID, pe)
 	if rm.OnPendingExecution != nil {
@@ -575,7 +607,22 @@ func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uin
 	if pe == nil || pe.Driver == nil || pe.Plan == nil {
 		return nil
 	}
-	return rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, pe.ReplicaID, rm)
+	err := rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, pe.ReplicaID, rm)
+	if err != nil {
+		glog.Warningf("recovery: rebuild execution failed for %s: %v", replicaID, err)
+		// Emit SessionFailed only for transport errors (dial/EOF/decode).
+		// Ack-driven failures (errRebuildAckFailed) already emitted SessionFailed
+		// through ObserveReplicaRebuildSessionAck — don't double-emit.
+		if !errors.Is(err, errRebuildAckFailed) && rm.bs != nil && rm.bs.v2Core != nil {
+			rm.bs.applyCoreEvent(engine.SessionFailed{
+				ID:        pe.VolumeID,
+				ReplicaID: replicaID,
+				Kind:      engine.SessionRebuild,
+				Reason:    err.Error(),
+			})
+		}
+	}
+	return err
 }
 
 // RecoveryCallbacks implementation — host-side completion notifications.
@@ -617,7 +664,23 @@ func (rm *RecoveryManager) OnRebuildCompleted(volumeID, replicaID string, plan *
 	if rm.bs == nil || rm.bs.v2Core == nil {
 		return
 	}
-	status := rm.readRebuildStatus(volumeID)
+	// For remote rebuilds, use the replica's achieved LSN (stored by onAck
+	// callback on SessionAckCompleted) instead of reading the primary's local
+	// vol — the primary's vol is the source, not the rebuilt destination.
+	rm.mu.Lock()
+	remoteAchieved, isRemote := rm.remoteRebuildAchieved[replicaID]
+	delete(rm.remoteRebuildAchieved, replicaID) // consumed
+	rm.mu.Unlock()
+
+	var status rt.RebuildCompletionStatus
+	if isRemote {
+		// Use replica's completion proof. CommittedLSN = CheckpointLSN = achievedLSN.
+		status.CommittedLSN = remoteAchieved
+		status.CheckpointLSN = remoteAchieved
+	} else {
+		// Legacy/local path: read from primary vol (backwards compat).
+		status = rm.readRebuildStatus(volumeID)
+	}
 	ev := rt.DeriveRebuildCommitted(volumeID, replicaID, status, plan)
 	rm.bs.applyCoreEvent(ev)
 }
@@ -706,6 +769,100 @@ func (rm *RecoveryManager) deriveRebuildAddr(replicaID string, assignments []blo
 		return ""
 	}
 	return net.JoinHostPort(host, strconv.Itoa(rebuildPort))
+}
+
+// buildRemoteRebuildIO creates a RemoteRebuildIO for the primary-side remote
+// rebuild path. It resolves the replica's ctrl address from the shipper,
+// derives BaseLSN from the actual checkpoint, and wires the onAck callback
+// through ObserveReplicaRebuildSessionAck for pin/watchdog/engine integration.
+func (rm *RecoveryManager) buildRemoteRebuildIO(replicaID, volPath, rebuildAddr string) *RemoteRebuildIO {
+	if rm == nil || rm.bs == nil {
+		return nil
+	}
+	// Resolve replica ctrl address from the shipper.
+	var ctrlAddr string
+	var shipperRef *blockvol.WALShipper
+	if err := rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		sg := vol.GetShipperGroup()
+		if sg == nil {
+			return nil
+		}
+		for i := 0; i < sg.Len(); i++ {
+			s := sg.Shipper(i)
+			if s != nil && s.ReplicaID() == replicaID {
+				ctrlAddr = s.CtrlAddr()
+				shipperRef = s
+				break
+			}
+			// Also match by suffix (engine replicaID = "path/serverID", shipper = "serverID")
+			if s != nil && len(replicaID) > len(volPath)+1 {
+				shipperServerID := replicaID[len(volPath)+1:]
+				if s.ReplicaID() == shipperServerID {
+					ctrlAddr = s.CtrlAddr()
+					shipperRef = s
+					break
+				}
+			}
+		}
+		return nil
+	}); err != nil || ctrlAddr == "" {
+		glog.Warningf("recovery: cannot resolve ctrl addr for %s in %s", replicaID, volPath)
+		return nil
+	}
+
+	// Derive BaseLSN from the real flushed checkpoint boundary.
+	var baseLSN uint64
+	_ = rm.bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		baseLSN = vol.CheckpointLSN()
+		return nil
+	})
+
+	// Resolve epoch and session ID from the orchestrator sender.
+	// The session ID must match the active orchestrator session so ack
+	// observation (ObserveReplicaRebuildSessionAck) accepts the acks.
+	var epoch, sessionID uint64
+	if s := rm.bs.v2Orchestrator.Registry.Sender(replicaID); s != nil {
+		epoch = s.Epoch()
+		if snap := s.SessionSnapshot(); snap != nil && snap.Active {
+			sessionID = snap.ID
+		}
+	}
+	if sessionID == 0 {
+		glog.Warningf("recovery: no active session for %s — cannot build remote rebuild IO", replicaID)
+		return nil
+	}
+
+	bs := rm.bs
+	return &RemoteRebuildIO{
+		ReplicaCtrlAddr: ctrlAddr,
+		RebuildAddr:     rebuildAddr,
+		BaseLSN:         baseLSN,
+		Epoch:           epoch,
+		SessionID:       sessionID,
+		OnAck: func(ack blockvol.SessionAckMsg) error {
+			err := bs.ObserveReplicaRebuildSessionAck(volPath, replicaID, ack)
+			// On completion, store the replica's achieved LSN so
+			// readRebuildStatus uses the replica's proof, not the primary's vol.
+			if err == nil && ack.Phase == blockvol.SessionAckCompleted {
+				achieved := ack.AchievedLSN
+				if achieved == 0 {
+					achieved = ack.WALAppliedLSN
+				}
+				rm.mu.Lock()
+				if rm.remoteRebuildAchieved == nil {
+					rm.remoteRebuildAchieved = make(map[string]uint64)
+				}
+				rm.remoteRebuildAchieved[replicaID] = achieved
+				rm.mu.Unlock()
+			}
+			return err
+		},
+		TransitionShipper: func(state blockvol.ReplicaState) {
+			if shipperRef != nil {
+				shipperRef.TransitionState(state)
+			}
+		},
+	}
 }
 
 func shouldReenterRecoveryFromFailure(reason string) bool {

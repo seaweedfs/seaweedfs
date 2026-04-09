@@ -32,21 +32,25 @@ const (
 
 // SessionControlMsg is the wire message for session control commands.
 //
-// Wire version: v1 (33 bytes). This is a new protocol with no deployed peers.
-// The initial design had a 37-byte format with a SnapshotID field that was
-// removed because the protocol contract uses flushed checkpoint boundaries,
-// not explicit snapshot IDs. If future versions need additional fields, the
-// decoder should check len(buf) and handle both sizes.
+// Wire format:
+//   v1: 33 bytes [8B epoch][8B sessionID][1B cmd][8B baseLSN][8B targetLSN]
+//   v2: 33 + 2 + len(addr) bytes: v1 header + [2B addrLen][addrBytes...]
+//
+// The decoder uses len(buf) to detect the v2 format. v2 adds an optional
+// RebuildAddr trailer for start_rebuild commands so the replica knows where
+// to connect for the base lane. This keeps start_rebuild atomic — one frame,
+// one decode, no multi-message fragility.
 type SessionControlMsg struct {
-	Epoch     uint64
-	SessionID uint64
-	Command   byte
-	BaseLSN   uint64 // flushed/checkpoint boundary for start_rebuild
-	TargetLSN uint64 // WAL target for start_rebuild
+	Epoch       uint64
+	SessionID   uint64
+	Command     byte
+	BaseLSN     uint64 // flushed/checkpoint boundary for start_rebuild
+	TargetLSN   uint64 // WAL target for start_rebuild
+	RebuildAddr string // optional: primary's rebuild server address (v2 trailer)
 }
 
-// EncodeSessionControl serializes a session control message.
-// Wire: [8B epoch][8B sessionID][1B cmd][8B baseLSN][8B targetLSN] = 33 bytes.
+// EncodeSessionControl serializes a session control message (v1, 33 bytes).
+// For messages with RebuildAddr, use EncodeSessionControlV2 instead.
 func EncodeSessionControl(msg SessionControlMsg) []byte {
 	buf := make([]byte, 33)
 	binary.BigEndian.PutUint64(buf[0:8], msg.Epoch)
@@ -57,18 +61,49 @@ func EncodeSessionControl(msg SessionControlMsg) []byte {
 	return buf
 }
 
+// EncodeSessionControlV2 serializes a session control message with optional
+// RebuildAddr trailer. If RebuildAddr is empty, produces the same 33 bytes as v1.
+// Wire: [33B v1 header][2B addrLen][addrBytes...] where addrLen may be 0.
+func EncodeSessionControlV2(msg SessionControlMsg) []byte {
+	header := EncodeSessionControl(msg)
+	if msg.RebuildAddr == "" {
+		return header
+	}
+	addrBytes := []byte(msg.RebuildAddr)
+	if len(addrBytes) > 65535 {
+		addrBytes = addrBytes[:65535]
+	}
+	buf := make([]byte, 33+2+len(addrBytes))
+	copy(buf, header)
+	binary.BigEndian.PutUint16(buf[33:35], uint16(len(addrBytes)))
+	copy(buf[35:], addrBytes)
+	return buf
+}
+
 // DecodeSessionControl deserializes a session control message.
+// Handles both v1 (33 bytes) and v2 (33 + trailer) formats via len-based detection.
 func DecodeSessionControl(buf []byte) (SessionControlMsg, error) {
 	if len(buf) < 33 {
 		return SessionControlMsg{}, fmt.Errorf("session control: short message (%d bytes)", len(buf))
 	}
-	return SessionControlMsg{
+	msg := SessionControlMsg{
 		Epoch:     binary.BigEndian.Uint64(buf[0:8]),
 		SessionID: binary.BigEndian.Uint64(buf[8:16]),
 		Command:   buf[16],
 		BaseLSN:   binary.BigEndian.Uint64(buf[17:25]),
 		TargetLSN: binary.BigEndian.Uint64(buf[25:33]),
-	}, nil
+	}
+	// v2 trailer: [2B addrLen][addrBytes...]
+	if len(buf) >= 35 {
+		addrLen := int(binary.BigEndian.Uint16(buf[33:35]))
+		if len(buf) < 35+addrLen {
+			return SessionControlMsg{}, fmt.Errorf("session control: trailer truncated (need %d, have %d)", 35+addrLen, len(buf))
+		}
+		if addrLen > 0 {
+			msg.RebuildAddr = string(buf[35 : 35+addrLen])
+		}
+	}
+	return msg, nil
 }
 
 // SessionAckMsg is the wire message for session progress/result.
@@ -289,9 +324,15 @@ func (c *RebuildTransportClient) ReceiveBaseBlocksWithStatus(conn net.Conn) (uin
 	return totalBlocks, achievedLSN, nil
 }
 
-// SendSessionControl sends a session control message on the control connection.
+// SendSessionControl sends a v1 session control message on the control connection.
 func SendSessionControl(conn net.Conn, msg SessionControlMsg) error {
 	return WriteFrame(conn, MsgSessionControl, EncodeSessionControl(msg))
+}
+
+// SendSessionControlV2 sends a v2 session control message with optional
+// RebuildAddr trailer. Atomic: one frame, one decode on the replica side.
+func SendSessionControlV2(conn net.Conn, msg SessionControlMsg) error {
+	return WriteFrame(conn, MsgSessionControl, EncodeSessionControlV2(msg))
 }
 
 // SendSessionAck sends a session ack message on the control connection.

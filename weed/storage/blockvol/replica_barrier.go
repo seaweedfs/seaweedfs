@@ -89,6 +89,11 @@ func (r *ReplicaReceiver) handleSessionControl(conn net.Conn, payload []byte, wr
 			}))
 			return err
 		}
+		// If the primary included a RebuildAddr trailer (v2 session control),
+		// auto-start the base lane client so the replica pulls base blocks.
+		if ctrl.RebuildAddr != "" {
+			go r.runBaseLaneClient(ctrl.SessionID, ctrl.RebuildAddr)
+		}
 		return nil
 	case SessionCmdCancel:
 		if err := r.vol.CancelRebuildSession(ctrl.SessionID, "remote_cancel"); err != nil {
@@ -98,6 +103,27 @@ func (r *ReplicaReceiver) handleSessionControl(conn net.Conn, payload []byte, wr
 	default:
 		return net.InvalidAddrError("unsupported session control command")
 	}
+}
+
+// runBaseLaneClient connects to the primary's rebuild server and pulls base
+// blocks for the active rebuild session. Runs as a background goroutine started
+// by handleSessionControl when the primary includes a RebuildAddr in the v2
+// session control message. On failure, the rebuild session will eventually time
+// out or be cancelled by the primary.
+func (r *ReplicaReceiver) runBaseLaneClient(sessionID uint64, rebuildAddr string) {
+	conn, err := net.DialTimeout("tcp", rebuildAddr, 5*time.Second)
+	if err != nil {
+		log.Printf("replica: base lane dial %s: %v", rebuildAddr, err)
+		return
+	}
+	defer conn.Close()
+	client := NewRebuildTransportClient(r.vol, sessionID)
+	blocks, err := client.ReceiveBaseBlocks(conn)
+	if err != nil {
+		log.Printf("replica: base lane receive from %s: %v", rebuildAddr, err)
+		return
+	}
+	log.Printf("replica: base lane complete from %s: %d blocks", rebuildAddr, blocks)
 }
 
 // handleBarrier waits until all WAL entries up to req.LSN have been received,

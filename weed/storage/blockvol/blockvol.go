@@ -1533,6 +1533,15 @@ func (v *BlockVol) StartRebuildServer(addr string) error {
 	return nil
 }
 
+// RebuildServerAddr returns the listening address of the rebuild server,
+// or empty string if no rebuild server is running.
+func (v *BlockVol) RebuildServerAddr() string {
+	if v.rebuildServer == nil {
+		return ""
+	}
+	return v.rebuildServer.Addr()
+}
+
 // StopRebuildServer stops the rebuild server if running.
 func (v *BlockVol) StopRebuildServer() {
 	if v.rebuildServer != nil {

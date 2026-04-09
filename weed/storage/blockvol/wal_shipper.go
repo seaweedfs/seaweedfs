@@ -28,6 +28,7 @@ const (
 	ReplicaInSync       ReplicaState = 3 // eligible for sync_all barriers
 	ReplicaDegraded     ReplicaState = 4 // transient failure, retry allowed
 	ReplicaNeedsRebuild ReplicaState = 5 // WAL gap too large, rebuild required (CP13-7)
+	ReplicaRebuilding   ReplicaState = 6 // active rebuild session accepted by replica
 )
 
 func (s ReplicaState) String() string {
@@ -44,6 +45,8 @@ func (s ReplicaState) String() string {
 		return "degraded"
 	case ReplicaNeedsRebuild:
 		return "needs_rebuild"
+	case ReplicaRebuilding:
+		return "rebuilding"
 	default:
 		return fmt.Sprintf("unknown(%d)", s)
 	}
@@ -71,7 +74,8 @@ type WALShipper struct {
 	state              atomic.Uint32 // ReplicaState
 	catchupFailures    int           // consecutive catch-up failures; reset on success
 	lastContactTime    atomic.Value  // time.Time: last successful barrier/handshake/catch-up
-	stopped            atomic.Bool
+	stopped              atomic.Bool
+	activeRebuildSession atomic.Bool // true when ReplicaRebuilding AND session confirmed
 
 	// onStateChange is called when the shipper transitions between states.
 	// Used to trigger immediate heartbeat on degradation/recovery.
@@ -127,6 +131,24 @@ func (s *WALShipper) SetLiveShippingPolicy(fn func(replicaID string, entryLSN ui
 	s.liveShippingPolicy = fn
 }
 
+// TransitionState sets the shipper state and fires the onStateChange callback.
+// Used by external coordinators (e.g., RemoteRebuildIO) to drive rebuild state
+// transitions: NeedsRebuild → Rebuilding → InSync, or Rebuilding → NeedsRebuild on failure.
+// Also manages the activeRebuildSession flag: set on entering Rebuilding,
+// cleared on leaving it.
+func (s *WALShipper) TransitionState(to ReplicaState) {
+	from := ReplicaState(s.state.Swap(uint32(to)))
+	// Manage session flag: entering Rebuilding sets it, leaving clears it.
+	if to == ReplicaRebuilding {
+		s.activeRebuildSession.Store(true)
+	} else if from == ReplicaRebuilding {
+		s.activeRebuildSession.Store(false)
+	}
+	if from != to && s.onStateChange != nil {
+		s.onStateChange(from, to)
+	}
+}
+
 const maxCatchupRetries = 3
 
 // NewWALShipper creates a WAL shipper. Connections are established lazily on
@@ -152,19 +174,28 @@ func NewWALShipper(dataAddr, controlAddr string, epochFn func() uint64, walAcces
 // the full reconnect protocol. See design/sync-all-reconnect-protocol.md.
 func (s *WALShipper) Ship(entry *WALEntry) error {
 	st := s.State()
-	// Ship allowed from Disconnected (bootstrap: data must flow before first barrier)
-	// and InSync (steady state). All other states reject.
-	if s.stopped.Load() || (st != ReplicaInSync && st != ReplicaDisconnected) {
+	// Ship allowed from Disconnected (bootstrap), InSync (steady state),
+	// and Rebuilding (live WAL lane during active rebuild session).
+	if s.stopped.Load() || (st != ReplicaInSync && st != ReplicaDisconnected && st != ReplicaRebuilding) {
 		return nil
 	}
-	if s.liveShippingPolicy != nil {
-		if allow, reason := s.liveShippingPolicy(s.replicaID, entry.LSN); !allow {
-			if reason == "" {
-				reason = "live_shipping_blocked"
+	// Rebuilding: session-gated authorization. The state alone is not sufficient —
+	// activeRebuildSession must also be set (confirmed via TransitionState from
+	// an accepted ack). This prevents stale transitions from opening the live lane.
+	if st == ReplicaRebuilding && !s.activeRebuildSession.Load() {
+		return nil
+	}
+	// Protocol-level liveShippingPolicy applies only to non-rebuild states.
+	if st != ReplicaRebuilding {
+		if s.liveShippingPolicy != nil {
+			if allow, reason := s.liveShippingPolicy(s.replicaID, entry.LSN); !allow {
+				if reason == "" {
+					reason = "live_shipping_blocked"
+				}
+				log.Printf("wal_shipper: live ship gated (replica=%s data=%s ctrl=%s lsn=%d reason=%s)",
+					s.replicaID, s.dataAddr, s.controlAddr, entry.LSN, reason)
+				return nil
 			}
-			log.Printf("wal_shipper: live ship gated (replica=%s data=%s ctrl=%s lsn=%d reason=%s)",
-				s.replicaID, s.dataAddr, s.controlAddr, entry.LSN, reason)
-			return nil
 		}
 	}
 	// Fresh or late-attached replicas must consume the retained backlog before
@@ -451,7 +482,7 @@ func (s *WALShipper) HasTransportContact() bool {
 	switch s.State() {
 	case ReplicaDegraded, ReplicaNeedsRebuild:
 		return false
-	case ReplicaConnecting, ReplicaCatchingUp, ReplicaInSync:
+	case ReplicaConnecting, ReplicaCatchingUp, ReplicaInSync, ReplicaRebuilding:
 		return true
 	}
 	if s.ShippedLSN() > 0 {

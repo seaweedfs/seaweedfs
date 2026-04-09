@@ -795,6 +795,197 @@ func TestP4_ShutdownDrain(t *testing.T) {
 
 // --- Rebuild address scoped ---
 
+// ============================================================
+// Probe → rebuild path: component tests for StartRebuildFromProbe
+// and the full handleReplicaProbeResult → recovery chain.
+//
+// These tests close the gap where bugs were only caught on hardware.
+// ============================================================
+
+// TestStartRebuildFromProbe_InstallsSessionAndReachesPlan verifies the new
+// primary-direct rebuild entry point: installSession(SessionRebuild) + startTask.
+// The goroutine must find the session, derive the rebuild address from
+// ReplicationPorts (no assignments), and reach rebuild planning.
+func TestStartRebuildFromProbe_InstallsSessionAndReachesPlan(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	// Write data so the volume has content for rebuild planning.
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	// Set up primary assignment with a replica.
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("expected sender for replica after assignment")
+	}
+
+	// Fire NeedsRebuildObserved (what handleReplicaProbeResult does before calling us).
+	bs.applyCoreEvent(engine.NeedsRebuildObserved{
+		ID:        volPath,
+		ReplicaID: replicaID,
+		Reason:    "gap_exceeds_retained_wal",
+	})
+
+	// Create recovery manager with fake rebuild IO so planning completes.
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	t.Cleanup(func() { rm.Shutdown() })
+
+	rebuildReached := make(chan string, 1)
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if pending != nil && pending.Plan != nil {
+			pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+			select {
+			case rebuildReached <- volumeID:
+			default:
+			}
+		}
+	}
+
+	// Call StartRebuildFromProbe — the method under test.
+	rm.StartRebuildFromProbe(replicaID)
+
+	// 1. Session must be installed.
+	sender = bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after StartRebuildFromProbe")
+	}
+	snap := sender.SessionSnapshot()
+	if snap == nil || !snap.Active || snap.Kind != engine.SessionRebuild {
+		t.Fatalf("session=%+v, want active rebuild session", snap)
+	}
+
+	// 2. Recovery goroutine must reach rebuild planning.
+	select {
+	case vol := <-rebuildReached:
+		if vol != volPath {
+			t.Fatalf("rebuild reached for %s, want %s", vol, volPath)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rebuild planning not reached within 5s")
+	}
+}
+
+// TestStartRebuildFromProbe_DeriveRebuildAddr_NilAssignments verifies that
+// deriveRebuildAddr produces a valid address when assignments are nil,
+// using the ReplicationPorts fallback.
+func TestStartRebuildFromProbe_DeriveRebuildAddr_NilAssignments(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVol(t)
+	rm := bs.v2Recovery
+
+	replicaID := volPath + "/vs2"
+	addr := rm.deriveRebuildAddr(replicaID, nil)
+	if addr == "" {
+		t.Fatal("deriveRebuildAddr with nil assignments returned empty — fallback broken")
+	}
+
+	// The fallback should use the same port as ReplicationPorts.
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	expected := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+	if addr != expected {
+		t.Fatalf("deriveRebuildAddr=%s, want %s", addr, expected)
+	}
+}
+
+// TestHandleReplicaProbeResult_RebuildRequired_FullPath exercises the full
+// probe → NeedsRebuildObserved → StartRebuildFromProbe → recovery chain.
+// This is the integration seam that was previously untested and required
+// hardware runs to find bugs.
+func TestHandleReplicaProbeResult_RebuildRequired_FullPath(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	t.Cleanup(func() { rm.Shutdown() })
+
+	rebuildReached := make(chan string, 1)
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if pending != nil && pending.Plan != nil {
+			pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+			select {
+			case rebuildReached <- volumeID:
+			default:
+			}
+		}
+	}
+
+	// Simulate what the shipper's ProbeReconnect returns.
+	bs.handleReplicaProbeResult(volPath, blockvol.ReplicaProbeResult{
+		ReplicaID:         "vs2", // shipper format, not engine format
+		Outcome:           blockvol.ProbeRebuildRequired,
+		ReplicaFlushedLSN: 0,
+	})
+
+	// 1. Engine should record NeedsRebuild.
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected core projection")
+	}
+	if proj.Recovery.Phase != engine.RecoveryNeedsRebuild {
+		t.Fatalf("recovery.phase=%s, want %s", proj.Recovery.Phase, engine.RecoveryNeedsRebuild)
+	}
+
+	// 2. Rebuild session should be installed.
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after probe result")
+	}
+	snap := sender.SessionSnapshot()
+	if snap == nil || !snap.Active || snap.Kind != engine.SessionRebuild {
+		t.Fatalf("session=%+v, want active rebuild", snap)
+	}
+
+	// 3. Recovery goroutine should reach planning.
+	select {
+	case vol := <-rebuildReached:
+		if vol != volPath {
+			t.Fatalf("rebuild for %s, want %s", vol, volPath)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("rebuild planning not reached within 5s")
+	}
+}
+
 func TestP4_RebuildAddrScoped(t *testing.T) {
 	bs, _ := createTestBlockServiceWithVol(t)
 	rm := bs.v2Recovery

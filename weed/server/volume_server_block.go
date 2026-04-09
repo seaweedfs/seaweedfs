@@ -1420,9 +1420,11 @@ func (bs *BlockService) handleReplicaProbeResult(path string, r blockvol.Replica
 				ReplicaID: engineReplicaID,
 				Reason:    "gap_exceeds_retained_wal",
 			})
-			// Start the rebuild through the existing recovery manager.
+			// Install rebuild session then start recovery. No fake
+			// assignment needed — deriveRebuildAddr computes the address
+			// from ReplicationPorts.
 			if bs.v2Recovery != nil {
-				bs.v2Recovery.StartRecoveryTask(engineReplicaID, bs.lastAssignmentsForPath(path))
+				bs.v2Recovery.StartRebuildFromProbe(engineReplicaID)
 			}
 		}
 
