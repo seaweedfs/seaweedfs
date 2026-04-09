@@ -186,6 +186,53 @@ func TestPutGetUserPolicyPreservesStatements(t *testing.T) {
 	assert.True(t, deleteObjectFound, "s3:DeleteObject action was lost")
 }
 
+// TestPutGetUserPolicyIssue9008 is a regression test for
+// https://github.com/seaweedfs/seaweedfs/issues/9008: put-user-policy followed
+// by get-user-policy must return the same policy document that was submitted,
+// with Action and Resource lists intact (no duplication, no collapsing).
+func TestPutGetUserPolicyIssue9008(t *testing.T) {
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	policyJSON := `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"]
+    }]
+  }`
+
+	iama := &IamApiServer{s3ApiConfig: &mockIamS3ApiConfig{}}
+	_, iamErr := iama.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"steward_policy"},
+		"PolicyDocument": []string{policyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	resp, iamErr := iama.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	assert.Equal(t, "2012-10-17", got.Version)
+	assert.Equal(t, 1, len(got.Statement))
+	stmt := got.Statement[0]
+	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
+
+	// Actions must match exactly what was submitted: no duplication, no
+	// collapsing to wildcards.
+	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
+
+	// Both resources must be preserved.
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+}
+
 func TestMultipleInlinePoliciesAggregateActions(t *testing.T) {
 	s3cfg := &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{{Name: "alice"}},

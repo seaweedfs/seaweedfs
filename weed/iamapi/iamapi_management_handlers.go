@@ -458,17 +458,34 @@ func (iama *IamApiServer) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values
 
 		policyDocument := policy_engine.PolicyDocument{Version: policyDocumentVersion}
 		statements := make(map[string][]string)
+		seenAction := make(map[string]map[string]bool)
 		for _, action := range ident.Actions {
-			// parse "Read:EXAMPLE-BUCKET"
-			act := strings.Split(action, ":")
+			// parse "Read:EXAMPLE-BUCKET" or "Read:EXAMPLE-BUCKET/prefix/*"
+			// Use SplitN so the path component (which may contain ':') is preserved intact.
+			act := strings.SplitN(action, ":", 2)
 
 			resource := "*"
 			if len(act) == 2 {
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+				// If the path already refers to objects (contains '/'), use it as-is.
+				// Otherwise it's a bare bucket pattern; append "/*" to scope to objects.
+				if strings.Contains(act[1], "/") {
+					resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
+				} else {
+					resource = fmt.Sprintf("arn:aws:s3:::%s/*", act[1])
+				}
 			}
-			statements[resource] = append(statements[resource],
-				fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0])),
-			)
+			s3Action := fmt.Sprintf("s3:%s", MapToIdentitiesAction(act[0]))
+			// Dedupe actions per resource: the Read/Write/List internal verbs map to
+			// coarse wildcards (s3:Get*, s3:Put*, s3:List*), so multiple distinct
+			// original actions can collapse to the same reconstructed verb.
+			if seenAction[resource] == nil {
+				seenAction[resource] = make(map[string]bool)
+			}
+			if seenAction[resource][s3Action] {
+				continue
+			}
+			seenAction[resource][s3Action] = true
+			statements[resource] = append(statements[resource], s3Action)
 		}
 		for resource, actions := range statements {
 			isEqAction := false
