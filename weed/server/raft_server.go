@@ -294,7 +294,13 @@ func recoverTopologyIdFromSnapshot(dataDir string, topo *topology.Topology) {
 // indicating this server was previously joined and does not need a new
 // JoinCommand on startup.
 func (s *RaftServer) HasExistingState() bool {
-	return s.raftServer != nil && !s.raftServer.IsLogEmpty()
+	if s.raftServer != nil {
+		return !s.raftServer.IsLogEmpty()
+	}
+	if s.RaftHashicorp != nil {
+		return s.RaftHashicorp.AppliedIndex() > 0
+	}
+	return false
 }
 
 func (s *RaftServer) DoJoinCommand() {
