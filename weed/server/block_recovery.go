@@ -862,22 +862,56 @@ func (rm *RecoveryManager) buildRemoteRebuildIO(replicaID, volPath, rebuildAddr 
 		Epoch:           epoch,
 		SessionID:       sessionID,
 		OnAck: func(ack blockvol.SessionAckMsg) error {
-			err := bs.ObserveReplicaRebuildSessionAck(volPath, replicaID, ack)
-			// On completion, store the replica's achieved LSN so
-			// readRebuildStatus uses the replica's proof, not the primary's vol.
-			if err == nil && ack.Phase == blockvol.SessionAckCompleted {
-				achieved := ack.AchievedLSN
-				if achieved == 0 {
-					achieved = ack.WALAppliedLSN
+			// Emit engine events directly. The remote coordinator owns the
+			// session — no sender registry lookup needed. This avoids the
+			// "sender not found" failure when the registry is reconciled
+			// between session install and ack arrival.
+			if bs == nil || bs.v2Core == nil {
+				return nil
+			}
+			achieved := ack.AchievedLSN
+			if achieved == 0 {
+				achieved = ack.WALAppliedLSN
+			}
+			switch ack.Phase {
+			case blockvol.SessionAckAccepted:
+				// No engine event needed — shipper transition handled by caller.
+			case blockvol.SessionAckRunning, blockvol.SessionAckBaseComplete:
+				if achieved > 0 {
+					bs.applyCoreEvent(engine.SessionProgressObserved{
+						ID:          volPath,
+						ReplicaID:   replicaID,
+						Kind:        engine.SessionRebuild,
+						AchievedLSN: achieved,
+					})
 				}
+			case blockvol.SessionAckCompleted:
+				// Store achieved LSN for OnRebuildCompleted (skip local vol read).
 				rm.mu.Lock()
 				if rm.remoteRebuildAchieved == nil {
 					rm.remoteRebuildAchieved = make(map[string]uint64)
 				}
 				rm.remoteRebuildAchieved[replicaID] = achieved
 				rm.mu.Unlock()
+				bs.applyCoreEvent(engine.SessionCompleted{
+					ID:          volPath,
+					ReplicaID:   replicaID,
+					Kind:        engine.SessionRebuild,
+					AchievedLSN: achieved,
+				})
+			case blockvol.SessionAckFailed:
+				reason := "rebuild_failed"
+				if ack.BaseComplete {
+					reason = "rebuild_failed_post_base"
+				}
+				bs.applyCoreEvent(engine.SessionFailed{
+					ID:        volPath,
+					ReplicaID: replicaID,
+					Kind:      engine.SessionRebuild,
+					Reason:    reason,
+				})
 			}
-			return err
+			return nil
 		},
 		TransitionShipper: func(state blockvol.ReplicaState) {
 			if shipperRef != nil {

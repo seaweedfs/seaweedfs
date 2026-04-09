@@ -217,9 +217,18 @@ func (s *RebuildSession) MarkBaseComplete(totalBlocks uint64) {
 	if s.phase == RebuildPhaseRunning {
 		s.phase = RebuildPhaseBaseComplete
 	}
+	// When BaseLSN == TargetLSN, the base image covers all data — no WAL
+	// tail needed. Auto-satisfy the WAL condition so TryComplete succeeds
+	// immediately after base transfer.
+	if s.config.BaseLSN == s.config.TargetLSN && s.walAppliedLSN < s.config.TargetLSN {
+		s.walAppliedLSN = s.config.TargetLSN
+	}
 	ack := s.sessionAckLocked()
 	s.mu.Unlock()
 	s.vol.emitRebuildSessionAck(ack)
+	// Try to complete immediately — covers the BaseLSN == TargetLSN case
+	// where no WAL entries will arrive.
+	s.TryComplete()
 }
 
 // TryComplete checks if both completion conditions are met:

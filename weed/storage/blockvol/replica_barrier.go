@@ -67,6 +67,8 @@ func (r *ReplicaReceiver) handleSessionControl(conn net.Conn, payload []byte, wr
 	}
 	switch ctrl.Command {
 	case SessionCmdStartRebuild:
+		log.Printf("replica: handleSessionControl start_rebuild session=%d epoch=%d base=%d target=%d rebuildAddr=%q",
+			ctrl.SessionID, ctrl.Epoch, ctrl.BaseLSN, ctrl.TargetLSN, ctrl.RebuildAddr)
 		r.vol.SetOnRebuildSessionAck(func(ack SessionAckMsg) {
 			if ack.SessionID != ctrl.SessionID {
 				return
@@ -111,12 +113,26 @@ func (r *ReplicaReceiver) handleSessionControl(conn net.Conn, payload []byte, wr
 // session control message. On failure, the rebuild session will eventually time
 // out or be cancelled by the primary.
 func (r *ReplicaReceiver) runBaseLaneClient(sessionID uint64, rebuildAddr string) {
+	log.Printf("replica: base lane client starting session=%d addr=%s", sessionID, rebuildAddr)
 	conn, err := net.DialTimeout("tcp", rebuildAddr, 5*time.Second)
 	if err != nil {
 		log.Printf("replica: base lane dial %s: %v", rebuildAddr, err)
 		return
 	}
 	defer conn.Close()
+
+	// Send rebuild request so the RebuildServer dispatches to ServeBaseBlocks.
+	epoch := r.vol.Epoch()
+	req := RebuildRequest{
+		Type:    RebuildSessionBase,
+		Epoch:   epoch,
+		FromLSN: 0, // full base
+	}
+	if err := WriteFrame(conn, MsgRebuildReq, EncodeRebuildRequest(req)); err != nil {
+		log.Printf("replica: base lane send request to %s: %v", rebuildAddr, err)
+		return
+	}
+
 	client := NewRebuildTransportClient(r.vol, sessionID)
 	blocks, err := client.ReceiveBaseBlocks(conn)
 	if err != nil {
