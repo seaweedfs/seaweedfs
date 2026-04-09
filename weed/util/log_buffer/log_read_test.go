@@ -61,7 +61,7 @@ func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 	defer logBuffer.ShutdownLogBuffer()
 
 	callCount := 0
-	maxCalls := 10
+	maxCalls := 4
 	mu := sync.Mutex{}
 
 	waitForDataFn := func() bool {
@@ -87,14 +87,12 @@ func TestLoopProcessLogDataWithOffset_EmptyBuffer(t *testing.T) {
 		t.Errorf("Expected isDone=true when waitForDataFn returns false, got false")
 	}
 
-	// With 10ms sleep per iteration, 10 iterations should take ~100ms minimum
-	minExpectedTime := time.Duration(maxCalls-1) * 10 * time.Millisecond
+	minExpectedTime := time.Duration(maxCalls-1) * notificationHealthCheckInterval
 	if elapsed < minExpectedTime {
 		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests busy-waiting)", elapsed, minExpectedTime)
 	}
 
-	// But shouldn't take more than 2x expected (allows for some overhead)
-	maxExpectedTime := time.Duration(maxCalls) * 30 * time.Millisecond
+	maxExpectedTime := time.Duration(maxCalls+1) * notificationHealthCheckInterval
 	if elapsed > maxExpectedTime {
 		t.Errorf("Loop took too long: %v (expected < %v)", elapsed, maxExpectedTime)
 	}
@@ -122,7 +120,7 @@ func TestLoopProcessLogDataWithOffset_NoDataResumeFromDisk(t *testing.T) {
 	defer logBuffer.ShutdownLogBuffer()
 
 	callCount := 0
-	maxCalls := 5
+	maxCalls := 3
 	mu := sync.Mutex{}
 
 	waitForDataFn := func() bool {
@@ -148,10 +146,9 @@ func TestLoopProcessLogDataWithOffset_NoDataResumeFromDisk(t *testing.T) {
 		t.Errorf("Expected isDone=true when waitForDataFn returns false, got false")
 	}
 
-	// Should take at least (maxCalls-1) * 10ms due to sleep in ResumeFromDiskError path
-	minExpectedTime := time.Duration(maxCalls-1) * 10 * time.Millisecond
+	minExpectedTime := time.Duration(maxCalls-1) * notificationHealthCheckInterval
 	if elapsed < minExpectedTime {
-		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests missing sleep)", elapsed, minExpectedTime)
+		t.Errorf("Loop exited too quickly (%v), expected at least %v (suggests missing wait)", elapsed, minExpectedTime)
 	}
 
 	t.Logf("Loop exited cleanly in %v after %d iterations (proper sleep detected)", elapsed, callCount)

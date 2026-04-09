@@ -515,6 +515,12 @@ func (logBuffer *LogBuffer) loopFlush() {
 				logBuffer.lastFlushTsNs.Store(d.stopTime.UnixNano())
 			}
 
+			// Wake readers that may be waiting to retry disk reads after the flush lands.
+			if logBuffer.notifyFn != nil {
+				logBuffer.notifyFn()
+			}
+			logBuffer.notifySubscribers()
+
 			// Signal completion if there's a callback channel
 			if d.done != nil {
 				close(d.done)
