@@ -75,12 +75,5 @@ func (ui *BaseUIProvider) ApplyTaskConfig(config types.TaskConfig) error {
 	return ui.applyTaskConfigFunc(config)
 }
 
-// CommonConfigGetter provides a common pattern for getting current configuration
-type CommonConfigGetter[T any] struct {
-	defaultConfig T
-	detectorFunc  func() T
-	schedulerFunc func() T
-}
-
 // RegisterUIFunc provides a common registration function signature
 type RegisterUIFunc[D, S any] func(uiRegistry *types.UIRegistry, detector D, scheduler S)
