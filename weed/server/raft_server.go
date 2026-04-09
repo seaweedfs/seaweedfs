@@ -298,7 +298,7 @@ func (s *RaftServer) HasExistingState() bool {
 		return !s.raftServer.IsLogEmpty()
 	}
 	if s.RaftHashicorp != nil {
-		return s.RaftHashicorp.AppliedIndex() > 0
+		return s.RaftHashicorp.LastIndex() > 0
 	}
 	return false
 }
