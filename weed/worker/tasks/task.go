@@ -1,27 +1,9 @@
 package tasks
 
 import (
-	"sync"
-	"time"
-
 	"github.com/seaweedfs/seaweedfs/weed/pb/worker_pb"
 	"github.com/seaweedfs/seaweedfs/weed/worker/types"
 )
-
-// BaseTask provides common functionality for all tasks
-type BaseTask struct {
-	taskType          types.TaskType
-	taskID            string
-	progress          float64
-	cancelled         bool
-	mutex             sync.RWMutex
-	startTime         time.Time
-	estimatedDuration time.Duration
-	logger            TaskLogger
-	loggerConfig      TaskLoggerConfig
-	progressCallback  func(float64, string) // Callback function for progress updates
-	currentStage      string                // Current stage description
-}
 
 // UnsupportedTaskTypeError represents an error for unsupported task types
 type UnsupportedTaskTypeError struct {
