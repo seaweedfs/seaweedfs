@@ -116,6 +116,11 @@ func (s *WALShipper) DataAddr() string {
 	return s.dataAddr
 }
 
+// CtrlAddr returns the shipper's configured control channel address.
+func (s *WALShipper) CtrlAddr() string {
+	return s.controlAddr
+}
+
 // SetLiveShippingPolicy installs a host-provided gate for current live-tail
 // shipping. The callback is consulted before any network dial or send occurs.
 func (s *WALShipper) SetLiveShippingPolicy(fn func(replicaID string, entryLSN uint64) (allow bool, reason string)) {
