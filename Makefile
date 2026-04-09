@@ -1,4 +1,4 @@
-.PHONY: test admin-generate admin-build admin-clean admin-dev admin-run admin-test admin-fmt admin-help weed-commands templ_install
+.PHONY: test admin-generate admin-build admin-clean admin-dev admin-run admin-test admin-fmt admin-help weed-commands
 
 BINARY = weed
 ADMIN_DIR = weed/admin
@@ -16,9 +16,6 @@ weed-commands:
 
 warp_install:
 	go install github.com/minio/warp@v0.7.6
-
-templ_install:
-	go install github.com/a-h/templ/cmd/templ@v0.3.977
 
 full_install: admin-generate
 	cd weed; go install -tags "elastic gocdk sqlite ydb tarantool tikv rclone"
@@ -44,9 +41,8 @@ test: admin-generate
 	cd weed; go test -tags "elastic gocdk sqlite ydb tarantool tikv rclone" -v ./...
 
 # Admin component targets
-admin-generate: templ_install
-	@echo "Generating admin component templates..."
-	@cd $(ADMIN_DIR) && templ generate ./view
+admin-generate:
+	@cd $(ADMIN_DIR) && $(MAKE) generate
 
 admin-build: admin-generate
 	@echo "Building admin component..."
