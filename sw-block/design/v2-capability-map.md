@@ -405,6 +405,31 @@ Primary proof tiers:
 | 7 | Product surfaces | CSI and frontend projection of V2 truth | integrated |
 | 8 | Launch envelope | bounded support and rollout claims | integrated + soak |
 
+## Matrix Linkage
+
+Use the three active documents in a fixed order:
+
+1. protocol docs define the rule
+2. this capability map defines which product tier owns the rule
+3. `v2-validation-matrix.md` defines what must be proven for closure
+4. `v2-integration-matrix.md` defines which real scenarios exercise the path
+
+The goal is to make the chain explicit:
+
+`protocol -> capability tier -> validation rows -> integration rows`
+
+| Tier | Primary protocol refs | Validation rows | Integration rows | Practical meaning |
+|------|------------------------|-----------------|------------------|-------------------|
+| 0 | `v2-protocol-truths.md`, `v2-sync-recovery-protocol.md` | `V4`, `V5`, `V14` | feeds `I-V1` through `I-V6` | pure semantic truth and fail-closed rules |
+| 1 | `v2-protocol-truths.md` | `V1` | `I-V1` | single-volume and bootstrap correctness |
+| 2 | `v2-sync-recovery-protocol.md` | `V1`, `V2`, `V4` | `I-V1`, `I-V2` | RF=2 replication base and barrier/publication closure |
+| 3 | `v2-sync-recovery-protocol.md`, `v2-rebuild-mvp-session-protocol.md` | `R1`-`R12`, `V3`, `V6`, `V7`, `V8`, `V11` | `I-R1`-`I-R8`, `I-V3`, `I-V4`, `I-V5` | recovery, rebuild, failover, and rejoin |
+| 4 | `v2-sync-recovery-protocol.md` | `V9`, `V10` | future `RF>=3` integrated rows | aggregate multi-replica projection and durability semantics |
+| 5 | `v2-rebuild-mvp-session-protocol.md`, snapshot/restore execution docs | `S1`-`S10` | `I-S1`-`I-S4` | snapshot, restore, and lifecycle operations |
+| 6 | `v2-automata-ownership-map.md`, `v2-protocol-claim-and-evidence.md` | `V8`, `V12`, `V13` | `I-V4`, `I-V6` | control-plane truth, observability, and operator surfaces |
+| 7 | product-surface and rollout docs | `V1`, `V2`, `V12`, `V13` | runner scenarios and product e2e packs | CSI/frontend projection of V2 truth |
+| 8 | rollout/support docs | stage-gate summaries in validation matrix | chaos/perf rows `I-C1`-`I-C4`, `I-P1`-`I-P3` | bounded launch envelope and operational confidence |
+
 ## Test Expansion Strategy From This Map
 
 This map should drive testing in a faster order than "one expensive scenario at a time."

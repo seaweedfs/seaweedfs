@@ -88,8 +88,9 @@ func TestRegistry_ListByServer(t *testing.T) {
 func TestRegistry_UpdateFullHeartbeat(t *testing.T) {
 	r := NewBlockVolumeRegistry()
 	// Register two volumes on server s1.
-	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusPending})
-	r.Register(&BlockVolumeEntry{Name: "vol2", VolumeServer: "s1", Path: "/v2.blk", Status: StatusPending})
+	pastGrace := time.Now().Add(-60 * time.Second)
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusPending, RegisteredAt: pastGrace})
+	r.Register(&BlockVolumeEntry{Name: "vol2", VolumeServer: "s1", Path: "/v2.blk", Status: StatusPending, RegisteredAt: pastGrace})
 
 	// Full heartbeat reports only vol1 (vol2 is stale).
 	r.UpdateFullHeartbeat("s1", []*master_pb.BlockVolumeInfoMessage{
@@ -127,7 +128,7 @@ func TestRegistry_UpdateFullHeartbeatWithInventoryAuthority_NonAuthoritativeEmpt
 
 func TestRegistry_UpdateFullHeartbeatWithInventoryAuthority_AuthoritativeEmptyStillDeletes(t *testing.T) {
 	r := NewBlockVolumeRegistry()
-	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusActive})
+	r.Register(&BlockVolumeEntry{Name: "vol1", VolumeServer: "s1", Path: "/v1.blk", Status: StatusActive, RegisteredAt: time.Now().Add(-60 * time.Second)})
 
 	r.UpdateFullHeartbeatWithInventoryAuthority("s1", nil, "", true)
 
@@ -3204,5 +3205,60 @@ func TestRegistry_UpdateFullHeartbeat_EngineProjectionModePreservedOnNewPrimaryW
 	}
 	if entry.EngineProjectionMode != "degraded" {
 		t.Fatalf("EngineProjectionMode=%q, want %q from new primary", entry.EngineProjectionMode, "degraded")
+	}
+}
+
+func TestRegistry_StaleCleanup_SkipsRecentlyRegisteredEntry(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1:8080")
+
+	// Register a volume — RegisteredAt is set automatically.
+	if err := r.Register(&BlockVolumeEntry{
+		Name:         "vol-grace",
+		VolumeServer: "vs1:8080",
+		Path:         "/blocks/vol-grace.blk",
+		Status:       StatusActive,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Authoritative heartbeat from vs1 that does NOT report this volume.
+	// Without grace period, this would delete the entry.
+	r.UpdateFullHeartbeatWithInventoryAuthority("vs1:8080", nil, "", true)
+
+	// Entry should survive — it was just registered.
+	entry, ok := r.Lookup("vol-grace")
+	if !ok {
+		t.Fatal("recently registered entry was deleted by stale cleanup — grace period not working")
+	}
+	if entry.Name != "vol-grace" {
+		t.Fatalf("entry name=%q, want vol-grace", entry.Name)
+	}
+}
+
+func TestRegistry_StaleCleanup_DeletesOldUnreportedEntry(t *testing.T) {
+	r := NewBlockVolumeRegistry()
+	r.MarkBlockCapable("vs1:8080")
+
+	// Register a volume with RegisteredAt in the past (beyond grace period).
+	if err := r.Register(&BlockVolumeEntry{
+		Name:         "vol-stale",
+		VolumeServer: "vs1:8080",
+		Path:         "/blocks/vol-stale.blk",
+		Status:       StatusActive,
+		Role:         blockvol.RoleToWire(blockvol.RolePrimary),
+		RegisteredAt: time.Now().Add(-60 * time.Second), // 60s ago, past grace
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Authoritative heartbeat without this volume.
+	r.UpdateFullHeartbeatWithInventoryAuthority("vs1:8080", nil, "", true)
+
+	// Entry should be deleted — it's old and not reported.
+	_, ok := r.Lookup("vol-stale")
+	if ok {
+		t.Fatal("old unreported entry survived stale cleanup — grace period should not protect it")
 	}
 }

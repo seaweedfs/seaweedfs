@@ -230,6 +230,34 @@ func (sg *ShipperGroup) MinRecoverableFlushedLSN() (uint64, bool) {
 	return min, found
 }
 
+// MinShippedLSN returns the minimum shippedLSN across all active shippers
+// (not NeedsRebuild). This is the Ceph-model retention watermark: the flusher
+// must not recycle WAL entries past the slowest active shipper's shipped
+// position, because those entries are needed for catch-up if the shipper
+// degrades during sustained async writes.
+//
+// Returns (0, false) if no shipper has shipped anything yet.
+func (sg *ShipperGroup) MinShippedLSN() (uint64, bool) {
+	sg.mu.RLock()
+	defer sg.mu.RUnlock()
+	var min uint64
+	found := false
+	for _, s := range sg.shippers {
+		if s.State() == ReplicaNeedsRebuild {
+			continue
+		}
+		lsn := s.ShippedLSN()
+		if lsn == 0 {
+			continue // hasn't shipped yet — don't pin at 0
+		}
+		if !found || lsn < min {
+			min = lsn
+			found = true
+		}
+	}
+	return min, found
+}
+
 // RetentionBudgetParams holds the inputs for retention budget evaluation.
 type RetentionBudgetParams struct {
 	Timeout        time.Duration

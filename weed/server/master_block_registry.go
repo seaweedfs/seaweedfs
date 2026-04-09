@@ -111,6 +111,12 @@ type BlockVolumeEntry struct {
 	LastLeaseGrant time.Time
 	LeaseTTL       time.Duration
 
+	// Registration race protection: the time this entry was created/registered
+	// by the master. Stale cleanup skips recently registered entries to allow
+	// the volume server time to discover the volume and include it in its
+	// next heartbeat inventory.
+	RegisteredAt time.Time
+
 	// CP11A-2: Coordinated expand tracking.
 	ExpandInProgress  bool
 	ExpandFailed      bool // true = primary committed but replica(s) failed; size suppressed
@@ -424,6 +430,9 @@ func (r *BlockVolumeRegistry) Register(entry *BlockVolumeEntry) error {
 	if _, ok := r.volumes[entry.Name]; ok {
 		return fmt.Errorf("block volume %q already registered", entry.Name)
 	}
+	if entry.RegisteredAt.IsZero() {
+		entry.RegisteredAt = time.Now()
+	}
 	entry.recomputeReplicaState()
 	r.volumes[entry.Name] = entry
 	r.addToServer(entry.VolumeServer, entry.Name)
@@ -640,6 +649,14 @@ func (r *BlockVolumeRegistry) UpdateFullHeartbeatWithInventoryAuthority(server s
 						if entry.ExpandInProgress {
 							glog.Warningf("block registry: skipping stale-cleanup for %q (ExpandInProgress=true, server=%s)",
 								name, server)
+							continue
+						}
+						// Registration race protection: skip recently registered entries.
+						// The VS may not have discovered the volume yet. Grace period
+						// of 30s (> 2 heartbeat intervals) prevents premature deletion.
+						if !entry.RegisteredAt.IsZero() && time.Since(entry.RegisteredAt) < 30*time.Second {
+							glog.V(0).Infof("block registry: skipping stale-cleanup for %q (registered %v ago, grace period)",
+								name, time.Since(entry.RegisteredAt).Round(time.Second))
 							continue
 						}
 						delete(r.volumes, name)

@@ -211,13 +211,13 @@ func CreateBlockVol(path string, opts CreateOptions, cfgs ...BlockVolConfig) (*B
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
 		BatchIO:  bio,
-		// CP13-6: replica-aware WAL retention.
-		RetentionFloorFn: func() (uint64, bool) {
-			if v.shipperGroup == nil {
-				return 0, false
-			}
-			return v.shipperGroup.MinRecoverableFlushedLSN()
-		},
+		// No keepup WAL retention: flusher recycles freely. If a replica
+		// falls behind and WAL entries are recycled, it escalates to
+		// NeedsRebuild — the correct outcome. Catch-up from extent via
+		// the LBA dirty map (V2) will eliminate this tension entirely.
+		// Session-only WAL pins (for active rebuild/catch-up) are handled
+		// separately by SetV2RetentionFloor.
+		RetentionFloorFn: nil,
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
 				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
@@ -340,17 +340,13 @@ func OpenBlockVol(path string, cfgs ...BlockVolConfig) (*BlockVol, error) {
 		Interval: cfg.FlushInterval,
 		Metrics:  v.Metrics,
 		BatchIO:  bio,
-		RetentionFloorFn: func() (uint64, bool) {
-			if v.shipperGroup == nil {
-				return 0, false
-			}
-			return v.shipperGroup.MinRecoverableFlushedLSN()
-		},
+		// No keepup WAL retention (same as CreateBlockVol path).
+		RetentionFloorFn: nil,
 		EvaluateRetentionBudgetsFn: func() {
 			if v.shipperGroup != nil {
 				v.shipperGroup.EvaluateRetentionBudgets(RetentionBudgetParams{
 					Timeout:        walRetentionTimeout,
-					MaxBytes:       0, // CP13-6 max-bytes disabled: uses replicaFlushedLSN which can't advance without barrier; v2 will replace with negotiated recovery protocol
+					MaxBytes:       0, // CP13-6 max-bytes disabled
 					PrimaryHeadLSN: v.nextLSN.Load() - 1,
 					BlockSize:      v.super.BlockSize,
 				})

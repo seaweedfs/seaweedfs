@@ -73,6 +73,28 @@ Do not reuse tests that encode V1.5 semantics that V2 intentionally removed:
 | `Restore Ready` | exact base restore and snapshot-tail recovery are safe and exact | snapshot boundary, integrity, partial-failure safety, tail convergence |
 | `V2 Ready` | primary-owned assignment/session/projection semantics close on real flows | bootstrap, keepup, catchup, rebuild, failover, rejoin, publish gating |
 
+## Matrix Linkage
+
+Read this matrix together with:
+
+1. `v2-capability-map.md` for ownership of the capability tier
+2. `v2-integration-matrix.md` for real scenario coverage
+
+This matrix answers "is the capability closed at all?" It does not by itself
+guarantee that enough real topology/workload/failure scenarios have been
+exercised. That second question belongs to the integration matrix.
+
+| Validation rows | Capability tier | Primary protocol refs | Main integration refs |
+|---|---|---|---|
+| `R1`-`R12` | Tier 3: RF=2 Recovery And Failover | `v2-sync-recovery-protocol.md`, `v2-rebuild-mvp-session-protocol.md` | `I-R1`-`I-R8` |
+| `S1`-`S10` | Tier 5: Lifecycle Capability | `v2-rebuild-mvp-session-protocol.md` and snapshot/restore execution rules | `I-S1`-`I-S4` |
+| `V1`-`V2` | Tier 2: RF=2 Replication Base | `v2-sync-recovery-protocol.md` | `I-V1`, `I-V2` |
+| `V3`-`V8` | Tier 3: RF=2 Recovery And Failover | `v2-sync-recovery-protocol.md`, `v2-rebuild-mvp-session-protocol.md` | `I-V3`, `I-V4`, `I-V5` |
+| `V9`-`V10` | Tier 4: Multi-Replica Runtime (`RF>=3`) | `v2-sync-recovery-protocol.md` | future RF>=3 integrated rows; currently bounded engine/component proof only |
+| `V11` | Tier 3 / Tier 8 boundary | recovery protocol plus launch-envelope disturbance claims | `I-V5` |
+| `V12`-`V13` | Tier 6: Control Plane And Operations | ownership / observability docs and control-plane protocol surfaces | `I-V4`, `I-V6` |
+| `V14` | Tier 0: Semantic Foundation | `v2-protocol-truths.md`, `v2-sync-recovery-protocol.md` | exercised across `I-V*` and negative component packs |
+
 ## Matrix A: Rebuild Ready
 
 | ID | Priority | Scenario | Trigger / entry | Reuse | Main proof | Final validation | Coverage | File | Evidence |

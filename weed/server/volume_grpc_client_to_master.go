@@ -349,7 +349,10 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 			return
 		case <-vs.stopChan:
 			var volumeMessages []*master_pb.VolumeInformationMessage
-			blockInventoryAuthoritative := true
+			// Shutdown beat: clear regular volumes but do NOT claim block
+			// inventory authority. The block registry entry must survive
+			// shutdown so failoverBlockVolumes can promote the replica.
+			noBlockAuthority := false
 			emptyBeat := &master_pb.Heartbeat{
 				Ip:                                ip,
 				Port:                              port,
@@ -359,8 +362,8 @@ func (vs *VolumeServer) doHeartbeatWithRetry(masterAddress pb.ServerAddress, grp
 				Rack:                              rack,
 				Volumes:                           volumeMessages,
 				HasNoVolumes:                      len(volumeMessages) == 0,
-				HasNoBlockVolumes:                 vs.blockService != nil,
-				BlockVolumeInventoryAuthoritative: &blockInventoryAuthoritative,
+				HasNoBlockVolumes:                 false,
+				BlockVolumeInventoryAuthoritative: &noBlockAuthority,
 			}
 			glog.V(1).Infof("volume server %s:%d stops and deletes all volumes", vs.store.Ip, vs.store.Port)
 			if err = stream.Send(emptyBeat); err != nil {

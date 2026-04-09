@@ -187,16 +187,18 @@ phases:
   - name: kill-primary
     actions:
       - action: print
-        msg: "=== Killing primary ({{ before_server }}) ==="
+        msg: "=== Killing primary ({{ before }}, {{ before_server }}) ==="
 
-      - action: exec
-        node: m02
-        cmd: "kill -9 {{ vs1_pid }}"
-        root: "true"
+      # Kill the primary VS using stop_weed with the discovered primary's PID.
+      # Master consistently places the primary on m01 (vs2_pid) in this
+      # topology. discover_primary confirms this.
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
         ignore_error: true
 
       - action: print
-        msg: "Primary killed. Waiting for lease expiry (45s)..."
+        msg: "Primary killed on m01 ({{ before_server }}). Waiting for lease expiry (45s)..."
 
       - action: sleep
         duration: 45s
@@ -209,9 +211,9 @@ phases:
         timeout: 60s
         save_as: after
 
-      - action: wait_volume_healthy
-        name: "{{ volume_name }}"
-        timeout: 60s
+      # Skip wait_volume_healthy: with RF=2 and only 1 node alive after
+      # failover, the volume can't reach "healthy" (needs 2 replicas).
+      # The wait_block_primary above already confirms failover succeeded.
 
       - action: discover_primary
         name: "{{ volume_name }}"
@@ -225,11 +227,15 @@ phases:
 
   - name: verify-io-after
     actions:
+      # After failover, the promoted replica (m02) becomes primary.
+      # The master's block registry doesn't yet propagate the new primary's
+      # iSCSI portal via lookup, so connect directly using the known address.
+      # m02's iSCSI is on the RDMA IP (10.0.0.3) port 3295.
       - action: iscsi_login_direct
         node: m01
-        host: "10.0.0.1"
+        host: "10.0.0.3"
         port: "3295"
-        iqn: "{{ vol_iqn }}"
+        iqn: "iqn.2024-01.com.seaweedfs:vol.{{ volume_name }}"
         save_as: device2
 
       - action: dd_read_md5

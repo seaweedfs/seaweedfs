@@ -76,6 +76,18 @@ func assertEqual(ctx context.Context, actx *tr.ActionContext, act tr.Action) (ma
 	actual := act.Params["actual"]
 	expected := act.Params["expected"]
 
+	// Reject empty strings — prevents false positives when an upstream action
+	// failed silently and returned empty. "" == "" would hide real failures.
+	if actual == "" && expected == "" {
+		return nil, fmt.Errorf("assert_equal: both actual and expected are empty — likely upstream action failure")
+	}
+	if actual == "" {
+		return nil, fmt.Errorf("assert_equal: actual is empty (expected %q) — likely upstream action failure", expected)
+	}
+	if expected == "" {
+		return nil, fmt.Errorf("assert_equal: expected is empty (actual %q) — likely upstream action failure", actual)
+	}
+
 	if actual != expected {
 		return nil, fmt.Errorf("assert_equal: %q != %q", actual, expected)
 	}

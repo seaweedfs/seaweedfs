@@ -196,6 +196,11 @@ func (ms *MasterServer) failoverBlockVolumes(deadServer string) {
 	}
 	ms.blockRegistry.FailoversTotal.Add(1)
 	entries := ms.blockRegistry.ListByServer(deadServer)
+	glog.V(0).Infof("failover: deadServer=%s entries=%d", deadServer, len(entries))
+	for i, e := range entries {
+		glog.V(0).Infof("failover: entry[%d] name=%q vs=%s role=%d hasReplica=%v epoch=%d",
+			i, e.Name, e.VolumeServer, e.Role, e.HasReplica(), e.Epoch)
+	}
 	now := time.Now()
 	for _, entry := range entries {
 		// Case 1: Dead server is the primary.
