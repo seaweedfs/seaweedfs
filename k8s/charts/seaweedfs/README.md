@@ -49,6 +49,25 @@ CREATE TABLE IF NOT EXISTS `filemeta` (
 
 Alternative database can also be configured (e.g. leveldb, postgres) following the instructions at `filer.extraEnvironmentVars`.
 
+#### RocksDB variant
+
+The _large_disk_rocksdb image tag ships with RocksDB pre-configured as the filer backend.
+To use this image with the Helm chart, override the image and disable the chart's default WEED_LEVELDB2_ENABLED, which otherwise overrides the image's RocksDB configuration:
+
+```yaml
+# Update <VERSION> placeholder with desired seaweedfs version.
+master:
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+
+volume:
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+
+filer:
+  imageOverride: chrislusf/seaweedfs:<VERSION>_large_disk_rocksdb
+  extraEnvironmentVars:
+    WEED_LEVELDB2_ENABLED: "false"
+```
+
 ### Node Labels
 Kubernetes nodes can have labels which help to define which node(Host) will run which pod:
 
