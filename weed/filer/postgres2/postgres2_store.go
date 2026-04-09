@@ -9,13 +9,9 @@ package postgres2
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"strconv"
-	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/filer/postgres"
@@ -113,42 +109,11 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		sqlUrl += " search_path=" + schema
 		adaptedSqlUrl += " search_path=" + schema
 	}
-	// Parse the DSN into a pgx config so we can configure driver-level
-	// options that are no longer accepted as DSN parameters in pgx/v5
-	// (notably prefer_simple_protocol, which was removed).
-	connConfig, parseErr := pgx.ParseConfig(sqlUrl)
-	if parseErr != nil {
-		return fmt.Errorf("can not parse connection config for %s error:%v", adaptedSqlUrl, parseErr)
+	db, openErr := postgres.OpenPGXDB(sqlUrl, adaptedSqlUrl, pgbouncerCompatible, maxIdle, maxOpen, maxLifetimeSeconds)
+	if openErr != nil {
+		return openErr
 	}
-
-	// PgBouncer compatibility: use the simple query protocol and disable
-	// statement caching. This avoids prepared statement issues with
-	// PgBouncer's transaction pooling mode. In pgx/v5, prefer_simple_protocol
-	// is no longer a DSN parameter; it must be set on the config directly.
-	if pgbouncerCompatible {
-		connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
-		connConfig.StatementCacheCapacity = 0
-		connConfig.DescriptionCacheCapacity = 0
-	}
-
-	registeredConnStr := stdlib.RegisterConnConfig(connConfig)
-	var dbErr error
-	store.DB, dbErr = sql.Open("pgx", registeredConnStr)
-	if dbErr != nil {
-		if store.DB != nil {
-			store.DB.Close()
-		}
-		store.DB = nil
-		return fmt.Errorf("can not connect to %s error:%v", adaptedSqlUrl, dbErr)
-	}
-
-	store.DB.SetMaxIdleConns(maxIdle)
-	store.DB.SetMaxOpenConns(maxOpen)
-	store.DB.SetConnMaxLifetime(time.Duration(maxLifetimeSeconds) * time.Second)
-
-	if err = store.DB.Ping(); err != nil {
-		return fmt.Errorf("connect to %s error:%v", adaptedSqlUrl, err)
-	}
+	store.DB = db
 
 	if err = store.CreateTable(context.Background(), abstract_sql.DEFAULT_TABLE); err != nil {
 		return fmt.Errorf("init table %s: %v", abstract_sql.DEFAULT_TABLE, err)
