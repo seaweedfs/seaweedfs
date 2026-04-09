@@ -14,7 +14,8 @@ import (
 	"strconv"
 	"time"
 
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/filer/abstract_sql"
 	"github.com/seaweedfs/seaweedfs/weed/filer/postgres"
@@ -73,12 +74,6 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 	// pgx-optimized connection string with better timeouts and connection handling
 	sqlUrl := "connect_timeout=30"
 
-	// PgBouncer compatibility: add prefer_simple_protocol=true when needed
-	// This avoids prepared statement issues with PgBouncer's transaction pooling mode
-	if pgbouncerCompatible {
-		sqlUrl += " prefer_simple_protocol=true"
-	}
-
 	if hostname != "" {
 		sqlUrl += " host=" + hostname
 	}
@@ -118,8 +113,27 @@ func (store *PostgresStore2) initialize(createTable, upsertQuery string, enableU
 		sqlUrl += " search_path=" + schema
 		adaptedSqlUrl += " search_path=" + schema
 	}
+	// Parse the DSN into a pgx config so we can configure driver-level
+	// options that are no longer accepted as DSN parameters in pgx/v5
+	// (notably prefer_simple_protocol, which was removed).
+	connConfig, parseErr := pgx.ParseConfig(sqlUrl)
+	if parseErr != nil {
+		return fmt.Errorf("can not parse connection config for %s error:%v", adaptedSqlUrl, parseErr)
+	}
+
+	// PgBouncer compatibility: use the simple query protocol and disable
+	// statement caching. This avoids prepared statement issues with
+	// PgBouncer's transaction pooling mode. In pgx/v5, prefer_simple_protocol
+	// is no longer a DSN parameter; it must be set on the config directly.
+	if pgbouncerCompatible {
+		connConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+		connConfig.StatementCacheCapacity = 0
+		connConfig.DescriptionCacheCapacity = 0
+	}
+
+	registeredConnStr := stdlib.RegisterConnConfig(connConfig)
 	var dbErr error
-	store.DB, dbErr = sql.Open("pgx", sqlUrl)
+	store.DB, dbErr = sql.Open("pgx", registeredConnStr)
 	if dbErr != nil {
 		if store.DB != nil {
 			store.DB.Close()
