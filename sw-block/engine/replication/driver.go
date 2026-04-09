@@ -144,13 +144,23 @@ func (d *RecoveryDriver) PlanRebuild(replicaID string) (*RecoveryPlan, error) {
 	history := d.Storage.GetRetainedHistory()
 	source, snapLSN := history.RebuildSourceDecision()
 
+	// RebuildTargetLSN: the primary's data boundary the replica must reach.
+	// CommittedLSN is the lineage-safe boundary, but during rebuild the replica
+	// is down — sync_all mode reports CommittedLSN=0 because no replica has
+	// confirmed durability. In that case, fall back to HeadLSN (the primary's
+	// actual data extent). The rebuild brings the replica up to the primary's head.
+	rebuildTarget := history.CommittedLSN
+	if rebuildTarget == 0 {
+		rebuildTarget = history.HeadLSN
+	}
+
 	plan := &RecoveryPlan{
 		ReplicaID:          replicaID,
 		SessionID:          sessID,
 		Outcome:            OutcomeNeedsRebuild,
 		RebuildSource:      source,
 		RebuildSnapshotLSN: snapLSN,
-		RebuildTargetLSN:   history.CommittedLSN,
+		RebuildTargetLSN:   rebuildTarget,
 	}
 
 	if source == RebuildSnapshotTail {

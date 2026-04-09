@@ -879,14 +879,18 @@ func (bs *BlockService) applyCoreEvent(ev engine.Event) {
 // so the VS log contains a complete trace for post-run diagnosis.
 func (bs *BlockService) coreApplyAndLog(ev engine.Event) engine.ApplyResult {
 	result := bs.v2Core.ApplyEvent(ev)
-	glog.V(0).Infof("core [%s]: event=%T mode=%s pub=%v reason=%q readiness={applied=%v shipper_cfg=%v shipper_conn=%v recv=%v} boundary={durable=%d committed=%d last_barrier_ok=%v last_barrier_reason=%q} cmds=%d",
+	cmdTypes := make([]string, len(result.Commands))
+	for i, cmd := range result.Commands {
+		cmdTypes[i] = fmt.Sprintf("%T", cmd)
+	}
+	glog.V(0).Infof("core [%s]: event=%T mode=%s pub=%v reason=%q readiness={applied=%v shipper_cfg=%v shipper_conn=%v recv=%v} boundary={durable=%d committed=%d last_barrier_ok=%v last_barrier_reason=%q} cmds=%d %v",
 		ev.VolumeID(), ev, result.Projection.Mode.Name,
 		result.Projection.Publication.Healthy, result.Projection.Publication.Reason,
 		result.Projection.Readiness.RoleApplied, result.Projection.Readiness.ShipperConfigured,
 		result.Projection.Readiness.ShipperConnected, result.Projection.Readiness.ReceiverReady,
 		result.Projection.Boundary.DurableLSN, result.Projection.Boundary.CommittedLSN,
 		result.Projection.Boundary.LastBarrierOK, result.Projection.Boundary.LastBarrierReason,
-		len(result.Commands))
+		len(result.Commands), cmdTypes)
 	return result
 }
 
