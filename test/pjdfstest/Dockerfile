@@ -24,4 +24,5 @@ RUN git clone "${PJDFSTEST_REPO}" /opt/pjdfstest && \
     make pjdfstest
 
 COPY run_inside_container.sh /run.sh
+COPY known_failures.txt /known_failures.txt
 RUN chmod +x /run.sh

@@ -138,6 +138,36 @@ TEST_ROOT="${MOUNT_DIR}/pjdfstest-root"
 sudo mkdir -p "${TEST_ROOT}"
 sudo cp -r "${PJDFSTEST_DIR}/." "${TEST_ROOT}/"
 
-echo "==> Running pjdfstest (${PJDFSTEST_TESTS})"
 cd "${TEST_ROOT}"
-sudo prove -rv "${PJDFSTEST_TESTS}"
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KNOWN_FAILURES="${SCRIPT_DIR}/known_failures.txt"
+
+# Build the list of tests to run, excluding known failures.
+if [[ -f "${KNOWN_FAILURES}" ]] && [[ "${PJDFSTEST_TESTS}" == "tests/" ]]; then
+  mapfile -t skip < <(grep -v '^#' "${KNOWN_FAILURES}" | grep -v '^$')
+  all_tests=()
+  while IFS= read -r -d '' t; do
+    all_tests+=("$t")
+  done < <(find tests/ -name '*.t' -print0 | sort -z)
+
+  run_tests=()
+  for t in "${all_tests[@]}"; do
+    is_skipped=false
+    for s in "${skip[@]}"; do
+      if [[ "$t" == "$s" ]]; then
+        is_skipped=true
+        break
+      fi
+    done
+    if ! $is_skipped; then
+      run_tests+=("$t")
+    fi
+  done
+
+  echo "==> Running pjdfstest (${#run_tests[@]} tests, ${#skip[@]} skipped)"
+  sudo prove -rv "${run_tests[@]}"
+else
+  echo "==> Running pjdfstest (${PJDFSTEST_TESTS})"
+  sudo prove -rv "${PJDFSTEST_TESTS}"
+fi

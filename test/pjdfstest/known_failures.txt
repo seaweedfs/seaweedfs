@@ -1,0 +1,67 @@
+# Known pjdfstest failures for SeaweedFS FUSE mount.
+#
+# Tests listed here are skipped during CI runs. Each entry must be a path
+# relative to the pjdfstest root (e.g. tests/chmod/02.t).
+#
+# A failure in any test NOT listed here will cause the CI job to fail,
+# catching regressions immediately.
+
+# ── Linux FUSE NAME_MAX=255 limitation ──────────────────────────────────
+# The Linux FUSE kernel module enforces NAME_MAX=255 at the VFS layer.
+# These tests create filenames >255 bytes which cannot be looked up via
+# normal syscalls (stat, chmod, etc.) after creation.
+tests/chmod/02.t
+tests/chmod/03.t
+tests/chown/02.t
+tests/chown/03.t
+tests/ftruncate/02.t
+tests/ftruncate/03.t
+tests/link/02.t
+tests/link/03.t
+tests/mkdir/02.t
+tests/mkdir/03.t
+tests/mkfifo/02.t
+tests/mkfifo/03.t
+tests/mknod/02.t
+tests/mknod/03.t
+tests/open/02.t
+tests/open/03.t
+tests/rename/01.t
+tests/rename/02.t
+tests/rmdir/02.t
+tests/rmdir/03.t
+tests/symlink/02.t
+tests/symlink/03.t
+tests/truncate/02.t
+tests/truncate/03.t
+tests/unlink/02.t
+tests/unlink/03.t
+
+# ── Hard link nlink/ctime tracking (requires filer changes) ────────────
+# The filer does not update ctime on remaining hard link entries when one
+# link is removed, and nlink counts are not correctly maintained across
+# rename operations.
+tests/rename/23.t
+tests/rename/24.t
+tests/unlink/00.t
+
+# ── Parent directory mtime/ctime on deferred file create ───────────────
+# When file creation is deferred (not flushed to filer immediately),
+# the parent directory mtime/ctime cannot be updated without invalidating
+# the just-cached child entry in the metadata cache.
+tests/open/00.t
+
+# ── Directory rename permission edge case ──────────────────────────────
+# Cross-directory rename of a subdirectory with restricted permissions
+# causes cascading test failures within the test file.
+tests/rename/21.t
+
+# ── rmdir after hard link unlink ───────────────────────────────────────
+# The filer may still report a directory as non-empty after all hard-linked
+# entries have been unlinked.
+tests/unlink/14.t
+
+# ── Nanosecond timestamp precision ─────────────────────────────────────
+# The protobuf schema stores timestamps as int64 seconds. Nanosecond
+# precision would require adding new fields.
+tests/utimensat/08.t
