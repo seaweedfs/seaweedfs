@@ -48,7 +48,7 @@ tests/rename/24.t
 tests/rename/21.t
 
 # ── rmdir after hard link unlink ───────────────────────────────────────
-# The filer may still report a directory as non-empty after all hard-linked
-# entries have been unlinked.
+# Making DeleteHardLink errors non-fatal prevents the entry from blocking
+# rmdir in most cases, but the test still has 1 subtest that fails.
 tests/unlink/14.t
 
