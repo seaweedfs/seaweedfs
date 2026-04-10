@@ -242,8 +242,14 @@ func TestLoopProcessLogDataWithOffset_WakesOnDataArrival(t *testing.T) {
 		close(readerDone)
 	}()
 
-	// Give the reader a moment to reach awaitNotificationOrTimeout.
-	time.Sleep(20 * time.Millisecond)
+	// Give the reader time to reach awaitNotificationOrTimeout. Both wake
+	// paths under test (notifyChan via AddToBuffer and shutdownCh via
+	// ShutdownLogBuffer) are race-free even if the reader hasn't parked yet
+	// — the notification stays buffered / shutdownCh stays closed — but a
+	// generous head start makes it likelier we exercise the actual park-then-
+	// wake path rather than the already-pending fast path. 50ms is well below
+	// notificationHealthCheckInterval (250ms) and tolerates slow CI.
+	time.Sleep(50 * time.Millisecond)
 
 	start := time.Now()
 	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
@@ -302,8 +308,14 @@ func TestLoopProcessLogDataWithOffset_WakesOnShutdown(t *testing.T) {
 		resultCh <- result{isDone: isDone, err: err}
 	}()
 
-	// Give the reader a moment to reach awaitNotificationOrTimeout.
-	time.Sleep(20 * time.Millisecond)
+	// Give the reader time to reach awaitNotificationOrTimeout. Both wake
+	// paths under test (notifyChan via AddToBuffer and shutdownCh via
+	// ShutdownLogBuffer) are race-free even if the reader hasn't parked yet
+	// — the notification stays buffered / shutdownCh stays closed — but a
+	// generous head start makes it likelier we exercise the actual park-then-
+	// wake path rather than the already-pending fast path. 50ms is well below
+	// notificationHealthCheckInterval (250ms) and tolerates slow CI.
+	time.Sleep(50 * time.Millisecond)
 
 	start := time.Now()
 	logBuffer.ShutdownLogBuffer()
