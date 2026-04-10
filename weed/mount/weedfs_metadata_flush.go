@@ -114,6 +114,8 @@ func (wfs *WFS) flushFileMetadata(fh *FileHandle) error {
 		metaNow := time.Now()
 		entry.Attributes.Mtime = metaNow.Unix()
 		entry.Attributes.MtimeNs = int32(metaNow.Nanosecond())
+		entry.Attributes.Ctime = metaNow.Unix()
+		entry.Attributes.CtimeNs = int32(metaNow.Nanosecond())
 	}
 
 	// Get current chunks - these include chunks that have been uploaded
