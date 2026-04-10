@@ -30,12 +30,14 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 		return s
 	}
 
+	now := time.Now().Unix()
 	newEntry := &filer_pb.Entry{
 		Name:        name,
 		IsDirectory: true,
 		Attributes: &filer_pb.FuseAttributes{
-			Mtime:    time.Now().Unix(),
-			Crtime:   time.Now().Unix(),
+			Mtime:    now,
+			Crtime:   now,
+			Ctime:    now,
 			FileMode: uint32(os.ModeDir) | in.Mode&^uint32(wfs.option.Umask),
 			Uid:      in.Uid,
 			Gid:      in.Gid,
@@ -76,6 +78,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtime(dirFullPath)
 	}
 
 	glog.V(3).Infof("mkdir %s: %v", entryFullPath, err)
@@ -114,6 +117,17 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	entryFullPath := dirFullPath.Child(name)
 
+	// POSIX: enforce sticky bit on the parent directory.
+	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if targetEntry, targetCode := wfs.maybeLoadEntry(entryFullPath); targetCode == fuse.OK && targetEntry != nil && targetEntry.Attributes != nil {
+			targetUid = targetEntry.Attributes.Uid
+		}
+		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
 	glog.V(3).Infof("remove directory: %v", entryFullPath)
 	deleteReq := &filer_pb.DeleteEntryRequest{
 		Directory:            string(dirFullPath),
@@ -141,6 +155,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
+	wfs.touchDirMtimeCtime(dirFullPath)
 
 	return fuse.OK
 

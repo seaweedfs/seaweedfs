@@ -12,6 +12,7 @@ import (
 type Attr struct {
 	Mtime         time.Time   // time of last modification
 	Crtime        time.Time   // time of creation (OS X only)
+	Ctime         time.Time   // time of last inode change
 	Mode          os.FileMode // file mode
 	Uid           uint32      // owner uid
 	Gid           uint32      // group gid

@@ -66,7 +66,10 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 }
 
 func checkName(name string) fuse.Status {
-	if len(name) >= 4096 {
+	// The Linux FUSE kernel module enforces NAME_MAX=255 at the VFS layer.
+	// Return ENAMETOOLONG early to avoid creating entries that cannot be
+	// looked up via normal syscalls (stat, chmod, etc.).
+	if len(name) > 255 {
 		return fuse.Status(syscall.ENAMETOOLONG)
 	}
 	return fuse.OK

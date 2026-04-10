@@ -1,0 +1,87 @@
+name: "pjdfstest POSIX Compliance"
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'test/pjdfstest/**'
+      - '.github/workflows/pjdfstest.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'weed/mount/**'
+      - 'weed/filer/**'
+      - 'test/pjdfstest/**'
+      - '.github/workflows/pjdfstest.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: pjdfstest/${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  pjdfstest:
+    name: pjdfstest
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Go
+      uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Build SeaweedFS e2e image
+      run: |
+        cd docker
+        make build_e2e || {
+          echo "Retrying without buildx cache..."
+          make binary_race
+          docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
+        }
+
+    - name: Build pjdfstest image
+      run: |
+        docker build -t chrislusf/seaweedfs:pjdfstest test/pjdfstest/
+
+    - name: Start SeaweedFS cluster
+      run: |
+        docker compose -f test/pjdfstest/docker-compose.yml up --wait
+
+    - name: Run pjdfstest
+      run: |
+        set -o pipefail
+        docker compose -f test/pjdfstest/docker-compose.yml exec -T mount \
+          /run.sh 2>&1 | tee /tmp/pjdfstest-output.log
+
+    - name: Collect logs
+      if: always()
+      run: |
+        mkdir -p /tmp/pjdfstest-docker-logs
+        for svc in master volume filer mount; do
+          docker compose -f test/pjdfstest/docker-compose.yml logs "$svc" \
+            > "/tmp/pjdfstest-docker-logs/${svc}.log" 2>&1 || true
+        done
+
+    - name: Tear down
+      if: always()
+      run: |
+        docker compose -f test/pjdfstest/docker-compose.yml down -v
+
+    - name: Upload logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: pjdfstest-results
+        path: |
+          /tmp/pjdfstest-output.log
+          /tmp/pjdfstest-docker-logs/
+        retention-days: 7

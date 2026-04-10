@@ -26,7 +26,11 @@ func (wfs *WFS) AcquireHandle(inode uint64, flags, uid, gid uint32) (fileHandle 
 		}
 		// Check unix permission bits for the requested access mode.
 		if entry != nil && entry.Attributes != nil {
-			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, entry.Attributes.Uid, entry.Attributes.Gid, entry.Attributes.FileMode, mask) {
+			fileUid, fileGid := entry.Attributes.Uid, entry.Attributes.Gid
+			if wfs.option.UidGidMapper != nil {
+				fileUid, fileGid = wfs.option.UidGidMapper.FilerToLocal(fileUid, fileGid)
+			}
+			if mask := openFlagsToAccessMask(flags); mask != 0 && !hasAccess(uid, gid, fileUid, fileGid, entry.Attributes.FileMode, mask) {
 				return nil, fuse.EACCES
 			}
 		}

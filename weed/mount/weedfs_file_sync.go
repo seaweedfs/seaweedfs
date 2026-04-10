@@ -189,7 +189,9 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 		if entry.Attributes.Gid == 0 {
 			entry.Attributes.Gid = gid
 		}
-		entry.Attributes.Mtime = time.Now().Unix()
+		now := time.Now().Unix()
+		entry.Attributes.Mtime = now
+		entry.Attributes.Ctime = now
 	}
 
 	glog.V(4).Infof("%s set chunks: %v", fileFullPath, len(entry.GetChunks()))

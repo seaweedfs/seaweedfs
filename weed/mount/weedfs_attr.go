@@ -24,6 +24,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	if status == fuse.OK {
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
+		wfs.applyInMemoryAtime(&out.Attr, inode)
 		return status
 	} else {
 		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
@@ -32,6 +33,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
 			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry(), true)
 			wfs.fhLockTable.ReleaseLock(fh.fh, fhActiveLock)
+			wfs.applyInMemoryAtime(&out.Attr, inode)
 			out.Nlink = 0
 			return fuse.OK
 		}
@@ -108,8 +110,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 	}
 
+	ownerChanged := false
 	if uid, ok := input.GetUID(); ok {
 		entry.Attributes.Uid = uid
+		ownerChanged = true
 		if input.NodeId == 1 {
 			wfs.option.MountUid = uid
 		}
@@ -117,18 +121,27 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	if gid, ok := input.GetGID(); ok {
 		entry.Attributes.Gid = gid
+		ownerChanged = true
 		if input.NodeId == 1 {
 			wfs.option.MountGid = gid
 		}
 	}
 
+	// POSIX: clear SUID/SGID bits when ownership changes (unless caller is root).
+	if ownerChanged && input.Uid != 0 {
+		entry.Attributes.FileMode &^= 0o6000
+	}
+
 	if atime, ok := input.GetATime(); ok {
-		entry.Attributes.Mtime = atime.Unix()
+		wfs.setAtime(input.NodeId, atime.Unix())
 	}
 
 	if mtime, ok := input.GetMTime(); ok {
 		entry.Attributes.Mtime = mtime.Unix()
 	}
+
+	// POSIX: update ctime on any metadata change.
+	entry.Attributes.Ctime = time.Now().Unix()
 
 	out.AttrValid = 1
 	size, includeSize := input.GetSize()
@@ -136,6 +149,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		out.Attr.Size = size
 	}
 	wfs.setAttrByPbEntry(&out.Attr, input.NodeId, entry, !includeSize)
+	wfs.applyInMemoryAtime(&out.Attr, input.NodeId)
 
 	if fh != nil {
 		fh.dirtyMetadata = true
@@ -177,8 +191,13 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	}
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	out.Mtime = uint64(entry.Attributes.Mtime)
-	out.Ctime = uint64(entry.Attributes.Mtime)
+	if entry.Attributes.Ctime != 0 {
+		out.Ctime = uint64(entry.Attributes.Ctime)
+	} else {
+		out.Ctime = uint64(entry.Attributes.Mtime)
+	}
 	out.Atime = uint64(entry.Attributes.Mtime)
+	// In-memory atime overlay is applied by the caller via applyInMemoryAtime.
 	out.Mode = toSyscallMode(os.FileMode(entry.Attributes.FileMode))
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
@@ -200,7 +219,11 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	setBlksize(out, blockSize)
 	out.Atime = uint64(entry.Attr.Mtime.Unix())
 	out.Mtime = uint64(entry.Attr.Mtime.Unix())
-	out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	if !entry.Attr.Ctime.IsZero() {
+		out.Ctime = uint64(entry.Attr.Ctime.Unix())
+	} else {
+		out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	}
 	out.Mode = toSyscallMode(entry.Attr.Mode)
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
@@ -226,6 +249,45 @@ func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.
 	out.EntryValid = 1
 	out.AttrValid = 1
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
+}
+
+// touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
+// POSIX requires this when entries are created or removed in the directory.
+func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
+	dirEntry, code := wfs.maybeLoadEntry(dirPath)
+	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
+		return
+	}
+	now := time.Now().Unix()
+	dirEntry.Attributes.Mtime = now
+	dirEntry.Attributes.Ctime = now
+	wfs.saveEntry(dirPath, dirEntry)
+}
+
+const atimeMapMaxSize = 8192
+
+// setAtime stores an in-memory atime for an inode. The map is bounded;
+// when full, a random entry is evicted.
+func (wfs *WFS) setAtime(inode uint64, t int64) {
+	wfs.atimeMu.Lock()
+	defer wfs.atimeMu.Unlock()
+	if len(wfs.atimeMap) >= atimeMapMaxSize {
+		// evict one random entry
+		for k := range wfs.atimeMap {
+			delete(wfs.atimeMap, k)
+			break
+		}
+	}
+	wfs.atimeMap[inode] = t
+}
+
+// applyInMemoryAtime overlays the in-memory atime onto a fuse.Attr if present.
+func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
+	wfs.atimeMu.Lock()
+	if t, ok := wfs.atimeMap[inode]; ok {
+		out.Atime = uint64(t)
+	}
+	wfs.atimeMu.Unlock()
 }
 
 func chmod(existing uint32, mode uint32) uint32 {

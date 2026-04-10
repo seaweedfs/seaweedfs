@@ -186,6 +186,17 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.EPERM
 	}
 
+	// POSIX: enforce sticky bit on the parent directory.
+	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if entry != nil && entry.Attributes != nil {
+			targetUid = entry.Attributes.Uid
+		}
+		if code := checkStickyBit(dirEntry.Attributes.FileMode, dirEntry.Attributes.Uid, targetUid, header.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
 	// Before deleting from the filer, mark any draining async-flush handle
 	// as deleted and wait for it to complete.  Without this, the async flush
 	// can race with the filer delete and recreate the just-unlinked entry
@@ -233,6 +244,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
+	wfs.touchDirMtimeCtime(dirFullPath)
 
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
@@ -279,6 +291,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		Attributes: &filer_pb.FuseAttributes{
 			Mtime:    now,
 			Crtime:   now,
+			Ctime:    now,
 			FileMode: uint32(fileMode),
 			Uid:      uid,
 			Gid:      gid,
@@ -327,6 +340,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtime(dirFullPath)
 	}
 
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
@@ -349,7 +363,9 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 	entry.Content = nil
 	entry.Chunks = nil
 	entry.Attributes.FileSize = 0
-	entry.Attributes.Mtime = time.Now().Unix()
+	now := time.Now().Unix()
+	entry.Attributes.Mtime = now
+	entry.Attributes.Ctime = now
 
 	if code := wfs.saveEntry(entryFullPath, entry); code != fuse.OK {
 		return code

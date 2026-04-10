@@ -199,6 +199,32 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 		return status
 	}
 
+	// POSIX: enforce sticky bit on the source directory.
+	if oldDirEntry, dirCode := wfs.maybeLoadEntry(oldDir); dirCode == fuse.OK && oldDirEntry != nil && oldDirEntry.Attributes != nil {
+		targetUid := uint32(0)
+		if oldEntry != nil && oldEntry.Attributes != nil {
+			targetUid = oldEntry.Attributes.Uid
+		}
+		if code := checkStickyBit(oldDirEntry.Attributes.FileMode, oldDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+			return code
+		}
+	}
+
+	// POSIX: enforce sticky bit on the destination directory when replacing an existing entry.
+	if in.Flags != RenameNoReplace {
+		if newEntry, newStatus := wfs.maybeLoadEntry(newPath); newStatus == fuse.OK && newEntry != nil {
+			if newDirEntry, dirCode := wfs.maybeLoadEntry(newDir); dirCode == fuse.OK && newDirEntry != nil && newDirEntry.Attributes != nil {
+				targetUid := uint32(0)
+				if newEntry.Attributes != nil {
+					targetUid = newEntry.Attributes.Uid
+				}
+				if code := checkStickyBit(newDirEntry.Attributes.FileMode, newDirEntry.Attributes.Uid, targetUid, in.Uid); code != fuse.OK {
+					return code
+				}
+			}
+		}
+	}
+
 	if wormEnforced, _ := wfs.wormEnforcedForEntry(oldPath, oldEntry); wormEnforced {
 		return fuse.EPERM
 	}
@@ -297,6 +323,10 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
+	wfs.touchDirMtimeCtime(oldDir)
+	if oldDir != newDir {
+		wfs.touchDirMtimeCtime(newDir)
+	}
 
 	return fuse.OK
 

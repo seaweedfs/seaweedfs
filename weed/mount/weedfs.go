@@ -123,6 +123,8 @@ type WFS struct {
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
 	refreshingDirs       map[util.FullPath]struct{}
+	atimeMu              sync.Mutex
+	atimeMap             map[uint64]int64 // inode -> atime (unix seconds), in-memory only, bounded
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
@@ -202,6 +204,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		fhLockTable:       util.NewLockTable[FileHandleId](),
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
+		atimeMap:          make(map[uint64]int64, 8192),
 		dirHotWindow:      dirHotWindow,
 		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
