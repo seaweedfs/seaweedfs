@@ -33,6 +33,8 @@ PJDFSTEST_TESTS="${PJDFSTEST_TESTS:-tests/}"
 mini_pid=""
 mount_pid=""
 
+CI_LOG_DIR="/tmp/seaweedfs-pjdfstest-logs"
+
 cleanup() {
   set +e
   if [[ -n "${mount_pid}" ]] && kill -0 "${mount_pid}" 2>/dev/null; then
@@ -48,6 +50,9 @@ cleanup() {
     kill -TERM "${mini_pid}" 2>/dev/null || true
     wait "${mini_pid}" 2>/dev/null || true
   fi
+  # Copy logs to a fixed path for CI artifact upload.
+  mkdir -p "${CI_LOG_DIR}"
+  cp "${LOG_DIR}"/*.log "${CI_LOG_DIR}/" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 

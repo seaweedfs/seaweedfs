@@ -75,7 +75,7 @@ jobs:
         name: pjdfstest-bare-metal-results
         path: |
           /tmp/pjdfstest-output.log
-          /tmp/seaweedfs-pjdfstest/logs/
+          /tmp/seaweedfs-pjdfstest-logs/
         retention-days: 7
 
   pjdfstest-docker:
@@ -95,7 +95,11 @@ jobs:
     - name: Build SeaweedFS e2e image
       run: |
         cd docker
-        make build_e2e
+        make build_e2e || {
+          echo "Retrying without buildx cache..."
+          make binary_race
+          docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
+        }
 
     - name: Build pjdfstest image
       run: |

@@ -26,7 +26,7 @@ services:
     image: chrislusf/seaweedfs:e2e
     command: "-v=4 filer -master=master:9333 -ip=filer -ip.bind=0.0.0.0"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "-I", "http://localhost:8888"]
+      test: ["CMD", "curl", "--fail", "-I", "http://localhost:8888/healthz"]
       interval: 2s
       timeout: 10s
       retries: 15
