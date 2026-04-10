@@ -29,10 +29,9 @@ type partitionReader struct {
 
 // bufferedRecords represents a batch of pre-fetched records
 type bufferedRecords struct {
-	recordBatch   []byte
-	startOffset   int64
-	endOffset     int64
-	highWaterMark int64
+	recordBatch []byte
+	startOffset int64
+	endOffset   int64
 }
 
 // partitionFetchRequest represents a request to fetch data from this partition
@@ -43,7 +42,6 @@ type partitionFetchRequest struct {
 	resultChan      chan *partitionFetchResult
 	isSchematized   bool
 	apiVersion      uint16
-	correlationID   int32 // Added for correlation tracking
 }
 
 // newPartitionReader creates and starts a new partition reader with pre-fetch buffering

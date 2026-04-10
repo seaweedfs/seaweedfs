@@ -3323,33 +3323,6 @@ func (h *Handler) writeResponseWithCorrelationID(w *bufio.Writer, correlationID 
 	return h.writeResponseWithHeader(w, correlationID, 0, 0, responseBody, timeout)
 }
 
-// writeResponseWithTimeout writes a Kafka response with timeout handling
-// DEPRECATED: Use writeResponseWithCorrelationID instead
-func (h *Handler) writeResponseWithTimeout(w *bufio.Writer, response []byte, timeout time.Duration) error {
-	// This old function expects response to include correlation ID at the start
-	// For backward compatibility with any remaining callers
-
-	// Write response size (4 bytes)
-	responseSizeBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(responseSizeBytes, uint32(len(response)))
-
-	if _, err := w.Write(responseSizeBytes); err != nil {
-		return fmt.Errorf("write response size: %w", err)
-	}
-
-	// Write response data
-	if _, err := w.Write(response); err != nil {
-		return fmt.Errorf("write response data: %w", err)
-	}
-
-	// Flush the buffer
-	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flush response: %w", err)
-	}
-
-	return nil
-}
-
 // EnableSchemaManagement enables schema management with the given configuration
 func (h *Handler) EnableSchemaManagement(config schema.ManagerConfig) error {
 	manager, err := schema.NewManagerWithHealthCheck(config)
