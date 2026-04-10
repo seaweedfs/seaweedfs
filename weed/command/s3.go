@@ -514,6 +514,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
+	icebergServer.SetCredentialValidator(s3ApiServer)
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)

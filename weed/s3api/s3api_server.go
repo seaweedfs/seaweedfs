@@ -1055,3 +1055,52 @@ func (s3a *S3ApiServer) DefaultAllow() bool {
 	}
 	return s3a.iam.iamIntegration.DefaultAllow()
 }
+
+// ValidateS3Credential validates an S3 access key / secret key pair.
+// Returns the identity name and identity object on success.
+func (s3a *S3ApiServer) ValidateS3Credential(accessKey, secretKey string) (string, interface{}, error) {
+	if s3a.iam == nil {
+		return "", nil, fmt.Errorf("IAM not configured")
+	}
+	identity, cred, found := s3a.iam.LookupByAccessKey(accessKey)
+	if !found {
+		return "", nil, fmt.Errorf("access key not found")
+	}
+	if cred.SecretKey != secretKey {
+		return "", nil, fmt.Errorf("invalid secret key")
+	}
+	if identity.Disabled {
+		return "", nil, fmt.Errorf("identity is disabled")
+	}
+	if cred.isCredentialExpired() {
+		return "", nil, fmt.Errorf("credential expired")
+	}
+	if cred.Status == "Inactive" {
+		return "", nil, fmt.Errorf("credential is inactive")
+	}
+	return identity.Name, identity, nil
+}
+
+// GetCredentialByAccessKey looks up a credential by access key.
+// Returns the identity name, identity object, and secret key.
+// Used for verifying Iceberg OAuth Bearer tokens with the exact credential
+// that was used to sign the token.
+func (s3a *S3ApiServer) GetCredentialByAccessKey(accessKey string) (string, interface{}, string, error) {
+	if s3a.iam == nil {
+		return "", nil, "", fmt.Errorf("IAM not configured")
+	}
+	identity, cred, found := s3a.iam.LookupByAccessKey(accessKey)
+	if !found {
+		return "", nil, "", fmt.Errorf("access key not found")
+	}
+	if identity.Disabled {
+		return "", nil, "", fmt.Errorf("identity is disabled")
+	}
+	if cred.isCredentialExpired() {
+		return "", nil, "", fmt.Errorf("credential expired")
+	}
+	if cred.Status == "Inactive" {
+		return "", nil, "", fmt.Errorf("credential is inactive")
+	}
+	return identity.Name, identity, cred.SecretKey, nil
+}
