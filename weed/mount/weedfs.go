@@ -63,9 +63,9 @@ type Option struct {
 	MountMtime       time.Time
 	MountParentInode uint64
 
-	VolumeServerAccess string // how to access volume servers
-	Cipher             bool   // whether encrypt data on volume server
-	UidGidMapper       *meta_cache.UidGidMapper
+	VolumeServerAccess   string // how to access volume servers
+	Cipher               bool   // whether encrypt data on volume server
+	UidGidMapper         *meta_cache.UidGidMapper
 	IncludeSystemEntries bool
 
 	// Periodic metadata flush interval in seconds (0 to disable)
