@@ -329,18 +329,11 @@ func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
 }
 
 // applyDirNlink sets nlink = 2 + number_of_subdirectories for a directory.
-// Only counts from the local metacache to avoid expensive filer queries.
-// When the cache has no entries (e.g. before readdir), keeps nlink=2.
+// Uses the in-memory subdirectory count tracked by mkdir/rmdir/rename.
 func (wfs *WFS) applyDirNlink(out *fuse.Attr, dirPath util.FullPath) {
-	var subdirCount uint32
-	wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, 100000, func(entry *filer.Entry) (bool, error) {
-		if entry.IsDirectory() {
-			subdirCount++
-		}
-		return true, nil
-	})
-	if subdirCount > 0 {
-		out.Nlink = 2 + subdirCount
+	count := wfs.inodeToPath.GetSubdirCount(dirPath)
+	if count > 0 {
+		out.Nlink = 2 + uint32(count)
 	}
 }
 
