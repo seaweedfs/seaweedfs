@@ -135,6 +135,15 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				glog.V(4).Infof("%s: Notification timeout after ResumeFromDiskError, rechecking state", readerName)
 			}
 
+			// If the LogBuffer is shutting down, exit cleanly instead of looping
+			// on ResumeFromDiskError. awaitNotificationOrTimeout returns true on
+			// shutdown (shutdownCh closed), which would otherwise spin here
+			// because ReadFromBuffer keeps returning ResumeFromDiskError.
+			if logBuffer.IsStopping() {
+				isDone = true
+				return
+			}
+
 			// Continue to next iteration (don't return ResumeFromDiskError)
 			continue
 		}
@@ -175,6 +184,12 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 					break
 				} else {
 					glog.V(4).Infof("%s: Notification timeout (LoopProcessLogData), rechecking state", readerName)
+				}
+				// Exit the wait loop on shutdown so we don't spin against a
+				// closed shutdownCh.
+				if logBuffer.IsStopping() {
+					isDone = true
+					return
 				}
 			}
 			if logBuffer.IsStopping() {
@@ -321,6 +336,11 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				glog.V(4).Infof("%s: Notification timeout, rechecking state", readerName)
 			}
 
+			// Exit cleanly on shutdown so we don't loop on ResumeFromDiskError.
+			if logBuffer.IsStopping() {
+				return lastReadPosition, true, nil
+			}
+
 			// Continue to next iteration (don't return ResumeFromDiskError)
 			continue
 		}
@@ -361,6 +381,10 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				} else {
 					glog.V(4).Infof("%s: Notification timeout for offset-based, rechecking state", readerName)
 				}
+				// On shutdown, exit cleanly instead of returning ResumeFromDiskError.
+				if logBuffer.IsStopping() {
+					return lastReadPosition, true, nil
+				}
 				return lastReadPosition, isDone, ResumeFromDiskError
 			}
 
@@ -378,6 +402,12 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					break
 				} else {
 					glog.V(4).Infof("%s: Notification timeout (main loop), rechecking state", readerName)
+				}
+				// Exit the wait loop on shutdown so we don't spin against a
+				// closed shutdownCh.
+				if logBuffer.IsStopping() {
+					glog.V(4).Infof("%s: LogBuffer is stopping", readerName)
+					return lastReadPosition, true, nil
 				}
 			}
 			if logBuffer.IsStopping() {
@@ -402,6 +432,10 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				glog.V(3).Infof("%s: Woke up from notification on empty buffer", readerName)
 			} else {
 				glog.V(4).Infof("%s: Empty buffer timeout, rechecking state", readerName)
+			}
+			// Exit cleanly on shutdown to avoid an idle spin on the empty buffer.
+			if logBuffer.IsStopping() {
+				return lastReadPosition, true, nil
 			}
 			continue
 		}
