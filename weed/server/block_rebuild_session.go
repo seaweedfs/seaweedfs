@@ -6,6 +6,7 @@ import (
 	"time"
 
 	engine "github.com/seaweedfs/seaweedfs/sw-block/engine/replication"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/blockvol"
 )
 
@@ -172,6 +173,10 @@ func (bs *BlockService) WireLocalReplicaRebuildSessionAcks(path, replicaID strin
 // The ack path still matters for retention-floor lifecycle, and later phases
 // carry progress/completion/failure facts from the replica.
 func (bs *BlockService) ObserveReplicaRebuildSessionAck(path, replicaID string, ack blockvol.SessionAckMsg) error {
+	return bs.observeReplicaRebuildSessionAck(path, replicaID, ack, true)
+}
+
+func (bs *BlockService) observeReplicaRebuildSessionAck(path, replicaID string, ack blockvol.SessionAckMsg, emitTerminal bool) error {
 	if bs == nil {
 		return fmt.Errorf("block service not enabled")
 	}
@@ -186,7 +191,15 @@ func (bs *BlockService) ObserveReplicaRebuildSessionAck(path, replicaID string, 
 	}
 	snap, err := bs.requireReplicaSession(replicaID, ack.SessionID, engine.SessionRebuild)
 	if err != nil {
-		return err
+		if emitTerminal {
+			// Local observation path: sender must exist.
+			return err
+		}
+		// Remote rebuild path: the coordinator owns the session. The sender
+		// may be absent from the registry (removed by reconciliation between
+		// installSession and ack arrival). Proceed without sender validation
+		// — pins and watchdog will use nil snap gracefully.
+		glog.V(1).Infof("recovery: remote rebuild ack observation: sender lookup skipped (%v)", err)
 	}
 	bs.updateRebuildAckWatch(path, replicaID, ack)
 	bs.updateRebuildProgressPin(path, replicaID, snap, ack)
@@ -217,6 +230,9 @@ func (bs *BlockService) ObserveReplicaRebuildSessionAck(path, replicaID string, 
 		if achieved == 0 {
 			achieved = ack.WALAppliedLSN
 		}
+		if !emitTerminal {
+			return nil
+		}
 		bs.applyCoreEvent(engine.SessionCompleted{
 			ID:          path,
 			ReplicaID:   replicaID,
@@ -228,6 +244,9 @@ func (bs *BlockService) ObserveReplicaRebuildSessionAck(path, replicaID string, 
 		reason := "session_ack_failed"
 		if ack.BaseComplete {
 			reason = "session_ack_failed_after_base_complete"
+		}
+		if !emitTerminal {
+			return nil
 		}
 		bs.applyCoreEvent(engine.SessionFailed{
 			ID:        path,
