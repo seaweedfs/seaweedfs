@@ -18,6 +18,13 @@ var (
 	ResumeFromDiskError = fmt.Errorf("resumeFromDisk")
 )
 
+// notificationHealthCheckInterval bounds how long an idle subscriber blocks
+// on the notification channel before re-checking state (client disconnect via
+// waitForDataFn, LogBuffer shutdown, timestamp advancement). notifyChan is the
+// primary wakeup path when new data arrives or a flush lands; this timeout is
+// the safety net for any missed notification and also caps the latency to
+// notice that the subscriber should exit. Balances idle CPU and log noise
+// against client-disconnect detection latency.
 const notificationHealthCheckInterval = 250 * time.Millisecond
 
 type MessagePosition struct {
