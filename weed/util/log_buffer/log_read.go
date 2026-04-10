@@ -132,7 +132,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification after ResumeFromDiskError", readerName)
 			} else {
-				glog.V(5).Infof("%s: Notification timeout after ResumeFromDiskError, rechecking state", readerName)
+				glog.V(4).Infof("%s: Notification timeout after ResumeFromDiskError, rechecking state", readerName)
 			}
 
 			// Continue to next iteration (don't return ResumeFromDiskError)
@@ -174,7 +174,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 				} else if lastTsNs != logBuffer.LastTsNs.Load() {
 					break
 				} else {
-					glog.V(5).Infof("%s: Notification timeout (LoopProcessLogData), rechecking state", readerName)
+					glog.V(4).Infof("%s: Notification timeout (LoopProcessLogData), rechecking state", readerName)
 				}
 			}
 			if logBuffer.IsStopping() {
@@ -318,7 +318,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification after disk read", readerName)
 			} else {
-				glog.V(5).Infof("%s: Notification timeout, rechecking state", readerName)
+				glog.V(4).Infof("%s: Notification timeout, rechecking state", readerName)
 			}
 
 			// Continue to next iteration (don't return ResumeFromDiskError)
@@ -359,7 +359,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 					glog.V(3).Infof("%s: Woke up from notification for offset-based read", readerName)
 				} else {
-					glog.V(5).Infof("%s: Notification timeout for offset-based, rechecking state", readerName)
+					glog.V(4).Infof("%s: Notification timeout for offset-based, rechecking state", readerName)
 				}
 				return lastReadPosition, isDone, ResumeFromDiskError
 			}
@@ -377,7 +377,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				} else if lastTsNs != logBuffer.LastTsNs.Load() {
 					break
 				} else {
-					glog.V(5).Infof("%s: Notification timeout (main loop), rechecking state", readerName)
+					glog.V(4).Infof("%s: Notification timeout (main loop), rechecking state", readerName)
 				}
 			}
 			if logBuffer.IsStopping() {
@@ -401,7 +401,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification on empty buffer", readerName)
 			} else {
-				glog.V(5).Infof("%s: Empty buffer timeout, rechecking state", readerName)
+				glog.V(4).Infof("%s: Empty buffer timeout, rechecking state", readerName)
 			}
 			continue
 		}
