@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -112,6 +113,9 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 			key, entry.HardLinkCounter)
 		return fsw.KvDelete(ctx, key)
 	}
+
+	// POSIX: update ctime when nlink changes (a hard link was removed).
+	entry.Attr.Ctime = time.Now()
 
 	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
 	if encodeErr != nil {
