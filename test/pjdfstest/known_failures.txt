@@ -6,37 +6,6 @@
 # A failure in any test NOT listed here will cause the CI job to fail,
 # catching regressions immediately.
 
-# ── Linux FUSE NAME_MAX=255 limitation ──────────────────────────────────
-# The Linux FUSE kernel module enforces NAME_MAX=255 at the VFS layer.
-# These tests create filenames >255 bytes which cannot be looked up via
-# normal syscalls (stat, chmod, etc.) after creation.
-tests/chmod/02.t
-tests/chmod/03.t
-tests/chown/02.t
-tests/chown/03.t
-tests/ftruncate/02.t
-tests/ftruncate/03.t
-tests/link/02.t
-tests/link/03.t
-tests/mkdir/02.t
-tests/mkdir/03.t
-tests/mkfifo/02.t
-tests/mkfifo/03.t
-tests/mknod/02.t
-tests/mknod/03.t
-tests/open/02.t
-tests/open/03.t
-tests/rename/01.t
-tests/rename/02.t
-tests/rmdir/02.t
-tests/rmdir/03.t
-tests/symlink/02.t
-tests/symlink/03.t
-tests/truncate/02.t
-tests/truncate/03.t
-tests/unlink/02.t
-tests/unlink/03.t
-
 # ── Directory nlink count before readdir ────────────────────────────────
 # Directory nlink = 2 + subdirectory count is only accurate after the
 # directory children have been cached (readdir). Before that, nlink=2.
@@ -51,4 +20,3 @@ tests/rename/21.t
 # Making DeleteHardLink errors non-fatal prevents the entry from blocking
 # rmdir in most cases, but the test still has 1 subtest that fails.
 tests/unlink/14.t
-

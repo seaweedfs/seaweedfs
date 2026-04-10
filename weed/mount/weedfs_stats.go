@@ -109,7 +109,7 @@ func (wfs *WFS) StatFs(cancel <-chan struct{}, in *fuse.InHeader, out *fuse.Stat
 	out.Ffree = math.MaxInt64 - actualFileCount
 
 	// Report the maximum length of a name and the minimum fragment size
-	out.NameLen = 1024
+	out.NameLen = 255
 	out.Frsize = uint32(blockSize)
 
 	return fuse.OK

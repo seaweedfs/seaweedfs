@@ -13,8 +13,8 @@ RUN apt-get update && \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-ARG PJDFSTEST_REPO=https://github.com/pjd/pjdfstest.git
-ARG PJDFSTEST_REF=03eb25706d8dbf3611c3f820b45b7a5e09a36c06
+ARG PJDFSTEST_REPO=https://github.com/sanwan/pjdfstest.git
+ARG PJDFSTEST_REF=d25636a227606f8960e5179741d8f4ad7030ef41
 
 RUN git clone "${PJDFSTEST_REPO}" /opt/pjdfstest && \
     cd /opt/pjdfstest && \
