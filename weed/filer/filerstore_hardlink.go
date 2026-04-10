@@ -115,7 +115,7 @@ func (fsw *FilerStoreWrapper) DeleteHardLink(ctx context.Context, hardLinkId Har
 	}
 
 	// POSIX: update ctime when nlink changes (a hard link was removed).
-	entry.Attr.Ctime = time.Now()
+	entry.Attr.Ctime = time.Now().UTC()
 
 	newBlob, encodeErr := entry.EncodeAttributesAndChunks()
 	if encodeErr != nil {
