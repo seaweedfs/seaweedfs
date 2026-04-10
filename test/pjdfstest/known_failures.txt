@@ -38,12 +38,9 @@ tests/unlink/02.t
 tests/unlink/03.t
 
 # ── Hard link nlink/ctime tracking (requires filer changes) ────────────
-# The filer does not update ctime on remaining hard link entries when one
-# link is removed, and nlink counts are not correctly maintained across
-# rename operations.
+# nlink counts are not correctly maintained across rename operations.
 tests/rename/23.t
 tests/rename/24.t
-tests/unlink/00.t
 
 # ── Parent directory mtime/ctime on deferred file create ───────────────
 # When file creation is deferred (not flushed to filer immediately),
