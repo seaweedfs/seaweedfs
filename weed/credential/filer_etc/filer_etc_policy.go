@@ -316,6 +316,69 @@ func (store *FilerEtcStore) GetPolicy(ctx context.Context, name string) (*policy
 	return nil, nil // Policy not found
 }
 
+// PutUserInlinePolicy stores a per-user inline policy document.
+func (store *FilerEtcStore) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+
+	if policiesCollection.InlinePolicies[userName] == nil {
+		policiesCollection.InlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	policiesCollection.InlinePolicies[userName][policyName] = document
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// GetUserInlinePolicy retrieves a per-user inline policy document.
+func (store *FilerEtcStore) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if userPolicies := policiesCollection.InlinePolicies[userName]; userPolicies != nil {
+		if doc, exists := userPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteUserInlinePolicy removes a per-user inline policy document.
+func (store *FilerEtcStore) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	store.policyMu.Lock()
+	defer store.policyMu.Unlock()
+
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return err
+	}
+	if userPolicies := policiesCollection.InlinePolicies[userName]; userPolicies != nil {
+		delete(userPolicies, policyName)
+		if len(userPolicies) == 0 {
+			delete(policiesCollection.InlinePolicies, userName)
+		}
+	}
+	return store.saveLegacyPoliciesCollection(ctx, policiesCollection)
+}
+
+// ListUserInlinePolicies returns the names of all inline policies for a user.
+func (store *FilerEtcStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	policiesCollection, _, err := store.loadLegacyPoliciesCollection(ctx)
+	if err != nil {
+		return nil, err
+	}
+	userPolicies := policiesCollection.InlinePolicies[userName]
+	names := make([]string, 0, len(userPolicies))
+	for name := range userPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}
+
 // ListPolicyNames returns all managed policy names stored in the filer.
 func (store *FilerEtcStore) ListPolicyNames(ctx context.Context) ([]string, error) {
 	names := make([]string, 0)

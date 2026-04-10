@@ -271,6 +271,40 @@ func (cm *CredentialManager) UpdatePolicy(ctx context.Context, name string, docu
 	return cm.Store.PutPolicy(ctx, name, document)
 }
 
+// PutUserInlinePolicy stores a per-user inline policy document.
+// Returns nil without error if the underlying store does not support inline policies.
+func (cm *CredentialManager) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := cm.Store.(InlinePolicyStore); ok {
+		return store.PutUserInlinePolicy(ctx, userName, policyName, document)
+	}
+	return nil
+}
+
+// GetUserInlinePolicy retrieves a per-user inline policy document.
+// Returns nil without error if the underlying store does not support inline policies.
+func (cm *CredentialManager) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := cm.Store.(InlinePolicyStore); ok {
+		return store.GetUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil, nil
+}
+
+// DeleteUserInlinePolicy removes a per-user inline policy document.
+func (cm *CredentialManager) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	if store, ok := cm.Store.(InlinePolicyStore); ok {
+		return store.DeleteUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil
+}
+
+// ListUserInlinePolicies returns the names of all inline policies for a user.
+func (cm *CredentialManager) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	if store, ok := cm.Store.(InlinePolicyStore); ok {
+		return store.ListUserInlinePolicies(ctx, userName)
+	}
+	return nil, nil
+}
+
 // LoadS3ConfigFile reads a static S3 identity config file and registers
 // the identities so they appear in LoadConfiguration and listing results.
 func (cm *CredentialManager) LoadS3ConfigFile(path string) error {
