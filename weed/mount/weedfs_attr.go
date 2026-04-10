@@ -17,7 +17,9 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	glog.V(4).Infof("GetAttr %v", input.NodeId)
 	if input.NodeId == 1 {
 		wfs.setRootAttr(out)
-		wfs.applyDirNlink(&out.Attr, util.FullPath(wfs.option.FilerMountRootPath))
+		if wfs.option.PosixDirNlink {
+			wfs.applyDirNlink(&out.Attr, util.FullPath(wfs.option.FilerMountRootPath))
+		}
 		return fuse.OK
 	}
 
@@ -27,7 +29,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		wfs.applyInMemoryAtime(&out.Attr, inode)
-		if entry.IsDirectory {
+		if entry.IsDirectory && wfs.option.PosixDirNlink {
 			wfs.applyDirNlink(&out.Attr, path)
 		}
 		return status

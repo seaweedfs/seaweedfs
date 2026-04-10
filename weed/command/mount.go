@@ -55,6 +55,9 @@ type MountOptions struct {
 	// Distributed lock for cross-mount write coordination
 	distributedLock *bool
 
+	// POSIX compliance options
+	posixDirNlink *bool
+
 	// FUSE performance options
 	writebackCache *bool
 	asyncDio       *bool
@@ -130,6 +133,9 @@ func init() {
 
 	// Distributed lock for cross-mount write coordination
 	mountOptions.distributedLock = cmdMount.Flag.Bool("dlm", false, "enable distributed lock for cross-mount write coordination (only one mount can write a file at a time)")
+
+	// POSIX compliance options
+	mountOptions.posixDirNlink = cmdMount.Flag.Bool("posix.dirNLink", false, "report POSIX-compliant directory nlink (2 + subdirectory count); costs one directory listing per stat")
 
 	// FUSE performance options
 	mountOptions.writebackCache = cmdMount.Flag.Bool("writebackCache", false, "enable FUSE writeback cache for improved write performance (at risk of data loss on crash)")
