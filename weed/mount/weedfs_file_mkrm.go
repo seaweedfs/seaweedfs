@@ -363,9 +363,11 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 	entry.Content = nil
 	entry.Chunks = nil
 	entry.Attributes.FileSize = 0
-	now := time.Now().Unix()
-	entry.Attributes.Mtime = now
-	entry.Attributes.Ctime = now
+	truncNow := time.Now()
+	entry.Attributes.Mtime = truncNow.Unix()
+	entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
+	entry.Attributes.Ctime = truncNow.Unix()
+	entry.Attributes.CtimeNs = int32(truncNow.Nanosecond())
 
 	if code := wfs.saveEntry(entryFullPath, entry); code != fuse.OK {
 		return code

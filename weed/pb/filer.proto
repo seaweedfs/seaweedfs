@@ -198,6 +198,8 @@ message FuseAttributes {
     uint32 rdev = 16;
     uint64 inode = 17;
     int64 ctime = 18; // unix time in seconds, inode change time
+    int32 mtime_ns = 19; // nanosecond component of mtime (0-999999999)
+    int32 ctime_ns = 20; // nanosecond component of ctime (0-999999999)
 }
 
 message CreateEntryRequest {
