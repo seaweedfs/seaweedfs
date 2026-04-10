@@ -92,7 +92,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 				fh.entryChunkGroup.SetChunks(chunks)
 			}
 		}
-		entry.Attributes.Mtime = time.Now().Unix()
+		truncNow := time.Now()
+		entry.Attributes.Mtime = truncNow.Unix()
+		entry.Attributes.MtimeNs = int32(truncNow.Nanosecond())
 		entry.Attributes.FileSize = size
 
 	}
@@ -269,9 +271,11 @@ func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
 	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
 		return
 	}
-	now := time.Now().Unix()
-	dirEntry.Attributes.Mtime = now
-	dirEntry.Attributes.Ctime = now
+	now := time.Now()
+	dirEntry.Attributes.Mtime = now.Unix()
+	dirEntry.Attributes.MtimeNs = int32(now.Nanosecond())
+	dirEntry.Attributes.Ctime = now.Unix()
+	dirEntry.Attributes.CtimeNs = int32(now.Nanosecond())
 	wfs.saveEntry(dirPath, dirEntry)
 }
 

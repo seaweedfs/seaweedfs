@@ -288,8 +288,10 @@ func synthesizeLocalEntryForServerSideWholeFileCopy(fhIn, fhOut *FileHandle, sou
 		}
 	}
 
+	copyNow := time.Now()
 	localEntry.Attributes.FileSize = uint64(sourceSize)
-	localEntry.Attributes.Mtime = time.Now().Unix()
+	localEntry.Attributes.Mtime = copyNow.Unix()
+	localEntry.Attributes.MtimeNs = int32(copyNow.Nanosecond())
 	return localEntry
 }
 
