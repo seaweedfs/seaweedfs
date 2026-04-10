@@ -961,7 +961,9 @@ type FuseAttributes struct {
 	Md5           []byte                 `protobuf:"bytes,14,opt,name=md5,proto3" json:"md5,omitempty"`
 	Rdev          uint32                 `protobuf:"varint,16,opt,name=rdev,proto3" json:"rdev,omitempty"`
 	Inode         uint64                 `protobuf:"varint,17,opt,name=inode,proto3" json:"inode,omitempty"`
-	Ctime         int64                  `protobuf:"varint,18,opt,name=ctime,proto3" json:"ctime,omitempty"` // unix time in seconds, inode change time
+	Ctime         int64                  `protobuf:"varint,18,opt,name=ctime,proto3" json:"ctime,omitempty"`                    // unix time in seconds, inode change time
+	MtimeNs       int32                  `protobuf:"varint,19,opt,name=mtime_ns,json=mtimeNs,proto3" json:"mtime_ns,omitempty"` // nanosecond component of mtime (0-999999999)
+	CtimeNs       int32                  `protobuf:"varint,20,opt,name=ctime_ns,json=ctimeNs,proto3" json:"ctime_ns,omitempty"` // nanosecond component of ctime (0-999999999)
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1097,6 +1099,20 @@ func (x *FuseAttributes) GetInode() uint64 {
 func (x *FuseAttributes) GetCtime() int64 {
 	if x != nil {
 		return x.Ctime
+	}
+	return 0
+}
+
+func (x *FuseAttributes) GetMtimeNs() int32 {
+	if x != nil {
+		return x.MtimeNs
+	}
+	return 0
+}
+
+func (x *FuseAttributes) GetCtimeNs() int32 {
+	if x != nil {
+		return x.CtimeNs
 	}
 	return 0
 }
@@ -5144,7 +5160,7 @@ const file_filer_proto_rawDesc = "" +
 	"\x06FileId\x12\x1b\n" +
 	"\tvolume_id\x18\x01 \x01(\rR\bvolumeId\x12\x19\n" +
 	"\bfile_key\x18\x02 \x01(\x04R\afileKey\x12\x16\n" +
-	"\x06cookie\x18\x03 \x01(\aR\x06cookie\"\xfe\x02\n" +
+	"\x06cookie\x18\x03 \x01(\aR\x06cookie\"\xb4\x03\n" +
 	"\x0eFuseAttributes\x12\x1b\n" +
 	"\tfile_size\x18\x01 \x01(\x04R\bfileSize\x12\x14\n" +
 	"\x05mtime\x18\x02 \x01(\x03R\x05mtime\x12\x1b\n" +
@@ -5162,7 +5178,9 @@ const file_filer_proto_rawDesc = "" +
 	"\x03md5\x18\x0e \x01(\fR\x03md5\x12\x12\n" +
 	"\x04rdev\x18\x10 \x01(\rR\x04rdev\x12\x14\n" +
 	"\x05inode\x18\x11 \x01(\x04R\x05inode\x12\x14\n" +
-	"\x05ctime\x18\x12 \x01(\x03R\x05ctime\"\x82\x02\n" +
+	"\x05ctime\x18\x12 \x01(\x03R\x05ctime\x12\x19\n" +
+	"\bmtime_ns\x18\x13 \x01(\x05R\amtimeNs\x12\x19\n" +
+	"\bctime_ns\x18\x14 \x01(\x05R\actimeNs\"\x82\x02\n" +
 	"\x12CreateEntryRequest\x12\x1c\n" +
 	"\tdirectory\x18\x01 \x01(\tR\tdirectory\x12%\n" +
 	"\x05entry\x18\x02 \x01(\v2\x0f.filer_pb.EntryR\x05entry\x12\x15\n" +

@@ -82,7 +82,9 @@ func EntryAttributeToPb(entry *Entry) *filer_pb.FuseAttributes {
 	return &filer_pb.FuseAttributes{
 		Crtime:        entry.Attr.Crtime.Unix(),
 		Mtime:         entry.Attr.Mtime.Unix(),
+		MtimeNs:       int32(entry.Attr.Mtime.Nanosecond()),
 		Ctime:         entry.Attr.Ctime.Unix(),
+		CtimeNs:       int32(entry.Attr.Ctime.Nanosecond()),
 		FileMode:      uint32(entry.Attr.Mode),
 		Uid:           entry.Uid,
 		Gid:           entry.Gid,
@@ -106,7 +108,9 @@ func EntryAttributeToExistingPb(entry *Entry, attr *filer_pb.FuseAttributes) {
 	}
 	attr.Crtime = entry.Attr.Crtime.Unix()
 	attr.Mtime = entry.Attr.Mtime.Unix()
+	attr.MtimeNs = int32(entry.Attr.Mtime.Nanosecond())
 	attr.Ctime = entry.Attr.Ctime.Unix()
+	attr.CtimeNs = int32(entry.Attr.Ctime.Nanosecond())
 	attr.FileMode = uint32(entry.Attr.Mode)
 	attr.Uid = entry.Uid
 	attr.Gid = entry.Gid
@@ -130,9 +134,9 @@ func PbToEntryAttribute(attr *filer_pb.FuseAttributes) Attr {
 	}
 
 	t.Crtime = time.Unix(attr.Crtime, 0)
-	t.Mtime = time.Unix(attr.Mtime, 0)
+	t.Mtime = time.Unix(attr.Mtime, int64(attr.MtimeNs))
 	if attr.Ctime != 0 {
-		t.Ctime = time.Unix(attr.Ctime, 0)
+		t.Ctime = time.Unix(attr.Ctime, int64(attr.CtimeNs))
 	} else {
 		t.Ctime = t.Mtime
 	}

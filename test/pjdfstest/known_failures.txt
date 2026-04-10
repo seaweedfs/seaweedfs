@@ -61,7 +61,3 @@ tests/rename/21.t
 # entries have been unlinked.
 tests/unlink/14.t
 
-# ── Nanosecond timestamp precision ─────────────────────────────────────
-# The protobuf schema stores timestamps as int64 seconds. Nanosecond
-# precision would require adding new fields.
-tests/utimensat/08.t
