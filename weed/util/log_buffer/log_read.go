@@ -58,12 +58,20 @@ func (mp MessagePosition) GetOffset() int64 {
 	return mp.Offset // Offset is stored directly
 }
 
-func awaitNotificationOrTimeout(notifyChan <-chan struct{}) bool {
+// awaitNotificationOrTimeout blocks until one of:
+//   - a new-data / flush notification arrives on notifyChan (returns true)
+//   - the LogBuffer is shut down via ShutdownLogBuffer (returns true; callers
+//     re-check IsStopping() and exit)
+//   - notificationHealthCheckInterval elapses (returns false; caller
+//     re-checks client-disconnect and other state)
+func (logBuffer *LogBuffer) awaitNotificationOrTimeout(notifyChan <-chan struct{}) bool {
 	timer := time.NewTimer(notificationHealthCheckInterval)
 	defer timer.Stop()
 
 	select {
 	case <-notifyChan:
+		return true
+	case <-logBuffer.shutdownCh:
 		return true
 	case <-timer.C:
 		return false
@@ -121,7 +129,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 			}
 
 			// Wait for notification or timeout (instant wake-up when data arrives)
-			if awaitNotificationOrTimeout(notifyChan) {
+			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification after ResumeFromDiskError", readerName)
 			} else {
 				glog.V(5).Infof("%s: Notification timeout after ResumeFromDiskError, rechecking state", readerName)
@@ -161,7 +169,7 @@ func (logBuffer *LogBuffer) LoopProcessLogData(readerName string, startPosition 
 					return
 				}
 				// Wait for notification or timeout (instant wake-up when data arrives)
-				if awaitNotificationOrTimeout(notifyChan) {
+				if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 					glog.V(3).Infof("%s: Woke up from notification (LoopProcessLogData)", readerName)
 				} else if lastTsNs != logBuffer.LastTsNs.Load() {
 					break
@@ -307,7 +315,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 			}
 
 			// Wait for notification or timeout (instant wake-up when data arrives)
-			if awaitNotificationOrTimeout(notifyChan) {
+			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification after disk read", readerName)
 			} else {
 				glog.V(5).Infof("%s: Notification timeout, rechecking state", readerName)
@@ -348,7 +356,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					return lastReadPosition, true, nil
 				}
 				// Wait for notification or timeout (instant wake-up when data arrives)
-				if awaitNotificationOrTimeout(notifyChan) {
+				if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 					glog.V(3).Infof("%s: Woke up from notification for offset-based read", readerName)
 				} else {
 					glog.V(5).Infof("%s: Notification timeout for offset-based, rechecking state", readerName)
@@ -364,7 +372,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 					return lastReadPosition, true, nil
 				}
 				// Wait for notification or timeout (instant wake-up when data arrives)
-				if awaitNotificationOrTimeout(notifyChan) {
+				if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 					glog.V(3).Infof("%s: Woke up from notification (main loop)", readerName)
 				} else if lastTsNs != logBuffer.LastTsNs.Load() {
 					break
@@ -390,7 +398,7 @@ func (logBuffer *LogBuffer) LoopProcessLogDataWithOffset(readerName string, star
 				glog.V(4).Infof("%s: Client disconnected on empty buffer", readerName)
 				return lastReadPosition, true, nil
 			}
-			if awaitNotificationOrTimeout(notifyChan) {
+			if logBuffer.awaitNotificationOrTimeout(notifyChan) {
 				glog.V(3).Infof("%s: Woke up from notification on empty buffer", readerName)
 			} else {
 				glog.V(5).Infof("%s: Empty buffer timeout, rechecking state", readerName)
