@@ -127,6 +127,10 @@ func (store *MemoryStore) GetUserInlinePolicy(ctx context.Context, userName, pol
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
 	if userPolicies := store.inlinePolicies[userName]; userPolicies != nil {
 		if doc, exists := userPolicies[policyName]; exists {
 			return &doc, nil
@@ -157,6 +161,10 @@ func (store *MemoryStore) DeleteUserInlinePolicy(ctx context.Context, userName, 
 func (store *MemoryStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
 
 	userPolicies := store.inlinePolicies[userName]
 	names := make([]string, 0, len(userPolicies))

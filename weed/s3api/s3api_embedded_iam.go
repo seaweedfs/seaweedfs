@@ -840,11 +840,47 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 	return actions, nil
 }
 
+// recomputeActions aggregates ident.Actions from all stored inline policies
+// for a user. If the credential manager is unavailable or has no stored policies,
+// returns nil (caller should keep existing actions).
+func (e *EmbeddedIamApi) recomputeActions(ctx context.Context, userName string) []string {
+	if e.credentialManager == nil {
+		return nil
+	}
+	policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+	if err != nil || len(policyNames) == 0 {
+		return nil
+	}
+	actionSet := make(map[string]bool)
+	var aggregated []string
+	for _, name := range policyNames {
+		doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, name)
+		if err != nil || doc == nil {
+			continue
+		}
+		actions, err := e.getActions(doc)
+		if err != nil {
+			glog.Warningf("recomputeActions: failed to parse inline policy %q for user %s: %v", name, userName, err)
+			continue
+		}
+		for _, a := range actions {
+			if !actionSet[a] {
+				actionSet[a] = true
+				aggregated = append(aggregated, a)
+			}
+		}
+	}
+	return aggregated
+}
+
 // PutUserPolicy attaches a policy to a user.
 func (e *EmbeddedIamApi) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamPutUserPolicyResponse, *iamError) {
 	resp := &iamPutUserPolicyResponse{}
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 	policyDocumentString := values.Get("PolicyDocument")
 	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
 	if err != nil {
@@ -859,14 +895,21 @@ func (e *EmbeddedIamApi) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		if userName != ident.Name {
 			continue
 		}
-		ident.Actions = actions
 
 		// Persist the original policy document for lossless round-trip via GetUserPolicy
+		ctx := context.Background()
 		if e.credentialManager != nil {
-			ctx := context.Background()
 			if storeErr := e.credentialManager.PutUserInlinePolicy(ctx, userName, policyName, policyDocument); storeErr != nil {
 				glog.Warningf("PutUserPolicy: failed to persist inline policy document for user %s: %v", userName, storeErr)
 			}
+		}
+
+		// Recompute ident.Actions from ALL stored inline policies so that
+		// multiple policies are properly aggregated for enforcement.
+		if aggregated := e.recomputeActions(ctx, userName); aggregated != nil {
+			ident.Actions = aggregated
+		} else {
+			ident.Actions = actions
 		}
 		return resp, nil
 	}
@@ -889,7 +932,11 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		// Try to retrieve the stored inline policy document for a lossless round-trip
 		if e.credentialManager != nil {
 			ctx := context.Background()
-			if storedDoc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName); err == nil && storedDoc != nil {
+			storedDoc, storeErr := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+			if storeErr != nil {
+				glog.Warningf("GetUserPolicy: failed to read stored inline policy %q for user %s: %v; falling back to reconstruction", policyName, userName, storeErr)
+			}
+			if storeErr == nil && storedDoc != nil {
 				policyDocumentJSON, err := json.Marshal(storedDoc)
 				if err != nil {
 					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
@@ -960,21 +1007,30 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
-// DeleteUserPolicy removes the inline policy from a user (clears their actions).
+// DeleteUserPolicy removes the inline policy from a user.
 func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDeleteUserPolicyResponse, *iamError) {
 	resp := &iamDeleteUserPolicyResponse{}
 	userName := values.Get("UserName")
 	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			ident.Actions = nil
+			ctx := context.Background()
 
 			// Remove the stored inline policy document
 			if e.credentialManager != nil {
-				ctx := context.Background()
 				if err := e.credentialManager.DeleteUserInlinePolicy(ctx, userName, policyName); err != nil {
 					glog.Warningf("DeleteUserPolicy: failed to delete inline policy document for user %s: %v", userName, err)
 				}
+			}
+
+			// Recompute ident.Actions from remaining inline policies
+			if aggregated := e.recomputeActions(ctx, userName); aggregated != nil {
+				ident.Actions = aggregated
+			} else {
+				ident.Actions = nil
 			}
 			return resp, nil
 		}
