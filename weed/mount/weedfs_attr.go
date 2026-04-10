@@ -108,8 +108,10 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 		}
 	}
 
+	ownerChanged := false
 	if uid, ok := input.GetUID(); ok {
 		entry.Attributes.Uid = uid
+		ownerChanged = true
 		if input.NodeId == 1 {
 			wfs.option.MountUid = uid
 		}
@@ -117,9 +119,15 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	if gid, ok := input.GetGID(); ok {
 		entry.Attributes.Gid = gid
+		ownerChanged = true
 		if input.NodeId == 1 {
 			wfs.option.MountGid = gid
 		}
+	}
+
+	// POSIX: clear SUID/SGID bits when ownership changes (unless caller is root).
+	if ownerChanged && input.Uid != 0 {
+		entry.Attributes.FileMode &^= 0o6000
 	}
 
 	if atime, ok := input.GetATime(); ok {
@@ -129,6 +137,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	if mtime, ok := input.GetMTime(); ok {
 		entry.Attributes.Mtime = mtime.Unix()
 	}
+
+	// POSIX: update ctime on any metadata change.
+	entry.Attributes.Ctime = time.Now().Unix()
 
 	out.AttrValid = 1
 	size, includeSize := input.GetSize()
@@ -177,7 +188,11 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	}
 	out.Blocks = (out.Size + blockSize - 1) / blockSize
 	out.Mtime = uint64(entry.Attributes.Mtime)
-	out.Ctime = uint64(entry.Attributes.Mtime)
+	if entry.Attributes.Ctime != 0 {
+		out.Ctime = uint64(entry.Attributes.Ctime)
+	} else {
+		out.Ctime = uint64(entry.Attributes.Mtime)
+	}
 	out.Atime = uint64(entry.Attributes.Mtime)
 	out.Mode = toSyscallMode(os.FileMode(entry.Attributes.FileMode))
 	if entry.HardLinkCounter > 0 {
@@ -200,7 +215,11 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 	setBlksize(out, blockSize)
 	out.Atime = uint64(entry.Attr.Mtime.Unix())
 	out.Mtime = uint64(entry.Attr.Mtime.Unix())
-	out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	if !entry.Attr.Ctime.IsZero() {
+		out.Ctime = uint64(entry.Attr.Ctime.Unix())
+	} else {
+		out.Ctime = uint64(entry.Attr.Mtime.Unix())
+	}
 	out.Mode = toSyscallMode(entry.Attr.Mode)
 	if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)

@@ -92,6 +92,19 @@ func hasAccess(callerUid, callerGid, fileUid, fileGid uint32, perm uint32, mask 
 	return (perm & mask) == mask
 }
 
+// checkStickyBit enforces the POSIX sticky-bit rule: when a directory has the
+// sticky bit set, only the file owner, the directory owner, or root may
+// delete or rename entries within it.
+func checkStickyBit(dirMode, dirUid, targetUid, callerUid uint32) fuse.Status {
+	if dirMode&0o1000 == 0 {
+		return fuse.OK
+	}
+	if callerUid == 0 || callerUid == dirUid || callerUid == targetUid {
+		return fuse.OK
+	}
+	return fuse.EPERM
+}
+
 // openFlagsToAccessMask converts open(2) flags to an access permission mask.
 func openFlagsToAccessMask(flags uint32) uint32 {
 	switch flags & uint32(syscall.O_ACCMODE) {

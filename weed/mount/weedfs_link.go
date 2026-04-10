@@ -72,7 +72,9 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 	}
 
 	// CreateLink 1.2 : update new file to hardlink mode
-	oldEntry.Attributes.Mtime = time.Now().Unix()
+	now := time.Now().Unix()
+	oldEntry.Attributes.Mtime = now
+	oldEntry.Attributes.Ctime = now
 	request := &filer_pb.CreateEntryRequest{
 		Directory: string(newParentPath),
 		Entry: &filer_pb.Entry{

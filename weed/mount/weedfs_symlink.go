@@ -28,14 +28,16 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	}
 	entryFullPath := dirPath.Child(name)
 
+	now := time.Now().Unix()
 	request := &filer_pb.CreateEntryRequest{
 		Directory: string(dirPath),
 		Entry: &filer_pb.Entry{
 			Name:        name,
 			IsDirectory: false,
 			Attributes: &filer_pb.FuseAttributes{
-				Mtime:         time.Now().Unix(),
-				Crtime:        time.Now().Unix(),
+				Mtime:         now,
+				Crtime:        now,
+				Ctime:         now,
 				FileMode:      uint32(os.FileMode(0777) | os.ModeSymlink),
 				Uid:           header.Uid,
 				Gid:           header.Gid,
