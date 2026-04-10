@@ -33,6 +33,7 @@ type oauthTestEnv struct {
 	filerGrpcPort  int
 	volumePort     int
 	volumeGrpcPort int
+	webdavPort     int
 	weedProcess    *exec.Cmd
 	weedCancel     context.CancelFunc
 	accessKey      string
@@ -69,7 +70,7 @@ func newOAuthTestEnv(t *testing.T) *oauthTestEnv {
 	}
 
 	bindIP := testutil.FindBindIP()
-	ports := testutil.MustAllocatePorts(t, 9)
+	ports := testutil.MustAllocatePorts(t, 10)
 
 	return &oauthTestEnv{
 		seaweedDir:     seaweedDir,
@@ -85,6 +86,7 @@ func newOAuthTestEnv(t *testing.T) *oauthTestEnv {
 		s3Port:         ports[6],
 		s3GrpcPort:     ports[7],
 		icebergPort:    ports[8],
+		webdavPort:     ports[9],
 		accessKey:      "AKIAIOSFODNN7EXAMPLE",
 		secretKey:      "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
 	}
@@ -116,6 +118,7 @@ func (env *oauthTestEnv) start(t *testing.T) {
 		"-s3.port", fmt.Sprintf("%d", env.s3Port),
 		"-s3.port.grpc", fmt.Sprintf("%d", env.s3GrpcPort),
 		"-s3.port.iceberg", fmt.Sprintf("%d", env.icebergPort),
+		"-webdav.port", fmt.Sprintf("%d", env.webdavPort),
 		"-s3.config", iamConfigPath,
 		"-ip", env.bindIP,
 		"-ip.bind", "0.0.0.0",

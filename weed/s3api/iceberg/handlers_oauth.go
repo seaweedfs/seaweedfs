@@ -43,15 +43,21 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grantType := r.FormValue("grant_type")
+	// Reject credentials in query string to prevent leaking secrets into logs and caches.
+	if r.URL.Query().Get("client_secret") != "" {
+		writeOAuthError(w, http.StatusBadRequest, "invalid_request", "client_secret must not be sent in the URL")
+		return
+	}
+
+	grantType := r.PostFormValue("grant_type")
 	if grantType != "client_credentials" {
 		writeOAuthError(w, http.StatusBadRequest, "unsupported_grant_type",
 			fmt.Sprintf("Unsupported grant_type: %s", grantType))
 		return
 	}
 
-	clientID := r.FormValue("client_id")
-	clientSecret := r.FormValue("client_secret")
+	clientID := r.PostFormValue("client_id")
+	clientSecret := r.PostFormValue("client_secret")
 
 	// Also support HTTP Basic auth per OAuth2 spec
 	if clientID == "" && clientSecret == "" {
@@ -82,7 +88,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 
 	// Generate a JWT signed with a key derived from the client secret.
 	// Include the access key in claims so we can look up the exact credential for verification.
-	signingKey := deriveSigningKey(clientSecret)
+	signingKey := deriveSigningKey(clientID, clientSecret)
 	now := time.Now()
 	claims := IcebergClaims{
 		IdentityName: identityName,
@@ -102,7 +108,7 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scope := r.FormValue("scope")
+	scope := r.PostFormValue("scope")
 	resp := OAuthTokenResponse{
 		AccessToken: tokenString,
 		TokenType:   "bearer",
@@ -153,7 +159,7 @@ func (s *Server) authenticateBearer(r *http.Request) (string, interface{}, bool)
 		return "", nil, false
 	}
 
-	signingKey := deriveSigningKey(secretKey)
+	signingKey := deriveSigningKey(unverified.AccessKey, secretKey)
 	claims := &IcebergClaims{}
 	verified, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -169,9 +175,13 @@ func (s *Server) authenticateBearer(r *http.Request) (string, interface{}, bool)
 	return identityName, identity, true
 }
 
-// deriveSigningKey derives a signing key from the client secret using HMAC-SHA256.
-func deriveSigningKey(secret string) []byte {
+// deriveSigningKey derives a signing key from the access key and secret using HMAC-SHA256.
+// Including the access key prevents cross-credential token forgery when two
+// credentials happen to share the same secret.
+func deriveSigningKey(accessKey, secret string) []byte {
 	h := hmac.New(sha256.New, []byte("seaweedfs-iceberg-oauth"))
+	h.Write([]byte(accessKey))
+	h.Write([]byte{0}) // null separator
 	h.Write([]byte(secret))
 	return h.Sum(nil)
 }
