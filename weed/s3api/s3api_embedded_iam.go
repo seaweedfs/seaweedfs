@@ -841,21 +841,28 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 }
 
 // recomputeActions aggregates ident.Actions from all stored inline policies
-// for a user. If the credential manager is unavailable or has no stored policies,
-// returns nil (caller should keep existing actions).
-func (e *EmbeddedIamApi) recomputeActions(ctx context.Context, userName string) []string {
+// for a user. Returns (nil, nil) when the credential manager is unavailable
+// (caller should keep existing actions). Returns a non-nil error on store
+// failures so callers can abort the mutation.
+func (e *EmbeddedIamApi) recomputeActions(ctx context.Context, userName string) ([]string, error) {
 	if e.credentialManager == nil {
-		return nil
+		return nil, nil
 	}
 	policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
-	if err != nil || len(policyNames) == 0 {
-		return nil
+	if err != nil {
+		return nil, fmt.Errorf("list inline policies for user %s: %w", userName, err)
+	}
+	if len(policyNames) == 0 {
+		return nil, nil
 	}
 	actionSet := make(map[string]bool)
 	var aggregated []string
 	for _, name := range policyNames {
 		doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, name)
-		if err != nil || doc == nil {
+		if err != nil {
+			return nil, fmt.Errorf("read inline policy %q for user %s: %w", name, userName, err)
+		}
+		if doc == nil {
 			continue
 		}
 		actions, err := e.getActions(doc)
@@ -870,7 +877,7 @@ func (e *EmbeddedIamApi) recomputeActions(ctx context.Context, userName string) 
 			}
 		}
 	}
-	return aggregated
+	return aggregated, nil
 }
 
 // PutUserPolicy attaches a policy to a user.
@@ -896,17 +903,22 @@ func (e *EmbeddedIamApi) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 			continue
 		}
 
-		// Persist the original policy document for lossless round-trip via GetUserPolicy
+		// Persist the original policy document for lossless round-trip via GetUserPolicy.
+		// This must succeed before updating ident.Actions to keep both in sync.
 		ctx := context.Background()
 		if e.credentialManager != nil {
 			if storeErr := e.credentialManager.PutUserInlinePolicy(ctx, userName, policyName, policyDocument); storeErr != nil {
-				glog.Warningf("PutUserPolicy: failed to persist inline policy document for user %s: %v", userName, storeErr)
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: storeErr}
 			}
 		}
 
 		// Recompute ident.Actions from ALL stored inline policies so that
 		// multiple policies are properly aggregated for enforcement.
-		if aggregated := e.recomputeActions(ctx, userName); aggregated != nil {
+		aggregated, recomputeErr := e.recomputeActions(ctx, userName)
+		if recomputeErr != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: recomputeErr}
+		}
+		if aggregated != nil {
 			ident.Actions = aggregated
 		} else {
 			ident.Actions = actions
@@ -1019,15 +1031,20 @@ func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, valu
 		if ident.Name == userName {
 			ctx := context.Background()
 
-			// Remove the stored inline policy document
+			// Remove the stored inline policy document.
+			// Must succeed before updating ident.Actions to keep both in sync.
 			if e.credentialManager != nil {
 				if err := e.credentialManager.DeleteUserInlinePolicy(ctx, userName, policyName); err != nil {
-					glog.Warningf("DeleteUserPolicy: failed to delete inline policy document for user %s: %v", userName, err)
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
 				}
 			}
 
 			// Recompute ident.Actions from remaining inline policies
-			if aggregated := e.recomputeActions(ctx, userName); aggregated != nil {
+			aggregated, recomputeErr := e.recomputeActions(ctx, userName)
+			if recomputeErr != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: recomputeErr}
+			}
+			if aggregated != nil {
 				ident.Actions = aggregated
 			} else {
 				ident.Actions = nil
