@@ -193,4 +193,3 @@ func writeOAuthError(w http.ResponseWriter, status int, errCode, description str
 	}
 	writeJSON(w, status, resp)
 }
-
