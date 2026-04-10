@@ -154,6 +154,120 @@ func TestLoopProcessLogDataWithOffset_NoDataResumeFromDisk(t *testing.T) {
 	t.Logf("Loop exited cleanly in %v after %d iterations (proper sleep detected)", elapsed, callCount)
 }
 
+// TestLoopFlush_NotifiesSubscribersAfterFlush is a regression test for the
+// issue #9007 fix: loopFlush must call notifySubscribers() after processing a
+// flush so that readers parked on notifyChan wake up when a flush lands. The
+// classic bug scenario is a reader that got ResumeFromDiskError, did a disk
+// read that raced the flush and found nothing, and is now blocked on
+// notifyChan waiting for the data that just hit disk.
+//
+// We drain the AddToBuffer notification first, then ForceFlush, and assert a
+// new notification is delivered on notifyChan well before the fallback
+// timeout. If the loopFlush notification is removed, this test fails by
+// hitting the fallback.
+func TestLoopFlush_NotifiesSubscribersAfterFlush(t *testing.T) {
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, nil, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	notifyChan := logBuffer.RegisterSubscriber("flush-notify-test")
+	defer logBuffer.UnregisterSubscriber("flush-notify-test")
+
+	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("k"),
+		Value: []byte("v"),
+		TsNs:  time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("AddToBuffer: %v", err)
+	}
+
+	// Consume the AddToBuffer notification so the channel starts empty.
+	select {
+	case <-notifyChan:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("expected a notification from AddToBuffer")
+	}
+
+	// ForceFlush waits for loopFlush to process the flush. After it returns,
+	// loopFlush must have called notifySubscribers() again.
+	start := time.Now()
+	logBuffer.ForceFlush()
+
+	select {
+	case <-notifyChan:
+		elapsed := time.Since(start)
+		// The fallback timeout is notificationHealthCheckInterval; the flush
+		// notification should arrive well before that.
+		if elapsed >= notificationHealthCheckInterval {
+			t.Errorf("flush notification too slow: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+		}
+		t.Logf("flush notification delivered in %v", elapsed)
+	case <-time.After(notificationHealthCheckInterval):
+		t.Fatalf("loopFlush did not notify subscribers within %v", notificationHealthCheckInterval)
+	}
+}
+
+// TestLoopProcessLogDataWithOffset_WakesOnDataArrival drives a real
+// LoopProcessLogDataWithOffset reader from an empty buffer (readFromDiskFn
+// returns nothing, forcing the reader to park on notifyChan after the
+// ResumeFromDiskError branch), then adds data from another goroutine and
+// asserts the reader completes well before the fallback timeout would fire.
+// This protects the end-to-end wake-up path; the loopFlush-specific
+// notification is covered by TestLoopFlush_NotifiesSubscribersAfterFlush.
+func TestLoopProcessLogDataWithOffset_WakesOnDataArrival(t *testing.T) {
+	readFromDiskFn := func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (MessagePosition, bool, error) {
+		// No data on disk; return unchanged so the reader parks on notifyChan.
+		return startPosition, false, nil
+	}
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, readFromDiskFn, nil)
+	defer logBuffer.ShutdownLogBuffer()
+
+	received := make(chan struct{})
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+		close(received)
+		return true, nil // isDone
+	}
+
+	waitForDataFn := func() bool { return true }
+
+	startPosition := NewMessagePositionFromOffset(0)
+
+	readerDone := make(chan struct{})
+	go func() {
+		_, _, _ = logBuffer.LoopProcessLogDataWithOffset(
+			"wake-test", startPosition, 0, waitForDataFn, eachLogEntryFn)
+		close(readerDone)
+	}()
+
+	// Give the reader a moment to reach awaitNotificationOrTimeout.
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	if err := logBuffer.AddToBuffer(&mq_pb.DataMessage{
+		Key:   []byte("k"),
+		Value: []byte("v"),
+		TsNs:  time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("AddToBuffer: %v", err)
+	}
+
+	select {
+	case <-received:
+	case <-time.After(notificationHealthCheckInterval):
+		t.Fatalf("reader did not process the entry within %v (fallback timeout)", notificationHealthCheckInterval)
+	}
+	<-readerDone
+	elapsed := time.Since(start)
+
+	if elapsed >= notificationHealthCheckInterval {
+		t.Errorf("reader wake too slow: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+	}
+	t.Logf("reader processed the entry in %v after AddToBuffer", elapsed)
+}
+
 // TestLoopProcessLogDataWithOffset_WithData tests normal operation with data
 func TestLoopProcessLogDataWithOffset_WithData(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
