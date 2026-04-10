@@ -144,6 +144,13 @@ func (wfs *WFS) doFlush(fh *FileHandle, uid, gid uint32, allowAsync bool) fuse.S
 		return fuse.OK
 	}
 
+	// Skip metadata flush if the file was unlinked while open.
+	// The filer entry is already gone; flushing would recreate it.
+	if fh.isDeleted {
+		glog.V(3).Infof("doFlush %s fh %d: file was unlinked, skipping metadata flush", fileFullPath, fh.fh)
+		return fuse.OK
+	}
+
 	if isOverQuota {
 		return fuse.Status(syscall.ENOSPC)
 	}
