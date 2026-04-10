@@ -244,6 +244,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
+	wfs.touchDirMtimeCtime(dirFullPath)
 
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
@@ -312,6 +313,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
 		glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
+		wfs.touchDirMtimeCtime(dirFullPath)
 		return inode, newEntry, fuse.OK
 	}
 
@@ -339,6 +341,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtime(dirFullPath)
 	}
 
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)

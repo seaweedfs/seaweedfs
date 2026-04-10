@@ -308,6 +308,10 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
+	wfs.touchDirMtimeCtime(oldDir)
+	if oldDir != newDir {
+		wfs.touchDirMtimeCtime(newDir)
+	}
 
 	return fuse.OK
 

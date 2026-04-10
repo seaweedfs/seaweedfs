@@ -247,6 +247,19 @@ func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
 }
 
+// touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
+// POSIX requires this when entries are created or removed in the directory.
+func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
+	dirEntry, code := wfs.maybeLoadEntry(dirPath)
+	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
+		return
+	}
+	now := time.Now().Unix()
+	dirEntry.Attributes.Mtime = now
+	dirEntry.Attributes.Ctime = now
+	wfs.saveEntry(dirPath, dirEntry)
+}
+
 func chmod(existing uint32, mode uint32) uint32 {
 	return existing&^07777 | mode&07777
 }
