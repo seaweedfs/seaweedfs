@@ -27,7 +27,7 @@ FILER_ADDR="127.0.0.1:${FILER_PORT}"
 # Pin to an immutable upstream commit so CI is reproducible. Override via env
 # if you want to test against a different ref or fork.
 PJDFSTEST_REPO="${PJDFSTEST_REPO:-https://github.com/pjd/pjdfstest.git}"
-PJDFSTEST_REF="${PJDFSTEST_REF:-03eb257}"
+PJDFSTEST_REF="${PJDFSTEST_REF:-03eb25706d8dbf3611c3f820b45b7a5e09a36c06}"
 PJDFSTEST_TESTS="${PJDFSTEST_TESTS:-tests/}"
 
 mini_pid=""
