@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"context"
 	"os"
 	"syscall"
 	"time"
@@ -277,6 +278,17 @@ func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
 	dirEntry.Attributes.Ctime = now.Unix()
 	dirEntry.Attributes.CtimeNs = int32(now.Nanosecond())
 	wfs.saveEntry(dirPath, dirEntry)
+}
+
+// touchDirMtimeCtimeLocal updates a directory's mtime and ctime directly
+// in the local metadata cache, without a filer RPC. This is used for
+// deferred file creates where a filer round-trip would invalidate the
+// just-cached child entry.
+func (wfs *WFS) touchDirMtimeCtimeLocal(dirPath util.FullPath) {
+	now := time.Now()
+	if err := wfs.metaCache.TouchDirMtimeCtime(context.Background(), dirPath, now); err != nil {
+		glog.V(3).Infof("touchDirMtimeCtimeLocal %s: %v", dirPath, err)
+	}
 }
 
 const atimeMapMaxSize = 8192

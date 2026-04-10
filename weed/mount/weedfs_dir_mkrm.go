@@ -56,7 +56,6 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	// but BEFORE outputPbEntry writes attributes to the kernel.  We restore
 	// explicitly below instead of using defer so the kernel gets local values.
 
-
 	request := &filer_pb.CreateEntryRequest{
 		Directory:                string(dirFullPath),
 		Entry:                    newEntry,
