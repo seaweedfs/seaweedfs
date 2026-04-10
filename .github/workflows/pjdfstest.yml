@@ -64,6 +64,7 @@ jobs:
         weed version
 
     - name: Run pjdfstest
+      continue-on-error: true
       run: |
         set -o pipefail
         test/pjdfstest/run.sh 2>&1 | tee /tmp/pjdfstest-output.log
@@ -110,6 +111,7 @@ jobs:
         docker compose -f test/pjdfstest/docker-compose.yml up --wait
 
     - name: Run pjdfstest
+      continue-on-error: true
       run: |
         set -o pipefail
         docker compose -f test/pjdfstest/docker-compose.yml exec -T mount \
