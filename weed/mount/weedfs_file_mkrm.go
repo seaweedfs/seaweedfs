@@ -312,6 +312,8 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry)); insertErr != nil {
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
+		wfs.inodeToPath.TouchDirectory(dirFullPath)
+		wfs.touchDirMtimeCtimeLocal(dirFullPath)
 		glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
 		return inode, newEntry, fuse.OK
 	}

@@ -45,12 +45,6 @@ tests/rename/23.t
 tests/rename/24.t
 tests/unlink/00.t
 
-# ── Parent directory mtime/ctime on deferred file create ───────────────
-# When file creation is deferred (not flushed to filer immediately),
-# the parent directory mtime/ctime cannot be updated without invalidating
-# the just-cached child entry in the metadata cache.
-tests/open/00.t
-
 # ── Directory rename permission edge case ──────────────────────────────
 # Cross-directory rename of a subdirectory with restricted permissions
 # causes cascading test failures within the test file.

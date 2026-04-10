@@ -278,6 +278,25 @@ func (mc *MetaCache) UpdateEntry(ctx context.Context, entry *filer.Entry) error 
 	return mc.localStore.UpdateEntry(ctx, entry)
 }
 
+// TouchDirMtimeCtime updates the mtime and ctime of a directory entry
+// directly in the local metadata cache store. This avoids a filer RPC
+// round-trip and the associated metadata event that would invalidate
+// recently cached child entries.
+func (mc *MetaCache) TouchDirMtimeCtime(ctx context.Context, dirPath util.FullPath, now time.Time) error {
+	mc.Lock()
+	defer mc.Unlock()
+	entry, err := mc.localStore.FindEntry(ctx, dirPath)
+	if err != nil {
+		return err
+	}
+	if entry == nil {
+		return nil
+	}
+	entry.Attr.Mtime = now
+	entry.Attr.Ctime = now
+	return mc.localStore.UpdateEntry(ctx, entry)
+}
+
 func (mc *MetaCache) FindEntry(ctx context.Context, fp util.FullPath) (entry *filer.Entry, err error) {
 	mc.RLock()
 	defer mc.RUnlock()
