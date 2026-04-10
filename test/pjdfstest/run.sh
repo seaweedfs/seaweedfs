@@ -77,6 +77,12 @@ for i in $(seq 1 60); do
   sleep 0.5
 done
 
+if ! (echo > "/dev/tcp/127.0.0.1/${FILER_PORT}") 2>/dev/null; then
+  echo "weed mini filer did not become reachable within 30s; log tail:" >&2
+  tail -n 100 "${LOG_DIR}/mini.log" >&2 || true
+  exit 1
+fi
+
 echo "==> Mounting SeaweedFS at ${MOUNT_DIR}"
 # allowOthers is required so that pjdfstest's setuid/setgid sub-tests (run via
 # sudo) can access files created as the invoking user.
@@ -109,9 +115,12 @@ fi
 
 echo "==> Cloning and building pjdfstest"
 PJDFSTEST_DIR="${WORK_DIR}/pjdfstest"
-if [[ ! -d "${PJDFSTEST_DIR}" ]]; then
-  git clone --depth 1 --branch "${PJDFSTEST_REF}" "${PJDFSTEST_REPO}" "${PJDFSTEST_DIR}"
+if [[ ! -d "${PJDFSTEST_DIR}/.git" ]]; then
+  git clone "${PJDFSTEST_REPO}" "${PJDFSTEST_DIR}"
 fi
+git -C "${PJDFSTEST_DIR}" remote set-url origin "${PJDFSTEST_REPO}"
+git -C "${PJDFSTEST_DIR}" fetch --depth 1 origin "${PJDFSTEST_REF}"
+git -C "${PJDFSTEST_DIR}" checkout --detach FETCH_HEAD
 (
   cd "${PJDFSTEST_DIR}"
   autoreconf -ifs
