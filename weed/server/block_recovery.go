@@ -633,17 +633,29 @@ func (rm *RecoveryManager) ExecutePendingRebuild(replicaID string, targetLSN uin
 		replicaID, targetLSN, pe.RebuildIO)
 	err := rt.ExecuteRebuildPlan(pe.Driver, pe.Plan, pe.RebuildIO, pe.VolumeID, pe.ReplicaID, rm)
 	if err != nil {
-		glog.Warningf("recovery: rebuild execution failed for %s: %v", replicaID, err)
-		// Emit SessionFailed only for transport errors (dial/EOF/decode).
-		// Ack-driven failures (errRebuildAckFailed) already emitted SessionFailed
-		// through ObserveReplicaRebuildSessionAck — don't double-emit.
-		if !errors.Is(err, errRebuildAckFailed) && rm.bs != nil && rm.bs.v2Core != nil {
-			rm.bs.applyCoreEvent(engine.SessionFailed{
-				ID:        pe.VolumeID,
-				ReplicaID: replicaID,
-				Kind:      engine.SessionRebuild,
-				Reason:    err.Error(),
-			})
+		// Check if the rebuild already completed via the remote ack path.
+		// After SessionAckCompleted, the OnAck callback emits SessionCompleted
+		// and stores achievedLSN in remoteRebuildAchieved. But then
+		// RebuildExecutor.Execute() continues calling sender methods which fail
+		// ("sender stopped") because the completion event already cleaned up.
+		// Suppress SessionFailed for these post-completion errors.
+		rm.mu.Lock()
+		_, alreadyCompleted := rm.remoteRebuildAchieved[replicaID]
+		rm.mu.Unlock()
+		if alreadyCompleted {
+			glog.V(0).Infof("recovery: rebuild post-completion error for %s (suppressed): %v", replicaID, err)
+		} else {
+			glog.Warningf("recovery: rebuild execution failed for %s: %v", replicaID, err)
+			// Emit SessionFailed only for real failures.
+			// Ack-driven failures (errRebuildAckFailed) already emitted SessionFailed.
+			if !errors.Is(err, errRebuildAckFailed) && rm.bs != nil && rm.bs.v2Core != nil {
+				rm.bs.applyCoreEvent(engine.SessionFailed{
+					ID:        pe.VolumeID,
+					ReplicaID: replicaID,
+					Kind:      engine.SessionRebuild,
+					Reason:    err.Error(),
+				})
+			}
 		}
 	}
 	return err
