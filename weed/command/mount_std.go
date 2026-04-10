@@ -354,6 +354,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		DirIdleEvictSec:   *option.dirIdleEvictSec,
 		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
 		WritebackCache:       option.writebackCache != nil && *option.writebackCache,
+		PosixDirNlink:        option.posixDirNlink != nil && *option.posixDirNlink,
 	})
 
 	// create mount root
