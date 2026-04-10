@@ -253,7 +253,7 @@ func TestDuckDBOAuthIntegration(t *testing.T) {
 
 	// Create a table bucket and namespace so DuckDB has something to query
 	bucketName := "duckdb-oauth-" + randomSuffix()
-	createTableBucketOnPort(t, env.s3Port, bucketName, env.accessKey, env.secretKey)
+	createTableBucketViaShell(t, env, bucketName)
 
 	// Create a namespace via the Iceberg REST API using OAuth token
 	token := requestOAuthToken(t, env, env.accessKey, env.secretKey)
@@ -385,28 +385,18 @@ func requestOAuthToken(t *testing.T, env *oauthTestEnv, accessKey, secretKey str
 	return tokenResp.AccessToken
 }
 
-// createTableBucketOnPort creates a table bucket via the S3Tables REST API on a specific port,
-// with AWS SigV4-style authentication headers.
-func createTableBucketOnPort(t *testing.T, s3Port int, bucketName, accessKey, secretKey string) {
+// createTableBucketViaShell creates a table bucket using weed shell,
+// which bypasses S3 auth. This is the same approach used by the Trino tests.
+func createTableBucketViaShell(t *testing.T, env *oauthTestEnv, bucketName string) {
 	t.Helper()
 
-	endpoint := fmt.Sprintf("http://localhost:%d/buckets", s3Port)
-	reqBody := fmt.Sprintf(`{"name":"%s"}`, bucketName)
-	req, err := http.NewRequest(http.MethodPut, endpoint, strings.NewReader(reqBody))
+	cmd := exec.Command(env.weedBinary, "shell",
+		fmt.Sprintf("-master=%s:%d.%d", env.bindIP, env.masterPort, env.masterGrpcPort),
+	)
+	cmd.Stdin = strings.NewReader(fmt.Sprintf("s3tables.bucket -create -name %s -account 000000000000\nexit\n", bucketName))
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("create table bucket %s: %v", bucketName, err)
-	}
-	defer resp.Body.Close()
-
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusConflict {
-		t.Fatalf("create table bucket %s failed: status=%d body=%s", bucketName, resp.StatusCode, body)
+		t.Fatalf("create table bucket %s via weed shell: %v\nOutput: %s", bucketName, err, output)
 	}
 	t.Logf("Created table bucket %s", bucketName)
 }
