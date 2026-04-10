@@ -268,6 +268,64 @@ func TestLoopProcessLogDataWithOffset_WakesOnDataArrival(t *testing.T) {
 	t.Logf("reader processed the entry in %v after AddToBuffer", elapsed)
 }
 
+// TestLoopProcessLogDataWithOffset_WakesOnShutdown verifies that a reader
+// parked inside awaitNotificationOrTimeout via the ResumeFromDiskError branch
+// exits promptly when ShutdownLogBuffer is called, without waiting for the
+// 250ms health-check fallback. Regression guard for the IsStopping() shutdown
+// path: if awaitNotificationOrTimeout returns true via shutdownCh and the
+// caller does not check IsStopping(), the reader either spins against the
+// closed shutdownCh or returns ResumeFromDiskError instead of exiting.
+func TestLoopProcessLogDataWithOffset_WakesOnShutdown(t *testing.T) {
+	readFromDiskFn := func(startPosition MessagePosition, stopTsNs int64, eachLogEntryFn EachLogEntryFuncType) (MessagePosition, bool, error) {
+		// No data on disk; return unchanged so the reader parks on notifyChan.
+		return startPosition, false, nil
+	}
+	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {
+	}
+	logBuffer := NewLogBuffer("test", 1*time.Minute, flushFn, readFromDiskFn, nil)
+	// Note: not deferring ShutdownLogBuffer; we trigger it explicitly below.
+
+	eachLogEntryFn := func(logEntry *filer_pb.LogEntry, offset int64) (bool, error) {
+		return false, nil
+	}
+	waitForDataFn := func() bool { return true }
+	startPosition := NewMessagePositionFromOffset(0)
+
+	type result struct {
+		isDone bool
+		err    error
+	}
+	resultCh := make(chan result, 1)
+	go func() {
+		_, isDone, err := logBuffer.LoopProcessLogDataWithOffset(
+			"shutdown-test", startPosition, 0, waitForDataFn, eachLogEntryFn)
+		resultCh <- result{isDone: isDone, err: err}
+	}()
+
+	// Give the reader a moment to reach awaitNotificationOrTimeout.
+	time.Sleep(20 * time.Millisecond)
+
+	start := time.Now()
+	logBuffer.ShutdownLogBuffer()
+
+	select {
+	case r := <-resultCh:
+		elapsed := time.Since(start)
+		if elapsed >= notificationHealthCheckInterval {
+			t.Errorf("reader did not wake on shutdown: %v (>= fallback %v)", elapsed, notificationHealthCheckInterval)
+		}
+		if !r.isDone {
+			t.Errorf("expected isDone=true on shutdown, got false")
+		}
+		if r.err != nil {
+			t.Errorf("expected err=nil on shutdown, got %v", r.err)
+		}
+		t.Logf("reader exited in %v after ShutdownLogBuffer", elapsed)
+	case <-time.After(2 * notificationHealthCheckInterval):
+		t.Fatalf("reader did not exit within %v after ShutdownLogBuffer", 2*notificationHealthCheckInterval)
+	}
+}
+
 // TestLoopProcessLogDataWithOffset_WithData tests normal operation with data
 func TestLoopProcessLogDataWithOffset_WithData(t *testing.T) {
 	flushFn := func(logBuffer *LogBuffer, startTime, stopTime time.Time, buf []byte, minOffset, maxOffset int64) {}
