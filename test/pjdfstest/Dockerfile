@@ -14,10 +14,11 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 ARG PJDFSTEST_REPO=https://github.com/pjd/pjdfstest.git
-ARG PJDFSTEST_REF=master
+ARG PJDFSTEST_REF=03eb25706d8dbf3611c3f820b45b7a5e09a36c06
 
-RUN git clone --depth 1 --branch "${PJDFSTEST_REF}" "${PJDFSTEST_REPO}" /opt/pjdfstest && \
+RUN git clone "${PJDFSTEST_REPO}" /opt/pjdfstest && \
     cd /opt/pjdfstest && \
+    git checkout "${PJDFSTEST_REF}" && \
     autoreconf -ifs && \
     ./configure && \
     make pjdfstest

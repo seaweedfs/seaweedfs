@@ -17,17 +17,17 @@
 set -euo pipefail
 
 WEED_BIN="${WEED_BIN:-weed}"
-WORK_DIR="${WORK_DIR:-/tmp/seaweedfs-pjdfstest}"
+WORK_DIR="${WORK_DIR:-$(mktemp -d /tmp/seaweedfs-pjdfstest.XXXXXX)}"
 MOUNT_DIR="${MOUNT_DIR:-${WORK_DIR}/mnt}"
 DATA_DIR="${DATA_DIR:-${WORK_DIR}/data}"
 LOG_DIR="${LOG_DIR:-${WORK_DIR}/logs}"
 FILER_PORT="${FILER_PORT:-28888}"
 FILER_ADDR="127.0.0.1:${FILER_PORT}"
 
-# Pin to a known-good upstream commit so CI is reproducible. Override via env
-# if you want to test against a fork (e.g. juicefs uses sanwan/pjdfstest).
+# Pin to an immutable upstream commit so CI is reproducible. Override via env
+# if you want to test against a different ref or fork.
 PJDFSTEST_REPO="${PJDFSTEST_REPO:-https://github.com/pjd/pjdfstest.git}"
-PJDFSTEST_REF="${PJDFSTEST_REF:-master}"
+PJDFSTEST_REF="${PJDFSTEST_REF:-03eb257}"
 PJDFSTEST_TESTS="${PJDFSTEST_TESTS:-tests/}"
 
 mini_pid=""
@@ -131,7 +131,7 @@ git -C "${PJDFSTEST_DIR}" checkout --detach FETCH_HEAD
 # pjdfstest must run inside the filesystem under test.
 TEST_ROOT="${MOUNT_DIR}/pjdfstest-root"
 sudo mkdir -p "${TEST_ROOT}"
-sudo cp -a "${PJDFSTEST_DIR}/." "${TEST_ROOT}/"
+sudo cp -r "${PJDFSTEST_DIR}/." "${TEST_ROOT}/"
 
 echo "==> Running pjdfstest (${PJDFSTEST_TESTS})"
 cd "${TEST_ROOT}"

@@ -10,7 +10,7 @@ PJDFSTEST_TESTS="${PJDFSTEST_TESTS:-tests/}"
 # Copy pjdfstest into the mounted filesystem so tests exercise the FS under test.
 TEST_ROOT="${MOUNT_DIR}/pjdfstest-root"
 mkdir -p "${TEST_ROOT}"
-cp -a /opt/pjdfstest/. "${TEST_ROOT}/"
+cp -r /opt/pjdfstest/. "${TEST_ROOT}/"
 
 echo "==> Running pjdfstest (${PJDFSTEST_TESTS})"
 cd "${TEST_ROOT}"
