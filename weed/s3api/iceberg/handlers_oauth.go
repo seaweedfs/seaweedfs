@@ -29,6 +29,7 @@ type OAuthErrorResponse struct {
 // IcebergClaims are JWT claims for Iceberg catalog OAuth tokens.
 type IcebergClaims struct {
 	IdentityName string `json:"identity_name"`
+	AccessKey    string `json:"access_key"`
 	jwt.RegisteredClaims
 }
 
@@ -72,18 +73,20 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	identityName, err := s.credentialValidator.ValidateS3Credential(clientID, clientSecret)
+	identityName, _, err := s.credentialValidator.ValidateS3Credential(clientID, clientSecret)
 	if err != nil {
 		glog.V(2).Infof("Iceberg OAuth: credential validation failed for client_id=%s: %v", clientID, err)
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "Invalid client credentials")
 		return
 	}
 
-	// Generate a JWT signed with a key derived from the client secret
+	// Generate a JWT signed with a key derived from the client secret.
+	// Include the access key in claims so we can look up the exact credential for verification.
 	signingKey := deriveSigningKey(clientSecret)
 	now := time.Now()
 	claims := IcebergClaims{
 		IdentityName: identityName,
+		AccessKey:    clientID,
 		RegisteredClaims: jwt.RegisteredClaims{
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(time.Duration(oauthTokenExpiry) * time.Second)),
@@ -111,43 +114,43 @@ func (s *Server) handleOAuthTokens(w http.ResponseWriter, r *http.Request) {
 }
 
 // authenticateBearer validates a Bearer token from the Authorization header.
-// Returns the identity name from the token, or empty string if invalid.
-func (s *Server) authenticateBearer(r *http.Request) (string, bool) {
+// Returns the identity name, identity object, and whether auth succeeded.
+func (s *Server) authenticateBearer(r *http.Request) (string, interface{}, bool) {
 	auth := r.Header.Get("Authorization")
 	if auth == "" {
-		return "", false
+		return "", nil, false
 	}
 	if !strings.HasPrefix(strings.ToLower(auth), "bearer ") {
-		return "", false
+		return "", nil, false
 	}
 	tokenString := strings.TrimSpace(auth[7:])
 	if tokenString == "" {
-		return "", false
+		return "", nil, false
 	}
 
 	if s.credentialValidator == nil {
-		return "", false
+		return "", nil, false
 	}
 
-	// Parse the token without verification first to get the identity name,
-	// then look up the signing key to verify
+	// Parse the token without verification first to get the access key,
+	// then look up the exact credential to verify the signature.
 	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
 	unverified := &IcebergClaims{}
 	_, _, err := parser.ParseUnverified(tokenString, unverified)
 	if err != nil {
 		glog.V(2).Infof("Iceberg OAuth: failed to parse token: %v", err)
-		return "", false
+		return "", nil, false
 	}
 
-	if unverified.IdentityName == "" {
-		return "", false
+	if unverified.AccessKey == "" {
+		return "", nil, false
 	}
 
-	// Look up the credential to get the signing key for verification
-	secretKey, err := s.credentialValidator.GetSecretKeyForIdentity(unverified.IdentityName)
+	// Look up the credential by access key to get the signing key for verification
+	identityName, identity, secretKey, err := s.credentialValidator.GetCredentialByAccessKey(unverified.AccessKey)
 	if err != nil {
-		glog.V(2).Infof("Iceberg OAuth: failed to get signing key for %s: %v", unverified.IdentityName, err)
-		return "", false
+		glog.V(2).Infof("Iceberg OAuth: failed to get credential for access key: %v", err)
+		return "", nil, false
 	}
 
 	signingKey := deriveSigningKey(secretKey)
@@ -160,10 +163,10 @@ func (s *Server) authenticateBearer(r *http.Request) (string, bool) {
 	})
 	if err != nil || !verified.Valid {
 		glog.V(2).Infof("Iceberg OAuth: token verification failed: %v", err)
-		return "", false
+		return "", nil, false
 	}
 
-	return claims.IdentityName, true
+	return identityName, identity, true
 }
 
 // deriveSigningKey derives a signing key from the client secret using HMAC-SHA256.

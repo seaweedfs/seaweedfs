@@ -12,33 +12,31 @@ import (
 type mockCredentialValidator struct {
 	credentials map[string]string // accessKey -> secretKey
 	identities  map[string]string // accessKey -> identityName
-	secrets     map[string]string // identityName -> secretKey
 }
 
-func (m *mockCredentialValidator) ValidateS3Credential(accessKey, secretKey string) (string, error) {
+func (m *mockCredentialValidator) ValidateS3Credential(accessKey, secretKey string) (string, interface{}, error) {
 	expected, ok := m.credentials[accessKey]
 	if !ok {
-		return "", fmt.Errorf("access key not found")
+		return "", nil, fmt.Errorf("access key not found")
 	}
 	if expected != secretKey {
-		return "", fmt.Errorf("invalid secret key")
+		return "", nil, fmt.Errorf("invalid secret key")
 	}
-	return m.identities[accessKey], nil
+	return m.identities[accessKey], nil, nil
 }
 
-func (m *mockCredentialValidator) GetSecretKeyForIdentity(identityName string) (string, error) {
-	secret, ok := m.secrets[identityName]
+func (m *mockCredentialValidator) GetCredentialByAccessKey(accessKey string) (string, interface{}, string, error) {
+	secret, ok := m.credentials[accessKey]
 	if !ok {
-		return "", fmt.Errorf("identity not found")
+		return "", nil, "", fmt.Errorf("access key not found")
 	}
-	return secret, nil
+	return m.identities[accessKey], nil, secret, nil
 }
 
 func newTestServerWithOAuth() *Server {
 	cv := &mockCredentialValidator{
 		credentials: map[string]string{"AKID123": "secret456"},
 		identities:  map[string]string{"AKID123": "testuser"},
-		secrets:     map[string]string{"testuser": "secret456"},
 	}
 	s := &Server{
 		credentialValidator: cv,
@@ -124,7 +122,7 @@ func TestBearerTokenRoundTrip(t *testing.T) {
 	authReq := httptest.NewRequest(http.MethodGet, "/v1/namespaces", nil)
 	authReq.Header.Set("Authorization", "Bearer "+resp.AccessToken)
 
-	identityName, ok := s.authenticateBearer(authReq)
+	identityName, _, ok := s.authenticateBearer(authReq)
 	if !ok {
 		t.Fatal("expected Bearer auth to succeed")
 	}
@@ -139,7 +137,7 @@ func TestBearerTokenInvalid(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/namespaces", nil)
 	req.Header.Set("Authorization", "Bearer invalid-token")
 
-	_, ok := s.authenticateBearer(req)
+	_, _, ok := s.authenticateBearer(req)
 	if ok {
 		t.Error("expected Bearer auth to fail with invalid token")
 	}
@@ -150,7 +148,7 @@ func TestBearerTokenNone(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/namespaces", nil)
 
-	_, ok := s.authenticateBearer(req)
+	_, _, ok := s.authenticateBearer(req)
 	if ok {
 		t.Error("expected Bearer auth to fail with no token")
 	}

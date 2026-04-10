@@ -226,13 +226,15 @@ func TestOAuthTokenEndpoint(t *testing.T) {
 		}
 		defer resp.Body.Close()
 
-		// Should succeed (200) - the default warehouse bucket may not exist,
-		// but auth should pass. Accept 200 or 500 (internal error from missing bucket).
-		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			body, _ := io.ReadAll(resp.Body)
-			t.Fatalf("Bearer auth rejected: status=%d body=%s", resp.StatusCode, body)
+		// Auth should pass. We accept 200 (success) or 500 (missing warehouse bucket
+		// is an internal error, not an auth error). Reject 401/403/404/405.
+		body, _ := io.ReadAll(resp.Body)
+		switch resp.StatusCode {
+		case http.StatusOK, http.StatusInternalServerError:
+			t.Logf("Bearer token auth succeeded, status=%d", resp.StatusCode)
+		default:
+			t.Fatalf("Bearer auth failed unexpectedly: status=%d body=%s", resp.StatusCode, body)
 		}
-		t.Logf("Bearer token auth succeeded, status=%d", resp.StatusCode)
 	})
 }
 
@@ -316,12 +318,14 @@ SELECT 'DuckDB Iceberg OAuth secret created successfully' as result;
 		t.Fatalf("write fallback SQL file: %v", err)
 	}
 
+	// Try the full SQL script first (CREATE SECRET + catalog access).
+	// Fall back to the simple CREATE SECRET test if iceberg_scan isn't supported.
 	cmd := exec.Command("docker", "run", "--rm",
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
 		"--add-host", "host.docker.internal:host-gateway",
 		"--entrypoint", "duckdb",
 		"duckdb/duckdb:latest",
-		"-init", "/test/duckdb_oauth_fallback.sql",
+		"-init", "/test/duckdb_oauth_test.sql",
 		"-c", "SELECT 1",
 	)
 
@@ -339,11 +343,41 @@ SELECT 'DuckDB Iceberg OAuth secret created successfully' as result;
 		if strings.Contains(outputStr, "NotFound_404") && strings.Contains(outputStr, "/v1/oauth/tokens") {
 			t.Fatal("OAuth token endpoint returned 404 - the fix is not working")
 		}
-		t.Fatalf("DuckDB command failed: %v\nOutput: %s", err, outputStr)
+		// If iceberg_scan failed but CREATE SECRET worked, fall back to simpler test
+		if strings.Contains(outputStr, "OAuth token obtained successfully") {
+			t.Logf("Full SQL had partial success (token obtained), iceberg_scan may not be supported. Continuing.")
+		} else {
+			// Try the fallback script that only tests CREATE SECRET
+			t.Logf("Full SQL failed, trying fallback CREATE SECRET test...")
+			fallbackCmd := exec.Command("docker", "run", "--rm",
+				"-v", fmt.Sprintf("%s:/test", env.dataDir),
+				"--add-host", "host.docker.internal:host-gateway",
+				"--entrypoint", "duckdb",
+				"duckdb/duckdb:latest",
+				"-init", "/test/duckdb_oauth_fallback.sql",
+				"-c", "SELECT 1",
+			)
+			fallbackOutput, fallbackErr := fallbackCmd.CombinedOutput()
+			fallbackStr := string(fallbackOutput)
+			t.Logf("DuckDB fallback output:\n%s", fallbackStr)
+
+			if fallbackErr != nil {
+				if strings.Contains(fallbackStr, "NotFound_404") && strings.Contains(fallbackStr, "/v1/oauth/tokens") {
+					t.Fatal("OAuth token endpoint returned 404 - the fix is not working")
+				}
+				t.Fatalf("DuckDB fallback also failed: %v\nOutput: %s", fallbackErr, fallbackStr)
+			}
+			if !strings.Contains(fallbackStr, "DuckDB Iceberg OAuth secret created successfully") {
+				t.Errorf("expected success message in fallback output, got:\n%s", fallbackStr)
+			}
+			return
+		}
 	}
 
-	if !strings.Contains(outputStr, "DuckDB Iceberg OAuth secret created successfully") {
-		t.Errorf("expected success message in output, got:\n%s", outputStr)
+	if strings.Contains(outputStr, "OAuth token obtained successfully") {
+		t.Logf("DuckDB OAuth CREATE SECRET succeeded")
+	} else {
+		t.Errorf("expected OAuth success message in output, got:\n%s", outputStr)
 	}
 }
 

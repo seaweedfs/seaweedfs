@@ -25,11 +25,12 @@ type S3Authenticator interface {
 // and provides credential lookup for OAuth token verification.
 type CredentialValidator interface {
 	// ValidateS3Credential checks if the access key and secret key are valid.
-	// Returns the identity name on success.
-	ValidateS3Credential(accessKey, secretKey string) (identityName string, err error)
-	// GetSecretKeyForIdentity returns the secret key for a given identity name.
-	// Used for verifying Bearer tokens.
-	GetSecretKeyForIdentity(identityName string) (secretKey string, err error)
+	// Returns the identity name and identity object on success.
+	ValidateS3Credential(accessKey, secretKey string) (identityName string, identity interface{}, err error)
+	// GetCredentialByAccessKey looks up a credential by access key.
+	// Returns the identity name, identity object, and secret key.
+	// Used for verifying Bearer tokens signed with a specific credential.
+	GetCredentialByAccessKey(accessKey string) (identityName string, identity interface{}, secretKey string, err error)
 }
 
 // Server implements the Iceberg REST Catalog API.
@@ -143,9 +144,12 @@ func (w *responseWriter) WriteHeader(code int) {
 func (s *Server) Auth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		// Try Bearer token authentication first (from OAuth2 flow)
-		if identityName, ok := s.authenticateBearer(r); ok {
+		if identityName, identity, ok := s.authenticateBearer(r); ok {
 			ctx := r.Context()
 			ctx = s3_constants.SetIdentityNameInContext(ctx, identityName)
+			if identity != nil {
+				ctx = s3_constants.SetIdentityInContext(ctx, identity)
+			}
 			r = r.WithContext(ctx)
 			handler(w, r)
 			return
