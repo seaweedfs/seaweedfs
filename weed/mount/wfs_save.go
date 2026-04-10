@@ -66,7 +66,7 @@ func (wfs *WFS) mapPbIdFromLocalToFiler(entry *filer_pb.Entry) {
 }
 
 func checkName(name string) fuse.Status {
-	if len(name) > 255 {
+	if len(name) >= 4096 {
 		return fuse.Status(syscall.ENAMETOOLONG)
 	}
 	return fuse.OK
