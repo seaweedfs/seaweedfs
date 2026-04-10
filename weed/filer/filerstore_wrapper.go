@@ -265,8 +265,11 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 		op := ctx.Value("OP")
 		if op != "MV" {
 			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
-			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
-				return err
+			if hlErr := fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); hlErr != nil {
+				// Log but continue: the directory entry must be removed
+				// even if hard link counter cleanup fails, otherwise the
+				// parent directory cannot be removed (rmdir ENOTEMPTY).
+				glog.Warningf("DeleteHardLink %s (id %x): %v", existingEntry.FullPath, existingEntry.HardLinkId, hlErr)
 			}
 		}
 	}
@@ -292,8 +295,12 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 		op := ctx.Value("OP")
 		if op != "MV" {
 			glog.V(4).InfofCtx(ctx, "DeleteHardLink %s", existingEntry.FullPath)
-			if err = fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); err != nil {
-				return err
+			if hlErr := fsw.DeleteHardLink(ctx, existingEntry.HardLinkId); hlErr != nil {
+				// Log the hard link cleanup error but continue to delete
+				// the directory entry. If we return early here, the entry
+				// remains in the store and the parent directory cannot be
+				// removed (rmdir returns ENOTEMPTY).
+				glog.Warningf("DeleteHardLink %s (id %x): %v", existingEntry.FullPath, existingEntry.HardLinkId, hlErr)
 			}
 		}
 	}
