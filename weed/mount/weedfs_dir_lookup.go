@@ -44,6 +44,10 @@ func (wfs *WFS) Lookup(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 	wfs.outputFilerEntry(out, inode, localEntry)
 
+	if localEntry.IsDirectory() {
+		wfs.applyDirNlink(&out.Attr, fullFilePath)
+	}
+
 	return fuse.OK
 
 }

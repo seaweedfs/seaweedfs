@@ -17,15 +17,19 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	glog.V(4).Infof("GetAttr %v", input.NodeId)
 	if input.NodeId == 1 {
 		wfs.setRootAttr(out)
+		wfs.applyDirNlink(&out.Attr, util.FullPath(wfs.option.FilerMountRootPath))
 		return fuse.OK
 	}
 
 	inode := input.NodeId
-	_, _, entry, status := wfs.maybeReadEntry(inode)
+	path, _, entry, status := wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		wfs.applyInMemoryAtime(&out.Attr, inode)
+		if entry.IsDirectory {
+			wfs.applyDirNlink(&out.Attr, path)
+		}
 		return status
 	} else {
 		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
@@ -177,7 +181,7 @@ func (wfs *WFS) setRootAttr(out *fuse.AttrOut) {
 	out.Ctime = now
 	out.Atime = now
 	out.Mode = toSyscallType(os.ModeDir) | uint32(wfs.option.MountMode)
-	out.Nlink = 1
+	out.Nlink = 2
 }
 
 func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.Entry, calculateSize bool) {
@@ -209,7 +213,9 @@ func (wfs *WFS) setAttrByPbEntry(out *fuse.Attr, inode uint64, entry *filer_pb.E
 	out.Atimensec = uint32(entry.Attributes.MtimeNs)
 	// In-memory atime overlay is applied by the caller via applyInMemoryAtime.
 	out.Mode = toSyscallMode(os.FileMode(entry.Attributes.FileMode))
-	if entry.HardLinkCounter > 0 {
+	if entry.IsDirectory {
+		out.Nlink = 2
+	} else if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
 	} else {
 		out.Nlink = 1
@@ -239,7 +245,9 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 		out.Ctimensec = uint32(entry.Attr.Mtime.Nanosecond())
 	}
 	out.Mode = toSyscallMode(entry.Attr.Mode)
-	if entry.HardLinkCounter > 0 {
+	if entry.IsDirectory() {
+		out.Nlink = 2
+	} else if entry.HardLinkCounter > 0 {
 		out.Nlink = uint32(entry.HardLinkCounter)
 	} else {
 		out.Nlink = 1
@@ -316,6 +324,22 @@ func (wfs *WFS) applyInMemoryAtime(out *fuse.Attr, inode uint64) {
 		out.Atimensec = uint32(t.Nanosecond())
 	}
 	wfs.atimeMu.Unlock()
+}
+
+// applyDirNlink sets nlink = 2 + number_of_subdirectories for a directory.
+// Only counts from the local metacache to avoid expensive filer queries.
+// When the cache has no entries (e.g. before readdir), keeps nlink=2.
+func (wfs *WFS) applyDirNlink(out *fuse.Attr, dirPath util.FullPath) {
+	var subdirCount uint32
+	wfs.metaCache.ListDirectoryEntries(context.Background(), dirPath, "", false, 100000, func(entry *filer.Entry) (bool, error) {
+		if entry.IsDirectory() {
+			subdirCount++
+		}
+		return true, nil
+	})
+	if subdirCount > 0 {
+		out.Nlink = 2 + subdirCount
+	}
 }
 
 func chmod(existing uint32, mode uint32) uint32 {
