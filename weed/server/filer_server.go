@@ -258,9 +258,6 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 	fs.filer.LoadRemoteStorageConfAndMapping()
 
 	grace.OnReload(fs.Reload)
-	grace.OnInterrupt(func() {
-		fs.Shutdown()
-	})
 
 	fs.SetupDlmReplication()
 	fs.filer.Dlm.LockRing.SetTakeSnapshotCallback(fs.OnDlmChangeSnapshot)
@@ -301,19 +298,7 @@ func (fs *FilerServer) checkWithMaster() {
 // Shutdown gracefully shuts down the filer server by waiting for in-flight uploads to complete.
 // This prevents data corruption when the process receives SIGTERM during active uploads.
 func (fs *FilerServer) Shutdown() {
-	glog.V(0).Infof("Filer shutdown initiated, waiting for in-flight uploads to complete")
-
-	// Wait for all in-flight uploads to complete
-	for {
-		remaining := atomic.LoadInt64(&fs.inFlightUploads)
-		if remaining == 0 {
-			break
-		}
-		glog.V(0).Infof("Waiting for %d in-flight upload(s) to complete", remaining)
-		time.Sleep(1 * time.Second)
-	}
-
-	glog.V(0).Infof("All uploads complete, proceeding with filer shutdown")
+	glog.V(0).Infof("Shutting down filer")
 	fs.filer.Shutdown()
 }
 

@@ -31,6 +31,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -434,6 +435,12 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
+	// Register graceful shutdown for gRPC server to wait for active RPCs
+	grace.OnInterrupt(func() {
+		glog.V(0).Infof("Gracefully stopping gRPC server")
+		grpcS.GracefulStop()
+	})
+
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
@@ -497,6 +504,22 @@ func (fo *FilerOptions) startFiler() {
 			}()
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
+
+		// Register HTTP server shutdown hook
+		grace.OnInterrupt(func() {
+			glog.V(0).Infof("Gracefully stopping HTTPS server")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTPS server shutdown: %v", err)
+			}
+		})
+
+		// Register filer shutdown hook (database closes last)
+		grace.OnInterrupt(func() {
+			fs.Shutdown()
+		})
+
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
 			go func() {
@@ -517,6 +540,22 @@ func (fo *FilerOptions) startFiler() {
 			}()
 		}
 		httpS := newHttpServer(defaultMux, nil)
+
+		// Register HTTP server shutdown hook
+		grace.OnInterrupt(func() {
+			glog.V(0).Infof("Gracefully stopping HTTP server")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTP server shutdown: %v", err)
+			}
+		})
+
+		// Register filer shutdown hook (database closes last)
+		grace.OnInterrupt(func() {
+			fs.Shutdown()
+		})
+
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
 			go func() {
