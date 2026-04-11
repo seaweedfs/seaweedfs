@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -303,12 +305,10 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		},
 	}
 
-	if deferFilerCreate {
-		// Defer the filer gRPC call to flush time. The caller (Create) will
-		// build a file handle directly from newEntry, bypassing AcquireHandle.
+	if deferFilerCreate || wfs.option.WritebackCache {
 		// Insert a local placeholder into the metadata cache so that
-		// maybeLoadEntry() can find the file (e.g., duplicate-create checks,
-		// stat, readdir). The actual filer entry is created by flushMetadataToFiler.
+		// maybeLoadEntry() can find the file immediately (e.g., duplicate-
+		// create checks, stat, readdir).
 		// We use InsertEntry directly instead of applyLocalMetadataEvent to avoid
 		// triggering directory hot-threshold eviction that would wipe the entry.
 		if insertErr := wfs.metaCache.InsertEntry(context.Background(), filer.FromPbEntry(string(dirFullPath), newEntry)); insertErr != nil {
@@ -316,7 +316,18 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
 		wfs.touchDirMtimeCtimeLocal(dirFullPath)
-		glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
+
+		if deferFilerCreate {
+			// Fully deferred: the caller (Create) will build a file handle
+			// directly from newEntry. The actual filer entry is created by
+			// flushMetadataToFiler on close.
+			glog.V(3).Infof("createFile %s: deferred to flush", entryFullPath)
+		} else {
+			// Async create: Mknod with writeback caching. The node is
+			// visible locally; fire the filer RPC in the background.
+			wfs.asyncCreateEntry(dirFullPath, newEntry)
+			glog.V(3).Infof("createFile %s: async create", entryFullPath)
+		}
 		return inode, newEntry, fuse.OK
 	}
 
@@ -354,6 +365,37 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	}
 
 	return inode, newEntry, fuse.OK
+}
+
+// asyncCreateEntry sends a CreateEntry RPC to the filer in the background.
+// The entry is already in the local meta cache; this persists it to the filer.
+// Used by Mknod with writeback caching — the node is visible locally right away.
+func (wfs *WFS) asyncCreateEntry(dirFullPath util.FullPath, entry *filer_pb.Entry) {
+	// Clone so the goroutine has its own copy for uid/gid mapping.
+	requestEntry := proto.Clone(entry).(*filer_pb.Entry)
+	dir := string(dirFullPath)
+	go func() {
+		wfs.mapPbIdFromLocalToFiler(requestEntry)
+		request := &filer_pb.CreateEntryRequest{
+			Directory:                dir,
+			Entry:                    requestEntry,
+			Signatures:               []int32{wfs.signature},
+			SkipCheckParentDirectory: true,
+		}
+		resp, err := wfs.streamCreateEntry(context.Background(), request)
+		if err != nil {
+			glog.Warningf("async createFile %s/%s: %v", dir, entry.Name, err)
+			return
+		}
+		event := resp.GetMetadataEvent()
+		if event == nil {
+			event = metadataCreateEvent(dir, requestEntry)
+		}
+		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+			glog.Warningf("async createFile %s/%s: metadata apply: %v", dir, entry.Name, applyErr)
+			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+		}
+	}()
 }
 
 func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry) fuse.Status {
