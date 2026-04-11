@@ -1,0 +1,154 @@
+name: rf1-perf-compare
+timeout: 3m
+
+# RF=1 performance baseline — no replication overhead.
+# Use this to compare V1.5 vs V2 engine overhead only.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: rf1-perf
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-perf-master /tmp/sw-perf-vs1 && mkdir -p /tmp/sw-perf-master /tmp/sw-perf-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-perf-vs2 && mkdir -p /tmp/sw-perf-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-perf-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-perf-vs2
+        extra_args: "-block.dir=/tmp/sw-perf-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "1"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+
+  - name: benchmark
+    actions:
+      - action: sleep
+        duration: 5s
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "10.0.0.1"
+        port: "3295"
+        iqn: "iqn.2024-01.com.seaweedfs:vol.{{ volume_name }}"
+        save_as: device
+
+      # Warmup
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "5"
+        time_based: "true"
+        name: warmup
+
+      # 4K random write qd=16
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: randwrite-4k-qd16
+        save_as: fio_4k
+
+      - action: fio_parse
+        json_var: fio_4k
+        metric: iops
+        save_as: iops_4k
+
+      - action: print
+        msg: "4K randwrite qd=16 IOPS: {{ iops_4k }}"
+
+      # 4K random write qd=1 (latency test)
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "1"
+        runtime: "10"
+        time_based: "true"
+        name: randwrite-4k-qd1
+        save_as: fio_qd1
+
+      - action: fio_parse
+        json_var: fio_qd1
+        metric: iops
+        save_as: iops_qd1
+
+      - action: print
+        msg: "4K randwrite qd=1 IOPS: {{ iops_qd1 }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

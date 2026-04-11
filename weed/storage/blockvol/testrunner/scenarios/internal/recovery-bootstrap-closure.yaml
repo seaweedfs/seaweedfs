@@ -1,0 +1,151 @@
+name: recovery-bootstrap-closure
+timeout: 10m
+
+# Stage 0 closure scenario:
+#   1. Create RF=2 sync_all volume
+#   2. Wait for assignment/shipper wiring
+#   3. Issue one small explicit fsync-backed write
+#   4. Wait until the volume reaches publish_healthy
+#
+# This scenario intentionally stops after bootstrap closure. Sustained workload,
+# large writes, and failover validation belong to Stage 1.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: rb-bootstrap
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-fo-master /tmp/sw-fo-vs1 && mkdir -p /tmp/sw-fo-master /tmp/sw-fo-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-fo-vs2 && mkdir -p /tmp/sw-fo-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-fo-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-fo-vs1
+        extra_args: "-block.dir=/tmp/sw-fo-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-fo-vs2
+        extra_args: "-block.dir=/tmp/sw-fo-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+  - name: bootstrap-fence
+    actions:
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: before
+
+      - action: print
+        msg: "Before: primary={{ before }} ({{ before_server }}), replica={{ before_replica_node }}"
+
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: sleep
+        duration: 10s
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      - action: dd_write
+        node: m01
+        device: "{{ device }}"
+        bs: 4k
+        count: "1"
+        sync_mode: fsync
+        save_as: bootstrap_md5
+
+      - action: print
+        msg: "Bootstrap fence passed — first barrier confirmed (md5={{ bootstrap_md5 }})"
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      - action: print
+        msg: "Volume healthy — bootstrap closure complete"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true

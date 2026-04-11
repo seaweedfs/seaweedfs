@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"reflect"
@@ -142,6 +143,71 @@ func (f fakeRebuildIO) TransferSnapshot(snapshotLSN uint64) error {
 
 func (f fakeRebuildIO) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
 	return endInclusive, nil
+}
+
+type errorRebuildIO struct {
+	err error
+}
+
+func (e errorRebuildIO) TransferFullBase(committedLSN uint64) (uint64, error) {
+	if e.err == nil {
+		return 0, errors.New("rebuild execution failed")
+	}
+	return 0, e.err
+}
+
+func (e errorRebuildIO) TransferSnapshot(snapshotLSN uint64) error {
+	if e.err == nil {
+		return errors.New("rebuild execution failed")
+	}
+	return e.err
+}
+
+func (e errorRebuildIO) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
+	if e.err == nil {
+		return 0, errors.New("rebuild execution failed")
+	}
+	return 0, e.err
+}
+
+type completedAckThenErrorRebuildIO struct {
+	rm          *RecoveryManager
+	replicaID   string
+	achievedLSN uint64
+	err         error
+}
+
+func (c completedAckThenErrorRebuildIO) TransferFullBase(committedLSN uint64) (uint64, error) {
+	if c.rm != nil {
+		achieved := c.achievedLSN
+		if achieved == 0 {
+			achieved = committedLSN
+		}
+		c.rm.mu.Lock()
+		if c.rm.remoteRebuildAchieved == nil {
+			c.rm.remoteRebuildAchieved = make(map[string]uint64)
+		}
+		c.rm.remoteRebuildAchieved[c.replicaID] = achieved
+		c.rm.mu.Unlock()
+	}
+	if c.err == nil {
+		return 0, errors.New("post_ack_error")
+	}
+	return 0, c.err
+}
+
+func (c completedAckThenErrorRebuildIO) TransferSnapshot(snapshotLSN uint64) error {
+	if c.err == nil {
+		return errors.New("post_ack_error")
+	}
+	return c.err
+}
+
+func (c completedAckThenErrorRebuildIO) StreamWALEntries(startExclusive, endInclusive uint64) (uint64, error) {
+	if c.err == nil {
+		return 0, errors.New("post_ack_error")
+	}
+	return 0, c.err
 }
 
 // --- Live-path with real vol: reaches planning ---
@@ -542,6 +608,197 @@ func TestP16B_RunRebuild_FailClosedWithoutFreshStartRebuildCommand(t *testing.T)
 	}
 	if sender.State() == engine.StateInSync {
 		t.Fatalf("sender should not become in_sync without executing start_rebuild, state=%s", sender.State())
+	}
+}
+
+func TestP16B_RunRebuild_ExecutionFailureAllowsFreshRetry(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	installTestSession(t, bs, replicaID, engine.SessionRebuild)
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+
+	attempts := 0
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
+			return
+		}
+		attempts++
+		if attempts == 1 {
+			pending.RebuildIO = errorRebuildIO{err: errors.New("mid_rebuild_failure")}
+			return
+		}
+		pending.RebuildIO = fakeRebuildIO{achievedLSN: pending.Plan.RebuildTargetLSN}
+	}
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+
+	rm.runRebuild(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
+
+	sender := bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after failed rebuild")
+	}
+	if sender.State() == engine.StateInSync {
+		t.Fatalf("sender state=%s, want non-in_sync after failed rebuild", sender.State())
+	}
+	firstProj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected core projection after failed rebuild")
+	}
+	if firstProj.Mode.Name != engine.ModeDegraded {
+		t.Fatalf("mode=%s, want degraded after failed rebuild", firstProj.Mode.Name)
+	}
+
+	installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	rm.runRebuild(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
+
+	sender = bs.v2Orchestrator.Registry.Sender(replicaID)
+	if sender == nil {
+		t.Fatal("sender missing after retry rebuild")
+	}
+	if sender.State() != engine.StateInSync {
+		t.Fatalf("sender state=%s, want %s after retry", sender.State(), engine.StateInSync)
+	}
+	finalProj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected final core projection after retry rebuild")
+	}
+	if finalProj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", finalProj.Recovery.Phase, engine.RecoveryIdle)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts=%d, want 2", attempts)
+	}
+}
+
+func TestP16B_RunRebuild_PostAckErrorStillFailsAndClearsRemoteMarker(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	if err := bs.blockStore.WithVolume(volPath, func(vol *blockvol.BlockVol) error {
+		for i := 0; i < 5; i++ {
+			if err := vol.WriteLBA(uint64(i), make([]byte, 4096)); err != nil {
+				return err
+			}
+		}
+		return vol.ForceFlush()
+	}); err != nil {
+		t.Fatalf("write+flush: %v", err)
+	}
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	installTestSession(t, bs, replicaID, engine.SessionRebuild)
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.OnPendingExecution = func(volumeID string, pending *rt.PendingExecution) {
+		if volumeID != volPath || pending == nil || pending.Plan == nil {
+			return
+		}
+		pending.RebuildIO = completedAckThenErrorRebuildIO{
+			rm:          rm,
+			replicaID:   replicaID,
+			achievedLSN: pending.Plan.RebuildTargetLSN,
+			err:         errors.New("post_ack_error"),
+		}
+	}
+	_, _, rebuildPort := bs.ReplicationPorts(volPath)
+	rebuildAddr := fmt.Sprintf("127.0.0.1:%d", rebuildPort)
+
+	rm.runRebuild(context.Background(), replicaID, []blockvol.BlockVolumeAssignment{{Path: volPath, RebuildAddr: rebuildAddr}})
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected core projection after post-ack error")
+	}
+	if proj.Mode.Name != engine.ModeDegraded {
+		t.Fatalf("mode=%s, want degraded after post-ack error", proj.Mode.Name)
+	}
+	if proj.Recovery.Reason != "post_ack_error" {
+		t.Fatalf("recovery_reason=%q, want post_ack_error", proj.Recovery.Reason)
+	}
+	rm.mu.Lock()
+	_, stillMarked := rm.remoteRebuildAchieved[replicaID]
+	rm.mu.Unlock()
+	if stillMarked {
+		t.Fatal("remote rebuild achieved marker should be cleared on failure")
+	}
+}
+
+func TestP16B_OnRebuildCompleted_RemotePathEmitsSessionCompleted(t *testing.T) {
+	bs, volPath := createTestBlockServiceWithVolCoreNoRecovery(t)
+
+	bs.ProcessAssignments([]blockvol.BlockVolumeAssignment{{
+		Path:            volPath,
+		Epoch:           1,
+		Role:            uint32(blockvol.RolePrimary),
+		ReplicaServerID: "vs2",
+		ReplicaDataAddr: "10.0.0.2:9333",
+		ReplicaCtrlAddr: "10.0.0.2:9334",
+	}})
+
+	replicaID := volPath + "/vs2"
+	sessionID := installTestSession(t, bs, replicaID, engine.SessionRebuild)
+	if sessionID == 0 {
+		t.Fatal("expected rebuild session")
+	}
+	targetLSN := uint64(123)
+	bs.applyCoreEvent(engine.RebuildStarted{ID: volPath, ReplicaID: replicaID, TargetLSN: targetLSN})
+
+	rm := NewRecoveryManager(bs)
+	bs.v2Recovery = rm
+	rm.mu.Lock()
+	rm.remoteRebuildAchieved[replicaID] = targetLSN + 7
+	rm.mu.Unlock()
+
+	rm.OnRebuildCompleted(volPath, replicaID, &engine.RecoveryPlan{RebuildTargetLSN: targetLSN})
+
+	proj, ok := bs.CoreProjection(volPath)
+	if !ok {
+		t.Fatal("expected core projection after remote rebuild completion")
+	}
+	if proj.Recovery.Phase != engine.RecoveryIdle {
+		t.Fatalf("recovery_phase=%s, want %s", proj.Recovery.Phase, engine.RecoveryIdle)
+	}
+	if proj.Boundary.AchievedLSN != targetLSN+7 {
+		t.Fatalf("achieved_lsn=%d, want %d", proj.Boundary.AchievedLSN, targetLSN+7)
+	}
+	rm.mu.Lock()
+	_, stillMarked := rm.remoteRebuildAchieved[replicaID]
+	rm.mu.Unlock()
+	if stillMarked {
+		t.Fatal("remote rebuild achieved marker should be consumed on completion")
 	}
 }
 

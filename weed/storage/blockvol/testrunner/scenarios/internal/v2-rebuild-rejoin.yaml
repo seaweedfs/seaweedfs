@@ -1,0 +1,355 @@
+name: v2-rebuild-rejoin
+timeout: 12m
+
+# I-R8 + I-V4: Full failover → rejoin → rebuild cycle.
+#
+# Tests the complete V2 lifecycle:
+#   1. Create RF=2 sync_all volume, write data, verify
+#   2. Kill primary (SIGKILL)
+#   3. Wait for master auto-promotion (lease expiry)
+#   4. Verify failover: new primary serves reads (data continuity)
+#   5. Write more data to new primary (post-failover checkpoint)
+#   6. Restart old primary — it rejoins as replica
+#   7. Wait for rebuild to complete (volume healthy again)
+#   8. Kill new primary, verify data on rebuilt replica
+#
+# This exercises: WAL retention, failover promotion, registry
+# stale-cleanup grace, rebuild session, and data convergence.
+#
+# Topology: m01=client/VS2, m02=master/VS1
+# Primary lands on m01 (VS2), replica on m02 (VS1).
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  volume_name: v2-rebuild
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-rb-master /tmp/sw-rb-vs1 && mkdir -p /tmp/sw-rb-master /tmp/sw-rb-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-rb-vs2 && mkdir -p /tmp/sw-rb-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-rb-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-rb-vs1
+        extra_args: "-block.dir=/tmp/sw-rb-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-rb-vs2
+        extra_args: "-block.dir=/tmp/sw-rb-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volume
+    actions:
+      - action: create_block_volume
+        name: "{{ volume_name }}"
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "2"
+        durability_mode: "sync_all"
+
+  # Phase 1: Bootstrap + initial workload.
+  - name: bootstrap-and-write
+    actions:
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: pri1
+
+      - action: print
+        msg: "Initial: primary={{ pri1 }} ({{ pri1_server }}), replica={{ pri1_replica_node }}"
+
+      - action: sleep
+        duration: 10s
+
+      - action: lookup_block_volume
+        name: "{{ volume_name }}"
+        save_as: vol
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_iscsi_host }}"
+        port: "{{ vol_iscsi_port }}"
+        iqn: "{{ vol_iqn }}"
+        save_as: device
+
+      # Bootstrap fence: first write + fsync.
+      - action: dd_write
+        node: m01
+        device: "{{ device }}"
+        bs: 4k
+        count: "1"
+        sync_mode: fsync
+
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 60s
+
+      # Main workload: fio + dd checkpoint at known offset.
+      - action: fio_json
+        node: m01
+        device: "{{ device }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "16"
+        runtime: "10"
+        time_based: "true"
+        name: initial-write
+
+      - action: dd_write
+        node: m01
+        device: "{{ device }}"
+        bs: 1M
+        count: "4"
+        seek: "16"
+        sync_mode: fsync
+        save_as: checkpoint1_md5
+
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device }}"
+        bs: 1M
+        count: "4"
+        skip: "16"
+        save_as: checkpoint1_verify
+
+      - action: assert_equal
+        actual: "{{ checkpoint1_verify }}"
+        expected: "{{ checkpoint1_md5 }}"
+
+      - action: print
+        msg: "Checkpoint 1 written: md5={{ checkpoint1_md5 }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  # Phase 2: Kill primary, wait for failover.
+  - name: kill-primary
+    actions:
+      - action: print
+        msg: "=== Killing primary {{ pri1 }} ({{ pri1_server }}) ==="
+
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+
+      - action: print
+        msg: "Primary killed. Waiting 45s for lease expiry..."
+
+      - action: sleep
+        duration: 45s
+
+  # Phase 3: Verify failover succeeded.
+  - name: verify-failover
+    actions:
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "{{ pri1_server }}"
+        timeout: 60s
+        save_as: after
+
+      - action: discover_primary
+        name: "{{ volume_name }}"
+        save_as: pri2
+
+      - action: print
+        msg: "Failover complete: {{ pri1_server }} → {{ pri2_server }}"
+
+      # Verify data continuity on new primary.
+      - action: iscsi_login_direct
+        node: m01
+        host: "10.0.0.3"
+        port: "3295"
+        iqn: "iqn.2024-01.com.seaweedfs:vol.{{ volume_name }}"
+        save_as: device2
+
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "4"
+        skip: "16"
+        save_as: failover_read
+
+      - action: assert_equal
+        actual: "{{ failover_read }}"
+        expected: "{{ checkpoint1_md5 }}"
+
+      - action: print
+        msg: "Data continuity verified after failover: md5={{ failover_read }}"
+
+      # Write checkpoint 2 on new primary (post-failover data).
+      - action: dd_write
+        node: m01
+        device: "{{ device2 }}"
+        bs: 1M
+        count: "4"
+        seek: "32"
+        sync_mode: fsync
+        save_as: checkpoint2_md5
+
+      - action: print
+        msg: "Checkpoint 2 written on new primary: md5={{ checkpoint2_md5 }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  # Phase 4: Restart old primary — it rejoins as replica and rebuilds.
+  - name: restart-old-primary
+    actions:
+      - action: print
+        msg: "=== Restarting old primary on m01 as replica ==="
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-rb-vs2
+        extra_args: "-block.dir=/tmp/sw-rb-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid_new
+
+      - action: sleep
+        duration: 5s
+
+      # Wait for the volume to become healthy (rebuild complete).
+      - action: wait_volume_healthy
+        name: "{{ volume_name }}"
+        timeout: 120s
+
+      - action: print
+        msg: "Rebuild complete — volume healthy with 2 replicas"
+
+  # Phase 5: Verify data on rebuilt replica.
+  # Kill the current primary (m02), connect to the rebuilt replica (m01),
+  # and verify both checkpoints are present.
+  - name: verify-rebuilt-data
+    actions:
+      - action: print
+        msg: "=== Verifying rebuilt replica data ==="
+
+      # Kill current primary (m02) so we can read from the rebuilt replica.
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+
+      - action: sleep
+        duration: 45s
+
+      - action: wait_block_primary
+        name: "{{ volume_name }}"
+        not: "10.0.0.3:18480"
+        timeout: 60s
+
+      # Connect to rebuilt replica (now promoted to primary on m01).
+      - action: iscsi_login_direct
+        node: m01
+        host: "10.0.0.1"
+        port: "3295"
+        iqn: "iqn.2024-01.com.seaweedfs:vol.{{ volume_name }}"
+        save_as: device3
+
+      # Verify checkpoint 1 (written before first failover).
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device3 }}"
+        bs: 1M
+        count: "4"
+        skip: "16"
+        save_as: rebuilt_cp1
+
+      - action: assert_equal
+        actual: "{{ rebuilt_cp1 }}"
+        expected: "{{ checkpoint1_md5 }}"
+
+      # Verify checkpoint 2 (written after first failover, before rebuild).
+      - action: dd_read_md5
+        node: m01
+        device: "{{ device3 }}"
+        bs: 1M
+        count: "4"
+        skip: "32"
+        save_as: rebuilt_cp2
+
+      - action: assert_equal
+        actual: "{{ rebuilt_cp2 }}"
+        expected: "{{ checkpoint2_md5 }}"
+
+      - action: print
+        msg: "REBUILD VERIFIED: cp1={{ rebuilt_cp1 }} cp2={{ rebuilt_cp2 }}"
+
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid_new }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true
