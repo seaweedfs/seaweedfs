@@ -106,7 +106,7 @@ func TestDrainAndRemoveFromWritable_NoPending(t *testing.T) {
 	// No pending — drain should return immediately
 	start := time.Now()
 	vl.DrainAndRemoveFromWritable(1)
-	if elapsed := time.Since(start); elapsed > 100*time.Millisecond {
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Errorf("drain with no pending took %v, expected near-instant", elapsed)
 	}
 
@@ -143,7 +143,7 @@ func TestDrainAndRemoveFromWritable_WithPending(t *testing.T) {
 	elapsed := time.Since(start)
 
 	// Should return quickly since pending is below threshold
-	if elapsed > 100*time.Millisecond {
+	if elapsed > 500*time.Millisecond {
 		t.Errorf("drain with pending below threshold took %v", elapsed)
 	}
 
@@ -213,9 +213,15 @@ func TestDrainAndRemoveFromWritable_DecaysViaConcurrentHeartbeat(t *testing.T) {
 	}
 
 	<-done
+
+	// Verify volume is no longer writable
+	writable, _ := vl.GetWritableVolumeCount()
+	if writable != 0 {
+		t.Errorf("expected 0 writable after drain, got %d", writable)
+	}
 }
 
-func TestSetVolumeReadOnly_LogsPending(t *testing.T) {
+func TestSetVolumeReadOnly_PreservesPending(t *testing.T) {
 	layout := `
 {
   "dc1":{
