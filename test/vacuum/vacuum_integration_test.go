@@ -214,27 +214,33 @@ func TestVacuumIntegration(t *testing.T) {
 	masterAddr := "127.0.0.1:9333"
 	collection := "vactest"
 
-	// Upload several files to create volume with data
+	// Upload files large enough that deleting most creates significant garbage.
+	// With volumeSizeLimitMB=10, we need several MB of garbage to exceed the
+	// 10% threshold passed to vacuum.
+	const fileSize = 500 * 1024 // 500 KB per file
+	const totalFiles = 16
+	const filesToDelete = 12 // delete 75% → ~6 MB garbage out of ~8 MB
+
 	var fids []string
 	var volumeId needle.VolumeId
-	for i := 0; i < 10; i++ {
-		data := bytes.Repeat([]byte(fmt.Sprintf("test data entry %d padding ", i)), 100)
+	for i := 0; i < totalFiles; i++ {
+		data := bytes.Repeat([]byte{byte('A' + i%26)}, fileSize)
 		fid, vid, err := uploadData(masterAddr, collection, data)
 		require.NoError(t, err, "upload %d", i)
 		fids = append(fids, fid)
 		volumeId = vid
 	}
-	t.Logf("Uploaded 10 files to volume %d", volumeId)
+	t.Logf("Uploaded %d files (%d KB each) to volume %d", totalFiles, fileSize/1024, volumeId)
 
 	// Wait for heartbeat to report sizes
 	time.Sleep(6 * time.Second)
 
-	// Delete half the files to create garbage
-	for i := 0; i < 5; i++ {
+	// Delete most files to create garbage well above the threshold
+	for i := 0; i < filesToDelete; i++ {
 		err := deleteFile(masterAddr, fids[i])
 		require.NoError(t, err, "delete %s", fids[i])
 	}
-	t.Logf("Deleted 5 files to create garbage")
+	t.Logf("Deleted %d of %d files to create garbage", filesToDelete, totalFiles)
 
 	// Wait for heartbeat to report deletions
 	time.Sleep(6 * time.Second)
@@ -310,7 +316,7 @@ func TestVacuumIntegration(t *testing.T) {
 
 	// Verify remaining files are still readable
 	t.Run("verify_remaining_data", func(t *testing.T) {
-		for i := 5; i < 10; i++ {
+		for i := filesToDelete; i < totalFiles; i++ {
 			fid := fids[i]
 			parsedFid, err := needle.ParseFileIdFromString(fid)
 			require.NoError(t, err)
