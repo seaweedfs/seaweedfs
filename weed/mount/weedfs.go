@@ -134,6 +134,7 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
+	fileIdPool           *FileIdPool
 
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
@@ -351,6 +352,11 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
+
+	if wfs.option.WritebackCache {
+		wfs.fileIdPool = NewFileIdPool(wfs)
+		glog.V(0).Infof("file ID pool enabled for writeback cache (batch=%d)", wfs.fileIdPool.batchSize)
+	}
 
 	return nil
 }
