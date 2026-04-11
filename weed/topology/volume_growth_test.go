@@ -433,7 +433,7 @@ func TestPickForWrite(t *testing.T) {
 						continue
 					}
 					volumeGrowOption.DataNode = dn
-					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl)
+					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl, 0)
 					if dc == "dc0" {
 						if err == nil || count != 0 || !shouldGrow {
 							fmt.Println(dc, r, dn, "pick for write should be with error")

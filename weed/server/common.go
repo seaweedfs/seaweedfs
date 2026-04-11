@@ -154,13 +154,14 @@ func submitForClientHandler(w http.ResponseWriter, r *http.Request, masterFn ope
 		}
 	}
 	ar := &operation.VolumeAssignRequest{
-		Count:       count,
-		DataCenter:  r.FormValue("dataCenter"),
-		Rack:        r.FormValue("rack"),
-		Replication: r.FormValue("replication"),
-		Collection:  r.FormValue("collection"),
-		Ttl:         r.FormValue("ttl"),
-		DiskType:    r.FormValue("disk"),
+		Count:            count,
+		DataCenter:       r.FormValue("dataCenter"),
+		Rack:             r.FormValue("rack"),
+		Replication:      r.FormValue("replication"),
+		Collection:       r.FormValue("collection"),
+		Ttl:              r.FormValue("ttl"),
+		DiskType:         r.FormValue("disk"),
+		ExpectedDataSize: uint64(pu.OriginalDataSize),
 	}
 	assignResult, ae := operation.Assign(ctx, masterFn, grpcDialOption, ar)
 	if ae != nil {
