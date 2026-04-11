@@ -216,7 +216,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		dirIdleEvict:      dirIdleEvict,
 	}
 
-	if option.EnableDistributedLock && len(option.FilerAddresses) > 0 {
+	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {
 		wfs.lockClient = cluster.NewLockClient(option.GrpcDialOption, option.FilerAddresses[0])
 		glog.V(0).Infof("distributed lock manager enabled for mount")
 	}
