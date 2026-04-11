@@ -159,23 +159,10 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	// Decay pending estimate once per heartbeat cycle.
-	// Replicated volumes trigger RegisterVolume from each replica's heartbeat.
-	// Only run decay when the reported size actually changes, so the excess
-	// is halved once per cycle instead of once per replica.
-	if v.Size != vl.vid2reportedSize[v.Id] {
+	// For new volumes, initialize vid2size from reported size.
+	if _, exists := vl.vid2size[v.Id]; !exists {
+		vl.vid2size[v.Id] = v.Size
 		vl.vid2reportedSize[v.Id] = v.Size
-		if prev := vl.vid2size[v.Id]; prev > v.Size {
-			vl.vid2size[v.Id] = v.Size + (prev-v.Size)/2
-		} else {
-			vl.vid2size[v.Id] = v.Size
-		}
-		// Update crowded state based on effective size
-		if float64(vl.vid2size[v.Id]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
-			vl.setVolumeCrowded(v.Id)
-		} else {
-			vl.removeFromCrowded(v.Id)
-		}
 	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
@@ -203,6 +190,30 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 		vl.oversizedVolumes.Add(v.Id, dn)
 	} else {
 		vl.oversizedVolumes.Remove(v.Id, dn)
+	}
+}
+
+// UpdateVolumeSize is called on every heartbeat for every reported volume.
+// It decays the pending size estimate toward the reported size and updates
+// crowded state. Replicated volumes report from multiple DataNodes; decay
+// runs only once per new reported size to avoid double-halving.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+
+	if reportedSize == vl.vid2reportedSize[vid] {
+		return // same size from another replica in this cycle
+	}
+	vl.vid2reportedSize[vid] = reportedSize
+	if prev := vl.vid2size[vid]; prev > reportedSize {
+		vl.vid2size[vid] = reportedSize + (prev-reportedSize)/2
+	} else {
+		vl.vid2size[vid] = reportedSize
+	}
+	if float64(vl.vid2size[vid]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+		vl.setVolumeCrowded(vid)
+	} else {
+		vl.removeFromCrowded(vid)
 	}
 }
 
@@ -341,9 +352,13 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		return vid, count, locationList.Copy(), false, nil
 	}
 
-	// collect candidates matching the constraints
-	var candidates []needle.VolumeId
-	for _, writableVolumeId := range vl.writables {
+	// Scan from a random offset to collect up to pickSampleSize matching
+	// candidates, avoiding a full scan + allocation in the common case.
+	var sample [pickSampleSize]needle.VolumeId
+	found := 0
+	start := rand.IntN(lenWriters)
+	for i := 0; i < lenWriters && found < pickSampleSize; i++ {
+		writableVolumeId := vl.writables[(start+i)%lenWriters]
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
 			if option.DataCenter != "" && dn.GetDataCenter().Id() != NodeId(option.DataCenter) {
@@ -355,14 +370,15 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
 				continue
 			}
-			candidates = append(candidates, writableVolumeId)
+			sample[found] = writableVolumeId
+			found++
 			break
 		}
 	}
-	if len(candidates) == 0 {
+	if found == 0 {
 		return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", NoWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
 	}
-	vid, locationList = vl.pickWeightedByRemaining(candidates)
+	vid, locationList = vl.weightedPick(sample[:found])
 	return vid, count, locationList.Copy(), false, nil
 }
 

@@ -342,16 +342,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	// Heartbeat: volume server reports size=3000 (some writes landed).
 	// Old effective=9000, new reported=3000 → excess=6000 → decayed to 3000.
 	// So vid2size should become 3000 + 6000/2 = 6000, not just 3000.
-	rp, _ := super_block.NewReplicaPlacementFromString("000")
-	freshVol := storage.VolumeInfo{
-		Id:               1,
-		Size:             3000,
-		Version:          needle.GetCurrentVersion(),
-		ReplicaPlacement: rp,
-	}
-	dn := vl.Lookup(1)[0]
-	dn.AddOrUpdateVolume(freshVol)
-	vl.RegisterVolume(&freshVol, dn)
+	vl.UpdateVolumeSize(1, 3000)
 
 	vl.accessLock.RLock()
 	if vl.vid2size[1] != 6000 {
@@ -361,14 +352,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 
 	// Second heartbeat: size=5000. Old effective=6000 → excess=1000 → decay to 500.
 	// vid2size should become 5000 + 1000/2 = 5500.
-	freshVol2 := storage.VolumeInfo{
-		Id:               1,
-		Size:             5000,
-		Version:          needle.GetCurrentVersion(),
-		ReplicaPlacement: rp,
-	}
-	dn.AddOrUpdateVolume(freshVol2)
-	vl.RegisterVolume(&freshVol2, dn)
+	vl.UpdateVolumeSize(1, 5000)
 
 	vl.accessLock.RLock()
 	if vl.vid2size[1] != 5500 {
@@ -378,14 +362,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 
 	// Third heartbeat: size=5500. Old effective=5500 → no excess.
 	// vid2size should be exactly 5500.
-	freshVol3 := storage.VolumeInfo{
-		Id:               1,
-		Size:             5500,
-		Version:          needle.GetCurrentVersion(),
-		ReplicaPlacement: rp,
-	}
-	dn.AddOrUpdateVolume(freshVol3)
-	vl.RegisterVolume(&freshVol3, dn)
+	vl.UpdateVolumeSize(1, 5500)
 
 	vl.accessLock.RLock()
 	if vl.vid2size[1] != 5500 {
@@ -448,20 +425,9 @@ func TestHeartbeatDecayDedupReplicas(t *testing.T) {
 	vl.accessLock.RUnlock()
 
 	// Both replicas report size=3000. Decay should happen once: 3000 + (9000-3000)/2 = 6000.
-	dns := vl.Lookup(1)
-	if len(dns) != 2 {
-		t.Fatalf("expected 2 replicas, got %d", len(dns))
-	}
-	freshVol := storage.VolumeInfo{
-		Id:               1,
-		Size:             3000,
-		Version:          needle.GetCurrentVersion(),
-		ReplicaPlacement: rp,
-	}
-	for _, dn := range dns {
-		dn.AddOrUpdateVolume(freshVol)
-		vl.RegisterVolume(&freshVol, dn)
-	}
+	// Calling UpdateVolumeSize twice simulates two replicas reporting in the same cycle.
+	vl.UpdateVolumeSize(1, 3000)
+	vl.UpdateVolumeSize(1, 3000) // second replica, same size — should be a no-op
 
 	vl.accessLock.RLock()
 	got := vl.vid2size[1]

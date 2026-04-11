@@ -499,6 +499,15 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
 	}
+	// Update effective sizes for all reported volumes (decay pending estimates)
+	for _, v := range volumeInfos {
+		if v.ReplicaPlacement == nil {
+			continue
+		}
+		diskType := types.ToDiskType(v.DiskType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		vl.UpdateVolumeSize(v.Id, v.Size)
+	}
 	return
 }
 
