@@ -337,12 +337,15 @@ func TestVacuumIntegration(t *testing.T) {
 			expected := payloads[i]
 
 			// Read file via HTTP from volume server
+			client := &http.Client{Timeout: 5 * time.Second}
 			url := fmt.Sprintf("http://127.0.0.1:8080/%s", fid)
-			resp, err := http.Get(url)
+			resp, err := client.Get(url)
 			if err != nil || resp.StatusCode == http.StatusNotFound {
-				// Try the other server
+				if resp != nil {
+					resp.Body.Close()
+				}
 				url = fmt.Sprintf("http://127.0.0.1:8081/%s", fid)
-				resp, err = http.Get(url)
+				resp, err = client.Get(url)
 			}
 			require.NoError(t, err, "read fid %s", fid)
 			body, err := io.ReadAll(resp.Body)
