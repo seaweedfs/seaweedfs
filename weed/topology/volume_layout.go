@@ -341,7 +341,7 @@ func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
 }
 
 const maxDrainWait = 30 * time.Second
-const pendingSizeThreshold uint64 = 4 * 1024 * 1024 // 4 MB
+const pendingSizeThreshold uint64 = 2 * 1024 * 1024 // 2 MB
 
 // GetPendingSize returns the estimated in-flight bytes for a volume:
 // the gap between the effective tracked size and the last heartbeat-reported size.
