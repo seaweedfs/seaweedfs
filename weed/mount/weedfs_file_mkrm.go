@@ -315,7 +315,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			glog.Warningf("createFile %s: insert local entry: %v", entryFullPath, insertErr)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-		wfs.touchDirMtimeCtimeLocal(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
 
 		if deferFilerCreate {
 			// Fully deferred: the caller (Create) will build a file handle
