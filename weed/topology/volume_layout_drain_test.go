@@ -1,7 +1,6 @@
 package topology
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -216,7 +215,7 @@ func TestDrainAndRemoveFromWritable_DecaysViaConcurrentHeartbeat(t *testing.T) {
 	<-done
 }
 
-func TestDrainAndSetVolumeReadOnly(t *testing.T) {
+func TestSetVolumeReadOnly_LogsPending(t *testing.T) {
 	layout := `
 {
   "dc1":{
@@ -236,20 +235,21 @@ func TestDrainAndSetVolumeReadOnly(t *testing.T) {
 	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 	dn := vl.Lookup(1)[0]
 
-	start := time.Now()
-	result := vl.DrainAndSetVolumeReadOnly(context.Background(), dn, 1)
-	elapsed := time.Since(start)
+	// Add some pending
+	vl.RecordAssign(1, 5000)
 
+	// SetVolumeReadOnly should succeed immediately (non-blocking)
+	result := vl.SetVolumeReadOnly(dn, 1)
 	if !result {
 		t.Error("expected SetVolumeReadOnly to return true")
 	}
-	if elapsed > 100*time.Millisecond {
-		t.Errorf("drain with no pending took %v", elapsed)
-	}
 
-	// Verify readonly
+	// Pending is still there (not drained), but volume is readonly
 	writable, _ := vl.GetWritableVolumeCount()
 	if writable != 0 {
 		t.Errorf("expected 0 writable after readonly, got %d", writable)
+	}
+	if p := vl.GetPendingSize(1); p != 5000 {
+		t.Errorf("expected 5000 pending (not drained), got %d", p)
 	}
 }

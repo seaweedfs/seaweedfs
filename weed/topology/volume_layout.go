@@ -385,15 +385,6 @@ func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
 	vl.waitForPendingDrain(context.Background(), vid)
 }
 
-// DrainAndSetVolumeReadOnly marks the volume readonly (removing it from
-// the writable list), then waits for pending assigned bytes to decay.
-// Respects context cancellation for gRPC handlers.
-// Used by volume move and EC encoding.
-func (vl *VolumeLayout) DrainAndSetVolumeReadOnly(ctx context.Context, dn *DataNode, vid needle.VolumeId) bool {
-	result := vl.SetVolumeReadOnly(dn, vid)
-	vl.waitForPendingDrain(ctx, vid)
-	return result
-}
 
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
