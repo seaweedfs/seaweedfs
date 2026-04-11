@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -119,7 +122,7 @@ func findWeedBinary() string {
 func waitForServer(address string, timeout time.Duration) error {
 	start := time.Now()
 	for time.Since(start) < timeout {
-		if conn, err := grpc.NewClient(address, grpc.WithInsecure()); err == nil {
+		if conn, err := net.DialTimeout("tcp", address, 1*time.Second); err == nil {
 			conn.Close()
 			return nil
 		}
@@ -222,12 +225,14 @@ func TestVacuumIntegration(t *testing.T) {
 	const filesToDelete = 12 // delete 75% → ~6 MB garbage out of ~8 MB
 
 	var fids []string
+	var payloads [][]byte
 	var volumeId needle.VolumeId
 	for i := 0; i < totalFiles; i++ {
 		data := bytes.Repeat([]byte{byte('A' + i%26)}, fileSize)
 		fid, vid, err := uploadData(masterAddr, collection, data)
 		require.NoError(t, err, "upload %d", i)
 		fids = append(fids, fid)
+		payloads = append(payloads, data)
 		volumeId = vid
 	}
 	t.Logf("Uploaded %d files (%d KB each) to volume %d", totalFiles, fileSize/1024, volumeId)
@@ -247,19 +252,17 @@ func TestVacuumIntegration(t *testing.T) {
 
 	// Verify garbage exists
 	t.Run("verify_garbage_before_vacuum", func(t *testing.T) {
-		// Check garbage on the volume server that hosts this volume
 		for _, addr := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
 			ratio, err := getGarbageRatio(addr, uint32(volumeId))
 			if err != nil {
-				continue // volume might not be on this server
+				continue
 			}
 			t.Logf("Garbage ratio on %s: %.2f%%", addr, ratio*100)
 			if ratio > 0.1 {
-				t.Logf("PASS: Significant garbage detected (%.2f%%) on %s", ratio*100, addr)
-				return
+				return // sufficient garbage found
 			}
 		}
-		t.Log("WARNING: No significant garbage detected — vacuum may have nothing to do")
+		t.Fatal("No server reported garbage > 10% — test data setup failed")
 	})
 
 	// Execute vacuum via shell command
@@ -307,41 +310,48 @@ func TestVacuumIntegration(t *testing.T) {
 
 	// Verify garbage was cleaned
 	t.Run("verify_cleanup_after_vacuum", func(t *testing.T) {
+		var volumeFound, cleanupVerified bool
 		for _, addr := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
 			ratio, err := getGarbageRatio(addr, uint32(volumeId))
 			if err != nil {
 				continue
 			}
+			volumeFound = true
 			t.Logf("Garbage ratio after vacuum on %s: %.2f%%", addr, ratio*100)
 			if ratio < 0.05 {
-				t.Logf("PASS: Garbage cleaned up (%.2f%%) on %s", ratio*100, addr)
+				cleanupVerified = true
 			}
+		}
+		if !volumeFound {
+			t.Fatal("No server reported volume after vacuum")
+		}
+		if !cleanupVerified {
+			t.Fatal("Garbage was not cleaned up after vacuum")
 		}
 	})
 
-	// Verify remaining files are still readable
+	// Verify remaining files are still readable with correct contents
 	t.Run("verify_remaining_data", func(t *testing.T) {
 		for i := filesToDelete; i < totalFiles; i++ {
 			fid := fids[i]
-			parsedFid, err := needle.ParseFileIdFromString(fid)
-			require.NoError(t, err)
+			expected := payloads[i]
 
-			// Look up volume location
-			options := &shell.ShellOptions{
-				Masters:        stringPtr(masterAddr),
-				GrpcDialOption: grpc.WithInsecure(),
-				FilerGroup:     stringPtr("default"),
+			// Read file via HTTP from volume server
+			url := fmt.Sprintf("http://127.0.0.1:8080/%s", fid)
+			resp, err := http.Get(url)
+			if err != nil || resp.StatusCode == http.StatusNotFound {
+				// Try the other server
+				url = fmt.Sprintf("http://127.0.0.1:8081/%s", fid)
+				resp, err = http.Get(url)
 			}
-			commandEnv := shell.NewCommandEnv(options)
-			readCtx, readCancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer readCancel()
-			go commandEnv.MasterClient.KeepConnectedToMaster(readCtx)
-			commandEnv.MasterClient.WaitUntilConnected(readCtx)
-
-			locations, found := commandEnv.MasterClient.GetLocationsClone(uint32(parsedFid.VolumeId))
-			require.True(t, found, "volume %d not found for fid %s", parsedFid.VolumeId, fid)
-			require.NotEmpty(t, locations, "no locations for fid %s", fid)
-			t.Logf("File %s still accessible at %s", fid, locations[0].Url)
+			require.NoError(t, err, "read fid %s", fid)
+			body, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			require.NoError(t, err, "read body of fid %s", fid)
+			require.Equal(t, http.StatusOK, resp.StatusCode, "fid %s returned %d", fid, resp.StatusCode)
+			require.Equal(t, len(expected), len(body), "fid %s size mismatch", fid)
+			require.True(t, bytes.Equal(expected, body), "fid %s content mismatch", fid)
+			t.Logf("File %s verified (%d bytes)", fid, len(body))
 		}
 	})
 }
