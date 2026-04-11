@@ -77,7 +77,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-		wfs.touchDirMtimeCtimeLocal(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
 		wfs.inodeToPath.AdjustSubdirCount(dirFullPath, 1)
 	}
 
@@ -160,7 +160,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
-	wfs.touchDirMtimeCtimeLocal(dirFullPath)
+	wfs.touchDirMtimeCtimeBest(dirFullPath)
 	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)
 
 	return fuse.OK
