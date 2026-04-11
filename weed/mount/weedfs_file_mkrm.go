@@ -69,7 +69,7 @@ func (wfs *WFS) Create(cancel <-chan struct{}, in *fuse.CreateIn, name string, o
 		return code
 	}
 
-	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, true)
+	inode, newEntry, code = wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, 0, true, true)
 	if code == fuse.Status(syscall.EEXIST) && in.Flags&syscall.O_EXCL == 0 {
 		// Race: another process created the file between our check and create.
 		// Reopen the winner's entry.
@@ -147,7 +147,7 @@ func (wfs *WFS) Mknod(cancel <-chan struct{}, in *fuse.MknodIn, name string, out
 		return
 	}
 
-	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false)
+	inode, newEntry, code := wfs.createRegularFile(dirFullPath, name, in.Mode, in.Uid, in.Gid, in.Rdev, false, false)
 	if code != fuse.OK {
 		return code
 	}
@@ -252,7 +252,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 
 }
 
-func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
+func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode uint32, uid, gid, rdev uint32, deferFilerCreate bool, skipExistenceCheck bool) (inode uint64, newEntry *filer_pb.Entry, code fuse.Status) {
 	if wfs.IsOverQuotaWithUncommitted() {
 		return 0, nil, fuse.Status(syscall.ENOSPC)
 	}
@@ -276,10 +276,12 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 	}
 
 	entryFullPath := dirFullPath.Child(name)
-	if _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
-		return 0, nil, fuse.Status(syscall.EEXIST)
-	} else if status != fuse.ENOENT {
-		return 0, nil, status
+	if !skipExistenceCheck {
+		if _, status := wfs.maybeLoadEntry(entryFullPath); status == fuse.OK {
+			return 0, nil, fuse.Status(syscall.EEXIST)
+		} else if status != fuse.ENOENT {
+			return 0, nil, status
+		}
 	}
 	fileMode := toOsFileMode(mode)
 	now := time.Now().Unix()
