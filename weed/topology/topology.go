@@ -319,6 +319,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	return next, nil
 }
 
+// EstimatedNeedleSizeBytes is the assumed size per assigned file ID, used to
+// estimate pending bytes between heartbeats. Intentionally coarse — it only
+// needs to spread load, not be precise.
+const EstimatedNeedleSizeBytes = 1024 * 1024 // 1 MB
+
 func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
 	var vid needle.VolumeId
 	vid, count, volumeLocationList, shouldGrow, err = volumeLayout.PickForWrite(requestedCount, option)
@@ -328,6 +333,8 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
+	// Track estimated assigned bytes to spread load between heartbeats
+	volumeLayout.RecordAssign(vid, int64(count)*EstimatedNeedleSizeBytes)
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
 	return fileId, count, volumeLocationList, shouldGrow, nil

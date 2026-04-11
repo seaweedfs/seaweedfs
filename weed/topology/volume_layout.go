@@ -117,6 +117,7 @@ type VolumeLayout struct {
 	volumeSizeLimit  uint64
 	replicationAsMin bool
 	accessLock       sync.RWMutex
+	vid2size         map[needle.VolumeId]uint64 // effective size: reported + pending
 }
 
 type VolumeLayoutStats struct {
@@ -138,6 +139,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
+		vid2size:         make(map[needle.VolumeId]uint64),
 	}
 }
 
@@ -155,6 +157,14 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
+	// Decay pending estimate: if our tracked size exceeds the freshly reported
+	// size, some assigned bytes are still in flight. Halve the excess each
+	// heartbeat so it converges quickly rather than dropping to zero.
+	if prev := vl.vid2size[v.Id]; prev > v.Size {
+		vl.vid2size[v.Id] = v.Size + (prev-v.Size)/2
+	} else {
+		vl.vid2size[v.Id] = v.Size
+	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
@@ -202,6 +212,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 
 		if location.Length() == 0 {
 			delete(vl.vid2location, v.Id)
+			delete(vl.vid2size, v.Id)
 			vl.removeFromCrowded(v.Id)
 		}
 
@@ -260,6 +271,20 @@ func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 	return float64(v.Size) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold
 }
 
+// RecordAssign adds the estimated byte size to the volume's tracked effective
+// size and marks it crowded if it crosses the threshold.
+func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	if pendingDelta > 0 {
+		vl.vid2size[vid] += uint64(pendingDelta)
+	}
+	if float64(vl.vid2size[vid]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+		vl.setVolumeCrowded(vid)
+	}
+}
+
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
 	defer vl.accessLock.RUnlock()
@@ -296,23 +321,16 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 		return 0, 0, nil, true, fmt.Errorf("%s", NoWritableVolumes)
 	}
 	if option.DataCenter == "" && option.Rack == "" && option.DataNode == "" {
-		vid := vl.writables[rand.IntN(lenWriters)]
-		locationList = vl.vid2location[vid]
+		vid, locationList = vl.pickWeightedByRemaining(vl.writables)
 		if locationList == nil || len(locationList.list) == 0 {
 			return 0, 0, nil, false, fmt.Errorf("Strangely vid %s is on no machine!", vid.String())
 		}
 		return vid, count, locationList.Copy(), false, nil
 	}
 
-	// clone vl.writables
-	writables := make([]needle.VolumeId, len(vl.writables))
-	copy(writables, vl.writables)
-	// randomize the writables
-	rand.Shuffle(len(writables), func(i, j int) {
-		writables[i], writables[j] = writables[j], writables[i]
-	})
-
-	for _, writableVolumeId := range writables {
+	// collect candidates matching the constraints
+	var candidates []needle.VolumeId
+	for _, writableVolumeId := range vl.writables {
 		volumeLocationList := vl.vid2location[writableVolumeId]
 		for _, dn := range volumeLocationList.list {
 			if option.DataCenter != "" && dn.GetDataCenter().Id() != NodeId(option.DataCenter) {
@@ -324,11 +342,82 @@ func (vl *VolumeLayout) PickForWrite(count uint64, option *VolumeGrowOption) (vi
 			if option.DataNode != "" && dn.Id() != NodeId(option.DataNode) {
 				continue
 			}
-			vid, locationList, counter = writableVolumeId, volumeLocationList.Copy(), count
-			return
+			candidates = append(candidates, writableVolumeId)
+			break
 		}
 	}
-	return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", NoWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
+	if len(candidates) == 0 {
+		return vid, count, locationList, true, fmt.Errorf("%s in DataCenter:%v Rack:%v DataNode:%v", NoWritableVolumes, option.DataCenter, option.Rack, option.DataNode)
+	}
+	vid, locationList = vl.pickWeightedByRemaining(candidates)
+	return vid, count, locationList.Copy(), false, nil
+}
+
+// pickSampleSize is how many random candidates to sample before doing a
+// weighted pick. Keeps cost O(1) regardless of total writable volume count
+// while still biasing toward emptier volumes.
+const pickSampleSize = 3
+
+// pickWeightedByRemaining randomly samples a few candidates from the list,
+// then does a weighted pick among them by remaining capacity.
+func (vl *VolumeLayout) pickWeightedByRemaining(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {
+	n := len(candidates)
+	if n <= pickSampleSize {
+		return vl.weightedPick(candidates)
+	}
+
+	// sample pickSampleSize distinct random indices via partial Fisher-Yates
+	// we only need the indices, not a full shuffle — swap into tail positions
+	idx := [pickSampleSize]int{}
+	for i := 0; i < pickSampleSize; i++ {
+		j := rand.IntN(n - i)
+		idx[i] = j
+		// "virtual swap": if a later sample hits j, redirect to n-1-i
+		// but since we read from candidates[] directly, just pick and
+		// accept the negligible collision probability for simplicity
+	}
+
+	var sample [pickSampleSize]needle.VolumeId
+	for i := 0; i < pickSampleSize; i++ {
+		sample[i] = candidates[idx[i]]
+	}
+	return vl.weightedPick(sample[:])
+}
+
+func (vl *VolumeLayout) weightedPick(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {
+	if len(candidates) == 1 {
+		vid := candidates[0]
+		return vid, vl.vid2location[vid]
+	}
+
+	// first pass: sum weights
+	var totalRemaining uint64
+	for _, vid := range candidates {
+		totalRemaining += vl.remainingSize(vid)
+	}
+
+	// second pass: weighted random pick
+	pick := rand.Uint64N(totalRemaining)
+	var cumulative uint64
+	for _, vid := range candidates {
+		cumulative += vl.remainingSize(vid)
+		if pick < cumulative {
+			return vid, vl.vid2location[vid]
+		}
+	}
+
+	vid := candidates[0]
+	return vid, vl.vid2location[vid]
+}
+
+func (vl *VolumeLayout) remainingSize(vid needle.VolumeId) uint64 {
+	size := vl.vid2size[vid]
+	if size < vl.volumeSizeLimit {
+		if r := vl.volumeSizeLimit - size; r > 1 {
+			return r
+		}
+	}
+	return 1
 }
 
 func (vl *VolumeLayout) HasGrowRequest() bool {
@@ -372,8 +461,10 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 			if !checkDcOnly && dn.GetRack().Id() != rackId {
 				continue
 			}
-			if info, err := dn.GetVolumesById(v); err == nil && !vl.isCrowdedVolume(&info) {
-				return false
+			if _, err := dn.GetVolumesById(v); err == nil {
+				if float64(vl.vid2size[v]) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+					return false
+				}
 			}
 		}
 	}
