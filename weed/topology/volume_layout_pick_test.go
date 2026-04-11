@@ -2,7 +2,6 @@ package topology
 
 import (
 	"encoding/json"
-	"fmt"
 	"math"
 	"testing"
 
@@ -15,14 +14,18 @@ import (
 
 // setupWithLimit is like setup() but allows specifying the volumeSizeLimit
 // so that VolumeLayouts are created with the correct limit from the start.
-func setupWithLimit(topologyLayout string, volumeSizeLimit uint64) *Topology {
+func setupWithLimit(t testing.TB, topologyLayout string, volumeSizeLimit uint64) *Topology {
+	t.Helper()
 	var data interface{}
 	if err := json.Unmarshal([]byte(topologyLayout), &data); err != nil {
-		fmt.Println("error:", err)
+		t.Fatalf("setupWithLimit: json.Unmarshal: %v", err)
+	}
+	mTopology, ok := data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("setupWithLimit: expected map[string]interface{}, got %T", data)
 	}
 
 	topo := NewTopology("weedfs", sequence.NewMemorySequencer(), volumeSizeLimit, 5, false)
-	mTopology := data.(map[string]interface{})
 	for dcKey, dcValue := range mTopology {
 		dc := NewDataCenter(dcKey)
 		dcMap := dcValue.(map[string]interface{})
@@ -69,8 +72,9 @@ func setupWithLimit(topologyLayout string, volumeSizeLimit uint64) *Topology {
 	return topo
 }
 
-func setupPickTest(layout string, volumeSizeLimit uint64) (*Topology, *VolumeLayout) {
-	topo := setupWithLimit(layout, volumeSizeLimit)
+func setupPickTest(t testing.TB, layout string, volumeSizeLimit uint64) (*Topology, *VolumeLayout) {
+	t.Helper()
+	topo := setupWithLimit(t, layout, volumeSizeLimit)
 	rp, _ := super_block.NewReplicaPlacementFromString("000")
 	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 	return topo, vl
@@ -95,7 +99,7 @@ func TestPickForWriteWeightedDistribution(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	counts := make(map[needle.VolumeId]int)
 	option := &VolumeGrowOption{}
@@ -147,7 +151,7 @@ func TestPickForWriteWithPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	// Add large pending to vid 1, making it effectively 9000/10000
 	vl.RecordAssign(1, 8000)
@@ -186,7 +190,7 @@ func TestPickForWriteSingleWritable(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	option := &VolumeGrowOption{}
 	for i := 0; i < 100; i++ {
@@ -216,7 +220,7 @@ func TestPickForWriteAllNearFull(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	option := &VolumeGrowOption{}
 	for i := 0; i < 100; i++ {
@@ -256,7 +260,7 @@ func TestPickForWriteConstrainedWeighted(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	counts := make(map[needle.VolumeId]int)
 	option := &VolumeGrowOption{DataCenter: "dc1"}
@@ -291,7 +295,7 @@ func TestRecordAssignMarksCrowded(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	// Volume at 85% — not crowded yet (threshold is 90%)
 	_, crowded := vl.GetWritableVolumeCount()
@@ -324,7 +328,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	// vid2size starts at 1000 (reported). Add 8000 pending → 9000.
 	vl.RecordAssign(1, 8000)
@@ -430,7 +434,7 @@ func TestHeartbeatDecayDedupReplicas(t *testing.T) {
   }
 }
 `
-	topo := setupWithLimit(layout, 10000)
+	topo := setupWithLimit(t, layout, 10000)
 	rp, _ := super_block.NewReplicaPlacementFromString("001")
 	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
 
@@ -485,7 +489,7 @@ func TestShouldGrowVolumesByDcAndRack_WithPendingSize(t *testing.T) {
   }
 }
 `
-	_, vl := setupPickTest(layout, 10000)
+	_, vl := setupPickTest(t, layout,10000)
 
 	writables := vl.CloneWritableVolumes()
 	if vl.ShouldGrowVolumesByDcAndRack(&writables, "dc1", "rack1") {
