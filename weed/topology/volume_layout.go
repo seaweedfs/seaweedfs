@@ -214,28 +214,25 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 
 	st := vl.sizeTracking[vid]
 	if st == nil {
-		vl.sizeTracking[vid] = &volumeSizeTracking{
+		st = &volumeSizeTracking{
 			effectiveSize:   reportedSize,
 			reportedSize:    reportedSize,
 			compactRevision: compactRevision,
 		}
-		return
-	}
-
-	if reportedSize == st.reportedSize && compactRevision == st.compactRevision {
+		vl.sizeTracking[vid] = st
+	} else if reportedSize == st.reportedSize && compactRevision == st.compactRevision {
 		return // same size from another replica in this cycle
-	}
-
-	st.reportedSize = reportedSize
-
-	if compactRevision != st.compactRevision {
-		// Compaction happened — size drop is real, not pending. Reset.
-		st.compactRevision = compactRevision
-		st.effectiveSize = reportedSize
-	} else if st.effectiveSize > reportedSize {
-		st.effectiveSize = reportedSize + (st.effectiveSize-reportedSize)/2
 	} else {
-		st.effectiveSize = reportedSize
+		st.reportedSize = reportedSize
+		if compactRevision != st.compactRevision {
+			// Compaction happened — size drop is real, not pending. Reset.
+			st.compactRevision = compactRevision
+			st.effectiveSize = reportedSize
+		} else if st.effectiveSize > reportedSize {
+			st.effectiveSize = reportedSize + (st.effectiveSize-reportedSize)/2
+		} else {
+			st.effectiveSize = reportedSize
+		}
 	}
 
 	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
