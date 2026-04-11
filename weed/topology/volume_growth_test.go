@@ -433,7 +433,7 @@ func TestPickForWrite(t *testing.T) {
 						continue
 					}
 					volumeGrowOption.DataNode = dn
-					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl)
+					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl, 0)
 					if dc == "dc0" {
 						if err == nil || count != 0 || !shouldGrow {
 							fmt.Println(dc, r, dn, "pick for write should be with error")
@@ -451,6 +451,18 @@ func TestPickForWrite(t *testing.T) {
 					} else if shouldGrow {
 						fmt.Println(dc, r, dn, "pick for write error : not should grow")
 						t.Fail()
+					}
+
+					// Also verify with a non-zero expectedDataSize hint
+					if dc != "dc0" {
+						fileId2, count2, _, shouldGrow2, err2 := topo.PickForWrite(1, volumeGrowOption, vl, 1024)
+						if err2 != nil {
+							fmt.Println(dc, r, dn, "pick for write with size hint error:", err2)
+							t.Fail()
+						} else if count2 == 0 || len(fileId2) == 0 || shouldGrow2 {
+							fmt.Println(dc, r, dn, "pick for write with size hint unexpected result")
+							t.Fail()
+						}
 					}
 				}
 			}

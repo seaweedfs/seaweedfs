@@ -231,6 +231,7 @@ message AssignRequest {
   uint32 memory_map_max_size_mb = 8;
   uint32 writable_volume_count = 9;
   string disk_type = 10;
+  uint64 expected_data_size = 11; // hint for size-aware volume selection
 }
 
 message VolumeGrowRequest {

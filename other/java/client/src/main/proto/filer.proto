@@ -294,6 +294,7 @@ message AssignVolumeRequest {
     string rack = 7;
     string data_node = 9;
     string disk_type = 8;
+    uint64 expected_data_size = 10; // hint for size-aware volume selection
 }
 
 message AssignVolumeResponse {

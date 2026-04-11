@@ -26,6 +26,7 @@ type VolumeAssignRequest struct {
 	Rack                string
 	DataNode            string
 	WritableVolumeCount uint32
+	ExpectedDataSize    uint64
 }
 
 type AssignResult struct {
@@ -86,6 +87,7 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 						Rack:                request.Rack,
 						DataNode:            request.DataNode,
 						WritableVolumeCount: request.WritableVolumeCount,
+						ExpectedDataSize:    request.ExpectedDataSize,
 					}
 					resp, grpcErr := masterClient.Assign(attemptCtx, req)
 					if grpcErr != nil {
