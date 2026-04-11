@@ -60,7 +60,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 			glog.Warningf("symlink %s: best-effort metadata apply failed: %v", entryFullPath, applyErr)
 			wfs.inodeToPath.InvalidateChildrenCache(dirPath)
 		}
-		wfs.touchDirMtimeCtime(dirPath)
+		wfs.touchDirMtimeCtimeBest(dirPath)
 	}
 
 	// Map back to local uid/gid before writing to the kernel.
