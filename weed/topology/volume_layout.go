@@ -165,6 +165,10 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 	} else {
 		vl.vid2size[v.Id] = v.Size
 	}
+	// Clear crowded if effective size dropped below the threshold
+	if float64(vl.vid2size[v.Id]) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+		vl.removeFromCrowded(v.Id)
+	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
 		if vInfo, err := dn.GetVolumesById(v.Id); err == nil {
@@ -274,8 +278,8 @@ func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 // RecordAssign adds the estimated byte size to the volume's tracked effective
 // size and marks it crowded if it crosses the threshold.
 func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
-	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
 
 	if pendingDelta > 0 {
 		vl.vid2size[vid] += uint64(pendingDelta)
@@ -360,26 +364,18 @@ const pickSampleSize = 3
 
 // pickWeightedByRemaining randomly samples a few candidates from the list,
 // then does a weighted pick among them by remaining capacity.
+// Sampled candidates may repeat when len(candidates) is small relative to
+// pickSampleSize; this is harmless — a repeated volume just gets proportionally
+// more weight, which is a negligible statistical effect.
 func (vl *VolumeLayout) pickWeightedByRemaining(candidates []needle.VolumeId) (needle.VolumeId, *VolumeLocationList) {
 	n := len(candidates)
 	if n <= pickSampleSize {
 		return vl.weightedPick(candidates)
 	}
 
-	// sample pickSampleSize distinct random indices via partial Fisher-Yates
-	// we only need the indices, not a full shuffle — swap into tail positions
-	idx := [pickSampleSize]int{}
-	for i := 0; i < pickSampleSize; i++ {
-		j := rand.IntN(n - i)
-		idx[i] = j
-		// "virtual swap": if a later sample hits j, redirect to n-1-i
-		// but since we read from candidates[] directly, just pick and
-		// accept the negligible collision probability for simplicity
-	}
-
 	var sample [pickSampleSize]needle.VolumeId
-	for i := 0; i < pickSampleSize; i++ {
-		sample[i] = candidates[idx[i]]
+	for i := range sample {
+		sample[i] = candidates[rand.IntN(n)]
 	}
 	return vl.weightedPick(sample[:])
 }
@@ -462,7 +458,10 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 				continue
 			}
 			if _, err := dn.GetVolumesById(v); err == nil {
-				if float64(vl.vid2size[v]) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+				vl.accessLock.RLock()
+				size := vl.vid2size[v]
+				vl.accessLock.RUnlock()
+				if float64(size) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 					return false
 				}
 			}
