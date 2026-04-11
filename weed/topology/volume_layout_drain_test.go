@@ -187,13 +187,18 @@ func TestDrainAndRemoveFromWritable_DecaysViaConcurrentHeartbeat(t *testing.T) {
 	// Add large pending (well above threshold)
 	vl.RecordAssign(1, 100*1024*1024) // 100 MB
 
-	// Simulate heartbeats in background that will decay the pending
+	// Simulate heartbeats in background that will decay the pending.
+	// Advance lastUpdateTime before each call to bypass the 2s replica dedup.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 10; i++ {
 			time.Sleep(500 * time.Millisecond)
-			// Each heartbeat reports actual size, decaying pending by half
+			vl.accessLock.Lock()
+			if st := vl.sizeTracking[1]; st != nil {
+				st.lastUpdateTime = time.Time{} // reset to allow update
+			}
+			vl.accessLock.Unlock()
 			vl.UpdateVolumeSize(1, 1000+uint64(i+1)*1000, 0)
 		}
 	}()

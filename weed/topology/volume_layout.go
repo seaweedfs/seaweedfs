@@ -104,9 +104,10 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 
 // volumeSizeTracking holds per-volume size accounting for weighted assignment.
 type volumeSizeTracking struct {
-	effectiveSize   uint64 // reported + pending assigned bytes
-	reportedSize    uint64 // last heartbeat-reported size (dedup replicas)
-	compactRevision uint32 // detect compaction to reset instead of decay
+	effectiveSize   uint64    // reported + pending assigned bytes
+	reportedSize    uint64    // last heartbeat-reported size (dedup replicas)
+	compactRevision uint32    // detect compaction to reset instead of decay
+	lastUpdateTime  time.Time // dedup replicas within the same heartbeat cycle
 }
 
 // mapping from volume to its locations, inverted from server to volume
@@ -213,17 +214,20 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
+	now := time.Now()
 	st := vl.sizeTracking[vid]
 	if st == nil {
 		st = &volumeSizeTracking{
 			effectiveSize:   reportedSize,
 			reportedSize:    reportedSize,
 			compactRevision: compactRevision,
+			lastUpdateTime:  now,
 		}
 		vl.sizeTracking[vid] = st
-	} else if reportedSize == st.reportedSize && compactRevision == st.compactRevision {
-		return // same size from another replica in this cycle
+	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
+		return // duplicate replica in the same heartbeat cycle
 	} else {
+		st.lastUpdateTime = now
 		st.reportedSize = reportedSize
 		if compactRevision != st.compactRevision {
 			// Compaction happened — size drop is real, not pending. Reset.

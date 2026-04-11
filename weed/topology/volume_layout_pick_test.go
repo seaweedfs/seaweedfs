@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/sequence"
 	"github.com/seaweedfs/seaweedfs/weed/storage"
@@ -339,6 +340,13 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	}
 	vl.accessLock.RUnlock()
 
+	// Helper to simulate a new heartbeat cycle (advance past dedup window)
+	advanceCycle := func() {
+		vl.accessLock.Lock()
+		vl.sizeTracking[1].lastUpdateTime = time.Now().Add(-3 * time.Second)
+		vl.accessLock.Unlock()
+	}
+
 	// Heartbeat: volume server reports size=3000 (some writes landed).
 	// Old effective=9000, new reported=3000 → excess=6000 → decayed to 3000.
 	// So vid2size should become 3000 + 6000/2 = 6000, not just 3000.
@@ -352,6 +360,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 
 	// Second heartbeat: size=5000. Old effective=6000 → excess=1000 → decay to 500.
 	// vid2size should become 5000 + 1000/2 = 5500.
+	advanceCycle()
 	vl.UpdateVolumeSize(1, 5000, 0)
 
 	vl.accessLock.RLock()
@@ -362,6 +371,7 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 
 	// Third heartbeat: size=5500. Old effective=5500 → no excess.
 	// vid2size should be exactly 5500.
+	advanceCycle()
 	vl.UpdateVolumeSize(1, 5500, 0)
 
 	vl.accessLock.RLock()
@@ -436,6 +446,49 @@ func TestHeartbeatDecayDedupReplicas(t *testing.T) {
 	// With dedup: should be 6000 (single decay).
 	if got != 6000 {
 		t.Errorf("expected vid2size=6000 (single decay), got %d (double decay would give 4500)", got)
+	}
+}
+
+func TestUpdateVolumeSize_DecaysEvenWhenReportedSizeUnchanged(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":1000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	// Add pending: effective = 1000 + 8000 = 9000
+	vl.RecordAssign(1, 8000)
+	if p := vl.GetPendingSize(1); p != 8000 {
+		t.Fatalf("expected 8000 pending, got %d", p)
+	}
+
+	// First heartbeat: reported size unchanged at 1000 (writes haven't landed).
+	// Decay should still run: 1000 + (9000-1000)/2 = 5000.
+	vl.UpdateVolumeSize(1, 1000, 0)
+	if p := vl.GetPendingSize(1); p != 4000 {
+		t.Errorf("expected 4000 pending after first decay, got %d", p)
+	}
+
+	// Simulate next heartbeat cycle (>2s later) with same reported size.
+	// Need to advance lastUpdateTime — manipulate directly under lock.
+	vl.accessLock.Lock()
+	vl.sizeTracking[1].lastUpdateTime = time.Now().Add(-3 * time.Second)
+	vl.accessLock.Unlock()
+
+	// Second heartbeat: still 1000. Decay again: 1000 + (5000-1000)/2 = 3000.
+	vl.UpdateVolumeSize(1, 1000, 0)
+	if p := vl.GetPendingSize(1); p != 2000 {
+		t.Errorf("expected 2000 pending after second decay, got %d", p)
 	}
 }
 
