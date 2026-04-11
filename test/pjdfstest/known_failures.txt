@@ -16,7 +16,3 @@ tests/rename/24.t
 # causes cascading test failures within the test file.
 tests/rename/21.t
 
-# ── rmdir after hard link unlink ───────────────────────────────────────
-# Making DeleteHardLink errors non-fatal prevents the entry from blocking
-# rmdir in most cases, but the test still has 1 subtest that fails.
-tests/unlink/14.t
