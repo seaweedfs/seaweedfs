@@ -37,7 +37,7 @@ type MetadataFollowOption struct {
 	// LogFileReaderFn, when non-nil, enables metadata chunks mode:
 	// the server sends log file chunk fids instead of streaming events,
 	// and the client reads directly from volume servers.
-	LogFileReaderFn        LogFileReaderFn
+	LogFileReaderFn LogFileReaderFn
 }
 
 type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
@@ -66,17 +66,17 @@ func makeSubscribeMetadataFunc(option *MetadataFollowOption, processEventFn Proc
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		stream, err := client.SubscribeMetadata(ctx, &filer_pb.SubscribeMetadataRequest{
-			ClientName:                    option.ClientName,
-			PathPrefix:                    option.PathPrefix,
-			PathPrefixes:                  option.AdditionalPathPrefixes,
-			Directories:                   option.DirectoriesToWatch,
-			SinceNs:                       option.StartTsNs,
-			Signature:                     option.SelfSignature,
-			ClientId:                      option.ClientId,
-			ClientEpoch:                   option.ClientEpoch,
-			UntilNs:                       option.StopTsNs,
-			ClientSupportsBatching:        true,
-			ClientSupportsMetadataChunks:  option.LogFileReaderFn != nil,
+			ClientName:                   option.ClientName,
+			PathPrefix:                   option.PathPrefix,
+			PathPrefixes:                 option.AdditionalPathPrefixes,
+			Directories:                  option.DirectoriesToWatch,
+			SinceNs:                      option.StartTsNs,
+			Signature:                    option.SelfSignature,
+			ClientId:                     option.ClientId,
+			ClientEpoch:                  option.ClientEpoch,
+			UntilNs:                      option.StopTsNs,
+			ClientSupportsBatching:       true,
+			ClientSupportsMetadataChunks: option.LogFileReaderFn != nil,
 		})
 		if err != nil {
 			return fmt.Errorf("subscribe: %w", err)

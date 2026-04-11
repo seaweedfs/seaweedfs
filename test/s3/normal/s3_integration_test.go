@@ -39,19 +39,19 @@ const (
 
 // TestCluster manages the weed mini instance for integration testing
 type TestCluster struct {
-	dataDir        string
-	ctx            context.Context
-	cancel         context.CancelFunc
-	s3Client       *s3.S3
-	isRunning      bool
-	startOnce      sync.Once
-	wg             sync.WaitGroup
-	masterPort     int
-	volumePort     int
-	filerPort      int
-	s3Port         int
-	s3Endpoint     string
-	rustVolumeCmd  *exec.Cmd
+	dataDir       string
+	ctx           context.Context
+	cancel        context.CancelFunc
+	s3Client      *s3.S3
+	isRunning     bool
+	startOnce     sync.Once
+	wg            sync.WaitGroup
+	masterPort    int
+	volumePort    int
+	filerPort     int
+	s3Port        int
+	s3Endpoint    string
+	rustVolumeCmd *exec.Cmd
 }
 
 // TestS3Integration demonstrates basic S3 operations against a running weed mini instance

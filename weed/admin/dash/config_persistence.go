@@ -289,8 +289,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskConfig() (*VacuumTaskConfig, error) {
 
 	// Return default config if no valid config found
 	return &VacuumTaskConfig{
-		GarbageThreshold:   0.3,
-		MinVolumeAgeHours:  24,
+		GarbageThreshold:  0.3,
+		MinVolumeAgeHours: 24,
 	}, nil
 }
 
@@ -305,8 +305,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
+					GarbageThreshold:  0.3,
+					MinVolumeAgeHours: 24,
 				},
 			},
 		}, nil
@@ -325,8 +325,8 @@ func (cp *ConfigPersistence) LoadVacuumTaskPolicy() (*worker_pb.TaskPolicy, erro
 			CheckIntervalSeconds:  6 * 3600,  // 6 hours in seconds
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   0.3,
-					MinVolumeAgeHours:  24,
+					GarbageThreshold:  0.3,
+					MinVolumeAgeHours: 24,
 				},
 			},
 		}, nil
@@ -705,8 +705,8 @@ func buildPolicyFromTaskConfigs() *worker_pb.MaintenancePolicy {
 			CheckIntervalSeconds:  int32(vacuumConfig.ScanIntervalSeconds),
 			TaskConfig: &worker_pb.TaskPolicy_VacuumConfig{
 				VacuumConfig: &worker_pb.VacuumTaskConfig{
-					GarbageThreshold:   float64(vacuumConfig.GarbageThreshold),
-					MinVolumeAgeHours:  int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
+					GarbageThreshold:  float64(vacuumConfig.GarbageThreshold),
+					MinVolumeAgeHours: int32(vacuumConfig.MinVolumeAgeSeconds / 3600), // Convert seconds to hours
 				},
 			},
 		}

@@ -54,8 +54,8 @@ var federationNameRegex = regexp.MustCompile(`^[\w+=,.@-]+$`)
 
 // STS duration constants (AWS specification)
 const (
-	minDurationSeconds = int64(900)    // 15 minutes
-	maxDurationSeconds = int64(43200)  // 12 hours (AssumeRole)
+	minDurationSeconds               = int64(900)    // 15 minutes
+	maxDurationSeconds               = int64(43200)  // 12 hours (AssumeRole)
 	defaultFederationDurationSeconds = int64(43200)  // 12 hours (GetFederationToken default)
 	maxFederationDurationSeconds     = int64(129600) // 36 hours (GetFederationToken max)
 )
@@ -958,8 +958,8 @@ type GetCallerIdentityResult struct {
 
 // GetFederationTokenResponse is the response for GetFederationToken
 type GetFederationTokenResponse struct {
-	XMLName          xml.Name                   `xml:"https://sts.amazonaws.com/doc/2011-06-15/ GetFederationTokenResponse"`
-	Result           GetFederationTokenResult   `xml:"GetFederationTokenResult"`
+	XMLName          xml.Name                 `xml:"https://sts.amazonaws.com/doc/2011-06-15/ GetFederationTokenResponse"`
+	Result           GetFederationTokenResult `xml:"GetFederationTokenResult"`
 	ResponseMetadata struct {
 		RequestId string `xml:"RequestId,omitempty"`
 	} `xml:"ResponseMetadata,omitempty"`

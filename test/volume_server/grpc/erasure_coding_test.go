@@ -778,8 +778,8 @@ func TestEcIndexConsistencyAfterEncode(t *testing.T) {
 	needles := []testNeedle{
 		{framework.NewFileID(volumeID, 1001, 0xAABB0001), []byte("small-needle-1")},
 		{framework.NewFileID(volumeID, 1002, 0xAABB0002), make([]byte, 1024)},     // 1KB
-		{framework.NewFileID(volumeID, 1003, 0xAABB0003), make([]byte, 64*1024)},   // 64KB
-		{framework.NewFileID(volumeID, 1004, 0xAABB0004), make([]byte, 256*1024)},  // 256KB
+		{framework.NewFileID(volumeID, 1003, 0xAABB0003), make([]byte, 64*1024)},  // 64KB
+		{framework.NewFileID(volumeID, 1004, 0xAABB0004), make([]byte, 256*1024)}, // 256KB
 		{framework.NewFileID(volumeID, 1005, 0xAABB0005), []byte("small-needle-2")},
 	}
 

@@ -315,4 +315,3 @@ func (s *RaftServer) DoJoinCommand() {
 	}
 
 }
-

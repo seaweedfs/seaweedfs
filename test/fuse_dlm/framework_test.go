@@ -39,11 +39,11 @@ type dlmTestCluster struct {
 	filerGrpcPorts [2]int
 	mountPoints    [2]string
 
-	masterCmd  *exec.Cmd
-	volumeCmd  *exec.Cmd
-	filerCmds  [2]*exec.Cmd
-	mountCmds  [2]*exec.Cmd
-	logFiles   []*os.File
+	masterCmd *exec.Cmd
+	volumeCmd *exec.Cmd
+	filerCmds [2]*exec.Cmd
+	mountCmds [2]*exec.Cmd
+	logFiles  []*os.File
 
 	cleanupOnce sync.Once
 }

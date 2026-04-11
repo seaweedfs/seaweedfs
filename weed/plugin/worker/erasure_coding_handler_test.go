@@ -204,7 +204,6 @@ func TestErasureCodingHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
-
 func TestEmitErasureCodingDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
 	config := erasurecodingtask.NewDefaultConfig()

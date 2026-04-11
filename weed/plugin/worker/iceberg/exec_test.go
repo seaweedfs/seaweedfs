@@ -1213,7 +1213,7 @@ func TestDetectSchedulesSnapshotExpiryDespiteCompactionEvaluationError(t *testin
 	handler := NewHandler(nil)
 	config := Config{
 		SnapshotRetentionHours: 24 * 365, // very long retention so age doesn't trigger
-		MaxSnapshotsToKeep:     1,         // 2 snapshots > 1 triggers expiry
+		MaxSnapshotsToKeep:     1,        // 2 snapshots > 1 triggers expiry
 		Operations:             "compact,expire_snapshots",
 	}
 

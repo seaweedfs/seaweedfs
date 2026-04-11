@@ -11,8 +11,8 @@ import (
 )
 
 var (
-	sseInitMu          sync.Mutex
-	sseInitialized     bool
+	sseInitMu      sync.Mutex
+	sseInitialized bool
 )
 
 // InitializeSSEForReplication sets up SSE-S3 and SSE-KMS decryption so that

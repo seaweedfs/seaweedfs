@@ -142,15 +142,15 @@ func (p *masterVolumeProvider) LookupVolumeIds(ctx context.Context, volumeIds []
 type MasterClient struct {
 	*vidMapClient // Embedded cache with shared logic
 
-	FilerGroup        string
-	clientType        string
-	clientHost        pb.ServerAddress
-	rack              string
-	currentMaster     pb.ServerAddress
-	currentMasterLock sync.RWMutex
-	masters           pb.ServerDiscovery
-	grpcDialOption    grpc.DialOption
-	grpcTimeout       time.Duration // Timeout for gRPC calls to master
+	FilerGroup           string
+	clientType           string
+	clientHost           pb.ServerAddress
+	rack                 string
+	currentMaster        pb.ServerAddress
+	currentMasterLock    sync.RWMutex
+	masters              pb.ServerDiscovery
+	grpcDialOption       grpc.DialOption
+	grpcTimeout          time.Duration // Timeout for gRPC calls to master
 	OnPeerUpdate         func(update *master_pb.ClusterNodeUpdate, startFrom time.Time)
 	OnPeerUpdateLock     sync.RWMutex
 	OnLockRingUpdate     func(update *master_pb.LockRingUpdate)

@@ -592,7 +592,7 @@ func deriveErasureCodingWorkerConfig(values map[string]*plugin_pb.ConfigValue) *
 	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &erasureCodingWorkerConfig{
-		TaskConfig:         taskConfig,
+		TaskConfig: taskConfig,
 	}
 }
 

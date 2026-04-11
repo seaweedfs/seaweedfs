@@ -40,28 +40,28 @@ var (
 )
 
 type Filer struct {
-	UniqueFilerId       int32
-	UniqueFilerEpoch    int32
-	Store               VirtualFilerStore
-	MasterClient        *wdclient.MasterClient
-	fileIdDeletionQueue *util.UnboundedQueue
-	GrpcDialOption      grpc.DialOption
-	DirBucketsPath      string
-	Cipher              bool
-	LocalMetaLogBuffer  *log_buffer.LogBuffer
-	metaLogCollection   string
-	metaLogReplication  string
-	MetaAggregator      *MetaAggregator
-	Signature           int32
-	FilerConf           *FilerConf
-	RemoteStorage       *FilerRemoteStorage
-	lazyFetchGroup      singleflight.Group
-	lazyListGroup       singleflight.Group
-	Dlm                 *lock_manager.DistributedLockManager
-	MaxFilenameLength   uint32
-	deletionQuit        chan struct{}
-	DeletionRetryQueue  *DeletionRetryQueue
-	EmptyFolderCleaner       *empty_folder_cleanup.EmptyFolderCleaner
+	UniqueFilerId           int32
+	UniqueFilerEpoch        int32
+	Store                   VirtualFilerStore
+	MasterClient            *wdclient.MasterClient
+	fileIdDeletionQueue     *util.UnboundedQueue
+	GrpcDialOption          grpc.DialOption
+	DirBucketsPath          string
+	Cipher                  bool
+	LocalMetaLogBuffer      *log_buffer.LogBuffer
+	metaLogCollection       string
+	metaLogReplication      string
+	MetaAggregator          *MetaAggregator
+	Signature               int32
+	FilerConf               *FilerConf
+	RemoteStorage           *FilerRemoteStorage
+	lazyFetchGroup          singleflight.Group
+	lazyListGroup           singleflight.Group
+	Dlm                     *lock_manager.DistributedLockManager
+	MaxFilenameLength       uint32
+	deletionQuit            chan struct{}
+	DeletionRetryQueue      *DeletionRetryQueue
+	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
 }
 

@@ -49,14 +49,14 @@ type s3AccountInfo struct {
 }
 
 type s3UserShowResult struct {
-	Name            string            `json:"name"`
-	Status          string            `json:"status"`
-	Source          string            `json:"source"`
-	Account         *s3AccountInfo    `json:"account,omitempty"`
-	Policies        []string          `json:"policies"`
-	Actions         []string          `json:"actions,omitempty"`
+	Name            string             `json:"name"`
+	Status          string             `json:"status"`
+	Source          string             `json:"source"`
+	Account         *s3AccountInfo     `json:"account,omitempty"`
+	Policies        []string           `json:"policies"`
+	Actions         []string           `json:"actions,omitempty"`
 	Credentials     []s3CredentialInfo `json:"credentials"`
-	ServiceAccounts []string          `json:"service_accounts,omitempty"`
+	ServiceAccounts []string           `json:"service_accounts,omitempty"`
 }
 
 func (c *commandS3UserShow) Do(args []string, commandEnv *CommandEnv, writer io.Writer) error {

@@ -23,7 +23,7 @@ const DefaultVnodeCount = 50
 type HashRing struct {
 	mu            sync.RWMutex
 	vnodeCount    int
-	sortedHashes  []uint32                     // sorted ring positions
+	sortedHashes  []uint32                      // sorted ring positions
 	vnodeToServer map[uint32]pb.ServerAddress   // ring position → server
 	servers       map[pb.ServerAddress]struct{} // set of all servers
 }

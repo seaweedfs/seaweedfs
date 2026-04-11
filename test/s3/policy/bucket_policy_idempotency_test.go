@@ -317,4 +317,3 @@ func hasKey(policy map[string]interface{}, key string) bool {
 
 	return false
 }
-

@@ -151,7 +151,6 @@ func TestVacuumHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
-
 func TestBuildExecutorActivity(t *testing.T) {
 	activity := BuildExecutorActivity("running", "vacuum in progress")
 	if activity == nil {

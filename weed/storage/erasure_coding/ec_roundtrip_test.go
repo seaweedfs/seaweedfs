@@ -287,7 +287,7 @@ func TestEcDecodeDatRoundTrip(t *testing.T) {
 	// to avoid needing huge test files. We test small block decode only.
 	// Each shard gets datSize/DataShards bytes in small 1MB blocks.
 	datSizes := []int64{
-		1000,                // tiny
+		1000, // tiny
 		int64(DataShardsCount) * ErasureCodingSmallBlockSize,     // exactly 1 small row (10MB)
 		int64(DataShardsCount)*ErasureCodingSmallBlockSize + 500, // 1 small row + partial
 	}

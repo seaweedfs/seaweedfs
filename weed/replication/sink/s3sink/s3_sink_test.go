@@ -46,8 +46,8 @@ func TestBuildTaggingString_ShouldURLEncodeValues(t *testing.T) {
 
 func TestBuildTaggingString_EmptyWhenNoTags(t *testing.T) {
 	extended := map[string][]byte{
-		"Content-Encoding":            []byte("gzip"),
-		s3_constants.AmzUserMetaMtime: []byte("12345"),
+		"Content-Encoding":             []byte("gzip"),
+		s3_constants.AmzUserMetaMtime:  []byte("12345"),
 		s3_constants.SeaweedFSSSES3Key: []byte(`{"algorithm":"AES256","encryptedDEK":"abc"}`),
 	}
 

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 )
 
@@ -92,10 +92,10 @@ func createMockVolumeServer(chunkData map[string][]byte, latency time.Duration) 
 
 // benchmarkConfig holds parameters for a single benchmark scenario
 type benchmarkConfig struct {
-	numChunks  int
-	chunkSize  int
-	latency    time.Duration
-	prefetch   int // 0 = sequential
+	numChunks int
+	chunkSize int
+	latency   time.Duration
+	prefetch  int // 0 = sequential
 }
 
 func (c benchmarkConfig) name() string {

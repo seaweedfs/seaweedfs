@@ -17,13 +17,13 @@ const LockRingStabilizationInterval = 1 * time.Second
 // so filers receive a single consistent ring update instead of multiple
 // intermediate states.
 type LockRingManager struct {
-	mu              sync.Mutex
-	members         map[FilerGroupName]map[pb.ServerAddress]struct{}
-	version         map[FilerGroupName]int64
-	lastBroadcast   map[FilerGroupName]*master_pb.LockRingUpdate
-	pendingTimer    map[FilerGroupName]*time.Timer
-	broadcastFn     func(resp *master_pb.KeepConnectedResponse)
-	stabilizeDelay  time.Duration
+	mu             sync.Mutex
+	members        map[FilerGroupName]map[pb.ServerAddress]struct{}
+	version        map[FilerGroupName]int64
+	lastBroadcast  map[FilerGroupName]*master_pb.LockRingUpdate
+	pendingTimer   map[FilerGroupName]*time.Timer
+	broadcastFn    func(resp *master_pb.KeepConnectedResponse)
+	stabilizeDelay time.Duration
 }
 
 func NewLockRingManager(broadcastFn func(resp *master_pb.KeepConnectedResponse)) *LockRingManager {

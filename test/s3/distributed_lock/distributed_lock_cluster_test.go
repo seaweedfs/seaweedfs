@@ -592,7 +592,6 @@ func (c *distributedLockCluster) tailLog(name string) string {
 	return strings.Join(lines, "\n")
 }
 
-
 func stopProcess(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return

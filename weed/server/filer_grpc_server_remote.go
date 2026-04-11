@@ -207,15 +207,15 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 			var etag string
 			err = operation.WithVolumeServerClient(false, assignedServerAddress, fs.grpcDialOption, func(volumeServerClient volume_server_pb.VolumeServerClient) error {
 				resp, fetchErr := volumeServerClient.FetchAndWriteNeedle(context.Background(), &volume_server_pb.FetchAndWriteNeedleRequest{
-					VolumeId:             uint32(fileId.VolumeId),
-					NeedleId:             uint64(fileId.Key),
-					Cookie:               uint32(fileId.Cookie),
-					Offset:               localOffset,
-					Size:                 size,
-					Replicas:             replicas,
-					Auth:                 string(assignResult.Auth),
-					DownloadConcurrency:  downloadConcurrency,
-					RemoteConf:           storageConf,
+					VolumeId:            uint32(fileId.VolumeId),
+					NeedleId:            uint64(fileId.Key),
+					Cookie:              uint32(fileId.Cookie),
+					Offset:              localOffset,
+					Size:                size,
+					Replicas:            replicas,
+					Auth:                string(assignResult.Auth),
+					DownloadConcurrency: downloadConcurrency,
+					RemoteConf:          storageConf,
 					RemoteLocation: &remote_pb.RemoteStorageLocation{
 						Name:   remoteStorageMountedLocation.Name,
 						Bucket: remoteStorageMountedLocation.Bucket,

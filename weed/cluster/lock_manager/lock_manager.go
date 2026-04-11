@@ -18,18 +18,18 @@ var LockNotFound = fmt.Errorf("lock not found")
 
 // LockManager local lock manager, used by distributed lock manager
 type LockManager struct {
-	locks            map[string]*Lock
-	accessLock       sync.RWMutex
-	nextGeneration   atomic.Int64
+	locks          map[string]*Lock
+	accessLock     sync.RWMutex
+	nextGeneration atomic.Int64
 }
 type Lock struct {
 	Token       string
 	ExpiredAtNs int64
 	Key         string // only used for moving locks
 	Owner       string
-	IsBackup    bool   // true if this node holds the lock as a backup
-	Generation  int64  // monotonic fencing token, increments on fresh acquisition
-	Seq         int64  // per-lock sequence number, increments on every mutation (acquire/renew/unlock)
+	IsBackup    bool  // true if this node holds the lock as a backup
+	Generation  int64 // monotonic fencing token, increments on fresh acquisition
+	Seq         int64 // per-lock sequence number, increments on every mutation (acquire/renew/unlock)
 }
 
 func NewLockManager() *LockManager {

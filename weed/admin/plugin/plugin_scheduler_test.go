@@ -619,10 +619,10 @@ func TestRunLaneSchedulerIterationLockBehavior(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		lane       SchedulerLane
-		jobType    string
-		wantLock   bool
+		name     string
+		lane     SchedulerLane
+		jobType  string
+		wantLock bool
 	}{
 		{"Default", LaneDefault, "vacuum", true},
 		{"Iceberg", LaneIceberg, "iceberg_maintenance", false},

@@ -340,7 +340,6 @@ func TestVolumeBalanceHandlerRejectsUnsupportedJobType(t *testing.T) {
 	}
 }
 
-
 func TestEmitVolumeBalanceDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
 	config := balancetask.NewDefaultConfig()

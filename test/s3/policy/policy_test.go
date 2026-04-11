@@ -703,7 +703,6 @@ func uniqueName(prefix string) string {
 
 // --- Test setup helpers ---
 
-
 func startMiniCluster(t *testing.T) (*TestCluster, error) {
 	ports := testutil.MustAllocatePorts(t, 8)
 	masterPort, masterGrpcPort := ports[0], ports[1]
@@ -805,7 +804,6 @@ enabled = true
 	cluster.isRunning = true
 	return cluster, nil
 }
-
 
 // startRustVolumeServer starts a Rust volume server that registers with the same master.
 func (c *TestCluster) startRustVolumeServer(t *testing.T) error {

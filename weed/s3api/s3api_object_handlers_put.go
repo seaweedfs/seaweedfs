@@ -858,11 +858,11 @@ var checksumAlgorithmMapping = map[string]struct {
 	alg  ChecksumAlgorithm
 	name string
 }{
-	"CRC32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
-	"CRC32C":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"CRC32":     {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"CRC32C":    {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
 	"CRC64NVME": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
-	"SHA1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
-	"SHA256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+	"SHA1":      {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"SHA256":    {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 }
 
 // trailerToChecksumAlgorithm maps trailer header names to their algorithm and canonical header name.
@@ -870,11 +870,11 @@ var trailerToChecksumAlgorithm = map[string]struct {
 	alg  ChecksumAlgorithm
 	name string
 }{
-	"x-amz-checksum-crc32":    {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
-	"x-amz-checksum-crc32c":   {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
+	"x-amz-checksum-crc32":     {ChecksumAlgorithmCRC32, s3_constants.AmzChecksumCRC32},
+	"x-amz-checksum-crc32c":    {ChecksumAlgorithmCRC32C, s3_constants.AmzChecksumCRC32C},
 	"x-amz-checksum-crc64nvme": {ChecksumAlgorithmCRC64NVMe, s3_constants.AmzChecksumCRC64NVME},
-	"x-amz-checksum-sha1":     {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
-	"x-amz-checksum-sha256":   {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
+	"x-amz-checksum-sha1":      {ChecksumAlgorithmSHA1, s3_constants.AmzChecksumSHA1},
+	"x-amz-checksum-sha256":    {ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 }
 
 // checksumHeaders is the ordered list of individual checksum headers to check.

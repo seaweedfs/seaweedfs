@@ -11,8 +11,8 @@ import (
 
 func makeResp(dir, name string, isDir bool, tsNs int64, isNew bool) *filer_pb.SubscribeMetadataResponse {
 	resp := &filer_pb.SubscribeMetadataResponse{
-		Directory: dir,
-		TsNs:      tsNs,
+		Directory:         dir,
+		TsNs:              tsNs,
 		EventNotification: &filer_pb.EventNotification{},
 	}
 	entry := &filer_pb.Entry{

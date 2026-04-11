@@ -15,10 +15,10 @@ import (
 // tsMinHeap implements heap.Interface for int64 timestamps.
 type tsMinHeap []int64
 
-func (h tsMinHeap) Len() int            { return len(h) }
-func (h tsMinHeap) Less(i, j int) bool  { return h[i] < h[j] }
-func (h tsMinHeap) Swap(i, j int)       { h[i], h[j] = h[j], h[i] }
-func (h *tsMinHeap) Push(x any)         { *h = append(*h, x.(int64)) }
+func (h tsMinHeap) Len() int           { return len(h) }
+func (h tsMinHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h tsMinHeap) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *tsMinHeap) Push(x any)        { *h = append(*h, x.(int64)) }
 func (h *tsMinHeap) Pop() any {
 	old := *h
 	n := len(old)
@@ -34,11 +34,11 @@ type syncJobPaths struct {
 }
 
 type MetadataProcessor struct {
-	activeJobs       map[int64]*syncJobPaths
-	activeJobsLock   sync.Mutex
-	activeJobsCond   *sync.Cond
-	concurrencyLimit int
-	fn               pb.ProcessMetadataFunc
+	activeJobs           map[int64]*syncJobPaths
+	activeJobsLock       sync.Mutex
+	activeJobsCond       *sync.Cond
+	concurrencyLimit     int
+	fn                   pb.ProcessMetadataFunc
 	processedTsWatermark atomic.Int64
 
 	// Indexes for O(depth) conflict detection, replacing O(n) linear scan.

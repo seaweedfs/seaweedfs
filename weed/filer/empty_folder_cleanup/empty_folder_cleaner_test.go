@@ -12,10 +12,10 @@ import (
 )
 
 type mockFilerOps struct {
-	countFn        func(path util.FullPath) (int, error)
-	deleteFn       func(path util.FullPath) error
-	attrsFn        func(path util.FullPath) (map[string][]byte, error)
-	isDirKeyObjFn  func(path util.FullPath) (bool, error)
+	countFn       func(path util.FullPath) (int, error)
+	deleteFn      func(path util.FullPath) error
+	attrsFn       func(path util.FullPath) (map[string][]byte, error)
+	isDirKeyObjFn func(path util.FullPath) (bool, error)
 }
 
 func (m *mockFilerOps) CountDirectoryEntries(_ context.Context, dirPath util.FullPath, _ int) (int, error) {

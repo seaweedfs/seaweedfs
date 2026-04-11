@@ -152,9 +152,9 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
-				"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-				"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-				"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+				"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+				"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+				"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 			},
 		},
 		AdminRuntimeDefaults: &plugin_pb.AdminRuntimeDefaults{
@@ -169,9 +169,9 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			JobTypeMaxRuntimeSeconds:      1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
-			"imbalance_threshold":  {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
-			"min_server_count":     {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
-			"preferred_tags":       {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
+			"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
+			"min_server_count":    {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 3}},
+			"preferred_tags":      {Kind: &plugin_pb.ConfigValue_StringValue{StringValue: ""}},
 		},
 	}
 }
@@ -404,11 +404,10 @@ func deriveECBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *ecBa
 	}
 	taskConfig.MinServerCount = int(minServerCountRaw)
 
-
 	taskConfig.PreferredTags = util.NormalizeTagList(readStringListConfig(values, "preferred_tags"))
 
 	return &ecBalanceWorkerConfig{
-		TaskConfig:         taskConfig,
+		TaskConfig: taskConfig,
 	}
 }
 

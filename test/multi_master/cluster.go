@@ -52,8 +52,8 @@ type MasterCluster struct {
 
 // clusterStatus is the JSON returned by /cluster/status.
 type clusterStatus struct {
-	IsLeader bool   `json:"IsLeader"`
-	Leader   string `json:"Leader"`
+	IsLeader bool     `json:"IsLeader"`
+	Leader   string   `json:"Leader"`
 	Peers    []string `json:"Peers"`
 }
 
@@ -357,7 +357,6 @@ func (mc *MasterCluster) tailLog(i int) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
 
 func findOrBuildWeedBinary() (string, error) {
 	if fromEnv := os.Getenv("WEED_BINARY"); fromEnv != "" {

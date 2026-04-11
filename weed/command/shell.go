@@ -15,7 +15,7 @@ var (
 	shellOptions      shell.ShellOptions
 	shellInitialFiler *string
 	shellCluster      *string
-	shellDebug      *bool
+	shellDebug        *bool
 )
 
 func init() {

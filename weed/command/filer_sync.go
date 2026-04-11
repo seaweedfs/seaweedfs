@@ -11,11 +11,11 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/replication/sink/filersink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"

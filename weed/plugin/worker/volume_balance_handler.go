@@ -1069,7 +1069,6 @@ func deriveBalanceWorkerConfig(values map[string]*plugin_pb.ConfigValue) *volume
 	}
 	taskConfig.MinServerCount = minServerCount
 
-
 	maxConcurrentMoves64 := readInt64Config(values, "max_concurrent_moves", int64(defaultMaxConcurrentMoves))
 	if maxConcurrentMoves64 < 1 {
 		maxConcurrentMoves64 = 1

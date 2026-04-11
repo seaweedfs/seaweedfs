@@ -863,7 +863,7 @@ func (l *loggingT) exit(err error) {
 // file rotation. There are conflicting methods, so the file cannot be embedded.
 // l.mu is held for all its methods.
 type syncBuffer struct {
-	logger    *loggingT
+	logger *loggingT
 	*bufio.Writer
 	file      *os.File
 	sev       severity

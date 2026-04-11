@@ -272,7 +272,6 @@ func stopProcess(cmd *exec.Cmd) {
 	}
 }
 
-
 func newWorkDir() (dir string, keepLogs bool, err error) {
 	keepLogs = os.Getenv("VOLUME_SERVER_IT_KEEP_LOGS") == "1"
 	dir, err = os.MkdirTemp("", "seaweedfs_volume_server_it_")

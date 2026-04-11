@@ -114,7 +114,7 @@ type schedulerLaneState struct {
 	// Per-lane execution reservation pool. Each lane tracks how many
 	// execution slots it has reserved on each worker independently,
 	// so lanes cannot starve each other.
-	execMu sync.Mutex
+	execMu  sync.Mutex
 	execRes map[string]int
 }
 

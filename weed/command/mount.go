@@ -6,38 +6,38 @@ import (
 )
 
 type MountOptions struct {
-	filer              *string
-	filerMountRootPath *string
-	dir                *string
-	dirAutoCreate      *bool
-	collection         *string
-	collectionQuota    *int
-	replication        *string
-	diskType           *string
-	ttlSec             *int
-	chunkSizeLimitMB   *int
-	concurrentWriters  *int
-	concurrentReaders  *int
-	cacheMetaTtlSec    *int
-	cacheDirForRead    *string
-	cacheDirForWrite   *string
-	cacheSizeMBForRead *int64
-	dataCenter         *string
-	allowOthers        *bool
-	defaultPermissions *bool
-	umaskString        *string
-	nonempty           *bool
-	volumeServerAccess *string
-	uidMap             *string
-	gidMap             *string
-	readOnly           *bool
+	filer                *string
+	filerMountRootPath   *string
+	dir                  *string
+	dirAutoCreate        *bool
+	collection           *string
+	collectionQuota      *int
+	replication          *string
+	diskType             *string
+	ttlSec               *int
+	chunkSizeLimitMB     *int
+	concurrentWriters    *int
+	concurrentReaders    *int
+	cacheMetaTtlSec      *int
+	cacheDirForRead      *string
+	cacheDirForWrite     *string
+	cacheSizeMBForRead   *int64
+	dataCenter           *string
+	allowOthers          *bool
+	defaultPermissions   *bool
+	umaskString          *string
+	nonempty             *bool
+	volumeServerAccess   *string
+	uidMap               *string
+	gidMap               *string
+	readOnly             *bool
 	includeSystemEntries *bool
-	debug              *bool
-	debugPort          *int
-	localSocket        *string
-	disableXAttr       *bool
-	extraOptions       []string
-	fuseCommandPid     int
+	debug                *bool
+	debugPort            *int
+	localSocket          *string
+	disableXAttr         *bool
+	extraOptions         []string
+	fuseCommandPid       int
 
 	// Periodic metadata flush to protect against orphan chunk cleanup
 	metadataFlushSeconds *int

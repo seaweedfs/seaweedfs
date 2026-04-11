@@ -139,7 +139,7 @@ func (p *renameStreamProxy) Context() context.Context {
 	return p.parent.Context()
 }
 
-func (p *renameStreamProxy) SendMsg(m any) error            { return p.parent.SendMsg(m) }
+func (p *renameStreamProxy) SendMsg(m any) error             { return p.parent.SendMsg(m) }
 func (p *renameStreamProxy) RecvMsg(m any) error             { return p.parent.RecvMsg(m) }
 func (p *renameStreamProxy) SetHeader(md metadata.MD) error  { return p.parent.SetHeader(md) }
 func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.SendHeader(md) }
