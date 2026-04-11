@@ -404,6 +404,71 @@ func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	}
 }
 
+func TestHeartbeatDecayDedupReplicas(t *testing.T) {
+	// Volume 1 replicated on server1 and server2.
+	// Both servers report size=3000 in the same heartbeat cycle.
+	// Decay should run only once, not once per replica.
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "ip":"10.0.0.1",
+        "volumes":[
+          {"id":1, "size":1000, "replication":"001"}
+        ],
+        "limit":10
+      },
+      "server2":{
+        "ip":"10.0.0.2",
+        "volumes":[
+          {"id":1, "size":1000, "replication":"001"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo := setupWithLimit(layout, 10000)
+	rp, _ := super_block.NewReplicaPlacementFromString("001")
+	vl := topo.GetVolumeLayout("", rp, needle.EMPTY_TTL, types.HardDriveType)
+
+	// Add pending: effective = 1000 + 8000 = 9000
+	vl.RecordAssign(1, 8000)
+
+	vl.accessLock.RLock()
+	if vl.vid2size[1] != 9000 {
+		t.Fatalf("expected vid2size=9000, got %d", vl.vid2size[1])
+	}
+	vl.accessLock.RUnlock()
+
+	// Both replicas report size=3000. Decay should happen once: 3000 + (9000-3000)/2 = 6000.
+	dns := vl.Lookup(1)
+	if len(dns) != 2 {
+		t.Fatalf("expected 2 replicas, got %d", len(dns))
+	}
+	freshVol := storage.VolumeInfo{
+		Id:               1,
+		Size:             3000,
+		Version:          needle.GetCurrentVersion(),
+		ReplicaPlacement: rp,
+	}
+	for _, dn := range dns {
+		dn.AddOrUpdateVolume(freshVol)
+		vl.RegisterVolume(&freshVol, dn)
+	}
+
+	vl.accessLock.RLock()
+	got := vl.vid2size[1]
+	vl.accessLock.RUnlock()
+	// Without dedup: would be 3000 + (6000-3000)/2 = 4500 (double decay).
+	// With dedup: should be 6000 (single decay).
+	if got != 6000 {
+		t.Errorf("expected vid2size=6000 (single decay), got %d (double decay would give 4500)", got)
+	}
+}
+
 func TestShouldGrowVolumesByDcAndRack_WithPendingSize(t *testing.T) {
 	layout := `
 {

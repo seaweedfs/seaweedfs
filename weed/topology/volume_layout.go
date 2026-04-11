@@ -116,8 +116,9 @@ type VolumeLayout struct {
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	accessLock       sync.RWMutex
-	vid2size         map[needle.VolumeId]uint64 // effective size: reported + pending
+	accessLock        sync.RWMutex
+	vid2size          map[needle.VolumeId]uint64 // effective size: reported + pending
+	vid2reportedSize  map[needle.VolumeId]uint64 // last heartbeat-reported size (dedup replicas)
 }
 
 type VolumeLayoutStats struct {
@@ -139,7 +140,8 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
-		vid2size:         make(map[needle.VolumeId]uint64),
+		vid2size:          make(map[needle.VolumeId]uint64),
+		vid2reportedSize:  make(map[needle.VolumeId]uint64),
 	}
 }
 
@@ -157,17 +159,23 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	// Decay pending estimate: if our tracked size exceeds the freshly reported
-	// size, some assigned bytes are still in flight. Halve the excess each
-	// heartbeat so it converges quickly rather than dropping to zero.
-	if prev := vl.vid2size[v.Id]; prev > v.Size {
-		vl.vid2size[v.Id] = v.Size + (prev-v.Size)/2
-	} else {
-		vl.vid2size[v.Id] = v.Size
-	}
-	// Clear crowded if effective size dropped below the threshold
-	if float64(vl.vid2size[v.Id]) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
-		vl.removeFromCrowded(v.Id)
+	// Decay pending estimate once per heartbeat cycle.
+	// Replicated volumes trigger RegisterVolume from each replica's heartbeat.
+	// Only run decay when the reported size actually changes, so the excess
+	// is halved once per cycle instead of once per replica.
+	if v.Size != vl.vid2reportedSize[v.Id] {
+		vl.vid2reportedSize[v.Id] = v.Size
+		if prev := vl.vid2size[v.Id]; prev > v.Size {
+			vl.vid2size[v.Id] = v.Size + (prev-v.Size)/2
+		} else {
+			vl.vid2size[v.Id] = v.Size
+		}
+		// Update crowded state based on effective size
+		if float64(vl.vid2size[v.Id]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+			vl.setVolumeCrowded(v.Id)
+		} else {
+			vl.removeFromCrowded(v.Id)
+		}
 	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
@@ -217,6 +225,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		if location.Length() == 0 {
 			delete(vl.vid2location, v.Id)
 			delete(vl.vid2size, v.Id)
+			delete(vl.vid2reportedSize, v.Id)
 			vl.removeFromCrowded(v.Id)
 		}
 
