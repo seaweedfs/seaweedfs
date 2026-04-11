@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/rand/v2"
 	"slices"
 	"sync"
@@ -319,6 +320,11 @@ func (t *Topology) NextVolumeId() (needle.VolumeId, error) {
 	return next, nil
 }
 
+// EstimatedNeedleSizeBytes is the assumed size per assigned file ID, used to
+// estimate pending bytes between heartbeats. Intentionally coarse — it only
+// needs to spread load, not be precise.
+const EstimatedNeedleSizeBytes = 1024 * 1024 // 1 MB
+
 func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption, volumeLayout *VolumeLayout) (fileId string, count uint64, volumeLocationList *VolumeLocationList, shouldGrow bool, err error) {
 	var vid needle.VolumeId
 	vid, count, volumeLocationList, shouldGrow, err = volumeLayout.PickForWrite(requestedCount, option)
@@ -328,6 +334,10 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 	if volumeLocationList == nil || volumeLocationList.Length() == 0 {
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
+	// Track estimated assigned bytes to spread load between heartbeats.
+	// Compute in uint64 and cap to avoid overflow on the int64 cast.
+	pendingBytes := min(uint64(count)*EstimatedNeedleSizeBytes, uint64(math.MaxInt64))
+	volumeLayout.RecordAssign(vid, int64(pendingBytes))
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
 	return fileId, count, volumeLocationList, shouldGrow, nil
@@ -484,6 +494,15 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
+	}
+	// Update effective sizes for all reported volumes (decay pending estimates)
+	for _, v := range volumeInfos {
+		if v.ReplicaPlacement == nil {
+			continue
+		}
+		diskType := types.ToDiskType(v.DiskType)
+		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
+		vl.UpdateVolumeSize(v.Id, v.Size)
 	}
 	return
 }
