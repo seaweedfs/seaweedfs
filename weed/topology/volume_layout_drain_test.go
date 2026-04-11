@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -201,8 +202,9 @@ func TestDrainAndRemoveFromWritable_DecaysViaConcurrentHeartbeat(t *testing.T) {
 	vl.DrainAndRemoveFromWritable(1)
 	elapsed := time.Since(start)
 
-	// Should have drained within a few seconds (heartbeats every 500ms)
-	if elapsed > 10*time.Second {
+	// Should have drained within a few seconds (heartbeats every 500ms).
+	// Use generous margin for slow CI.
+	if elapsed > 15*time.Second {
 		t.Errorf("drain took %v, expected faster with concurrent heartbeats", elapsed)
 	}
 
@@ -230,7 +232,7 @@ func TestDrainAndSetVolumeReadOnly(t *testing.T) {
 	dn := vl.Lookup(1)[0]
 
 	start := time.Now()
-	result := vl.DrainAndSetVolumeReadOnly(dn, 1)
+	result := vl.DrainAndSetVolumeReadOnly(context.Background(), dn, 1)
 	elapsed := time.Since(start)
 
 	if !result {

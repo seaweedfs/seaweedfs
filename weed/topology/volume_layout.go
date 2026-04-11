@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"sync"
@@ -352,16 +353,20 @@ func (vl *VolumeLayout) GetPendingSize(vid needle.VolumeId) uint64 {
 }
 
 // waitForPendingDrain polls until pending bytes for the volume decay below
-// the threshold, or the timeout expires. Since the volume is already removed
-// from the writable list, no new assigns accumulate — pending only decreases
-// via heartbeat decay.
-func (vl *VolumeLayout) waitForPendingDrain(vid needle.VolumeId) {
+// the threshold, the timeout expires, or the context is cancelled. Since the
+// volume is already removed from the writable list, no new assigns accumulate
+// — pending only decreases via heartbeat decay.
+func (vl *VolumeLayout) waitForPendingDrain(ctx context.Context, vid needle.VolumeId) {
 	deadline := time.Now().Add(maxDrainWait)
 	for time.Now().Before(deadline) {
 		if vl.GetPendingSize(vid) <= pendingSizeThreshold {
 			return
 		}
-		time.Sleep(1 * time.Second)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
+		}
 	}
 	glog.Warningf("volume %d: %d pending bytes remain after drain timeout", vid, vl.GetPendingSize(vid))
 }
@@ -373,15 +378,16 @@ func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
 	vl.accessLock.Lock()
 	vl.removeFromWritable(vid)
 	vl.accessLock.Unlock()
-	vl.waitForPendingDrain(vid)
+	vl.waitForPendingDrain(context.Background(), vid)
 }
 
 // DrainAndSetVolumeReadOnly marks the volume readonly (removing it from
 // the writable list), then waits for pending assigned bytes to decay.
+// Respects context cancellation for gRPC handlers.
 // Used by volume move and EC encoding.
-func (vl *VolumeLayout) DrainAndSetVolumeReadOnly(dn *DataNode, vid needle.VolumeId) bool {
+func (vl *VolumeLayout) DrainAndSetVolumeReadOnly(ctx context.Context, dn *DataNode, vid needle.VolumeId) bool {
 	result := vl.SetVolumeReadOnly(dn, vid)
-	vl.waitForPendingDrain(vid)
+	vl.waitForPendingDrain(ctx, vid)
 	return result
 }
 
