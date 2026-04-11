@@ -438,7 +438,18 @@ func (fo *FilerOptions) startFiler() {
 	// Register graceful shutdown for gRPC server to wait for active RPCs
 	grace.OnInterrupt(func() {
 		glog.V(0).Infof("Gracefully stopping gRPC server")
-		grpcS.GracefulStop()
+		stopped := make(chan struct{})
+		go func() {
+			grpcS.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+			glog.V(0).Infof("gRPC server stopped gracefully")
+		case <-time.After(10 * time.Second):
+			glog.V(0).Infof("gRPC server graceful stop timed out, forcing stop")
+			grpcS.Stop()
+		}
 	})
 
 	if runtime.GOOS != "windows" {
@@ -508,16 +519,11 @@ func (fo *FilerOptions) startFiler() {
 		// Register HTTP server shutdown hook
 		grace.OnInterrupt(func() {
 			glog.V(0).Infof("Gracefully stopping HTTPS server")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTPS server shutdown: %v", err)
 			}
-		})
-
-		// Register filer shutdown hook (database closes last)
-		grace.OnInterrupt(func() {
-			fs.Shutdown()
 		})
 
 		if MiniClusterCtx != nil {
@@ -531,6 +537,8 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		fs.Shutdown()
 	} else {
 		if filerLocalListener != nil {
 			go func() {
@@ -544,16 +552,11 @@ func (fo *FilerOptions) startFiler() {
 		// Register HTTP server shutdown hook
 		grace.OnInterrupt(func() {
 			glog.V(0).Infof("Gracefully stopping HTTP server")
-			shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTP server shutdown: %v", err)
 			}
-		})
-
-		// Register filer shutdown hook (database closes last)
-		grace.OnInterrupt(func() {
-			fs.Shutdown()
 		})
 
 		if MiniClusterCtx != nil {
@@ -567,5 +570,7 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		fs.Shutdown()
 	}
 }
