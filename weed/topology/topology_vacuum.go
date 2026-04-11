@@ -67,9 +67,7 @@ func (t *Topology) batchVacuumVolumeCheck(grpcDialOption grpc.DialOption, vid ne
 
 func (t *Topology) batchVacuumVolumeCompact(grpcDialOption grpc.DialOption, vl *VolumeLayout, vid needle.VolumeId,
 	locationlist *VolumeLocationList, preallocate int64) bool {
-	vl.accessLock.Lock()
-	vl.removeFromWritable(vid)
-	vl.accessLock.Unlock()
+	vl.DrainAndRemoveFromWritable(vid)
 
 	ch := make(chan bool, locationlist.Length())
 	for index, dn := range locationlist.list {

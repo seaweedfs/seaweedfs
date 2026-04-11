@@ -336,7 +336,7 @@ func (ms *MasterServer) VolumeMarkReadonly(ctx context.Context, req *master_pb.V
 	for _, dn := range dataNodes {
 		if dn.Ip == req.Ip && dn.Port == int(req.Port) {
 			if req.IsReadonly {
-				vl.SetVolumeReadOnly(dn, needle.VolumeId(req.VolumeId))
+				vl.DrainAndSetVolumeReadOnly(dn, needle.VolumeId(req.VolumeId))
 			} else {
 				vl.SetVolumeWritable(dn, needle.VolumeId(req.VolumeId))
 			}

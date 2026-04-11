@@ -505,7 +505,7 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		}
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		vl.UpdateVolumeSize(v.Id, v.Size)
+		vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision)
 	}
 	return
 }
