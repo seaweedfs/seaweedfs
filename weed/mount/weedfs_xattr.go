@@ -212,5 +212,10 @@ func (wfs *WFS) RemoveXAttr(cancel <-chan struct{}, header *fuse.InHeader, attr 
 
 	delete(entry.Extended, XATTR_PREFIX+attr)
 
+	if fh != nil {
+		fh.dirtyMetadata = true
+		return fuse.OK
+	}
+
 	return wfs.saveEntry(path, entry)
 }

@@ -77,7 +77,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-		wfs.touchDirMtimeCtime(dirFullPath)
+		wfs.touchDirMtimeCtimeBest(dirFullPath)
 		wfs.inodeToPath.AdjustSubdirCount(dirFullPath, 1)
 	}
 
@@ -94,6 +94,11 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	wfs.mapPbIdFromFilerToLocal(newEntry)
 
 	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
+
+	// The newly created directory is guaranteed to be empty, so mark it as
+	// cached immediately to avoid a needless filer round-trip on the first
+	// Lookup or ReadDir inside this directory.
+	wfs.inodeToPath.MarkChildrenCached(entryFullPath)
 
 	wfs.outputPbEntry(out, inode, newEntry)
 
@@ -155,7 +160,7 @@ func (wfs *WFS) Rmdir(cancel <-chan struct{}, header *fuse.InHeader, name string
 	}
 	wfs.inodeToPath.RemovePath(entryFullPath)
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
-	wfs.touchDirMtimeCtime(dirFullPath)
+	wfs.touchDirMtimeCtimeBest(dirFullPath)
 	wfs.inodeToPath.AdjustSubdirCount(dirFullPath, -1)
 
 	return fuse.OK

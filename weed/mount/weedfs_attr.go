@@ -275,6 +275,18 @@ func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
 }
 
+// touchDirMtimeCtimeBest updates a directory's mtime and ctime using the
+// best strategy for the current mode:
+//   - WritebackCache: local meta cache only (no filer RPC)
+//   - Normal mode: filer UpdateEntry RPC for POSIX correctness
+func (wfs *WFS) touchDirMtimeCtimeBest(dirPath util.FullPath) {
+	if wfs.option.WritebackCache {
+		wfs.touchDirMtimeCtimeLocal(dirPath)
+	} else {
+		wfs.touchDirMtimeCtime(dirPath)
+	}
+}
+
 // touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
 // POSIX requires this when entries are created or removed in the directory.
 func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
@@ -291,9 +303,7 @@ func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
 }
 
 // touchDirMtimeCtimeLocal updates a directory's mtime and ctime directly
-// in the local metadata cache, without a filer RPC. This is used for
-// deferred file creates where a filer round-trip would invalidate the
-// just-cached child entry.
+// in the local metadata cache, without a filer RPC.
 func (wfs *WFS) touchDirMtimeCtimeLocal(dirPath util.FullPath) {
 	now := time.Now()
 	if err := wfs.metaCache.TouchDirMtimeCtime(context.Background(), dirPath, now); err != nil {
