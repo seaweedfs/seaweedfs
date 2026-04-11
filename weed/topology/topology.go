@@ -335,7 +335,12 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		return "", 0, nil, shouldGrow, fmt.Errorf("%s available for collection:%s replication:%s ttl:%s", NoWritableVolumes, option.Collection, option.ReplicaPlacement.String(), option.Ttl.String())
 	}
 	// Track estimated assigned bytes to spread load between heartbeats
-	pendingBytes := int64(min(count, uint64(math.MaxInt64/EstimatedNeedleSizeBytes))) * EstimatedNeedleSizeBytes
+	maxAssignableCount := uint64(math.MaxInt64 / EstimatedNeedleSizeBytes)
+	safeCount := count
+	if safeCount > maxAssignableCount {
+		safeCount = maxAssignableCount
+	}
+	pendingBytes := int64(safeCount) * EstimatedNeedleSizeBytes
 	volumeLayout.RecordAssign(vid, pendingBytes)
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
