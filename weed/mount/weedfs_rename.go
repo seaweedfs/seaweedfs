@@ -323,9 +323,9 @@ func (wfs *WFS) Rename(cancel <-chan struct{}, in *fuse.RenameIn, oldName string
 	}
 	wfs.inodeToPath.TouchDirectory(oldDir)
 	wfs.inodeToPath.TouchDirectory(newDir)
-	wfs.touchDirMtimeCtime(oldDir)
+	wfs.touchDirMtimeCtimeLocal(oldDir)
 	if oldDir != newDir {
-		wfs.touchDirMtimeCtime(newDir)
+		wfs.touchDirMtimeCtimeLocal(newDir)
 		// Adjust subdirectory counts when moving a directory across parents.
 		if oldEntry != nil && oldEntry.IsDirectory {
 			wfs.inodeToPath.AdjustSubdirCount(oldDir, -1)

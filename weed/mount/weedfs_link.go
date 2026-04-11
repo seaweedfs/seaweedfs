@@ -131,7 +131,7 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 				glog.Warningf("link %s: best-effort metadata apply failed: %v", newParentPath.Child(name), applyErr)
 				wfs.inodeToPath.InvalidateChildrenCache(newParentPath)
 			}
-			wfs.touchDirMtimeCtime(newParentPath)
+			wfs.touchDirMtimeCtimeLocal(newParentPath)
 		}
 	}
 

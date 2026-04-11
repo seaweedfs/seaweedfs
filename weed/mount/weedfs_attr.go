@@ -275,25 +275,10 @@ func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
 }
 
-// touchDirMtimeCtime updates a directory's mtime and ctime on the filer.
-// POSIX requires this when entries are created or removed in the directory.
-func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
-	dirEntry, code := wfs.maybeLoadEntry(dirPath)
-	if code != fuse.OK || dirEntry == nil || dirEntry.Attributes == nil {
-		return
-	}
-	now := time.Now()
-	dirEntry.Attributes.Mtime = now.Unix()
-	dirEntry.Attributes.MtimeNs = int32(now.Nanosecond())
-	dirEntry.Attributes.Ctime = now.Unix()
-	dirEntry.Attributes.CtimeNs = int32(now.Nanosecond())
-	wfs.saveEntry(dirPath, dirEntry)
-}
-
 // touchDirMtimeCtimeLocal updates a directory's mtime and ctime directly
-// in the local metadata cache, without a filer RPC. This is used for
-// deferred file creates where a filer round-trip would invalidate the
-// just-cached child entry.
+// in the local metadata cache, without a filer RPC. The filer already
+// processed the mutation that triggered this update, so a second RPC
+// (UpdateEntry) just to bump timestamps is unnecessary.
 func (wfs *WFS) touchDirMtimeCtimeLocal(dirPath util.FullPath) {
 	now := time.Now()
 	if err := wfs.metaCache.TouchDirMtimeCtime(context.Background(), dirPath, now); err != nil {

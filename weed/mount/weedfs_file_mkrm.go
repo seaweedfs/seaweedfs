@@ -244,7 +244,7 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 	}
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
-	wfs.touchDirMtimeCtime(dirFullPath)
+	wfs.touchDirMtimeCtimeLocal(dirFullPath)
 
 	wfs.inodeToPath.RemovePath(entryFullPath)
 
@@ -342,7 +342,7 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 		wfs.inodeToPath.TouchDirectory(dirFullPath)
-		wfs.touchDirMtimeCtime(dirFullPath)
+		wfs.touchDirMtimeCtimeLocal(dirFullPath)
 	}
 
 	glog.V(3).Infof("createFile %s: %v", entryFullPath, err)
