@@ -277,21 +277,26 @@ func TestVacuumIntegration(t *testing.T) {
 		commandEnv.MasterClient.WaitUntilConnected(shellCtx)
 		time.Sleep(2 * time.Second)
 
+		// Acquire lock (required by shell commands)
+		locked, unlock := tryLock(t, commandEnv, 30*time.Second)
+		require.True(t, locked, "could not acquire shell lock")
+		defer unlock()
+
 		// Find and execute vacuum command
-		var vacuumCmd shell.Command
+		var output bytes.Buffer
+		var found bool
+		var err error
 		for _, cmd := range shell.Commands {
 			if cmd.Name() == "volume.vacuum" {
-				vacuumCmd = cmd
+				err = cmd.Do(
+					[]string{"-garbageThreshold", "0.1", "-collection", collection},
+					commandEnv, &output,
+				)
+				found = true
 				break
 			}
 		}
-		require.NotNil(t, vacuumCmd, "volume.vacuum command not found")
-
-		var output bytes.Buffer
-		err := vacuumCmd.Do(
-			[]string{"-garbageThreshold", "0.1", "-collection", collection},
-			commandEnv, &output,
-		)
+		require.True(t, found, "volume.vacuum command not found")
 		t.Logf("Vacuum output: %s", output.String())
 		require.NoError(t, err, "vacuum command failed")
 		t.Log("Vacuum completed successfully")
@@ -343,4 +348,42 @@ func TestVacuumIntegration(t *testing.T) {
 
 func stringPtr(s string) *string {
 	return &s
+}
+
+func tryLock(t *testing.T, commandEnv *shell.CommandEnv, timeout time.Duration) (locked bool, unlock func()) {
+	t.Helper()
+	type result struct {
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		for _, cmd := range shell.Commands {
+			if cmd.Name() == "lock" {
+				var out bytes.Buffer
+				done <- result{err: cmd.Do([]string{}, commandEnv, &out)}
+				return
+			}
+		}
+		done <- result{err: fmt.Errorf("lock command not found")}
+	}()
+
+	select {
+	case res := <-done:
+		if res.err != nil {
+			t.Logf("lock failed: %v", res.err)
+			return false, nil
+		}
+		return true, func() {
+			for _, cmd := range shell.Commands {
+				if cmd.Name() == "unlock" {
+					var out bytes.Buffer
+					cmd.Do([]string{}, commandEnv, &out)
+					return
+				}
+			}
+		}
+	case <-time.After(timeout):
+		t.Log("lock timed out")
+		return false, nil
+	}
 }
