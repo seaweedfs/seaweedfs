@@ -840,10 +840,54 @@ func (e *EmbeddedIamApi) getActions(policy *policy_engine.PolicyDocument) ([]str
 	return actions, nil
 }
 
+// recomputeActions aggregates ident.Actions from all stored inline policies
+// for a user. Returns (nil, nil) when the credential manager is unavailable
+// (caller should keep existing actions). Returns a non-nil error on store
+// failures so callers can abort the mutation.
+func (e *EmbeddedIamApi) recomputeActions(ctx context.Context, userName string) ([]string, error) {
+	if e.credentialManager == nil {
+		return nil, nil
+	}
+	policyNames, err := e.credentialManager.ListUserInlinePolicies(ctx, userName)
+	if err != nil {
+		return nil, fmt.Errorf("list inline policies for user %s: %w", userName, err)
+	}
+	if len(policyNames) == 0 {
+		return nil, nil
+	}
+	actionSet := make(map[string]bool)
+	var aggregated []string
+	for _, name := range policyNames {
+		doc, err := e.credentialManager.GetUserInlinePolicy(ctx, userName, name)
+		if err != nil {
+			return nil, fmt.Errorf("read inline policy %q for user %s: %w", name, userName, err)
+		}
+		if doc == nil {
+			continue
+		}
+		actions, err := e.getActions(doc)
+		if err != nil {
+			glog.Warningf("recomputeActions: failed to parse inline policy %q for user %s: %v", name, userName, err)
+			continue
+		}
+		for _, a := range actions {
+			if !actionSet[a] {
+				actionSet[a] = true
+				aggregated = append(aggregated, a)
+			}
+		}
+	}
+	return aggregated, nil
+}
+
 // PutUserPolicy attaches a policy to a user.
 func (e *EmbeddedIamApi) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamPutUserPolicyResponse, *iamError) {
 	resp := &iamPutUserPolicyResponse{}
 	userName := values.Get("UserName")
+	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 	policyDocumentString := values.Get("PolicyDocument")
 	policyDocument, err := e.GetPolicyDocument(&policyDocumentString)
 	if err != nil {
@@ -858,7 +902,27 @@ func (e *EmbeddedIamApi) PutUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 		if userName != ident.Name {
 			continue
 		}
-		ident.Actions = actions
+
+		// Persist the original policy document for lossless round-trip via GetUserPolicy.
+		// This must succeed before updating ident.Actions to keep both in sync.
+		ctx := context.Background()
+		if e.credentialManager != nil {
+			if storeErr := e.credentialManager.PutUserInlinePolicy(ctx, userName, policyName, policyDocument); storeErr != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: storeErr}
+			}
+		}
+
+		// Recompute ident.Actions from ALL stored inline policies so that
+		// multiple policies are properly aggregated for enforcement.
+		aggregated, recomputeErr := e.recomputeActions(ctx, userName)
+		if recomputeErr != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: recomputeErr}
+		}
+		if aggregated != nil {
+			ident.Actions = aggregated
+		} else {
+			ident.Actions = actions
+		}
 		return resp, nil
 	}
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf("the user with name %s cannot be found", userName)}
@@ -876,34 +940,58 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 
 		resp.GetUserPolicyResult.UserName = userName
 		resp.GetUserPolicyResult.PolicyName = policyName
+
+		// Try to retrieve the stored inline policy document for a lossless round-trip
+		if e.credentialManager != nil {
+			ctx := context.Background()
+			storedDoc, storeErr := e.credentialManager.GetUserInlinePolicy(ctx, userName, policyName)
+			if storeErr != nil {
+				glog.Warningf("GetUserPolicy: failed to read stored inline policy %q for user %s: %v; falling back to reconstruction", policyName, userName, storeErr)
+			}
+			if storeErr == nil && storedDoc != nil {
+				policyDocumentJSON, err := json.Marshal(storedDoc)
+				if err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+				}
+				resp.GetUserPolicyResult.PolicyDocument = string(policyDocumentJSON)
+				return resp, nil
+			}
+		}
+
+		// Fallback: reconstruct from ident.Actions (lossy - fine-grained actions
+		// collapse to wildcards like s3:Get*, s3:Put*, s3:List*)
 		if len(ident.Actions) == 0 {
 			return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: errors.New("no actions found")}
 		}
 
 		policyDocument := policy_engine.PolicyDocument{Version: iamPolicyDocumentVersion}
 		statements := make(map[string][]string)
+		seenAction := make(map[string]map[string]bool)
 		for _, action := range ident.Actions {
 			// Action format: "ActionType" (global) or "ActionType:bucket" or "ActionType:bucket/path"
-			actionType, bucketPath, hasPath := strings.Cut(action, ":")
-			var resource string
-			if !hasPath {
-				// Global action (no bucket specified)
-				resource = "*"
-			} else if strings.Contains(bucketPath, "/") {
-				// Path-specific: bucket/path -> arn:aws:s3:::bucket/path/*
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", bucketPath)
-			} else {
-				// Bucket-level: bucket -> arn:aws:s3:::bucket/*
-				resource = fmt.Sprintf("arn:aws:s3:::%s/*", bucketPath)
+			// Use SplitN so the path component (which may contain ':') is preserved intact.
+			act := strings.SplitN(action, ":", 2)
+
+			resource := "*"
+			if len(act) == 2 {
+				// Preserve the stored path verbatim so bucket-level and
+				// object-level resources remain distinguishable.
+				resource = fmt.Sprintf("arn:aws:s3:::%s", act[1])
 			}
-			statements[resource] = append(statements[resource],
-				fmt.Sprintf("s3:%s", iamMapToIdentitiesAction(actionType)),
-			)
+			s3Action := fmt.Sprintf("s3:%s", iamMapToIdentitiesAction(act[0]))
+			// Dedupe actions per resource
+			if seenAction[resource] == nil {
+				seenAction[resource] = make(map[string]bool)
+			}
+			if seenAction[resource][s3Action] {
+				continue
+			}
+			seenAction[resource][s3Action] = true
+			statements[resource] = append(statements[resource], s3Action)
 		}
 		for resource, actions := range statements {
 			isEqAction := false
 			for i, statement := range policyDocument.Statement {
-				// Use order-independent comparison to avoid duplicates from different action orderings
 				if iamStringSlicesEqual(statement.Action.Strings(), actions) {
 					policyDocument.Statement[i].Resource = policy_engine.NewStringOrStringSlicePtr(append(
 						policyDocument.Statement[i].Resource.Strings(), resource)...)
@@ -931,13 +1019,36 @@ func (e *EmbeddedIamApi) GetUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values 
 	return resp, &iamError{Code: iam.ErrCodeNoSuchEntityException, Error: fmt.Errorf(iamUserDoesNotExist, userName)}
 }
 
-// DeleteUserPolicy removes the inline policy from a user (clears their actions).
+// DeleteUserPolicy removes the inline policy from a user.
 func (e *EmbeddedIamApi) DeleteUserPolicy(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamDeleteUserPolicyResponse, *iamError) {
 	resp := &iamDeleteUserPolicyResponse{}
 	userName := values.Get("UserName")
+	policyName := values.Get("PolicyName")
+	if policyName == "" {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("PolicyName is required")}
+	}
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
-			ident.Actions = nil
+			ctx := context.Background()
+
+			// Remove the stored inline policy document.
+			// Must succeed before updating ident.Actions to keep both in sync.
+			if e.credentialManager != nil {
+				if err := e.credentialManager.DeleteUserInlinePolicy(ctx, userName, policyName); err != nil {
+					return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: err}
+				}
+			}
+
+			// Recompute ident.Actions from remaining inline policies
+			aggregated, recomputeErr := e.recomputeActions(ctx, userName)
+			if recomputeErr != nil {
+				return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: recomputeErr}
+			}
+			if aggregated != nil {
+				ident.Actions = aggregated
+			} else {
+				ident.Actions = nil
+			}
 			return resp, nil
 		}
 	}
@@ -951,6 +1062,16 @@ func (e *EmbeddedIamApi) ListUserPolicies(s3cfg *iam_pb.S3ApiConfiguration, valu
 	userName := values.Get("UserName")
 	for _, ident := range s3cfg.Identities {
 		if ident.Name == userName {
+			// Try to list stored inline policy names
+			if e.credentialManager != nil {
+				ctx := context.Background()
+				if names, err := e.credentialManager.ListUserInlinePolicies(ctx, userName); err == nil && len(names) > 0 {
+					resp.ListUserPoliciesResult.PolicyNames = names
+					resp.ListUserPoliciesResult.IsTruncated = false
+					return resp, nil
+				}
+			}
+			// Fallback: infer a single policy name from actions
 			if len(ident.Actions) > 0 {
 				resp.ListUserPoliciesResult.PolicyNames = []string{userName + "_policy"}
 			}

@@ -280,6 +280,34 @@ func (s *PropagatingCredentialStore) LoadInlinePolicies(ctx context.Context) (ma
 	return nil, nil
 }
 
+func (s *PropagatingCredentialStore) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.PutUserInlinePolicy(ctx, userName, policyName, document)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.GetUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil, nil
+}
+
+func (s *PropagatingCredentialStore) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.DeleteUserInlinePolicy(ctx, userName, policyName)
+	}
+	return nil
+}
+
+func (s *PropagatingCredentialStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	if store, ok := s.CredentialStore.(InlinePolicyStore); ok {
+		return store.ListUserInlinePolicies(ctx, userName)
+	}
+	return nil, nil
+}
+
 func (s *PropagatingCredentialStore) CreatePolicy(ctx context.Context, name string, document policy_engine.PolicyDocument) error {
 	if pm, ok := s.CredentialStore.(PolicyManager); ok {
 		if err := pm.CreatePolicy(ctx, name, document); err != nil {

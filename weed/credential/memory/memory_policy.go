@@ -105,3 +105,71 @@ func (store *MemoryStore) DeletePolicy(ctx context.Context, name string) error {
 	delete(store.policies, name)
 	return nil
 }
+
+// PutUserInlinePolicy stores a per-user inline policy document.
+func (store *MemoryStore) PutUserInlinePolicy(ctx context.Context, userName, policyName string, document policy_engine.PolicyDocument) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	if store.inlinePolicies[userName] == nil {
+		store.inlinePolicies[userName] = make(map[string]policy_engine.PolicyDocument)
+	}
+	store.inlinePolicies[userName][policyName] = document
+	return nil
+}
+
+// GetUserInlinePolicy retrieves a per-user inline policy document.
+func (store *MemoryStore) GetUserInlinePolicy(ctx context.Context, userName, policyName string) (*policy_engine.PolicyDocument, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	if userPolicies := store.inlinePolicies[userName]; userPolicies != nil {
+		if doc, exists := userPolicies[policyName]; exists {
+			return &doc, nil
+		}
+	}
+	return nil, nil
+}
+
+// DeleteUserInlinePolicy removes a per-user inline policy document.
+func (store *MemoryStore) DeleteUserInlinePolicy(ctx context.Context, userName, policyName string) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	if !store.initialized {
+		return fmt.Errorf("store not initialized")
+	}
+
+	if userPolicies := store.inlinePolicies[userName]; userPolicies != nil {
+		delete(userPolicies, policyName)
+		if len(userPolicies) == 0 {
+			delete(store.inlinePolicies, userName)
+		}
+	}
+	return nil
+}
+
+// ListUserInlinePolicies returns the names of all inline policies for a user.
+func (store *MemoryStore) ListUserInlinePolicies(ctx context.Context, userName string) ([]string, error) {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	if !store.initialized {
+		return nil, fmt.Errorf("store not initialized")
+	}
+
+	userPolicies := store.inlinePolicies[userName]
+	names := make([]string, 0, len(userPolicies))
+	for name := range userPolicies {
+		names = append(names, name)
+	}
+	return names, nil
+}

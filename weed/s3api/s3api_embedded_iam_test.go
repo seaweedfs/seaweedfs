@@ -1259,6 +1259,82 @@ func TestEmbeddedIamCreateAccessKeyForExistingUser(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 }
 
+// TestEmbeddedIamPutGetUserPolicyRoundTrip is a regression test for
+// https://github.com/seaweedfs/seaweedfs/issues/9008: put-user-policy followed
+// by get-user-policy must return the same policy document, with Action and Resource
+// lists intact (no wildcard expansion, no duplication, no collapsing).
+func TestEmbeddedIamPutGetUserPolicyRoundTrip(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "steward"}},
+	}
+	api.mockConfig = s3cfg
+
+	policyJSON := `{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"]
+    }]
+  }`
+
+	// PutUserPolicy
+	_, iamErr := api.PutUserPolicy(s3cfg, url.Values{
+		"UserName":       []string{"steward"},
+		"PolicyName":     []string{"steward_policy"},
+		"PolicyDocument": []string{policyJSON},
+	})
+	assert.Nil(t, iamErr)
+
+	// GetUserPolicy should return the exact document
+	resp, iamErr := api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	assert.Equal(t, "2012-10-17", got.Version)
+	require.Equal(t, 1, len(got.Statement))
+	stmt := got.Statement[0]
+	assert.Equal(t, policy_engine.PolicyEffectAllow, stmt.Effect)
+	assert.ElementsMatch(t, []string{"s3:GetObject", "s3:PutObject", "s3:ListBucket"}, stmt.Action.Strings())
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+}
+
+// TestEmbeddedIamGetUserPolicyFallback tests the lossy fallback reconstruction
+// when no stored inline policy is available (pre-existing ident.Actions only).
+func TestEmbeddedIamGetUserPolicyFallback(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:    "steward",
+			Actions: []string{"Read:b-le*", "Write:b-le*", "List:b-le*", "Read:b-le*/*", "Write:b-le*/*", "List:b-le*/*"},
+		}},
+	}
+	api.mockConfig = s3cfg
+
+	// No stored inline policy — GetUserPolicy must reconstruct from ident.Actions
+	resp, iamErr := api.GetUserPolicy(s3cfg, url.Values{
+		"UserName":   []string{"steward"},
+		"PolicyName": []string{"steward_policy"},
+	})
+	assert.Nil(t, iamErr)
+
+	var got policy_engine.PolicyDocument
+	assert.NoError(t, json.Unmarshal([]byte(resp.GetUserPolicyResult.PolicyDocument), &got))
+
+	// Fallback is lossy but must not duplicate actions
+	require.Equal(t, 1, len(got.Statement), "fallback should merge equal-action statements")
+	stmt := got.Statement[0]
+	assert.ElementsMatch(t, []string{"s3:Get*", "s3:Put*", "s3:List*"}, stmt.Action.Strings())
+	// Bucket-level and object-level resources stay distinct
+	assert.ElementsMatch(t, []string{"arn:aws:s3:::b-le*", "arn:aws:s3:::b-le*/*"}, stmt.Resource.Strings())
+}
+
 // TestEmbeddedIamGetUserPolicyUserNotFound tests GetUserPolicy with non-existent user
 func TestEmbeddedIamGetUserPolicyUserNotFound(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
