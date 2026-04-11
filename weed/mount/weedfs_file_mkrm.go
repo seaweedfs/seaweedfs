@@ -370,10 +370,14 @@ func (wfs *WFS) createRegularFile(dirFullPath util.FullPath, name string, mode u
 // asyncCreateEntry sends a CreateEntry RPC to the filer in the background.
 // The entry is already in the local meta cache; this persists it to the filer.
 // Used by Mknod with writeback caching — the node is visible locally right away.
+//
+// If the filer RPC fails after retries, the local cache entry is removed so the
+// phantom file does not persist across cache invalidation or mount restart.
 func (wfs *WFS) asyncCreateEntry(dirFullPath util.FullPath, entry *filer_pb.Entry) {
 	// Clone so the goroutine has its own copy for uid/gid mapping.
 	requestEntry := proto.Clone(entry).(*filer_pb.Entry)
 	dir := string(dirFullPath)
+	entryPath := dirFullPath.Child(entry.Name)
 	go func() {
 		wfs.mapPbIdFromLocalToFiler(requestEntry)
 		request := &filer_pb.CreateEntryRequest{
@@ -382,17 +386,27 @@ func (wfs *WFS) asyncCreateEntry(dirFullPath util.FullPath, entry *filer_pb.Entr
 			Signatures:               []int32{wfs.signature},
 			SkipCheckParentDirectory: true,
 		}
-		resp, err := wfs.streamCreateEntry(context.Background(), request)
+		err := retryMetadataFlush(func() error {
+			resp, createErr := wfs.streamCreateEntry(context.Background(), request)
+			if createErr != nil {
+				return createErr
+			}
+			event := resp.GetMetadataEvent()
+			if event == nil {
+				event = metadataCreateEvent(dir, requestEntry)
+			}
+			if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+				glog.Warningf("async createFile %s: metadata apply: %v", entryPath, applyErr)
+				wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
+			}
+			return nil
+		}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+			glog.Warningf("async createFile %s: retrying (attempt %d/%d) after %v: %v",
+				entryPath, nextAttempt, totalAttempts, backoff, err)
+		})
 		if err != nil {
-			glog.Warningf("async createFile %s/%s: %v", dir, entry.Name, err)
-			return
-		}
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataCreateEvent(dir, requestEntry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("async createFile %s/%s: metadata apply: %v", dir, entry.Name, applyErr)
+			glog.Errorf("async createFile %s: failed after retries: %v — removing local entry", entryPath, err)
+			wfs.metaCache.DeleteEntry(context.Background(), entryPath)
 			wfs.inodeToPath.InvalidateChildrenCache(dirFullPath)
 		}
 	}()
