@@ -6,11 +6,6 @@
 # A failure in any test NOT listed here will cause the CI job to fail,
 # catching regressions immediately.
 
-# ── Directory nlink count before readdir ────────────────────────────────
-# Directory nlink = 2 + subdirectory count is only accurate after the
-# directory children have been cached (readdir). Before that, nlink=2.
-tests/rename/24.t
-
 # ── Directory rename permission edge case ──────────────────────────────
 # Cross-directory rename of a subdirectory with restricted permissions
 # causes cascading test failures within the test file.
