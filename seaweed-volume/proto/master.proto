@@ -197,17 +197,6 @@ message ClusterNodeUpdate {
 message KeepConnectedResponse {
   VolumeLocation volume_location = 1;
   ClusterNodeUpdate cluster_node_update = 2;
-  LockRingUpdate lock_ring_update = 3;
-}
-
-// LockRingUpdate is sent by the master to all filers when the lock ring
-// membership changes. The master batches rapid changes (e.g., node drop + join)
-// and sends the complete member list atomically, avoiding intermediate ring
-// states that would cause unnecessary lock churn.
-message LockRingUpdate {
-  string filer_group = 1;
-  repeated string servers = 2;
-  int64 version = 3;
 }
 
 message LookupVolumeRequest {
@@ -362,13 +351,11 @@ message VacuumVolumeResponse {
 }
 
 message DisableVacuumRequest {
-    bool by_plugin = 1;
 }
 message DisableVacuumResponse {
 }
 
 message EnableVacuumRequest {
-    bool by_plugin = 1;
 }
 message EnableVacuumResponse {
 }
