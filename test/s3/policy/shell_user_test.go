@@ -100,6 +100,7 @@ func TestShellUserLifecycle(t *testing.T) {
 			fmt.Sprintf("s3.user.provision -name %s -bucket %s -role readonly", userName, bucket2))
 		requireContains(t, out, "already exists", "provision on existing user")
 		requireContains(t, out, "Created policy", "second policy created")
+		requireContains(t, out, "Attached policy", "second policy attached to existing user")
 		requireNotContains(t, out, "Access Key:", "no new credentials for existing user")
 
 		execShell(t, weedCmd, master, filer, fmt.Sprintf("s3.user.delete -name %s", userName))

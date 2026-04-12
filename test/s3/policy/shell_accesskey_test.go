@@ -50,6 +50,9 @@ func TestShellAccessKeyLifecycle(t *testing.T) {
 	})
 
 	t.Run("RotateKey", func(t *testing.T) {
+		if createdAK == "" {
+			t.Fatal("createdAK is empty; CreateAdditionalKey must run successfully first")
+		}
 		out := execShell(t, weedCmd, master, filer,
 			fmt.Sprintf("s3.accesskey.rotate -user %s -access_key %s", userName, initialAK))
 		requireContains(t, out, initialAK, "rotate shows old key")
@@ -61,6 +64,9 @@ func TestShellAccessKeyLifecycle(t *testing.T) {
 	})
 
 	t.Run("DeleteKey", func(t *testing.T) {
+		if createdAK == "" {
+			t.Fatal("createdAK is empty; CreateAdditionalKey must run successfully first")
+		}
 		execShell(t, weedCmd, master, filer,
 			fmt.Sprintf("s3.accesskey.delete -user %s -access_key %s", userName, createdAK))
 		out := execShell(t, weedCmd, master, filer, fmt.Sprintf("s3.accesskey.list -user %s", userName))

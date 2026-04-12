@@ -38,9 +38,6 @@ func TestShellServiceAccountLifecycle(t *testing.T) {
 		out = execShell(t, weedCmd, master, filer, fmt.Sprintf("s3.serviceaccount.list -user %s", userName))
 		requireContains(t, out, userName, "serviceaccount.list parent column")
 		saID = extractServiceAccountID(t, out, userName)
-		if saID == "" {
-			t.Fatalf("failed to extract service account ID from list output:\n%s", out)
-		}
 	})
 
 	t.Run("Show", func(t *testing.T) {
