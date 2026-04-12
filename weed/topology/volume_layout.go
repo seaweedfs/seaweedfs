@@ -1,6 +1,7 @@
 package topology
 
 import (
+	"context"
 	"fmt"
 	"math/rand/v2"
 	"sync"
@@ -101,6 +102,14 @@ func (v *volumesBinaryState) copyState(list *VolumeLocationList) copyState {
 	return enoughCopies
 }
 
+// volumeSizeTracking holds per-volume size accounting for weighted assignment.
+type volumeSizeTracking struct {
+	effectiveSize   uint64    // reported + pending assigned bytes
+	reportedSize    uint64    // last heartbeat-reported size (dedup replicas)
+	compactRevision uint32    // detect compaction to reset instead of decay
+	lastUpdateTime  time.Time // dedup replicas within the same heartbeat cycle
+}
+
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
 	growRequest      atomic.Bool
@@ -116,9 +125,8 @@ type VolumeLayout struct {
 	vacuumedVolumes  map[needle.VolumeId]time.Time
 	volumeSizeLimit  uint64
 	replicationAsMin bool
-	accessLock        sync.RWMutex
-	vid2size          map[needle.VolumeId]uint64 // effective size: reported + pending
-	vid2reportedSize  map[needle.VolumeId]uint64 // last heartbeat-reported size (dedup replicas)
+	accessLock       sync.RWMutex
+	sizeTracking     map[needle.VolumeId]*volumeSizeTracking
 }
 
 type VolumeLayoutStats struct {
@@ -140,8 +148,7 @@ func NewVolumeLayout(rp *super_block.ReplicaPlacement, ttl *needle.TTL, diskType
 		vacuumedVolumes:  make(map[needle.VolumeId]time.Time),
 		volumeSizeLimit:  volumeSizeLimit,
 		replicationAsMin: replicationAsMin,
-		vid2size:          make(map[needle.VolumeId]uint64),
-		vid2reportedSize:  make(map[needle.VolumeId]uint64),
+		sizeTracking:    make(map[needle.VolumeId]*volumeSizeTracking),
 	}
 }
 
@@ -159,10 +166,13 @@ func (vl *VolumeLayout) RegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 		vl.vid2location[v.Id] = NewVolumeLocationList()
 	}
 	vl.vid2location[v.Id].Set(dn)
-	// For new volumes, initialize vid2size from reported size.
-	if _, exists := vl.vid2size[v.Id]; !exists {
-		vl.vid2size[v.Id] = v.Size
-		vl.vid2reportedSize[v.Id] = v.Size
+	// For new volumes, initialize size tracking from reported size.
+	if _, exists := vl.sizeTracking[v.Id]; !exists {
+		vl.sizeTracking[v.Id] = &volumeSizeTracking{
+			effectiveSize:   v.Size,
+			reportedSize:    v.Size,
+			compactRevision: v.CompactRevision,
+		}
 	}
 	// glog.V(4).Infof("volume %d added to %s len %d copy %d", v.Id, dn.Id(), vl.vid2location[v.Id].Length(), v.ReplicaPlacement.GetCopyCount())
 	for _, dn := range vl.vid2location[v.Id].list {
@@ -197,20 +207,40 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 // It decays the pending size estimate toward the reported size and updates
 // crowded state. Replicated volumes report from multiple DataNodes; decay
 // runs only once per new reported size to avoid double-halving.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64) {
+// If the compact revision changed, the size drop is from compaction (not
+// pending writes), so we reset effectiveSize to the reported size instead of
+// decaying.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if reportedSize == vl.vid2reportedSize[vid] {
-		return // same size from another replica in this cycle
-	}
-	vl.vid2reportedSize[vid] = reportedSize
-	if prev := vl.vid2size[vid]; prev > reportedSize {
-		vl.vid2size[vid] = reportedSize + (prev-reportedSize)/2
+	now := time.Now()
+	st := vl.sizeTracking[vid]
+	if st == nil {
+		st = &volumeSizeTracking{
+			effectiveSize:   reportedSize,
+			reportedSize:    reportedSize,
+			compactRevision: compactRevision,
+			lastUpdateTime:  now,
+		}
+		vl.sizeTracking[vid] = st
+	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
+		return // duplicate replica in the same heartbeat cycle
 	} else {
-		vl.vid2size[vid] = reportedSize
+		st.lastUpdateTime = now
+		st.reportedSize = reportedSize
+		if compactRevision != st.compactRevision {
+			// Compaction happened — size drop is real, not pending. Reset.
+			st.compactRevision = compactRevision
+			st.effectiveSize = reportedSize
+		} else if st.effectiveSize > reportedSize {
+			st.effectiveSize = reportedSize + (st.effectiveSize-reportedSize)/2
+		} else {
+			st.effectiveSize = reportedSize
+		}
 	}
-	if float64(vl.vid2size[vid]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+
+	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 		vl.setVolumeCrowded(vid)
 	} else {
 		vl.removeFromCrowded(vid)
@@ -235,8 +265,7 @@ func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
 
 		if location.Length() == 0 {
 			delete(vl.vid2location, v.Id)
-			delete(vl.vid2size, v.Id)
-			delete(vl.vid2reportedSize, v.Id)
+			delete(vl.sizeTracking, v.Id)
 			vl.removeFromCrowded(v.Id)
 		}
 
@@ -301,13 +330,61 @@ func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
-	if pendingDelta > 0 {
-		vl.vid2size[vid] += uint64(pendingDelta)
+	st := vl.sizeTracking[vid]
+	if st == nil {
+		return
 	}
-	if float64(vl.vid2size[vid]) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+	if pendingDelta > 0 {
+		st.effectiveSize += uint64(pendingDelta)
+	}
+	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 		vl.setVolumeCrowded(vid)
 	}
 }
+
+const maxDrainWait = 30 * time.Second
+const pendingSizeThreshold uint64 = 2 * 1024 * 1024 // 2 MB
+
+// GetPendingSize returns the estimated in-flight bytes for a volume:
+// the gap between the effective tracked size and the last heartbeat-reported size.
+func (vl *VolumeLayout) GetPendingSize(vid needle.VolumeId) uint64 {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+	if st := vl.sizeTracking[vid]; st != nil && st.effectiveSize > st.reportedSize {
+		return st.effectiveSize - st.reportedSize
+	}
+	return 0
+}
+
+// waitForPendingDrain polls until pending bytes for the volume decay below
+// the threshold, the timeout expires, or the context is cancelled. Since the
+// volume is already removed from the writable list, no new assigns accumulate
+// — pending only decreases via heartbeat decay.
+func (vl *VolumeLayout) waitForPendingDrain(ctx context.Context, vid needle.VolumeId) {
+	deadline := time.Now().Add(maxDrainWait)
+	for time.Now().Before(deadline) {
+		if vl.GetPendingSize(vid) <= pendingSizeThreshold {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(1 * time.Second):
+		}
+	}
+	glog.Warningf("volume %d: %d pending bytes remain after drain timeout", vid, vl.GetPendingSize(vid))
+}
+
+// DrainAndRemoveFromWritable removes the volume from the writable list
+// immediately, then waits for pending assigned bytes to decay.
+// Used by vacuum before compaction.
+func (vl *VolumeLayout) DrainAndRemoveFromWritable(vid needle.VolumeId) {
+	vl.accessLock.Lock()
+	vl.removeFromWritable(vid)
+	vl.accessLock.Unlock()
+	vl.waitForPendingDrain(context.Background(), vid)
+}
+
 
 func (vl *VolumeLayout) isEmpty() bool {
 	vl.accessLock.RLock()
@@ -432,7 +509,10 @@ func (vl *VolumeLayout) weightedPick(candidates []needle.VolumeId) (needle.Volum
 }
 
 func (vl *VolumeLayout) remainingSize(vid needle.VolumeId) uint64 {
-	size := vl.vid2size[vid]
+	var size uint64
+	if st := vl.sizeTracking[vid]; st != nil {
+		size = st.effectiveSize
+	}
 	if size < vl.volumeSizeLimit {
 		if r := vl.volumeSizeLimit - size; r > 1 {
 			return r
@@ -484,7 +564,10 @@ func (vl *VolumeLayout) ShouldGrowVolumesByDcAndRack(writables *[]needle.VolumeI
 			}
 			if _, err := dn.GetVolumesById(v); err == nil {
 				vl.accessLock.RLock()
-				size := vl.vid2size[v]
+				var size uint64
+				if st := vl.sizeTracking[v]; st != nil {
+					size = st.effectiveSize
+				}
 				vl.accessLock.RUnlock()
 				if float64(size) <= float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 					return false
