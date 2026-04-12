@@ -251,7 +251,7 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		Name:                     "seaweedfs",
 		SingleThreaded:           false,
 		DisableXAttrs:            *option.disableXAttr,
-		Debug:                    *option.debug,
+		Debug:                    *option.debugFuse,
 		EnableLocks:              true,
 		ExplicitDataCacheControl: false,
 		DirectMount:              true,

@@ -172,6 +172,29 @@ func (uploader *Uploader) uploadWithRetryData(assignFn func() (fileId string, ho
 	return
 }
 
+// AssignFunc returns a file ID, host, and auth token for uploading.
+type AssignFunc func() (fileId string, host string, auth security.EncodedJwt, err error)
+
+// UploadWithAssignFunc uploads data using a caller-provided assign function.
+// This allows callers to use pre-allocated file IDs from a pool instead of
+// making an AssignVolume RPC per chunk.
+func (uploader *Uploader) UploadWithAssignFunc(assignFn AssignFunc, uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (fileId string, uploadResult *UploadResult, err error, data []byte) {
+	bytesReader, ok := reader.(*util.BytesReader)
+	if ok {
+		data = bytesReader.Bytes
+	} else {
+		data, err = io.ReadAll(reader)
+		if err != nil {
+			glog.V(0).Infof("upload read input %s: %v", uploadOption.SourceUrl, err)
+			err = fmt.Errorf("read input: %w", err)
+			return
+		}
+		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
+	}
+	fileId, uploadResult, err = uploader.uploadWithRetryData(assignFn, uploadOption, genFileUrlFn, data)
+	return
+}
+
 // UploadWithRetry will retry both assigning volume request and uploading content
 // The option parameter does not need to specify UploadUrl and Jwt, which will come from assigning volume.
 func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assignRequest *filer_pb.AssignVolumeRequest, uploadOption *UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (fileId string, uploadResult *UploadResult, err error, data []byte) {
