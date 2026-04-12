@@ -82,7 +82,13 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		f.UniqueFilerId = -f.UniqueFilerId
 	}
 
-	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, f.readPersistedLogBufferPosition, notifyFn)
+	// ReadFromDiskFn is intentionally nil here.  SubscribeLocalMetadata already
+	// manages disk reads explicitly with shouldReadFromDisk / lastCheckedFlushTsNs
+	// tracking.  Setting ReadFromDiskFn would cause LoopProcessLogData to issue a
+	// redundant ReadPersistedLogBuffer call (ListDirectoryEntries + readahead
+	// goroutine) on every 250ms health-check tick when a subscriber encounters
+	// ResumeFromDiskError, adding significant CPU and GC pressure even when idle.
+	f.LocalMetaLogBuffer = log_buffer.NewLogBuffer("local", LogFlushInterval, f.logFlushFunc, nil, notifyFn)
 	f.metaLogCollection = collection
 	f.metaLogReplication = replication
 
