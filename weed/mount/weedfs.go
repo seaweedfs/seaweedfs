@@ -133,6 +133,8 @@ type WFS struct {
 	atimeMap             map[uint64]time.Time // inode -> atime, in-memory only, bounded
 	dirMtimeMu           sync.Mutex
 	dirMtimeMap          map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
+	entryValidSec        uint64 // kernel FUSE entry cache TTL in seconds
+	attrValidSec         uint64 // kernel FUSE attr cache TTL in seconds
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
@@ -215,9 +217,19 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
 		dirMtimeMap:       make(map[uint64]time.Time, 1024),
+		entryValidSec:    1,
+		attrValidSec:     1,
 		dirHotWindow:      dirHotWindow,
 		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
+	}
+
+	// With writeback caching, this mount is the single writer. Increase kernel
+	// FUSE cache TTLs so the kernel doesn't re-issue Lookup/GetAttr for every
+	// path component and stat — the local meta cache is authoritative.
+	if option.WritebackCache {
+		wfs.entryValidSec = 10
+		wfs.attrValidSec = 10
 	}
 
 	if option.EnableDistributedLock && !option.WritebackCache && len(option.FilerAddresses) > 0 {

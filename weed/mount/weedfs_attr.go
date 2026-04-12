@@ -25,7 +25,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 	inode := input.NodeId
 	path, _, entry, status := wfs.maybeReadEntry(inode)
 	if status == fuse.OK {
-		out.AttrValid = 1
+		out.AttrValid = wfs.attrValidSec
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		wfs.applyInMemoryAtime(&out.Attr, inode)
 		if entry.IsDirectory {
@@ -37,7 +37,7 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		return status
 	} else {
 		if fh, found := wfs.fhMap.FindFileHandle(inode); found {
-			out.AttrValid = 1
+			out.AttrValid = wfs.attrValidSec
 			// Use shared lock to prevent race with Write operations
 			fhActiveLock := wfs.fhLockTable.AcquireLock("GetAttr", fh.fh, util.SharedLock)
 			wfs.setAttrByPbEntry(&out.Attr, inode, fh.entry.GetEntry(), true)
@@ -157,7 +157,7 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 	entry.Attributes.Ctime = now.Unix()
 	entry.Attributes.CtimeNs = int32(now.Nanosecond())
 
-	out.AttrValid = 1
+	out.AttrValid = wfs.attrValidSec
 	size, includeSize := input.GetSize()
 	if includeSize {
 		out.Attr.Size = size
@@ -264,16 +264,16 @@ func (wfs *WFS) setAttrByFilerEntry(out *fuse.Attr, inode uint64, entry *filer.E
 func (wfs *WFS) outputPbEntry(out *fuse.EntryOut, inode uint64, entry *filer_pb.Entry) {
 	out.NodeId = inode
 	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
+	out.EntryValid = wfs.entryValidSec
+	out.AttrValid = wfs.attrValidSec
 	wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 }
 
 func (wfs *WFS) outputFilerEntry(out *fuse.EntryOut, inode uint64, entry *filer.Entry) {
 	out.NodeId = inode
 	out.Generation = 1
-	out.EntryValid = 1
-	out.AttrValid = 1
+	out.EntryValid = wfs.entryValidSec
+	out.AttrValid = wfs.attrValidSec
 	wfs.setAttrByFilerEntry(&out.Attr, inode, entry)
 }
 
