@@ -137,6 +137,14 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		}
 		fmt.Fprintf(writer, "Created policy %q\n", policyName)
 
+		// rollbackPolicy removes the policy we just created. Used when a later
+		// step fails, to avoid leaving the policy orphaned.
+		rollbackPolicy := func() {
+			if _, delErr := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{Name: policyName}); delErr != nil {
+				fmt.Fprintf(writer, "Warning: failed to rollback policy %q: %v\n", policyName, delErr)
+			}
+		}
+
 		if existingIdentity != nil {
 			// User exists: attach the new policy if not already present
 			for _, pn := range existingIdentity.PolicyNames {
@@ -148,9 +156,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 			existingIdentity.PolicyNames = append(existingIdentity.PolicyNames, policyName)
 			_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{Username: *name, Identity: existingIdentity})
 			if err != nil {
-				if _, delErr := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{Name: policyName}); delErr != nil {
-					fmt.Fprintf(writer, "Warning: failed to rollback policy %q: %v\n", policyName, delErr)
-				}
+				rollbackPolicy()
 				return fmt.Errorf("attach policy to existing user: %w", err)
 			}
 			fmt.Fprintf(writer, "Attached policy %q to existing user %q\n", policyName, *name)
@@ -158,10 +164,12 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 			// Step 2: Create new user with credentials
 			ak, err = iam.GenerateRandomString(iam.AccessKeyIdLength, iam.CharsetUpper)
 			if err != nil {
+				rollbackPolicy()
 				return fmt.Errorf("generate access key: %v", err)
 			}
 			sk, err = iam.GenerateSecretAccessKey()
 			if err != nil {
+				rollbackPolicy()
 				return fmt.Errorf("generate secret key: %v", err)
 			}
 
@@ -178,9 +186,7 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 			}
 			_, err = client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity})
 			if err != nil {
-				if _, delErr := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{Name: policyName}); delErr != nil {
-					fmt.Fprintf(writer, "Warning: failed to rollback policy %q: %v\n", policyName, delErr)
-				}
+				rollbackPolicy()
 				return fmt.Errorf("create user: %w", err)
 			}
 			userCreated = true
