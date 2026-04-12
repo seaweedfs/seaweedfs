@@ -9,7 +9,6 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
-	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 )
 
 // FileIdEntry holds a pre-allocated file ID from the filer/master, ready for
@@ -129,9 +128,15 @@ func (p *FileIdPool) doRefill() {
 	p.mu.Unlock()
 }
 
-// assignBatch requests `count` file IDs from the filer in a single RPC.
-// The master allocates `count` sequential needle keys on the same volume.
-// We parse the base file ID and generate the full sequence.
+// assignBatch requests `count` file IDs from the filer using individual
+// Count=1 RPCs over a single gRPC connection. Each response includes a
+// per-fid JWT, so uploads work correctly when JWT security is enabled.
+//
+// We use individual requests instead of Count=N because the master generates
+// one JWT for the base file ID only (master_grpc_server_assign.go:158), and
+// the volume server validates that the JWT's Fid matches the upload's file ID
+// exactly (volume_server_handlers.go:367). Sequential IDs derived from a
+// Count=N response would fail this check.
 //
 // Note: the AssignVolumeRequest intentionally omits the Path field. Pooled IDs
 // use the mount's global storage parameters, not per-path rules from filer.conf
@@ -139,62 +144,34 @@ func (p *FileIdPool) doRefill() {
 func (p *FileIdPool) assignBatch(count int) ([]FileIdEntry, error) {
 	var entries []FileIdEntry
 	err := p.wfs.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, assignErr := client.AssignVolume(context.Background(), &filer_pb.AssignVolumeRequest{
-			Count:            int32(count),
+		now := time.Now()
+		req := &filer_pb.AssignVolumeRequest{
+			Count:            1,
 			Replication:      p.wfs.option.Replication,
 			Collection:       p.wfs.option.Collection,
 			TtlSec:           p.wfs.option.TtlSec,
 			DiskType:         string(p.wfs.option.DiskType),
 			DataCenter:       p.wfs.option.DataCenter,
 			ExpectedDataSize: uint64(p.wfs.option.ChunkSizeLimit),
-		})
-		if assignErr != nil {
-			return assignErr
 		}
-		if resp.Error != "" {
-			return fmt.Errorf("assign: %s", resp.Error)
-		}
-
-		now := time.Now()
-		host := p.wfs.AdjustedUrl(resp.Location)
-		auth := security.EncodedJwt(resp.Auth)
-		allocated := int(resp.Count)
-		if allocated <= 0 {
-			allocated = 1
-		}
-
-		if allocated == 1 {
+		for i := 0; i < count; i++ {
+			resp, assignErr := client.AssignVolume(context.Background(), req)
+			if assignErr != nil {
+				if len(entries) > 0 {
+					break // partial batch is fine
+				}
+				return assignErr
+			}
+			if resp.Error != "" {
+				if len(entries) > 0 {
+					break
+				}
+				return fmt.Errorf("assign: %s", resp.Error)
+			}
 			entries = append(entries, FileIdEntry{
 				FileId: resp.FileId,
-				Host:   host,
-				Auth:   auth,
-				Time:   now,
-			})
-			return nil
-		}
-
-		// Parse the base file ID to generate sequential IDs.
-		// Format: "volumeId,needleKeyHexCookieHex"
-		// Sequential IDs increment the needle key by 1 each, same volume+cookie.
-		baseFid, parseErr := needle.ParseFileIdFromString(resp.FileId)
-		if parseErr != nil {
-			// Fallback: can't parse, just use the single base ID.
-			entries = append(entries, FileIdEntry{
-				FileId: resp.FileId,
-				Host:   host,
-				Auth:   auth,
-				Time:   now,
-			})
-			return nil
-		}
-
-		baseKey := uint64(baseFid.Key)
-		for i := 0; i < allocated; i++ {
-			fid := needle.NewFileId(baseFid.VolumeId, baseKey+uint64(i), uint32(baseFid.Cookie))
-			entries = append(entries, FileIdEntry{
-				FileId: fid.String(),
-				Host:   host,
-				Auth:   auth,
+				Host:   p.wfs.AdjustedUrl(resp.Location),
+				Auth:   security.EncodedJwt(resp.Auth),
 				Time:   now,
 			})
 		}
