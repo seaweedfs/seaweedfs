@@ -65,7 +65,7 @@ func TestShellServiceAccountLifecycle(t *testing.T) {
 			}
 		}
 		if count < 2 {
-			t.Errorf("expected at least 2 service accounts for %s, got %d\n%s", userName, count, out)
+			t.Fatalf("expected at least 2 service accounts for %s, got %d\n%s", userName, count, out)
 		}
 	})
 
