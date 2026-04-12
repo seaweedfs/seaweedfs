@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -31,6 +32,7 @@ import (
 	weed_server "github.com/seaweedfs/seaweedfs/weed/server"
 	stats_collect "github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
 )
 
@@ -381,6 +383,15 @@ func (fo *FilerOptions) startFiler() {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
+	// Ensure fs.Shutdown() runs exactly once, whether triggered by a signal hook
+	// or by the main goroutine after Serve() returns (e.g., MiniCluster tests).
+	var shutdownOnce sync.Once
+	shutdownFiler := func() {
+		shutdownOnce.Do(func() {
+			fs.Shutdown()
+		})
+	}
+
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", version.Version(), "public at", publicListeningAddress)
@@ -434,6 +445,24 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
+	// Register graceful shutdown for gRPC server to wait for active RPCs
+	grace.OnInterrupt(func() {
+		glog.V(0).Infof("Gracefully stopping gRPC server")
+		stopped := make(chan struct{})
+		go func() {
+			grpcS.GracefulStop()
+			close(stopped)
+		}()
+		select {
+		case <-stopped:
+			glog.V(0).Infof("gRPC server stopped gracefully")
+		case <-time.After(10 * time.Second):
+			glog.V(0).Infof("gRPC server graceful stop timed out, forcing stop")
+			grpcS.Stop()
+		}
+	})
+
+	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
@@ -442,14 +471,12 @@ func (fo *FilerOptions) startFiler() {
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
-		go func() {
-			// start on local unix socket
-			filerSocketListener, err := net.Listen("unix", localSocket)
-			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			newHttpServer(defaultMux, nil).Serve(filerSocketListener)
-		}()
+		filerSocketListener, err := net.Listen("unix", localSocket)
+		if err != nil {
+			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+		}
+		socketServer = newHttpServer(defaultMux, nil)
+		go socketServer.Serve(filerSocketListener)
 	}
 
 	if viper.GetString("https.filer.key") != "" {
@@ -489,14 +516,34 @@ func (fo *FilerOptions) startFiler() {
 
 		security.FixTlsConfig(util.GetViper(), tlsConfig)
 
+		var localTLSServer *http.Server
 		if filerLocalListener != nil {
+			localTLSServer = newHttpServer(defaultMux, tlsConfig)
 			go func() {
-				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
+				if err := localTLSServer.ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
+
+		// Register shutdown hooks: stop all HTTP servers, then close filer database
+		grace.OnInterrupt(func() {
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if socketServer != nil {
+				socketServer.Shutdown(shutdownCtx)
+			}
+			if localTLSServer != nil {
+				localTLSServer.Shutdown(shutdownCtx)
+			}
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTPS server shutdown: %v", err)
+			}
+		})
+		grace.OnInterrupt(shutdownFiler)
+
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
 			go func() {
@@ -508,15 +555,37 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.ServeTLS(filerListener, "", ""); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		shutdownFiler()
 	} else {
+		var localHTTPServer *http.Server
 		if filerLocalListener != nil {
+			localHTTPServer = newHttpServer(defaultMux, nil)
 			go func() {
-				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
+				if err := localHTTPServer.Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, nil)
+
+		// Register shutdown hooks: stop all HTTP servers, then close filer database
+		grace.OnInterrupt(func() {
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			if socketServer != nil {
+				socketServer.Shutdown(shutdownCtx)
+			}
+			if localHTTPServer != nil {
+				localHTTPServer.Shutdown(shutdownCtx)
+			}
+			if err := httpS.Shutdown(shutdownCtx); err != nil {
+				glog.Warningf("HTTP server shutdown: %v", err)
+			}
+		})
+		grace.OnInterrupt(shutdownFiler)
+
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
 			go func() {
@@ -528,5 +597,7 @@ func (fo *FilerOptions) startFiler() {
 		if err := httpS.Serve(filerListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
+		// Close database after servers have stopped to prevent data corruption
+		shutdownFiler()
 	}
 }
