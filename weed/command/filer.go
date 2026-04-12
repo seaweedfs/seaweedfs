@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/viper"
@@ -382,6 +383,15 @@ func (fo *FilerOptions) startFiler() {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
 	}
 
+	// Ensure fs.Shutdown() runs exactly once, whether triggered by a signal hook
+	// or by the main goroutine after Serve() returns (e.g., MiniCluster tests).
+	var shutdownOnce sync.Once
+	shutdownFiler := func() {
+		shutdownOnce.Do(func() {
+			fs.Shutdown()
+		})
+	}
+
 	if *fo.publicPort != 0 {
 		publicListeningAddress := util.JoinHostPort(*fo.bindIp, *fo.publicPort)
 		glog.V(0).Infoln("Start Seaweed filer server", version.Version(), "public at", publicListeningAddress)
@@ -452,6 +462,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 	})
 
+	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
 		localSocket := *fo.localSocket
 		if localSocket == "" {
@@ -460,14 +471,12 @@ func (fo *FilerOptions) startFiler() {
 		if err := os.Remove(localSocket); err != nil && !os.IsNotExist(err) {
 			glog.Fatalf("Failed to remove %s, error: %s", localSocket, err.Error())
 		}
-		go func() {
-			// start on local unix socket
-			filerSocketListener, err := net.Listen("unix", localSocket)
-			if err != nil {
-				glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
-			}
-			newHttpServer(defaultMux, nil).Serve(filerSocketListener)
-		}()
+		filerSocketListener, err := net.Listen("unix", localSocket)
+		if err != nil {
+			glog.Fatalf("Failed to listen on %s: %v", localSocket, err)
+		}
+		socketServer = newHttpServer(defaultMux, nil)
+		go socketServer.Serve(filerSocketListener)
 	}
 
 	if viper.GetString("https.filer.key") != "" {
@@ -507,24 +516,33 @@ func (fo *FilerOptions) startFiler() {
 
 		security.FixTlsConfig(util.GetViper(), tlsConfig)
 
+		var localTLSServer *http.Server
 		if filerLocalListener != nil {
+			localTLSServer = newHttpServer(defaultMux, tlsConfig)
 			go func() {
-				if err := newHttpServer(defaultMux, tlsConfig).ServeTLS(filerLocalListener, "", ""); err != nil {
+				if err := localTLSServer.ServeTLS(filerLocalListener, "", ""); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
 
-		// Register HTTP server shutdown hook
+		// Register shutdown hooks: stop all HTTP servers, then close filer database
 		grace.OnInterrupt(func() {
-			glog.V(0).Infof("Gracefully stopping HTTPS server")
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
+			if socketServer != nil {
+				socketServer.Shutdown(shutdownCtx)
+			}
+			if localTLSServer != nil {
+				localTLSServer.Shutdown(shutdownCtx)
+			}
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTPS server shutdown: %v", err)
 			}
 		})
+		grace.OnInterrupt(shutdownFiler)
 
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
@@ -538,26 +556,35 @@ func (fo *FilerOptions) startFiler() {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 		// Close database after servers have stopped to prevent data corruption
-		fs.Shutdown()
+		shutdownFiler()
 	} else {
+		var localHTTPServer *http.Server
 		if filerLocalListener != nil {
+			localHTTPServer = newHttpServer(defaultMux, nil)
 			go func() {
-				if err := newHttpServer(defaultMux, nil).Serve(filerLocalListener); err != nil {
+				if err := localHTTPServer.Serve(filerLocalListener); err != nil {
 					glog.Errorf("Filer Fail to serve: %v", err)
 				}
 			}()
 		}
 		httpS := newHttpServer(defaultMux, nil)
 
-		// Register HTTP server shutdown hook
+		// Register shutdown hooks: stop all HTTP servers, then close filer database
 		grace.OnInterrupt(func() {
-			glog.V(0).Infof("Gracefully stopping HTTP server")
+			glog.V(0).Infof("Gracefully stopping all HTTP servers")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
+			if socketServer != nil {
+				socketServer.Shutdown(shutdownCtx)
+			}
+			if localHTTPServer != nil {
+				localHTTPServer.Shutdown(shutdownCtx)
+			}
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTP server shutdown: %v", err)
 			}
 		})
+		grace.OnInterrupt(shutdownFiler)
 
 		if MiniClusterCtx != nil {
 			ctx := MiniClusterCtx
@@ -571,6 +598,6 @@ func (fo *FilerOptions) startFiler() {
 			glog.Fatalf("Filer Fail to serve: %v", err)
 		}
 		// Close database after servers have stopped to prevent data corruption
-		fs.Shutdown()
+		shutdownFiler()
 	}
 }
