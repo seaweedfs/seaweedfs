@@ -185,9 +185,11 @@ func (uploader *Uploader) UploadWithAssignFunc(assignFn AssignFunc, uploadOption
 	} else {
 		data, err = io.ReadAll(reader)
 		if err != nil {
+			glog.V(0).Infof("upload read input %s: %v", uploadOption.SourceUrl, err)
 			err = fmt.Errorf("read input: %w", err)
 			return
 		}
+		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
 	}
 	fileId, uploadResult, err = uploader.uploadWithRetryData(assignFn, uploadOption, genFileUrlFn, data)
 	return

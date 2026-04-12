@@ -69,7 +69,6 @@ func TestFileIdPoolSequentialIds(t *testing.T) {
 	for i := 0; i < int(resp.Count); i++ {
 		fid := needle.NewFileId(baseFid.VolumeId, baseKey+uint64(i), uint32(baseFid.Cookie))
 		t.Logf("ID %d: %s", i, fid.String())
-		// Verify each ID can be parsed back
 		parsed, err := needle.ParseFileIdFromString(fid.String())
 		if err != nil {
 			t.Fatalf("Failed to parse sequential ID %d: %v", i, err)
@@ -83,12 +82,13 @@ func TestFileIdPoolSequentialIds(t *testing.T) {
 // TestFileIdPoolExpiry verifies that expired entries are evicted.
 func TestFileIdPoolExpiry(t *testing.T) {
 	pool := &FileIdPool{
-		maxAge: 50 * time.Millisecond,
+		maxAge: time.Second,
 	}
+	pool.cond = sync.NewCond(&pool.mu)
 	now := time.Now()
 	pool.entries = []FileIdEntry{
-		{FileId: "1,old", Time: now.Add(-100 * time.Millisecond)},
-		{FileId: "2,old", Time: now.Add(-100 * time.Millisecond)},
+		{FileId: "1,old", Time: now.Add(-2 * time.Second)},
+		{FileId: "2,old", Time: now.Add(-2 * time.Second)},
 		{FileId: "3,fresh", Time: now},
 	}
 	pool.evictExpired()
@@ -100,12 +100,52 @@ func TestFileIdPoolExpiry(t *testing.T) {
 	}
 }
 
+// TestFileIdPoolGetWaitsForRefill verifies that concurrent Get() calls wait
+// for an in-flight refill instead of returning an error.
+func TestFileIdPoolGetWaitsForRefill(t *testing.T) {
+	pool := &FileIdPool{
+		poolSize:  10,
+		batchSize: 5,
+		lowWater:  3,
+		maxAge:    30 * time.Second,
+	}
+	pool.cond = sync.NewCond(&pool.mu)
+
+	// Simulate a slow refill in progress.
+	pool.filling = true
+	done := make(chan struct{})
+	go func() {
+		// After a short delay, deliver entries and signal.
+		time.Sleep(10 * time.Millisecond)
+		pool.mu.Lock()
+		now := time.Now()
+		for i := 0; i < 5; i++ {
+			pool.entries = append(pool.entries, FileIdEntry{
+				FileId: fmt.Sprintf("1,%x12345678", 1000+i),
+				Host:   "127.0.0.1:8080",
+				Auth:   "jwt",
+				Time:   now,
+			})
+		}
+		pool.filling = false
+		pool.cond.Broadcast()
+		pool.mu.Unlock()
+		close(done)
+	}()
+
+	// Get() should wait for the refill, not return an error.
+	entry, err := pool.Get()
+	if err != nil {
+		t.Fatalf("Get() returned error while refill in progress: %v", err)
+	}
+	if entry.FileId == "" {
+		t.Fatal("Get() returned empty entry")
+	}
+	<-done
+}
+
 // BenchmarkPoolGetVsDirectAssign measures the latency difference between
 // getting a file ID from the pool vs a direct (simulated) AssignVolume RPC.
-//
-// This simulates the per-chunk overhead: each chunk upload needs a file ID.
-// With the pool, Get() is a local mutex+slice operation.
-// Without the pool, each chunk blocks on an AssignVolume RPC.
 func BenchmarkPoolGetVsDirectAssign(b *testing.B) {
 	assignLatencies := []time.Duration{
 		0,
@@ -129,47 +169,59 @@ func BenchmarkPoolGetVsDirectAssign(b *testing.B) {
 		})
 
 		b.Run("PoolGet/"+name, func(b *testing.B) {
-			// Pre-fill pool with enough entries
 			pool := &FileIdPool{
-				maxAge: 30 * time.Second,
+				maxAge:   30 * time.Second,
+				lowWater: 1000000, // disable background refill
 			}
-			now := time.Now()
-			for i := 0; i < b.N+100; i++ {
-				pool.entries = append(pool.entries, FileIdEntry{
-					FileId: fmt.Sprintf("1,%x12345678", i),
-					Host:   "127.0.0.1:8080",
-					Auth:   security.EncodedJwt("test-jwt"),
-					Time:   now,
-				})
+			pool.cond = sync.NewCond(&pool.mu)
+			// Pre-fill with a fixed-size pool; refill under StopTimer when depleted.
+			const preload = 4096
+			refill := func() {
+				now := time.Now()
+				for i := 0; i < preload; i++ {
+					pool.entries = append(pool.entries, FileIdEntry{
+						FileId: fmt.Sprintf("1,%x12345678", i),
+						Host:   "127.0.0.1:8080",
+						Auth:   security.EncodedJwt("test-jwt"),
+						Time:   now,
+					})
+				}
 			}
+			refill()
 			b.ResetTimer()
 			for i := 0; i < b.N; i++ {
 				pool.mu.Lock()
-				if len(pool.entries) > 0 {
-					_ = pool.entries[0]
-					pool.entries = pool.entries[1:]
+				if len(pool.entries) == 0 {
+					pool.mu.Unlock()
+					b.StopTimer()
+					refill()
+					b.StartTimer()
+					pool.mu.Lock()
 				}
+				_ = pool.entries[0]
+				pool.entries = pool.entries[1:]
 				pool.mu.Unlock()
 			}
 		})
 	}
 }
 
-// BenchmarkConcurrentPoolGet measures pool throughput under concurrent access,
-// simulating multiple upload workers grabbing file IDs simultaneously.
+// BenchmarkConcurrentPoolGet measures pool throughput under concurrent access.
 func BenchmarkConcurrentPoolGet(b *testing.B) {
 	for _, workers := range []int{1, 4, 16, 64} {
 		b.Run(fmt.Sprintf("workers=%d", workers), func(b *testing.B) {
 			pool := &FileIdPool{
-				maxAge: 30 * time.Second,
+				maxAge:   30 * time.Second,
+				lowWater: 1000000,
 			}
-			// Pre-fill with enough entries
+			pool.cond = sync.NewCond(&pool.mu)
+			// Pre-fill
 			now := time.Now()
-			total := b.N * workers
+			total := b.N*workers + 1000
 			pool.entries = make([]FileIdEntry, total)
 			for i := range pool.entries {
 				pool.entries[i] = FileIdEntry{
-					FileId: fmt.Sprintf("1,%x12345678", i),
+					FileId: fmt.Sprintf("1,%x12345678", i+1000),
 					Host:   "127.0.0.1:8080",
 					Auth:   security.EncodedJwt("test-jwt"),
 					Time:   now,
@@ -202,8 +254,7 @@ func BenchmarkConcurrentPoolGet(b *testing.B) {
 	}
 }
 
-// BenchmarkBatchAssign measures the cost of batch vs individual assign RPCs,
-// showing the amortization benefit of Count>1.
+// BenchmarkBatchAssign measures the cost of batch vs individual assign RPCs.
 func BenchmarkBatchAssign(b *testing.B) {
 	for _, batchSize := range []int{1, 8, 16, 32} {
 		b.Run(fmt.Sprintf("batch=%d", batchSize), func(b *testing.B) {
@@ -216,7 +267,6 @@ func BenchmarkBatchAssign(b *testing.B) {
 					b.Fatal(err)
 				}
 
-				// Simulate generating sequential IDs
 				baseFid, _ := needle.ParseFileIdFromString(resp.FileId)
 				baseKey := uint64(baseFid.Key)
 				for j := 0; j < int(resp.Count); j++ {
