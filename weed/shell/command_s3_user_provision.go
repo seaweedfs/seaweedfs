@@ -138,7 +138,13 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		fmt.Fprintf(writer, "Created policy %q\n", policyName)
 
 		if existingIdentity != nil {
-			// User exists: attach the new policy
+			// User exists: attach the new policy if not already present
+			for _, pn := range existingIdentity.PolicyNames {
+				if pn == policyName {
+					fmt.Fprintf(writer, "Policy %q already attached to user %q\n", policyName, *name)
+					return nil
+				}
+			}
 			existingIdentity.PolicyNames = append(existingIdentity.PolicyNames, policyName)
 			_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{Username: *name, Identity: existingIdentity})
 			if err != nil {
