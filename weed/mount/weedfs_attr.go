@@ -1,7 +1,6 @@
 package mount
 
 import (
-	"context"
 	"os"
 	"syscall"
 	"time"
@@ -29,8 +28,11 @@ func (wfs *WFS) GetAttr(cancel <-chan struct{}, input *fuse.GetAttrIn, out *fuse
 		out.AttrValid = 1
 		wfs.setAttrByPbEntry(&out.Attr, inode, entry, true)
 		wfs.applyInMemoryAtime(&out.Attr, inode)
-		if entry.IsDirectory && wfs.option.PosixDirNlink {
-			wfs.applyDirNlink(&out.Attr, path)
+		if entry.IsDirectory {
+			wfs.applyInMemoryDirMtime(&out.Attr, inode)
+			if wfs.option.PosixDirNlink {
+				wfs.applyDirNlink(&out.Attr, path)
+			}
 		}
 		return status
 	} else {
@@ -302,13 +304,44 @@ func (wfs *WFS) touchDirMtimeCtime(dirPath util.FullPath) {
 	wfs.saveEntry(dirPath, dirEntry)
 }
 
-// touchDirMtimeCtimeLocal updates a directory's mtime and ctime directly
-// in the local metadata cache, without a filer RPC.
+// touchDirMtimeCtimeLocal updates a directory's mtime and ctime in an in-memory
+// overlay, avoiding LevelDB reads and writes entirely. The overlay is applied
+// by applyInMemoryDirMtime when GetAttr/Lookup reads the directory's attributes.
 func (wfs *WFS) touchDirMtimeCtimeLocal(dirPath util.FullPath) {
-	now := time.Now()
-	if err := wfs.metaCache.TouchDirMtimeCtime(context.Background(), dirPath, now); err != nil {
-		glog.V(3).Infof("touchDirMtimeCtimeLocal %s: %v", dirPath, err)
+	if inode, found := wfs.inodeToPath.GetInode(dirPath); found {
+		wfs.setDirMtime(inode, time.Now())
 	}
+}
+
+const dirMtimeMapMaxSize = 8192
+
+func (wfs *WFS) setDirMtime(inode uint64, t time.Time) {
+	wfs.dirMtimeMu.Lock()
+	defer wfs.dirMtimeMu.Unlock()
+	if len(wfs.dirMtimeMap) >= dirMtimeMapMaxSize {
+		for k := range wfs.dirMtimeMap {
+			delete(wfs.dirMtimeMap, k)
+			break
+		}
+	}
+	wfs.dirMtimeMap[inode] = t
+}
+
+// applyInMemoryDirMtime overlays the in-memory mtime/ctime onto fuse.Attr
+// for directories that had recent child mutations.
+func (wfs *WFS) applyInMemoryDirMtime(out *fuse.Attr, inode uint64) {
+	wfs.dirMtimeMu.Lock()
+	if t, ok := wfs.dirMtimeMap[inode]; ok {
+		sec := uint64(t.Unix())
+		nsec := uint32(t.Nanosecond())
+		if sec > out.Mtime || (sec == out.Mtime && nsec > out.Mtimensec) {
+			out.Mtime = sec
+			out.Mtimensec = nsec
+			out.Ctime = sec
+			out.Ctimensec = nsec
+		}
+	}
+	wfs.dirMtimeMu.Unlock()
 }
 
 const atimeMapMaxSize = 8192

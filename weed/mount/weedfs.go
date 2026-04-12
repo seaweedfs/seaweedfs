@@ -131,6 +131,8 @@ type WFS struct {
 	refreshingDirs       map[util.FullPath]struct{}
 	atimeMu              sync.Mutex
 	atimeMap             map[uint64]time.Time // inode -> atime, in-memory only, bounded
+	dirMtimeMu           sync.Mutex
+	dirMtimeMap          map[uint64]time.Time // inode -> mtime/ctime, in-memory overlay for dirs
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
@@ -212,6 +214,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
+		dirMtimeMap:       make(map[uint64]time.Time, 1024),
 		dirHotWindow:      dirHotWindow,
 		dirHotThreshold:   dirHotThreshold,
 		dirIdleEvict:      dirIdleEvict,
