@@ -2,6 +2,7 @@ package shell
 
 import (
 	"context"
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"io"
@@ -63,7 +64,17 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		return fmt.Errorf("generate secret key: %v", err)
 	}
 
+	// Generate a unique service account ID matching the format
+	// required by credential.ValidateServiceAccountId: sa:<parent>:<uuid>.
+	var idBytes [4]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return fmt.Errorf("generate service account id: %v", err)
+	}
+	uuid := fmt.Sprintf("%012d", uint32(idBytes[0])<<24|uint32(idBytes[1])<<16|uint32(idBytes[2])<<8|uint32(idBytes[3]))
+	saId := fmt.Sprintf("sa:%s:%s", *user, uuid)
+
 	sa := &iam_pb.ServiceAccount{
+		Id:          saId,
 		ParentUser:  *user,
 		Description: *description,
 		Credential: &iam_pb.Credential{
