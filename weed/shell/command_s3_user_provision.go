@@ -110,15 +110,8 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		return fmt.Errorf("marshal policy: %v", err)
 	}
 
-	// Generate credentials
-	ak, err := iam.GenerateRandomString(iam.AccessKeyIdLength, iam.CharsetUpper)
-	if err != nil {
-		return fmt.Errorf("generate access key: %v", err)
-	}
-	sk, err := iam.GenerateSecretAccessKey()
-	if err != nil {
-		return fmt.Errorf("generate secret key: %v", err)
-	}
+	var ak, sk string
+	var userCreated bool
 
 	err = pb.WithGrpcClient(false, 0, func(conn *grpc.ClientConn) error {
 		client := iam_pb.NewSeaweedIdentityAccessManagementClient(conn)
@@ -126,8 +119,10 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		defer cancel()
 
 		// Step 0: Check if user already exists
+		var existingIdentity *iam_pb.Identity
 		if resp, getErr := client.GetUser(ctx, &iam_pb.GetUserRequest{Username: *name}); getErr == nil && resp.Identity != nil {
-			return fmt.Errorf("user %q already exists", *name)
+			existingIdentity = resp.Identity
+			fmt.Fprintf(writer, "User %q already exists, adding policy\n", *name)
 		} else if getErr != nil && status.Code(getErr) != codes.NotFound {
 			return fmt.Errorf("check user existence: %w", getErr)
 		}
@@ -142,27 +137,61 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		}
 		fmt.Fprintf(writer, "Created policy %q\n", policyName)
 
-		// Step 2: Create user
-		identity := &iam_pb.Identity{
-			Name: *name,
-			Credentials: []*iam_pb.Credential{
-				{
-					AccessKey: ak,
-					SecretKey: sk,
-					Status:    iam.AccessKeyStatusActive,
-				},
-			},
-			PolicyNames: []string{policyName},
-		}
-		_, err = client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity})
-		if err != nil {
-			// Rollback: remove the policy we just created
+		// rollbackPolicy removes the policy we just created. Used when a later
+		// step fails, to avoid leaving the policy orphaned.
+		rollbackPolicy := func() {
 			if _, delErr := client.DeletePolicy(ctx, &iam_pb.DeletePolicyRequest{Name: policyName}); delErr != nil {
 				fmt.Fprintf(writer, "Warning: failed to rollback policy %q: %v\n", policyName, delErr)
 			}
-			return fmt.Errorf("create user: %w", err)
 		}
-		fmt.Fprintf(writer, "Created user %q with policy %q attached\n", *name, policyName)
+
+		if existingIdentity != nil {
+			// User exists: attach the new policy if not already present
+			for _, pn := range existingIdentity.PolicyNames {
+				if pn == policyName {
+					fmt.Fprintf(writer, "Policy %q already attached to user %q\n", policyName, *name)
+					return nil
+				}
+			}
+			existingIdentity.PolicyNames = append(existingIdentity.PolicyNames, policyName)
+			_, err = client.UpdateUser(ctx, &iam_pb.UpdateUserRequest{Username: *name, Identity: existingIdentity})
+			if err != nil {
+				rollbackPolicy()
+				return fmt.Errorf("attach policy to existing user: %w", err)
+			}
+			fmt.Fprintf(writer, "Attached policy %q to existing user %q\n", policyName, *name)
+		} else {
+			// Step 2: Create new user with credentials
+			ak, err = iam.GenerateRandomString(iam.AccessKeyIdLength, iam.CharsetUpper)
+			if err != nil {
+				rollbackPolicy()
+				return fmt.Errorf("generate access key: %v", err)
+			}
+			sk, err = iam.GenerateSecretAccessKey()
+			if err != nil {
+				rollbackPolicy()
+				return fmt.Errorf("generate secret key: %v", err)
+			}
+
+			identity := &iam_pb.Identity{
+				Name: *name,
+				Credentials: []*iam_pb.Credential{
+					{
+						AccessKey: ak,
+						SecretKey: sk,
+						Status:    iam.AccessKeyStatusActive,
+					},
+				},
+				PolicyNames: []string{policyName},
+			}
+			_, err = client.CreateUser(ctx, &iam_pb.CreateUserRequest{Identity: identity})
+			if err != nil {
+				rollbackPolicy()
+				return fmt.Errorf("create user: %w", err)
+			}
+			userCreated = true
+			fmt.Fprintf(writer, "Created user %q with policy %q attached\n", *name, policyName)
+		}
 
 		return nil
 	}, commandEnv.option.FilerAddress.ToGrpcAddress(), false, commandEnv.option.GrpcDialOption)
@@ -170,10 +199,12 @@ func (c *commandS3UserProvision) Do(args []string, commandEnv *CommandEnv, write
 		return err
 	}
 
-	fmt.Fprintln(writer)
-	fmt.Fprintf(writer, "Access Key: %s\n", ak)
-	fmt.Fprintf(writer, "Secret Key: %s\n", sk)
-	fmt.Fprintln(writer)
-	fmt.Fprintln(writer, "Save these credentials - the secret key cannot be retrieved later.")
+	if userCreated {
+		fmt.Fprintln(writer)
+		fmt.Fprintf(writer, "Access Key: %s\n", ak)
+		fmt.Fprintf(writer, "Secret Key: %s\n", sk)
+		fmt.Fprintln(writer)
+		fmt.Fprintln(writer, "Save these credentials - the secret key cannot be retrieved later.")
+	}
 	return nil
 }

@@ -2,6 +2,8 @@ package shell
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -63,7 +65,17 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 		return fmt.Errorf("generate secret key: %v", err)
 	}
 
+	// Generate a unique service account ID matching the format
+	// required by credential.ValidateServiceAccountId: sa:<parent>:<uuid>.
+	// 16 bytes (128 bits) of randomness makes collisions negligible.
+	var idBytes [16]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
+		return fmt.Errorf("generate service account id: %v", err)
+	}
+	saId := fmt.Sprintf("sa:%s:%s", *user, hex.EncodeToString(idBytes[:]))
+
 	sa := &iam_pb.ServiceAccount{
+		Id:          saId,
 		ParentUser:  *user,
 		Description: *description,
 		Credential: &iam_pb.Credential{
@@ -117,7 +129,7 @@ func (c *commandS3ServiceAccountCreate) Do(args []string, commandEnv *CommandEnv
 	}
 
 	fmt.Fprintf(writer, "Created service account for user %q\n", *user)
-	fmt.Fprintln(writer, "Note: use s3.serviceaccount.list to find the server-assigned ID.")
+	fmt.Fprintf(writer, "ID:         %s\n", saId)
 	fmt.Fprintf(writer, "Access Key: %s\n", ak)
 	fmt.Fprintf(writer, "Secret Key: %s\n", sk)
 	if *description != "" {
