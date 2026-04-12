@@ -615,8 +615,27 @@ func (logBuffer *LogBuffer) invalidateAllDiskCacheChunks() {
 	}
 }
 
+// GetEarliestTime returns the oldest timestamp still resident in the buffer.
+// It must consider the sealed prev buffers in addition to the active buffer,
+// because ReadFromBuffer's tsMemory (and therefore ResumeFromDiskError) is
+// computed from the min across both.  Returning only the active startTime
+// would cause gap-detection callers to skip past data still living in prev
+// buffers, and can also silently equal the consumer's lastReadTime and
+// stall on listenersCond.Wait().
 func (logBuffer *LogBuffer) GetEarliestTime() time.Time {
-	return logBuffer.startTime
+	logBuffer.RLock()
+	defer logBuffer.RUnlock()
+
+	earliest := logBuffer.startTime
+	for _, prevBuf := range logBuffer.prevBuffers.buffers {
+		if prevBuf.startTime.IsZero() {
+			continue
+		}
+		if earliest.IsZero() || prevBuf.startTime.Before(earliest) {
+			earliest = prevBuf.startTime
+		}
+	}
+	return earliest
 }
 
 func (logBuffer *LogBuffer) HasData() bool {
