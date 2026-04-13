@@ -84,7 +84,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload dev release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev
           prerelease: true
@@ -155,7 +155,7 @@ jobs:
           rm weed-volume-normal
 
       - name: Upload dev release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: dev
           prerelease: true
