@@ -23,6 +23,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/plugin_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/schema_pb"
 	"github.com/seaweedfs/seaweedfs/weed/security"
+	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/wdclient"
@@ -1696,6 +1697,17 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						if volInfo.FileCount >= volInfo.DeleteCount {
 							data.FileCount += int64(volInfo.FileCount-volInfo.DeleteCount) / replicaCount
 						}
+						collectionMap[collection] = data
+					}
+					for _, ecShardInfo := range diskInfo.EcShardInfos {
+						collection := ecShardInfo.Collection
+						if collection == "" {
+							collection = "default"
+						}
+						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
+						data := collectionMap[collection]
+						data.PhysicalSize += int64(shards.TotalSize())
+						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
 						collectionMap[collection] = data
 					}
 				}
