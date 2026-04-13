@@ -1807,39 +1807,62 @@ func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context
 // bucket (e.g. "Read:bucket", "Write:bucket/prefix") from the persisted S3 IAM
 // configuration. Wildcarded resources and global actions are preserved because
 // they may cover other buckets. Static (read-only) identities are not touched.
-// Returns true if the configuration was changed and saved.
+//
+// Updates are applied per-identity via the credential store's UpdateUser path,
+// which rewrites only the affected user record. This avoids a full-config
+// read-modify-write cycle that could clobber unrelated concurrent IAM edits.
+// Returns true if any identity was updated.
 func (iam *IdentityAccessManagement) PruneBucketFromConfiguration(ctx context.Context, bucket string) (bool, error) {
 	if iam == nil || iam.credentialManager == nil || bucket == "" {
 		return false, nil
 	}
-	config, err := iam.credentialManager.LoadConfiguration(ctx)
+	usernames, err := iam.credentialManager.ListUsers(ctx)
 	if err != nil {
 		return false, err
 	}
 	changed := false
-	for _, ident := range config.Identities {
+	var firstErr error
+	for _, username := range usernames {
+		if iam.IsStaticIdentity(username) {
+			continue
+		}
+		ident, err := iam.credentialManager.GetUser(ctx, username)
+		if err != nil {
+			if errors.Is(err, credential.ErrUserNotFound) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
 		if ident == nil || ident.IsStatic {
 			continue
 		}
 		kept := ident.Actions[:0]
+		pruned := false
 		for _, a := range ident.Actions {
 			if actionScopedToBucket(a, bucket) {
-				changed = true
+				pruned = true
 				continue
 			}
 			kept = append(kept, a)
 		}
+		if !pruned {
+			continue
+		}
 		ident.Actions = kept
+		if err := iam.credentialManager.UpdateUser(ctx, username, ident); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		changed = true
 	}
-	if !changed {
-		return false, nil
-	}
-	if err := iam.credentialManager.SaveConfiguration(ctx, config); err != nil {
-		return false, err
-	}
-	// In-memory identities will be refreshed via the filer metadata subscription
-	// (see onIamConfigChange), which fans the update out to every S3 server.
-	return true, nil
+	// In-memory identities refresh via the filer metadata subscription
+	// (onIamConfigChange), which fans the update out to every S3 server.
+	return changed, firstErr
 }
 
 // actionScopedToBucket reports whether a configured action string like
