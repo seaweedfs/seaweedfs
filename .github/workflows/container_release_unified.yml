@@ -251,7 +251,7 @@ jobs:
           
       - name: Build and push ${{ matrix.variant }}
         if: github.event_name != 'workflow_dispatch' || github.event.inputs.variant == 'all' || github.event.inputs.variant == matrix.variant
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.1.0
         env:
           DOCKER_BUILDKIT: 1
         with:
