@@ -57,7 +57,7 @@ jobs:
           fi
       -
         name: Build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.1.0
         with:
           context: ./docker
           push: ${{ github.event_name != 'pull_request' }}
