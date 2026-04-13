@@ -90,11 +90,23 @@ func (v *ChunkCacheVolume) Shutdown() {
 
 func (v *ChunkCacheVolume) doReset() {
 	v.Shutdown()
-	os.Truncate(v.fileName+".dat", 0)
-	os.Truncate(v.fileName+".idx", 0)
-	glog.V(4).Infof("cache removeAll %s ...", v.fileName+".ldb")
-	os.RemoveAll(v.fileName + ".ldb")
-	glog.V(4).Infof("cache removed %s", v.fileName+".ldb")
+	fn := v.fileName + ".dat"
+	err := os.Truncate(fn, 0)
+	if err != nil {
+		glog.Errorf("ChunkCacheVolume.doReset: truncate %q failed: %s", fn, err)
+	}
+	fn = v.fileName + ".idx"
+	err = os.Truncate(fn, 0)
+	if err != nil {
+		glog.Errorf("ChunkCacheVolume.doReset: truncate %q failed: %s", fn, err)
+	}
+	fn = v.fileName + ".ldb"
+	err = os.RemoveAll(fn)
+	if err != nil {
+		glog.Errorf("ChunkCacheVolume.doReset: remove %q failed: %s", fn, err)
+	} else {
+		glog.V(4).Infof("cache removed %s", fn)
+	}
 }
 
 func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
@@ -134,7 +146,9 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 		return nil, ErrorOutOfBounds
 	}
 	data := make([]byte, wanted)
-	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); readErr != nil {
+	var readSize int
+	var readErr error
+	if readSize, readErr = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); readErr != nil {
 		if readSize != wanted {
 			return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
 				v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, readErr)
@@ -144,8 +158,10 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 			return nil, fmt.Errorf("read %d, expected %d", readSize, wanted)
 		}
 	}
-
-	return data, nil
+	if readErr != nil && readSize == wanted {
+		readErr = nil
+	}
+	return data, readErr
 }
 
 func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, offset uint64) (n int, err error) {
@@ -168,8 +184,10 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 			return n, fmt.Errorf("read %d, expected %d", n, wanted)
 		}
 	}
-
-	return n, nil
+	if err != nil && n == wanted {
+		err = nil
+	}
+	return n, err
 }
 
 func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
@@ -186,7 +204,10 @@ func (v *ChunkCacheVolume) WriteNeedle(key types.NeedleId, data []byte) error {
 	v.fileSize += int64(written)
 	extraSize := written % types.NeedlePaddingSize
 	if extraSize != 0 {
-		v.DataBackend.WriteAt(v.smallBuffer[:types.NeedlePaddingSize-extraSize], offset+int64(written))
+		_, err = v.DataBackend.WriteAt(v.smallBuffer[:types.NeedlePaddingSize-extraSize], offset+int64(written))
+		if err != nil {
+			return err
+		}
 		v.fileSize += int64(types.NeedlePaddingSize - extraSize)
 	}
 
