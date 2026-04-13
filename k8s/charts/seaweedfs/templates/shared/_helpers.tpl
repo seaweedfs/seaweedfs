@@ -72,77 +72,77 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* Return the proper filer image */}}
-{{- define "filer.image" -}}
+{{- define "seaweedfs.filer.image" -}}
 {{- if .Values.filer.imageOverride -}}
 {{- $imageOverride := .Values.filer.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper master image */}}
-{{- define "master.image" -}}
+{{- define "seaweedfs.master.image" -}}
 {{- if .Values.master.imageOverride -}}
 {{- $imageOverride := .Values.master.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper s3 image */}}
-{{- define "s3.image" -}}
+{{- define "seaweedfs.s3.image" -}}
 {{- if .Values.s3.imageOverride -}}
 {{- $imageOverride := .Values.s3.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper sftp image */}}
-{{- define "sftp.image" -}}
+{{- define "seaweedfs.sftp.image" -}}
 {{- if .Values.sftp.imageOverride -}}
 {{- $imageOverride := .Values.sftp.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper admin image */}}
-{{- define "admin.image" -}}
+{{- define "seaweedfs.admin.image" -}}
 {{- if .Values.admin.imageOverride -}}
 {{- $imageOverride := .Values.admin.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper worker image */}}
-{{- define "worker.image" -}}
+{{- define "seaweedfs.worker.image" -}}
 {{- if .Values.worker.imageOverride -}}
 {{- $imageOverride := .Values.worker.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Return the proper volume image */}}
-{{- define "volume.image" -}}
+{{- define "seaweedfs.volume.image" -}}
 {{- if .Values.volume.imageOverride -}}
 {{- $imageOverride := .Values.volume.imageOverride -}}
 {{- printf "%s" $imageOverride -}}
 {{- else -}}
-{{- include "common.image" . }}
+{{- include "seaweedfs.image" . }}
 {{- end -}}
 {{- end -}}
 
 {{/* Computes the container image name for all components (if they are not overridden) */}}
-{{- define "common.image" -}}
+{{- define "seaweedfs.image" -}}
 {{- $registryName := default .Values.image.registry .Values.global.imageRegistry | toString -}}
 {{- $repositoryName := default .Values.image.repository .Values.global.seaweedfs.image.repository | toString -}}
 {{- $name := .Values.global.seaweedfs.image.name | toString -}}
@@ -160,7 +160,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* check if any Volume PVC exists */}}
-{{- define "volume.pvc_exists" -}}
+{{- define "seaweedfs.volume.pvc_exists" -}}
 {{- if or (or (eq .Values.volume.data.type "persistentVolumeClaim") (and (eq .Values.volume.idx.type "persistentVolumeClaim") .Values.volume.dir_idx )) (eq .Values.volume.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
@@ -169,7 +169,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* check if any Filer PVC exists */}}
-{{- define "filer.pvc_exists" -}}
+{{- define "seaweedfs.filer.pvc_exists" -}}
 {{- if or (eq .Values.filer.data.type "persistentVolumeClaim") (eq .Values.filer.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
@@ -178,7 +178,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* check if any Master PVC exists */}}
-{{- define "master.pvc_exists" -}}
+{{- define "seaweedfs.master.pvc_exists" -}}
 {{- if or (eq .Values.master.data.type "persistentVolumeClaim") (eq .Values.master.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
@@ -187,7 +187,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* check if any Admin PVC exists */}}
-{{- define "admin.pvc_exists" -}}
+{{- define "seaweedfs.admin.pvc_exists" -}}
 {{- if or (eq .Values.admin.data.type "persistentVolumeClaim") (eq .Values.admin.logs.type "persistentVolumeClaim") -}}
 {{- printf "true" -}}
 {{- else -}}
@@ -196,7 +196,7 @@ Inject extra environment vars in the format key:value, if populated
 {{- end -}}
 
 {{/* check if any InitContainers exist for Volumes */}}
-{{- define "volume.initContainers_exists" -}}
+{{- define "seaweedfs.volume.initContainers_exists" -}}
 {{- if or (not (empty .Values.volume.idx )) (not (empty .Values.volume.initContainers )) -}}
 {{- printf "true" -}}
 {{- else -}}
@@ -225,10 +225,10 @@ imagePullSecrets:
 {{/*
 Renders a value that contains template perhaps with scope if the scope is present.
 Usage:
-{{ include "common.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ ) }}
-{{ include "common.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ "scope" $app ) }}
+{{ include "seaweedfs.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ ) }}
+{{ include "seaweedfs.tplvalues.render" ( dict "value" .Values.path.to.the.Value "context" $ "scope" $app ) }}
 */}}
-{{- define "common.tplvalues.render" -}}
+{{- define "seaweedfs.tplvalues.render" -}}
 {{- $value := typeIs "string" .value | ternary .value (.value | toYaml) }}
 {{- if contains "{{" (toJson .value) }}
   {{- if .scope }}
@@ -245,9 +245,9 @@ Usage:
 Converts a Kubernetes quantity like "256Mi" or "2G" to a float64 in base units,
 handling both binary (Ki, Mi, Gi) and decimal (m, k, M) suffixes; numeric inputs
 Usage:
-{{ include "common.resource-quantity" "10Gi" }}
+{{ include "seaweedfs.resource-quantity" "10Gi" }}
 */}}
-{{- define "common.resource-quantity" -}}
+{{- define "seaweedfs.resource-quantity" -}}
     {{- $value := . -}}
     {{- $unit := 1.0 -}}
     {{- if typeIs "string" . -}}
@@ -267,7 +267,7 @@ Usage:
 getOrGeneratePassword will check if a password exists in a secret and return it,
 or generate a new random password if it doesn't exist.
 */}}
-{{- define "getOrGeneratePassword" -}}
+{{- define "seaweedfs.getOrGeneratePassword" -}}
 {{- $params := . -}}
 {{- $namespace := $params.namespace -}}
 {{- $secretName := $params.secretName -}}
