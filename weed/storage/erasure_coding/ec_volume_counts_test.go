@@ -20,14 +20,25 @@ func makeEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte 
 	return b
 }
 
-func writeFixture(t *testing.T, dir, collection string, vid int, ecxData []byte) *erasure_coding.EcVolume {
+// encodeEcjIds packs a slice of needle ids into the binary .ecj on-disk format.
+func encodeEcjIds(ids []types.NeedleId) []byte {
+	buf := make([]byte, 0, len(ids)*types.NeedleIdSize)
+	for _, id := range ids {
+		b := make([]byte, types.NeedleIdSize)
+		types.NeedleIdToBytes(b, id)
+		buf = append(buf, b...)
+	}
+	return buf
+}
+
+func writeFixture(t *testing.T, dir, collection string, vid int, ecxData []byte, ecjIds []types.NeedleId) *erasure_coding.EcVolume {
 	t.Helper()
 	base := filepath.Join(dir, fmt.Sprintf("%s_%d", collection, vid))
 
 	if err := os.WriteFile(base+".ecx", ecxData, 0644); err != nil {
 		t.Fatalf("write ecx: %v", err)
 	}
-	if err := os.WriteFile(base+".ecj", []byte{}, 0644); err != nil {
+	if err := os.WriteFile(base+".ecj", encodeEcjIds(ecjIds), 0644); err != nil {
 		t.Fatalf("write ecj: %v", err)
 	}
 	if err := os.WriteFile(base+".ec00", make([]byte, 8), 0644); err != nil {
@@ -44,45 +55,43 @@ func writeFixture(t *testing.T, dir, collection string, vid int, ecxData []byte)
 	return ev
 }
 
-// TestEcVolumeFileAndDeleteCountInitial verifies that counts are seeded
-// eagerly on volume load by walking .ecx: fileCount is the total number of
-// recorded needles (live + tombstoned) and deleteCount is the tombstones.
+// TestEcVolumeFileAndDeleteCountInitial verifies that FileAndDeleteCount is
+// derived from file sizes at load: fileCount = .ecx size / NeedleMapEntrySize
+// and deleteCount = .ecj size / NeedleIdSize. No index walk is performed.
 func TestEcVolumeFileAndDeleteCountInitial(t *testing.T) {
 	dir := t.TempDir()
 
-	entries := []byte{}
-	// 3 live needles
-	entries = append(entries, makeEntry(1, types.ToOffset(64), 100)...)
-	entries = append(entries, makeEntry(2, types.ToOffset(128), 200)...)
-	entries = append(entries, makeEntry(3, types.ToOffset(256), 300)...)
-	// 2 tombstoned needles
-	entries = append(entries, makeEntry(4, types.ToOffset(512), types.TombstoneFileSize)...)
-	entries = append(entries, makeEntry(5, types.ToOffset(1024), types.TombstoneFileSize)...)
+	// 3 needles in .ecx, 2 deletions already recorded in .ecj.
+	ecx := []byte{}
+	ecx = append(ecx, makeEntry(1, types.ToOffset(64), 100)...)
+	ecx = append(ecx, makeEntry(2, types.ToOffset(128), 200)...)
+	ecx = append(ecx, makeEntry(3, types.ToOffset(256), 300)...)
+	ecj := []types.NeedleId{2, 3}
 
-	ev := writeFixture(t, dir, "test", 1, entries)
+	ev := writeFixture(t, dir, "test", 1, ecx, ecj)
 	defer ev.Close()
 
 	fileCount, deleteCount := ev.FileAndDeleteCount()
-	if fileCount != 5 {
-		t.Errorf("fileCount: got %d, want 5 (total entries in .ecx)", fileCount)
+	if fileCount != 3 {
+		t.Errorf("fileCount: got %d, want 3 (.ecx entries)", fileCount)
 	}
 	if deleteCount != 2 {
-		t.Errorf("deleteCount: got %d, want 2", deleteCount)
+		t.Errorf("deleteCount: got %d, want 2 (.ecj entries)", deleteCount)
 	}
 }
 
 // TestEcVolumeFileAndDeleteCountAfterDelete verifies that DeleteNeedleFromEcx
-// increments the delete counter for live->tombstone transitions only, leaving
-// the total fileCount unchanged, and stays idempotent on repeat / missing
-// needle deletes.
+// increments the derived delete count by appending to .ecj, while leaving
+// fileCount (derived from the sealed .ecx) unchanged. Idempotent re-deletes
+// and deletes of missing needles must not drift the count.
 func TestEcVolumeFileAndDeleteCountAfterDelete(t *testing.T) {
 	dir := t.TempDir()
 
-	entries := []byte{}
-	entries = append(entries, makeEntry(1, types.ToOffset(64), 100)...)
-	entries = append(entries, makeEntry(2, types.ToOffset(128), 200)...)
+	ecx := []byte{}
+	ecx = append(ecx, makeEntry(1, types.ToOffset(64), 100)...)
+	ecx = append(ecx, makeEntry(2, types.ToOffset(128), 200)...)
 
-	ev := writeFixture(t, dir, "test", 1, entries)
+	ev := writeFixture(t, dir, "test", 1, ecx, nil)
 	defer ev.Close()
 
 	if fc, dc := ev.FileAndDeleteCount(); fc != 2 || dc != 0 {
@@ -96,7 +105,8 @@ func TestEcVolumeFileAndDeleteCountAfterDelete(t *testing.T) {
 		t.Errorf("after first delete: got (%d, %d), want (2, 1)", fc, dc)
 	}
 
-	// Re-deleting an already tombstoned needle must not drift the counts.
+	// Re-deleting an already tombstoned needle is a no-op on .ecj, so
+	// deleteCount must stay at 1.
 	if err := ev.DeleteNeedleFromEcx(2); err != nil {
 		t.Fatalf("idempotent DeleteNeedleFromEcx: %v", err)
 	}
@@ -104,7 +114,8 @@ func TestEcVolumeFileAndDeleteCountAfterDelete(t *testing.T) {
 		t.Errorf("after idempotent delete: got (%d, %d), want (2, 1)", fc, dc)
 	}
 
-	// Deleting a non-existent needle is a no-op on counts.
+	// Deleting a non-existent needle is a no-op: search returns NotFound,
+	// no .ecj append.
 	if err := ev.DeleteNeedleFromEcx(99); err != nil {
 		t.Fatalf("missing DeleteNeedleFromEcx: %v", err)
 	}

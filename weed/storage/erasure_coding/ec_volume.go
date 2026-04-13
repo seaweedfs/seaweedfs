@@ -44,14 +44,12 @@ type EcVolume struct {
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
 
-	// countsLock guards the in-memory file/delete counters below. These are
-	// seeded once from .ecx on volume load and then maintained incrementally
-	// on every DeleteNeedleFromEcx call, analogous to how a regular volume's
-	// needle map tracks its FileCount/DeletedCount. Each heartbeat reads the
-	// live values directly without re-walking the index.
-	countsLock  sync.Mutex
-	fileCount   uint64 // total needles ever recorded in .ecx (live + tombstoned)
-	deleteCount uint64 // tombstoned needles in this node's .ecx copy
+	// ecjFileSize mirrors the on-disk size of the .ecj deletion journal and
+	// is maintained under ecjFileAccessLock. File and delete counts are
+	// derived directly from ecxFileSize and ecjFileSize — the .ecx entry
+	// layout is fixed (NeedleMapEntrySize per entry) and each .ecj entry is
+	// one NeedleId — so heartbeats report counts in O(1) without walking.
+	ecjFileSize int64
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -87,6 +85,11 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	// open ecj file
 	if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
+	}
+	if ecjFi, statErr := ev.ecjFile.Stat(); statErr == nil {
+		ev.ecjFileSize = ecjFi.Size()
+	} else {
+		glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
 	}
 
 	// read volume info
@@ -125,34 +128,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
-	ev.seedCountsFromEcx()
-
 	return
-}
-
-// seedCountsFromEcx walks the .ecx index once at volume load to compute the
-// initial file and delete counts. Errors are logged but non-fatal: counts
-// simply stay at zero in that case, matching needle-map behaviour for
-// regular volumes with corrupt indexes.
-func (ev *EcVolume) seedCountsFromEcx() {
-	if ev.ecxFile == nil {
-		return
-	}
-	var total, tombstoned uint64
-	if err := ev.WalkIndex(func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		total++
-		if size.IsDeleted() {
-			tombstoned++
-		}
-		return nil
-	}); err != nil {
-		glog.Warningf("ec volume %d: seed counts from .ecx: %v", ev.VolumeId, err)
-		return
-	}
-	ev.countsLock.Lock()
-	ev.fileCount = total
-	ev.deleteCount = tombstoned
-	ev.countsLock.Unlock()
 }
 
 func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
@@ -321,28 +297,34 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 }
 
 // FileAndDeleteCount returns the current (fileCount, deleteCount) for this
-// EC volume. fileCount is the total number of needles recorded in .ecx
-// (live + tombstoned), matching the semantics of normal volume FileCount.
-// deleteCount is the number of tombstones in this node's local .ecx copy;
-// because a needle delete is applied on exactly one shard holder (see
-// doDeleteNeedleFromRemoteEcShardServers), the admin aggregation sums
-// deleteCount across nodes to get the volume's true delete total.
+// EC volume, derived directly from the on-disk index file sizes:
+//
+//   - fileCount = .ecx size / NeedleMapEntrySize — the total number of
+//     needles ever recorded in the .ecx index. Because .ecx is sealed
+//     when the volume is EC-encoded and is only rewritten (preserving
+//     record count) during decode/rebuild, this matches the "cumulative
+//     put count" semantics of regular volume FileCount.
+//
+//   - deleteCount = .ecj size / NeedleIdSize — the number of deletions
+//     recorded in the journal. DeleteNeedleFromEcx appends one NeedleId
+//     per live->tombstone transition, so this is the node-local delete
+//     count. Because a needle delete is applied on exactly one shard
+//     holder (see doDeleteNeedleFromRemoteEcShardServers), the admin
+//     aggregation sums deleteCount across nodes to get the volume's true
+//     delete total.
+//
+// Computing from file sizes keeps heartbeats O(1); no index walk needed.
 func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
-	ev.countsLock.Lock()
-	defer ev.countsLock.Unlock()
-	return ev.fileCount, ev.deleteCount
-}
-
-// recordDelete bumps the delete counter when DeleteNeedleFromEcx has just
-// transitioned a live entry to a tombstone. Idempotent deletes (oldSize was
-// already a tombstone) must not drift the counter.
-func (ev *EcVolume) recordDelete(wasLive bool) {
-	if !wasLive {
-		return
+	if types.NeedleMapEntrySize > 0 {
+		fileCount = uint64(ev.ecxFileSize) / uint64(types.NeedleMapEntrySize)
 	}
-	ev.countsLock.Lock()
-	ev.deleteCount++
-	ev.countsLock.Unlock()
+	ev.ecjFileAccessLock.Lock()
+	ecjSize := ev.ecjFileSize
+	ev.ecjFileAccessLock.Unlock()
+	if types.NeedleIdSize > 0 {
+		deleteCount = uint64(ecjSize) / uint64(types.NeedleIdSize)
+	}
+	return
 }
 
 func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size types.Size, intervals []Interval, err error) {

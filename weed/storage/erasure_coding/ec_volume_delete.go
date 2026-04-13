@@ -35,19 +35,28 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return err
 	}
 
-	ev.recordDelete(!oldSize.IsDeleted())
+	// Already tombstoned: avoid writing a duplicate .ecj entry so that
+	// deleteCount (derived from .ecj size) stays idempotent on re-delete.
+	if oldSize.IsDeleted() {
+		return nil
+	}
 
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
 
 	ev.ecjFileAccessLock.Lock()
+	defer ev.ecjFileAccessLock.Unlock()
 
-	ev.ecjFile.Seek(0, io.SeekEnd)
-	ev.ecjFile.Write(b)
+	if _, seekErr := ev.ecjFile.Seek(0, io.SeekEnd); seekErr != nil {
+		return fmt.Errorf("seek ecj: %w", seekErr)
+	}
+	n, writeErr := ev.ecjFile.Write(b)
+	if writeErr != nil {
+		return fmt.Errorf("write ecj: %w", writeErr)
+	}
+	ev.ecjFileSize += int64(n)
 
-	ev.ecjFileAccessLock.Unlock()
-
-	return
+	return nil
 }
 
 func RebuildEcxFile(baseFileName string) error {
