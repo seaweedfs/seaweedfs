@@ -1803,6 +1803,60 @@ func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context
 	return manager.SyncRuntimePolicies(ctx, policies)
 }
 
+// PruneBucketFromConfiguration removes any identity actions scoped to the given
+// bucket (e.g. "Read:bucket", "Write:bucket/prefix") from the persisted S3 IAM
+// configuration. Wildcarded resources and global actions are preserved because
+// they may cover other buckets. Static (read-only) identities are not touched.
+// Returns true if the configuration was changed and saved.
+func (iam *IdentityAccessManagement) PruneBucketFromConfiguration(ctx context.Context, bucket string) (bool, error) {
+	if iam == nil || iam.credentialManager == nil || bucket == "" {
+		return false, nil
+	}
+	config, err := iam.credentialManager.LoadConfiguration(ctx)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	for _, ident := range config.Identities {
+		if ident == nil || ident.IsStatic {
+			continue
+		}
+		kept := ident.Actions[:0]
+		for _, a := range ident.Actions {
+			if actionScopedToBucket(a, bucket) {
+				changed = true
+				continue
+			}
+			kept = append(kept, a)
+		}
+		ident.Actions = kept
+	}
+	if !changed {
+		return false, nil
+	}
+	if err := iam.credentialManager.SaveConfiguration(ctx, config); err != nil {
+		return false, err
+	}
+	// In-memory identities will be refreshed via the filer metadata subscription
+	// (see onIamConfigChange), which fans the update out to every S3 server.
+	return true, nil
+}
+
+// actionScopedToBucket reports whether a configured action string like
+// "Read:bucket" or "Write:bucket/prefix" is scoped exclusively to the given
+// bucket. Wildcard resources are never considered scoped to a single bucket.
+func actionScopedToBucket(action, bucket string) bool {
+	idx := strings.Index(action, ":")
+	if idx < 0 {
+		return false
+	}
+	resource := action[idx+1:]
+	if strings.ContainsAny(resource, "*?") {
+		return false
+	}
+	return resource == bucket || strings.HasPrefix(resource, bucket+"/")
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")

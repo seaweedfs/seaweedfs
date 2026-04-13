@@ -405,6 +405,15 @@ func (s3a *S3ApiServer) DeleteBucketHandler(w http.ResponseWriter, r *http.Reque
 	s3a.invalidateBucketConfigCache(bucket)
 	stats_collect.DeleteBucketMetrics(bucket)
 
+	// Prune identity actions that were scoped to this bucket via s3.configure.
+	// Logged but not fatal: the bucket is already gone, and leftover entries
+	// are harmless until the bucket (or another with the same name) reappears.
+	if s3a.iam != nil {
+		if _, err := s3a.iam.PruneBucketFromConfiguration(r.Context(), bucket); err != nil {
+			glog.Errorf("DeleteBucketHandler: failed to prune IAM actions for bucket %s: %v", bucket, err)
+		}
+	}
+
 	s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 }
 
