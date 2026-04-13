@@ -35,9 +35,7 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return err
 	}
 
-	ev.countsLock.Lock()
-	ev.recordDeleteLocked(!oldSize.IsDeleted())
-	ev.countsLock.Unlock()
+	ev.recordDelete(!oldSize.IsDeleted())
 
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)

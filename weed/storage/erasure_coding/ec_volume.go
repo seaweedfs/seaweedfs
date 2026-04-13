@@ -44,10 +44,14 @@ type EcVolume struct {
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
 
-	countsLock        sync.Mutex
-	countsInitialized bool
-	fileCount         uint64 // live needles in .ecx
-	deleteCount       uint64 // union of .ecx tombstones and .ecj journal entries (deduped)
+	// countsLock guards the in-memory file/delete counters below. These are
+	// seeded once from .ecx on volume load and then maintained incrementally
+	// on every DeleteNeedleFromEcx call, analogous to how a regular volume's
+	// needle map tracks its FileCount/DeletedCount. Each heartbeat reads the
+	// live values directly without re-walking the index.
+	countsLock  sync.Mutex
+	fileCount   uint64 // total needles ever recorded in .ecx (live + tombstoned)
+	deleteCount uint64 // tombstoned needles in this node's .ecx copy
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -121,7 +125,34 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 
 	ev.ShardLocations = make(map[ShardId][]pb.ServerAddress)
 
+	ev.seedCountsFromEcx()
+
 	return
+}
+
+// seedCountsFromEcx walks the .ecx index once at volume load to compute the
+// initial file and delete counts. Errors are logged but non-fatal: counts
+// simply stay at zero in that case, matching needle-map behaviour for
+// regular volumes with corrupt indexes.
+func (ev *EcVolume) seedCountsFromEcx() {
+	if ev.ecxFile == nil {
+		return
+	}
+	var total, tombstoned uint64
+	if err := ev.WalkIndex(func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		total++
+		if size.IsDeleted() {
+			tombstoned++
+		}
+		return nil
+	}); err != nil {
+		glog.Warningf("ec volume %d: seed counts from .ecx: %v", ev.VolumeId, err)
+		return
+	}
+	ev.countsLock.Lock()
+	ev.fileCount = total
+	ev.deleteCount = tombstoned
+	ev.countsLock.Unlock()
 }
 
 func (ev *EcVolume) AddEcVolumeShard(ecVolumeShard *EcVolumeShard) bool {
@@ -289,102 +320,29 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 	return
 }
 
-// FileAndDeleteCount returns the number of live and tombstoned needles in
-// the .ecx index, computing them on first call and caching thereafter.
-// Deletions performed via DeleteNeedleFromEcx keep the cache in sync.
+// FileAndDeleteCount returns the current (fileCount, deleteCount) for this
+// EC volume. fileCount is the total number of needles recorded in .ecx
+// (live + tombstoned), matching the semantics of normal volume FileCount.
+// deleteCount is the number of tombstones in this node's local .ecx copy;
+// because a needle delete is applied on exactly one shard holder (see
+// doDeleteNeedleFromRemoteEcShardServers), the admin aggregation sums
+// deleteCount across nodes to get the volume's true delete total.
 func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
 	ev.countsLock.Lock()
 	defer ev.countsLock.Unlock()
-	if !ev.countsInitialized {
-		ev.initCountsLocked()
-	}
 	return ev.fileCount, ev.deleteCount
 }
 
-// initCountsLocked walks the .ecx index and the .ecj deletion journal once
-// to seed fileCount and deleteCount. The delete count is the union of .ecx
-// tombstones and .ecj journal entries, deduped by needle id so a needle that
-// is both tombstoned in .ecx and present in .ecj is only counted once.
-// Must be called with countsLock held.
-func (ev *EcVolume) initCountsLocked() {
-	ev.countsInitialized = true
-	ev.fileCount = 0
-	ev.deleteCount = 0
-	if ev.ecxFile == nil {
+// recordDelete bumps the delete counter when DeleteNeedleFromEcx has just
+// transitioned a live entry to a tombstone. Idempotent deletes (oldSize was
+// already a tombstone) must not drift the counter.
+func (ev *EcVolume) recordDelete(wasLive bool) {
+	if !wasLive {
 		return
 	}
-
-	// Read the .ecj journal into a set of pending-delete needle ids. In the
-	// steady state every id here also has a tombstone in .ecx, but the journal
-	// may contain entries that have not yet been folded in (e.g. on partial
-	// recovery) or that are not present in .ecx at all.
-	ecjDeleted := ev.readEcjDeletedIds()
-
-	if err := ev.WalkIndex(func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if size.IsDeleted() {
-			ev.deleteCount++
-			delete(ecjDeleted, key)
-			return nil
-		}
-		if _, pending := ecjDeleted[key]; pending {
-			ev.deleteCount++
-			delete(ecjDeleted, key)
-			return nil
-		}
-		ev.fileCount++
-		return nil
-	}); err != nil {
-		glog.Warningf("ec volume %d: walk .ecx for counts: %v", ev.VolumeId, err)
-	}
-
-	// Any remaining .ecj ids refer to needles that are not in .ecx at all;
-	// still count them as deleted so the journal is fully accounted for.
-	ev.deleteCount += uint64(len(ecjDeleted))
-}
-
-// readEcjDeletedIds returns the set of needle ids recorded in the .ecj
-// deletion journal. The journal is a flat concatenation of NeedleId-sized
-// entries; duplicates in the file are naturally deduped by the map.
-func (ev *EcVolume) readEcjDeletedIds() map[types.NeedleId]struct{} {
-	ids := make(map[types.NeedleId]struct{})
-	ev.ecjFileAccessLock.Lock()
-	defer ev.ecjFileAccessLock.Unlock()
-	if ev.ecjFile == nil {
-		return ids
-	}
-	fi, err := ev.ecjFile.Stat()
-	if err != nil {
-		glog.Warningf("ec volume %d: stat .ecj for counts: %v", ev.VolumeId, err)
-		return ids
-	}
-	size := fi.Size()
-	if size < int64(types.NeedleIdSize) {
-		return ids
-	}
-	buf := make([]byte, types.NeedleIdSize)
-	for off := int64(0); off+int64(types.NeedleIdSize) <= size; off += int64(types.NeedleIdSize) {
-		n, err := ev.ecjFile.ReadAt(buf, off)
-		if err != nil || n != types.NeedleIdSize {
-			glog.Warningf("ec volume %d: read .ecj at %d: %v", ev.VolumeId, off, err)
-			break
-		}
-		ids[types.BytesToNeedleId(buf)] = struct{}{}
-	}
-	return ids
-}
-
-// recordDeleteLocked updates cached counts when a needle is marked deleted.
-// Called with countsLock held. wasLive indicates the pre-delete state.
-func (ev *EcVolume) recordDeleteLocked(wasLive bool) {
-	if !ev.countsInitialized {
-		return
-	}
-	if wasLive {
-		if ev.fileCount > 0 {
-			ev.fileCount--
-		}
-		ev.deleteCount++
-	}
+	ev.countsLock.Lock()
+	ev.deleteCount++
+	ev.countsLock.Unlock()
 }
 
 func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size types.Size, intervals []Interval, err error) {

@@ -1672,12 +1672,21 @@ type collectionStats struct {
 	FileCount    int64
 }
 
+// ecVolumeCounts is used to correctly combine EC volume counts reported by
+// multiple nodes. Every node holding any shard of an EC volume reports the
+// same file_count (total entries in the replicated .ecx), so we dedupe it
+// per volume id. In contrast, a needle delete is applied on exactly one
+// shard holder, so each node reports its own local tombstone count and the
+// true delete total is the sum across nodes.
+type ecVolumeCounts struct {
+	collection  string
+	fileCount   uint64
+	deleteCount uint64
+}
+
 func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]collectionStats {
 	collectionMap := make(map[string]collectionStats)
-	// Every node that holds any shard of an EC volume reports the same
-	// (file_count, delete_count) for that volume, so the counts must be
-	// applied once per volume id rather than summed across nodes.
-	seenEcVolumes := make(map[uint32]struct{})
+	ecVolumeAgg := make(map[uint32]*ecVolumeCounts)
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
@@ -1712,18 +1721,31 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						data := collectionMap[collection]
 						data.PhysicalSize += int64(shards.TotalSize())
 						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
-						if _, seen := seenEcVolumes[ecShardInfo.Id]; !seen {
-							seenEcVolumes[ecShardInfo.Id] = struct{}{}
-							if ecShardInfo.FileCount >= ecShardInfo.DeleteCount {
-								data.FileCount += int64(ecShardInfo.FileCount - ecShardInfo.DeleteCount)
-							}
-						}
 						collectionMap[collection] = data
+
+						agg, ok := ecVolumeAgg[ecShardInfo.Id]
+						if !ok {
+							agg = &ecVolumeCounts{collection: collection, fileCount: ecShardInfo.FileCount}
+							ecVolumeAgg[ecShardInfo.Id] = agg
+						}
+						agg.deleteCount += ecShardInfo.DeleteCount
 					}
 				}
 			}
 		}
 	}
+
+	// Fold EC per-volume counts into the collection totals. fileCount is
+	// already deduped (set once per volume), deleteCount is the sum of
+	// local tombstones across every node holding shards of the volume.
+	for _, agg := range ecVolumeAgg {
+		data := collectionMap[agg.collection]
+		if agg.fileCount >= agg.deleteCount {
+			data.FileCount += int64(agg.fileCount - agg.deleteCount)
+		}
+		collectionMap[agg.collection] = data
+	}
+
 	return collectionMap
 }
 
