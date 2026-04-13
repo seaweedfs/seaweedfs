@@ -468,7 +468,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 	policy := schedulerPolicy{
 		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
 		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
-		ExecutionTimeout:       defaultScheduledExecutionTimeout,
+		ExecutionTimeout:       durationFromSeconds(adminRuntime.ExecutionTimeoutSeconds, defaultScheduledExecutionTimeout),
 		JobTypeMaxRuntime:      durationFromSeconds(adminRuntime.JobTypeMaxRuntimeSeconds, defaultScheduledJobTypeMaxRuntime),
 		RetryBackoff:           durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
 		MaxResults:             adminRuntime.MaxJobsPerDetection,
@@ -503,12 +503,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		policy.JobTypeMaxRuntime = defaultScheduledJobTypeMaxRuntime
 	}
 
-	// Plugin protocol currently has only detection timeout in admin settings.
-	execTimeout := time.Duration(adminRuntime.DetectionTimeoutSeconds*2) * time.Second
-	if execTimeout < defaultScheduledExecutionTimeout {
-		execTimeout = defaultScheduledExecutionTimeout
+	if policy.ExecutionTimeout < defaultScheduledExecutionTimeout {
+		policy.ExecutionTimeout = defaultScheduledExecutionTimeout
 	}
-	policy.ExecutionTimeout = execTimeout
 
 	return policy, true, nil
 }
@@ -610,6 +607,37 @@ func deriveSchedulerAdminRuntime(
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
 		adminConfig := *cfg.AdminRuntime
+		// Overlay descriptor defaults for any zero numeric fields. Persisted
+		// configs from older versions have no execution_timeout_seconds, and
+		// without this overlay the scheduler would fall back to the 90s
+		// default instead of the handler's declared baseline.
+		if descriptor != nil && descriptor.AdminRuntimeDefaults != nil {
+			defaults := descriptor.AdminRuntimeDefaults
+			if adminConfig.DetectionIntervalSeconds <= 0 {
+				adminConfig.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+			}
+			if adminConfig.DetectionTimeoutSeconds <= 0 {
+				adminConfig.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
+			}
+			if adminConfig.MaxJobsPerDetection <= 0 {
+				adminConfig.MaxJobsPerDetection = defaults.MaxJobsPerDetection
+			}
+			if adminConfig.GlobalExecutionConcurrency <= 0 {
+				adminConfig.GlobalExecutionConcurrency = defaults.GlobalExecutionConcurrency
+			}
+			if adminConfig.PerWorkerExecutionConcurrency <= 0 {
+				adminConfig.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
+			}
+			if adminConfig.RetryBackoffSeconds <= 0 {
+				adminConfig.RetryBackoffSeconds = defaults.RetryBackoffSeconds
+			}
+			if adminConfig.JobTypeMaxRuntimeSeconds <= 0 {
+				adminConfig.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
+			}
+			if adminConfig.ExecutionTimeoutSeconds <= 0 {
+				adminConfig.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
+			}
+		}
 		return &adminConfig
 	}
 
@@ -628,6 +656,7 @@ func deriveSchedulerAdminRuntime(
 		RetryLimit:                    defaults.RetryLimit,
 		RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
 		JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
+		ExecutionTimeoutSeconds:       defaults.ExecutionTimeoutSeconds,
 	}
 }
 

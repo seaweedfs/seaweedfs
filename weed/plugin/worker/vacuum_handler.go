@@ -200,6 +200,7 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           10,
 			JobTypeMaxRuntimeSeconds:      1800,
+			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"garbage_threshold": {
