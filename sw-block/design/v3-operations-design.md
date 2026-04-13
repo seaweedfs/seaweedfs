@@ -530,30 +530,103 @@ Run 'block.status mydb' for details.
 
 | Feature | Who has it | Priority |
 |---------|-----------|----------|
-| Web dashboard | Ceph, Longhorn, TrueNAS | P3 |
+| Web dashboard | Ceph, Longhorn, TrueNAS | P1 (existing foundation) |
 | Declarative cluster spec | Ceph `ceph orch` | P3 |
-| Grafana dashboard JSON | Ceph, Longhorn | P2 |
 | Multi-cluster management | None (all single-cluster) | Not planned |
 
-## 8. Implementation Phases
+## 8. Existing UI / Admin Foundation (V1)
 
-### Phase 1: Shell commands (P0)
+V1 already built several admin interfaces that V3 should reuse:
 
-Implement in `weed/shell/`:
+### 8.1 iSCSI Admin HTTP Server
+
+File: `weed/storage/blockvol/iscsi/cmd/iscsi-target/admin.go`
+
+Provides HTTP endpoints for the standalone iscsi-target binary:
+
+| Endpoint | Method | What it does |
+|----------|--------|-------------|
+| `/status` | GET | Volume status JSON (role, epoch, WAL head, replica state) |
+| `/assign` | POST | Inject assignment (epoch, role, lease TTL) |
+| `/replica` | POST | Set WAL shipping target (data/ctrl addr) |
+| `/rebuild` | POST | Start/stop rebuild server |
+| `/snapshot` | POST | Create/delete/restore/list snapshots |
+| `/resize` | POST | Expand volume size |
+| `/metrics` | GET | Prometheus metrics (with optional auth token) |
+
+These endpoints powered the CP4b-4 HA integration tests. The admin
+server runs alongside the iSCSI target and controls it via HTTP.
+
+**V3 action**: Move these endpoints into `weed server`'s volume server
+HTTP handler. The standalone binary keeps its admin server for testing;
+the production path uses the integrated weed server endpoints.
+
+### 8.2 Grafana Dashboard
+
+File: `weed/storage/blockvol/monitoring/dashboards/block-overview.json`
+
+Pre-built Grafana dashboard with panels for:
+- Cluster health (stat panel)
+- WAL pressure state
+- Volumes by role (bar gauge)
+- Prometheus metric queries
+
+**V3 action**: Update metric names if changed, add V2 metrics (rebuild
+duration, failover count, shipper state). The dashboard is importable
+as-is into any Grafana instance.
+
+### 8.3 Master UI HTML
+
+File: `weed/server/master_ui/master.html`
+
+The master already serves an HTML UI at `http://master:9333/` showing:
+- Cluster topology (data centers, racks, nodes)
+- Volume count and IDs per node
+- Raft cluster state
+
+**V3 action**: Add a "Block Volumes" tab that calls `/block/volumes`
+REST API and renders a table. This is the fastest path to a web UI —
+~200 lines of HTML/JS added to the existing template.
+
+### 8.4 Volume Server UI HTML
+
+File: `weed/server/volume_server_ui/volume.html`
+
+The volume server serves an HTML UI at `http://vs:8480/ui/` showing
+local volume information.
+
+**V3 action**: Add block volume section showing local BlockVol status,
+iSCSI target info, and replica state.
+
+### 8.5 Prometheus Metrics
+
+Already integrated in weed server. Key block metrics are exported via
+the standard `/metrics` endpoint. No separate metrics server needed.
+
+## 9. Implementation Phases
+
+### Phase 1: Shell commands + Master UI tab (P0)
+
+Shell commands in `weed/shell/`:
 - `block.list` — volume list with health
 - `block.status` — detailed volume status
 - `block.create` — create with dry-run
 - `block.delete` — delete with dry-run + confirm
 - `block.health` — cluster health summary
 
-These commands call existing master gRPC APIs. No new backend code
-needed — just shell-side formatting.
+These call existing master gRPC APIs. No new backend code needed.
 
-Estimated: ~400 lines, 5 new files in `weed/shell/`.
+Master UI block tab in `weed/server/master_ui/master.html`:
+- Add "Block Volumes" tab to existing UI
+- Table: name, size, RF, mode, primary, replica, health
+- Auto-refresh every 5 seconds
+- Calls `/block/volumes` REST endpoint
 
-### Phase 2: REST API (P1)
+Estimated: ~600 lines (400 shell + 200 HTML/JS).
 
-Implement in `weed/server/master_server_handlers_block.go`:
+### Phase 2: REST API + Grafana update (P1)
+
+REST API in `weed/server/master_server_handlers_block.go`:
 - CRUD endpoints for volumes
 - Health endpoint
 - Server list endpoint
@@ -561,7 +634,12 @@ Implement in `weed/server/master_server_handlers_block.go`:
 These wrap existing `BlockVolumeRegistry` and `blockAssignmentQueue`
 methods. JSON request/response.
 
-Estimated: ~300 lines.
+Grafana dashboard update:
+- Update `block-overview.json` with V2/V3 metrics
+- Add rebuild duration, failover count panels
+- Add per-volume IOPS panel
+
+Estimated: ~350 lines (300 API + 50 dashboard JSON).
 
 ### Phase 3: Enhanced operations (P2)
 
@@ -570,6 +648,7 @@ Estimated: ~300 lines.
 - `block.promote` with dry-run
 - `block.events` (recent failover/rebuild log)
 - `block.bench` (built-in fio wrapper)
+- Migrate iSCSI admin endpoints to weed server
 
 ### Phase 4: Developer experience (P2)
 
@@ -578,8 +657,40 @@ Estimated: ~300 lines.
 - Connection string output on volume creation
 - `block.setup` interactive wizard
 
-### Phase 5: Dashboards (P3)
+### Phase 5: Full Web UI (P3)
 
-- Grafana dashboard JSON
-- Prometheus alert rules template
-- Web UI for block volume management (if demand exists)
+Two options:
+
+**Option A: Extend master UI (lightweight)**
+- Add volume detail page (click volume name → full status)
+- Add snapshot/expand/promote buttons
+- Add cluster health dashboard panel
+- ~500 lines HTML/JS, no framework
+
+**Option B: Standalone dashboard (full)**
+- Separate SPA (React/Vue) served from master
+- Real-time WebSocket updates
+- Performance charts (IOPS, latency over time)
+- User auth integration
+- ~2000+ lines, needs framework
+
+Recommendation: Start with Option A. Move to Option B only when
+customer demand justifies the investment.
+
+## 10. Existing vs New Code Map
+
+| Feature | Existing Code | New Code Needed |
+|---------|--------------|-----------------|
+| Volume CRUD | `BlockVolumeRegistry`, `CreateBlockVolume` gRPC | Shell formatting + REST wrapper |
+| Status/health | `BlockVolumeEntry`, heartbeat data | Shell formatting |
+| Prometheus metrics | `weed/storage/blockvol/metrics.go` | Already done |
+| Grafana dashboard | `monitoring/dashboards/block-overview.json` | Update metrics |
+| Master web UI | `master_ui/master.html` | Add Block tab |
+| Volume server UI | `volume_server_ui/volume.html` | Add Block section |
+| Admin HTTP (iSCSI) | `iscsi/cmd/iscsi-target/admin.go` | Migrate to weed server |
+| Snapshot API | `blockvol.CreateSnapshot()` etc | Shell + REST wrapper |
+| Failover API | `PromoteBestReplica()`, `ManualPromote()` | Shell wrapper |
+| Rebuild API | `StartRebuildFromProbe()` | Shell wrapper |
+
+Most of the backend exists. The work is wiring it to user-facing
+interfaces (shell, REST, HTML).
