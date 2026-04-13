@@ -1,0 +1,285 @@
+name: dm-stripe-two-server
+timeout: 5m
+
+# Test: dm-stripe across 2 BlockVols on 2 servers.
+# Proves Linux-layer striping works with sw-block for high throughput.
+#
+# Topology:
+#   m01: client + VS2 (BlockVol B)
+#   m02: master + VS1 (BlockVol A)
+#   Client connects iSCSI to both, dm-stripe combines them.
+
+env:
+  master_url: "http://10.0.0.3:9433"
+  vol_size: "1073741824"
+
+topology:
+  nodes:
+    m01:
+      host: 192.168.1.181
+      alt_ips: ["10.0.0.1"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+    m02:
+      host: 192.168.1.184
+      alt_ips: ["10.0.0.3"]
+      user: testdev
+      key: "/opt/work/testdev_key"
+
+phases:
+  - name: cluster-start
+    actions:
+      - action: exec
+        node: m02
+        cmd: "fuser -k 9433/tcp 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-stripe-master /tmp/sw-stripe-vs1 && mkdir -p /tmp/sw-stripe-master /tmp/sw-stripe-vs1/blocks"
+        root: "true"
+        ignore_error: true
+      - action: exec
+        node: m01
+        cmd: "fuser -k 18480/tcp 2>/dev/null; sleep 1; rm -rf /tmp/sw-stripe-vs2 && mkdir -p /tmp/sw-stripe-vs2/blocks"
+        root: "true"
+        ignore_error: true
+
+      - action: start_weed_master
+        node: m02
+        port: "9433"
+        dir: /tmp/sw-stripe-master
+        extra_args: "-ip=10.0.0.3"
+        save_as: master_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: start_weed_volume
+        node: m02
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-stripe-vs1
+        extra_args: "-block.dir=/tmp/sw-stripe-vs1/blocks -block.listen=:3295 -ip=10.0.0.3"
+        save_as: vs1_pid
+
+      - action: start_weed_volume
+        node: m01
+        port: "18480"
+        master: "10.0.0.3:9433"
+        dir: /tmp/sw-stripe-vs2
+        extra_args: "-block.dir=/tmp/sw-stripe-vs2/blocks -block.listen=:3295 -ip=10.0.0.1"
+        save_as: vs2_pid
+
+      - action: sleep
+        duration: 3s
+
+      - action: wait_cluster_ready
+        node: m02
+        master_url: "{{ master_url }}"
+
+      - action: wait_block_servers
+        count: "2"
+
+  - name: create-volumes
+    actions:
+      # Create 2 RF=1 volumes — one will land on each server
+      - action: create_block_volume
+        name: stripe-a
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+
+      - action: create_block_volume
+        name: stripe-b
+        size_bytes: "{{ vol_size }}"
+        replica_factor: "1"
+
+      - action: sleep
+        duration: 5s
+
+  - name: discover-placement
+    actions:
+      # Find where each volume was placed
+      - action: discover_primary
+        name: stripe-a
+        save_as: pri_a
+
+      - action: discover_primary
+        name: stripe-b
+        save_as: pri_b
+
+      - action: print
+        msg: "stripe-a on {{ pri_a }} ({{ pri_a_server }}), stripe-b on {{ pri_b }} ({{ pri_b_server }})"
+
+  - name: connect-iscsi
+    actions:
+      # Connect to both volumes from m01 using discovered addresses
+      - action: lookup_block_volume
+        name: stripe-a
+        save_as: vol_a
+
+      - action: lookup_block_volume
+        name: stripe-b
+        save_as: vol_b
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_a_iscsi_host }}"
+        port: "{{ vol_a_iscsi_port }}"
+        iqn: "{{ vol_a_iqn }}"
+        save_as: dev_a
+
+      - action: iscsi_login_direct
+        node: m01
+        host: "{{ vol_b_iscsi_host }}"
+        port: "{{ vol_b_iscsi_port }}"
+        iqn: "{{ vol_b_iqn }}"
+        save_as: dev_b
+
+      - action: print
+        msg: "Connected: dev_a={{ dev_a }} (m02), dev_b={{ dev_b }} (m01)"
+
+  - name: setup-stripe
+    actions:
+      # Create dm-stripe: 64KB stripe unit across both devices
+      # stripe_sectors = 64KB / 512B = 128 sectors
+      # total_sectors = size of one device (they must be equal)
+      - action: exec
+        node: m01
+        cmd: |
+          SECTORS_A=$(blockdev --getsz {{ dev_a }})
+          SECTORS_B=$(blockdev --getsz {{ dev_b }})
+          TOTAL=$((SECTORS_A + SECTORS_B))
+          echo "Device A: {{ dev_a }} = ${SECTORS_A} sectors"
+          echo "Device B: {{ dev_b }} = ${SECTORS_B} sectors"
+          echo "Total: ${TOTAL} sectors"
+          echo "0 ${TOTAL} striped 2 128 {{ dev_a }} 0 {{ dev_b }} 0" | dmsetup create sw-stripe0
+          ls -la /dev/mapper/sw-stripe0
+        root: "true"
+        save_as: stripe_setup
+
+      - action: print
+        msg: "dm-stripe created: /dev/mapper/sw-stripe0 ({{ stripe_setup }})"
+
+  - name: benchmark-single
+    actions:
+      # Baseline: single volume performance (dev_a only)
+      - action: fio_json
+        node: m01
+        device: "{{ dev_a }}"
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "10"
+        time_based: "true"
+        name: single_vol_write
+        save_as: single_vol_write
+
+      - action: fio_parse
+        json_var: single_vol_write
+        metric: iops
+        save_as: single_write_iops
+
+      - action: fio_json
+        node: m01
+        device: "{{ dev_a }}"
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        runtime: "10"
+        time_based: "true"
+        name: single_vol_read
+        save_as: single_vol_read
+
+      - action: fio_parse
+        json_var: single_vol_read
+        metric: iops
+        save_as: single_read_iops
+
+      - action: print
+        msg: "SINGLE VOLUME: write={{ single_write_iops }} IOPS, read={{ single_read_iops }} IOPS"
+
+  - name: benchmark-stripe
+    actions:
+      # Striped: both volumes combined
+      - action: fio_json
+        node: m01
+        device: /dev/mapper/sw-stripe0
+        rw: randwrite
+        bs: 4k
+        iodepth: "32"
+        runtime: "10"
+        time_based: "true"
+        name: stripe_write
+        save_as: stripe_write
+
+      - action: fio_parse
+        json_var: stripe_write
+        metric: iops
+        save_as: stripe_write_iops
+
+      - action: fio_json
+        node: m01
+        device: /dev/mapper/sw-stripe0
+        rw: randread
+        bs: 4k
+        iodepth: "32"
+        runtime: "10"
+        time_based: "true"
+        name: stripe_read
+        save_as: stripe_read
+
+      - action: fio_parse
+        json_var: stripe_read
+        metric: iops
+        save_as: stripe_read_iops
+
+      - action: print
+        msg: "STRIPED (2x): write={{ stripe_write_iops }} IOPS, read={{ stripe_read_iops }} IOPS"
+
+      - action: print
+        msg: "COMPARISON: single_write={{ single_write_iops }} → stripe_write={{ stripe_write_iops }} | single_read={{ single_read_iops }} → stripe_read={{ stripe_read_iops }}"
+
+  - name: verify-data
+    actions:
+      # Write known data to stripe, read back, verify
+      - action: dd_write
+        node: m01
+        device: /dev/mapper/sw-stripe0
+        bs: 1M
+        count: "10"
+        sync_mode: fsync
+        save_as: stripe_md5
+
+      - action: dd_read_md5
+        node: m01
+        device: /dev/mapper/sw-stripe0
+        bs: 1M
+        count: "10"
+        save_as: stripe_verify
+
+      - action: assert_equal
+        actual: "{{ stripe_verify }}"
+        expected: "{{ stripe_md5 }}"
+
+      - action: print
+        msg: "STRIPE DATA INTEGRITY VERIFIED: md5={{ stripe_md5 }}"
+
+  - name: cleanup
+    always: true
+    actions:
+      - action: exec
+        node: m01
+        cmd: "dmsetup remove sw-stripe0 2>/dev/null; true"
+        root: "true"
+        ignore_error: true
+      - action: iscsi_cleanup
+        node: m01
+        ignore_error: true
+      - action: stop_weed
+        node: m01
+        pid: "{{ vs2_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ vs1_pid }}"
+        ignore_error: true
+      - action: stop_weed
+        node: m02
+        pid: "{{ master_pid }}"
+        ignore_error: true
