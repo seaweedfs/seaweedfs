@@ -1334,7 +1334,13 @@ func buildBatchVolumeBalanceProposals(
 				maxMoveSeconds = s
 			}
 		}
-		estimatedRuntimeSeconds := totalSeconds / int64(maxConcurrentMoves)
+		// Round up to whole scheduling rounds: with N moves and C slots,
+		// the busiest slot processes ceil(N/C) moves, not N/C. Using
+		// avg * ceil(N/C) avoids underestimating when N is not a multiple
+		// of C (e.g. 6 moves at concurrency 5 → 2 rounds, not 1.2).
+		avgSeconds := totalSeconds / int64(len(moves))
+		numRounds := (int64(len(moves)) + int64(maxConcurrentMoves) - 1) / int64(maxConcurrentMoves)
+		estimatedRuntimeSeconds := avgSeconds * numRounds
 		if maxMoveSeconds > estimatedRuntimeSeconds {
 			estimatedRuntimeSeconds = maxMoveSeconds
 		}
