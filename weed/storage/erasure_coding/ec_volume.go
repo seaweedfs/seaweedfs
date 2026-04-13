@@ -47,7 +47,7 @@ type EcVolume struct {
 	countsLock        sync.Mutex
 	countsInitialized bool
 	fileCount         uint64 // live needles in .ecx
-	deleteCount       uint64 // tombstoned needles in .ecx
+	deleteCount       uint64 // union of .ecx tombstones and .ecj journal entries (deduped)
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -301,7 +301,10 @@ func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
 	return ev.fileCount, ev.deleteCount
 }
 
-// initCountsLocked walks the .ecx index once to seed fileCount and deleteCount.
+// initCountsLocked walks the .ecx index and the .ecj deletion journal once
+// to seed fileCount and deleteCount. The delete count is the union of .ecx
+// tombstones and .ecj journal entries, deduped by needle id so a needle that
+// is both tombstoned in .ecx and present in .ecj is only counted once.
 // Must be called with countsLock held.
 func (ev *EcVolume) initCountsLocked() {
 	ev.countsInitialized = true
@@ -310,16 +313,64 @@ func (ev *EcVolume) initCountsLocked() {
 	if ev.ecxFile == nil {
 		return
 	}
+
+	// Read the .ecj journal into a set of pending-delete needle ids. In the
+	// steady state every id here also has a tombstone in .ecx, but the journal
+	// may contain entries that have not yet been folded in (e.g. on partial
+	// recovery) or that are not present in .ecx at all.
+	ecjDeleted := ev.readEcjDeletedIds()
+
 	if err := ev.WalkIndex(func(key types.NeedleId, offset types.Offset, size types.Size) error {
 		if size.IsDeleted() {
 			ev.deleteCount++
-		} else {
-			ev.fileCount++
+			delete(ecjDeleted, key)
+			return nil
 		}
+		if _, pending := ecjDeleted[key]; pending {
+			ev.deleteCount++
+			delete(ecjDeleted, key)
+			return nil
+		}
+		ev.fileCount++
 		return nil
 	}); err != nil {
 		glog.Warningf("ec volume %d: walk .ecx for counts: %v", ev.VolumeId, err)
 	}
+
+	// Any remaining .ecj ids refer to needles that are not in .ecx at all;
+	// still count them as deleted so the journal is fully accounted for.
+	ev.deleteCount += uint64(len(ecjDeleted))
+}
+
+// readEcjDeletedIds returns the set of needle ids recorded in the .ecj
+// deletion journal. The journal is a flat concatenation of NeedleId-sized
+// entries; duplicates in the file are naturally deduped by the map.
+func (ev *EcVolume) readEcjDeletedIds() map[types.NeedleId]struct{} {
+	ids := make(map[types.NeedleId]struct{})
+	ev.ecjFileAccessLock.Lock()
+	defer ev.ecjFileAccessLock.Unlock()
+	if ev.ecjFile == nil {
+		return ids
+	}
+	fi, err := ev.ecjFile.Stat()
+	if err != nil {
+		glog.Warningf("ec volume %d: stat .ecj for counts: %v", ev.VolumeId, err)
+		return ids
+	}
+	size := fi.Size()
+	if size < int64(types.NeedleIdSize) {
+		return ids
+	}
+	buf := make([]byte, types.NeedleIdSize)
+	for off := int64(0); off+int64(types.NeedleIdSize) <= size; off += int64(types.NeedleIdSize) {
+		n, err := ev.ecjFile.ReadAt(buf, off)
+		if err != nil || n != types.NeedleIdSize {
+			glog.Warningf("ec volume %d: read .ecj at %d: %v", ev.VolumeId, off, err)
+			break
+		}
+		ids[types.BytesToNeedleId(buf)] = struct{}{}
+	}
+	return ids
 }
 
 // recordDeleteLocked updates cached counts when a needle is marked deleted.
