@@ -1704,13 +1704,10 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						if collection == "" {
 							collection = "default"
 						}
-						var shardBytes int64
-						for _, ss := range ecShardInfo.ShardSizes {
-							shardBytes += ss
-						}
+						shards := erasure_coding.ShardsInfoFromVolumeEcShardInformationMessage(ecShardInfo)
 						data := collectionMap[collection]
-						data.PhysicalSize += shardBytes
-						data.LogicalSize += shardBytes * int64(erasure_coding.DataShardsCount) / int64(erasure_coding.TotalShardsCount)
+						data.PhysicalSize += int64(shards.TotalSize())
+						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
 						collectionMap[collection] = data
 					}
 				}
