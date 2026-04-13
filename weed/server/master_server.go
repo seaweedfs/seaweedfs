@@ -204,6 +204,7 @@ func NewMasterServer(r *mux.Router, option *MasterOption, peers map[string]pb.Se
 		ms.startAdminScripts()
 	}
 
+	stats.MasterStartTimeSeconds.Set(float64(time.Now().Unix()))
 	return ms
 }
 
