@@ -1,6 +1,7 @@
 package erasure_coding_test
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func makeEntry(key types.NeedleId, offset types.Offset, size types.Size) []byte 
 
 func writeFixture(t *testing.T, dir, collection string, vid int, ecxData []byte) *erasure_coding.EcVolume {
 	t.Helper()
-	base := filepath.Join(dir, collection+"_1")
+	base := filepath.Join(dir, fmt.Sprintf("%s_%d", collection, vid))
 
 	if err := os.WriteFile(base+".ecx", ecxData, 0644); err != nil {
 		t.Fatalf("write ecx: %v", err)
