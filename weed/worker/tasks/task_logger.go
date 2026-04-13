@@ -199,7 +199,10 @@ func (l *FileTaskLogger) LogProgress(progress float64, message string) {
 	}
 
 	l.writeLogEntry(entry)
-	l.saveMetadata() // Update metadata with new progress
+	// Update metadata with new progress
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to save initial task metadata: %v", err)
+	}
 }
 
 // LogStatus logs task status change
@@ -216,7 +219,10 @@ func (l *FileTaskLogger) LogStatus(status string, message string) {
 	}
 
 	l.writeLogEntry(entry)
-	l.saveMetadata() // Update metadata with new status
+	// Update metadata with new status
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to update metadata with new status: %v", err)
+	}
 }
 
 // LogWithFields logs a message with structured fields
@@ -263,7 +269,9 @@ func (l *FileTaskLogger) Close() error {
 	}
 
 	// Save final metadata
-	l.saveMetadata()
+	if err := l.saveMetadata(); err != nil {
+		glog.Warningf("Failed to save final task metadata: %v", err)
+	}
 
 	// Close log file
 	if l.logFile != nil {
