@@ -77,7 +77,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "master.image" . }}
+          image: {{ template "seaweedfs.master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             {{- /* Determine default cluster alias and the corresponding env var keys to avoid conflicts */}}
@@ -418,7 +418,7 @@ spec:
             {{- omit .Values.allInOne.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.allInOne.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.allInOne.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
         - name: data

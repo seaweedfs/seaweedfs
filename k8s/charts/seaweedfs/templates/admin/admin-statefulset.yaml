@@ -82,7 +82,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "admin.image" . }}
+          image: {{ template "seaweedfs.admin.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           {{- $adminAuthEnabled := or .Values.admin.secret.existingSecret .Values.admin.secret.adminPassword }}
           {{- $urlPrefix := .Values.admin.urlPrefix }}
@@ -242,7 +242,7 @@ spec:
           securityContext: {{- omit .Values.admin.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.admin.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.admin.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.admin.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
         {{- if eq .Values.admin.data.type "hostPath" }}
@@ -303,7 +303,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.admin.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "admin.pvc_exists" . -}}
+  {{- $pvc_exists := include "seaweedfs.admin.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
     {{- if eq .Values.admin.data.type "persistentVolumeClaim" }}

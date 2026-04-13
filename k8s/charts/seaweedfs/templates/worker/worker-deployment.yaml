@@ -77,7 +77,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "worker.image" . }}
+          image: {{ template "seaweedfs.worker.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
@@ -219,7 +219,7 @@ spec:
           securityContext: {{- omit .Values.worker.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if .Values.worker.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.worker.sidecars "context" $) | nindent 8 }}
       {{- end }}
       volumes:
         {{- if eq .Values.worker.data.type "hostPath" }}
