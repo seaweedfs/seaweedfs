@@ -1803,6 +1803,83 @@ func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context
 	return manager.SyncRuntimePolicies(ctx, policies)
 }
 
+// PruneBucketFromConfiguration removes any identity actions scoped to the given
+// bucket (e.g. "Read:bucket", "Write:bucket/prefix") from the persisted S3 IAM
+// configuration. Wildcarded resources and global actions are preserved because
+// they may cover other buckets. Static (read-only) identities are not touched.
+//
+// Updates are applied per-identity via the credential store's UpdateUser path,
+// which rewrites only the affected user record. This avoids a full-config
+// read-modify-write cycle that could clobber unrelated concurrent IAM edits.
+// Returns true if any identity was updated.
+func (iam *IdentityAccessManagement) PruneBucketFromConfiguration(ctx context.Context, bucket string) (bool, error) {
+	if iam == nil || iam.credentialManager == nil || bucket == "" {
+		return false, nil
+	}
+	usernames, err := iam.credentialManager.ListUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	var firstErr error
+	for _, username := range usernames {
+		if iam.IsStaticIdentity(username) {
+			continue
+		}
+		ident, err := iam.credentialManager.GetUser(ctx, username)
+		if err != nil {
+			if errors.Is(err, credential.ErrUserNotFound) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if ident == nil || ident.IsStatic {
+			continue
+		}
+		kept := ident.Actions[:0]
+		pruned := false
+		for _, a := range ident.Actions {
+			if actionScopedToBucket(a, bucket) {
+				pruned = true
+				continue
+			}
+			kept = append(kept, a)
+		}
+		if !pruned {
+			continue
+		}
+		ident.Actions = kept
+		if err := iam.credentialManager.UpdateUser(ctx, username, ident); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		changed = true
+	}
+	// In-memory identities refresh via the filer metadata subscription
+	// (onIamConfigChange), which fans the update out to every S3 server.
+	return changed, firstErr
+}
+
+// actionScopedToBucket reports whether a configured action string like
+// "Read:bucket" or "Write:bucket/prefix" is scoped exclusively to the given
+// bucket. Wildcard resources are never considered scoped to a single bucket.
+func actionScopedToBucket(action, bucket string) bool {
+	idx := strings.Index(action, ":")
+	if idx < 0 {
+		return false
+	}
+	resource := action[idx+1:]
+	if strings.ContainsAny(resource, "*?") {
+		return false
+	}
+	return resource == bucket || strings.HasPrefix(resource, bucket+"/")
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
