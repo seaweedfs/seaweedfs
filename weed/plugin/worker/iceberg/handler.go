@@ -332,6 +332,7 @@ func (h *Handler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           60,
 			JobTypeMaxRuntimeSeconds:      3600, // 1 hour max
+			ExecutionTimeoutSeconds:       3600,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"target_file_size_mb":           {Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: defaultTargetFileSizeMB}},

@@ -468,7 +468,7 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 	policy := schedulerPolicy{
 		DetectionInterval:      durationFromSeconds(adminRuntime.DetectionIntervalSeconds, defaultScheduledDetectionInterval),
 		DetectionTimeout:       durationFromSeconds(adminRuntime.DetectionTimeoutSeconds, defaultScheduledDetectionTimeout),
-		ExecutionTimeout:       defaultScheduledExecutionTimeout,
+		ExecutionTimeout:       durationFromSeconds(adminRuntime.ExecutionTimeoutSeconds, defaultScheduledExecutionTimeout),
 		JobTypeMaxRuntime:      durationFromSeconds(adminRuntime.JobTypeMaxRuntimeSeconds, defaultScheduledJobTypeMaxRuntime),
 		RetryBackoff:           durationFromSeconds(adminRuntime.RetryBackoffSeconds, defaultScheduledRetryBackoff),
 		MaxResults:             adminRuntime.MaxJobsPerDetection,
@@ -503,12 +503,9 @@ func (r *Plugin) loadSchedulerPolicy(jobType string) (schedulerPolicy, bool, err
 		policy.JobTypeMaxRuntime = defaultScheduledJobTypeMaxRuntime
 	}
 
-	// Plugin protocol currently has only detection timeout in admin settings.
-	execTimeout := time.Duration(adminRuntime.DetectionTimeoutSeconds*2) * time.Second
-	if execTimeout < defaultScheduledExecutionTimeout {
-		execTimeout = defaultScheduledExecutionTimeout
+	if policy.ExecutionTimeout < defaultScheduledExecutionTimeout {
+		policy.ExecutionTimeout = defaultScheduledExecutionTimeout
 	}
-	policy.ExecutionTimeout = execTimeout
 
 	return policy, true, nil
 }
@@ -628,6 +625,7 @@ func deriveSchedulerAdminRuntime(
 		RetryLimit:                    defaults.RetryLimit,
 		RetryBackoffSeconds:           defaults.RetryBackoffSeconds,
 		JobTypeMaxRuntimeSeconds:      defaults.JobTypeMaxRuntimeSeconds,
+		ExecutionTimeoutSeconds:       defaults.ExecutionTimeoutSeconds,
 	}
 }
 

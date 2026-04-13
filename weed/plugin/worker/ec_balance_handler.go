@@ -167,6 +167,7 @@ func (h *ECBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           30,
 			JobTypeMaxRuntimeSeconds:      1800,
+			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold": {Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.2}},
@@ -456,6 +457,12 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 		summary = fmt.Sprintf("Move EC shard of volume %d: %s → %s", result.VolumeID, sourceNode, targetNode)
 	}
 
+	// EC shard moves only relocate one shard (1/14 of the volume). Budget
+	// 5 min/GB of full volume size, which conservatively covers the shard
+	// transfer plus mount/registration overhead.
+	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
+	estimatedRuntimeSeconds := volumeSizeGB * 5 * 60
+
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
@@ -478,6 +485,9 @@ func buildECBalanceProposal(result *workertypes.TaskDetectionResult) (*plugin_pb
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},
+			},
+			"estimated_runtime_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 			},
 		},
 		Labels: map[string]string{

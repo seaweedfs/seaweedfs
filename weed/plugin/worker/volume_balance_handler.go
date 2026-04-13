@@ -246,6 +246,7 @@ func (h *VolumeBalanceHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           15,
 			JobTypeMaxRuntimeSeconds:      1800,
+			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"imbalance_threshold": {
@@ -1160,6 +1161,12 @@ func buildVolumeBalanceProposal(
 		summary = fmt.Sprintf("Move volume %d from %s to %s", result.VolumeID, sourceNode, targetNode)
 	}
 
+	// Estimate runtime at 5 min/GB (matches vacuum) so the scheduler grants
+	// a per-attempt deadline that scales with volume size instead of the
+	// 2*DetectionTimeout default.
+	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
+	estimatedRuntimeSeconds := volumeSizeGB * 5 * 60
+
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
@@ -1182,6 +1189,9 @@ func buildVolumeBalanceProposal(
 			},
 			"collection": {
 				Kind: &plugin_pb.ConfigValue_StringValue{StringValue: result.Collection},
+			},
+			"estimated_runtime_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 			},
 		},
 		Labels: map[string]string{
@@ -1311,6 +1321,27 @@ func buildBatchVolumeBalanceProposals(
 			continue
 		}
 
+		// Estimate runtime so the scheduler grants a per-attempt deadline
+		// large enough for the whole batch. Mirrors vacuum's 5 min/GB budget.
+		// Use max(largest single move, total / concurrency) so a skewed batch
+		// with one big move isn't underestimated by the average.
+		var totalSeconds, maxMoveSeconds int64
+		for _, m := range moves {
+			gb := int64(m.VolumeSize/1024/1024/1024) + 1
+			s := gb * 5 * 60
+			totalSeconds += s
+			if s > maxMoveSeconds {
+				maxMoveSeconds = s
+			}
+		}
+		estimatedRuntimeSeconds := totalSeconds / int64(maxConcurrentMoves)
+		if maxMoveSeconds > estimatedRuntimeSeconds {
+			estimatedRuntimeSeconds = maxMoveSeconds
+		}
+		if minBudget := int64(len(moves)) * 60; estimatedRuntimeSeconds < minBudget {
+			estimatedRuntimeSeconds = minBudget
+		}
+
 		proposalID := fmt.Sprintf("volume-balance-batch-%d-%d", batchStart, time.Now().UnixNano())
 		summary := fmt.Sprintf("Batch balance %d volumes (%s)", len(moves), strings.Join(volumeIDs, ","))
 		if len(summary) > maxProposalStringLength {
@@ -1340,6 +1371,9 @@ func buildBatchVolumeBalanceProposals(
 				},
 				"batch_size": {
 					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(moves))},
+				},
+				"estimated_runtime_seconds": {
+					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 				},
 			},
 			Labels: map[string]string{

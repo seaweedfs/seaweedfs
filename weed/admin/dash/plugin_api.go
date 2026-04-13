@@ -916,6 +916,9 @@ func applyDescriptorDefaultsToPersistedConfig(
 		if runtime.JobTypeMaxRuntimeSeconds <= 0 {
 			runtime.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
 		}
+		if runtime.ExecutionTimeoutSeconds <= 0 {
+			runtime.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
+		}
 		if runtime.RetryBackoffSeconds <= 0 {
 			runtime.RetryBackoffSeconds = defaults.RetryBackoffSeconds
 		}

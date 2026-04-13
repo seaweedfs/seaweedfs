@@ -123,6 +123,7 @@ func (h *AdminScriptHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    0,
 			RetryBackoffSeconds:           30,
 			JobTypeMaxRuntimeSeconds:      1800,
+			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{},
 	}

@@ -166,6 +166,7 @@ func (h *ErasureCodingHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 			RetryLimit:                    1,
 			RetryBackoffSeconds:           30,
 			JobTypeMaxRuntimeSeconds:      1800,
+			ExecutionTimeoutSeconds:       1800,
 		},
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"quiet_for_seconds": {
@@ -634,6 +635,12 @@ func buildErasureCodingProposal(
 		summary = fmt.Sprintf("Erasure code volume %d from %s", result.VolumeID, sourceNode)
 	}
 
+	// EC encoding reads the full volume, computes shards, and writes 14
+	// shards out to target nodes. Budget 10 min/GB (roughly 2x a plain copy)
+	// so the scheduler grants a deadline scaled to volume size.
+	volumeSizeGB := int64(result.TypedParams.VolumeSize/1024/1024/1024) + 1
+	estimatedRuntimeSeconds := volumeSizeGB * 10 * 60
+
 	return &plugin_pb.JobProposal{
 		ProposalId: proposalID,
 		DedupeKey:  dedupeKey,
@@ -656,6 +663,9 @@ func buildErasureCodingProposal(
 			},
 			"target_count": {
 				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(len(params.Targets))},
+			},
+			"estimated_runtime_seconds": {
+				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: estimatedRuntimeSeconds},
 			},
 		},
 		Labels: map[string]string{
