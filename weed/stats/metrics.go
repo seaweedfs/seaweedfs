@@ -54,6 +54,14 @@ var (
 			Help:      "A metric with a constant '1' value labeled by version, commit, sizelimit, goos, and goarch from which SeaweedFS was built.",
 		}, []string{"version", "commit", "sizelimit", "goos", "goarch"})
 
+	MasterStartTimeSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "master",
+			Name:      "start_time_seconds",
+			Help:      "Start time of the master, as seconds since UNIX epoch.",
+		})
+
 	MasterClientConnectCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -215,6 +223,14 @@ var (
 			Name:      "sync_offset",
 			Help:      "The offset of the filer synchronization service.",
 		}, []string{"sourceFiler", "targetFiler", "clientName", "path"})
+
+	VolumeServerStartTimeSeconds = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "start_time_seconds",
+			Help:      "Start time of the volume server, as seconds since UNIX epoch.",
+		})
 
 	VolumeServerRequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -470,6 +486,7 @@ var (
 func init() {
 	Gather.MustRegister(BuildInfo)
 
+	Gather.MustRegister(MasterStartTimeSeconds)
 	Gather.MustRegister(MasterClientConnectCounter)
 	Gather.MustRegister(MasterRaftIsleader)
 	Gather.MustRegister(MasterAdminLock)
@@ -494,6 +511,7 @@ func init() {
 	Gather.MustRegister(collectors.NewGoCollector())
 	Gather.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 
+	Gather.MustRegister(VolumeServerStartTimeSeconds)
 	Gather.MustRegister(VolumeServerRequestCounter)
 	Gather.MustRegister(VolumeServerHandlerCounter)
 	Gather.MustRegister(VolumeServerRequestHistogram)
