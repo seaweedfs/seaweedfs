@@ -142,50 +142,115 @@ works in a scenario YAML.
 
 ---
 
-### P1: Structured Results + Trend Tracking
+### P1: Result Index + History (text-db)
 
-**Goal**: Persist results in a queryable format. Detect performance
-regressions automatically.
+**Goal**: Index all run bundles in a lightweight text database. Support
+listing, searching, comparing, and cleaning up old runs.
 
-**Why P1**: Without history, we can't tell if a code change degraded
-performance. Each run is ephemeral.
+**Why P1**: Runs accumulate as directories on the test node. Without an
+index, you can't find old results, compare trends, or clean up disk space.
 
-**Design**:
+**What already exists** (RunBundle system):
 
 ```
 results/
-  index.json                    ← append-only run index
-  runs/
-    20260411-140236/
-      meta.json                 ← scenario, binary, topology, timestamp
-      metrics.json              ← {iops_write: 46666, iops_read: 61800, ...}
-      phases.json               ← per-phase timing and pass/fail
-      artifacts/                ← logs, core dumps on failure
-  baselines/
-    rf1-perf.json               ← rolling baseline: mean, stddev, threshold
+  20260409-175214-d099/           ← one dir per run (timestamp-based)
+    manifest.json                 ← run identity: scenario, git SHA, binary hash
+    scenario.yaml                 ← frozen copy of input YAML
+    result.json                   ← full structured result (phases, actions, vars)
+    result.xml                    ← JUnit XML
+    result.html                   ← HTML report
+    artifacts/                    ← collected logs on failure
+  20260410-012330-5d99/
+    ...
 ```
 
-**New capabilities**:
+Each run is self-contained. manifest.json has: run_id, scenario_name,
+scenario_sha256, git_sha, host, status, command_line, started_at, finished_at.
 
-| Feature | Description | Est. lines |
-|---------|-------------|-----------|
-| `metrics.json` writer | Extract metrics from fio/dd results, write structured JSON | 80 |
-| `index.json` updater | Append each run to index with scenario/binary/timestamp | 40 |
-| Baseline comparator | Compare latest metrics against baseline, flag regressions | 100 |
-| `sw-test-runner trend` | CLI command to show metric trend over last N runs | 80 |
-| Total | | ~300 |
+**What's missing**: an index across runs.
 
-**Regression detection rule**:
+**Design**: Add a `runs.db` text file (one JSON line per run) that acts
+as a lightweight index. No external database dependency.
 
 ```
-if latest.iops < baseline.mean - 2 * baseline.stddev:
-    WARN: performance regression detected
-    latest: 38,000 IOPS
-    baseline: 46,666 ± 1,200 IOPS (last 10 runs)
+results/
+  runs.db                         ← newline-delimited JSON (one line per run)
+  20260409-175214-d099/
+    manifest.json
+    result.json
+    ...
 ```
 
-**Acceptance**: After 5 runs of `rf1-perf-compare.yaml`, `sw-test-runner trend`
-shows IOPS over time and would flag a >5% regression.
+**runs.db format** (one JSON line per entry):
+
+```json
+{"run_id":"20260409-175214-d099","scenario":"v2-rebuild-rejoin","status":"pass","actions":58,"passed":58,"failed":0,"duration_ms":181795,"iops_write":46666,"iops_read":0,"git_sha":"8ecc50645","binary_md5":"4bcf08","started_at":"2026-04-09T17:52:14Z","dir":"20260409-175214-d099","disk_mb":12}
+{"run_id":"20260410-012330-5d99","scenario":"recovery-baseline-failover","status":"pass","actions":43,"passed":43,"failed":0,"duration_ms":111583,"iops_write":28733,"git_sha":"8ecc50645","binary_md5":"4bcf08","started_at":"2026-04-10T01:23:30Z","dir":"20260410-012330-5d99","disk_mb":8}
+```
+
+**New CLI commands**:
+
+```bash
+# List all runs, most recent first
+sw-test-runner list
+  RUN_ID                  SCENARIO                    STATUS  ACTIONS  IOPS_W   DURATION
+  20260411-140236-8012    dm-stripe-two-server        pass    42/42    79001    1m10s
+  20260410-012330-5d99    recovery-baseline-failover   pass    43/43    28733    1m52s
+  20260409-175214-d099    v2-rebuild-rejoin           pass    58/58    —        3m02s
+
+# Filter by scenario
+sw-test-runner list --scenario rebuild
+sw-test-runner list --status fail
+sw-test-runner list --since 2026-04-10
+
+# Show trend for a scenario
+sw-test-runner trend rf1-perf-compare
+  DATE        GIT_SHA     IOPS_WRITE  IOPS_READ   STATUS
+  2026-04-10  8ecc506     47233       —           pass (v1.5)
+  2026-04-10  8ecc506     46666       —           pass (v2)
+
+# Compare two runs
+sw-test-runner diff 20260410-run1 20260410-run2
+
+# Clean up old runs (keep last N per scenario)
+sw-test-runner gc --keep 10
+  Deleted 23 runs, freed 1.2 GB
+
+# Rebuild index from existing run directories
+sw-test-runner reindex
+  Scanned 45 run directories, indexed 45 entries
+```
+
+**New code**:
+
+| Component | Description | Est. lines |
+|-----------|-------------|-----------|
+| Index writer | Append one JSON line to runs.db after each run | 50 |
+| Index reader | Parse runs.db, filter/sort/search | 80 |
+| `list` command | Terminal table from index | 60 |
+| `trend` command | Filter by scenario, show metrics over time | 60 |
+| `gc` command | Delete old run dirs, update index | 50 |
+| `reindex` command | Scan run dirs, rebuild runs.db from manifest+result | 60 |
+| Disk size calculator | `du -s` each run dir, store in index | 20 |
+| Total | | ~380 |
+
+**Regression detection**:
+
+```
+sw-test-runner trend rf1-perf-compare --check
+  Latest: 46,666 IOPS
+  Baseline (last 10): 47,100 ± 800 IOPS
+  Status: OK (within 1 stddev)
+
+sw-test-runner trend rf1-perf-compare --check
+  Latest: 38,000 IOPS
+  Baseline (last 10): 47,100 ± 800 IOPS
+  Status: REGRESSION (-19.3%, > 2 stddev)
+```
+
+**Acceptance**: After 5 runs, `sw-test-runner list` shows all 5 with
+metrics. `sw-test-runner gc --keep 3` deletes the 2 oldest.
 
 ---
 
