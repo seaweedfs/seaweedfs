@@ -1344,7 +1344,10 @@ func buildBatchVolumeBalanceProposals(
 		if maxMoveSeconds > estimatedRuntimeSeconds {
 			estimatedRuntimeSeconds = maxMoveSeconds
 		}
-		if minBudget := int64(len(moves)) * 60; estimatedRuntimeSeconds < minBudget {
+		// Floor for orchestration overhead — scales per wave (one round of
+		// concurrent moves) rather than per move, since setup/teardown
+		// happens once per wave, not once per move.
+		if minBudget := numRounds * 60; estimatedRuntimeSeconds < minBudget {
 			estimatedRuntimeSeconds = minBudget
 		}
 
