@@ -692,8 +692,8 @@ github.com/antlr4-go/antlr/v4 v4.13.1/go.mod h1:GKmUxMtwp6ZgGwZSva4eWPC5mS6vUAmO
 github.com/apache/arrow-go/v18 v18.5.2-0.20260220015023-a886a5722b87 h1:r/gg2gzUXiXoy72VU3jnODh8l/5rL0aslnTAbtmai/U=
 github.com/apache/arrow-go/v18 v18.5.2-0.20260220015023-a886a5722b87/go.mod h1:IJTMBTlHe7cDOhRh0ioGuEKBl5iTR6xPfl5BN4AgirU=
 github.com/apache/arrow/go/v10 v10.0.1/go.mod h1:YvhnlEePVnBS4+0z3fhPfUy7W1Ikj0Ih0vcRo/gZ1M0=
-github.com/apache/cassandra-gocql-driver/v2 v2.0.0 h1:Omnzb1Z/P90Dr2TbVNu54ICQL7TKVIIsJO231w484HU=
-github.com/apache/cassandra-gocql-driver/v2 v2.0.0/go.mod h1:QH/asJjB3mHvY6Dot6ZKMMpTcOrWJ8i9GhsvG1g0PK4=
+github.com/apache/cassandra-gocql-driver/v2 v2.1.0 h1:VEbbeJ2ift4deKMZ6Fs55Vs3fq/RrkjCcxCnqUxhwf8=
+github.com/apache/cassandra-gocql-driver/v2 v2.1.0/go.mod h1:QH/asJjB3mHvY6Dot6ZKMMpTcOrWJ8i9GhsvG1g0PK4=
 github.com/apache/iceberg-go v0.5.0 h1:wQj4CK5YiXZcB+tj19gWG+Jf1I6MiORQ/StSL/E5gGQ=
 github.com/apache/iceberg-go v0.5.0/go.mod h1:F/rdP1yZmnO4mQ0Qew2HTGdc+ZV57cRfxbbq/uJm1eM=
 github.com/apache/thrift v0.16.0/go.mod h1:PHK3hniurgQaNMZYaCLEqXKsYK8upmhPbmdP2FXSqgU=
