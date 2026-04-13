@@ -145,6 +145,8 @@ message VolumeEcShardInformationMessage {
   uint64 expire_at_sec = 5; // used to record the destruction time of ec volume
   uint32 disk_id = 6;
   repeated int64 shard_sizes = 7; // optimized: sizes for shards in order of set bits in ec_index_bits
+  uint64 file_count = 8;   // live needles in the .ecx index (identical across nodes holding shards of this volume)
+  uint64 delete_count = 9; // tombstoned needles in the .ecx index
 }
 
 message StorageBackend {

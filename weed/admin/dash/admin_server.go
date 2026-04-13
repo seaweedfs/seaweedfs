@@ -1674,6 +1674,10 @@ type collectionStats struct {
 
 func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]collectionStats {
 	collectionMap := make(map[string]collectionStats)
+	// Every node that holds any shard of an EC volume reports the same
+	// (file_count, delete_count) for that volume, so the counts must be
+	// applied once per volume id rather than summed across nodes.
+	seenEcVolumes := make(map[uint32]struct{})
 	for _, dc := range topologyInfo.DataCenterInfos {
 		for _, rack := range dc.RackInfos {
 			for _, node := range rack.DataNodeInfos {
@@ -1708,6 +1712,12 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						data := collectionMap[collection]
 						data.PhysicalSize += int64(shards.TotalSize())
 						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
+						if _, seen := seenEcVolumes[ecShardInfo.Id]; !seen {
+							seenEcVolumes[ecShardInfo.Id] = struct{}{}
+							if ecShardInfo.FileCount >= ecShardInfo.DeleteCount {
+								data.FileCount += int64(ecShardInfo.FileCount - ecShardInfo.DeleteCount)
+							}
+						}
 						collectionMap[collection] = data
 					}
 				}

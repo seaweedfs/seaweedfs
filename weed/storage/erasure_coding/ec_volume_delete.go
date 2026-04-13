@@ -26,7 +26,7 @@ var (
 
 func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 
-	_, _, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
+	_, oldSize, err := SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, MarkNeedleDeleted)
 
 	if err != nil {
 		if err == NotFoundError {
@@ -34,6 +34,10 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		}
 		return err
 	}
+
+	ev.countsLock.Lock()
+	ev.recordDeleteLocked(!oldSize.IsDeleted())
+	ev.countsLock.Unlock()
 
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)

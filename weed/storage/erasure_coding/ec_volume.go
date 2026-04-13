@@ -43,6 +43,11 @@ type EcVolume struct {
 	datFileSize               int64
 	ExpireAtSec               uint64     //ec volume destroy time, calculated from the ec volume was created
 	ECContext                 *ECContext // EC encoding parameters
+
+	countsLock        sync.Mutex
+	countsInitialized bool
+	fileCount         uint64 // live needles in .ecx
+	deleteCount       uint64 // tombstoned needles in .ecx
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -254,6 +259,8 @@ func (ev *EcVolume) ShardIdList() (shardIds []ShardId) {
 func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages []*master_pb.VolumeEcShardInformationMessage) {
 	ecInfoPerVolume := map[needle.VolumeId]*master_pb.VolumeEcShardInformationMessage{}
 
+	fileCount, deleteCount := ev.FileAndDeleteCount()
+
 	for _, s := range ev.Shards {
 		m, ok := ecInfoPerVolume[s.VolumeId]
 		if !ok {
@@ -263,6 +270,8 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 				DiskType:    string(ev.diskType),
 				ExpireAtSec: ev.ExpireAtSec,
 				DiskId:      diskId,
+				FileCount:   fileCount,
+				DeleteCount: deleteCount,
 			}
 			ecInfoPerVolume[s.VolumeId] = m
 		}
@@ -278,6 +287,53 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 		messages = append(messages, m)
 	}
 	return
+}
+
+// FileAndDeleteCount returns the number of live and tombstoned needles in
+// the .ecx index, computing them on first call and caching thereafter.
+// Deletions performed via DeleteNeedleFromEcx keep the cache in sync.
+func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
+	ev.countsLock.Lock()
+	defer ev.countsLock.Unlock()
+	if !ev.countsInitialized {
+		ev.initCountsLocked()
+	}
+	return ev.fileCount, ev.deleteCount
+}
+
+// initCountsLocked walks the .ecx index once to seed fileCount and deleteCount.
+// Must be called with countsLock held.
+func (ev *EcVolume) initCountsLocked() {
+	ev.countsInitialized = true
+	ev.fileCount = 0
+	ev.deleteCount = 0
+	if ev.ecxFile == nil {
+		return
+	}
+	if err := ev.WalkIndex(func(key types.NeedleId, offset types.Offset, size types.Size) error {
+		if size.IsDeleted() {
+			ev.deleteCount++
+		} else {
+			ev.fileCount++
+		}
+		return nil
+	}); err != nil {
+		glog.Warningf("ec volume %d: walk .ecx for counts: %v", ev.VolumeId, err)
+	}
+}
+
+// recordDeleteLocked updates cached counts when a needle is marked deleted.
+// Called with countsLock held. wasLive indicates the pre-delete state.
+func (ev *EcVolume) recordDeleteLocked(wasLive bool) {
+	if !ev.countsInitialized {
+		return
+	}
+	if wasLive {
+		if ev.fileCount > 0 {
+			ev.fileCount--
+		}
+		ev.deleteCount++
+	}
 }
 
 func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size types.Size, intervals []Interval, err error) {
