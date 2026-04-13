@@ -607,6 +607,37 @@ func deriveSchedulerAdminRuntime(
 ) *plugin_pb.AdminRuntimeConfig {
 	if cfg != nil && cfg.AdminRuntime != nil {
 		adminConfig := *cfg.AdminRuntime
+		// Overlay descriptor defaults for any zero numeric fields. Persisted
+		// configs from older versions have no execution_timeout_seconds, and
+		// without this overlay the scheduler would fall back to the 90s
+		// default instead of the handler's declared baseline.
+		if descriptor != nil && descriptor.AdminRuntimeDefaults != nil {
+			defaults := descriptor.AdminRuntimeDefaults
+			if adminConfig.DetectionIntervalSeconds <= 0 {
+				adminConfig.DetectionIntervalSeconds = defaults.DetectionIntervalSeconds
+			}
+			if adminConfig.DetectionTimeoutSeconds <= 0 {
+				adminConfig.DetectionTimeoutSeconds = defaults.DetectionTimeoutSeconds
+			}
+			if adminConfig.MaxJobsPerDetection <= 0 {
+				adminConfig.MaxJobsPerDetection = defaults.MaxJobsPerDetection
+			}
+			if adminConfig.GlobalExecutionConcurrency <= 0 {
+				adminConfig.GlobalExecutionConcurrency = defaults.GlobalExecutionConcurrency
+			}
+			if adminConfig.PerWorkerExecutionConcurrency <= 0 {
+				adminConfig.PerWorkerExecutionConcurrency = defaults.PerWorkerExecutionConcurrency
+			}
+			if adminConfig.RetryBackoffSeconds <= 0 {
+				adminConfig.RetryBackoffSeconds = defaults.RetryBackoffSeconds
+			}
+			if adminConfig.JobTypeMaxRuntimeSeconds <= 0 {
+				adminConfig.JobTypeMaxRuntimeSeconds = defaults.JobTypeMaxRuntimeSeconds
+			}
+			if adminConfig.ExecutionTimeoutSeconds <= 0 {
+				adminConfig.ExecutionTimeoutSeconds = defaults.ExecutionTimeoutSeconds
+			}
+		}
 		return &adminConfig
 	}
 

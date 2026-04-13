@@ -452,6 +452,13 @@ func (s *AdminServer) UpdatePluginJobTypeConfigAPI(w http.ResponseWriter, r *htt
 	}
 	config.UpdatedBy = username
 
+	// Reapply descriptor defaults so a save from an older form (or a UI
+	// that omits new fields) cannot silently clear a baseline like
+	// execution_timeout_seconds back to zero.
+	if descriptor, err := s.LoadPluginJobTypeDescriptor(jobType); err == nil && descriptor != nil {
+		applyDescriptorDefaultsToPersistedConfig(config, descriptor)
+	}
+
 	if err := s.SavePluginJobTypeConfig(config); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, err.Error())
 		return
