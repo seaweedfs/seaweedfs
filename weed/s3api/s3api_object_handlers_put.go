@@ -891,29 +891,27 @@ var checksumHeaders = []struct {
 	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 }
 
-// getHeaderOrQuery returns the value of an x-amz-* parameter, falling back to
-// the request's query string if the header is absent. AWS SDK presigners
-// hoist headers such as x-amz-sdk-checksum-algorithm into the query string
-// when generating presigned URLs, so the server must accept either location.
+// lookupHeaderOrQuery returns the value of an x-amz-* parameter, checking the
+// request headers first and falling back to the pre-parsed query values. AWS
+// SDK presigners hoist headers such as x-amz-sdk-checksum-algorithm into the
+// signed URL's query string, so the server must accept either location.
 // Query parameter lookup is case-insensitive to tolerate SDK/canonicalization
 // variations.
-func getHeaderOrQuery(r *http.Request, key string) string {
+func lookupHeaderOrQuery(r *http.Request, query url.Values, key string) string {
 	if v := r.Header.Get(key); v != "" {
 		return v
 	}
-	if r.URL == nil {
+	if len(query) == 0 {
 		return ""
 	}
-	q := r.URL.Query()
-	if v := q.Get(key); v != "" {
+	if v := query.Get(key); v != "" {
 		return v
 	}
-	lower := strings.ToLower(key)
-	for k, vs := range q {
+	for k, vs := range query {
 		if len(vs) == 0 || vs[0] == "" {
 			continue
 		}
-		if strings.EqualFold(k, key) || strings.ToLower(k) == lower {
+		if strings.EqualFold(k, key) {
 			return vs[0]
 		}
 	}
@@ -928,8 +926,17 @@ func getHeaderOrQuery(r *http.Request, key string) string {
 // enum, the canonical HTTP header name, and an error code if an unsupported algorithm is
 // specified.
 func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
+	// Parse the query string once — AWS SDK presigners hoist signed headers such as
+	// x-amz-sdk-checksum-algorithm into the query, so every header lookup below also
+	// needs to consult the query. url.Values() is only parsed when the raw query is
+	// non-empty so non-presigned requests do not pay for an unused map allocation.
+	var query url.Values
+	if r.URL != nil && r.URL.RawQuery != "" {
+		query = r.URL.Query()
+	}
+
 	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs; hoisted to query for presigned URLs)
-	if algo := getHeaderOrQuery(r, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
+	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
 			return m.alg, m.name, s3err.ErrNone
 		}
@@ -938,7 +945,7 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 	}
 
 	// Check x-amz-checksum-algorithm header (also accept from query for presigned URLs)
-	if algo := getHeaderOrQuery(r, s3_constants.AmzChecksumAlgorithm); algo != "" {
+	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
 			return m.alg, m.name, s3err.ErrNone
 		}
@@ -964,12 +971,24 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 	// presigned URLs may hoist them to the query string)
 	// Uses ordered slice for deterministic selection
 	for _, entry := range checksumHeaders {
-		if getHeaderOrQuery(r, entry.header) != "" {
+		if lookupHeaderOrQuery(r, query, entry.header) != "" {
 			return entry.alg, entry.name, s3err.ErrNone
 		}
 	}
 
 	return ChecksumAlgorithmNone, "", s3err.ErrNone
+}
+
+// getHeaderOrQuery is a convenience wrapper used outside the hot path. It
+// fetches the value of an x-amz-* parameter, falling back to the query string
+// for presigned URLs. Prefer lookupHeaderOrQuery with a pre-parsed url.Values
+// when doing multiple lookups on the same request.
+func getHeaderOrQuery(r *http.Request, key string) string {
+	var query url.Values
+	if r.URL != nil && r.URL.RawQuery != "" {
+		query = r.URL.Query()
+	}
+	return lookupHeaderOrQuery(r, query, key)
 }
 
 const defaultFileMode = uint32(0660)
