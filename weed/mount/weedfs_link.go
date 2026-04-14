@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"syscall"
 	"time"
@@ -185,7 +186,12 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 		if err != nil || sibling == nil {
 			continue
 		}
-		if len(sibling.HardLinkId) == 0 {
+		// Only touch siblings that genuinely share the same hard-link id.
+		// inodeToPath's shared-inode invariant should already guarantee
+		// this, but a mismatch can occur transiently (e.g. a rename
+		// replaced one of the paths), and blindly stamping an unrelated
+		// entry's counter would corrupt it.
+		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
 			continue
 		}
 		sibling.HardLinkCounter = authoritativeEntry.HardLinkCounter
