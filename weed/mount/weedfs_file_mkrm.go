@@ -248,7 +248,26 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 	wfs.touchDirMtimeCtimeBest(dirFullPath)
 
-	wfs.inodeToPath.RemovePath(entryFullPath)
+	// For hard-linked files, the filer's DeleteHardLink decremented the
+	// shared blob, but the sibling link entries in the local metacache
+	// still carry the pre-unlink HardLinkCounter, and the kernel has
+	// cached attrs on the shared inode. Propagate the decrement to every
+	// sibling cache entry and invalidate the kernel attr cache so
+	// subsequent lstats on other links see the new nlink — pjdfstest
+	// link/00.t asserts this after `unlink n0` leaves n1/n2 behind.
+	if entry != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1 {
+		decremented := proto.Clone(entry).(*filer_pb.Entry)
+		decremented.HardLinkCounter = entry.HardLinkCounter - 1
+		if decremented.Attributes != nil {
+			now := time.Now()
+			decremented.Attributes.Ctime = now.Unix()
+			decremented.Attributes.CtimeNs = int32(now.Nanosecond())
+		}
+		wfs.inodeToPath.RemovePath(entryFullPath)
+		wfs.syncHardLinkSiblings(entry.Attributes.Inode, decremented, entryFullPath)
+	} else {
+		wfs.inodeToPath.RemovePath(entryFullPath)
+	}
 
 	return fuse.OK
 
