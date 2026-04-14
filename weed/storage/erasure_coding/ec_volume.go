@@ -315,15 +315,11 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 //
 // Computing from file sizes keeps heartbeats O(1); no index walk needed.
 func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
-	if types.NeedleMapEntrySize > 0 {
-		fileCount = uint64(ev.ecxFileSize) / uint64(types.NeedleMapEntrySize)
-	}
+	fileCount = uint64(ev.ecxFileSize) / uint64(types.NeedleMapEntrySize)
 	ev.ecjFileAccessLock.Lock()
 	ecjSize := ev.ecjFileSize
 	ev.ecjFileAccessLock.Unlock()
-	if types.NeedleIdSize > 0 {
-		deleteCount = uint64(ecjSize) / uint64(types.NeedleIdSize)
-	}
+	deleteCount = uint64(ecjSize) / uint64(types.NeedleIdSize)
 	return
 }
 

@@ -14,6 +14,18 @@ use crate::storage::erasure_coding::ec_shard::*;
 use crate::storage::needle::needle::{get_actual_size, Needle};
 use crate::storage::types::*;
 
+/// Three-way outcome of a .ecx tombstone attempt. See
+/// [`EcVolume::mark_needle_deleted_in_ecx`].
+#[derive(Debug, PartialEq, Eq)]
+enum DeleteOutcome {
+    /// Needle id is not present in this volume's .ecx index.
+    NotFound,
+    /// Needle exists but was already tombstoned before this call.
+    AlreadyDeleted,
+    /// Needle was live and has now been tombstoned.
+    Tombstoned,
+}
+
 /// An erasure-coded volume managing its local shards and index.
 pub struct EcVolume {
     pub volume_id: VolumeId,
@@ -28,6 +40,12 @@ pub struct EcVolume {
     ecx_file: Option<File>,
     ecx_file_size: i64,
     ecj_file: Option<File>,
+    /// On-disk size of the .ecj deletion journal. File and delete counts
+    /// reported in heartbeats are derived directly from .ecx/.ecj file sizes
+    /// (see `file_and_delete_count`) — each .ecx entry is NEEDLE_MAP_ENTRY_SIZE
+    /// bytes and each .ecj entry is NEEDLE_ID_SIZE bytes — so heartbeats are
+    /// O(1) and never walk the index. Mirrors Go's `ecjFileSize`.
+    ecj_file_size: i64,
     pub disk_type: DiskType,
     /// Directory where .ecx/.ecj were actually found (may differ from dir_idx after fallback).
     ecx_actual_dir: String,
@@ -112,6 +130,7 @@ impl EcVolume {
             ecx_file: None,
             ecx_file_size: 0,
             ecj_file: None,
+            ecj_file_size: 0,
             disk_type: DiskType::default(),
             ecx_actual_dir: dir_idx.to_string(),
             shard_locations: HashMap::new(),
@@ -141,10 +160,12 @@ impl EcVolume {
             }
         }
 
-        // Replay .ecj journal into .ecx on startup (matches Go's RebuildEcxFile).
-        vol.rebuild_ecx_from_journal()?;
-
-        // Open .ecj file (deletion journal) — use ecx_actual_dir for consistency
+        // Open .ecj file (deletion journal) — use ecx_actual_dir for consistency.
+        // Note: Go does NOT replay .ecj into .ecx at volume load (RebuildEcxFile
+        // is only invoked from specific decode/rebuild gRPC handlers), so we
+        // don't either. Tombstones from prior sessions were already written
+        // in-place in .ecx, and the journal grows monotonically until a
+        // decode/rebuild operation folds it in.
         let ecj_base =
             crate::storage::volume::volume_file_name(&vol.ecx_actual_dir, collection, volume_id);
         let ecj_path = format!("{}.ecj", ecj_base);
@@ -154,9 +175,27 @@ impl EcVolume {
             .create(true)
             .append(true)
             .open(&ecj_path)?;
+        vol.ecj_file_size = ecj_file.metadata()?.len() as i64;
         vol.ecj_file = Some(ecj_file);
 
         Ok(vol)
+    }
+
+    /// Returns (file_count, delete_count) derived in O(1) from the on-disk
+    /// index sizes. Mirrors Go's `EcVolume.FileAndDeleteCount`:
+    ///
+    ///   file_count   = ecx_file_size / NEEDLE_MAP_ENTRY_SIZE  (total entries
+    ///                  recorded in .ecx — sealed at encode time)
+    ///   delete_count = ecj_file_size / NEEDLE_ID_SIZE         (node-local
+    ///                  tombstones in the deletion journal)
+    ///
+    /// Because each needle delete is applied on exactly one shard holder,
+    /// the admin aggregation sums delete_count across nodes while taking
+    /// file_count from a single holder (they are identical per volume).
+    pub fn file_and_delete_count(&self) -> (u64, u64) {
+        let file_count = (self.ecx_file_size as u64) / (NEEDLE_MAP_ENTRY_SIZE as u64);
+        let delete_count = (self.ecj_file_size as u64) / (NEEDLE_ID_SIZE as u64);
+        (file_count, delete_count)
     }
 
     // ---- File names ----
@@ -255,6 +294,8 @@ impl EcVolume {
             return Vec::new();
         }
 
+        let (file_count, delete_count) = self.file_and_delete_count();
+
         vec![master_pb::VolumeEcShardInformationMessage {
             id: self.volume_id.0,
             collection: self.collection.clone(),
@@ -263,6 +304,8 @@ impl EcVolume {
             disk_type: self.disk_type.to_string(),
             expire_at_sec: self.expire_at_sec,
             disk_id,
+            file_count,
+            delete_count,
             ..Default::default()
         }]
     }
@@ -573,15 +616,24 @@ impl EcVolume {
     /// Mark a needle as deleted in the .ecx file in-place.
     /// Matches Go's MarkNeedleDeleted: binary search the .ecx, then overwrite
     /// the size field with TOMBSTONE_FILE_SIZE.
-    fn mark_needle_deleted_in_ecx(&self, needle_id: NeedleId) -> io::Result<bool> {
+    /// Outcome of a tombstone attempt in .ecx.
+    ///
+    ///   `NotFound`       — needle is not in this volume's .ecx.
+    ///   `AlreadyDeleted` — entry exists but its size is already TOMBSTONE.
+    ///   `Tombstoned`     — entry was live and has now been marked deleted.
+    ///
+    /// Mirrors the three-way outcome of Go's `DeleteNeedleFromEcx`, which
+    /// skips the .ecj append when the entry was already tombstoned so that
+    /// the derived `delete_count` stays idempotent on repeat deletes.
+    fn mark_needle_deleted_in_ecx(&self, needle_id: NeedleId) -> io::Result<DeleteOutcome> {
         let ecx_file = match self.ecx_file.as_ref() {
             Some(f) => f,
-            None => return Ok(false),
+            None => return Ok(DeleteOutcome::NotFound),
         };
 
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
         if entry_count == 0 {
-            return Ok(false);
+            return Ok(DeleteOutcome::NotFound);
         }
 
         // Binary search for the needle
@@ -599,9 +651,11 @@ impl EcVolume {
                 ecx_file.read_exact_at(&mut entry_buf, file_offset)?;
             }
 
-            let (key, _offset, _size) = idx_entry_from_bytes(&entry_buf);
+            let (key, _offset, old_size) = idx_entry_from_bytes(&entry_buf);
             if key == needle_id {
-                // Found — overwrite the size field with TOMBSTONE_FILE_SIZE
+                if old_size.is_deleted() {
+                    return Ok(DeleteOutcome::AlreadyDeleted);
+                }
                 let size_offset = file_offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64;
                 let mut size_buf = [0u8; SIZE_SIZE];
                 TOMBSTONE_FILE_SIZE.to_bytes(&mut size_buf);
@@ -610,7 +664,7 @@ impl EcVolume {
                     use std::os::unix::fs::FileExt;
                     ecx_file.write_all_at(&size_buf, size_offset)?;
                 }
-                return Ok(true);
+                return Ok(DeleteOutcome::Tombstoned);
             } else if key < needle_id {
                 lo = mid + 1;
             } else {
@@ -618,12 +672,14 @@ impl EcVolume {
             }
         }
 
-        Ok(false) // not found
+        Ok(DeleteOutcome::NotFound)
     }
 
-    /// Replay .ecj journal entries into .ecx on startup.
-    /// Matches Go's RebuildEcxFile: for each needle ID in .ecj, marks it
-    /// deleted in .ecx, then removes the .ecj file.
+    /// Replay .ecj journal entries into .ecx: for each needle id in .ecj,
+    /// mark it deleted in .ecx, then remove the journal file. Mirrors Go's
+    /// `RebuildEcxFile`, which is invoked from specific decode / rebuild
+    /// gRPC handlers — it is intentionally **not** called on volume load.
+    #[allow(dead_code)]
     fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
         if !std::path::Path::new(&ecj_path).exists() {
@@ -663,11 +719,17 @@ impl EcVolume {
 
     // ---- Deletion journal ----
 
-    /// Append a deleted needle ID to the .ecj journal and mark in .ecx.
-    /// Matches Go's DeleteNeedleFromEcx: marks in .ecx first, then journals.
+    /// Append a deleted needle ID to the .ecj journal and mark it deleted in
+    /// .ecx. Matches Go's DeleteNeedleFromEcx: the .ecj write is skipped if
+    /// the needle is missing or was already tombstoned, so the derived
+    /// `delete_count` (ecj_file_size / NEEDLE_ID_SIZE) stays idempotent on
+    /// repeat deletes and only advances on real live->tombstone transitions.
     pub fn journal_delete(&mut self, needle_id: NeedleId) -> io::Result<()> {
-        // Mark deleted in .ecx in-place (matches Go's MarkNeedleDeleted)
-        let _ = self.mark_needle_deleted_in_ecx(needle_id);
+        let outcome = self.mark_needle_deleted_in_ecx(needle_id)?;
+        if outcome != DeleteOutcome::Tombstoned {
+            return Ok(());
+        }
+
         let ecj_file = self
             .ecj_file
             .as_mut()
@@ -677,6 +739,7 @@ impl EcVolume {
         needle_id.to_bytes(&mut buf);
         ecj_file.write_all(&buf)?;
         ecj_file.sync_all()?;
+        self.ecj_file_size += NEEDLE_ID_SIZE as i64;
         Ok(())
     }
 
@@ -859,16 +922,33 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let dir = tmp.path().to_str().unwrap();
 
-        // Need ecx file for EcVolume::new to succeed
-        write_ecx_file(dir, "", VolumeId(1), &[]);
+        // .ecj append is gated on a live->tombstone transition in .ecx, so
+        // the fixture must contain the needles we are about to delete.
+        let entries = vec![
+            (NeedleId(10), Offset::from_actual_offset(8), Size(100)),
+            (NeedleId(20), Offset::from_actual_offset(200), Size(200)),
+        ];
+        write_ecx_file(dir, "", VolumeId(1), &entries);
 
         let mut vol = EcVolume::new(dir, dir, "", VolumeId(1)).unwrap();
+        let (fc0, dc0) = vol.file_and_delete_count();
+        assert_eq!((fc0, dc0), (2, 0));
 
         vol.journal_delete(NeedleId(10)).unwrap();
         vol.journal_delete(NeedleId(20)).unwrap();
 
         let deleted = vol.read_deleted_needles().unwrap();
         assert_eq!(deleted, vec![NeedleId(10), NeedleId(20)]);
+
+        let (fc, dc) = vol.file_and_delete_count();
+        assert_eq!((fc, dc), (2, 2));
+
+        // Idempotent re-delete must not bump delete_count.
+        vol.journal_delete(NeedleId(10)).unwrap();
+        // Deleting a missing needle must not bump delete_count either.
+        vol.journal_delete(NeedleId(999)).unwrap();
+        let (fc, dc) = vol.file_and_delete_count();
+        assert_eq!((fc, dc), (2, 2));
     }
 
     #[test]
