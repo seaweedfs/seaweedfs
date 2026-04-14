@@ -48,11 +48,33 @@ var defaultConfig = &s3TestConfig{
 	BucketPrefix: "test-checksum-",
 }
 
+func getenvAny(keys ...string) string {
+	for _, k := range keys {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func init() {
-	if v := os.Getenv("S3_ENDPOINT"); v != "" {
+	if v := getenvAny("S3_ENDPOINT"); v != "" {
 		defaultConfig.Endpoint = v
 	}
+	if v := getenvAny("S3_ACCESS_KEY", "AWS_ACCESS_KEY_ID"); v != "" {
+		defaultConfig.AccessKey = v
+	}
+	if v := getenvAny("S3_SECRET_KEY", "AWS_SECRET_ACCESS_KEY"); v != "" {
+		defaultConfig.SecretKey = v
+	}
+	if v := getenvAny("AWS_REGION", "AWS_DEFAULT_REGION"); v != "" {
+		defaultConfig.Region = v
+	}
 }
+
+// presignedHTTPClient is used for non-SDK PUTs to a presigned URL. A fixed
+// timeout keeps tests from hanging forever if the server stalls.
+var presignedHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
 func getS3Client(t *testing.T) *s3.Client {
 	cfg, err := config.LoadDefaultConfig(context.TODO(),
@@ -104,7 +126,7 @@ func uploadViaPresignedURL(t *testing.T, url string, body []byte) {
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.ContentLength = int64(len(body))
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := presignedHTTPClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(resp.Body)
