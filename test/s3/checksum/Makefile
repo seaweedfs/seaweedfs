@@ -51,6 +51,15 @@ start-server: check-deps
 		sleep 1; \
 	done; \
 	echo "❌ Server failed to start within 90 seconds"; \
+	if [ -f weed-server.pid ]; then \
+		PID=$$(cat weed-server.pid); \
+		if ps -p $$PID >/dev/null 2>&1; then \
+			kill -TERM $$PID 2>/dev/null || true; \
+			sleep 1; \
+			ps -p $$PID >/dev/null 2>&1 && kill -KILL $$PID 2>/dev/null || true; \
+		fi; \
+		rm -f weed-server.pid; \
+	fi; \
 	if [ -f weed-test.log ]; then tail -100 weed-test.log; fi; \
 	exit 1
 
@@ -68,7 +77,10 @@ stop-server:
 
 test: check-deps
 	@echo "Running checksum tests (pattern: $(TEST_PATTERN))..."
-	@go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
+	@S3_ENDPOINT=http://localhost:$(S3_PORT) \
+		S3_ACCESS_KEY=$(ACCESS_KEY) \
+		S3_SECRET_KEY=$(SECRET_KEY) \
+		go test -v -timeout=$(TEST_TIMEOUT) -run "$(TEST_PATTERN)" .
 
 test-with-server: start-server
 	@sleep 3
