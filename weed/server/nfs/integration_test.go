@@ -14,15 +14,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gonfs "github.com/willscott/go-nfs"
@@ -556,8 +559,18 @@ func TestSeaweedNFSServesLargeChunkRoundTripOverRPC(t *testing.T) {
 	volumeServer := newFakeVolumeServer(t)
 	controlPlane := &fakeVolumeControlPlane{host: volumeServer.host()}
 	controlPlaneAddr := startFakeVolumeControlPlane(t, controlPlane)
+	_, grpcPortString, err := net.SplitHostPort(controlPlaneAddr)
+	require.NoError(t, err)
+	grpcPort, err := strconv.Atoi(grpcPortString)
+	require.NoError(t, err)
 
 	server := newTestServer(t, "/exports", client)
+	server.option.Filer = pb.NewServerAddressWithGrpcPort(controlPlaneAddr, grpcPort)
+	server.option.GrpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	if server.filerClient != nil {
+		server.filerClient.Close()
+	}
+	server.filerClient = wdclient.NewFilerClient([]pb.ServerAddress{server.option.Filer}, server.option.GrpcDialOption, "")
 	server.withFilerClient = func(_ bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 		conn, err := grpc.NewClient(controlPlaneAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
@@ -572,7 +585,7 @@ func TestSeaweedNFSServesLargeChunkRoundTripOverRPC(t *testing.T) {
 	defer target.Close()
 
 	payload := make([]byte, maxInlineWriteSize+4096)
-	_, err := rand.New(rand.NewSource(1)).Read(payload)
+	_, err = rand.New(rand.NewSource(1)).Read(payload)
 	require.NoError(t, err)
 
 	file, err := target.OpenFile("/big.bin", 0o644)

@@ -33,6 +33,19 @@ var (
 	loadJwtConfigOnce        sync.Once
 )
 
+func AppendQueryParameter(rawURL, key, value string) string {
+	encoded := url.Values{key: []string{value}}.Encode()
+	switch {
+	case strings.Contains(rawURL, "?"):
+		if strings.HasSuffix(rawURL, "?") || strings.HasSuffix(rawURL, "&") {
+			return rawURL + encoded
+		}
+		return rawURL + "&" + encoded
+	default:
+		return rawURL + "?" + encoded
+	}
+}
+
 func loadJwtConfig() {
 	v := util.GetViper()
 	jwtSigningReadKey = security.SigningKey(v.GetString("jwt.signing.read.key"))
@@ -545,7 +558,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				// Check for context cancellation during data processing
 				select {
 				case <-ctx.Done():
@@ -608,7 +621,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 			default:
 			}
 
-			n, shouldRetry, err = readUrlDirectToBuffer(ctx, urlString+"?readDeleted=true", jwt, buffer)
+			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), jwt, buffer)
 			if err == nil {
 				return n, nil
 			}

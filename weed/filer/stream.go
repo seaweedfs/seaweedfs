@@ -487,7 +487,7 @@ func (c *ChunkStreamReader) fetchChunkToBuffer(chunkView *ChunkView) error {
 	var shouldRetry bool
 	jwt := JwtForVolumeServer(chunkView.FileId)
 	for _, urlString := range urlStrings {
-		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), urlString+"?readDeleted=true", jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
+		shouldRetry, err = util_http.ReadUrlAsStream(context.Background(), util_http.AppendQueryParameter(urlString, "readDeleted", "true"), jwt, chunkView.CipherKey, chunkView.IsGzipped, chunkView.IsFullChunk(), chunkView.OffsetInChunk, int(chunkView.ViewSize), func(data []byte) {
 			buffer.Write(data)
 		})
 		if !shouldRetry {

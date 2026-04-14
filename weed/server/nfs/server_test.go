@@ -6,7 +6,10 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gonfs "github.com/willscott/go-nfs"
@@ -718,6 +722,63 @@ func TestSeaweedFileSystemReadsInlineContent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 5, n)
 	assert.Equal(t, "hello", string(buf))
+}
+
+func TestSeaweedFileSystemReadsChunkThroughFilerProxy(t *testing.T) {
+	initIntegrationHTTPClient.Do(util_http.InitGlobalHttpClient)
+
+	payload := []byte("hello via filer proxy")
+	proxyRequests := 0
+	proxyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proxyRequests++
+		assert.Equal(t, "7,proxy", r.URL.Query().Get("proxyChunkId"))
+		_, _ = w.Write(payload)
+	}))
+	defer proxyServer.Close()
+
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+			string(filer.InodeIndexKey(202)): testIndexRecord(t, 202, 3, "/exports/proxy.txt"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": {
+				Name:        "exports",
+				IsDirectory: true,
+				Attributes: &filer_pb.FuseAttributes{
+					Inode:    101,
+					FileMode: uint32(0755),
+				},
+			},
+			"/exports/proxy.txt": {
+				Name: "proxy.txt",
+				Chunks: []*filer_pb.FileChunk{
+					{FileId: "7,proxy", Size: uint64(len(payload))},
+				},
+				Attributes: &filer_pb.FuseAttributes{
+					Inode:    202,
+					FileMode: uint32(0644),
+					FileSize: uint64(len(payload)),
+				},
+			},
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	server.option.VolumeServerAccess = "filerProxy"
+	server.option.Filer = pb.ServerAddress(strings.TrimPrefix(proxyServer.URL, "http://"))
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	file, err := handler.rootFS.Open("/proxy.txt")
+	require.NoError(t, err)
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	require.NoError(t, err)
+	assert.Equal(t, payload, data)
+	assert.Equal(t, 1, proxyRequests)
 }
 
 func TestSeaweedFileSystemReadDirAndFSStat(t *testing.T) {

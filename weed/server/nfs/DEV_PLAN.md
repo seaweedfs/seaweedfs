@@ -30,7 +30,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Add a minimal filer-backed read-only filesystem adapter for NFS
 - [x] Add filer-backed metadata mutations and small inline-content writes for the experimental NFS adapter
 - [ ] Extract shared read/write helpers from mount, WebDAV, and SFTP
-- [ ] Standardize direct-volume read mode vs filer-proxy mode
+- [x] Standardize direct-volume read mode vs filer-proxy mode
 - [ ] Reuse chunk cache and mutation stream helpers without FUSE dependencies
 
 ## Phase 3: NFS frontend
@@ -88,4 +88,5 @@ frontend can be credible:
 - hardlink/symlink protocol coverage and restart-safe handle tests
 - read-only export mode and client allowlist enforcement for `weed nfs`
 - shared reader-cache invalidation from filer metadata subscriptions
+- mount-style lookup routing for `direct`, `publicUrl`, and `filerProxy` chunk reads
 - explicit lock-protocol blocker documentation for the current `go-nfs` stack

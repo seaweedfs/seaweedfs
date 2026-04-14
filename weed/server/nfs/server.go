@@ -11,8 +11,10 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	gonfs "github.com/willscott/go-nfs"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type Option struct {
@@ -35,6 +37,7 @@ type Server struct {
 	clientAuthorizer   *clientAuthorizer
 	sharedReaderCache  *filer.ReaderCache
 	chunkInvalidator   chunkInvalidator
+	filerClient        *wdclient.FilerClient
 	newUploader        func() (chunkUploader, error)
 	withFilerClient    filerClientExecutor
 	withInternalClient internalClientExecutor
@@ -53,9 +56,20 @@ func NewServer(option *Option) (*Server, error) {
 	if option.VolumeServerAccess == "" {
 		option.VolumeServerAccess = "direct"
 	}
+	if option.GrpcDialOption == nil {
+		option.GrpcDialOption = grpc.WithTransportCredentials(insecure.NewCredentials())
+	}
 	clientAuthorizer, err := newClientAuthorizer(option.AllowedClients)
 	if err != nil {
 		return nil, err
+	}
+	var filerClient *wdclient.FilerClient
+	if option.VolumeServerAccess != "filerProxy" {
+		var opts *wdclient.FilerClientOption
+		if option.VolumeServerAccess == "publicUrl" {
+			opts = &wdclient.FilerClientOption{UrlPreference: wdclient.PreferPublicUrl}
+		}
+		filerClient = wdclient.NewFilerClient([]pb.ServerAddress{option.Filer}, option.GrpcDialOption, "", opts)
 	}
 	exportRoot := normalizeExportRoot(util.FullPath(option.FilerRootPath))
 	signature := util.RandomInt32()
@@ -66,6 +80,7 @@ func NewServer(option *Option) (*Server, error) {
 		signature:          signature,
 		handleLimit:        1 << 20,
 		clientAuthorizer:   clientAuthorizer,
+		filerClient:        filerClient,
 		newUploader:        newChunkUploader,
 		withFilerClient:    newFilerClientExecutor(option, signature),
 		withInternalClient: newInternalClientExecutor(option, signature),
@@ -82,6 +97,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) serve(listener net.Listener) error {
+	if s.filerClient != nil {
+		defer s.filerClient.Close()
+	}
 	if s.clientAuthorizer != nil && s.clientAuthorizer.enabled {
 		listener = &allowlistListener{
 			Listener:   listener,
@@ -141,4 +159,19 @@ func (s *Server) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFil
 		return errors.New("nfs filer client is not configured")
 	}
 	return s.withFilerClient(streamingMode, fn)
+}
+
+func (s *Server) LookupFn() wdclient.LookupFileIdFunctionType {
+	if s == nil {
+		return nil
+	}
+	if s.option != nil && s.option.VolumeServerAccess == "filerProxy" {
+		return func(ctx context.Context, fileID string) ([]string, error) {
+			return []string{fmt.Sprintf("http://%s/?proxyChunkId=%s", s.option.Filer.ToHttpAddress(), fileID)}, nil
+		}
+	}
+	if s.filerClient != nil {
+		return s.filerClient.GetLookupFileIdFunction()
+	}
+	return nil
 }

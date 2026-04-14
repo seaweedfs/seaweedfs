@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	"github.com/seaweedfs/seaweedfs/weed/wdclient"
 	gonfs "github.com/willscott/go-nfs"
 	gonfsfile "github.com/willscott/go-nfs/file"
 	"google.golang.org/protobuf/proto"
@@ -81,7 +82,7 @@ func newSeaweedFileSystem(server *Server, actualRoot util.FullPath, sharedReader
 	if sharedReaderCache != nil {
 		fs.readerCache = sharedReaderCache
 	} else {
-		fs.readerCache = filer.NewReaderCache(32, chunk_cache.ChunkCache(noopChunkCache{}), filer.LookupFn(fs))
+		fs.readerCache = filer.NewReaderCache(32, chunk_cache.ChunkCache(noopChunkCache{}), fs.LookupFn())
 	}
 	return fs
 }
@@ -480,6 +481,13 @@ func (fs *seaweedFileSystem) Root() string {
 
 func (fs *seaweedFileSystem) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
 	return fs.server.WithFilerClient(streamingMode, fn)
+}
+
+func (fs *seaweedFileSystem) LookupFn() wdclient.LookupFileIdFunctionType {
+	if fs == nil || fs.server == nil {
+		return nil
+	}
+	return fs.server.LookupFn()
 }
 
 func (fs *seaweedFileSystem) AdjustedUrl(location *filer_pb.Location) string {
@@ -1137,7 +1145,7 @@ func (f *seaweedFile) ReadAt(p []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 	if f.reader == nil {
-		visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), filer.LookupFn(f.fs), f.info.entry.GetChunks(), 0, fileSize)
+		visibleIntervals, err := filer.NonOverlappingVisibleIntervals(context.Background(), f.fs.LookupFn(), f.info.entry.GetChunks(), 0, fileSize)
 		if err != nil {
 			return 0, err
 		}
