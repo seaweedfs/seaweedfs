@@ -262,12 +262,18 @@ func TestVacuumIntegration(t *testing.T) {
 	// Wait for heartbeat to report deletions
 	time.Sleep(6 * time.Second)
 
-	// Verify garbage exists on at least one of the volumes we deleted from.
+	// Verify garbage exists on every volume we deleted from.
 	// Retry briefly in case heartbeats / deletions have not fully settled.
+	// We require all dirty volumes to report garbage > threshold so that
+	// the subsequent vacuum + cleanup check has a well-defined expectation
+	// for every volume, not just the first one that happens to be ready.
 	t.Run("verify_garbage_before_vacuum", func(t *testing.T) {
-		deadline := time.Now().Add(15 * time.Second)
+		deadline := time.Now().Add(20 * time.Second)
+		var lastMissing needle.VolumeId
 		for {
+			ready := true
 			for _, vid := range dirtyVolumes {
+				volumeReady := false
 				for _, addr := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
 					ratio, err := getGarbageRatio(addr, uint32(vid))
 					if err != nil {
@@ -275,16 +281,25 @@ func TestVacuumIntegration(t *testing.T) {
 					}
 					t.Logf("Garbage ratio for volume %d on %s: %.2f%%", vid, addr, ratio*100)
 					if ratio > 0.1 {
-						return // sufficient garbage found
+						volumeReady = true
+						break
 					}
 				}
+				if !volumeReady {
+					ready = false
+					lastMissing = vid
+					break
+				}
+			}
+			if ready {
+				return
 			}
 			if time.Now().After(deadline) {
 				break
 			}
 			time.Sleep(1 * time.Second)
 		}
-		t.Fatal("No volume reported garbage > 10% — test data setup failed")
+		t.Fatalf("volume %d did not report garbage > 10%% — test data setup failed", lastMissing)
 	})
 
 	// Execute vacuum via shell command
@@ -327,31 +342,49 @@ func TestVacuumIntegration(t *testing.T) {
 		t.Log("Vacuum completed successfully")
 	})
 
-	// Wait for vacuum effects to settle
-	time.Sleep(6 * time.Second)
-
 	// Verify garbage was cleaned on every volume we deleted from.
+	// Vacuum + heartbeat reporting is asynchronous, so retry until each
+	// volume reports a cleaned ratio or the deadline expires.
 	t.Run("verify_cleanup_after_vacuum", func(t *testing.T) {
+		deadline := time.Now().Add(30 * time.Second)
+		remaining := map[needle.VolumeId]struct{}{}
 		for _, vid := range dirtyVolumes {
-			var volumeFound, cleanupVerified bool
-			for _, addr := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
-				ratio, err := getGarbageRatio(addr, uint32(vid))
-				if err != nil {
-					continue
-				}
-				volumeFound = true
-				t.Logf("Garbage ratio for volume %d after vacuum on %s: %.2f%%", vid, addr, ratio*100)
-				if ratio < 0.05 {
-					cleanupVerified = true
-				}
-			}
-			if !volumeFound {
-				t.Fatalf("No server reported volume %d after vacuum", vid)
-			}
-			if !cleanupVerified {
-				t.Fatalf("Garbage on volume %d was not cleaned up after vacuum", vid)
-			}
+			remaining[vid] = struct{}{}
 		}
+		var lastErr string
+		for {
+			for vid := range remaining {
+				var volumeFound, cleanupVerified bool
+				for _, addr := range []string{"127.0.0.1:8080", "127.0.0.1:8081"} {
+					ratio, err := getGarbageRatio(addr, uint32(vid))
+					if err != nil {
+						continue
+					}
+					volumeFound = true
+					t.Logf("Garbage ratio for volume %d after vacuum on %s: %.2f%%", vid, addr, ratio*100)
+					if ratio < 0.05 {
+						cleanupVerified = true
+						break
+					}
+				}
+				switch {
+				case !volumeFound:
+					lastErr = fmt.Sprintf("no server reported volume %d after vacuum", vid)
+				case !cleanupVerified:
+					lastErr = fmt.Sprintf("garbage on volume %d was not cleaned up after vacuum", vid)
+				default:
+					delete(remaining, vid)
+				}
+			}
+			if len(remaining) == 0 {
+				return
+			}
+			if time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(1 * time.Second)
+		}
+		t.Fatal(lastErr)
 	})
 
 	// Verify remaining files are still readable with correct contents
