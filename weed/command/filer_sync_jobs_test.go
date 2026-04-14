@@ -27,6 +27,20 @@ func makeResp(dir, name string, isDir bool, tsNs int64, isNew bool) *filer_pb.Su
 	return resp
 }
 
+// makeDirUpdateResp builds an in-place attribute update event for a directory
+// (same parent and same name on both sides — matches filer_pb.IsUpdate).
+func makeDirUpdateResp(parent, name string, tsNs int64) *filer_pb.SubscribeMetadataResponse {
+	return &filer_pb.SubscribeMetadataResponse{
+		Directory: parent,
+		TsNs:      tsNs,
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry:      &filer_pb.Entry{Name: name, IsDirectory: true},
+			NewEntry:      &filer_pb.Entry{Name: name, IsDirectory: true},
+			NewParentPath: parent,
+		},
+	}
+}
+
 func makeRenameResp(oldDir, oldName, newDir, newName string, isDir bool, tsNs int64) *filer_pb.SubscribeMetadataResponse {
 	return &filer_pb.SubscribeMetadataResponse{
 		Directory: oldDir,
@@ -77,9 +91,9 @@ func TestFileVsFileConflict(t *testing.T) {
 
 	// Add a file job
 	active := makeResp("/dir1", "file.txt", false, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(active)
+	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// Same file should conflict
 	same := makeResp("/dir1", "file.txt", false, 2, true)
@@ -108,9 +122,9 @@ func TestFileUnderActiveDirConflict(t *testing.T) {
 
 	// Add a directory job at /dir1
 	active := makeResp("/", "dir1", true, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(active)
+	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// File under /dir1 should conflict
 	under := makeResp("/dir1", "file.txt", false, 2, true)
@@ -146,9 +160,9 @@ func TestDirWithActiveFileUnder(t *testing.T) {
 
 	// Add file jobs under /dir1
 	f1 := makeResp("/dir1/sub", "file.txt", false, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(f1)
-	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(f1)
+	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// Directory /dir1 should conflict (has active file under it)
 	dirOp := makeResp("/", "dir1", true, 2, true)
@@ -170,9 +184,9 @@ func TestDirVsDirConflict(t *testing.T) {
 
 	// Add directory job at /a/b
 	active := makeResp("/a", "b", true, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(active)
+	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// /a/b/c (descendant) should conflict
 	desc := makeResp("/a/b", "c", true, 2, true)
@@ -206,9 +220,9 @@ func TestRenameConflict(t *testing.T) {
 
 	// Add file job at /dir1/file.txt
 	f1 := makeResp("/dir1", "file.txt", false, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(f1)
-	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(f1)
+	p.activeJobs[f1.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// Rename from /dir2/a.txt to /dir1/file.txt should conflict (newPath matches)
 	rename := makeRenameResp("/dir2", "a.txt", "/dir1", "file.txt", false, 2)
@@ -236,11 +250,11 @@ func TestActiveRenameConflict(t *testing.T) {
 
 	// Add active rename job: /dir1/old.txt -> /dir2/new.txt
 	rename := makeRenameResp("/dir1", "old.txt", "/dir2", "new.txt", false, 1)
-	path, newPath, isDir := extractPathsFromMetadata(rename)
-	p.activeJobs[rename.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(rename)
+	p.activeJobs[rename.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 	if newPath != "" {
-		p.addPathToIndex(newPath, isDir)
+		p.addPathToIndex(newPath, kind)
 	}
 
 	// File at /dir1/old.txt should conflict
@@ -271,9 +285,9 @@ func TestRootDirConflict(t *testing.T) {
 	// Note: a dir entry at "/" would be created as FullPath("/").Child("somedir")
 	// But let's test what happens with an active dir at /some/path and check root
 	active := makeResp("/some", "dir", true, 1, true)
-	path, newPath, isDir := extractPathsFromMetadata(active)
-	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-	p.addPathToIndex(path, isDir)
+	path, newPath, kind := extractJobInfo(active)
+	p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+	p.addPathToIndex(path, kind)
 
 	// Root dir should conflict because active dir /some/dir is under /
 	// A new directory at "/" should see descendantCount["/"] > 0
@@ -289,7 +303,7 @@ func TestIndexCleanup(t *testing.T) {
 
 	// Add then remove a file job
 	path := util.FullPath("/a/b/c/file.txt")
-	p.addPathToIndex(path, false)
+	p.addPathToIndex(path, kindFile)
 
 	if p.activeFilePaths[path] != 1 {
 		t.Errorf("expected activeFilePaths count 1, got %d", p.activeFilePaths[path])
@@ -298,7 +312,7 @@ func TestIndexCleanup(t *testing.T) {
 		t.Errorf("expected descendantCount['/a/b/c'] = 1, got %d", p.descendantCount["/a/b/c"])
 	}
 
-	p.removePathFromIndex(path, false)
+	p.removePathFromIndex(path, kindFile)
 
 	if len(p.activeFilePaths) != 0 {
 		t.Errorf("expected empty activeFilePaths after removal, got %v", p.activeFilePaths)
@@ -316,8 +330,8 @@ func TestWatermarkWithHeap(t *testing.T) {
 	// Simulate adding jobs in order
 	for _, ts := range []int64{10, 20, 30} {
 		jobPath := util.FullPath("/file" + string(rune('0'+ts/10)))
-		p.activeJobs[ts] = &syncJobPaths{path: jobPath, isDirectory: false}
-		p.addPathToIndex(jobPath, false)
+		p.activeJobs[ts] = &syncJobPaths{path: jobPath, kind: kindFile}
+		p.addPathToIndex(jobPath, kindFile)
 		heap.Push(&p.tsHeap, ts)
 	}
 
@@ -327,7 +341,7 @@ func TestWatermarkWithHeap(t *testing.T) {
 
 	// Remove non-oldest (ts=20) — heap top should stay 10
 	delete(p.activeJobs, 20)
-	p.removePathFromIndex("/file2", false)
+	p.removePathFromIndex("/file2", kindFile)
 	// Lazy clean: top is 10 which is still active, so no pop
 	for p.tsHeap.Len() > 0 {
 		if _, active := p.activeJobs[p.tsHeap[0]]; active {
@@ -341,7 +355,7 @@ func TestWatermarkWithHeap(t *testing.T) {
 
 	// Remove oldest (ts=10) — lazy clean should find 30
 	delete(p.activeJobs, 10)
-	p.removePathFromIndex("/file1", false)
+	p.removePathFromIndex("/file1", kindFile)
 	for p.tsHeap.Len() > 0 {
 		if _, active := p.activeJobs[p.tsHeap[0]]; active {
 			break
@@ -351,6 +365,89 @@ func TestWatermarkWithHeap(t *testing.T) {
 	if p.tsHeap.Len() != 1 || p.tsHeap[0] != 30 {
 		t.Errorf("expected heap min=30 after removing 10 and 20, got len=%d", p.tsHeap.Len())
 	}
+}
+
+// TestNonBarrierDirUpdateDoesNotBlockDescendants verifies the loosened
+// dir-conflict rule: an attribute-only directory update (same parent + same
+// name) must NOT block file events under that directory. A barrier dir event
+// (create/delete/rename) on the same path still must.
+func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
+	noop := func(resp *filer_pb.SubscribeMetadataResponse) error { return nil }
+
+	t.Run("attribute update on /dir1 does not block file under it", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+
+		// Active non-barrier: attribute update on /dir1.
+		active := makeDirUpdateResp("/", "dir1", 1)
+		path, newPath, kind := extractJobInfo(active)
+		if kind != kindNonBarrierDir {
+			t.Fatalf("expected kindNonBarrierDir for dir attribute update, got %v", kind)
+		}
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		// File under /dir1 should NOT conflict with the attribute update.
+		under := makeResp("/dir1", "file.txt", false, 2, true)
+		if p.conflictsWith(under) {
+			t.Error("file under a non-barrier dir update should not conflict")
+		}
+
+		// Nested file should also not conflict.
+		deep := makeResp("/dir1/sub/deep", "file.txt", false, 3, true)
+		if p.conflictsWith(deep) {
+			t.Error("deeply nested file under a non-barrier dir update should not conflict")
+		}
+	})
+
+	t.Run("barrier dir create at the same path still blocks descendants", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+
+		active := makeResp("/", "dir1", true, 1, true) // create
+		path, newPath, kind := extractJobInfo(active)
+		if kind != kindBarrierDir {
+			t.Fatalf("expected kindBarrierDir for dir create, got %v", kind)
+		}
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		under := makeResp("/dir1", "file.txt", false, 2, true)
+		if !p.conflictsWith(under) {
+			t.Error("file under an active barrier dir create should still conflict")
+		}
+	})
+
+	t.Run("barrier dir delete still waits for in-flight descendants", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+
+		// Active file under /dir1.
+		f := makeResp("/dir1", "file.txt", false, 1, true)
+		path, newPath, kind := extractJobInfo(f)
+		p.activeJobs[f.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		// Incoming barrier delete on /dir1 should still wait for the
+		// in-flight file descendant.
+		del := makeResp("/", "dir1", true, 2, false)
+		if !p.conflictsWith(del) {
+			t.Error("barrier dir delete should wait for descendant file job")
+		}
+	})
+
+	t.Run("non-barrier dir update still keeps ancestor barrier waiting", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+
+		// Active non-barrier dir update at /a/b.
+		upd := makeDirUpdateResp("/a", "b", 1)
+		path, newPath, kind := extractJobInfo(upd)
+		p.activeJobs[upd.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		// A barrier delete on /a (the ancestor) should wait for it.
+		del := makeResp("/", "a", true, 2, false)
+		if !p.conflictsWith(del) {
+			t.Error("barrier ancestor dir delete should wait for non-barrier descendant update")
+		}
+	})
 }
 
 // benchResult prevents the compiler from optimizing away the conflict check.
@@ -369,9 +466,9 @@ func BenchmarkConflictCheck(b *testing.B) {
 				dir := fmt.Sprintf("/dir%d/sub%d", i/100, i%100)
 				name := fmt.Sprintf("file%d.txt", i)
 				resp := makeResp(dir, name, false, int64(i+1), true)
-				path, newPath, isDir := extractPathsFromMetadata(resp)
-				p.activeJobs[resp.TsNs] = &syncJobPaths{path: path, newPath: newPath, isDirectory: isDir}
-				p.addPathToIndex(path, isDir)
+				path, newPath, kind := extractJobInfo(resp)
+				p.activeJobs[resp.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+				p.addPathToIndex(path, kind)
 			}
 
 			// Benchmark conflict check for a non-conflicting event
