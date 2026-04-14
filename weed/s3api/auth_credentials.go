@@ -1413,8 +1413,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
 
-	if action == s3_constants.ACTION_LIST && bucket == "" && identity.Name != s3_constants.AccountAnonymousId {
-		// ListBuckets operation for authenticated users - authorization handled per-bucket in the handler
+	if action == s3_constants.ACTION_LIST && bucket == "" &&
+		(identity.Name != s3_constants.AccountAnonymousId || identity.hasListAction()) {
+		// ListBuckets operation - authorization handled per-bucket in the handler.
+		// For authenticated users this is always deferred to the handler. For the
+		// anonymous identity we only defer when it actually carries a List action
+		// (e.g. "List:prefix-*"); otherwise fall through to the global check so
+		// an anonymous caller with no permissions is rejected outright rather
+		// than receiving an empty ListAllMyBuckets result.
 	} else {
 		// First check bucket policy if one exists
 		// Bucket policies can grant or deny access to specific users/principals
@@ -1587,6 +1593,29 @@ func (identity *Identity) CanDo(action Action, bucket string, objectKey string) 
 	}
 	//log error
 	glog.V(3).Infof("identity %s is not allowed to perform action %s on %s", identity.Name, action, bucket+"/"+objectKey)
+	return false
+}
+
+// hasListAction reports whether the identity carries any List-scoped legacy
+// action (e.g. "List", "List:*", "List:prefix-*") or has administrative
+// privileges. Used to decide whether a ListBuckets request from an anonymous
+// identity should be deferred to the per-bucket check in the handler or
+// denied at the global auth layer.
+func (identity *Identity) hasListAction() bool {
+	if identity == nil {
+		return false
+	}
+	if identity.isAdmin() {
+		return true
+	}
+	listPrefix := string(s3_constants.ACTION_LIST)
+	listPrefixWithColon := listPrefix + ":"
+	for _, a := range identity.Actions {
+		act := string(a)
+		if act == listPrefix || strings.HasPrefix(act, listPrefixWithColon) {
+			return true
+		}
+	}
 	return false
 }
 
