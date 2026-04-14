@@ -1414,7 +1414,7 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	policyAllows := false
 
 	if action == s3_constants.ACTION_LIST && bucket == "" &&
-		(identity.Name != s3_constants.AccountAnonymousId || anonymousHasListAction(identity)) {
+		(identity.Name != s3_constants.AccountAnonymousId || identity.hasListAction()) {
 		// ListBuckets operation - authorization handled per-bucket in the handler.
 		// For authenticated users this is always deferred to the handler. For the
 		// anonymous identity we only defer when it actually carries a List action
@@ -1596,18 +1596,23 @@ func (identity *Identity) CanDo(action Action, bucket string, objectKey string) 
 	return false
 }
 
-// anonymousHasListAction reports whether the anonymous identity carries any
-// List-scoped legacy action (e.g. "List", "List:*", "List:prefix-*"). Used to
-// decide whether an unauthenticated ListBuckets request should be deferred to
-// the per-bucket check in the handler or denied at the global auth layer.
-func anonymousHasListAction(identity *Identity) bool {
+// hasListAction reports whether the identity carries any List-scoped legacy
+// action (e.g. "List", "List:*", "List:prefix-*") or has administrative
+// privileges. Used to decide whether a ListBuckets request from an anonymous
+// identity should be deferred to the per-bucket check in the handler or
+// denied at the global auth layer.
+func (identity *Identity) hasListAction() bool {
 	if identity == nil {
 		return false
 	}
+	if identity.isAdmin() {
+		return true
+	}
 	listPrefix := string(s3_constants.ACTION_LIST)
+	listPrefixWithColon := listPrefix + ":"
 	for _, a := range identity.Actions {
 		act := string(a)
-		if act == listPrefix || strings.HasPrefix(act, listPrefix+":") {
+		if act == listPrefix || strings.HasPrefix(act, listPrefixWithColon) {
 			return true
 		}
 	}
