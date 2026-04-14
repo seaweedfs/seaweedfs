@@ -136,7 +136,12 @@ func ensureEnvironment(t *testing.T) {
 	os.RemoveAll(filepath.Join("tmp", "admin"))
 	os.MkdirAll(filepath.Join("tmp", "admin"), 0755)
 	startWeed(t, "admin", "admin", "-master=localhost:9333", "-port=23646", "-dataDir=./tmp/admin")
-	waitForUrl(t, AdminUrl+"/health", 60)
+	// Admin is started after master, 14 volume servers, filer and 2 workers,
+	// so under cold CI conditions the wait here has to absorb the tail of
+	// every earlier subprocess coming up. 60s is too tight and has flaked;
+	// 180s gives comfortable headroom without meaningfully extending the
+	// fast path (the first successful /health usually hits well under 30s).
+	waitForUrl(t, AdminUrl+"/health", 180)
 
 	t.Log("Environment started successfully")
 }
