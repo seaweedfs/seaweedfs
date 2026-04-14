@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"sort"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
@@ -267,5 +268,30 @@ func (fsw *FilerStoreWrapper) collectInodeIndexEntriesRecursive(ctx context.Cont
 		}
 		lastFileName = nextLastFileName
 		includeStartFile = false
+	}
+}
+
+// recordInodeIndexWrite updates the inode→path secondary index after the
+// primary store mutation has already succeeded. The index is best-effort: a
+// failure here must not surface as an operation error, because the caller
+// would then observe a failed create/update even though the entry was
+// persisted, and a retry cannot heal the index (DeleteEntry exits early once
+// the entry is gone). We log and let later writes rebuild the record.
+func (fsw *FilerStoreWrapper) recordInodeIndexWrite(ctx context.Context, op string, path util.FullPath, inode uint64) {
+	if inode == 0 || path == "" {
+		return
+	}
+	if err := fsw.storeInodeIndex(ctx, path, inode); err != nil {
+		glog.WarningfCtx(ctx, "%s: update inode index for %s (inode %d): %v", op, path, inode, err)
+	}
+}
+
+// recordInodeIndexRemoval mirrors recordInodeIndexWrite for removals.
+func (fsw *FilerStoreWrapper) recordInodeIndexRemoval(ctx context.Context, op string, path util.FullPath, inode uint64) {
+	if inode == 0 || path == "" {
+		return
+	}
+	if err := fsw.removePathFromInodeIndex(ctx, path, inode); err != nil {
+		glog.WarningfCtx(ctx, "%s: clear inode index for %s (inode %d): %v", op, path, inode, err)
 	}
 }

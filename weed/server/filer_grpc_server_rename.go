@@ -35,7 +35,8 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 	}
 
 	var metadataEvents []metadataEvent
-	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents)
+	var pendingChunkDeletes []*filer_pb.FileChunk
+	moveErr := fs.moveEntry(ctx, nil, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return nil, fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -44,6 +45,13 @@ func (fs *FilerServer) AtomicRenameEntry(ctx context.Context, req *filer_pb.Atom
 			fs.filer.RollbackTransaction(ctx)
 			return nil, fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
+	}
+	// Chunks from an overwritten rename target are only deletable after the
+	// rename transaction has committed: anything that fails mid-rename (move,
+	// child moves, oldPath delete, CommitTransaction) would otherwise leave
+	// live metadata pointing at freshly-deleted chunks.
+	if len(pendingChunkDeletes) > 0 {
+		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
 	for _, event := range metadataEvents {
 		event.notify(fs.filer, ctx, req.Signatures)
@@ -92,7 +100,8 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 	}
 
 	var metadataEvents []metadataEvent
-	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents)
+	var pendingChunkDeletes []*filer_pb.FileChunk
+	moveErr := fs.moveEntry(ctx, stream, oldParent, oldEntry, newParent, req.NewName, req.Signatures, false, &metadataEvents, &pendingChunkDeletes)
 	if moveErr != nil {
 		fs.filer.RollbackTransaction(ctx)
 		return fmt.Errorf("%s/%s move error: %v", req.OldDirectory, req.OldName, moveErr)
@@ -101,6 +110,9 @@ func (fs *FilerServer) StreamRenameEntry(req *filer_pb.StreamRenameEntryRequest,
 			fs.filer.RollbackTransaction(ctx)
 			return fmt.Errorf("%s/%s move commit error: %v", req.OldDirectory, req.OldName, commitError)
 		}
+	}
+	if len(pendingChunkDeletes) > 0 {
+		fs.filer.DeleteChunksNotRecursive(pendingChunkDeletes)
 	}
 	for _, event := range metadataEvents {
 		event.notify(fs.filer, ctx, req.Signatures)
@@ -119,23 +131,23 @@ func (event metadataEvent) notify(f *filer.Filer, ctx context.Context, signature
 	f.NotifyUpdateEvent(ctx, event.oldEntry, event.newEntry, event.deleteChunks, false, signatures)
 }
 
-func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent) error {
+func (fs *FilerServer) moveEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
 
 	if err := fs.moveSelfEntry(ctx, stream, oldParent, entry, newParent, newName, func() error {
 		if entry.IsDirectory() {
-			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures, metadataEvents); err != nil {
+			if err := fs.moveFolderSubEntries(ctx, stream, oldParent, entry, newParent, newName, signatures, metadataEvents, pendingChunkDeletes); err != nil {
 				return err
 			}
 		}
 		return nil
-	}, signatures, skipTargetLookup, metadataEvents); err != nil {
+	}, signatures, skipTargetLookup, metadataEvents, pendingChunkDeletes); err != nil {
 		return fmt.Errorf("fail to move %s => %s: %v", oldParent.Child(entry.Name()), newParent.Child(newName), err)
 	}
 
 	return nil
 }
 
-func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, metadataEvents *[]metadataEvent) error {
+func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, signatures []int32, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
 
 	currentDirPath := oldParent.Child(entry.Name())
 	newDirPath := newParent.Child(newName)
@@ -158,7 +170,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 			// println("processing", lastFileName)
 			newChildPath := newDirPath.Child(item.Name())
 			skipTarget := fs.filer.Store.SameActualStore(newDirPath, newChildPath)
-			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents)
+			err := fs.moveEntry(ctx, stream, currentDirPath, item, newDirPath, item.Name(), signatures, skipTarget, metadataEvents, pendingChunkDeletes)
 			if err != nil {
 				return err
 			}
@@ -170,7 +182,7 @@ func (fs *FilerServer) moveFolderSubEntries(ctx context.Context, stream filer_pb
 	return nil
 }
 
-func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent) error {
+func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.SeaweedFiler_StreamRenameEntryServer, oldParent util.FullPath, entry *filer.Entry, newParent util.FullPath, newName string, moveFolderSubEntries func() error, signatures []int32, skipTargetLookup bool, metadataEvents *[]metadataEvent, pendingChunkDeletes *[]*filer_pb.FileChunk) error {
 
 	oldPath, newPath := oldParent.Child(entry.Name()), newParent.Child(newName)
 
@@ -241,8 +253,12 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 		toDelete, err := filer.MinusChunks(ctx, fs.filer.MasterClient.GetLookupFileIdFunction(), existingTarget.GetChunks(), newEntry.GetChunks())
 		if err != nil {
 			glog.ErrorfCtx(ctx, "Failed to resolve overwrite target chunks during rename. new: %v, old: %v", newEntry.GetChunks(), existingTarget.GetChunks())
-		} else {
-			fs.filer.DeleteChunksNotRecursive(toDelete)
+		} else if len(toDelete) > 0 {
+			// Defer chunk deletion until after CommitTransaction so that a
+			// failure in any subsequent step (child moves, oldPath delete,
+			// stream send, or the commit itself) leaves the chunks intact for
+			// the rolled-back rename.
+			*pendingChunkDeletes = append(*pendingChunkDeletes, toDelete...)
 		}
 	}
 	if stream != nil {

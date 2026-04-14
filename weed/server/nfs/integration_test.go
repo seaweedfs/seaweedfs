@@ -288,6 +288,15 @@ func nfsLink(target *nfsclient.Target, sourceHandle []byte, linkPath string) err
 		return err
 	}
 
+	// Field layout matches the go-nfs server's onLink handler
+	// (vendor: github.com/willscott/go-nfs/nfs_onlink.go), which reads
+	// DirOpArg + SetFileAttributes + opaque target handle. That wire
+	// order differs from RFC 1813 §3.3.15 LINK3args {nfs_fh3 file;
+	// diropargs3 link;} — the go-nfs library is not strictly compliant
+	// here, and we mirror its layout so the integration test exercises
+	// the same parser the server uses. Do not reorder fields to match
+	// the RFC: the test would then fail against a correctly-functioning
+	// server.
 	type LinkArgs struct {
 		rpc.Header
 		Link   nfsclient.Diropargs3
