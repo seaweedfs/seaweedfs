@@ -129,7 +129,8 @@ func uploadViaPresignedURL(t *testing.T, url string, body []byte) {
 	resp, err := presignedHTTPClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "read presigned PUT response body")
 	require.Equalf(t, http.StatusOK, resp.StatusCode,
 		"presigned PUT failed: %d %s", resp.StatusCode, string(respBody))
 }
