@@ -31,6 +31,12 @@ type UploadPipeline struct {
 type SealedChunk struct {
 	chunk            PageChunk
 	referenceCounter int // track uploading or reading processes
+	// accountant and chunkSize are captured when the chunk is sealed so
+	// FreeReference can release the global write-budget slot exactly once
+	// regardless of which code path triggers the final deref (normal
+	// upload completion, Shutdown, or replace-in-place in moveToSealed).
+	accountant *WriteBufferAccountant
+	chunkSize  int64
 }
 
 func (sc *SealedChunk) FreeReference(messageOnFree string) {
@@ -38,6 +44,7 @@ func (sc *SealedChunk) FreeReference(messageOnFree string) {
 	if sc.referenceCounter == 0 {
 		glog.V(4).Infof("Free sealed chunk: %s", messageOnFree)
 		sc.chunk.FreeResource()
+		sc.accountant.Release(sc.chunkSize)
 	}
 }
 
@@ -202,11 +209,12 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 
 	if oldMemChunk, found := up.sealedChunks[logicChunkIndex]; found {
 		oldMemChunk.FreeReference(fmt.Sprintf("%s replace chunk %d", up.filepath, logicChunkIndex))
-		up.accountant.Release(up.ChunkSize)
 	}
 	sealedChunk := &SealedChunk{
 		chunk:            memChunk,
 		referenceCounter: 1, // default 1 is for uploading process
+		accountant:       up.accountant,
+		chunkSize:        up.ChunkSize,
 	}
 	up.sealedChunks[logicChunkIndex] = sealedChunk
 	delete(up.writableChunks, logicChunkIndex)
@@ -237,7 +245,6 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 		// then remove from sealed chunks
 		delete(up.sealedChunks, logicChunkIndex)
 		sealedChunk.FreeReference(fmt.Sprintf("%s finished uploading chunk %d", up.filepath, logicChunkIndex))
-		up.accountant.Release(up.ChunkSize)
 
 	})
 	up.chunksLock.Lock()
@@ -248,8 +255,20 @@ func (up *UploadPipeline) Shutdown() {
 
 	up.chunksLock.Lock()
 	defer up.chunksLock.Unlock()
-	for logicChunkIndex, sealedChunk := range up.sealedChunks {
-		sealedChunk.FreeReference(fmt.Sprintf("%s uploadpipeline shutdown chunk %d", up.filepath, logicChunkIndex))
+	// Free any writable chunks that were reserved but never sealed — on the
+	// Destroy() path (truncate / metadata invalidation) there is no
+	// preceding FlushData(), so dirty writable chunks would otherwise leak
+	// both their memory and their write-budget slots.
+	for logicChunkIndex, writableChunk := range up.writableChunks {
+		glog.V(4).Infof("%s uploadpipeline shutdown writable chunk %d", up.filepath, logicChunkIndex)
+		writableChunk.FreeResource()
 		up.accountant.Release(up.ChunkSize)
+		delete(up.writableChunks, logicChunkIndex)
+	}
+	for logicChunkIndex, sealedChunk := range up.sealedChunks {
+		// FreeReference releases the accountant slot on the refcount-zero
+		// transition; a racing async uploader will call FreeReference again
+		// and be a no-op, so there is no double-release.
+		sealedChunk.FreeReference(fmt.Sprintf("%s uploadpipeline shutdown chunk %d", up.filepath, logicChunkIndex))
 	}
 }
