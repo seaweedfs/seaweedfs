@@ -88,6 +88,13 @@ func writeBufferCapConfig(debugPort int) *TestConfig {
 			"-writeBufferSizeMB=16",
 			"-debug=true",
 			fmt.Sprintf("-debug.port=%d", debugPort),
+			// Route glog to stderr so the framework's process log
+			// capture actually contains something — by default weed
+			// sends glog to /tmp/weed.* files which the CI artifact
+			// upload step never sees. Critical for diagnosing
+			// upload/saveToStorage errors on Linux runs.
+			"-logtostderr=true",
+			"-v=2",
 		},
 		SkipCleanup: false,
 	}
@@ -103,6 +110,14 @@ func writeWithTimeout(t *testing.T, path string, data []byte, timeout time.Durat
 	go func() { done <- os.WriteFile(path, data, 0644) }()
 	select {
 	case err := <-done:
+		if err != nil {
+			// Dump mount goroutines on any write error, not just
+			// timeout — upload failures that surface via close()
+			// as EIO leave the mount process running but in an
+			// informative state (pending sealed chunks, error
+			// counters, etc).
+			t.Logf("write %s failed (%v) — dumping MOUNT goroutines:\n%s", path, err, fetchMountGoroutines())
+		}
 		require.NoError(t, err, "write %s", path)
 	case <-time.After(timeout):
 		t.Logf("write %s did not finish within %v — dumping TEST goroutines:\n%s", path, timeout, dumpAllGoroutines())
