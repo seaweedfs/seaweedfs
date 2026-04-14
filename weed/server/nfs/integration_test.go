@@ -28,6 +28,7 @@ import (
 	gonfs "github.com/willscott/go-nfs"
 	nfsclient "github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
+	"github.com/willscott/go-nfs-client/nfs/xdr"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -54,6 +55,8 @@ type fakeVolumeControlPlane struct {
 }
 
 var initIntegrationHTTPClient sync.Once
+
+const nfsProc3Link = 15
 
 func newFakeVolumeServer(t *testing.T) *fakeVolumeServer {
 	t.Helper()
@@ -258,6 +261,53 @@ func isClosedNetworkErr(err error) bool {
 	return strings.Contains(err.Error(), "listener closed")
 }
 
+func nfsLink(target *nfsclient.Target, sourceHandle []byte, linkPath string) error {
+	parentDir, linkName := path.Split(path.Clean(linkPath))
+	if linkName == "" {
+		return fmt.Errorf("invalid hard link path %q", linkPath)
+	}
+	if parentDir == "" {
+		parentDir = "/"
+	}
+
+	_, parentHandle, err := target.Lookup(parentDir)
+	if err != nil {
+		return err
+	}
+
+	type LinkArgs struct {
+		rpc.Header
+		Link   nfsclient.Diropargs3
+		Sattr  nfsclient.Sattr3
+		Target []byte
+	}
+
+	res, err := target.Call(&LinkArgs{
+		Header: rpc.Header{
+			Rpcvers: 2,
+			Prog:    nfsclient.Nfs3Prog,
+			Vers:    nfsclient.Nfs3Vers,
+			Proc:    nfsProc3Link,
+			Cred:    rpc.AuthNull,
+			Verf:    rpc.AuthNull,
+		},
+		Link: nfsclient.Diropargs3{
+			FH:       parentHandle,
+			Filename: linkName,
+		},
+		Target: sourceHandle,
+	})
+	if err != nil {
+		return err
+	}
+
+	status, err := xdr.ReadUint32(res)
+	if err != nil {
+		return err
+	}
+	return nfsclient.NFS3Error(status)
+}
+
 func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	client := &fakeNFSFilerClient{
 		kv: map[string][]byte{
@@ -315,6 +365,128 @@ func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	require.NoError(t, target.Remove("/docs/final.txt"))
 	_, _, err = target.Lookup("/docs/final.txt")
 	require.Error(t, err)
+}
+
+func TestSeaweedNFSServesSymlinkRoundTripOverRPC(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	target, cleanup := mountTestTarget(t, server)
+	defer cleanup()
+	defer target.Close()
+
+	file, err := target.OpenFile("/target.txt", 0o644)
+	require.NoError(t, err)
+	_, err = file.Write([]byte("payload"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	require.NoError(t, target.Symlink("target.txt", "/target.link"))
+
+	info, _, err := target.Lookup("/target.link")
+	require.NoError(t, err)
+	attr, ok := info.(*nfsclient.Fattr)
+	require.True(t, ok)
+	assert.Equal(t, uint32(nfsclient.NF3Lnk), attr.Type)
+
+	linkFile, err := target.Open("/target.link")
+	require.NoError(t, err)
+	defer linkFile.Close()
+
+	linkTarget, err := linkFile.Readlink()
+	require.NoError(t, err)
+	assert.Equal(t, "target.txt", linkTarget)
+
+	entry := client.entries["/exports/target.link"]
+	require.NotNil(t, entry)
+	assert.Equal(t, "target.txt", entry.GetAttributes().GetSymlinkTarget())
+}
+
+func TestSeaweedNFSServesHardLinkRoundTripOverRPC(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	target, cleanup := mountTestTarget(t, server)
+	defer cleanup()
+	defer target.Close()
+
+	file, err := target.OpenFile("/source.txt", 0o644)
+	require.NoError(t, err)
+	payload := []byte("shared content")
+	_, err = file.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, sourceHandle, err := target.Lookup("/source.txt")
+	require.NoError(t, err)
+	require.NoError(t, nfsLink(target, sourceHandle, "/linked.txt"))
+
+	sourceInfo, sourceHandle, err := target.Lookup("/source.txt")
+	require.NoError(t, err)
+	linkedInfo, linkedHandle, err := target.Lookup("/linked.txt")
+	require.NoError(t, err)
+
+	sourceAttr, ok := sourceInfo.(*nfsclient.Fattr)
+	require.True(t, ok)
+	linkAttr, ok := linkedInfo.(*nfsclient.Fattr)
+	require.True(t, ok)
+	assert.Equal(t, sourceHandle, linkedHandle)
+	assert.Equal(t, sourceAttr.Fileid, linkAttr.Fileid)
+	assert.Equal(t, uint32(2), sourceAttr.Nlink)
+	assert.Equal(t, uint32(2), linkAttr.Nlink)
+
+	linkedFile, err := target.Open("/linked.txt")
+	require.NoError(t, err)
+	defer linkedFile.Close()
+
+	data, err := io.ReadAll(linkedFile)
+	require.NoError(t, err)
+	assert.Equal(t, payload, data)
+
+	sourceEntry := client.entries["/exports/source.txt"]
+	linkedEntry := client.entries["/exports/linked.txt"]
+	require.NotNil(t, sourceEntry)
+	require.NotNil(t, linkedEntry)
+	assert.Equal(t, sourceEntry.GetHardLinkId(), linkedEntry.GetHardLinkId())
+	assert.Equal(t, int32(2), sourceEntry.GetHardLinkCounter())
+	assert.Equal(t, int32(2), linkedEntry.GetHardLinkCounter())
+
+	require.NoError(t, target.Remove("/source.txt"))
+
+	remainingAttr, err := target.GetAttr(sourceHandle)
+	require.NoError(t, err)
+	assert.Equal(t, uint32(1), remainingAttr.Nlink)
+
+	_, _, err = target.Lookup("/source.txt")
+	require.Error(t, err)
+
+	linkedFile, err = target.Open("/linked.txt")
+	require.NoError(t, err)
+	data, err = io.ReadAll(linkedFile)
+	require.NoError(t, err)
+	require.NoError(t, linkedFile.Close())
+	assert.Equal(t, payload, data)
+
+	require.NoError(t, target.Remove("/linked.txt"))
+	_, err = target.GetAttr(linkedHandle)
+	require.Error(t, err)
+	nfsErr, ok := err.(*nfsclient.Error)
+	require.True(t, ok)
+	assert.Equal(t, uint32(nfsclient.NFS3ErrStale), nfsErr.ErrorNum)
 }
 
 func TestSeaweedNFSServesLargeChunkRoundTripOverRPC(t *testing.T) {
@@ -420,4 +592,52 @@ func TestSeaweedNFSRejectsStaleHandleAfterDeleteRecreate(t *testing.T) {
 	require.NoError(t, err)
 	_, err = target.GetAttr(newHandle)
 	require.NoError(t, err)
+}
+
+func TestSeaweedNFSFileHandleSurvivesServerRestart(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	target, cleanup := mountTestTarget(t, server)
+
+	file, err := target.OpenFile("/restart.txt", 0o644)
+	require.NoError(t, err)
+	payload := []byte("survives restart")
+	_, err = file.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, handle, err := target.Lookup("/restart.txt")
+	require.NoError(t, err)
+
+	target.Close()
+	cleanup()
+
+	restartedServer := newTestServer(t, "/exports", client)
+	restartedTarget, restartedCleanup := mountTestTarget(t, restartedServer)
+	defer restartedCleanup()
+	defer restartedTarget.Close()
+
+	attr, err := restartedTarget.GetAttr(handle)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(client.entries["/exports/restart.txt"].GetAttributes().GetInode()), attr.Fileid)
+
+	_, restartedHandle, err := restartedTarget.Lookup("/restart.txt")
+	require.NoError(t, err)
+	assert.Equal(t, handle, restartedHandle)
+
+	readFile, err := restartedTarget.Open("/restart.txt")
+	require.NoError(t, err)
+	defer readFile.Close()
+
+	data, err := io.ReadAll(readFile)
+	require.NoError(t, err)
+	assert.Equal(t, payload, data)
 }

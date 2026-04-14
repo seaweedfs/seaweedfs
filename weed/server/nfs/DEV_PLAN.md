@@ -46,10 +46,10 @@ identity, shared lock state, and restart-safe filehandles.
 
 ## Phase 4: HA correctness
 
-- [ ] Deterministic filehandle format based on filer-owned identity
+- [x] Deterministic filehandle format based on filer-owned identity
 - [ ] Shared lock state and reclaim/grace handling
 - [ ] Metadata subscription-based invalidation in each NFS head
-- [ ] Multi-head restart and failover tests
+- [x] Multi-head restart and failover tests
 
 ## Validation
 
@@ -60,8 +60,17 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] NFS unit tests for create/write/truncate/rename/remove metadata flows in the experimental adapter
 - [x] User-space protocol integration tests for create/read/write/rename/delete over NFS
 - [x] Stale-handle tests after delete/recreate
-- [ ] Hardlink and symlink tests
-- [ ] Lock and failover tests
+- [x] Hardlink and symlink tests
+- [x] Restart and failover tests with shared filer state
+- [ ] Lock tests
+
+## Current Blockers
+
+- Shared NFS lock semantics are not implementable on the current
+  `github.com/willscott/go-nfs` backend. It exposes local billy
+  `File.Lock`/`Unlock` hooks, but does not implement the NLM or NFSv4 lock
+  state RPCs needed for shared lock state, grace periods, or reclaim after
+  failover.
 
 ## Current PR Scope
 
@@ -74,3 +83,5 @@ frontend can be credible:
 - `weed nfs` command, experimental `go-nfs` server path, deterministic filehandle/lookup plumbing, and filer-backed namespace mutations
 - buffered large-file chunk uploads through `AssignVolume`
 - inode preservation/backfill tests
+- hardlink/symlink protocol coverage and restart-safe handle tests
+- explicit lock-protocol blocker documentation for the current `go-nfs` stack

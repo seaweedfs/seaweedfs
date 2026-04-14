@@ -19,6 +19,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
+	gonfs "github.com/willscott/go-nfs"
 	gonfsfile "github.com/willscott/go-nfs/file"
 	"google.golang.org/protobuf/proto"
 )
@@ -70,6 +71,7 @@ var _ billy.Filesystem = (*seaweedFileSystem)(nil)
 var _ billy.Capable = (*seaweedFileSystem)(nil)
 var _ billy.Change = (*seaweedFileSystem)(nil)
 var _ filer_pb.FilerClient = (*seaweedFileSystem)(nil)
+var _ gonfs.UnixChange = (*seaweedFileSystem)(nil)
 
 func newSeaweedFileSystem(server *Server, actualRoot util.FullPath, sharedReaderCache *filer.ReaderCache) *seaweedFileSystem {
 	fs := &seaweedFileSystem{
@@ -310,6 +312,68 @@ func (fs *seaweedFileSystem) Symlink(target, link string) error {
 	return err
 }
 
+func (fs *seaweedFileSystem) Link(target, link string) error {
+	ctx := context.Background()
+
+	linkVirtualPath, linkActualPath := fs.resolvePath(link)
+	if linkVirtualPath == "/" {
+		return os.ErrPermission
+	}
+	if _, err := fs.fileInfoForVirtualPath(ctx, linkVirtualPath); err == nil {
+		return os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	sourceActualPath, sourceEntry, err := fs.resolveHardLinkTarget(ctx, target)
+	if err != nil {
+		return err
+	}
+	if sourceEntry == nil {
+		return os.ErrNotExist
+	}
+	if sourceEntry.IsDirectory {
+		return billy.ErrNotSupported
+	}
+
+	sourceOriginal, ok := proto.Clone(sourceEntry).(*filer_pb.Entry)
+	if !ok {
+		return errors.New("clone hard link source entry")
+	}
+
+	updatedSource, err := fs.mutateEntry(ctx, sourceActualPath, func(entry *filer_pb.Entry) {
+		if entry.Attributes == nil {
+			entry.Attributes = &filer_pb.FuseAttributes{}
+		}
+		if len(entry.HardLinkId) == 0 {
+			entry.HardLinkId = filer.NewHardLinkId()
+			entry.HardLinkCounter = 1
+		}
+		entry.HardLinkCounter++
+		touchEntryTimes(entry, true)
+	})
+	if err != nil {
+		return err
+	}
+
+	newLinkEntry, ok := proto.Clone(updatedSource).(*filer_pb.Entry)
+	if !ok {
+		return errors.New("clone hard link target entry")
+	}
+	_, linkName := linkActualPath.DirAndName()
+	newLinkEntry.Name = linkName
+
+	if _, err := fs.createEntryFromProto(ctx, linkActualPath, newLinkEntry); err != nil {
+		_, rollbackErr := fs.updateEntryAtPath(ctx, sourceActualPath, sourceOriginal)
+		if rollbackErr != nil {
+			return fmt.Errorf("create hard link: %w (rollback failed: %v)", err, rollbackErr)
+		}
+		return err
+	}
+
+	return nil
+}
+
 func (fs *seaweedFileSystem) Readlink(link string) (string, error) {
 	info, err := fs.fileInfoForVirtualPath(context.Background(), link)
 	if err != nil {
@@ -319,6 +383,18 @@ func (fs *seaweedFileSystem) Readlink(link string) (string, error) {
 		return "", billy.ErrNotSupported
 	}
 	return info.entry.Attributes.SymlinkTarget, nil
+}
+
+func (fs *seaweedFileSystem) Mknod(string, uint32, uint32, uint32) error {
+	return billy.ErrNotSupported
+}
+
+func (fs *seaweedFileSystem) Mkfifo(string, uint32) error {
+	return billy.ErrNotSupported
+}
+
+func (fs *seaweedFileSystem) Socket(string) error {
+	return billy.ErrNotSupported
 }
 
 func (fs *seaweedFileSystem) Chroot(p string) (billy.Filesystem, error) {
@@ -486,6 +562,55 @@ func (fs *seaweedFileSystem) createEntry(ctx context.Context, actualPath util.Fu
 	return fs.lookupEntry(ctx, actualPath)
 }
 
+func (fs *seaweedFileSystem) createEntryFromProto(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
+	dir, name := actualPath.DirAndName()
+
+	clonedEntry, ok := proto.Clone(entry).(*filer_pb.Entry)
+	if !ok {
+		return nil, errors.New("clone filer entry")
+	}
+	clonedEntry.Name = name
+
+	var createdEntry *filer_pb.Entry
+	err := fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+			Directory: dir,
+			Entry:     clonedEntry,
+			OExcl:     false,
+		})
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				return os.ErrExist
+			}
+			return err
+		}
+		if resp != nil {
+			if resp.ErrorCode != filer_pb.FilerError_OK {
+				if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+					if errors.Is(sentinel, filer_pb.ErrEntryAlreadyExists) {
+						return os.ErrExist
+					}
+					return sentinel
+				}
+				if resp.Error != "" {
+					return errors.New(resp.Error)
+				}
+			}
+			if resp.MetadataEvent != nil && resp.MetadataEvent.EventNotification != nil && resp.MetadataEvent.EventNotification.NewEntry != nil {
+				createdEntry = resp.MetadataEvent.EventNotification.NewEntry
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if createdEntry != nil {
+		return createdEntry, nil
+	}
+	return fs.lookupEntry(ctx, actualPath)
+}
+
 func (fs *seaweedFileSystem) mutateEntry(ctx context.Context, actualPath util.FullPath, mutate func(*filer_pb.Entry)) (*filer_pb.Entry, error) {
 	currentEntry, err := fs.lookupEntry(ctx, actualPath)
 	if err != nil {
@@ -505,6 +630,38 @@ func (fs *seaweedFileSystem) mutateEntry(ctx context.Context, actualPath util.Fu
 	dir, _ := actualPath.DirAndName()
 	var updatedEntry *filer_pb.Entry
 	err = fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		resp, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+			Directory: dir,
+			Entry:     clonedEntry,
+		})
+		if err != nil {
+			return err
+		}
+		if resp != nil && resp.MetadataEvent != nil && resp.MetadataEvent.EventNotification != nil && resp.MetadataEvent.EventNotification.NewEntry != nil {
+			updatedEntry = resp.MetadataEvent.EventNotification.NewEntry
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updatedEntry != nil {
+		return updatedEntry, nil
+	}
+	return fs.lookupEntry(ctx, actualPath)
+}
+
+func (fs *seaweedFileSystem) updateEntryAtPath(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) (*filer_pb.Entry, error) {
+	clonedEntry, ok := proto.Clone(entry).(*filer_pb.Entry)
+	if !ok {
+		return nil, errors.New("clone filer entry")
+	}
+	_, name := actualPath.DirAndName()
+	clonedEntry.Name = name
+
+	dir, _ := actualPath.DirAndName()
+	var updatedEntry *filer_pb.Entry
+	err := fs.server.withInternalClient(false, func(client nfsFilerClient) error {
 		resp, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
 			Entry:     clonedEntry,
@@ -683,6 +840,32 @@ func (fs *seaweedFileSystem) lookupEntry(ctx context.Context, actualPath util.Fu
 		return nil, os.ErrNotExist
 	}
 	return nil, err
+}
+
+func (fs *seaweedFileSystem) resolveHardLinkTarget(ctx context.Context, target string) (util.FullPath, *filer_pb.Entry, error) {
+	var resolved *ResolvedHandle
+	handleErr := fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		var err error
+		resolved, err = NewResolver(fs.server.exportRoot, client).ResolveHandle(ctx, []byte(target))
+		return err
+	})
+	if handleErr == nil && resolved != nil {
+		return resolved.Path, resolved.Entry, nil
+	}
+
+	if strings.HasPrefix(target, "/") {
+		_, actualPath := fs.resolvePath(target)
+		entry, err := fs.lookupEntry(ctx, actualPath)
+		if err != nil {
+			return "", nil, err
+		}
+		return actualPath, entry, nil
+	}
+
+	if handleErr != nil {
+		return "", nil, handleErr
+	}
+	return "", nil, os.ErrNotExist
 }
 
 func (fs *seaweedFileSystem) ensureIndexedEntry(ctx context.Context, actualPath util.FullPath, entry *filer_pb.Entry) (*filer_pb.Entry, uint64, error) {

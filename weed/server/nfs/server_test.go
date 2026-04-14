@@ -70,7 +70,7 @@ func (f *fakeNFSFilerClient) KvGet(_ context.Context, in *filer_pb.KvGetRequest,
 
 func (f *fakeNFSFilerClient) LookupDirectoryEntry(_ context.Context, in *filer_pb.LookupDirectoryEntryRequest, _ ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error) {
 	fullPath := util.NewFullPath(in.Directory, in.Name)
-	if entry, found := f.entries[fullPath]; found {
+	if entry := f.materializeEntry(fullPath); entry != nil {
 		return &filer_pb.LookupDirectoryEntryResponse{Entry: entry}, nil
 	}
 	return nil, filer_pb.ErrNotFound
@@ -84,7 +84,11 @@ func (f *fakeNFSFilerClient) ListEntries(_ context.Context, in *filer_pb.ListEnt
 		if util.FullPath(dir) != requestedDir {
 			continue
 		}
-		entries = append(entries, cloneEntry(entry))
+		if materialized := f.materializeEntry(fullPath); materialized != nil {
+			entries = append(entries, materialized)
+		} else {
+			entries = append(entries, cloneEntry(entry))
+		}
 	}
 	responses := make([]*filer_pb.ListEntriesResponse, 0, len(entries))
 	for _, entry := range entries {
@@ -143,8 +147,11 @@ func (f *fakeNFSFilerClient) DeleteEntry(_ context.Context, in *filer_pb.DeleteE
 		return &filer_pb.DeleteEntryResponse{Error: filer_pb.ErrNotFound.Error()}, nil
 	}
 
+	if len(entry.GetHardLinkId()) > 0 {
+		f.decrementHardLink(entry.GetHardLinkId())
+	}
 	if inode := entry.GetAttributes().GetInode(); inode != 0 {
-		delete(f.kv, string(filer.InodeIndexKey(inode)))
+		f.removeInodeIndexPath(fullPath, inode)
 	}
 	delete(f.entries, fullPath)
 	return &filer_pb.DeleteEntryResponse{}, nil
@@ -159,23 +166,14 @@ func (f *fakeNFSFilerClient) AtomicRenameEntry(_ context.Context, in *filer_pb.A
 		return nil, filer_pb.ErrNotFound
 	}
 	delete(f.entries, oldPath)
+	if inode := entry.GetAttributes().GetInode(); inode != 0 {
+		f.removeInodeIndexPath(oldPath, inode)
+	}
 
 	newPath := util.NewFullPath(in.NewDirectory, in.NewName)
 	renamed := cloneEntry(entry)
 	renamed.Name = in.NewName
 	renamed = f.persistEntry(newPath, renamed, true)
-
-	if inode := renamed.GetAttributes().GetInode(); inode != 0 {
-		record := &filer.InodeIndexRecord{
-			Generation: 1,
-			Paths:      []string{string(newPath)},
-		}
-		value, err := record.Encode()
-		if err != nil {
-			return nil, err
-		}
-		f.kv[string(filer.InodeIndexKey(inode))] = value
-	}
 
 	return &filer_pb.AtomicRenameEntryResponse{}, nil
 }
@@ -203,16 +201,117 @@ func (f *fakeNFSFilerClient) persistEntry(fullPath util.FullPath, entry *filer_p
 	f.entries[fullPath] = cloned
 
 	if cloned.Attributes.Inode != 0 {
-		record := &filer.InodeIndexRecord{
-			Generation: 1,
-			Paths:      []string{string(fullPath)},
-		}
-		value, err := record.Encode()
-		if err == nil {
-			f.kv[string(filer.InodeIndexKey(cloned.Attributes.Inode))] = value
-		}
+		f.addInodeIndexPath(fullPath, cloned.Attributes.Inode)
+	}
+	if len(cloned.GetHardLinkId()) > 0 {
+		f.storeHardLinkBlob(fullPath, cloned)
 	}
 	return cloned
+}
+
+func (f *fakeNFSFilerClient) materializeEntry(fullPath util.FullPath) *filer_pb.Entry {
+	entry, found := f.entries[fullPath]
+	if !found || entry == nil {
+		return nil
+	}
+	cloned := cloneEntry(entry)
+	if len(cloned.GetHardLinkId()) == 0 {
+		return cloned
+	}
+
+	value, found := f.kv[string(cloned.GetHardLinkId())]
+	if !found {
+		return cloned
+	}
+
+	dir, _ := fullPath.DirAndName()
+	fsEntry := filer.FromPbEntry(dir, cloned)
+	if err := fsEntry.DecodeAttributesAndChunks(value); err != nil {
+		return cloned
+	}
+	fsEntry.FullPath = fullPath
+	return fsEntry.ToProtoEntry()
+}
+
+func (f *fakeNFSFilerClient) addInodeIndexPath(fullPath util.FullPath, inode uint64) {
+	if inode == 0 {
+		return
+	}
+
+	record := &filer.InodeIndexRecord{Generation: filer.InodeIndexInitialGeneration}
+	if value, found := f.kv[string(filer.InodeIndexKey(inode))]; found {
+		if decoded, err := filer.DecodeInodeIndexRecord(value); err == nil {
+			record = decoded
+		}
+	}
+	record.Paths = append(record.Paths, string(fullPath))
+	value, err := record.Encode()
+	if err == nil {
+		f.kv[string(filer.InodeIndexKey(inode))] = value
+	}
+}
+
+func (f *fakeNFSFilerClient) removeInodeIndexPath(fullPath util.FullPath, inode uint64) {
+	if inode == 0 {
+		return
+	}
+
+	key := string(filer.InodeIndexKey(inode))
+	value, found := f.kv[key]
+	if !found {
+		return
+	}
+	record, err := filer.DecodeInodeIndexRecord(value)
+	if err != nil {
+		delete(f.kv, key)
+		return
+	}
+	var kept []string
+	for _, path := range record.Paths {
+		if util.FullPath(path) != fullPath {
+			kept = append(kept, path)
+		}
+	}
+	record.Paths = kept
+	if len(record.Paths) == 0 {
+		delete(f.kv, key)
+		return
+	}
+	value, err = record.Encode()
+	if err == nil {
+		f.kv[key] = value
+	}
+}
+
+func (f *fakeNFSFilerClient) storeHardLinkBlob(fullPath util.FullPath, entry *filer_pb.Entry) {
+	dir, _ := fullPath.DirAndName()
+	fsEntry := filer.FromPbEntry(dir, cloneEntry(entry))
+	fsEntry.FullPath = fullPath
+	value, err := fsEntry.EncodeAttributesAndChunks()
+	if err == nil {
+		f.kv[string(entry.GetHardLinkId())] = value
+	}
+}
+
+func (f *fakeNFSFilerClient) decrementHardLink(hardLinkID []byte) {
+	value, found := f.kv[string(hardLinkID)]
+	if !found {
+		return
+	}
+
+	fsEntry := &filer.Entry{}
+	if err := fsEntry.DecodeAttributesAndChunks(value); err != nil {
+		return
+	}
+	fsEntry.HardLinkCounter--
+	if fsEntry.HardLinkCounter <= 0 {
+		delete(f.kv, string(hardLinkID))
+		return
+	}
+	value, err := fsEntry.EncodeAttributesAndChunks()
+	if err == nil {
+		f.kv[string(hardLinkID)] = value
+	}
 }
 
 func (f *fakeNFSFilerClient) allocateInode() uint64 {
