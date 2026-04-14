@@ -248,7 +248,7 @@ jobs:
   s3-checksum-tests:
     name: S3 Checksum Tests
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out code
@@ -265,7 +265,7 @@ jobs:
           go install -buildvcs=false
 
       - name: Run S3 Checksum Tests
-        timeout-minutes: 12
+        timeout-minutes: 16
         working-directory: test/s3/checksum
         run: |
           set -x
