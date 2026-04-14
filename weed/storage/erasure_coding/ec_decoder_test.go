@@ -482,86 +482,98 @@ func TestEcxFileDeletionWithSeparateHandles(t *testing.T) {
 	}
 }
 
-// TestEcVolumeSyncEnsuresDeletionsVisible is an integration test for issue #7751
-// that verifies the EcVolume.Sync() method ensures deleted needles are visible
-// to external readers (like ec.decode's CopyFile).
-func TestEcVolumeSyncEnsuresDeletionsVisible(t *testing.T) {
+// TestEcVolumeDeleteDurableToJournal tracks issue #7751: a runtime needle
+// delete must be observable by the ec.decode CopyFile path. Under the
+// current design .ecx is an immutable sealed index at runtime — deletes
+// are journaled to .ecj and tracked in an in-memory set — so the
+// durability chain decode relies on is:
+//
+//   1. DeleteNeedleFromEcx appends the needle id to .ecj and fsyncs it.
+//   2. Runtime reads via FindNeedleFromEcx consult the in-memory set and
+//      return TombstoneFileSize even though the sealed .ecx record on
+//      disk still shows the original size.
+//   3. ec.decode later closes the EcVolume and calls RebuildEcxFile on
+//      the now-quiescent files, which walks .ecj and writes tombstones
+//      into .ecx. CopyFile then reads the rebuilt .ecx.
+//
+// This test exercises the full chain on a tempdir fixture.
+func TestEcVolumeDeleteDurableToJournal(t *testing.T) {
 	dir := t.TempDir()
 
 	collection := "test"
 	vid := 1
 	base := filepath.Join(dir, collection+"_1")
 
-	// Create initial .ecx file with live needle
+	// Seed .ecx with two live needles.
 	needle1 := makeNeedleMapEntry(types.NeedleId(1), types.ToOffset(64), types.Size(100))
 	needle2 := makeNeedleMapEntry(types.NeedleId(2), types.ToOffset(128), types.Size(200))
 	ecxData := append(needle1, needle2...)
 	if err := os.WriteFile(base+".ecx", ecxData, 0644); err != nil {
 		t.Fatalf("write ecx: %v", err)
 	}
-
-	// Create empty .ecj file
 	if err := os.WriteFile(base+".ecj", []byte{}, 0644); err != nil {
 		t.Fatalf("write ecj: %v", err)
 	}
-
-	// Create minimal EC shard file to allow EcVolume creation
-	// Shards need super block header (8 bytes)
-	shardData := make([]byte, 8)
-	if err := os.WriteFile(base+".ec00", shardData, 0644); err != nil {
+	if err := os.WriteFile(base+".ec00", make([]byte, 8), 0644); err != nil {
 		t.Fatalf("write ec00: %v", err)
 	}
-
-	// Create .vif file
 	if err := os.WriteFile(base+".vif", []byte{}, 0644); err != nil {
 		t.Fatalf("write vif: %v", err)
 	}
 
-	// Create EcVolume
-	ecVolume, err := erasure_coding.NewEcVolume(
-		"hdd",
-		dir, // data dir
-		dir, // idx dir
-		collection,
-		needle.VolumeId(vid),
-	)
+	ecVolume, err := erasure_coding.NewEcVolume("hdd", dir, dir, collection, needle.VolumeId(vid))
 	if err != nil {
 		t.Fatalf("NewEcVolume: %v", err)
 	}
-	defer ecVolume.Close()
 
-	// Delete needle 2 via EcVolume (this writes to .ecx and .ecj)
+	// Runtime delete must not mutate .ecx.
 	if err := ecVolume.DeleteNeedleFromEcx(types.NeedleId(2)); err != nil {
 		t.Fatalf("DeleteNeedleFromEcx: %v", err)
 	}
 
-	// Before Sync: open a new reader handle to simulate CopyFile
-	readerBefore, err := os.OpenFile(base+".ecx", os.O_RDONLY, 0644)
+	// FindNeedleFromEcx masks the id via the in-memory set.
+	_, size, err := ecVolume.FindNeedleFromEcx(types.NeedleId(2))
 	if err != nil {
-		t.Fatalf("open ecx for read (before sync): %v", err)
+		t.Fatalf("FindNeedleFromEcx(2): %v", err)
 	}
-	defer readerBefore.Close()
-
-	// Now call Sync() - this is what fixes issue #7751
-	ecVolume.Sync()
-
-	// After Sync: open another reader handle
-	readerAfter, err := os.OpenFile(base+".ecx", os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("open ecx for read (after sync): %v", err)
-	}
-	defer readerAfter.Close()
-
-	// Read needle 2's entry from the after-sync handle
-	entrySize := types.NeedleIdSize + types.OffsetSize + types.SizeSize
-	data := make([]byte, entrySize)
-	if _, err := readerAfter.ReadAt(data, int64(entrySize)); err != nil {
-		t.Fatalf("ReadAt after sync: %v", err)
-	}
-
-	// Verify needle 2 is marked as deleted
-	size := types.BytesToSize(data[types.NeedleIdSize+types.OffsetSize:])
 	if !size.IsDeleted() {
-		t.Fatalf("expected needle 2 to be deleted after Sync(), got size: %d", size)
+		t.Fatalf("expected FindNeedleFromEcx to return tombstone for deleted needle, got size=%d", size)
+	}
+
+	// Direct .ecx reader should still see the original size — .ecx is
+	// immutable at runtime.
+	entrySize := int64(types.NeedleIdSize + types.OffsetSize + types.SizeSize)
+	rawBuf := make([]byte, entrySize)
+	rawReader, err := os.Open(base + ".ecx")
+	if err != nil {
+		t.Fatalf("open ecx raw: %v", err)
+	}
+	if _, err := rawReader.ReadAt(rawBuf, entrySize); err != nil {
+		t.Fatalf("read raw ecx entry: %v", err)
+	}
+	rawReader.Close()
+	rawSize := types.BytesToSize(rawBuf[types.NeedleIdSize+types.OffsetSize:])
+	if rawSize.IsDeleted() {
+		t.Fatalf("runtime delete must not mutate .ecx on disk; got tombstone in raw entry")
+	}
+
+	// Close the volume so RebuildEcxFile can operate on the files, then
+	// fold .ecj into .ecx as the decode path does and verify the rebuilt
+	// index has the tombstone visible to external readers.
+	ecVolume.Close()
+	if err := erasure_coding.RebuildEcxFile(base); err != nil {
+		t.Fatalf("RebuildEcxFile: %v", err)
+	}
+	rebuilt, err := os.Open(base + ".ecx")
+	if err != nil {
+		t.Fatalf("open rebuilt ecx: %v", err)
+	}
+	defer rebuilt.Close()
+	if _, err := rebuilt.ReadAt(rawBuf, entrySize); err != nil {
+		t.Fatalf("read rebuilt ecx entry: %v", err)
+	}
+	rebuiltSize := types.BytesToSize(rawBuf[types.NeedleIdSize+types.OffsetSize:])
+	if !rebuiltSize.IsDeleted() {
+		t.Fatalf("expected needle 2 to be tombstoned in rebuilt .ecx, got size=%d", rebuiltSize)
 	}
 }

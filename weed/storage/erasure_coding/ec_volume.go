@@ -45,11 +45,20 @@ type EcVolume struct {
 	ECContext                 *ECContext // EC encoding parameters
 
 	// ecjFileSize mirrors the on-disk size of the .ecj deletion journal and
-	// is maintained under ecjFileAccessLock. File and delete counts are
-	// derived directly from ecxFileSize and ecjFileSize — the .ecx entry
-	// layout is fixed (NeedleMapEntrySize per entry) and each .ecj entry is
-	// one NeedleId — so heartbeats report counts in O(1) without walking.
+	// is maintained under ecjFileAccessLock. It is only used by IO helpers
+	// (seek/truncate) — the authoritative runtime delete count comes from
+	// deletedNeedles.
 	ecjFileSize int64
+
+	// deletedNeedles is the in-memory set of needle ids that have been
+	// deleted since the volume was encoded. .ecx is immutable at runtime —
+	// it only stores the sorted (id, offset, size) index written at encode
+	// time — and runtime deletes are journaled to .ecj + tracked here.
+	// Reads consult this set to mask out deleted needles on top of the
+	// sealed .ecx lookup. Heartbeat delete_count is derived from len(set).
+	// Seeded from .ecj in NewEcVolume and updated under deletedNeedlesLock.
+	deletedNeedlesLock sync.RWMutex
+	deletedNeedles     map[types.NeedleId]struct{}
 }
 
 func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection string, vid needle.VolumeId) (ev *EcVolume, err error) {
@@ -82,7 +91,7 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 	ev.ecxFileSize = ecxFi.Size()
 	ev.ecxCreatedAt = ecxFi.ModTime()
 
-	// open ecj file
+	// open ecj file and seed the in-memory deleted set from it.
 	if ev.ecjFile, err = os.OpenFile(indexBaseFileName+".ecj", os.O_RDWR|os.O_CREATE, 0644); err != nil {
 		return nil, fmt.Errorf("cannot open ec volume journal %s.ecj: %v", indexBaseFileName, err)
 	}
@@ -90,6 +99,10 @@ func NewEcVolume(diskType types.DiskType, dir string, dirIdx string, collection 
 		ev.ecjFileSize = ecjFi.Size()
 	} else {
 		glog.Warningf("stat ec volume journal %s.ecj: %v", indexBaseFileName, statErr)
+	}
+	ev.deletedNeedles = make(map[types.NeedleId]struct{})
+	if loadErr := ev.loadDeletedNeedlesFromEcj(); loadErr != nil {
+		glog.Warningf("ec volume %d: load deleted needles from .ecj: %v", vid, loadErr)
 	}
 
 	// read volume info
@@ -297,30 +310,64 @@ func (ev *EcVolume) ToVolumeEcShardInformationMessage(diskId uint32) (messages [
 }
 
 // FileAndDeleteCount returns the current (fileCount, deleteCount) for this
-// EC volume, derived directly from the on-disk index file sizes:
+// EC volume.
 //
 //   - fileCount = .ecx size / NeedleMapEntrySize — the total number of
-//     needles ever recorded in the .ecx index. Because .ecx is sealed
-//     when the volume is EC-encoded and is only rewritten (preserving
-//     record count) during decode/rebuild, this matches the "cumulative
-//     put count" semantics of regular volume FileCount.
+//     needles recorded in the sealed sorted index. Because .ecx is written
+//     at encode time and only overwritten during decode/rebuild (which
+//     preserves record count), this matches the "cumulative put count"
+//     semantics of regular volume FileCount.
 //
-//   - deleteCount = .ecj size / NeedleIdSize — the number of deletions
-//     recorded in the journal. DeleteNeedleFromEcx appends one NeedleId
-//     per live->tombstone transition, so this is the node-local delete
-//     count. Because a needle delete is applied on exactly one shard
-//     holder (see doDeleteNeedleFromRemoteEcShardServers), the admin
+//   - deleteCount = len(deletedNeedles) — the number of unique runtime
+//     deletes tracked in memory. The set is seeded from .ecj on load and
+//     appended to on every successful DeleteNeedleFromEcx. Because a
+//     needle delete is applied on exactly one shard holder, the admin
 //     aggregation sums deleteCount across nodes to get the volume's true
 //     delete total.
 //
-// Computing from file sizes keeps heartbeats O(1); no index walk needed.
+// Both values are O(1) — no index walking.
 func (ev *EcVolume) FileAndDeleteCount() (fileCount, deleteCount uint64) {
 	fileCount = uint64(ev.ecxFileSize) / uint64(types.NeedleMapEntrySize)
-	ev.ecjFileAccessLock.Lock()
-	ecjSize := ev.ecjFileSize
-	ev.ecjFileAccessLock.Unlock()
-	deleteCount = uint64(ecjSize) / uint64(types.NeedleIdSize)
+	ev.deletedNeedlesLock.RLock()
+	deleteCount = uint64(len(ev.deletedNeedles))
+	ev.deletedNeedlesLock.RUnlock()
 	return
+}
+
+// IsNeedleDeleted reports whether the given needle id is in the in-memory
+// deleted set. Callers that have already looked the needle up in .ecx
+// should consult this to apply runtime deletion state on top of the
+// sealed index.
+func (ev *EcVolume) IsNeedleDeleted(needleId types.NeedleId) bool {
+	ev.deletedNeedlesLock.RLock()
+	_, ok := ev.deletedNeedles[needleId]
+	ev.deletedNeedlesLock.RUnlock()
+	return ok
+}
+
+// markNeedleDeletedInMemory inserts a needle id into the deleted set.
+func (ev *EcVolume) markNeedleDeletedInMemory(needleId types.NeedleId) {
+	ev.deletedNeedlesLock.Lock()
+	ev.deletedNeedles[needleId] = struct{}{}
+	ev.deletedNeedlesLock.Unlock()
+}
+
+// loadDeletedNeedlesFromEcj walks the .ecj journal and populates the
+// in-memory deleted set. Called once from NewEcVolume under the exclusive
+// ownership of the just-constructed (and not yet shared) EcVolume.
+func (ev *EcVolume) loadDeletedNeedlesFromEcj() error {
+	if ev.ecjFile == nil || ev.ecjFileSize < int64(types.NeedleIdSize) {
+		return nil
+	}
+	buf := make([]byte, types.NeedleIdSize)
+	for off := int64(0); off+int64(types.NeedleIdSize) <= ev.ecjFileSize; off += int64(types.NeedleIdSize) {
+		if _, err := ev.ecjFile.ReadAt(buf, off); err != nil {
+			return fmt.Errorf("read ecj at %d: %w", off, err)
+		}
+		id := types.BytesToNeedleId(buf)
+		ev.deletedNeedles[id] = struct{}{}
+	}
+	return nil
 }
 
 func (ev *EcVolume) LocateEcShardNeedle(needleId types.NeedleId, version needle.Version) (offset types.Offset, size types.Size, intervals []Interval, err error) {
@@ -356,7 +403,15 @@ func (ev *EcVolume) LocateEcShardNeedleInterval(version needle.Version, offset i
 }
 
 func (ev *EcVolume) FindNeedleFromEcx(needleId types.NeedleId) (offset types.Offset, size types.Size, err error) {
-	return SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+	offset, size, err = SearchNeedleFromSortedIndex(ev.ecxFile, ev.ecxFileSize, needleId, nil)
+	if err != nil {
+		return
+	}
+	// Apply runtime deletion state on top of the sealed .ecx lookup.
+	if ev.IsNeedleDeleted(needleId) {
+		size = types.TombstoneFileSize
+	}
+	return
 }
 
 func SearchNeedleFromSortedIndex(ecxFile *os.File, ecxFileSize int64, needleId types.NeedleId, processNeedleFn func(file *os.File, offset int64) error) (offset types.Offset, size types.Size, err error) {
