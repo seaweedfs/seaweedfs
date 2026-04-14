@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"syscall"
 	"time"
@@ -147,7 +148,63 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 
 	wfs.inodeToPath.AddPath(oldEntry.Attributes.Inode, newEntryPath)
 
+	// Propagate the new HardLinkCounter to sibling cache entries and
+	// invalidate the kernel's inode attr cache. Without this, `stat` on any
+	// existing sibling link (other than the source we just wrote) returns
+	// the old nlink from the local metacache — pjdfstest link/00.t catches
+	// this after `link n1 n2` when it stats n0.
+	wfs.syncHardLinkSiblings(oldEntry.Attributes.Inode, oldEntry, oldEntryPath, newEntryPath)
+
 	wfs.outputPbEntry(out, oldEntry.Attributes.Inode, request.Entry)
 
 	return fuse.OK
+}
+
+// syncHardLinkSiblings rewrites the cached HardLinkCounter (and ctime) on
+// every sibling link of the given inode, and invalidates the kernel's inode
+// attr cache. `authoritativeEntry` carries the counter/ctime that should be
+// propagated. `skipPaths` are the link paths already updated by the caller
+// (typically the source and/or the newly created/removed link).
+func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.Entry, skipPaths ...util.FullPath) {
+	if authoritativeEntry == nil || len(authoritativeEntry.HardLinkId) == 0 {
+		return
+	}
+	paths := wfs.inodeToPath.GetAllPaths(inode)
+	if len(paths) == 0 {
+		return
+	}
+	skip := make(map[util.FullPath]struct{}, len(skipPaths))
+	for _, p := range skipPaths {
+		skip[p] = struct{}{}
+	}
+	ctx := context.Background()
+	for _, p := range paths {
+		if _, skipped := skip[p]; skipped {
+			continue
+		}
+		sibling, err := wfs.metaCache.FindEntry(ctx, p)
+		if err != nil || sibling == nil {
+			continue
+		}
+		// Only touch siblings that genuinely share the same hard-link id.
+		// inodeToPath's shared-inode invariant should already guarantee
+		// this, but a mismatch can occur transiently (e.g. a rename
+		// replaced one of the paths), and blindly stamping an unrelated
+		// entry's counter would corrupt it.
+		if !bytes.Equal(sibling.HardLinkId, authoritativeEntry.HardLinkId) {
+			continue
+		}
+		sibling.HardLinkCounter = authoritativeEntry.HardLinkCounter
+		if authoritativeEntry.Attributes != nil {
+			sibling.Attr.Ctime = time.Unix(authoritativeEntry.Attributes.Ctime, int64(authoritativeEntry.Attributes.CtimeNs))
+		}
+		if err := wfs.metaCache.UpdateEntry(ctx, sibling); err != nil {
+			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
+		}
+	}
+	if wfs.fuseServer != nil {
+		if status := wfs.fuseServer.InodeNotify(inode, 0, -1); status != fuse.OK {
+			glog.V(4).Infof("syncHardLinkSiblings invalidate inode %d: %v", inode, status)
+		}
+	}
 }
