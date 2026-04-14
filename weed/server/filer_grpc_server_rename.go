@@ -192,6 +192,26 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 			return findErr
 		}
 	}
+	if existingTarget != nil {
+		switch {
+		case existingTarget.IsDirectory() && !entry.IsDirectory():
+			return fmt.Errorf("%s: %w", existingTarget.FullPath, filer_pb.ErrExistingIsDirectory)
+		case !existingTarget.IsDirectory() && entry.IsDirectory():
+			return fmt.Errorf("%s: %w", existingTarget.FullPath, filer_pb.ErrExistingIsFile)
+		}
+		if deleteErr := fs.filer.DeleteEntryMetaAndData(
+			filer.WithSuppressedMetadataEvents(ctx),
+			newPath,
+			false,
+			false,
+			false,
+			false,
+			signatures,
+			0,
+		); deleteErr != nil {
+			return deleteErr
+		}
+	}
 
 	// add to new directory
 	newEntry := &filer.Entry{
@@ -215,6 +235,14 @@ func (fs *FilerServer) moveSelfEntry(ctx context.Context, stream filer_pb.Seawee
 	} else {
 		if createErr := fs.filer.CreateEntry(filer.WithSuppressedMetadataEvents(ctx), newEntry, false, false, signatures, false, fs.filer.MaxFilenameLength); createErr != nil {
 			return createErr
+		}
+	}
+	if existingTarget != nil {
+		toDelete, err := filer.MinusChunks(ctx, fs.filer.MasterClient.GetLookupFileIdFunction(), existingTarget.GetChunks(), newEntry.GetChunks())
+		if err != nil {
+			glog.ErrorfCtx(ctx, "Failed to resolve overwrite target chunks during rename. new: %v, old: %v", newEntry.GetChunks(), existingTarget.GetChunks())
+		} else {
+			fs.filer.DeleteChunksNotRecursive(toDelete)
 		}
 	}
 	if stream != nil {

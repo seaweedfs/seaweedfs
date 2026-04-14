@@ -34,7 +34,27 @@ func newClientAuthorizer(allowed []string) (*clientAuthorizer, error) {
 			authorizer.enabled = true
 			continue
 		}
+
+		if ip := normalizeClientIP(entry); ip != nil {
+			authorizer.exact[ip.String()] = struct{}{}
+			authorizer.enabled = true
+			continue
+		}
+
+		ips, err := net.LookupIP(entry)
+		if err != nil {
+			return nil, fmt.Errorf("resolve allowed NFS client %q: %w", entry, err)
+		}
+		if len(ips) == 0 {
+			return nil, fmt.Errorf("resolve allowed NFS client %q: no addresses", entry)
+		}
 		authorizer.exact[entry] = struct{}{}
+		for _, ip := range ips {
+			if ip == nil {
+				continue
+			}
+			authorizer.exact[ip.String()] = struct{}{}
+		}
 		authorizer.enabled = true
 	}
 
@@ -64,9 +84,12 @@ func (a *clientAuthorizer) isAllowedAddr(addr net.Addr) bool {
 		return true
 	}
 
-	ip := net.ParseIP(host)
+	ip := normalizeClientIP(host)
 	if ip == nil {
 		return false
+	}
+	if _, found := a.exact[ip.String()]; found {
+		return true
 	}
 	for _, network := range a.cidrs {
 		if network.Contains(ip) {
@@ -87,6 +110,14 @@ func remoteHost(remote string) string {
 		host = host[1 : len(host)-1]
 	}
 	return host
+}
+
+func normalizeClientIP(host string) net.IP {
+	host = strings.TrimSpace(host)
+	if zoneIndex := strings.LastIndex(host, "%"); zoneIndex >= 0 {
+		host = host[:zoneIndex]
+	}
+	return net.ParseIP(host)
 }
 
 type allowlistListener struct {

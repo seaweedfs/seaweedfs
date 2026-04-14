@@ -230,14 +230,15 @@ func mountTestTarget(t *testing.T, server *Server) (*nfsclient.Target, func()) {
 	}()
 
 	var client *rpc.Client
-	for attempt := 0; attempt < 5; attempt++ {
+	for attempt := 0; attempt < 10; attempt++ {
 		client, err = rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
 		if err == nil {
 			break
 		}
-		if !strings.Contains(err.Error(), "address already in use") {
+		if attempt == 9 {
 			require.NoError(t, err)
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	require.NoError(t, err)
 

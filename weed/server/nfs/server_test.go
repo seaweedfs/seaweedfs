@@ -585,6 +585,88 @@ func TestSeaweedFileSystemReadOnlyDisablesMutations(t *testing.T) {
 	require.ErrorIs(t, err, billy.ErrReadOnly)
 }
 
+func TestSeaweedFileSystemStatAndOpenFollowSymlinks(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+			string(filer.InodeIndexKey(202)): testIndexRecord(t, 202, 2, "/exports/target.txt"),
+			string(filer.InodeIndexKey(303)): testIndexRecord(t, 303, 3, "/exports/link.txt"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports":            testEntry("exports", true, 101, uint32(0755), nil),
+			"/exports/target.txt": testEntry("target.txt", false, 202, uint32(0644), []byte("hello")),
+			"/exports/link.txt": {
+				Name: "link.txt",
+				Attributes: &filer_pb.FuseAttributes{
+					Inode:         303,
+					FileMode:      uint32(0o777),
+					SymlinkTarget: "target.txt",
+				},
+			},
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	linkInfo, err := handler.rootFS.Lstat("/link.txt")
+	require.NoError(t, err)
+	assert.NotZero(t, linkInfo.Mode()&os.ModeSymlink)
+
+	targetInfo, err := handler.rootFS.Stat("/link.txt")
+	require.NoError(t, err)
+	assert.Zero(t, targetInfo.Mode()&os.ModeSymlink)
+	assert.Equal(t, int64(5), targetInfo.Size())
+
+	file, err := handler.rootFS.Open("/link.txt")
+	require.NoError(t, err)
+	defer file.Close()
+
+	data, err := io.ReadAll(file)
+	require.NoError(t, err)
+	assert.Equal(t, "hello", string(data))
+}
+
+func TestSeaweedFileSystemAppendModeAndUnsupportedLocks(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+			string(filer.InodeIndexKey(202)): testIndexRecord(t, 202, 2, "/exports/demo.txt"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports":          testEntry("exports", true, 101, uint32(0755), nil),
+			"/exports/demo.txt": testEntry("demo.txt", false, 202, uint32(0644), []byte("hello")),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	assert.False(t, billy.CapabilityCheck(handler.rootFS, billy.LockCapability))
+
+	file, err := handler.rootFS.OpenFile("/demo.txt", os.O_WRONLY|os.O_APPEND, 0)
+	require.NoError(t, err)
+
+	_, err = file.Seek(0, io.SeekStart)
+	require.ErrorContains(t, err, "append-only")
+	require.ErrorIs(t, file.Lock(), billy.ErrNotSupported)
+	require.ErrorIs(t, file.Unlock(), billy.ErrNotSupported)
+
+	_, err = file.Write([]byte("!"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	updated, err := handler.rootFS.Open("/demo.txt")
+	require.NoError(t, err)
+	defer updated.Close()
+
+	data, err := io.ReadAll(updated)
+	require.NoError(t, err)
+	assert.Equal(t, "hello!", string(data))
+}
+
 func TestServerApplyMetadataInvalidationResponseUncachesExportChunks(t *testing.T) {
 	invalidator := &recordingChunkInvalidator{}
 	server := &Server{

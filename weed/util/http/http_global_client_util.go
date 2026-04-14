@@ -35,15 +35,24 @@ var (
 
 func AppendQueryParameter(rawURL, key, value string) string {
 	encoded := url.Values{key: []string{value}}.Encode()
+	fragment := ""
+	if fragmentIndex := strings.Index(rawURL, "#"); fragmentIndex >= 0 {
+		fragment = rawURL[fragmentIndex:]
+		rawURL = rawURL[:fragmentIndex]
+	}
+
+	var result string
 	switch {
 	case strings.Contains(rawURL, "?"):
 		if strings.HasSuffix(rawURL, "?") || strings.HasSuffix(rawURL, "&") {
-			return rawURL + encoded
+			result = rawURL + encoded
+		} else {
+			result = rawURL + "&" + encoded
 		}
-		return rawURL + "&" + encoded
 	default:
-		return rawURL + "?" + encoded
+		result = rawURL + "?" + encoded
 	}
+	return result + fragment
 }
 
 func loadJwtConfig() {
