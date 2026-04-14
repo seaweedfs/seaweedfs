@@ -100,6 +100,62 @@ func TestResolverRejectsGenerationMismatch(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleHandle)
 }
 
+func TestResolverKeepsHandleValidAcrossRename(t *testing.T) {
+	client := &fakeResolverClient{
+		kv:      make(map[string][]byte),
+		entries: make(map[util.FullPath]*filer_pb.Entry),
+	}
+	resolver := NewResolver("/exports", client)
+
+	record := &filer.InodeIndexRecord{
+		Generation: 5,
+		Paths:      []string{"/exports/new-name.txt"},
+	}
+	value, err := record.Encode()
+	require.NoError(t, err)
+	client.kv[string(filer.InodeIndexKey(88))] = value
+	client.entries["/exports/new-name.txt"] = &filer_pb.Entry{
+		Name: "new-name.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			Inode: 88,
+		},
+	}
+
+	handle := NewFileHandle(resolver.ExportID(), FileHandleKindFile, 88, 5)
+	resolved, err := resolver.ResolveHandle(context.Background(), handle.Encode())
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/exports/new-name.txt"), resolved.Path)
+	require.NotNil(t, resolved.Entry)
+	assert.Equal(t, uint64(88), resolved.Entry.Attributes.Inode)
+}
+
+func TestResolverRejectsHandleAfterDeleteRecreateWithNewInode(t *testing.T) {
+	client := &fakeResolverClient{
+		kv:      make(map[string][]byte),
+		entries: make(map[util.FullPath]*filer_pb.Entry),
+	}
+	resolver := NewResolver("/exports", client)
+
+	client.entries["/exports/file.txt"] = &filer_pb.Entry{
+		Name: "file.txt",
+		Attributes: &filer_pb.FuseAttributes{
+			Inode: 999,
+		},
+	}
+
+	record := &filer.InodeIndexRecord{
+		Generation: 4,
+		Paths:      []string{"/exports/file.txt"},
+	}
+	value, err := record.Encode()
+	require.NoError(t, err)
+	client.kv[string(filer.InodeIndexKey(77))] = value
+
+	handle := NewFileHandle(resolver.ExportID(), FileHandleKindFile, 77, 4)
+	_, err = resolver.ResolveHandle(context.Background(), handle.Encode())
+	require.ErrorIs(t, err, ErrStaleHandle)
+}
+
 func TestResolverSupportsSyntheticRootHandle(t *testing.T) {
 	client := &fakeResolverClient{
 		kv:      make(map[string][]byte),

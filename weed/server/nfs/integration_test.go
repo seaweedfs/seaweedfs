@@ -296,12 +296,17 @@ func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	assert.Equal(t, payload, entry.Content)
 	assert.Empty(t, entry.Chunks)
 
+	_, beforeRenameHandle, err := target.Lookup("/docs/note.txt")
+	require.NoError(t, err)
+
 	entries, err := target.ReadDirPlus("/docs")
 	require.NoError(t, err)
 	require.Len(t, entries, 1)
 	assert.Equal(t, "note.txt", entries[0].Name())
 
 	require.NoError(t, target.Rename("/docs/note.txt", "/docs/final.txt"))
+	_, err = target.GetAttr(beforeRenameHandle)
+	require.NoError(t, err)
 	_, _, err = target.Lookup("/docs/final.txt")
 	require.NoError(t, err)
 	_, _, err = target.Lookup("/docs/note.txt")
@@ -371,4 +376,48 @@ func TestSeaweedNFSServesLargeChunkRoundTripOverRPC(t *testing.T) {
 	require.Len(t, controlPlane.assigns, 1)
 	assert.Equal(t, "/exports/big.bin", controlPlane.assigns[0].GetPath())
 	assert.NotEmpty(t, controlPlane.lookups)
+}
+
+func TestSeaweedNFSRejectsStaleHandleAfterDeleteRecreate(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	target, cleanup := mountTestTarget(t, server)
+	defer cleanup()
+	defer target.Close()
+
+	file, err := target.OpenFile("/stale.txt", 0o644)
+	require.NoError(t, err)
+	_, err = file.Write([]byte("old"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, oldHandle, err := target.Lookup("/stale.txt")
+	require.NoError(t, err)
+
+	require.NoError(t, target.Remove("/stale.txt"))
+
+	file, err = target.OpenFile("/stale.txt", 0o644)
+	require.NoError(t, err)
+	_, err = file.Write([]byte("new"))
+	require.NoError(t, err)
+	require.NoError(t, file.Close())
+
+	_, err = target.GetAttr(oldHandle)
+	require.Error(t, err)
+	nfsErr, ok := err.(*nfsclient.Error)
+	require.True(t, ok)
+	assert.Equal(t, uint32(nfsclient.NFS3ErrStale), nfsErr.ErrorNum)
+
+	_, newHandle, err := target.Lookup("/stale.txt")
+	require.NoError(t, err)
+	_, err = target.GetAttr(newHandle)
+	require.NoError(t, err)
 }
