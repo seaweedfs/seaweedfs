@@ -80,3 +80,79 @@ func hasData(usage *ChunkWrittenIntervalList, chunkStartOffset, x int64) bool {
 	}
 	return false
 }
+
+func TestIsComplete_AdjacentIntervals(t *testing.T) {
+	// Linux FUSE delivers writes up to FUSE_MAX_PAGES_PER_REQ
+	// (typically 1 MiB) per op, so a 2 MiB chunk filled by sequential
+	// writes arrives as two adjacent 1 MiB writes. addInterval does
+	// not merge adjacent intervals into one, but IsComplete must
+	// still report the chunk as fully covered — otherwise
+	// maybeMoveToSealed never fires, the chunk stays writable
+	// forever, and the write buffer cap cannot drain. Regression for
+	// the TestWriteBufferCap Linux CI deadlock on PR #9066.
+	const chunkSize int64 = 2 * 1024 * 1024
+
+	cases := []struct {
+		name     string
+		writes   [][2]int64
+		expected bool
+	}{
+		{
+			name:     "single full write",
+			writes:   [][2]int64{{0, chunkSize}},
+			expected: true,
+		},
+		{
+			name:     "two adjacent halves in order",
+			writes:   [][2]int64{{0, chunkSize / 2}, {chunkSize / 2, chunkSize}},
+			expected: true,
+		},
+		{
+			name:     "two adjacent halves out of order",
+			writes:   [][2]int64{{chunkSize / 2, chunkSize}, {0, chunkSize / 2}},
+			expected: true,
+		},
+		{
+			name: "eight adjacent eighths",
+			writes: func() [][2]int64 {
+				const n = 8
+				step := chunkSize / n
+				out := make([][2]int64, 0, n)
+				for i := int64(0); i < n; i++ {
+					out = append(out, [2]int64{i * step, (i + 1) * step})
+				}
+				return out
+			}(),
+			expected: true,
+		},
+		{
+			name:     "gap in the middle",
+			writes:   [][2]int64{{0, chunkSize / 4}, {chunkSize / 2, chunkSize}},
+			expected: false,
+		},
+		{
+			name:     "missing last byte",
+			writes:   [][2]int64{{0, chunkSize - 1}},
+			expected: false,
+		},
+		{
+			name:     "missing first byte",
+			writes:   [][2]int64{{1, chunkSize}},
+			expected: false,
+		},
+		{
+			name:     "overlapping intervals covering everything",
+			writes:   [][2]int64{{0, chunkSize*3/4 + 1}, {chunkSize / 2, chunkSize}},
+			expected: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			list := newChunkWrittenIntervalList()
+			for i, w := range tc.writes {
+				list.MarkWritten(w[0], w[1], int64(i+1))
+			}
+			assert.Equal(t, tc.expected, list.IsComplete(chunkSize), "IsComplete mismatch")
+		})
+	}
+}
