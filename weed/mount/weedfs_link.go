@@ -63,9 +63,20 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		hlKey := string(oldEntry.HardLinkId)
 		lock := wfs.hardLinkLockTable.AcquireLock("link", hlKey, util.ExclusiveLock)
 		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
-		// Do not fall back to the pre-lock snapshot: if the source was
-		// deleted while we waited, we must abort instead of deriving
-		// the next counter from a stale entry.
+		// Under the lock, re-resolve the source alias from the inode.
+		// A concurrent Unlink that held this same lock may have removed
+		// the specific alias we picked pre-lock even though other
+		// sibling hard links for the same inode are still around;
+		// GetPath(Oldnodeid) returns whichever alias is still active.
+		refreshedPath, refreshedStatus := wfs.inodeToPath.GetPath(in.Oldnodeid)
+		if refreshedStatus != fuse.OK {
+			return refreshedStatus
+		}
+		oldEntryPath = refreshedPath
+		oldParentPath, _ = oldEntryPath.DirAndName()
+		// Do not fall back to the pre-lock snapshot: if every alias
+		// was deleted while we waited, abort instead of deriving the
+		// next counter from a stale entry.
 		fresh, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
 		if freshStatus != fuse.OK {
 			return freshStatus
