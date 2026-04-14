@@ -657,7 +657,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
 		// Verify against client-provided checksum if present in request headers
 		// (non-chunked uploads send the value directly; chunked uploads validate in the reader)
-		if expectedChecksum := r.Header.Get(checksumHeaderName); expectedChecksum != "" {
+		if expectedChecksum := getHeaderOrQuery(r, checksumHeaderName); expectedChecksum != "" {
 			if expectedChecksum != checksumBase64 {
 				glog.Warningf("putToFiler: checksum mismatch for %s: expected %s, got %s", checksumHeaderName, expectedChecksum, checksumBase64)
 				s3a.deleteOrphanedChunks(chunkResult.FileChunks)
@@ -891,14 +891,45 @@ var checksumHeaders = []struct {
 	{s3_constants.AmzChecksumSHA256, ChecksumAlgorithmSHA256, s3_constants.AmzChecksumSHA256},
 }
 
+// getHeaderOrQuery returns the value of an x-amz-* parameter, falling back to
+// the request's query string if the header is absent. AWS SDK presigners
+// hoist headers such as x-amz-sdk-checksum-algorithm into the query string
+// when generating presigned URLs, so the server must accept either location.
+// Query parameter lookup is case-insensitive to tolerate SDK/canonicalization
+// variations.
+func getHeaderOrQuery(r *http.Request, key string) string {
+	if v := r.Header.Get(key); v != "" {
+		return v
+	}
+	if r.URL == nil {
+		return ""
+	}
+	q := r.URL.Query()
+	if v := q.Get(key); v != "" {
+		return v
+	}
+	lower := strings.ToLower(key)
+	for k, vs := range q {
+		if len(vs) == 0 || vs[0] == "" {
+			continue
+		}
+		if strings.EqualFold(k, key) || strings.ToLower(k) == lower {
+			return vs[0]
+		}
+	}
+	return ""
+}
+
 // detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
 // It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
 // x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
-// headers. Returns the algorithm enum, the canonical HTTP header name, and an error code
-// if an unsupported algorithm is specified.
+// headers. For presigned URLs, the same parameters are accepted from the query string
+// because AWS SDK presigners hoist those headers into the query. Returns the algorithm
+// enum, the canonical HTTP header name, and an error code if an unsupported algorithm is
+// specified.
 func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
-	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs)
-	if algo := r.Header.Get(s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
+	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs; hoisted to query for presigned URLs)
+	if algo := getHeaderOrQuery(r, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
 			return m.alg, m.name, s3err.ErrNone
 		}
@@ -906,8 +937,8 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 		return ChecksumAlgorithmNone, "", s3err.ErrInvalidRequest
 	}
 
-	// Check x-amz-checksum-algorithm header
-	if algo := r.Header.Get(s3_constants.AmzChecksumAlgorithm); algo != "" {
+	// Check x-amz-checksum-algorithm header (also accept from query for presigned URLs)
+	if algo := getHeaderOrQuery(r, s3_constants.AmzChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
 			return m.alg, m.name, s3err.ErrNone
 		}
@@ -929,10 +960,11 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 		}
 	}
 
-	// Check individual checksum headers (non-chunked uploads send the value directly)
+	// Check individual checksum headers (non-chunked uploads send the value directly;
+	// presigned URLs may hoist them to the query string)
 	// Uses ordered slice for deterministic selection
 	for _, entry := range checksumHeaders {
-		if r.Header.Get(entry.header) != "" {
+		if getHeaderOrQuery(r, entry.header) != "" {
 			return entry.alg, entry.name, s3err.ErrNone
 		}
 	}
