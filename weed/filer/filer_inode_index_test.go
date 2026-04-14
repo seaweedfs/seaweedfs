@@ -26,6 +26,9 @@ func TestFilerStoreWrapperMaintainsInodeIndexLifecycle(t *testing.T) {
 	path, err := wrapper.lookupInodePath(ctx, created.Attr.Inode)
 	require.NoError(t, err)
 	assert.Equal(t, created.FullPath, path)
+	paths, err := wrapper.lookupInodePaths(ctx, created.Attr.Inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{created.FullPath}, paths)
 
 	updated := &Entry{
 		FullPath: util.FullPath("/docs/report.txt"),
@@ -42,6 +45,76 @@ func TestFilerStoreWrapperMaintainsInodeIndexLifecycle(t *testing.T) {
 	require.NoError(t, wrapper.DeleteEntry(ctx, created.FullPath))
 	_, err = wrapper.lookupInodePath(ctx, created.Attr.Inode)
 	require.ErrorIs(t, err, ErrKvNotFound)
+}
+
+func TestFilerStoreWrapperMaintainsMultiplePathsPerInode(t *testing.T) {
+	wrapper := NewFilerStoreWrapper(newStubFilerStore())
+	ctx := context.Background()
+	inode := uint64(88)
+	hardLinkId := NewHardLinkId()
+
+	require.NoError(t, wrapper.InsertEntry(ctx, &Entry{
+		FullPath: util.FullPath("/links/b.txt"),
+		Attr: Attr{
+			Mode:  0o644,
+			Inode: inode,
+		},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 2,
+	}))
+	require.NoError(t, wrapper.InsertEntry(ctx, &Entry{
+		FullPath: util.FullPath("/links/a.txt"),
+		Attr: Attr{
+			Mode:  0o644,
+			Inode: inode,
+		},
+		HardLinkId:      hardLinkId,
+		HardLinkCounter: 2,
+	}))
+
+	paths, err := wrapper.lookupInodePaths(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{"/links/a.txt", "/links/b.txt"}, paths)
+
+	path, err := wrapper.lookupInodePath(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/links/a.txt"), path)
+
+	require.NoError(t, wrapper.DeleteEntry(ctx, util.FullPath("/links/a.txt")))
+
+	paths, err = wrapper.lookupInodePaths(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{"/links/b.txt"}, paths)
+
+	path, err = wrapper.lookupInodePath(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/links/b.txt"), path)
+}
+
+func TestFilerStoreWrapperUpgradesLegacySinglePathInodeIndexRecords(t *testing.T) {
+	wrapper := NewFilerStoreWrapper(newStubFilerStore())
+	ctx := context.Background()
+	inode := uint64(91)
+
+	require.NoError(t, wrapper.KvPut(ctx, inodeIndexKey(inode), []byte("/legacy/path.txt")))
+
+	path, err := wrapper.lookupInodePath(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/legacy/path.txt"), path)
+
+	paths, err := wrapper.lookupInodePaths(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{"/legacy/path.txt"}, paths)
+
+	require.NoError(t, wrapper.storeInodeIndex(ctx, util.FullPath("/legacy/second.txt"), inode))
+
+	paths, err = wrapper.lookupInodePaths(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{"/legacy/path.txt", "/legacy/second.txt"}, paths)
+
+	value, err := wrapper.KvGet(ctx, inodeIndexKey(inode))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"paths":["/legacy/path.txt","/legacy/second.txt"]}`, string(value))
 }
 
 func TestFilerStoreWrapperKeepsInodeIndexWhenDeleteArrivesAfterRenameInsert(t *testing.T) {
@@ -68,6 +141,10 @@ func TestFilerStoreWrapperKeepsInodeIndexWhenDeleteArrivesAfterRenameInsert(t *t
 	path, err := wrapper.lookupInodePath(ctx, inode)
 	require.NoError(t, err)
 	assert.Equal(t, util.FullPath("/new/name.txt"), path)
+
+	paths, err := wrapper.lookupInodePaths(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, []util.FullPath{"/new/name.txt"}, paths)
 }
 
 func TestRecursiveDeleteRemovesDescendantInodeIndexes(t *testing.T) {

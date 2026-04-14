@@ -289,7 +289,7 @@ func (fsw *FilerStoreWrapper) DeleteEntry(ctx context.Context, fp util.FullPath)
 	if err := actualStore.DeleteEntry(ctx, fp); err != nil {
 		return err
 	}
-	return fsw.deleteInodeIndexIfCurrentPath(ctx, fullPath, inode)
+	return fsw.removePathFromInodeIndex(ctx, fullPath, inode)
 }
 
 func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry *Entry) (err error) {
@@ -324,7 +324,7 @@ func (fsw *FilerStoreWrapper) DeleteOneEntry(ctx context.Context, existingEntry 
 	if err := actualStore.DeleteEntry(ctx, existingEntry.FullPath); err != nil {
 		return err
 	}
-	return fsw.deleteInodeIndexIfCurrentPath(ctx, fullPath, inode)
+	return fsw.removePathFromInodeIndex(ctx, fullPath, inode)
 }
 
 func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.FullPath) (err error) {
@@ -347,7 +347,7 @@ func (fsw *FilerStoreWrapper) DeleteFolderChildren(ctx context.Context, fp util.
 		return err
 	}
 	for _, entry := range collected {
-		if err := fsw.deleteInodeIndexIfCurrentPath(ctx, entry.path, entry.inode); err != nil {
+		if err := fsw.removePathFromInodeIndex(ctx, entry.path, entry.inode); err != nil {
 			return err
 		}
 	}

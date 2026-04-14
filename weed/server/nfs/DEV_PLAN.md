@@ -22,7 +22,8 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Cover auto-created parent directories with the same inode assignment path
 - [x] Add a filer-side inode secondary index foundation (`inode -> current path`)
 - [x] Expose internal inode lookup helpers for future NFS handle resolution
-- [ ] Extend the inode index to cover multi-path hardlinks and generation-safe handles
+- [x] Extend the inode index to cover multi-path hardlinks
+- [ ] Add generation-safe handle metadata to the inode index
 
 ## Phase 2: reusable filer-backed filesystem core
 
@@ -48,6 +49,7 @@ identity, shared lock state, and restart-safe filehandles.
 ## Validation
 
 - [x] Filer unit tests for inode assignment and preservation
+- [x] Filer unit tests for hardlink-aware inode index updates
 - [ ] Integration tests for create/read/write/rename/delete over NFS
 - [ ] Stale-handle tests after delete/recreate
 - [ ] Hardlink and symlink tests
@@ -60,6 +62,6 @@ frontend can be credible:
 
 - design and development plan documents
 - server-side inode assignment
-- filer-side inode index foundation and tests
+- filer-side inode index foundation, multi-path hardlink support, and tests
 - `weed nfs` command and server skeleton
 - inode preservation/backfill tests

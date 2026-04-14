@@ -3,6 +3,8 @@ package filer
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
+	"sort"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
@@ -14,6 +16,10 @@ type inodeIndexEntry struct {
 	inode uint64
 }
 
+type inodeIndexRecord struct {
+	Paths []string `json:"paths,omitempty"`
+}
+
 func inodeIndexKey(inode uint64) []byte {
 	key := make([]byte, len(inodeIndexKeyPrefix)+8)
 	copy(key, inodeIndexKeyPrefix)
@@ -21,41 +27,198 @@ func inodeIndexKey(inode uint64) []byte {
 	return key
 }
 
-func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.FullPath, inode uint64) error {
-	if inode == 0 {
+func decodeInodeIndexRecord(value []byte) (*inodeIndexRecord, error) {
+	if len(value) == 0 {
+		return &inodeIndexRecord{}, nil
+	}
+
+	// The first foundation slice stored the current path as raw bytes. Keep that
+	// format readable so existing records are transparently upgraded on write.
+	if value[0] != '{' {
+		record := &inodeIndexRecord{}
+		record.addPath(util.FullPath(value))
+		return record, nil
+	}
+
+	record := &inodeIndexRecord{}
+	if err := json.Unmarshal(value, record); err != nil {
+		return nil, err
+	}
+	record.normalize()
+	return record, nil
+}
+
+func (record *inodeIndexRecord) encode() ([]byte, error) {
+	record.normalize()
+	return json.Marshal(record)
+}
+
+func (record *inodeIndexRecord) normalize() {
+	if len(record.Paths) == 0 {
+		return
+	}
+
+	sanitized := make([]string, 0, len(record.Paths))
+	for _, path := range record.Paths {
+		if path == "" {
+			continue
+		}
+		sanitized = append(sanitized, path)
+	}
+	if len(sanitized) == 0 {
+		record.Paths = nil
+		return
+	}
+
+	sort.Strings(sanitized)
+	deduped := sanitized[:1]
+	for _, path := range sanitized[1:] {
+		if path == deduped[len(deduped)-1] {
+			continue
+		}
+		deduped = append(deduped, path)
+	}
+	record.Paths = deduped
+}
+
+func (record *inodeIndexRecord) addPath(path util.FullPath) bool {
+	if path == "" {
+		return false
+	}
+	record.normalize()
+	target := string(path)
+	index := sort.SearchStrings(record.Paths, target)
+	if index < len(record.Paths) && record.Paths[index] == target {
+		return false
+	}
+	record.Paths = append(record.Paths, "")
+	copy(record.Paths[index+1:], record.Paths[index:])
+	record.Paths[index] = target
+	return true
+}
+
+func (record *inodeIndexRecord) removePath(path util.FullPath) bool {
+	if len(record.Paths) == 0 || path == "" {
+		return false
+	}
+	record.normalize()
+	target := string(path)
+	index := sort.SearchStrings(record.Paths, target)
+	if index >= len(record.Paths) || record.Paths[index] != target {
+		return false
+	}
+	record.Paths = append(record.Paths[:index], record.Paths[index+1:]...)
+	if len(record.Paths) == 0 {
+		record.Paths = nil
+	}
+	return true
+}
+
+func (record *inodeIndexRecord) canonicalPath() util.FullPath {
+	record.normalize()
+	if len(record.Paths) == 0 {
+		return ""
+	}
+	return util.FullPath(record.Paths[0])
+}
+
+func (record *inodeIndexRecord) fullPaths() []util.FullPath {
+	record.normalize()
+	if len(record.Paths) == 0 {
 		return nil
 	}
-	return fsw.KvPut(ctx, inodeIndexKey(inode), []byte(path))
+	paths := make([]util.FullPath, 0, len(record.Paths))
+	for _, path := range record.Paths {
+		paths = append(paths, util.FullPath(path))
+	}
+	return paths
+}
+
+func (fsw *FilerStoreWrapper) lookupInodeIndex(ctx context.Context, inode uint64) (*inodeIndexRecord, error) {
+	if inode == 0 {
+		return nil, ErrKvNotFound
+	}
+
+	value, err := fsw.KvGet(ctx, inodeIndexKey(inode))
+	if err != nil {
+		return nil, err
+	}
+
+	return decodeInodeIndexRecord(value)
+}
+
+func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.FullPath, inode uint64) error {
+	if inode == 0 || path == "" {
+		return nil
+	}
+
+	record, err := fsw.lookupInodeIndex(ctx, inode)
+	if err != nil {
+		if err != ErrKvNotFound {
+			return err
+		}
+		record = &inodeIndexRecord{}
+	}
+	record.addPath(path)
+
+	value, err := record.encode()
+	if err != nil {
+		return err
+	}
+	return fsw.KvPut(ctx, inodeIndexKey(inode), value)
 }
 
 func (fsw *FilerStoreWrapper) lookupInodePath(ctx context.Context, inode uint64) (util.FullPath, error) {
-	if inode == 0 {
-		return "", ErrKvNotFound
-	}
-	value, err := fsw.KvGet(ctx, inodeIndexKey(inode))
+	record, err := fsw.lookupInodeIndex(ctx, inode)
 	if err != nil {
 		return "", err
 	}
-	return util.FullPath(value), nil
+
+	path := record.canonicalPath()
+	if path == "" {
+		return "", ErrKvNotFound
+	}
+	return path, nil
 }
 
-func (fsw *FilerStoreWrapper) deleteInodeIndexIfCurrentPath(ctx context.Context, path util.FullPath, inode uint64) error {
-	if inode == 0 {
+func (fsw *FilerStoreWrapper) lookupInodePaths(ctx context.Context, inode uint64) ([]util.FullPath, error) {
+	record, err := fsw.lookupInodeIndex(ctx, inode)
+	if err != nil {
+		return nil, err
+	}
+
+	paths := record.fullPaths()
+	if len(paths) == 0 {
+		return nil, ErrKvNotFound
+	}
+	return paths, nil
+}
+
+func (fsw *FilerStoreWrapper) removePathFromInodeIndex(ctx context.Context, path util.FullPath, inode uint64) error {
+	if inode == 0 || path == "" {
 		return nil
 	}
 
-	currentPath, err := fsw.lookupInodePath(ctx, inode)
+	record, err := fsw.lookupInodeIndex(ctx, inode)
 	if err != nil {
 		if err == ErrKvNotFound {
 			return nil
 		}
 		return err
 	}
-	if currentPath != path {
+
+	if !record.removePath(path) {
 		return nil
 	}
+	if len(record.Paths) == 0 {
+		return fsw.KvDelete(ctx, inodeIndexKey(inode))
+	}
 
-	return fsw.KvDelete(ctx, inodeIndexKey(inode))
+	value, err := record.encode()
+	if err != nil {
+		return err
+	}
+	return fsw.KvPut(ctx, inodeIndexKey(inode), value)
 }
 
 func (fsw *FilerStoreWrapper) collectInodeIndexEntries(ctx context.Context, dirPath util.FullPath) ([]inodeIndexEntry, error) {
