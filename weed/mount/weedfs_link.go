@@ -55,6 +55,19 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		return fuse.EPERM
 	}
 
+	// If the source is already a hard link, serialize on its HardLinkId
+	// so concurrent Link/Unlink operations on different siblings cannot
+	// both compute a new counter from a stale base. Re-load the entry
+	// under the lock to pick up any prior holder's sibling update.
+	if len(oldEntry.HardLinkId) > 0 {
+		hlKey := string(oldEntry.HardLinkId)
+		lock := wfs.hardLinkLockTable.AcquireLock("link", hlKey, util.ExclusiveLock)
+		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
+		if fresh, freshStatus := wfs.maybeLoadEntry(oldEntryPath); freshStatus == fuse.OK && fresh != nil {
+			oldEntry = fresh
+		}
+	}
+
 	// update old file to hardlink mode
 	origHardLinkId := oldEntry.HardLinkId
 	origHardLinkCounter := oldEntry.HardLinkCounter

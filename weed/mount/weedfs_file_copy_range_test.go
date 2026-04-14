@@ -314,9 +314,10 @@ func newCopyRangeTestWFS() *WFS {
 			VolumeServerAccess: "filerProxy",
 			FilerAddresses:     []pb.ServerAddress{"127.0.0.1:8888"},
 		},
-		inodeToPath: NewInodeToPath(util.FullPath("/"), 0),
-		fhMap:       NewFileHandleToInode(),
-		fhLockTable: util.NewLockTable[FileHandleId](),
+		inodeToPath:       NewInodeToPath(util.FullPath("/"), 0),
+		fhMap:             NewFileHandleToInode(),
+		fhLockTable:       util.NewLockTable[FileHandleId](),
+		hardLinkLockTable: util.NewLockTable[string](),
 	}
 	wfs.copyBufferPool.New = func() any {
 		return make([]byte, 1024)

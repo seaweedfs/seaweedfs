@@ -188,6 +188,23 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.EPERM
 	}
 
+	// For hard-linked files, serialize all concurrent mutations on the
+	// same HardLinkId so the filer-side blob decrement and the mount-side
+	// sibling cache sync are observed atomically by other unlinkers.
+	// Without this, two concurrent unlinks on different links of the same
+	// file both read the same pre-decrement counter and both stamp their
+	// siblings to counter-1, leaving the cache one higher than the blob.
+	// Re-load the entry under the lock so we see any sibling update a
+	// prior holder just applied.
+	if entry != nil && len(entry.HardLinkId) > 0 {
+		hlKey := string(entry.HardLinkId)
+		lock := wfs.hardLinkLockTable.AcquireLock("unlink", hlKey, util.ExclusiveLock)
+		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
+		if fresh, freshCode := wfs.maybeLoadEntry(entryFullPath); freshCode == fuse.OK && fresh != nil {
+			entry = fresh
+		}
+	}
+
 	// POSIX: enforce sticky bit on the parent directory.
 	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)

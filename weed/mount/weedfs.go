@@ -123,6 +123,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
@@ -213,6 +214,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
 		pendingAsyncFlush: make(map[uint64]chan struct{}),
 		fhLockTable:       util.NewLockTable[FileHandleId](),
+		hardLinkLockTable: util.NewLockTable[string](),
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
