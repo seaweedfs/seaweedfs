@@ -19,7 +19,10 @@ type nfsFilerClient interface {
 	KvGet(ctx context.Context, in *filer_pb.KvGetRequest, opts ...grpc.CallOption) (*filer_pb.KvGetResponse, error)
 	LookupDirectoryEntry(ctx context.Context, in *filer_pb.LookupDirectoryEntryRequest, opts ...grpc.CallOption) (*filer_pb.LookupDirectoryEntryResponse, error)
 	ListEntries(ctx context.Context, in *filer_pb.ListEntriesRequest, opts ...grpc.CallOption) (nfsListEntriesClient, error)
+	CreateEntry(ctx context.Context, in *filer_pb.CreateEntryRequest, opts ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error)
 	UpdateEntry(ctx context.Context, in *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error)
+	DeleteEntry(ctx context.Context, in *filer_pb.DeleteEntryRequest, opts ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error)
+	AtomicRenameEntry(ctx context.Context, in *filer_pb.AtomicRenameEntryRequest, opts ...grpc.CallOption) (*filer_pb.AtomicRenameEntryResponse, error)
 	Statistics(ctx context.Context, in *filer_pb.StatisticsRequest, opts ...grpc.CallOption) (*filer_pb.StatisticsResponse, error)
 }
 
@@ -39,8 +42,20 @@ func (c grpcNFSFilerClient) ListEntries(ctx context.Context, in *filer_pb.ListEn
 	return c.client.ListEntries(ctx, in, opts...)
 }
 
+func (c grpcNFSFilerClient) CreateEntry(ctx context.Context, in *filer_pb.CreateEntryRequest, opts ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
+	return c.client.CreateEntry(ctx, in, opts...)
+}
+
 func (c grpcNFSFilerClient) UpdateEntry(ctx context.Context, in *filer_pb.UpdateEntryRequest, opts ...grpc.CallOption) (*filer_pb.UpdateEntryResponse, error) {
 	return c.client.UpdateEntry(ctx, in, opts...)
+}
+
+func (c grpcNFSFilerClient) DeleteEntry(ctx context.Context, in *filer_pb.DeleteEntryRequest, opts ...grpc.CallOption) (*filer_pb.DeleteEntryResponse, error) {
+	return c.client.DeleteEntry(ctx, in, opts...)
+}
+
+func (c grpcNFSFilerClient) AtomicRenameEntry(ctx context.Context, in *filer_pb.AtomicRenameEntryRequest, opts ...grpc.CallOption) (*filer_pb.AtomicRenameEntryResponse, error) {
+	return c.client.AtomicRenameEntry(ctx, in, opts...)
 }
 
 func (c grpcNFSFilerClient) Statistics(ctx context.Context, in *filer_pb.StatisticsRequest, opts ...grpc.CallOption) (*filer_pb.StatisticsResponse, error) {

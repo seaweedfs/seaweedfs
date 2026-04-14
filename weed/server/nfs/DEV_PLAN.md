@@ -28,6 +28,7 @@ identity, shared lock state, and restart-safe filehandles.
 ## Phase 2: reusable filer-backed filesystem core
 
 - [x] Add a minimal filer-backed read-only filesystem adapter for NFS
+- [x] Add filer-backed metadata mutations and small inline-content writes for the experimental NFS adapter
 - [ ] Extract shared read/write helpers from mount, WebDAV, and SFTP
 - [ ] Standardize direct-volume read mode vs filer-proxy mode
 - [ ] Reuse chunk cache and mutation stream helpers without FUSE dependencies
@@ -37,7 +38,8 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Add `weed nfs` command and option surface
 - [x] Add deterministic filehandle codec and inode lookup plumbing in the NFS skeleton
 - [x] Integrate an experimental read-only NFSv3 RPC frontend
-- [x] Implement initial read-only metadata operations against filer RPCs
+- [x] Implement initial metadata operations against filer RPCs
+- [x] Implement initial namespace mutations and small-file inline writes for the experimental server
 - [ ] Implement direct data-path reads/writes through volume servers
 - [ ] Add export configuration and basic access controls
 
@@ -54,6 +56,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Filer unit tests for hardlink-aware inode index updates
 - [x] NFS unit tests for filehandle encoding and inode-based resolution
 - [x] NFS unit tests for read-only mount, getattr/lookup handle round trips, readdir, and inline reads
+- [x] NFS unit tests for create/write/truncate/rename/remove metadata flows in the experimental adapter
 - [ ] Integration tests for create/read/write/rename/delete over NFS
 - [ ] Stale-handle tests after delete/recreate
 - [ ] Hardlink and symlink tests
@@ -67,5 +70,5 @@ frontend can be credible:
 - design and development plan documents
 - server-side inode assignment
 - filer-side inode index foundation, multi-path hardlink support, generation metadata, and tests
-- `weed nfs` command, experimental read-only `go-nfs` server path, and deterministic filehandle/lookup plumbing
+- `weed nfs` command, experimental `go-nfs` server path, deterministic filehandle/lookup plumbing, and filer-backed namespace mutations
 - inode preservation/backfill tests

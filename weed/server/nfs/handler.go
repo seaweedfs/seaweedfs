@@ -34,7 +34,10 @@ func (h *Handler) Mount(_ context.Context, _ net.Conn, req gonfs.MountRequest) (
 	return gonfs.MountStatusOk, h.rootFS, []gonfs.AuthFlavor{gonfs.AuthFlavorNull, gonfs.AuthFlavorUnix}
 }
 
-func (h *Handler) Change(billy.Filesystem) billy.Change {
+func (h *Handler) Change(filesystem billy.Filesystem) billy.Change {
+	if changer, ok := filesystem.(billy.Change); ok {
+		return changer
+	}
 	return nil
 }
 

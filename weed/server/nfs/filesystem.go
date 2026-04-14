@@ -22,6 +22,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const maxInlineWriteSize = 4 << 20
+
 type noopChunkCache struct{}
 
 func (noopChunkCache) ReadChunkAt(_ []byte, _ string, _ uint64) (int, error) { return 0, nil }
@@ -36,15 +38,16 @@ type seaweedFileSystem struct {
 }
 
 type seaweedFileInfo struct {
-	name       string
-	size       int64
-	mode       os.FileMode
-	modTime    time.Time
-	actualPath util.FullPath
-	entry      *filer_pb.Entry
-	generation uint64
-	fileID     uint64
-	nlink      uint32
+	name        string
+	virtualPath string
+	size        int64
+	mode        os.FileMode
+	modTime     time.Time
+	actualPath  util.FullPath
+	entry       *filer_pb.Entry
+	generation  uint64
+	fileID      uint64
+	nlink       uint32
 }
 
 type seaweedFile struct {
@@ -53,10 +56,15 @@ type seaweedFile struct {
 	info        *seaweedFileInfo
 	reader      io.ReaderAt
 	offset      int64
+	writable    bool
+	content     []byte
+	dirty       bool
+	closed      bool
 }
 
 var _ billy.Filesystem = (*seaweedFileSystem)(nil)
 var _ billy.Capable = (*seaweedFileSystem)(nil)
+var _ billy.Change = (*seaweedFileSystem)(nil)
 var _ filer_pb.FilerClient = (*seaweedFileSystem)(nil)
 
 func newSeaweedFileSystem(server *Server, actualRoot util.FullPath, sharedReaderCache *filer.ReaderCache) *seaweedFileSystem {
@@ -73,37 +81,54 @@ func newSeaweedFileSystem(server *Server, actualRoot util.FullPath, sharedReader
 }
 
 func (fs *seaweedFileSystem) Capabilities() billy.Capability {
-	return billy.ReadCapability | billy.SeekCapability | billy.LockCapability
+	return billy.WriteCapability | billy.ReadCapability | billy.ReadAndWriteCapability |
+		billy.SeekCapability | billy.TruncateCapability | billy.LockCapability
 }
 
-func (fs *seaweedFileSystem) Create(string) (billy.File, error) {
-	return nil, billy.ErrReadOnly
+func (fs *seaweedFileSystem) Create(filename string) (billy.File, error) {
+	return fs.OpenFile(filename, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0o666)
 }
 
 func (fs *seaweedFileSystem) Open(filename string) (billy.File, error) {
-	return fs.openFile(context.Background(), filename)
+	return fs.openFile(context.Background(), filename, os.O_RDONLY, 0)
 }
 
-func (fs *seaweedFileSystem) OpenFile(filename string, flag int, _ os.FileMode) (billy.File, error) {
-	if flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC|os.O_EXCL) != 0 {
-		return nil, billy.ErrReadOnly
-	}
-	return fs.openFile(context.Background(), filename)
+func (fs *seaweedFileSystem) OpenFile(filename string, flag int, perm os.FileMode) (billy.File, error) {
+	return fs.openFile(context.Background(), filename, flag, perm)
 }
 
-func (fs *seaweedFileSystem) openFile(ctx context.Context, filename string) (billy.File, error) {
-	info, err := fs.fileInfoForVirtualPath(ctx, filename)
+func (fs *seaweedFileSystem) openFile(ctx context.Context, filename string, flag int, perm os.FileMode) (billy.File, error) {
+	virtualPath := cleanBillyPath(filename)
+	writable := flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC|os.O_EXCL) != 0
+
+	info, err := fs.ensureOpenEntry(ctx, virtualPath, flag, perm)
 	if err != nil {
 		return nil, err
 	}
 	if info.entry.IsDirectory {
 		return nil, fmt.Errorf("%s: is a directory", filename)
 	}
-	return &seaweedFile{
+	file := &seaweedFile{
 		fs:          fs,
-		virtualPath: cleanBillyPath(filename),
+		virtualPath: virtualPath,
 		info:        info,
-	}, nil
+		writable:    writable,
+	}
+	if writable {
+		content, contentErr := fs.loadWritableContent(ctx, info)
+		if contentErr != nil {
+			return nil, contentErr
+		}
+		file.content = content
+		if flag&os.O_TRUNC != 0 {
+			file.content = nil
+			file.dirty = true
+		}
+		if flag&os.O_APPEND != 0 {
+			file.offset = int64(len(file.content))
+		}
+	}
+	return file, nil
 }
 
 func (fs *seaweedFileSystem) Stat(filename string) (os.FileInfo, error) {
@@ -114,12 +139,67 @@ func (fs *seaweedFileSystem) Lstat(filename string) (os.FileInfo, error) {
 	return fs.fileInfoForVirtualPath(context.Background(), filename)
 }
 
-func (fs *seaweedFileSystem) Rename(string, string) error {
-	return billy.ErrReadOnly
+func (fs *seaweedFileSystem) Rename(oldpath, newpath string) error {
+	oldVirtualPath, oldActualPath := fs.resolvePath(oldpath)
+	_, newActualPath := fs.resolvePath(newpath)
+
+	if oldVirtualPath == "/" || cleanBillyPath(newpath) == "/" {
+		return os.ErrPermission
+	}
+	if _, err := fs.fileInfoForVirtualPath(context.Background(), oldVirtualPath); err != nil {
+		return err
+	}
+
+	oldDir, oldName := oldActualPath.DirAndName()
+	newDir, newName := newActualPath.DirAndName()
+	return fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		_, err := client.AtomicRenameEntry(context.Background(), &filer_pb.AtomicRenameEntryRequest{
+			OldDirectory: oldDir,
+			OldName:      oldName,
+			NewDirectory: newDir,
+			NewName:      newName,
+		})
+		if err != nil {
+			if isLookupNotFound(err) {
+				return os.ErrNotExist
+			}
+			return err
+		}
+		return nil
+	})
 }
 
-func (fs *seaweedFileSystem) Remove(string) error {
-	return billy.ErrReadOnly
+func (fs *seaweedFileSystem) Remove(filename string) error {
+	virtualPath, actualPath := fs.resolvePath(filename)
+	if virtualPath == "/" {
+		return os.ErrPermission
+	}
+	if _, err := fs.fileInfoForVirtualPath(context.Background(), virtualPath); err != nil {
+		return err
+	}
+
+	dir, name := actualPath.DirAndName()
+	return fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		resp, err := client.DeleteEntry(context.Background(), &filer_pb.DeleteEntryRequest{
+			Directory:    dir,
+			Name:         name,
+			IsDeleteData: false,
+			IsRecursive:  false,
+		})
+		if err != nil {
+			if isLookupNotFound(err) {
+				return os.ErrNotExist
+			}
+			return err
+		}
+		if resp != nil && resp.Error != "" {
+			if strings.Contains(resp.Error, filer_pb.ErrNotFound.Error()) {
+				return os.ErrNotExist
+			}
+			return errors.New(resp.Error)
+		}
+		return nil
+	})
 }
 
 func (fs *seaweedFileSystem) Join(elem ...string) string {
@@ -189,12 +269,41 @@ func (fs *seaweedFileSystem) ReadDir(dirname string) ([]os.FileInfo, error) {
 	return infos, nil
 }
 
-func (fs *seaweedFileSystem) MkdirAll(string, os.FileMode) error {
-	return billy.ErrReadOnly
+func (fs *seaweedFileSystem) MkdirAll(filename string, perm os.FileMode) error {
+	virtualPath := cleanBillyPath(filename)
+	if virtualPath == "/" {
+		return nil
+	}
+
+	info, err := fs.fileInfoForVirtualPath(context.Background(), virtualPath)
+	if err == nil {
+		if info.IsDir() {
+			return nil
+		}
+		return os.ErrExist
+	}
+	if !os.IsNotExist(err) {
+		return err
+	}
+
+	_, actualPath := fs.resolvePath(virtualPath)
+	_, err = fs.createEntry(context.Background(), actualPath, true, perm|os.ModeDir, "")
+	return err
 }
 
-func (fs *seaweedFileSystem) Symlink(string, string) error {
-	return billy.ErrReadOnly
+func (fs *seaweedFileSystem) Symlink(target, link string) error {
+	virtualPath, actualPath := fs.resolvePath(link)
+	if virtualPath == "/" {
+		return os.ErrPermission
+	}
+	if _, err := fs.fileInfoForVirtualPath(context.Background(), virtualPath); err == nil {
+		return os.ErrExist
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	_, err := fs.createEntry(context.Background(), actualPath, false, 0o777, target)
+	return err
 }
 
 func (fs *seaweedFileSystem) Readlink(link string) (string, error) {
@@ -217,6 +326,40 @@ func (fs *seaweedFileSystem) Chroot(p string) (billy.Filesystem, error) {
 		return nil, fmt.Errorf("%s: not a directory", p)
 	}
 	return newSeaweedFileSystem(fs.server, info.actualPath, fs.readerCache), nil
+}
+
+func (fs *seaweedFileSystem) Chmod(name string, mode os.FileMode) error {
+	_, actualPath := fs.resolvePath(name)
+	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
+		entry.Attributes.FileMode = uint32(mode)
+		touchEntryTimes(entry, false)
+	})
+	return err
+}
+
+func (fs *seaweedFileSystem) Lchown(name string, uid, gid int) error {
+	_, actualPath := fs.resolvePath(name)
+	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
+		entry.Attributes.Uid = uint32(uid)
+		entry.Attributes.Gid = uint32(gid)
+		touchEntryTimes(entry, false)
+	})
+	return err
+}
+
+func (fs *seaweedFileSystem) Chown(name string, uid, gid int) error {
+	return fs.Lchown(name, uid, gid)
+}
+
+func (fs *seaweedFileSystem) Chtimes(name string, _ time.Time, mtime time.Time) error {
+	_, actualPath := fs.resolvePath(name)
+	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
+		entry.Attributes.Mtime = mtime.Unix()
+		entry.Attributes.MtimeNs = int32(mtime.Nanosecond())
+		entry.Attributes.Ctime = mtime.Unix()
+		entry.Attributes.CtimeNs = int32(mtime.Nanosecond())
+	})
+	return err
 }
 
 func (fs *seaweedFileSystem) Root() string {
@@ -243,6 +386,175 @@ func (fs *seaweedFileSystem) resolvePath(name string) (string, util.FullPath) {
 	return virtualPath, fs.actualRoot.Child(strings.TrimPrefix(virtualPath, "/"))
 }
 
+func (fs *seaweedFileSystem) ensureOpenEntry(ctx context.Context, virtualPath string, flag int, perm os.FileMode) (*seaweedFileInfo, error) {
+	info, err := fs.fileInfoForVirtualPath(ctx, virtualPath)
+	if err == nil {
+		if flag&os.O_CREATE != 0 && flag&os.O_EXCL != 0 {
+			return nil, os.ErrExist
+		}
+		return info, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if flag&os.O_CREATE == 0 {
+		return nil, err
+	}
+
+	_, actualPath := fs.resolvePath(virtualPath)
+	if perm == 0 {
+		perm = 0o666
+	}
+	entry, createErr := fs.createEntry(ctx, actualPath, false, perm, "")
+	if createErr != nil {
+		return nil, createErr
+	}
+	return fs.materializeFileInfo(ctx, virtualPath, actualPath, entry)
+}
+
+func (fs *seaweedFileSystem) createEntry(ctx context.Context, actualPath util.FullPath, isDirectory bool, mode os.FileMode, symlinkTarget string) (*filer_pb.Entry, error) {
+	dir, name := actualPath.DirAndName()
+	now := time.Now()
+	entry := &filer_pb.Entry{
+		Name:        name,
+		IsDirectory: isDirectory,
+		Attributes: &filer_pb.FuseAttributes{
+			Mtime:    now.Unix(),
+			MtimeNs:  int32(now.Nanosecond()),
+			Ctime:    now.Unix(),
+			CtimeNs:  int32(now.Nanosecond()),
+			Crtime:   now.Unix(),
+			FileMode: uint32(mode),
+			Uid:      filer_pb.OS_UID,
+			Gid:      filer_pb.OS_GID,
+		},
+	}
+	if isDirectory {
+		entry.Attributes.FileMode = uint32(mode | os.ModeDir)
+	}
+	if symlinkTarget != "" {
+		entry.Attributes.SymlinkTarget = symlinkTarget
+	}
+
+	var createdEntry *filer_pb.Entry
+	err := fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		resp, err := client.CreateEntry(ctx, &filer_pb.CreateEntryRequest{
+			Directory: dir,
+			Entry:     entry,
+			OExcl:     false,
+		})
+		if err != nil {
+			if errors.Is(err, filer_pb.ErrEntryAlreadyExists) {
+				return os.ErrExist
+			}
+			return err
+		}
+		if resp != nil {
+			if resp.ErrorCode != filer_pb.FilerError_OK {
+				if sentinel := filer_pb.FilerErrorToSentinel(resp.ErrorCode); sentinel != nil {
+					if errors.Is(sentinel, filer_pb.ErrEntryAlreadyExists) {
+						return os.ErrExist
+					}
+					return sentinel
+				}
+				if resp.Error != "" {
+					return errors.New(resp.Error)
+				}
+			}
+			if resp.MetadataEvent != nil && resp.MetadataEvent.EventNotification != nil && resp.MetadataEvent.EventNotification.NewEntry != nil {
+				createdEntry = resp.MetadataEvent.EventNotification.NewEntry
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if createdEntry != nil {
+		return createdEntry, nil
+	}
+	return fs.lookupEntry(ctx, actualPath)
+}
+
+func (fs *seaweedFileSystem) mutateEntry(ctx context.Context, actualPath util.FullPath, mutate func(*filer_pb.Entry)) (*filer_pb.Entry, error) {
+	currentEntry, err := fs.lookupEntry(ctx, actualPath)
+	if err != nil {
+		return nil, err
+	}
+
+	clonedEntry, ok := proto.Clone(currentEntry).(*filer_pb.Entry)
+	if !ok {
+		return nil, errors.New("clone filer entry")
+	}
+	if clonedEntry.Attributes == nil {
+		clonedEntry.Attributes = &filer_pb.FuseAttributes{}
+	}
+
+	mutate(clonedEntry)
+
+	dir, _ := actualPath.DirAndName()
+	var updatedEntry *filer_pb.Entry
+	err = fs.server.withInternalClient(false, func(client nfsFilerClient) error {
+		resp, err := client.UpdateEntry(ctx, &filer_pb.UpdateEntryRequest{
+			Directory: dir,
+			Entry:     clonedEntry,
+		})
+		if err != nil {
+			return err
+		}
+		if resp != nil && resp.MetadataEvent != nil && resp.MetadataEvent.EventNotification != nil && resp.MetadataEvent.EventNotification.NewEntry != nil {
+			updatedEntry = resp.MetadataEvent.EventNotification.NewEntry
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if updatedEntry != nil {
+		return updatedEntry, nil
+	}
+	return fs.lookupEntry(ctx, actualPath)
+}
+
+func (fs *seaweedFileSystem) loadWritableContent(ctx context.Context, info *seaweedFileInfo) ([]byte, error) {
+	if info == nil || info.entry == nil {
+		return nil, os.ErrNotExist
+	}
+	if len(info.entry.Content) > 0 {
+		return bytes.Clone(info.entry.Content), nil
+	}
+
+	fileSize := info.size
+	if fileSize == 0 {
+		return nil, nil
+	}
+	if fileSize > maxInlineWriteSize {
+		return nil, billy.ErrNotSupported
+	}
+
+	readFile := &seaweedFile{
+		fs:          fs,
+		virtualPath: info.virtualPath,
+		info:        info,
+	}
+	content := make([]byte, fileSize)
+	_, err := readFile.ReadAt(content, 0)
+	if err != nil && err != io.EOF {
+		return nil, err
+	}
+	return content, nil
+}
+
+func (fs *seaweedFileSystem) persistContent(ctx context.Context, actualPath util.FullPath, content []byte) (*filer_pb.Entry, error) {
+	return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
+		entry.Content = bytes.Clone(content)
+		entry.Chunks = nil
+		entry.RemoteEntry = nil
+		entry.Attributes.FileSize = uint64(len(content))
+		touchEntryTimes(entry, true)
+	})
+}
+
 func (fs *seaweedFileSystem) fileInfoForVirtualPath(ctx context.Context, name string) (*seaweedFileInfo, error) {
 	virtualPath, actualPath := fs.resolvePath(name)
 
@@ -265,15 +577,16 @@ func (fs *seaweedFileSystem) materializeFileInfo(ctx context.Context, virtualPat
 	}
 
 	return &seaweedFileInfo{
-		name:       fileInfoName(virtualPath, entry),
-		size:       int64(filer.FileSize(entry)),
-		mode:       fileModeForEntry(entry),
-		modTime:    entryModTime(entry),
-		actualPath: actualPath,
-		entry:      entry,
-		generation: generation,
-		fileID:     fileID,
-		nlink:      entryLinkCount(entry),
+		name:        fileInfoName(virtualPath, entry),
+		virtualPath: virtualPath,
+		size:        int64(filer.FileSize(entry)),
+		mode:        fileModeForEntry(entry),
+		modTime:     entryModTime(entry),
+		actualPath:  actualPath,
+		entry:       entry,
+		generation:  generation,
+		fileID:      fileID,
+		nlink:       entryLinkCount(entry),
 	}, nil
 }
 
@@ -442,6 +755,25 @@ func entryLinkCount(entry *filer_pb.Entry) uint32 {
 	return 1
 }
 
+func touchEntryTimes(entry *filer_pb.Entry, updateMtime bool) {
+	if entry == nil {
+		return
+	}
+	if entry.Attributes == nil {
+		entry.Attributes = &filer_pb.FuseAttributes{}
+	}
+	now := time.Now()
+	if updateMtime {
+		entry.Attributes.Mtime = now.Unix()
+		entry.Attributes.MtimeNs = int32(now.Nanosecond())
+	}
+	entry.Attributes.Ctime = now.Unix()
+	entry.Attributes.CtimeNs = int32(now.Nanosecond())
+	if entry.Attributes.Crtime == 0 {
+		entry.Attributes.Crtime = now.Unix()
+	}
+}
+
 func cleanBillyPath(name string) string {
 	if name == "" || name == "." {
 		return "/"
@@ -483,12 +815,26 @@ func (fi *seaweedFileInfo) Sys() interface{} {
 func (f *seaweedFile) Name() string { return f.virtualPath }
 
 func (f *seaweedFile) Read(p []byte) (int, error) {
+	if f.writable {
+		if f.offset >= int64(len(f.content)) {
+			return 0, io.EOF
+		}
+		n := copy(p, f.content[f.offset:])
+		f.offset += int64(n)
+		if n < len(p) {
+			return n, io.EOF
+		}
+		return n, nil
+	}
 	n, err := f.ReadAt(p, f.offset)
 	f.offset += int64(n)
 	return n, err
 }
 
 func (f *seaweedFile) ReadAt(p []byte, off int64) (int, error) {
+	if f.writable {
+		return bytes.NewReader(f.content).ReadAt(p, off)
+	}
 	if len(f.info.entry.Content) > 0 {
 		reader := bytes.NewReader(f.info.entry.Content)
 		return reader.ReadAt(p, off)
@@ -509,8 +855,27 @@ func (f *seaweedFile) ReadAt(p []byte, off int64) (int, error) {
 	return f.reader.ReadAt(p, off)
 }
 
-func (f *seaweedFile) Write([]byte) (int, error) {
-	return 0, billy.ErrReadOnly
+func (f *seaweedFile) Write(p []byte) (int, error) {
+	if !f.writable {
+		return 0, billy.ErrReadOnly
+	}
+	if f.closed {
+		return 0, os.ErrClosed
+	}
+
+	endOffset := int(f.offset) + len(p)
+	if endOffset > maxInlineWriteSize {
+		return 0, billy.ErrNotSupported
+	}
+	if endOffset > len(f.content) {
+		grown := make([]byte, endOffset)
+		copy(grown, f.content)
+		f.content = grown
+	}
+	copy(f.content[f.offset:], p)
+	f.offset = int64(endOffset)
+	f.dirty = true
+	return len(p), nil
 }
 
 func (f *seaweedFile) Seek(offset int64, whence int) (int64, error) {
@@ -520,7 +885,11 @@ func (f *seaweedFile) Seek(offset int64, whence int) (int64, error) {
 	case io.SeekCurrent:
 		f.offset += offset
 	case io.SeekEnd:
-		f.offset = f.info.size + offset
+		if f.writable {
+			f.offset = int64(len(f.content)) + offset
+		} else {
+			f.offset = f.info.size + offset
+		}
 	default:
 		return 0, fmt.Errorf("invalid whence %d", whence)
 	}
@@ -530,12 +899,50 @@ func (f *seaweedFile) Seek(offset int64, whence int) (int64, error) {
 	return f.offset, nil
 }
 
-func (f *seaweedFile) Close() error { return nil }
-func (f *seaweedFile) Lock() error  { return nil }
+func (f *seaweedFile) Close() error {
+	if f.closed {
+		return nil
+	}
+	f.closed = true
+	if !f.writable || !f.dirty {
+		return nil
+	}
+
+	updatedEntry, err := f.fs.persistContent(context.Background(), f.info.actualPath, f.content)
+	if err != nil {
+		return err
+	}
+	updatedInfo, err := f.fs.materializeFileInfo(context.Background(), f.virtualPath, f.info.actualPath, updatedEntry)
+	if err != nil {
+		return err
+	}
+	f.info = updatedInfo
+	f.dirty = false
+	return nil
+}
+func (f *seaweedFile) Lock() error { return nil }
 func (f *seaweedFile) Unlock() error {
 	return nil
 }
 
-func (f *seaweedFile) Truncate(int64) error {
-	return billy.ErrReadOnly
+func (f *seaweedFile) Truncate(size int64) error {
+	if !f.writable {
+		return billy.ErrReadOnly
+	}
+	if size < 0 || size > maxInlineWriteSize {
+		return billy.ErrNotSupported
+	}
+	target := int(size)
+	if target <= len(f.content) {
+		f.content = f.content[:target]
+	} else {
+		grown := make([]byte, target)
+		copy(grown, f.content)
+		f.content = grown
+	}
+	if f.offset > size {
+		f.offset = size
+	}
+	f.dirty = true
+	return nil
 }
