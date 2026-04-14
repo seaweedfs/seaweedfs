@@ -22,8 +22,14 @@ enum DeleteOutcome {
     NotFound,
     /// Needle exists but was already tombstoned before this call.
     AlreadyDeleted,
-    /// Needle was live and has now been tombstoned.
-    Tombstoned,
+    /// Needle was live and has now been tombstoned. Carries the info
+    /// needed to roll the tombstone back if a subsequent .ecj write fails:
+    /// the byte offset of the entry's size field and the original size
+    /// bytes that were overwritten.
+    Tombstoned {
+        size_offset: u64,
+        old_size_bytes: [u8; SIZE_SIZE],
+    },
 }
 
 /// An erasure-coded volume managing its local shards and index.
@@ -665,6 +671,13 @@ impl EcVolume {
                     return Ok(DeleteOutcome::AlreadyDeleted);
                 }
                 let size_offset = file_offset + NEEDLE_ID_SIZE as u64 + OFFSET_SIZE as u64;
+                // Capture the original size bytes before overwriting so that
+                // journal_delete can roll the tombstone back if the .ecj
+                // append fails.
+                let start = NEEDLE_ID_SIZE + OFFSET_SIZE;
+                let mut old_size_bytes = [0u8; SIZE_SIZE];
+                old_size_bytes.copy_from_slice(&entry_buf[start..start + SIZE_SIZE]);
+
                 let mut size_buf = [0u8; SIZE_SIZE];
                 TOMBSTONE_FILE_SIZE.to_bytes(&mut size_buf);
                 #[cfg(unix)]
@@ -672,7 +685,10 @@ impl EcVolume {
                     use std::os::unix::fs::FileExt;
                     ecx_file.write_all_at(&size_buf, size_offset)?;
                 }
-                return Ok(DeleteOutcome::Tombstoned);
+                return Ok(DeleteOutcome::Tombstoned {
+                    size_offset,
+                    old_size_bytes,
+                });
             } else if key < needle_id {
                 lo = mid + 1;
             } else {
@@ -713,7 +729,9 @@ impl EcVolume {
         // Remove the .ecj file after replay (matches Go)
         let _ = fs::remove_file(&ecj_path);
 
-        // Re-create .ecj for future deletions
+        // Re-create .ecj for future deletions and reset the cached size so
+        // file_and_delete_count() stops reporting the pre-rebuild journal
+        // contents (which have now been folded into .ecx tombstones).
         let ecj_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -721,6 +739,7 @@ impl EcVolume {
             .append(true)
             .open(&ecj_path)?;
         self.ecj_file = Some(ecj_file);
+        self.ecj_file_size = 0;
 
         Ok(())
     }
@@ -732,22 +751,65 @@ impl EcVolume {
     /// the needle is missing or was already tombstoned, so the derived
     /// `delete_count` (ecj_file_size / NEEDLE_ID_SIZE) stays idempotent on
     /// repeat deletes and only advances on real live->tombstone transitions.
+    ///
+    /// If the .ecj append fails, the .ecx tombstone is rolled back so the
+    /// two files stay in sync — otherwise a read for this needle would
+    /// return "deleted" while the heartbeat-reported delete_count never
+    /// advanced (matching the behaviour the rollback prevents in Go).
     pub fn journal_delete(&mut self, needle_id: NeedleId) -> io::Result<()> {
-        let outcome = self.mark_needle_deleted_in_ecx(needle_id)?;
-        if outcome != DeleteOutcome::Tombstoned {
-            return Ok(());
+        let (size_offset, old_size_bytes) = match self.mark_needle_deleted_in_ecx(needle_id)? {
+            DeleteOutcome::NotFound | DeleteOutcome::AlreadyDeleted => return Ok(()),
+            DeleteOutcome::Tombstoned {
+                size_offset,
+                old_size_bytes,
+            } => (size_offset, old_size_bytes),
+        };
+
+        let append_result: io::Result<()> = {
+            let ecj_file = self
+                .ecj_file
+                .as_mut()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecj file not open"))?;
+            let mut buf = [0u8; NEEDLE_ID_SIZE];
+            needle_id.to_bytes(&mut buf);
+            ecj_file
+                .write_all(&buf)
+                .and_then(|_| ecj_file.sync_all())
+        };
+
+        match append_result {
+            Ok(()) => {
+                self.ecj_file_size += NEEDLE_ID_SIZE as i64;
+                Ok(())
+            }
+            Err(e) => {
+                if let Err(rollback_err) =
+                    self.restore_ecx_size(size_offset, &old_size_bytes)
+                {
+                    tracing::error!(
+                        volume_id = self.volume_id.0,
+                        needle_id = needle_id.0,
+                        rollback_error = %rollback_err,
+                        "failed to rollback ecx tombstone after ecj write error"
+                    );
+                }
+                Err(e)
+            }
         }
+    }
 
-        let ecj_file = self
-            .ecj_file
-            .as_mut()
-            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecj file not open"))?;
-
-        let mut buf = [0u8; NEEDLE_ID_SIZE];
-        needle_id.to_bytes(&mut buf);
-        ecj_file.write_all(&buf)?;
-        ecj_file.sync_all()?;
-        self.ecj_file_size += NEEDLE_ID_SIZE as i64;
+    /// Writes `old_size_bytes` back over the size field of a .ecx entry,
+    /// rolling back a tombstone written by `mark_needle_deleted_in_ecx`.
+    fn restore_ecx_size(&self, size_offset: u64, old_size_bytes: &[u8; SIZE_SIZE]) -> io::Result<()> {
+        let ecx_file = self
+            .ecx_file
+            .as_ref()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "ecx file not open"))?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileExt;
+            ecx_file.write_all_at(old_size_bytes, size_offset)?;
+        }
         Ok(())
     }
 
