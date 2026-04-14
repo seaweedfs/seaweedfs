@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -13,6 +15,35 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+// mountDebugPort holds the debug/pprof port the test passed to the
+// mount process via -debug.port. It is set once at TestWriteBufferCap
+// entry and consulted from the write-timeout paths to fetch the mount
+// process's goroutine dump (the test's own dumpAllGoroutines only
+// covers the test process).
+var mountDebugPort int
+
+// fetchMountGoroutines pulls a full goroutine dump from the mount
+// process's pprof endpoint. If the mount debug port isn't configured
+// or the HTTP call fails, a short explanation is returned instead of
+// an error — this is diagnostic best-effort, not a test assertion.
+func fetchMountGoroutines() string {
+	if mountDebugPort == 0 {
+		return "(mount debug port not configured)"
+	}
+	url := fmt.Sprintf("http://127.0.0.1:%d/debug/pprof/goroutine?debug=2", mountDebugPort)
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return fmt.Sprintf("(failed to reach mount pprof at %s: %v)", url, err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Sprintf("(failed to read mount pprof body: %v)", err)
+	}
+	return string(body)
+}
 
 // dumpAllGoroutines returns a full stack trace of every live goroutine.
 // Used on write-timeout to give CI actionable diagnosis if the write
@@ -35,7 +66,12 @@ func dumpAllGoroutines() string {
 // time. The cap is intentionally NOT minimal — over-tight settings
 // interact with the per-file writable-chunk limit and the FUSE MaxWrite
 // batching in ways that starve single-handle writers on slow CI.
-func writeBufferCapConfig() *TestConfig {
+//
+// Also enables the mount's pprof debug endpoint so the test can fetch
+// mount-process goroutine dumps on write-timeout, which is the only
+// way to actually diagnose a backpressure deadlock (the test process
+// itself is just blocked in syscall.Write waiting on FUSE).
+func writeBufferCapConfig(debugPort int) *TestConfig {
 	return &TestConfig{
 		Collection:  "",
 		Replication: "000",
@@ -50,6 +86,8 @@ func writeBufferCapConfig() *TestConfig {
 			// CI runner, small enough that the concurrent test
 			// below still has to drain through it.
 			"-writeBufferSizeMB=16",
+			"-debug=true",
+			fmt.Sprintf("-debug.port=%d", debugPort),
 		},
 		SkipCleanup: false,
 	}
@@ -67,7 +105,8 @@ func writeWithTimeout(t *testing.T, path string, data []byte, timeout time.Durat
 	case err := <-done:
 		require.NoError(t, err, "write %s", path)
 	case <-time.After(timeout):
-		t.Logf("write %s did not finish within %v — dumping goroutines:\n%s", path, timeout, dumpAllGoroutines())
+		t.Logf("write %s did not finish within %v — dumping TEST goroutines:\n%s", path, timeout, dumpAllGoroutines())
+		t.Logf("dumping MOUNT goroutines:\n%s", fetchMountGoroutines())
 		t.Fatalf("write %s timed out — write buffer cap is likely leaking or deadlocking", path)
 	}
 }
@@ -108,7 +147,8 @@ func runSubtestWithWatchdog(t *testing.T, timeout time.Duration, body func(t *te
 // unit test TestWriteBufferCap_SharedAcrossPipelines, which drives a
 // controlled gated uploader and samples Used() throughout the run.
 func TestWriteBufferCap(t *testing.T) {
-	config := writeBufferCapConfig()
+	mountDebugPort = freePort(t)
+	config := writeBufferCapConfig(mountDebugPort)
 	framework := NewFuseTestFramework(t, config)
 	defer framework.Cleanup()
 
