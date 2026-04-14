@@ -1,10 +1,12 @@
 package nfs
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -31,6 +33,8 @@ type Server struct {
 	signature          int32
 	handleLimit        int
 	clientAuthorizer   *clientAuthorizer
+	sharedReaderCache  *filer.ReaderCache
+	chunkInvalidator   chunkInvalidator
 	newUploader        func() (chunkUploader, error)
 	withFilerClient    filerClientExecutor
 	withInternalClient internalClientExecutor
@@ -90,6 +94,17 @@ func (s *Server) serve(listener net.Listener) error {
 		_ = listener.Close()
 		return err
 	}
+	followCtx, followCancel := context.WithCancel(context.Background())
+	defer followCancel()
+	followDone := make(chan struct{})
+	go func() {
+		defer close(followDone)
+		s.runMetadataInvalidationLoop(followCtx)
+	}()
+	defer func() {
+		followCancel()
+		<-followDone
+	}()
 
 	glog.V(0).Infof("Start Seaweed NFS Server filer=%s bind=%s export=%s exportId=%d readOnly=%t allowedClients=%d volumeServerAccess=%s",
 		s.option.Filer,
@@ -108,9 +123,16 @@ func (s *Server) newHandler() (*Handler, error) {
 	if s == nil {
 		return nil, errors.New("nfs server is not configured")
 	}
+	rootFS := newSeaweedFileSystem(s, s.exportRoot, s.sharedReaderCache)
+	if s.sharedReaderCache == nil {
+		s.sharedReaderCache = rootFS.readerCache
+	}
+	if s.chunkInvalidator == nil {
+		s.chunkInvalidator = s.sharedReaderCache
+	}
 	return &Handler{
 		server: s,
-		rootFS: newSeaweedFileSystem(s, s.exportRoot, nil),
+		rootFS: rootFS,
 	}, nil
 }
 

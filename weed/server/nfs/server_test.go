@@ -29,6 +29,12 @@ type fakeListEntriesClient struct {
 	index     int
 }
 
+type fakeSubscribeMetadataClient struct {
+	responses []*filer_pb.SubscribeMetadataResponse
+	index     int
+	err       error
+}
+
 func (c *fakeListEntriesClient) Recv() (*filer_pb.ListEntriesResponse, error) {
 	if c.index >= len(c.responses) {
 		return nil, io.EOF
@@ -38,16 +44,31 @@ func (c *fakeListEntriesClient) Recv() (*filer_pb.ListEntriesResponse, error) {
 	return resp, nil
 }
 
+func (c *fakeSubscribeMetadataClient) Recv() (*filer_pb.SubscribeMetadataResponse, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
+	if c.index >= len(c.responses) {
+		return nil, io.EOF
+	}
+	resp := c.responses[c.index]
+	c.index++
+	return resp, nil
+}
+
 type fakeNFSFilerClient struct {
-	kv           map[string][]byte
-	entries      map[util.FullPath]*filer_pb.Entry
-	updateResult map[util.FullPath]*filer_pb.Entry
-	statistics   *filer_pb.StatisticsResponse
-	creates      []*filer_pb.CreateEntryRequest
-	updates      []*filer_pb.UpdateEntryRequest
-	deletes      []*filer_pb.DeleteEntryRequest
-	renames      []*filer_pb.AtomicRenameEntryRequest
-	nextInode    uint64
+	kv                 map[string][]byte
+	entries            map[util.FullPath]*filer_pb.Entry
+	updateResult       map[util.FullPath]*filer_pb.Entry
+	statistics         *filer_pb.StatisticsResponse
+	creates            []*filer_pb.CreateEntryRequest
+	updates            []*filer_pb.UpdateEntryRequest
+	deletes            []*filer_pb.DeleteEntryRequest
+	renames            []*filer_pb.AtomicRenameEntryRequest
+	subscribeRequests  []*filer_pb.SubscribeMetadataRequest
+	subscribeResponses []*filer_pb.SubscribeMetadataResponse
+	subscribeErr       error
+	nextInode          uint64
 }
 
 type fakeChunkUploadCall struct {
@@ -64,6 +85,10 @@ type fakeChunkUploader struct {
 	calls  []fakeChunkUploadCall
 }
 
+type recordingChunkInvalidator struct {
+	fileIDs []string
+}
+
 type fakeRemoteConn struct {
 	remote net.Addr
 }
@@ -76,6 +101,10 @@ func (c *fakeRemoteConn) RemoteAddr() net.Addr             { return c.remote }
 func (c *fakeRemoteConn) SetDeadline(time.Time) error      { return nil }
 func (c *fakeRemoteConn) SetReadDeadline(time.Time) error  { return nil }
 func (c *fakeRemoteConn) SetWriteDeadline(time.Time) error { return nil }
+
+func (i *recordingChunkInvalidator) UnCache(fileID string) {
+	i.fileIDs = append(i.fileIDs, fileID)
+}
 
 func (f *fakeNFSFilerClient) KvGet(_ context.Context, in *filer_pb.KvGetRequest, _ ...grpc.CallOption) (*filer_pb.KvGetResponse, error) {
 	if value, found := f.kv[string(in.Key)]; found {
@@ -111,6 +140,14 @@ func (f *fakeNFSFilerClient) ListEntries(_ context.Context, in *filer_pb.ListEnt
 		responses = append(responses, &filer_pb.ListEntriesResponse{Entry: entry})
 	}
 	return &fakeListEntriesClient{responses: responses}, nil
+}
+
+func (f *fakeNFSFilerClient) SubscribeMetadata(_ context.Context, in *filer_pb.SubscribeMetadataRequest, _ ...grpc.CallOption) (nfsSubscribeMetadataClient, error) {
+	f.subscribeRequests = append(f.subscribeRequests, proto.Clone(in).(*filer_pb.SubscribeMetadataRequest))
+	return &fakeSubscribeMetadataClient{
+		responses: f.subscribeResponses,
+		err:       f.subscribeErr,
+	}, nil
 }
 
 func (f *fakeNFSFilerClient) CreateEntry(_ context.Context, in *filer_pb.CreateEntryRequest, _ ...grpc.CallOption) (*filer_pb.CreateEntryResponse, error) {
@@ -542,6 +579,89 @@ func TestSeaweedFileSystemReadOnlyDisablesMutations(t *testing.T) {
 
 	err = handler.rootFS.MkdirAll("/docs", 0o755)
 	require.ErrorIs(t, err, billy.ErrReadOnly)
+}
+
+func TestServerApplyMetadataInvalidationResponseUncachesExportChunks(t *testing.T) {
+	invalidator := &recordingChunkInvalidator{}
+	server := &Server{
+		exportRoot:       "/exports",
+		chunkInvalidator: invalidator,
+	}
+
+	server.applyMetadataInvalidationResponse(&filer_pb.SubscribeMetadataResponse{
+		Directory: "/exports",
+		EventNotification: &filer_pb.EventNotification{
+			OldEntry: &filer_pb.Entry{
+				Name: "old.txt",
+				Chunks: []*filer_pb.FileChunk{
+					{FileId: "1,old"},
+				},
+			},
+			NewEntry: &filer_pb.Entry{
+				Name: "new.txt",
+				Chunks: []*filer_pb.FileChunk{
+					{FileId: "2,new"},
+					{FileId: "1,old"},
+				},
+			},
+			NewParentPath: "/exports/renamed",
+		},
+		Events: []*filer_pb.SubscribeMetadataResponse{
+			{
+				Directory: "/outside",
+				EventNotification: &filer_pb.EventNotification{
+					NewEntry: &filer_pb.Entry{
+						Name: "skip.txt",
+						Chunks: []*filer_pb.FileChunk{
+							{FileId: "9,skip"},
+						},
+					},
+				},
+			},
+			{
+				Directory: "/exports",
+				EventNotification: &filer_pb.EventNotification{
+					NewEntry: &filer_pb.Entry{
+						Name: "nested.txt",
+						Chunks: []*filer_pb.FileChunk{
+							{FileId: "3,nested"},
+						},
+					},
+				},
+			},
+		},
+	})
+
+	assert.Equal(t, []string{"1,old", "2,new", "3,nested"}, invalidator.fileIDs)
+}
+
+func TestServerFollowMetadataStreamSubscribesAndInvalidates(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		subscribeResponses: []*filer_pb.SubscribeMetadataResponse{
+			{
+				Directory: "/exports",
+				EventNotification: &filer_pb.EventNotification{
+					NewEntry: &filer_pb.Entry{
+						Name: "demo.txt",
+						Chunks: []*filer_pb.FileChunk{
+							{FileId: "7,abc"},
+						},
+					},
+				},
+			},
+		},
+	}
+	invalidator := &recordingChunkInvalidator{}
+
+	server := newTestServer(t, "/exports", client)
+	server.chunkInvalidator = invalidator
+
+	err := server.followMetadataStream(context.Background())
+	require.NoError(t, err)
+	require.Len(t, client.subscribeRequests, 1)
+	assert.Equal(t, "/exports", client.subscribeRequests[0].GetPathPrefix())
+	assert.Equal(t, "nfs", client.subscribeRequests[0].GetClientName())
+	assert.Equal(t, []string{"7,abc"}, invalidator.fileIDs)
 }
 
 func TestSeaweedFileSystemBackfillsLegacyInodeOnStat(t *testing.T) {

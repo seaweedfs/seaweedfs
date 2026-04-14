@@ -48,7 +48,7 @@ identity, shared lock state, and restart-safe filehandles.
 
 - [x] Deterministic filehandle format based on filer-owned identity
 - [ ] Shared lock state and reclaim/grace handling
-- [ ] Metadata subscription-based invalidation in each NFS head
+- [x] Metadata subscription-based invalidation in each NFS head
 - [x] Multi-head restart and failover tests
 
 ## Validation
@@ -63,6 +63,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Hardlink and symlink tests
 - [x] Restart and failover tests with shared filer state
 - [x] Read-only export and mount allowlist tests
+- [x] Metadata subscription invalidation tests
 - [ ] Lock tests
 
 ## Current Blockers
@@ -86,4 +87,5 @@ frontend can be credible:
 - inode preservation/backfill tests
 - hardlink/symlink protocol coverage and restart-safe handle tests
 - read-only export mode and client allowlist enforcement for `weed nfs`
+- shared reader-cache invalidation from filer metadata subscriptions
 - explicit lock-protocol blocker documentation for the current `go-nfs` stack
