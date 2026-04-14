@@ -20,8 +20,9 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Preserve inode across in-place updates
 - [x] Backfill inode on update for legacy zero-inode entries
 - [x] Cover auto-created parent directories with the same inode assignment path
-- [ ] Add a filer-side inode secondary index (`inode -> path(s), generation`)
-- [ ] Expose internal inode lookup helpers for future NFS handle resolution
+- [x] Add a filer-side inode secondary index foundation (`inode -> current path`)
+- [x] Expose internal inode lookup helpers for future NFS handle resolution
+- [ ] Extend the inode index to cover multi-path hardlinks and generation-safe handles
 
 ## Phase 2: reusable filer-backed filesystem core
 
@@ -31,7 +32,7 @@ identity, shared lock state, and restart-safe filehandles.
 
 ## Phase 3: NFS frontend
 
-- [ ] Add `weed nfs` command and option surface
+- [x] Add `weed nfs` command and option surface
 - [ ] Integrate an experimental NFSv3 RPC frontend
 - [ ] Implement metadata operations against filer RPCs
 - [ ] Implement direct data-path reads/writes through volume servers
@@ -54,9 +55,11 @@ identity, shared lock state, and restart-safe filehandles.
 
 ## Current PR Scope
 
-This first PR only lands the filer identity foundation needed before an NFS
+This first PR lands the first two enabling slices needed before an NFS
 frontend can be credible:
 
 - design and development plan documents
 - server-side inode assignment
+- filer-side inode index foundation and tests
+- `weed nfs` command and server skeleton
 - inode preservation/backfill tests
