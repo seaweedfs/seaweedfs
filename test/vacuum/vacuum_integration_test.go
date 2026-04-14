@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -246,6 +248,8 @@ func TestVacuumIntegration(t *testing.T) {
 	for v := range dirtyVolumesSet {
 		dirtyVolumes = append(dirtyVolumes, v)
 	}
+	// Sort for deterministic log output and stable iteration order across runs.
+	sort.Slice(dirtyVolumes, func(i, j int) bool { return dirtyVolumes[i] < dirtyVolumes[j] })
 	t.Logf("Uploaded %d files (%d KB each) across volumes %v; will delete from volumes %v",
 		totalFiles, fileSize/1024, fileVolumes, dirtyVolumes)
 
@@ -351,7 +355,7 @@ func TestVacuumIntegration(t *testing.T) {
 		for _, vid := range dirtyVolumes {
 			remaining[vid] = struct{}{}
 		}
-		var lastErr string
+		failureReasons := map[needle.VolumeId]string{}
 		for {
 			for vid := range remaining {
 				var volumeFound, cleanupVerified bool
@@ -369,11 +373,12 @@ func TestVacuumIntegration(t *testing.T) {
 				}
 				switch {
 				case !volumeFound:
-					lastErr = fmt.Sprintf("no server reported volume %d after vacuum", vid)
+					failureReasons[vid] = fmt.Sprintf("no server reported volume %d after vacuum", vid)
 				case !cleanupVerified:
-					lastErr = fmt.Sprintf("garbage on volume %d was not cleaned up after vacuum", vid)
+					failureReasons[vid] = fmt.Sprintf("garbage on volume %d was not cleaned up after vacuum", vid)
 				default:
 					delete(remaining, vid)
+					delete(failureReasons, vid)
 				}
 			}
 			if len(remaining) == 0 {
@@ -384,7 +389,17 @@ func TestVacuumIntegration(t *testing.T) {
 			}
 			time.Sleep(1 * time.Second)
 		}
-		t.Fatal(lastErr)
+		stillFailing := make([]needle.VolumeId, 0, len(remaining))
+		for vid := range remaining {
+			stillFailing = append(stillFailing, vid)
+		}
+		sort.Slice(stillFailing, func(i, j int) bool { return stillFailing[i] < stillFailing[j] })
+		msgs := make([]string, 0, len(stillFailing))
+		for _, vid := range stillFailing {
+			msgs = append(msgs, failureReasons[vid])
+		}
+		t.Fatalf("cleanup verification failed for %d volume(s): %s",
+			len(stillFailing), strings.Join(msgs, "; "))
 	})
 
 	// Verify remaining files are still readable with correct contents
