@@ -62,7 +62,15 @@ type S3ApiServerOption struct {
 	GrpcPort                  int
 	ExternalUrl               string // external URL clients use, for signature verification behind a reverse proxy
 	DefaultFileMode           uint32 // default file permission mode for S3 uploads (e.g. 0660, 0644)
+	CacheSizeMB               int64  // in-memory chunk cache capacity in MB for the shared ReaderCache; 0 disables
 }
+
+// s3ChunkCacheChunkSizeMB is the assumed chunk size (in MiB) used to convert
+// CacheSizeMB into the entry count the in-memory cache accepts. This matches
+// the default -filer.maxMB for all filer/webdav/mini flag sites. It is NOT a
+// hard limit — larger chunks still get cached, this just means the byte budget
+// is approximate when upload-side chunking is configured larger.
+const s3ChunkCacheChunkSizeMB = 4
 
 type S3ApiServer struct {
 	s3_pb.UnimplementedSeaweedS3IamCacheServer
@@ -185,12 +193,22 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 	}()
 
-	// Shared ReaderCache for the S3 GET streaming path. The chunk cache is
-	// nil for now — all TieredChunkCache receiver methods are nil-safe. A
-	// follow-up adds an in-memory chunk cache on top. Keeping this shared
+	// Shared ReaderCache for the S3 GET streaming path. Keeping this shared
 	// (rather than per-request) avoids the per-request Close(), which would
 	// otherwise wait for background chunk downloads that run on
 	// context.Background() even after the client disconnects.
+	//
+	// The underlying ChunkCache is controlled by option.CacheSizeMB below:
+	//   - CacheSizeMB == 0: a nil *chunk_cache.TieredChunkCache is used (its
+	//     receiver methods are nil-safe). Completed chunks are not deposited
+	//     into a cross-request cache — concurrent readers still share in-flight
+	//     downloads through the ReaderCache's downloaders map, but repeat reads
+	//     refetch from volume servers.
+	//   - CacheSizeMB > 0: a chunk_cache.ChunkCacheInMemory is created and
+	//     wrapped in the ReaderCache, so repeat and concurrent reads hit
+	//     memory. maxEntries is approximated from the byte budget and the
+	//     assumed chunk size (s3ChunkCacheChunkSizeMB), clamped to a small
+	//     floor so tiny caches still function.
 	//
 	// Downloader slots: each slot holds one in-flight / recently-completed
 	// chunk buffer (~4 MiB by default), so this caps both peak memory for
@@ -199,7 +217,30 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 	// because it typically has a handful of clients; S3 serves many
 	// concurrent readers, so we pick a more generous default here.
 	const s3ReaderCacheDownloaderLimit = 256
-	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, (*chunk_cache.TieredChunkCache)(nil), filerClient.GetLookupFileIdFunction())
+
+	// Negative CacheSizeMB is a misconfiguration; fail fast rather than
+	// silently behaving like 0.
+	if option.CacheSizeMB < 0 {
+		return nil, fmt.Errorf("invalid -s3.cacheCapacityMB %d: must be >= 0", option.CacheSizeMB)
+	}
+	var chunkCache chunk_cache.ChunkCache
+	if option.CacheSizeMB > 0 {
+		// ccache sizes entries by count; convert the configured byte budget
+		// via the assumed chunk size. Clamp to a floor so tiny caches still
+		// function.
+		maxEntries := option.CacheSizeMB / s3ChunkCacheChunkSizeMB
+		if maxEntries < 8 {
+			maxEntries = 8
+		}
+		chunkCache = chunk_cache.NewChunkCacheInMemory(maxEntries)
+		// Log the effective capacity after the floor clamp, not the configured
+		// value — a user passing `-s3.cacheCapacityMB=1` actually gets 8 entries
+		// ≈ 32 MiB because of the floor.
+		glog.V(0).Infof("s3 chunk cache enabled: in-memory, ~%dMB (%d chunks of ~%dMB)", maxEntries*s3ChunkCacheChunkSizeMB, maxEntries, s3ChunkCacheChunkSizeMB)
+	} else {
+		chunkCache = (*chunk_cache.TieredChunkCache)(nil)
+	}
+	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, chunkCache, filerClient.GetLookupFileIdFunction())
 
 	s3ApiServer = &S3ApiServer{
 		option:                option,
