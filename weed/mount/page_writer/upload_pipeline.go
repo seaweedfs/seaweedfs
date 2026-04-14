@@ -40,6 +40,12 @@ type SealedChunk struct {
 }
 
 func (sc *SealedChunk) FreeReference(messageOnFree string) {
+	// Early-return guard so repeated calls (Shutdown racing the async
+	// uploader, or any future caller that loses track of ownership) are
+	// strict no-ops rather than driving referenceCounter negative.
+	if sc.referenceCounter <= 0 {
+		return
+	}
 	sc.referenceCounter--
 	if sc.referenceCounter == 0 {
 		glog.V(4).Infof("Free sealed chunk: %s", messageOnFree)

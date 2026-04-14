@@ -72,15 +72,41 @@ func writeWithTimeout(t *testing.T, path string, data []byte, timeout time.Durat
 	}
 }
 
+// runSubtestWithWatchdog runs body in a goroutine and fails the
+// subtest if it doesn't return within timeout, dumping every live
+// goroutine so CI surfaces the wedge instead of a 45-minute walltime.
+// Individual write operations are already timeout-wrapped, but reads
+// and the surrounding bookkeeping are not — this closes the gap for
+// the whole subtest body.
+func runSubtestWithWatchdog(t *testing.T, timeout time.Duration, body func(t *testing.T)) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		body(t)
+	}()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Logf("subtest did not finish within %v — dumping goroutines:\n%s", timeout, dumpAllGoroutines())
+		t.Fatalf("subtest timed out after %v", timeout)
+	}
+}
+
 // TestWriteBufferCap exercises the end-to-end write-buffer cap on a
 // real FUSE mount. Without the cap, a volume-server stall would let
 // the swap file grow without bound (issue #8777). With the cap, writers
 // must serialize through a bounded budget while still producing correct
-// output — that correctness (and the absence of deadlocks) is what this
-// test verifies. It deliberately does not try to assert that Reserve
-// *blocked*; the in-package unit test
-// TestWriteBufferCap_SharedAcrossPipelines already covers that with a
-// controlled, gated uploader.
+// output — that correctness (and the absence of deadlocks) is what
+// this test verifies.
+//
+// Note: this test deliberately does not assert that Reserve *blocked*
+// at some observed used-byte peak. The mount runs as a subprocess so
+// its in-process WriteBufferAccountant state is not reachable from the
+// test without adding a metrics/RPC surface to the mount binary. The
+// deterministic peak-vs-cap assertion instead lives in the in-package
+// unit test TestWriteBufferCap_SharedAcrossPipelines, which drives a
+// controlled gated uploader and samples Used() throughout the run.
 func TestWriteBufferCap(t *testing.T) {
 	config := writeBufferCapConfig()
 	framework := NewFuseTestFramework(t, config)
@@ -88,16 +114,24 @@ func TestWriteBufferCap(t *testing.T) {
 
 	require.NoError(t, framework.Setup(config))
 
+	const subtestTimeout = 3 * time.Minute
+
 	t.Run("ConcurrentWritesUnderCap", func(t *testing.T) {
-		testConcurrentWritesUnderCap(t, framework)
+		runSubtestWithWatchdog(t, subtestTimeout, func(t *testing.T) {
+			testConcurrentWritesUnderCap(t, framework)
+		})
 	})
 
 	t.Run("LargeFileUnderCap", func(t *testing.T) {
-		testLargeFileUnderCap(t, framework)
+		runSubtestWithWatchdog(t, subtestTimeout, func(t *testing.T) {
+			testLargeFileUnderCap(t, framework)
+		})
 	})
 
 	t.Run("DoesNotDeadlockAfterPressure", func(t *testing.T) {
-		testWriteBufferNoDeadlockAfterPressure(t, framework)
+		runSubtestWithWatchdog(t, subtestTimeout, func(t *testing.T) {
+			testWriteBufferNoDeadlockAfterPressure(t, framework)
+		})
 	})
 }
 
@@ -171,12 +205,13 @@ func testConcurrentWritesUnderCap(t *testing.T, framework *FuseTestFramework) {
 	}
 }
 
-// testLargeFileUnderCap writes a single file whose size comfortably
-// exceeds the cap through a single handle, verifying that the pipeline
+// testLargeFileUnderCap writes a single file whose size exceeds the
+// 16 MiB cap through a single handle, verifying that the pipeline
 // drains its own earlier chunks and makes forward progress rather than
-// self-deadlocking when the global budget is already full.
+// self-deadlocking when the global budget is already full of its own
+// earlier sealed chunks.
 func testLargeFileUnderCap(t *testing.T, framework *FuseTestFramework) {
-	const fileSize = 12 * 1024 * 1024 // 12 MiB ⇒ 6 chunks vs 8-slot budget
+	const fileSize = 20 * 1024 * 1024 // 20 MiB ⇒ 10 chunks vs 8-slot budget
 
 	payload := make([]byte, fileSize)
 	_, err := rand.Read(payload)
