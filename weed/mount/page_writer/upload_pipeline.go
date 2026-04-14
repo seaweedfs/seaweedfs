@@ -25,6 +25,7 @@ type UploadPipeline struct {
 	sealedChunks       map[LogicChunkIndex]*SealedChunk
 	activeReadChunks   map[LogicChunkIndex]int
 	readerCountCond    *sync.Cond
+	accountant         *WriteBufferAccountant
 }
 
 type SealedChunk struct {
@@ -56,6 +57,14 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 	return t
 }
 
+// SetWriteBufferAccountant installs a shared byte-budget accountant. When
+// set, creating a new page chunk (memory or swap) first reserves ChunkSize
+// bytes against the accountant, blocking the writer if the global cap is
+// reached. Must be called before the pipeline is used.
+func (up *UploadPipeline) SetWriteBufferAccountant(a *WriteBufferAccountant) {
+	up.accountant = a
+}
+
 func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
 
 	up.chunksLock.Lock()
@@ -64,6 +73,22 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
 	pageChunk, found := up.writableChunks[logicChunkIndex]
+	if !found {
+		// Reserve a chunk-sized slot against the global write budget before
+		// allocating. Reserve may block when volumes are full and sealed
+		// chunks can't drain, so we must release chunksLock first — the
+		// uploader goroutines that eventually call Release take chunksLock.
+		if up.accountant != nil {
+			up.chunksLock.Unlock()
+			up.accountant.Reserve(up.ChunkSize)
+			up.chunksLock.Lock()
+			// Re-check: another writer on the same file may have created
+			// the chunk while we were blocked. If so, give the slot back.
+			if pageChunk, found = up.writableChunks[logicChunkIndex]; found {
+				up.accountant.Release(up.ChunkSize)
+			}
+		}
+	}
 	if !found {
 		if len(up.writableChunks) > up.writableChunkLimit {
 			// if current file chunks is over the per file buffer count limit
@@ -105,6 +130,7 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 			pageChunk = up.swapFile.NewSwapFileChunk(logicChunkIndex)
 			// fmt.Printf(" create file chunk %d\n", logicChunkIndex)
 			if pageChunk == nil {
+				up.accountant.Release(up.ChunkSize)
 				return 0, fmt.Errorf("failed to create swap file chunk")
 			}
 		}
@@ -176,6 +202,7 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 
 	if oldMemChunk, found := up.sealedChunks[logicChunkIndex]; found {
 		oldMemChunk.FreeReference(fmt.Sprintf("%s replace chunk %d", up.filepath, logicChunkIndex))
+		up.accountant.Release(up.ChunkSize)
 	}
 	sealedChunk := &SealedChunk{
 		chunk:            memChunk,
@@ -210,6 +237,7 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 		// then remove from sealed chunks
 		delete(up.sealedChunks, logicChunkIndex)
 		sealedChunk.FreeReference(fmt.Sprintf("%s finished uploading chunk %d", up.filepath, logicChunkIndex))
+		up.accountant.Release(up.ChunkSize)
 
 	})
 	up.chunksLock.Lock()
@@ -222,5 +250,6 @@ func (up *UploadPipeline) Shutdown() {
 	defer up.chunksLock.Unlock()
 	for logicChunkIndex, sealedChunk := range up.sealedChunks {
 		sealedChunk.FreeReference(fmt.Sprintf("%s uploadpipeline shutdown chunk %d", up.filepath, logicChunkIndex))
+		up.accountant.Release(up.ChunkSize)
 	}
 }

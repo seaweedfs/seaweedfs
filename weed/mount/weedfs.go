@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
@@ -49,6 +50,7 @@ type Option struct {
 	CacheDirForRead             string
 	CacheSizeMBForRead          int64
 	CacheDirForWrite            string
+	WriteBufferSizeMB           int64
 	CacheMetaTTlSec             int
 	DataCenter                  string
 	Umask                       os.FileMode
@@ -113,6 +115,7 @@ type WFS struct {
 	metaCache            *meta_cache.MetaCache
 	stats                statsCache
 	chunkCache           *chunk_cache.TieredChunkCache
+	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature            int32
 	concurrentWriters    *util.LimitedConcurrentExecutor
 	copyBufferPool       sync.Pool
@@ -243,6 +246,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
+	}
+	if option.WriteBufferSizeMB > 0 {
+		wfs.writeBufferAccountant = page_writer.NewWriteBufferAccountant(option.WriteBufferSizeMB * 1024 * 1024)
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
