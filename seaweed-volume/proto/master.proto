@@ -147,6 +147,9 @@ message VolumeEcShardInformationMessage {
   repeated int64 shard_sizes = 7; // optimized: sizes for shards in order of set bits in ec_index_bits
   uint64 file_count = 8;   // total needles in the .ecx index (live + tombstoned)
   uint64 delete_count = 9; // node-local tombstones in the .ecj deletion journal
+  // fields 10-19 reserved for future upstream open-source additions.
+  // fields 20+ are owned by the enterprise fork (e.g. data_shards/parity_shards)
+  // and must not be used here without coordination.
 }
 
 message StorageBackend {

@@ -639,8 +639,8 @@ type VolumeEcShardInformationMessage struct {
 	ExpireAtSec   uint64                 `protobuf:"varint,5,opt,name=expire_at_sec,json=expireAtSec,proto3" json:"expire_at_sec,omitempty"` // used to record the destruction time of ec volume
 	DiskId        uint32                 `protobuf:"varint,6,opt,name=disk_id,json=diskId,proto3" json:"disk_id,omitempty"`
 	ShardSizes    []int64                `protobuf:"varint,7,rep,packed,name=shard_sizes,json=shardSizes,proto3" json:"shard_sizes,omitempty"` // optimized: sizes for shards in order of set bits in ec_index_bits
-	FileCount     uint64                 `protobuf:"varint,8,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`           // live needles in the .ecx index (identical across nodes holding shards of this volume)
-	DeleteCount   uint64                 `protobuf:"varint,9,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`     // tombstoned needles in the .ecx index
+	FileCount     uint64                 `protobuf:"varint,8,opt,name=file_count,json=fileCount,proto3" json:"file_count,omitempty"`           // total needles in the .ecx index (live + tombstoned)
+	DeleteCount   uint64                 `protobuf:"varint,9,opt,name=delete_count,json=deleteCount,proto3" json:"delete_count,omitempty"`     // node-local tombstones in the .ecj deletion journal
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
