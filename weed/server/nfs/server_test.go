@@ -649,8 +649,12 @@ func TestSeaweedFileSystemAppendModeAndUnsupportedLocks(t *testing.T) {
 	file, err := handler.rootFS.OpenFile("/demo.txt", os.O_WRONLY|os.O_APPEND, 0)
 	require.NoError(t, err)
 
-	_, err = file.Seek(0, io.SeekStart)
-	require.ErrorContains(t, err, "append-only")
+	// POSIX allows Seek on an O_APPEND fd — it only restricts Write. A
+	// Seek to the beginning should succeed, but the subsequent Write must
+	// still land at the end of file.
+	newOffset, err := file.Seek(0, io.SeekStart)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), newOffset)
 	require.ErrorIs(t, file.Lock(), billy.ErrNotSupported)
 	require.ErrorIs(t, file.Unlock(), billy.ErrNotSupported)
 

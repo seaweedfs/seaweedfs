@@ -25,7 +25,16 @@ import (
 )
 
 const (
-	maxInlineWriteSize   = 4 << 20
+	maxInlineWriteSize = 4 << 20
+	// maxBufferedWriteSize caps how much data a writable open may buffer in
+	// the NFS server before writing back to the filer. It is a per-file
+	// ceiling, not a global pool, so the worst-case memory footprint is
+	// roughly maxBufferedWriteSize * (concurrent writable handles). 64 MiB
+	// is enough to cover most NFSv3 clients that buffer ~1 MiB per WRITE
+	// and still keeps a few thousand concurrent writers comfortable on a
+	// filer host. Raising this limit trades RAM for support for larger
+	// whole-file rewrites; the long-term fix is streaming/multi-chunk
+	// writes rather than a bigger buffer.
 	maxBufferedWriteSize = 64 << 20
 	listEntriesPageSize  = 1024
 	maxSymlinkDepth      = 32
@@ -1261,9 +1270,11 @@ func (f *seaweedFile) Seek(offset int64, whence int) (int64, error) {
 	if nextOffset < 0 {
 		nextOffset = 0
 	}
-	if f.appendOnly && nextOffset != int64(len(f.content)) {
-		return f.offset, fmt.Errorf("append-only file descriptors may only seek to EOF")
-	}
+	// POSIX allows Seek on an O_APPEND file — the append-only constraint
+	// only restricts Write, not read offsets or lseek positioning. Write
+	// already snaps the offset back to EOF before writing (see seaweedFile
+	// Write), so we can accept any Seek here without violating the
+	// append-only guarantee.
 	f.offset = nextOffset
 	return f.offset, nil
 }
