@@ -73,6 +73,7 @@ type S3Options struct {
 	cipher                    *bool
 	externalUrl               *string
 	defaultFileMode           *string
+	cacheSizeMB               *int64
 }
 
 func init() {
@@ -109,6 +110,7 @@ func init() {
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
+	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 }
 
 var cmdS3 = &Command{
@@ -343,6 +345,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcPort:                  *s3opt.portGrpc,
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
+		CacheSizeMB:               *s3opt.cacheSizeMB,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
