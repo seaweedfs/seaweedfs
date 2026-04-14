@@ -29,6 +29,9 @@ func TestFilerStoreWrapperMaintainsInodeIndexLifecycle(t *testing.T) {
 	paths, err := wrapper.lookupInodePaths(ctx, created.Attr.Inode)
 	require.NoError(t, err)
 	assert.Equal(t, []util.FullPath{created.FullPath}, paths)
+	record, err := wrapper.lookupInodeIndex(ctx, created.Attr.Inode)
+	require.NoError(t, err)
+	assert.Equal(t, InodeIndexInitialGeneration, record.Generation)
 
 	updated := &Entry{
 		FullPath: util.FullPath("/docs/report.txt"),
@@ -75,6 +78,9 @@ func TestFilerStoreWrapperMaintainsMultiplePathsPerInode(t *testing.T) {
 	paths, err := wrapper.lookupInodePaths(ctx, inode)
 	require.NoError(t, err)
 	assert.Equal(t, []util.FullPath{"/links/a.txt", "/links/b.txt"}, paths)
+	record, err := wrapper.lookupInodeIndex(ctx, inode)
+	require.NoError(t, err)
+	assert.Equal(t, InodeIndexInitialGeneration, record.Generation)
 
 	path, err := wrapper.lookupInodePath(ctx, inode)
 	require.NoError(t, err)
@@ -96,7 +102,7 @@ func TestFilerStoreWrapperUpgradesLegacySinglePathInodeIndexRecords(t *testing.T
 	ctx := context.Background()
 	inode := uint64(91)
 
-	require.NoError(t, wrapper.KvPut(ctx, inodeIndexKey(inode), []byte("/legacy/path.txt")))
+	require.NoError(t, wrapper.KvPut(ctx, InodeIndexKey(inode), []byte("/legacy/path.txt")))
 
 	path, err := wrapper.lookupInodePath(ctx, inode)
 	require.NoError(t, err)
@@ -112,9 +118,9 @@ func TestFilerStoreWrapperUpgradesLegacySinglePathInodeIndexRecords(t *testing.T
 	require.NoError(t, err)
 	assert.Equal(t, []util.FullPath{"/legacy/path.txt", "/legacy/second.txt"}, paths)
 
-	value, err := wrapper.KvGet(ctx, inodeIndexKey(inode))
+	value, err := wrapper.KvGet(ctx, InodeIndexKey(inode))
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"paths":["/legacy/path.txt","/legacy/second.txt"]}`, string(value))
+	assert.JSONEq(t, `{"generation":1,"paths":["/legacy/path.txt","/legacy/second.txt"]}`, string(value))
 }
 
 func TestFilerStoreWrapperKeepsInodeIndexWhenDeleteArrivesAfterRenameInsert(t *testing.T) {

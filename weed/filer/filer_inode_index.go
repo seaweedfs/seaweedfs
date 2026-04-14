@@ -10,37 +10,39 @@ import (
 )
 
 const inodeIndexKeyPrefix = "filer.inode.path."
+const InodeIndexInitialGeneration uint64 = 1
 
 type inodeIndexEntry struct {
 	path  util.FullPath
 	inode uint64
 }
 
-type inodeIndexRecord struct {
-	Paths []string `json:"paths,omitempty"`
+type InodeIndexRecord struct {
+	Generation uint64   `json:"generation,omitempty"`
+	Paths      []string `json:"paths,omitempty"`
 }
 
-func inodeIndexKey(inode uint64) []byte {
+func InodeIndexKey(inode uint64) []byte {
 	key := make([]byte, len(inodeIndexKeyPrefix)+8)
 	copy(key, inodeIndexKeyPrefix)
 	binary.BigEndian.PutUint64(key[len(inodeIndexKeyPrefix):], inode)
 	return key
 }
 
-func decodeInodeIndexRecord(value []byte) (*inodeIndexRecord, error) {
+func DecodeInodeIndexRecord(value []byte) (*InodeIndexRecord, error) {
 	if len(value) == 0 {
-		return &inodeIndexRecord{}, nil
+		return &InodeIndexRecord{}, nil
 	}
 
 	// The first foundation slice stored the current path as raw bytes. Keep that
 	// format readable so existing records are transparently upgraded on write.
 	if value[0] != '{' {
-		record := &inodeIndexRecord{}
+		record := &InodeIndexRecord{Generation: InodeIndexInitialGeneration}
 		record.addPath(util.FullPath(value))
 		return record, nil
 	}
 
-	record := &inodeIndexRecord{}
+	record := &InodeIndexRecord{}
 	if err := json.Unmarshal(value, record); err != nil {
 		return nil, err
 	}
@@ -48,14 +50,17 @@ func decodeInodeIndexRecord(value []byte) (*inodeIndexRecord, error) {
 	return record, nil
 }
 
-func (record *inodeIndexRecord) encode() ([]byte, error) {
+func (record *InodeIndexRecord) Encode() ([]byte, error) {
 	record.normalize()
 	return json.Marshal(record)
 }
 
-func (record *inodeIndexRecord) normalize() {
+func (record *InodeIndexRecord) normalize() {
 	if len(record.Paths) == 0 {
 		return
+	}
+	if record.Generation == 0 {
+		record.Generation = InodeIndexInitialGeneration
 	}
 
 	sanitized := make([]string, 0, len(record.Paths))
@@ -81,7 +86,7 @@ func (record *inodeIndexRecord) normalize() {
 	record.Paths = deduped
 }
 
-func (record *inodeIndexRecord) addPath(path util.FullPath) bool {
+func (record *InodeIndexRecord) addPath(path util.FullPath) bool {
 	if path == "" {
 		return false
 	}
@@ -97,7 +102,7 @@ func (record *inodeIndexRecord) addPath(path util.FullPath) bool {
 	return true
 }
 
-func (record *inodeIndexRecord) removePath(path util.FullPath) bool {
+func (record *InodeIndexRecord) removePath(path util.FullPath) bool {
 	if len(record.Paths) == 0 || path == "" {
 		return false
 	}
@@ -114,7 +119,7 @@ func (record *inodeIndexRecord) removePath(path util.FullPath) bool {
 	return true
 }
 
-func (record *inodeIndexRecord) canonicalPath() util.FullPath {
+func (record *InodeIndexRecord) CanonicalPath() util.FullPath {
 	record.normalize()
 	if len(record.Paths) == 0 {
 		return ""
@@ -122,7 +127,7 @@ func (record *inodeIndexRecord) canonicalPath() util.FullPath {
 	return util.FullPath(record.Paths[0])
 }
 
-func (record *inodeIndexRecord) fullPaths() []util.FullPath {
+func (record *InodeIndexRecord) FullPaths() []util.FullPath {
 	record.normalize()
 	if len(record.Paths) == 0 {
 		return nil
@@ -134,17 +139,17 @@ func (record *inodeIndexRecord) fullPaths() []util.FullPath {
 	return paths
 }
 
-func (fsw *FilerStoreWrapper) lookupInodeIndex(ctx context.Context, inode uint64) (*inodeIndexRecord, error) {
+func (fsw *FilerStoreWrapper) lookupInodeIndex(ctx context.Context, inode uint64) (*InodeIndexRecord, error) {
 	if inode == 0 {
 		return nil, ErrKvNotFound
 	}
 
-	value, err := fsw.KvGet(ctx, inodeIndexKey(inode))
+	value, err := fsw.KvGet(ctx, InodeIndexKey(inode))
 	if err != nil {
 		return nil, err
 	}
 
-	return decodeInodeIndexRecord(value)
+	return DecodeInodeIndexRecord(value)
 }
 
 func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.FullPath, inode uint64) error {
@@ -157,15 +162,15 @@ func (fsw *FilerStoreWrapper) storeInodeIndex(ctx context.Context, path util.Ful
 		if err != ErrKvNotFound {
 			return err
 		}
-		record = &inodeIndexRecord{}
+		record = &InodeIndexRecord{Generation: InodeIndexInitialGeneration}
 	}
 	record.addPath(path)
 
-	value, err := record.encode()
+	value, err := record.Encode()
 	if err != nil {
 		return err
 	}
-	return fsw.KvPut(ctx, inodeIndexKey(inode), value)
+	return fsw.KvPut(ctx, InodeIndexKey(inode), value)
 }
 
 func (fsw *FilerStoreWrapper) lookupInodePath(ctx context.Context, inode uint64) (util.FullPath, error) {
@@ -174,7 +179,7 @@ func (fsw *FilerStoreWrapper) lookupInodePath(ctx context.Context, inode uint64)
 		return "", err
 	}
 
-	path := record.canonicalPath()
+	path := record.CanonicalPath()
 	if path == "" {
 		return "", ErrKvNotFound
 	}
@@ -187,7 +192,7 @@ func (fsw *FilerStoreWrapper) lookupInodePaths(ctx context.Context, inode uint64
 		return nil, err
 	}
 
-	paths := record.fullPaths()
+	paths := record.FullPaths()
 	if len(paths) == 0 {
 		return nil, ErrKvNotFound
 	}
@@ -211,14 +216,14 @@ func (fsw *FilerStoreWrapper) removePathFromInodeIndex(ctx context.Context, path
 		return nil
 	}
 	if len(record.Paths) == 0 {
-		return fsw.KvDelete(ctx, inodeIndexKey(inode))
+		return fsw.KvDelete(ctx, InodeIndexKey(inode))
 	}
 
-	value, err := record.encode()
+	value, err := record.Encode()
 	if err != nil {
 		return err
 	}
-	return fsw.KvPut(ctx, inodeIndexKey(inode), value)
+	return fsw.KvPut(ctx, InodeIndexKey(inode), value)
 }
 
 func (fsw *FilerStoreWrapper) collectInodeIndexEntries(ctx context.Context, dirPath util.FullPath) ([]inodeIndexEntry, error) {

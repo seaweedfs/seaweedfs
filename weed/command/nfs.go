@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/security"
 	weed_server_nfs "github.com/seaweedfs/seaweedfs/weed/server/nfs"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/version"
@@ -51,12 +52,15 @@ func runNfs(cmd *Command, args []string) bool {
 	listenAddress := fmt.Sprintf("%s:%d", *nfsStandaloneOptions.ipBind, *nfsStandaloneOptions.port)
 	glog.V(0).Infof("Starting Seaweed NFS Server %s at %s", version.Version(), listenAddress)
 
+	grpcDialOption := security.LoadClientTLS(util.GetViper(), "grpc.client")
+
 	nfsServer, err := weed_server_nfs.NewServer(&weed_server_nfs.Option{
 		Filer:              pb.ServerAddress(*nfsStandaloneOptions.filer),
 		BindIp:             *nfsStandaloneOptions.ipBind,
 		Port:               *nfsStandaloneOptions.port,
 		FilerRootPath:      *nfsStandaloneOptions.filerRootPath,
 		VolumeServerAccess: *nfsStandaloneOptions.volumeServerAccess,
+		GrpcDialOption:     grpcDialOption,
 	})
 	if err != nil {
 		glog.Errorf("NFS Server startup error: %v", err)
