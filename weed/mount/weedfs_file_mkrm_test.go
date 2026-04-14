@@ -114,7 +114,8 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 		signature:   1,
 		inodeToPath: NewInodeToPath(root, 0),
 		fhMap:       NewFileHandleToInode(),
-		fhLockTable: util.NewLockTable[FileHandleId](),
+		fhLockTable:       util.NewLockTable[FileHandleId](),
+		hardLinkLockTable: util.NewLockTable[string](),
 	}
 	wfs.metaCache = meta_cache.NewMetaCache(
 		filepath.Join(t.TempDir(), "meta"),
