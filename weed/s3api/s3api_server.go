@@ -31,6 +31,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/grace"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	util_http_client "github.com/seaweedfs/seaweedfs/weed/util/http/client"
@@ -84,6 +85,12 @@ type S3ApiServer struct {
 	stsHandlers           *STSHandlers    // STS HTTP handlers for AssumeRoleWithWebIdentity
 	cipher                bool            // encrypt data on volume servers
 	newObjectWriteLock    func(bucket, object string) objectWriteLock
+	// Shared ReaderCache used by the S3 GET streaming path. It lives for the
+	// lifetime of the server so that concurrent and repeat reads share a
+	// single in-flight download per chunk, and so that no per-request
+	// teardown waits on context.Background() fetches. The chunkCache field
+	// is nil in this commit; a follow-up wires in an in-memory chunk cache.
+	readerCache *filer.ReaderCache
 }
 
 type objectWriteLock interface {
@@ -178,6 +185,22 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		}
 	}()
 
+	// Shared ReaderCache for the S3 GET streaming path. The chunk cache is
+	// nil for now — all TieredChunkCache receiver methods are nil-safe. A
+	// follow-up adds an in-memory chunk cache on top. Keeping this shared
+	// (rather than per-request) avoids the per-request Close(), which would
+	// otherwise wait for background chunk downloads that run on
+	// context.Background() even after the client disconnects.
+	//
+	// Downloader slots: each slot holds one in-flight / recently-completed
+	// chunk buffer (~4 MiB by default), so this caps both peak memory for
+	// in-flight chunks (s3ReaderCacheDownloaderLimit × chunkSize) and the
+	// global fetch concurrency across all S3 GET requests. WebDAV uses 32
+	// because it typically has a handful of clients; S3 serves many
+	// concurrent readers, so we pick a more generous default here.
+	const s3ReaderCacheDownloaderLimit = 256
+	readerCache := filer.NewReaderCache(s3ReaderCacheDownloaderLimit, (*chunk_cache.TieredChunkCache)(nil), filerClient.GetLookupFileIdFunction())
+
 	s3ApiServer = &S3ApiServer{
 		option:                option,
 		iam:                   iam,
@@ -190,6 +213,7 @@ func NewS3ApiServerWithStore(router *mux.Router, option *S3ApiServerOption, expl
 		policyEngine:          policyEngine,                           // Initialize bucket policy engine
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		cipher:                option.Cipher,
+		readerCache:           readerCache,
 	}
 
 	if len(option.Filers) > 0 {

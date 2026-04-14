@@ -1026,14 +1026,15 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		}
 	}
 
-	// CRITICAL: Resolve chunks and prepare stream BEFORE WriteHeader
-	// This ensures we can write proper error responses if these operations fail
+	// CRITICAL: Resolve chunks and prepare reader BEFORE WriteHeader so failures
+	// can still return a proper S3 error response.
 	ctx := r.Context()
 	lookupFileIdFn := s3a.createLookupFileIdFunction()
 
-	// Resolve chunk manifests with the requested range
+	// Resolve chunk manifests into visible intervals for the requested range.
+	// NonOverlappingVisibleIntervals internally calls ResolveChunkManifest.
 	tChunkResolve := time.Now()
-	resolvedChunks, _, err := filer.ResolveChunkManifest(ctx, lookupFileIdFn, chunks, offset, offset+size)
+	visibleIntervals, err := filer.NonOverlappingVisibleIntervals(ctx, lookupFileIdFn, chunks, offset, offset+size)
 	chunkResolveTime = time.Since(tChunkResolve)
 	if err != nil {
 		if isCanceledStreamingError(err) {
@@ -1050,34 +1051,23 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 		return newStreamErrorWithResponse(fmt.Errorf("failed to resolve chunks: %v", err))
 	}
 
-	// Prepare streaming function with simple master client wrapper
+	// Build a ChunkReadAt backed by the server-wide ReaderCache. This mirrors
+	// the WebDAV read path (server/webdav_server.go) and outperforms the
+	// io.Pipe-based streamChunksPrefetched path: ReaderCache prefetches whole
+	// chunks into memory buffers that the consumer can memcpy out of, so
+	// prefetchCount translates into actual in-flight bytes rather than just
+	// parallel TCP handshakes.
+	//
+	// We do NOT call reader.Close() here — ChunkReadAt.Close() would destroy
+	// the ReaderCache's downloaders map, which is shared across concurrent
+	// requests. Eviction is handled by the ReaderCache's own downloader
+	// limit. JWT for volume-server requests is generated internally by
+	// util_http.RetriedFetchChunkData from jwtSigningReadKey, matching the
+	// WebDAV and mount read paths.
 	tStreamPrep := time.Now()
-	// Use filerClient directly (not wrapped) so it can support cache invalidation
-	streamFn, err := filer.PrepareStreamContentWithPrefetch(
-		ctx,
-		s3a.filerClient,
-		filer.JwtForVolumeServer, // Use filer's JWT function (loads config once, generates JWT locally)
-		resolvedChunks,
-		offset,
-		size,
-		0, // no throttling
-		4, // prefetch 4 chunks ahead for overlapped fetching
-	)
+	chunkViews := filer.ViewFromVisibleIntervals(visibleIntervals, offset, size)
+	reader := filer.NewChunkReaderAtFromClient(ctx, s3a.readerCache, chunkViews, totalSize, filer.DefaultPrefetchCount)
 	streamPrepTime = time.Since(tStreamPrep)
-	if err != nil {
-		if isCanceledStreamingError(err) {
-			glog.V(3).Infof("streamFromVolumeServers: request canceled while preparing stream: %v", err)
-			return err
-		}
-		if errors.Is(err, context.DeadlineExceeded) {
-			glog.Warningf("streamFromVolumeServers: request deadline exceeded while preparing stream: %v", err)
-		} else {
-			glog.Errorf("streamFromVolumeServers: failed to prepare stream: %v", err)
-		}
-		// Write S3-compliant XML error response
-		s3err.WriteErrorResponse(w, r, s3err.ErrInternalError)
-		return newStreamErrorWithResponse(fmt.Errorf("failed to prepare stream: %v", err))
-	}
 
 	// All validation and preparation successful - NOW set headers and write status
 	tHeaderSet := time.Now()
@@ -1102,11 +1092,22 @@ func (s3a *S3ApiServer) streamFromVolumeServers(w http.ResponseWriter, r *http.R
 	// Track time to first byte metric
 	TimeToFirstByte(r.Method, t0, r)
 
-	// Stream directly to response with counting wrapper
+	// Stream directly to response with counting wrapper.
+	// ChunkReadAt's ReadAt is backed by in-memory prefetched chunk buffers, so
+	// io.CopyBuffer drains them as fast memcpys.
 	tStreamExec := time.Now()
-	glog.V(4).Infof("streamFromVolumeServers: starting streamFn, offset=%d, size=%d", offset, size)
+	glog.V(4).Infof("streamFromVolumeServers: starting chunk reader, offset=%d, size=%d", offset, size)
 	cw := &countingWriter{w: w}
-	err = streamFn(cw)
+	// Cap the copy buffer to the response size so small-object GETs (common
+	// for thumbnails, config files, etc.) don't allocate a 256 KiB scratch
+	// buffer per request.
+	const maxCopyBuf = 256 * 1024
+	copyBufSize := int64(maxCopyBuf)
+	if size > 0 && size < copyBufSize {
+		copyBufSize = size
+	}
+	copyBuf := make([]byte, copyBufSize)
+	_, err = io.CopyBuffer(cw, io.NewSectionReader(reader, offset, size), copyBuf)
 	streamExecTime = time.Since(tStreamExec)
 	// Track traffic even on partial writes for accurate egress accounting
 	if cw.written > 0 {
