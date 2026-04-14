@@ -245,6 +245,61 @@ jobs:
           path: test/s3/retention/weed-test*.log
           retention-days: 3
 
+  s3-checksum-tests:
+    name: S3 Checksum Tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: 'go.mod'
+        id: go
+
+      - name: Install SeaweedFS
+        run: |
+          go install -buildvcs=false
+
+      - name: Run S3 Checksum Tests
+        timeout-minutes: 12
+        working-directory: test/s3/checksum
+        run: |
+          set -x
+          echo "=== System Information ==="
+          uname -a
+          free -h
+          df -h
+          echo "=== Starting Tests ==="
+          make test-with-server
+
+      - name: Show server logs on failure
+        if: failure()
+        working-directory: test/s3/checksum
+        run: |
+          echo "=== Server Logs ==="
+          if [ -f weed-test.log ]; then
+            echo "Last 100 lines of server logs:"
+            tail -100 weed-test.log
+          else
+            echo "No server log file found"
+          fi
+
+          echo "=== Test Environment ==="
+          ps aux | grep -E "(weed|test)" || true
+          netstat -tlnp | grep -E "(8333|9333|8080)" || true
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: s3-checksum-test-logs
+          path: test/s3/checksum/weed-test*.log
+          retention-days: 3
+
   s3-cors-tests:
     name: S3 CORS Tests
     runs-on: ubuntu-22.04
