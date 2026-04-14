@@ -137,14 +137,18 @@ func (fs *seaweedFileSystem) openFile(ctx context.Context, filename string, flag
 		appendOnly:  writable && flag&os.O_APPEND != 0,
 	}
 	if writable {
-		content, contentErr := fs.loadWritableContent(ctx, info)
-		if contentErr != nil {
-			return nil, contentErr
-		}
-		file.content = content
 		if flag&os.O_TRUNC != 0 {
+			// O_TRUNC discards the existing data, so skip the filer read
+			// altogether — loading the old content just to throw it away
+			// burns network bandwidth and memory for no benefit.
 			file.content = nil
 			file.dirty = true
+		} else {
+			content, contentErr := fs.loadWritableContent(ctx, info)
+			if contentErr != nil {
+				return nil, contentErr
+			}
+			file.content = content
 		}
 		if flag&os.O_APPEND != 0 {
 			file.offset = int64(len(file.content))
