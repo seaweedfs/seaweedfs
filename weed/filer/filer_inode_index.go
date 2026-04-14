@@ -228,8 +228,11 @@ func (fsw *FilerStoreWrapper) removePathFromInodeIndex(ctx context.Context, path
 }
 
 func (fsw *FilerStoreWrapper) collectInodeIndexEntries(ctx context.Context, dirPath util.FullPath) ([]inodeIndexEntry, error) {
-	ctx = context.WithoutCancel(ctx)
-
+	// Honor caller cancellation during the walk: a DeleteFolderChildren on a
+	// pathological directory could otherwise loop indefinitely gathering
+	// entries even after the client has given up, turning into a DoS vector.
+	// If the walk is aborted, the caller treats the index cleanup as
+	// best-effort and drops the partial result.
 	var collected []inodeIndexEntry
 	if err := fsw.collectInodeIndexEntriesRecursive(ctx, dirPath, &collected); err != nil {
 		return nil, err
