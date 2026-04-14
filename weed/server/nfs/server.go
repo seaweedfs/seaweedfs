@@ -18,6 +18,8 @@ type Option struct {
 	BindIp             string
 	Port               int
 	FilerRootPath      string
+	ReadOnly           bool
+	AllowedClients     []string
 	VolumeServerAccess string
 	GrpcDialOption     grpc.DialOption
 }
@@ -28,6 +30,7 @@ type Server struct {
 	exportID           uint32
 	signature          int32
 	handleLimit        int
+	clientAuthorizer   *clientAuthorizer
 	newUploader        func() (chunkUploader, error)
 	withFilerClient    filerClientExecutor
 	withInternalClient internalClientExecutor
@@ -46,6 +49,10 @@ func NewServer(option *Option) (*Server, error) {
 	if option.VolumeServerAccess == "" {
 		option.VolumeServerAccess = "direct"
 	}
+	clientAuthorizer, err := newClientAuthorizer(option.AllowedClients)
+	if err != nil {
+		return nil, err
+	}
 	exportRoot := normalizeExportRoot(util.FullPath(option.FilerRootPath))
 	signature := util.RandomInt32()
 	return &Server{
@@ -54,6 +61,7 @@ func NewServer(option *Option) (*Server, error) {
 		exportID:           exportIDForRoot(exportRoot),
 		signature:          signature,
 		handleLimit:        1 << 20,
+		clientAuthorizer:   clientAuthorizer,
 		newUploader:        newChunkUploader,
 		withFilerClient:    newFilerClientExecutor(option, signature),
 		withInternalClient: newInternalClientExecutor(option, signature),
@@ -70,17 +78,26 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) serve(listener net.Listener) error {
+	if s.clientAuthorizer != nil && s.clientAuthorizer.enabled {
+		listener = &allowlistListener{
+			Listener:   listener,
+			authorizer: s.clientAuthorizer,
+		}
+	}
+
 	handler, err := s.newHandler()
 	if err != nil {
 		_ = listener.Close()
 		return err
 	}
 
-	glog.V(0).Infof("Start Seaweed NFS Server filer=%s bind=%s export=%s exportId=%d volumeServerAccess=%s",
+	glog.V(0).Infof("Start Seaweed NFS Server filer=%s bind=%s export=%s exportId=%d readOnly=%t allowedClients=%d volumeServerAccess=%s",
 		s.option.Filer,
 		listener.Addr(),
 		s.exportRoot,
 		s.exportID,
+		s.option.ReadOnly,
+		len(s.option.AllowedClients),
 		s.option.VolumeServerAccess,
 	)
 

@@ -87,8 +87,11 @@ func newSeaweedFileSystem(server *Server, actualRoot util.FullPath, sharedReader
 }
 
 func (fs *seaweedFileSystem) Capabilities() billy.Capability {
-	return billy.WriteCapability | billy.ReadCapability | billy.ReadAndWriteCapability |
-		billy.SeekCapability | billy.TruncateCapability | billy.LockCapability
+	capabilities := billy.ReadCapability | billy.SeekCapability | billy.LockCapability
+	if !fs.isReadOnly() {
+		capabilities |= billy.WriteCapability | billy.ReadAndWriteCapability | billy.TruncateCapability
+	}
+	return capabilities
 }
 
 func (fs *seaweedFileSystem) Create(filename string) (billy.File, error) {
@@ -106,6 +109,11 @@ func (fs *seaweedFileSystem) OpenFile(filename string, flag int, perm os.FileMod
 func (fs *seaweedFileSystem) openFile(ctx context.Context, filename string, flag int, perm os.FileMode) (billy.File, error) {
 	virtualPath := cleanBillyPath(filename)
 	writable := flag&(os.O_WRONLY|os.O_RDWR|os.O_APPEND|os.O_CREATE|os.O_TRUNC|os.O_EXCL) != 0
+	if writable {
+		if err := fs.ensureWritable(); err != nil {
+			return nil, err
+		}
+	}
 
 	info, err := fs.ensureOpenEntry(ctx, virtualPath, flag, perm)
 	if err != nil {
@@ -146,6 +154,9 @@ func (fs *seaweedFileSystem) Lstat(filename string) (os.FileInfo, error) {
 }
 
 func (fs *seaweedFileSystem) Rename(oldpath, newpath string) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	oldVirtualPath, oldActualPath := fs.resolvePath(oldpath)
 	_, newActualPath := fs.resolvePath(newpath)
 
@@ -176,6 +187,9 @@ func (fs *seaweedFileSystem) Rename(oldpath, newpath string) error {
 }
 
 func (fs *seaweedFileSystem) Remove(filename string) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	virtualPath, actualPath := fs.resolvePath(filename)
 	if virtualPath == "/" {
 		return os.ErrPermission
@@ -276,6 +290,9 @@ func (fs *seaweedFileSystem) ReadDir(dirname string) ([]os.FileInfo, error) {
 }
 
 func (fs *seaweedFileSystem) MkdirAll(filename string, perm os.FileMode) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	virtualPath := cleanBillyPath(filename)
 	if virtualPath == "/" {
 		return nil
@@ -298,6 +315,9 @@ func (fs *seaweedFileSystem) MkdirAll(filename string, perm os.FileMode) error {
 }
 
 func (fs *seaweedFileSystem) Symlink(target, link string) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	virtualPath, actualPath := fs.resolvePath(link)
 	if virtualPath == "/" {
 		return os.ErrPermission
@@ -313,6 +333,9 @@ func (fs *seaweedFileSystem) Symlink(target, link string) error {
 }
 
 func (fs *seaweedFileSystem) Link(target, link string) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	linkVirtualPath, linkActualPath := fs.resolvePath(link)
@@ -409,6 +432,9 @@ func (fs *seaweedFileSystem) Chroot(p string) (billy.Filesystem, error) {
 }
 
 func (fs *seaweedFileSystem) Chmod(name string, mode os.FileMode) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	_, actualPath := fs.resolvePath(name)
 	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
 		entry.Attributes.FileMode = uint32(mode)
@@ -418,6 +444,9 @@ func (fs *seaweedFileSystem) Chmod(name string, mode os.FileMode) error {
 }
 
 func (fs *seaweedFileSystem) Lchown(name string, uid, gid int) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	_, actualPath := fs.resolvePath(name)
 	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
 		entry.Attributes.Uid = uint32(uid)
@@ -432,6 +461,9 @@ func (fs *seaweedFileSystem) Chown(name string, uid, gid int) error {
 }
 
 func (fs *seaweedFileSystem) Chtimes(name string, _ time.Time, mtime time.Time) error {
+	if err := fs.ensureWritable(); err != nil {
+		return err
+	}
 	_, actualPath := fs.resolvePath(name)
 	_, err := fs.mutateEntry(context.Background(), actualPath, func(entry *filer_pb.Entry) {
 		entry.Attributes.Mtime = mtime.Unix()
@@ -458,6 +490,17 @@ func (fs *seaweedFileSystem) AdjustedUrl(location *filer_pb.Location) string {
 		return location.PublicUrl
 	}
 	return location.Url
+}
+
+func (fs *seaweedFileSystem) isReadOnly() bool {
+	return fs != nil && fs.server != nil && fs.server.option != nil && fs.server.option.ReadOnly
+}
+
+func (fs *seaweedFileSystem) ensureWritable() error {
+	if fs.isReadOnly() {
+		return billy.ErrReadOnly
+	}
+	return nil
 }
 
 func (fs *seaweedFileSystem) GetDataCenter() string {
@@ -1108,6 +1151,9 @@ func (f *seaweedFile) Write(p []byte) (int, error) {
 	if !f.writable {
 		return 0, billy.ErrReadOnly
 	}
+	if f.fs != nil && f.fs.isReadOnly() {
+		return 0, billy.ErrReadOnly
+	}
 	if f.closed {
 		return 0, os.ErrClosed
 	}
@@ -1176,6 +1222,9 @@ func (f *seaweedFile) Unlock() error {
 
 func (f *seaweedFile) Truncate(size int64) error {
 	if !f.writable {
+		return billy.ErrReadOnly
+	}
+	if f.fs != nil && f.fs.isReadOnly() {
 		return billy.ErrReadOnly
 	}
 	if size < 0 || size > maxBufferedWriteSize {

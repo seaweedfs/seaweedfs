@@ -226,7 +226,16 @@ func mountTestTarget(t *testing.T, server *Server) (*nfsclient.Target, func()) {
 		done <- gonfs.Serve(listener, handler)
 	}()
 
-	client, err := rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
+	var client *rpc.Client
+	for attempt := 0; attempt < 5; attempt++ {
+		client, err = rpc.DialTCP(listener.Addr().Network(), listener.Addr().String(), false)
+		if err == nil {
+			break
+		}
+		if !strings.Contains(err.Error(), "address already in use") {
+			require.NoError(t, err)
+		}
+	}
 	require.NoError(t, err)
 
 	mounter := &nfsclient.Mount{Client: client}
@@ -365,6 +374,49 @@ func TestSeaweedNFSServesInlineRoundTripOverRPC(t *testing.T) {
 	require.NoError(t, target.Remove("/docs/final.txt"))
 	_, _, err = target.Lookup("/docs/final.txt")
 	require.Error(t, err)
+}
+
+func TestSeaweedNFSReadOnlyRejectsMutations(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+			string(filer.InodeIndexKey(202)): testIndexRecord(t, 202, 3, "/exports/existing.txt"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports":              testEntry("exports", true, 101, uint32(0755), nil),
+			"/exports/existing.txt": testEntry("existing.txt", false, 202, uint32(0644), []byte("seed")),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	server.option.ReadOnly = true
+
+	target, cleanup := mountTestTarget(t, server)
+	defer cleanup()
+	defer target.Close()
+
+	_, err := target.OpenFile("/created.txt", 0o644)
+	require.Error(t, err)
+	nfsErr, ok := err.(*nfsclient.Error)
+	require.True(t, ok)
+	assert.Equal(t, uint32(nfsclient.NFS3ErrROFS), nfsErr.ErrorNum)
+
+	file, err := target.Open("/existing.txt")
+	require.NoError(t, err)
+	_, err = file.Write([]byte("mutate"))
+	require.Error(t, err)
+	nfsErr, ok = err.(*nfsclient.Error)
+	require.True(t, ok)
+	assert.Equal(t, uint32(nfsclient.NFS3ErrROFS), nfsErr.ErrorNum)
+	_ = file.Close()
+
+	readFile, err := target.Open("/existing.txt")
+	require.NoError(t, err)
+	defer readFile.Close()
+
+	data, err := io.ReadAll(readFile)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("seed"), data)
 }
 
 func TestSeaweedNFSServesSymlinkRoundTripOverRPC(t *testing.T) {

@@ -20,6 +20,8 @@ type NfsOptions struct {
 	ipBind             *string
 	port               *int
 	filerRootPath      *string
+	readOnly           *bool
+	allowedClients     *string
 	volumeServerAccess *string
 }
 
@@ -29,16 +31,19 @@ func init() {
 	nfsStandaloneOptions.ipBind = cmdNfs.Flag.String("ip.bind", "", "ip address to bind to. Default listen to all.")
 	nfsStandaloneOptions.port = cmdNfs.Flag.Int("port", 2049, "NFS server listen port")
 	nfsStandaloneOptions.filerRootPath = cmdNfs.Flag.String("filer.path", "/", "use this remote path from filer server")
+	nfsStandaloneOptions.readOnly = cmdNfs.Flag.Bool("readOnly", false, "export the filer path as read only")
+	nfsStandaloneOptions.allowedClients = cmdNfs.Flag.String("allowedClients", "", "comma-separated client IPs, hostnames, or CIDRs allowed to connect")
 	nfsStandaloneOptions.volumeServerAccess = cmdNfs.Flag.String("volumeServerAccess", "direct", "access volume servers by [direct|publicUrl|filerProxy]")
 }
 
 var cmdNfs = &Command{
 	UsageLine: "nfs -port=2049 -filer=<ip:port>",
-	Short:     "start an experimental NFS server stub that is backed by a filer",
-	Long: `start an experimental NFS server stub that is backed by a filer.
+	Short:     "start an experimental NFSv3 server backed by a filer",
+	Long: `start an experimental NFSv3 server backed by a filer.
 
-This command only wires option parsing and server construction today. The NFS
-protocol serving path is intentionally not implemented yet.
+This command serves an experimental filer-native NFSv3 frontend with
+deterministic filehandles, filer-backed metadata operations, and direct
+volume-server data access for chunk reads and buffered writes.
 	`,
 }
 
@@ -59,6 +64,8 @@ func runNfs(cmd *Command, args []string) bool {
 		BindIp:             *nfsStandaloneOptions.ipBind,
 		Port:               *nfsStandaloneOptions.port,
 		FilerRootPath:      *nfsStandaloneOptions.filerRootPath,
+		ReadOnly:           *nfsStandaloneOptions.readOnly,
+		AllowedClients:     util.StringSplit(*nfsStandaloneOptions.allowedClients, ","),
 		VolumeServerAccess: *nfsStandaloneOptions.volumeServerAccess,
 		GrpcDialOption:     grpcDialOption,
 	})

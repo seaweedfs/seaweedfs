@@ -42,7 +42,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Implement initial namespace mutations and small-file inline writes for the experimental server
 - [x] Implement initial buffered large-file writes through `AssignVolume` and volume-server chunk uploads
 - [ ] Expand direct data-path reads/writes through volume servers beyond the current buffered fallback
-- [ ] Add export configuration and basic access controls
+- [x] Add export configuration and basic access controls
 
 ## Phase 4: HA correctness
 
@@ -62,6 +62,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Stale-handle tests after delete/recreate
 - [x] Hardlink and symlink tests
 - [x] Restart and failover tests with shared filer state
+- [x] Read-only export and mount allowlist tests
 - [ ] Lock tests
 
 ## Current Blockers
@@ -84,4 +85,5 @@ frontend can be credible:
 - buffered large-file chunk uploads through `AssignVolume`
 - inode preservation/backfill tests
 - hardlink/symlink protocol coverage and restart-safe handle tests
+- read-only export mode and client allowlist enforcement for `weed nfs`
 - explicit lock-protocol blocker documentation for the current `go-nfs` stack

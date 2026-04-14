@@ -5,9 +5,12 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"testing"
+	"time"
 
+	billy "github.com/go-git/go-billy/v5"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -60,6 +63,19 @@ type fakeChunkUploader struct {
 	err    error
 	calls  []fakeChunkUploadCall
 }
+
+type fakeRemoteConn struct {
+	remote net.Addr
+}
+
+func (c *fakeRemoteConn) Read(_ []byte) (int, error)       { return 0, io.EOF }
+func (c *fakeRemoteConn) Write(p []byte) (int, error)      { return len(p), nil }
+func (c *fakeRemoteConn) Close() error                     { return nil }
+func (c *fakeRemoteConn) LocalAddr() net.Addr              { return &net.TCPAddr{} }
+func (c *fakeRemoteConn) RemoteAddr() net.Addr             { return c.remote }
+func (c *fakeRemoteConn) SetDeadline(time.Time) error      { return nil }
+func (c *fakeRemoteConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *fakeRemoteConn) SetWriteDeadline(time.Time) error { return nil }
 
 func (f *fakeNFSFilerClient) KvGet(_ context.Context, in *filer_pb.KvGetRequest, _ ...grpc.CallOption) (*filer_pb.KvGetResponse, error) {
 	if value, found := f.kv[string(in.Key)]; found {
@@ -411,6 +427,15 @@ func newTestServer(t *testing.T, exportRoot string, client *fakeNFSFilerClient) 
 	return server
 }
 
+func TestNewServerRejectsInvalidAllowedClientCIDR(t *testing.T) {
+	_, err := NewServer(&Option{
+		FilerRootPath:  "/exports",
+		Port:           2049,
+		AllowedClients: []string{"10.0.0.0/not-a-cidr"},
+	})
+	require.Error(t, err)
+}
+
 func TestHandlerMountAndFileHandleRoundTrip(t *testing.T) {
 	client := &fakeNFSFilerClient{
 		kv: map[string][]byte{
@@ -458,6 +483,65 @@ func TestHandlerRejectsUnexpectedMountPath(t *testing.T) {
 	status, filesystem, _ := handler.Mount(context.Background(), nil, gonfs.MountRequest{Dirpath: []byte("/wrong")})
 	assert.Equal(t, gonfs.MountStatusErrNoEnt, status)
 	assert.Nil(t, filesystem)
+}
+
+func TestHandlerRejectsMountFromUnauthorizedClient(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	server.option.AllowedClients = []string{"10.0.0.0/8"}
+	authorizer, err := newClientAuthorizer(server.option.AllowedClients)
+	require.NoError(t, err)
+	server.clientAuthorizer = authorizer
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	req := gonfs.MountRequest{Dirpath: []byte("/exports")}
+
+	deniedConn := &fakeRemoteConn{remote: &net.TCPAddr{IP: net.ParseIP("127.0.0.1"), Port: 12345}}
+	status, filesystem, _ := handler.Mount(context.Background(), deniedConn, req)
+	assert.Equal(t, gonfs.MountStatusErrAcces, status)
+	assert.Nil(t, filesystem)
+
+	allowedConn := &fakeRemoteConn{remote: &net.TCPAddr{IP: net.ParseIP("10.2.3.4"), Port: 12345}}
+	status, filesystem, _ = handler.Mount(context.Background(), allowedConn, req)
+	assert.Equal(t, gonfs.MountStatusOk, status)
+	assert.NotNil(t, filesystem)
+}
+
+func TestSeaweedFileSystemReadOnlyDisablesMutations(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+
+	server := newTestServer(t, "/exports", client)
+	server.option.ReadOnly = true
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	assert.False(t, billy.CapabilityCheck(handler.rootFS, billy.WriteCapability))
+	assert.False(t, billy.CapabilityCheck(handler.rootFS, billy.TruncateCapability))
+	assert.Nil(t, handler.Change(handler.rootFS))
+
+	_, err = handler.rootFS.OpenFile("/new.txt", os.O_CREATE|os.O_RDWR, 0o644)
+	require.ErrorIs(t, err, billy.ErrReadOnly)
+
+	err = handler.rootFS.MkdirAll("/docs", 0o755)
+	require.ErrorIs(t, err, billy.ErrReadOnly)
 }
 
 func TestSeaweedFileSystemBackfillsLegacyInodeOnStat(t *testing.T) {

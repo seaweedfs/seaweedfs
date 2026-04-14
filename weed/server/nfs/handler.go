@@ -20,7 +20,10 @@ type Handler struct {
 
 var _ gonfs.Handler = (*Handler)(nil)
 
-func (h *Handler) Mount(_ context.Context, _ net.Conn, req gonfs.MountRequest) (gonfs.MountStatus, billy.Filesystem, []gonfs.AuthFlavor) {
+func (h *Handler) Mount(_ context.Context, conn net.Conn, req gonfs.MountRequest) (gonfs.MountStatus, billy.Filesystem, []gonfs.AuthFlavor) {
+	if h.server.clientAuthorizer != nil && !h.server.clientAuthorizer.isAllowedConn(conn) {
+		return gonfs.MountStatusErrAcces, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
+	}
 	requestedPath := normalizeExportRoot(util.FullPath(req.Dirpath))
 	if requestedPath != h.server.exportRoot {
 		return gonfs.MountStatusErrNoEnt, nil, []gonfs.AuthFlavor{gonfs.AuthFlavorNull}
@@ -35,6 +38,9 @@ func (h *Handler) Mount(_ context.Context, _ net.Conn, req gonfs.MountRequest) (
 }
 
 func (h *Handler) Change(filesystem billy.Filesystem) billy.Change {
+	if h.server != nil && h.server.option != nil && h.server.option.ReadOnly {
+		return nil
+	}
 	if changer, ok := filesystem.(billy.Change); ok {
 		return changer
 	}
