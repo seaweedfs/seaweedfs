@@ -1228,9 +1228,9 @@ func (f *seaweedFile) Write(p []byte) (int, error) {
 		return 0, billy.ErrNotSupported
 	}
 	if endOffset > len(f.content) {
-		grown := make([]byte, endOffset)
-		copy(grown, f.content)
-		f.content = grown
+		// Use append so Go's amortized growth strategy kicks in instead of
+		// copying the entire buffer on every extending write.
+		f.content = append(f.content, make([]byte, endOffset-len(f.content))...)
 	}
 	copy(f.content[f.offset:], p)
 	f.offset = int64(endOffset)
@@ -1302,9 +1302,9 @@ func (f *seaweedFile) Truncate(size int64) error {
 	if target <= len(f.content) {
 		f.content = f.content[:target]
 	} else {
-		grown := make([]byte, target)
-		copy(grown, f.content)
-		f.content = grown
+		// Amortized growth via append is cheaper than a fresh make+copy
+		// every time Truncate expands the file.
+		f.content = append(f.content, make([]byte, target-len(f.content))...)
 	}
 	if f.offset > size {
 		f.offset = size
