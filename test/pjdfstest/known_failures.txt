@@ -6,8 +6,3 @@
 # A failure in any test NOT listed here will cause the CI job to fail,
 # catching regressions immediately.
 
-# ── Directory rename permission edge case ──────────────────────────────
-# Cross-directory rename of a subdirectory with restricted permissions
-# causes cascading test failures within the test file.
-tests/rename/21.t
-

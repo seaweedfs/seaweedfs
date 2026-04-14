@@ -38,7 +38,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			Mtime:    now,
 			Crtime:   now,
 			Ctime:    now,
-			FileMode: uint32(os.ModeDir) | in.Mode&^uint32(wfs.option.Umask),
+			FileMode: uint32(os.ModeDir) | in.Mode,
 			Uid:      in.Uid,
 			Gid:      in.Gid,
 		},
