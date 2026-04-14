@@ -58,7 +58,7 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] NFS unit tests for filehandle encoding and inode-based resolution
 - [x] NFS unit tests for read-only mount, getattr/lookup handle round trips, readdir, and inline reads
 - [x] NFS unit tests for create/write/truncate/rename/remove metadata flows in the experimental adapter
-- [ ] Integration tests for create/read/write/rename/delete over NFS
+- [x] User-space protocol integration tests for create/read/write/rename/delete over NFS
 - [ ] Stale-handle tests after delete/recreate
 - [ ] Hardlink and symlink tests
 - [ ] Lock and failover tests
