@@ -205,8 +205,16 @@ impl EcVolume {
         crate::storage::volume::volume_file_name(&self.dir, &self.collection, self.volume_id)
     }
 
+    /// Base path for the .ecx / .ecj index pair. Resolved from
+    /// `ecx_actual_dir` (initialized to `dir_idx` and only updated after a
+    /// successful idx-dir → data-dir fallback in `new()`), so every call site
+    /// agrees on the same file regardless of whether the fallback fired.
     fn idx_base_name(&self) -> String {
-        crate::storage::volume::volume_file_name(&self.dir_idx, &self.collection, self.volume_id)
+        crate::storage::volume::volume_file_name(
+            &self.ecx_actual_dir,
+            &self.collection,
+            self.volume_id,
+        )
     }
 
     pub fn ecx_file_name(&self) -> String {
@@ -841,15 +849,17 @@ impl EcVolume {
         let _ = fs::remove_file(format!("{}.ecx", actual_base));
         let _ = fs::remove_file(format!("{}.ecj", actual_base));
         let _ = fs::remove_file(format!("{}.vif", actual_base));
-        // Also try the configured idx dir and data dir in case files exist in either
+        // Also sweep the originally-configured idx dir in case stale files
+        // exist there (ecx_file_name() / ecj_file_name() now resolve from
+        // ecx_actual_dir, so we have to build the idx-dir paths explicitly).
         if self.ecx_actual_dir != self.dir_idx {
-            let _ = fs::remove_file(self.ecx_file_name());
-            let _ = fs::remove_file(self.ecj_file_name());
             let idx_base = crate::storage::volume::volume_file_name(
                 &self.dir_idx,
                 &self.collection,
                 self.volume_id,
             );
+            let _ = fs::remove_file(format!("{}.ecx", idx_base));
+            let _ = fs::remove_file(format!("{}.ecj", idx_base));
             let _ = fs::remove_file(format!("{}.vif", idx_base));
         }
         if self.ecx_actual_dir != self.dir && self.dir_idx != self.dir {
