@@ -13,6 +13,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster/lock_manager"
 	"github.com/seaweedfs/seaweedfs/weed/filer/empty_folder_cleanup"
+	"github.com/seaweedfs/seaweedfs/weed/sequence"
 
 	"github.com/seaweedfs/seaweedfs/weed/cluster"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
@@ -63,6 +64,7 @@ type Filer struct {
 	DeletionRetryQueue      *DeletionRetryQueue
 	EmptyFolderCleaner      *empty_folder_cleanup.EmptyFolderCleaner
 	EmptyFolderCleanupDelay time.Duration
+	inodeSequencer          sequence.Sequencer
 }
 
 func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerHost pb.ServerAddress, filerGroup string, collection string, replication string, dataCenter string, maxFilenameLength uint32, notifyFn func()) *Filer {
@@ -77,6 +79,7 @@ func NewFiler(masters pb.ServerDiscovery, grpcDialOption grpc.DialOption, filerH
 		MaxFilenameLength:   maxFilenameLength,
 		deletionQuit:        make(chan struct{}),
 		DeletionRetryQueue:  NewDeletionRetryQueue(),
+		inodeSequencer:      newInodeSequencer(filerHost),
 	}
 	if f.UniqueFilerId < 0 {
 		f.UniqueFilerId = -f.UniqueFilerId
@@ -231,6 +234,7 @@ func (f *Filer) CreateEntry(ctx context.Context, entry *Entry, o_excl bool, isFr
 	*/
 
 	if oldEntry == nil {
+		f.ensureEntryInode(entry)
 
 		if !skipCreateParentDir {
 			dirParts := strings.Split(string(entry.FullPath), "/")
@@ -315,6 +319,7 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 				GroupNames: entry.GroupNames,
 			},
 		}
+		f.ensureEntryInode(dirEntry)
 		if isUnderBuckets && level > 3 {
 			// Parent directories under buckets are created automatically; no additional logging.
 		}
@@ -351,6 +356,12 @@ func (f *Filer) ensureParentDirectoryEntry(ctx context.Context, entry *Entry, di
 func (f *Filer) UpdateEntry(ctx context.Context, oldEntry, entry *Entry) (err error) {
 	if oldEntry != nil {
 		entry.Attr.Crtime = oldEntry.Attr.Crtime
+		if oldEntry.Attr.Inode != 0 {
+			// Object identity must not change on in-place updates.
+			entry.Attr.Inode = oldEntry.Attr.Inode
+		} else {
+			f.ensureEntryInode(entry)
+		}
 		if oldEntry.IsDirectory() && !entry.IsDirectory() {
 			glog.ErrorfCtx(ctx, "existing %s is a directory", oldEntry.FullPath)
 			return fmt.Errorf("%s: %w", oldEntry.FullPath, filer_pb.ErrExistingIsDirectory)

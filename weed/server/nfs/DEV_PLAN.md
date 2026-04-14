@@ -1,0 +1,62 @@
+# NFS Dev Plan
+
+Status: active
+Owner: codex
+
+## Goal
+
+Implement SeaweedFS NFS support as a filer-native gateway with stable object
+identity, shared lock state, and restart-safe filehandles.
+
+## Phase 0: architecture
+
+- [x] Write the design note in [DESIGN.md](./DESIGN.md)
+- [x] Choose filer-native gateway as the primary architecture
+- [x] Identify stable inode/filehandle support as the first prerequisite
+
+## Phase 1: filer identity foundation
+
+- [x] Add server-side inode assignment for newly created filer entries
+- [x] Preserve inode across in-place updates
+- [x] Backfill inode on update for legacy zero-inode entries
+- [x] Cover auto-created parent directories with the same inode assignment path
+- [ ] Add a filer-side inode secondary index (`inode -> path(s), generation`)
+- [ ] Expose internal inode lookup helpers for future NFS handle resolution
+
+## Phase 2: reusable filer-backed filesystem core
+
+- [ ] Extract shared read/write helpers from mount, WebDAV, and SFTP
+- [ ] Standardize direct-volume read mode vs filer-proxy mode
+- [ ] Reuse chunk cache and mutation stream helpers without FUSE dependencies
+
+## Phase 3: NFS frontend
+
+- [ ] Add `weed nfs` command and option surface
+- [ ] Integrate an experimental NFSv3 RPC frontend
+- [ ] Implement metadata operations against filer RPCs
+- [ ] Implement direct data-path reads/writes through volume servers
+- [ ] Add export configuration and basic access controls
+
+## Phase 4: HA correctness
+
+- [ ] Deterministic filehandle format based on filer-owned identity
+- [ ] Shared lock state and reclaim/grace handling
+- [ ] Metadata subscription-based invalidation in each NFS head
+- [ ] Multi-head restart and failover tests
+
+## Validation
+
+- [x] Filer unit tests for inode assignment and preservation
+- [ ] Integration tests for create/read/write/rename/delete over NFS
+- [ ] Stale-handle tests after delete/recreate
+- [ ] Hardlink and symlink tests
+- [ ] Lock and failover tests
+
+## Current PR Scope
+
+This first PR only lands the filer identity foundation needed before an NFS
+frontend can be credible:
+
+- design and development plan documents
+- server-side inode assignment
+- inode preservation/backfill tests
