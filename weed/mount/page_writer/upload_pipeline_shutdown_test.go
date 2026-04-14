@@ -14,8 +14,7 @@ import (
 func TestShutdown_ReleasesWritableReservation(t *testing.T) {
 	acc := NewWriteBufferAccountant(1024 * 1024)
 	saveFn := func(io.Reader, int64, int64, int64, func()) {}
-	up := NewUploadPipeline(nil, 64*1024, saveFn, 16, t.TempDir())
-	up.SetWriteBufferAccountant(acc)
+	up := NewUploadPipeline(nil, 64*1024, saveFn, 16, t.TempDir(), acc)
 
 	// A small partial write lands in writableChunks as a mem chunk and
 	// stays there (the chunk is not complete so maybeMoveToSealed is a

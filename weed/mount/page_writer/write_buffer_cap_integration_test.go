@@ -78,8 +78,7 @@ func TestWriteBufferCap_SharedAcrossPipelines(t *testing.T) {
 	// can actually enter the upload stage and hit the gated saveFn.
 	pipelines := make([]*UploadPipeline, numPipelines)
 	for i := range pipelines {
-		up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(4), chunkSize, saveFn, 2, t.TempDir())
-		up.SetWriteBufferAccountant(acc)
+		up := NewUploadPipeline(util.NewLimitedConcurrentExecutor(4), chunkSize, saveFn, 2, t.TempDir(), acc)
 		pipelines[i] = up
 	}
 

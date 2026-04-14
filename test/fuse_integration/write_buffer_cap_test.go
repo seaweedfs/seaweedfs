@@ -111,25 +111,35 @@ func writeWithTimeout(t *testing.T, path string, data []byte, timeout time.Durat
 	}
 }
 
-// runSubtestWithWatchdog runs body in a goroutine and fails the
-// subtest if it doesn't return within timeout, dumping every live
-// goroutine so CI surfaces the wedge instead of a 45-minute walltime.
-// Individual write operations are already timeout-wrapped, but reads
-// and the surrounding bookkeeping are not — this closes the gap for
-// the whole subtest body.
+// runSubtestWithWatchdog runs body on the current (subtest main)
+// goroutine and starts a watcher goroutine that logs diagnostics and
+// fails the test if body doesn't return within timeout.
+//
+// body must run on the main goroutine because test helpers inside it
+// (require.NoError, writeWithTimeout's own t.Fatalf on its internal
+// timeout) need t.Fatal / t.FailNow, which Go's testing docs restrict
+// to the goroutine running the test function. The watcher goroutine
+// only calls goroutine-safe t methods (t.Log, t.Logf, t.Errorf) so it
+// can mark the test failed and dump diagnostics without violating
+// that contract. If body is stuck past timeout the watcher still
+// surfaces the wedge (test + mount goroutine dumps + a FAIL mark);
+// body itself gets unblocked either by its own inner writeWithTimeout
+// firing t.Fatalf or by Go test's global -timeout.
 func runSubtestWithWatchdog(t *testing.T, timeout time.Duration, body func(t *testing.T)) {
 	t.Helper()
-	done := make(chan struct{})
+	stop := make(chan struct{})
+	defer close(stop)
 	go func() {
-		defer close(done)
-		body(t)
+		select {
+		case <-stop:
+			return
+		case <-time.After(timeout):
+			t.Logf("subtest exceeded %v watchdog — dumping TEST goroutines:\n%s", timeout, dumpAllGoroutines())
+			t.Logf("dumping MOUNT goroutines:\n%s", fetchMountGoroutines())
+			t.Errorf("subtest exceeded %v watchdog — see goroutine dumps above", timeout)
+		}
 	}()
-	select {
-	case <-done:
-	case <-time.After(timeout):
-		t.Logf("subtest did not finish within %v — dumping goroutines:\n%s", timeout, dumpAllGoroutines())
-		t.Fatalf("subtest timed out after %v", timeout)
-	}
+	body(t)
 }
 
 // TestWriteBufferCap exercises the end-to-end write-buffer cap on a

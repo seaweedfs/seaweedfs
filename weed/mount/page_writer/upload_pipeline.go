@@ -54,7 +54,14 @@ func (sc *SealedChunk) FreeReference(messageOnFree string) {
 	}
 }
 
-func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, bufferChunkLimit int, swapFileDir string) *UploadPipeline {
+// NewUploadPipeline constructs an UploadPipeline. accountant may be nil,
+// in which case no global write-buffer cap is enforced. When non-nil,
+// creating a new page chunk (memory or swap) first reserves ChunkSize
+// bytes against it, blocking the writer if the global cap is reached.
+// The accountant is captured at construction so the pipeline's hot paths
+// (SaveDataAt, moveToSealed, Shutdown) can read up.accountant without
+// any synchronization.
+func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, bufferChunkLimit int, swapFileDir string, accountant *WriteBufferAccountant) *UploadPipeline {
 	t := &UploadPipeline{
 		ChunkSize:          chunkSize,
 		writableChunks:     make(map[LogicChunkIndex]PageChunk),
@@ -65,17 +72,10 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 		activeReadChunks:   make(map[LogicChunkIndex]int),
 		writableChunkLimit: bufferChunkLimit,
 		swapFile:           NewSwapFile(swapFileDir, chunkSize),
+		accountant:         accountant,
 	}
 	t.readerCountCond = sync.NewCond(&t.chunksLock)
 	return t
-}
-
-// SetWriteBufferAccountant installs a shared byte-budget accountant. When
-// set, creating a new page chunk (memory or swap) first reserves ChunkSize
-// bytes against the accountant, blocking the writer if the global cap is
-// reached. Must be called before the pipeline is used.
-func (up *UploadPipeline) SetWriteBufferAccountant(a *WriteBufferAccountant) {
-	up.accountant = a
 }
 
 func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsNs int64) (n int, err error) {
