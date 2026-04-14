@@ -99,9 +99,10 @@ func TestDetectRequestedChecksumAlgorithm(t *testing.T) {
 	}
 }
 
-func TestGetHeaderOrQueryCaseInsensitive(t *testing.T) {
+func TestLookupHeaderOrQueryCaseInsensitive(t *testing.T) {
 	r := httptest.NewRequest(http.MethodPut, "http://example.com/?x-AMZ-sdk-CHECKSUM-algorithm=SHA256", nil)
-	if got := getHeaderOrQuery(r, s3_constants.AmzSdkChecksumAlgorithm); got != "SHA256" {
+	q := parseRequestQuery(r)
+	if got := lookupHeaderOrQuery(r, q, s3_constants.AmzSdkChecksumAlgorithm); got != "SHA256" {
 		t.Fatalf("expected SHA256, got %q", got)
 	}
 }

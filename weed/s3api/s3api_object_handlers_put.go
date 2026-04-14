@@ -362,8 +362,14 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	plaintextHash := md5.New()
 	dataReader = io.TeeReader(dataReader, plaintextHash)
 
+	// Parse the request's query string once. AWS SDK presigners hoist signed
+	// headers such as x-amz-sdk-checksum-algorithm into the URL's query string,
+	// so the checksum detection and (later) expected-checksum verification below
+	// both need to consult the query in addition to headers.
+	requestQuery := parseRequestQuery(r)
+
 	// Detect and set up additional checksum computation (S3 checksum algorithm support)
-	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithm(r)
+	checksumAlgo, checksumHeaderName, checksumErrCode := detectRequestedChecksumAlgorithmQ(r, requestQuery)
 	if checksumErrCode != s3err.ErrNone {
 		return "", checksumErrCode, SSEResponseMetadata{}
 	}
@@ -657,7 +663,7 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 		checksumBase64 = base64.StdEncoding.EncodeToString(checksumHash.Sum(nil))
 		// Verify against client-provided checksum if present in request headers
 		// (non-chunked uploads send the value directly; chunked uploads validate in the reader)
-		if expectedChecksum := getHeaderOrQuery(r, checksumHeaderName); expectedChecksum != "" {
+		if expectedChecksum := lookupHeaderOrQuery(r, requestQuery, checksumHeaderName); expectedChecksum != "" {
 			if expectedChecksum != checksumBase64 {
 				glog.Warningf("putToFiler: checksum mismatch for %s: expected %s, got %s", checksumHeaderName, expectedChecksum, checksumBase64)
 				s3a.deleteOrphanedChunks(chunkResult.FileChunks)
@@ -918,6 +924,18 @@ func lookupHeaderOrQuery(r *http.Request, query url.Values, key string) string {
 	return ""
 }
 
+// parseRequestQuery returns the parsed query for a request, or nil if there
+// is no raw query to parse. Callers that perform multiple header-or-query
+// lookups on the same request should call this once and thread the result
+// into lookupHeaderOrQuery / detectRequestedChecksumAlgorithmQ to avoid
+// re-parsing the query on every lookup.
+func parseRequestQuery(r *http.Request) url.Values {
+	if r == nil || r.URL == nil || r.URL.RawQuery == "" {
+		return nil
+	}
+	return r.URL.Query()
+}
+
 // detectRequestedChecksumAlgorithm detects the checksum algorithm requested by the client.
 // It checks the x-amz-sdk-checksum-algorithm header, x-amz-checksum-algorithm header,
 // x-amz-trailer header (including comma-separated values), and individual x-amz-checksum-*
@@ -925,16 +943,18 @@ func lookupHeaderOrQuery(r *http.Request, query url.Values, key string) string {
 // because AWS SDK presigners hoist those headers into the query. Returns the algorithm
 // enum, the canonical HTTP header name, and an error code if an unsupported algorithm is
 // specified.
+//
+// This wrapper parses the query string on the caller's behalf. Hot paths that
+// also need to inspect the query for other parameters (see putToFiler) should
+// call detectRequestedChecksumAlgorithmQ with a pre-parsed url.Values.
 func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, string, s3err.ErrorCode) {
-	// Parse the query string once — AWS SDK presigners hoist signed headers such as
-	// x-amz-sdk-checksum-algorithm into the query, so every header lookup below also
-	// needs to consult the query. url.Values() is only parsed when the raw query is
-	// non-empty so non-presigned requests do not pay for an unused map allocation.
-	var query url.Values
-	if r.URL != nil && r.URL.RawQuery != "" {
-		query = r.URL.Query()
-	}
+	return detectRequestedChecksumAlgorithmQ(r, parseRequestQuery(r))
+}
 
+// detectRequestedChecksumAlgorithmQ is the pre-parsed-query variant of
+// detectRequestedChecksumAlgorithm. Pass nil for `query` when the caller has
+// no parsed query to reuse.
+func detectRequestedChecksumAlgorithmQ(r *http.Request, query url.Values) (ChecksumAlgorithm, string, s3err.ErrorCode) {
 	// Check x-amz-sdk-checksum-algorithm (set by AWS SDKs; hoisted to query for presigned URLs)
 	if algo := lookupHeaderOrQuery(r, query, s3_constants.AmzSdkChecksumAlgorithm); algo != "" {
 		if m, ok := checksumAlgorithmMapping[strings.ToUpper(algo)]; ok {
@@ -977,18 +997,6 @@ func detectRequestedChecksumAlgorithm(r *http.Request) (ChecksumAlgorithm, strin
 	}
 
 	return ChecksumAlgorithmNone, "", s3err.ErrNone
-}
-
-// getHeaderOrQuery is a convenience wrapper used outside the hot path. It
-// fetches the value of an x-amz-* parameter, falling back to the query string
-// for presigned URLs. Prefer lookupHeaderOrQuery with a pre-parsed url.Values
-// when doing multiple lookups on the same request.
-func getHeaderOrQuery(r *http.Request, key string) string {
-	var query url.Values
-	if r.URL != nil && r.URL.RawQuery != "" {
-		query = r.URL.Query()
-	}
-	return lookupHeaderOrQuery(r, query, key)
 }
 
 const defaultFileMode = uint32(0660)
