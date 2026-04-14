@@ -134,6 +134,9 @@ func (r *Resolver) ResolveHandle(ctx context.Context, raw []byte) (*ResolvedHand
 	if handle.ExportID != r.exportID {
 		return nil, ErrHandleExportMismatch
 	}
+	if handle.Inode == 0 {
+		return r.resolveSyntheticRoot(ctx, handle)
+	}
 
 	kvResp, err := r.client.KvGet(ctx, &filer_pb.KvGetRequest{Key: filer.InodeIndexKey(handle.Inode)})
 	if err != nil {
@@ -188,6 +191,41 @@ func (r *Resolver) ResolveHandle(ctx context.Context, raw []byte) (*ResolvedHand
 	}
 
 	return nil, ErrStaleHandle
+}
+
+func (r *Resolver) resolveSyntheticRoot(ctx context.Context, handle FileHandle) (*ResolvedHandle, error) {
+	if handle.Kind != FileHandleKindDirectory || handle.Generation != filer.InodeIndexInitialGeneration {
+		return nil, ErrStaleHandle
+	}
+
+	dir, name := r.exportRoot.DirAndName()
+	lookupResp, err := r.client.LookupDirectoryEntry(ctx, &filer_pb.LookupDirectoryEntryRequest{
+		Directory: dir,
+		Name:      name,
+	})
+	if isLookupNotFound(err) {
+		return &ResolvedHandle{
+			Handle: handle,
+			Path:   r.exportRoot,
+			Entry:  syntheticRootEntry(),
+		}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if lookupResp == nil || lookupResp.Entry == nil {
+		return &ResolvedHandle{
+			Handle: handle,
+			Path:   r.exportRoot,
+			Entry:  syntheticRootEntry(),
+		}, nil
+	}
+
+	return &ResolvedHandle{
+		Handle: handle,
+		Path:   r.exportRoot,
+		Entry:  lookupResp.Entry,
+	}, nil
 }
 
 func normalizeExportRoot(root util.FullPath) util.FullPath {

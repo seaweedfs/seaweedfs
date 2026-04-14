@@ -100,6 +100,21 @@ func TestResolverRejectsGenerationMismatch(t *testing.T) {
 	require.ErrorIs(t, err, ErrStaleHandle)
 }
 
+func TestResolverSupportsSyntheticRootHandle(t *testing.T) {
+	client := &fakeResolverClient{
+		kv:      make(map[string][]byte),
+		entries: make(map[util.FullPath]*filer_pb.Entry),
+	}
+	resolver := NewResolver("/", client)
+
+	handle := NewFileHandle(resolver.ExportID(), FileHandleKindDirectory, 0, filer.InodeIndexInitialGeneration)
+	resolved, err := resolver.ResolveHandle(context.Background(), handle.Encode())
+	require.NoError(t, err)
+	assert.Equal(t, util.FullPath("/"), resolved.Path)
+	require.NotNil(t, resolved.Entry)
+	assert.True(t, resolved.Entry.IsDirectory)
+}
+
 func TestNewServerNormalizesExportRootAndExportID(t *testing.T) {
 	server, err := NewServer(&Option{
 		FilerRootPath: "/export/path/",

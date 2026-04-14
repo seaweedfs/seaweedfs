@@ -3,13 +3,15 @@ package nfs
 import (
 	"errors"
 	"fmt"
+	"net"
 
+	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
+	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
+	gonfs "github.com/willscott/go-nfs"
 	"google.golang.org/grpc"
 )
-
-var ErrNotImplemented = errors.New("nfs protocol serving is not implemented yet")
 
 type Option struct {
 	Filer              pb.ServerAddress
@@ -21,9 +23,13 @@ type Option struct {
 }
 
 type Server struct {
-	option     *Option
-	exportRoot util.FullPath
-	exportID   uint32
+	option             *Option
+	exportRoot         util.FullPath
+	exportID           uint32
+	signature          int32
+	handleLimit        int
+	withFilerClient    filerClientExecutor
+	withInternalClient internalClientExecutor
 }
 
 func NewServer(option *Option) (*Server, error) {
@@ -40,21 +46,58 @@ func NewServer(option *Option) (*Server, error) {
 		option.VolumeServerAccess = "direct"
 	}
 	exportRoot := normalizeExportRoot(util.FullPath(option.FilerRootPath))
+	signature := util.RandomInt32()
 	return &Server{
-		option:     option,
-		exportRoot: exportRoot,
-		exportID:   exportIDForRoot(exportRoot),
+		option:             option,
+		exportRoot:         exportRoot,
+		exportID:           exportIDForRoot(exportRoot),
+		signature:          signature,
+		handleLimit:        1 << 20,
+		withFilerClient:    newFilerClientExecutor(option, signature),
+		withInternalClient: newInternalClientExecutor(option, signature),
 	}, nil
 }
 
 func (s *Server) Start() error {
-	return fmt.Errorf("%w; filer=%s bind=%s port=%d filer.path=%s exportId=%d volumeServerAccess=%s",
-		ErrNotImplemented,
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", s.option.BindIp, s.option.Port))
+	if err != nil {
+		return fmt.Errorf("listen nfs on %s:%d: %w", s.option.BindIp, s.option.Port, err)
+	}
+
+	return s.serve(listener)
+}
+
+func (s *Server) serve(listener net.Listener) error {
+	handler, err := s.newHandler()
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
+
+	glog.V(0).Infof("Start Seaweed NFS Server filer=%s bind=%s export=%s exportId=%d volumeServerAccess=%s",
 		s.option.Filer,
-		s.option.BindIp,
-		s.option.Port,
+		listener.Addr(),
 		s.exportRoot,
 		s.exportID,
 		s.option.VolumeServerAccess,
 	)
+
+	return gonfs.Serve(listener, handler)
+}
+
+func (s *Server) newHandler() (*Handler, error) {
+	if s == nil {
+		return nil, errors.New("nfs server is not configured")
+	}
+	return &Handler{
+		server: s,
+		rootFS: newSeaweedFileSystem(s, s.exportRoot, nil),
+	}, nil
+}
+
+func (s *Server) WithFilerClient(streamingMode bool, fn func(filer_pb.SeaweedFilerClient) error) error {
+	if s == nil || s.withFilerClient == nil {
+		return errors.New("nfs filer client is not configured")
+	}
+	return s.withFilerClient(streamingMode, fn)
 }
