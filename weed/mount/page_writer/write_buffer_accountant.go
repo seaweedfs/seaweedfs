@@ -56,7 +56,7 @@ func (a *WriteBufferAccountant) Release(n int64) {
 
 // Used returns the currently reserved byte count (for tests/metrics).
 func (a *WriteBufferAccountant) Used() int64 {
-	if a == nil {
+	if a == nil || a.cap <= 0 {
 		return 0
 	}
 	a.mu.Lock()

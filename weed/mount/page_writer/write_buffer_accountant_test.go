@@ -41,13 +41,18 @@ func TestWriteBufferAccountant_BlocksWhenOverCap(t *testing.T) {
 	a := NewWriteBufferAccountant(100)
 	a.Reserve(100)
 
+	started := make(chan struct{})
 	var landed atomic.Bool
 	go func() {
-		a.Reserve(50) // should block
+		close(started)
+		a.Reserve(50) // should block — used=100, cap=100
 		landed.Store(true)
 	}()
 
-	time.Sleep(50 * time.Millisecond)
+	// Wait until the goroutine is about to enter Reserve. Once it does,
+	// Reserve cannot make progress until Release is called (cap is
+	// full), so landed is guaranteed to stay false until we release.
+	<-started
 	if landed.Load() {
 		t.Fatal("second reserve should be blocked while cap is full")
 	}
