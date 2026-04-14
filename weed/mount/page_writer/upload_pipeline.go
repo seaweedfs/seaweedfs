@@ -204,8 +204,8 @@ func (up *UploadPipeline) maybeMoveToSealed(memChunk PageChunk, logicChunkIndex 
 }
 
 func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex LogicChunkIndex) {
-	atomic.AddInt32(&up.uploaderCount, 1)
-	glog.V(4).Infof("%s uploaderCount %d ++> %d", up.filepath, up.uploaderCount-1, up.uploaderCount)
+	newCount := atomic.AddInt32(&up.uploaderCount, 1)
+	glog.V(4).Infof("%s uploaderCount %d ++> %d", up.filepath, newCount-1, newCount)
 
 	if oldMemChunk, found := up.sealedChunks[logicChunkIndex]; found {
 		oldMemChunk.FreeReference(fmt.Sprintf("%s replace chunk %d", up.filepath, logicChunkIndex))
@@ -226,8 +226,8 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 		sealedChunk.chunk.SaveContent(up.saveToStorageFn)
 
 		// notify waiting process
-		atomic.AddInt32(&up.uploaderCount, -1)
-		glog.V(4).Infof("%s uploaderCount %d --> %d", up.filepath, up.uploaderCount+1, up.uploaderCount)
+		newCount := atomic.AddInt32(&up.uploaderCount, -1)
+		glog.V(4).Infof("%s uploaderCount %d --> %d", up.filepath, newCount+1, newCount)
 		// Lock and Unlock are not required,
 		// but it may signal multiple times during one wakeup,
 		// and the waiting goroutine may miss some of them!
