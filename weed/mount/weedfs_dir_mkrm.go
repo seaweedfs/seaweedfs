@@ -31,6 +31,20 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	}
 
 	now := time.Now().Unix()
+
+	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
+	if code != fuse.OK {
+		return
+	}
+
+	entryFullPath := dirFullPath.Child(name)
+
+	// Pre-allocate the mount's local inode and stamp it into the create
+	// request so both the mount and the filer agree on object identity from
+	// the start. Without this, the filer assigns its own inode in CreateEntry
+	// and the cached entry then reports a different value than the one we
+	// return to the kernel here.
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
 	newEntry := &filer_pb.Entry{
 		Name:        name,
 		IsDirectory: true,
@@ -41,15 +55,9 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 			FileMode: uint32(os.ModeDir) | in.Mode,
 			Uid:      in.Uid,
 			Gid:      in.Gid,
+			Inode:    inode,
 		},
 	}
-
-	dirFullPath, code := wfs.inodeToPath.GetPath(in.NodeId)
-	if code != fuse.OK {
-		return
-	}
-
-	entryFullPath := dirFullPath.Child(name)
 
 	wfs.mapPbIdFromLocalToFiler(newEntry)
 	// Defer restoring to local uid/gid AFTER the entry is sent to the filer
@@ -93,7 +101,7 @@ func (wfs *WFS) Mkdir(cancel <-chan struct{}, in *fuse.MkdirIn, name string, out
 	// for subsequent permission checks on children.
 	wfs.mapPbIdFromFilerToLocal(newEntry)
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, 0, true)
+	inode = wfs.inodeToPath.Lookup(entryFullPath, newEntry.Attributes.Crtime, true, false, inode, true)
 
 	// The newly created directory is guaranteed to be empty, so mark it as
 	// cached immediately to avoid a needless filer round-trip on the first
