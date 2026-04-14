@@ -28,6 +28,7 @@ type Server struct {
 	exportID           uint32
 	signature          int32
 	handleLimit        int
+	newUploader        func() (chunkUploader, error)
 	withFilerClient    filerClientExecutor
 	withInternalClient internalClientExecutor
 }
@@ -53,6 +54,7 @@ func NewServer(option *Option) (*Server, error) {
 		exportID:           exportIDForRoot(exportRoot),
 		signature:          signature,
 		handleLimit:        1 << 20,
+		newUploader:        newChunkUploader,
 		withFilerClient:    newFilerClientExecutor(option, signature),
 		withInternalClient: newInternalClientExecutor(option, signature),
 	}, nil

@@ -15,6 +15,7 @@ import (
 
 	billy "github.com/go-git/go-billy/v5"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
@@ -22,7 +23,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-const maxInlineWriteSize = 4 << 20
+const (
+	maxInlineWriteSize   = 4 << 20
+	maxBufferedWriteSize = 64 << 20
+)
 
 type noopChunkCache struct{}
 
@@ -371,6 +375,12 @@ func (fs *seaweedFileSystem) WithFilerClient(streamingMode bool, fn func(filer_p
 }
 
 func (fs *seaweedFileSystem) AdjustedUrl(location *filer_pb.Location) string {
+	if location == nil {
+		return ""
+	}
+	if fs.server.option.VolumeServerAccess == "publicUrl" && location.PublicUrl != "" {
+		return location.PublicUrl
+	}
 	return location.Url
 }
 
@@ -528,7 +538,7 @@ func (fs *seaweedFileSystem) loadWritableContent(ctx context.Context, info *seaw
 	if fileSize == 0 {
 		return nil, nil
 	}
-	if fileSize > maxInlineWriteSize {
+	if fileSize > maxBufferedWriteSize {
 		return nil, billy.ErrNotSupported
 	}
 
@@ -545,7 +555,63 @@ func (fs *seaweedFileSystem) loadWritableContent(ctx context.Context, info *seaw
 	return content, nil
 }
 
+func (fs *seaweedFileSystem) saveDataAsChunk(actualPath util.FullPath, content []byte) (*filer_pb.FileChunk, error) {
+	uploader, err := fs.server.newUploader()
+	if err != nil {
+		return nil, fmt.Errorf("upload data: %w", err)
+	}
+
+	filename := actualPath.Name()
+	fileID, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
+		fs,
+		&filer_pb.AssignVolumeRequest{
+			Count:      1,
+			DataCenter: fs.GetDataCenter(),
+			Path:       string(actualPath),
+		},
+		&operation.UploadOption{
+			Filename:          filename,
+			Cipher:            false,
+			IsInputCompressed: false,
+			MimeType:          "",
+			PairMap:           nil,
+		},
+		func(host, fileID string) string {
+			fileURL := fmt.Sprintf("http://%s/%s", host, fileID)
+			if fs.server.option.VolumeServerAccess == "filerProxy" {
+				fileURL = fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.server.option.Filer.ToHttpAddress(), fileID)
+			}
+			return fileURL
+		},
+		util.NewBytesReader(content),
+	)
+	if uploadErr != nil {
+		return nil, fmt.Errorf("upload data: %w", uploadErr)
+	}
+	if uploadResult == nil {
+		return nil, errors.New("upload data: missing upload result")
+	}
+	if uploadResult.Error != "" {
+		return nil, fmt.Errorf("upload result: %s", uploadResult.Error)
+	}
+	return uploadResult.ToPbFileChunk(fileID, 0, time.Now().UnixNano()), nil
+}
+
 func (fs *seaweedFileSystem) persistContent(ctx context.Context, actualPath util.FullPath, content []byte) (*filer_pb.Entry, error) {
+	if len(content) > maxInlineWriteSize {
+		chunk, err := fs.saveDataAsChunk(actualPath, content)
+		if err != nil {
+			return nil, err
+		}
+		return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
+			entry.Content = nil
+			entry.Chunks = []*filer_pb.FileChunk{chunk}
+			entry.RemoteEntry = nil
+			entry.Attributes.FileSize = uint64(len(content))
+			touchEntryTimes(entry, true)
+		})
+	}
+
 	return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
 		entry.Content = bytes.Clone(content)
 		entry.Chunks = nil
@@ -864,7 +930,7 @@ func (f *seaweedFile) Write(p []byte) (int, error) {
 	}
 
 	endOffset := int(f.offset) + len(p)
-	if endOffset > maxInlineWriteSize {
+	if endOffset > maxBufferedWriteSize {
 		return 0, billy.ErrNotSupported
 	}
 	if endOffset > len(f.content) {
@@ -929,7 +995,7 @@ func (f *seaweedFile) Truncate(size int64) error {
 	if !f.writable {
 		return billy.ErrReadOnly
 	}
-	if size < 0 || size > maxInlineWriteSize {
+	if size < 0 || size > maxBufferedWriteSize {
 		return billy.ErrNotSupported
 	}
 	target := int(size)

@@ -1,6 +1,7 @@
 package nfs
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -8,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
+	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -43,6 +45,20 @@ type fakeNFSFilerClient struct {
 	deletes      []*filer_pb.DeleteEntryRequest
 	renames      []*filer_pb.AtomicRenameEntryRequest
 	nextInode    uint64
+}
+
+type fakeChunkUploadCall struct {
+	assignRequest *filer_pb.AssignVolumeRequest
+	uploadOption  *operation.UploadOption
+	uploadURL     string
+	data          []byte
+}
+
+type fakeChunkUploader struct {
+	fileID string
+	result *operation.UploadResult
+	err    error
+	calls  []fakeChunkUploadCall
 }
 
 func (f *fakeNFSFilerClient) KvGet(_ context.Context, in *filer_pb.KvGetRequest, _ ...grpc.CallOption) (*filer_pb.KvGetResponse, error) {
@@ -205,6 +221,43 @@ func (f *fakeNFSFilerClient) allocateInode() uint64 {
 	}
 	f.nextInode++
 	return f.nextInode
+}
+
+func (u *fakeChunkUploader) UploadWithRetry(_ filer_pb.FilerClient, assignRequest *filer_pb.AssignVolumeRequest, uploadOption *operation.UploadOption, genFileUrlFn func(host, fileId string) string, reader io.Reader) (string, *operation.UploadResult, error, []byte) {
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return "", nil, err, nil
+	}
+
+	fileID := u.fileID
+	if fileID == "" {
+		fileID = "7,abc"
+	}
+	result := u.result
+	if result == nil {
+		result = &operation.UploadResult{
+			Size:       uint32(len(data)),
+			ContentMd5: "etag",
+		}
+	}
+
+	var assignClone *filer_pb.AssignVolumeRequest
+	if assignRequest != nil {
+		assignClone, _ = proto.Clone(assignRequest).(*filer_pb.AssignVolumeRequest)
+	}
+	var optionClone *operation.UploadOption
+	if uploadOption != nil {
+		copied := *uploadOption
+		optionClone = &copied
+	}
+
+	u.calls = append(u.calls, fakeChunkUploadCall{
+		assignRequest: assignClone,
+		uploadOption:  optionClone,
+		uploadURL:     genFileUrlFn("volume.example:8080", fileID),
+		data:          bytes.Clone(data),
+	})
+	return fileID, result, u.err, data
 }
 
 func cloneEntry(entry *filer_pb.Entry) *filer_pb.Entry {
@@ -460,4 +513,52 @@ func TestSeaweedFileSystemSupportsNamespaceMutations(t *testing.T) {
 	require.Len(t, client.updates, 3)
 	require.Len(t, client.renames, 1)
 	require.Len(t, client.deletes, 1)
+}
+
+func TestSeaweedFileSystemUploadsLargeWritesAsChunks(t *testing.T) {
+	client := &fakeNFSFilerClient{
+		kv: map[string][]byte{
+			string(filer.InodeIndexKey(101)): testIndexRecord(t, 101, 1, "/exports"),
+		},
+		entries: map[util.FullPath]*filer_pb.Entry{
+			"/exports": testEntry("exports", true, 101, uint32(0755), nil),
+		},
+	}
+	uploader := &fakeChunkUploader{fileID: "9,xyz"}
+
+	server := newTestServer(t, "/exports", client)
+	server.option.VolumeServerAccess = "filerProxy"
+	server.newUploader = func() (chunkUploader, error) {
+		return uploader, nil
+	}
+
+	handler, err := server.newHandler()
+	require.NoError(t, err)
+
+	require.NoError(t, handler.rootFS.MkdirAll("/docs", 0o755))
+
+	file, err := handler.rootFS.Create("/docs/big.bin")
+	require.NoError(t, err)
+
+	payload := bytes.Repeat([]byte("a"), maxInlineWriteSize+1)
+	n, err := file.Write(payload)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	require.NoError(t, file.Close())
+
+	require.Len(t, uploader.calls, 1)
+	call := uploader.calls[0]
+	require.NotNil(t, call.assignRequest)
+	require.NotNil(t, call.uploadOption)
+	assert.Equal(t, "/exports/docs/big.bin", call.assignRequest.Path)
+	assert.Equal(t, "big.bin", call.uploadOption.Filename)
+	assert.Equal(t, "http://test-filer:8888/?proxyChunkId=9,xyz", call.uploadURL)
+	assert.Equal(t, payload, call.data)
+
+	entry := client.entries["/exports/docs/big.bin"]
+	require.NotNil(t, entry)
+	require.Len(t, entry.GetChunks(), 1)
+	assert.Nil(t, entry.Content)
+	assert.Equal(t, uint64(len(payload)), entry.GetAttributes().GetFileSize())
+	assert.Equal(t, "9,xyz", entry.GetChunks()[0].GetFileId())
 }

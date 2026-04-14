@@ -40,7 +40,8 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Integrate an experimental read-only NFSv3 RPC frontend
 - [x] Implement initial metadata operations against filer RPCs
 - [x] Implement initial namespace mutations and small-file inline writes for the experimental server
-- [ ] Implement direct data-path reads/writes through volume servers
+- [x] Implement initial buffered large-file writes through `AssignVolume` and volume-server chunk uploads
+- [ ] Expand direct data-path reads/writes through volume servers beyond the current buffered fallback
 - [ ] Add export configuration and basic access controls
 
 ## Phase 4: HA correctness
@@ -71,4 +72,5 @@ frontend can be credible:
 - server-side inode assignment
 - filer-side inode index foundation, multi-path hardlink support, generation metadata, and tests
 - `weed nfs` command, experimental `go-nfs` server path, deterministic filehandle/lookup plumbing, and filer-backed namespace mutations
+- buffered large-file chunk uploads through `AssignVolume`
 - inode preservation/backfill tests
