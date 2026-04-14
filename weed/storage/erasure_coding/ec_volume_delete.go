@@ -51,20 +51,43 @@ func (ev *EcVolume) DeleteNeedleFromEcx(needleId types.NeedleId) (err error) {
 		return nil
 	}
 
+	// Durably flush the .ecx tombstone before touching the journal: after
+	// this Sync returns, the tombstone is the source of truth even if the
+	// process crashes before .ecj is updated. deleteCount may drift by at
+	// most one (benign) and a retry hits the already-tombstoned fast path.
+	if syncErr := ev.ecxFile.Sync(); syncErr != nil {
+		ev.rollbackEcxTombstone(entryFileOffset, oldSize, needleId)
+		return fmt.Errorf("sync ecx: %w", syncErr)
+	}
+
 	b := make([]byte, types.NeedleIdSize)
 	types.NeedleIdToBytes(b, needleId)
 
 	ev.ecjFileAccessLock.Lock()
 	defer ev.ecjFileAccessLock.Unlock()
 
+	prevEcjSize := ev.ecjFileSize
 	if _, seekErr := ev.ecjFile.Seek(0, io.SeekEnd); seekErr != nil {
 		ev.rollbackEcxTombstone(entryFileOffset, oldSize, needleId)
 		return fmt.Errorf("seek ecj: %w", seekErr)
 	}
 	n, writeErr := ev.ecjFile.Write(b)
 	if writeErr != nil {
+		// Truncate off any partially-written bytes so the on-disk size
+		// does not drift away from the cached ecjFileSize.
+		if truncErr := ev.ecjFile.Truncate(prevEcjSize); truncErr != nil {
+			glog.Errorf("ec volume %d: failed to truncate ecj after write error: %v", ev.VolumeId, truncErr)
+		}
 		ev.rollbackEcxTombstone(entryFileOffset, oldSize, needleId)
 		return fmt.Errorf("write ecj: %w", writeErr)
+	}
+	if syncErr := ev.ecjFile.Sync(); syncErr != nil {
+		// write_all may have landed in page cache; truncate and roll back.
+		if truncErr := ev.ecjFile.Truncate(prevEcjSize); truncErr != nil {
+			glog.Errorf("ec volume %d: failed to truncate ecj after sync error: %v", ev.VolumeId, truncErr)
+		}
+		ev.rollbackEcxTombstone(entryFileOffset, oldSize, needleId)
+		return fmt.Errorf("sync ecj: %w", syncErr)
 	}
 	ev.ecjFileSize += int64(n)
 

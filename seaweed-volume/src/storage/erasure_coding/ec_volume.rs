@@ -640,10 +640,20 @@ impl EcVolume {
     /// skips the .ecj append when the entry was already tombstoned so that
     /// the derived `delete_count` stays idempotent on repeat deletes.
     fn mark_needle_deleted_in_ecx(&self, needle_id: NeedleId) -> io::Result<DeleteOutcome> {
-        let ecx_file = match self.ecx_file.as_ref() {
-            Some(f) => f,
-            None => return Ok(DeleteOutcome::NotFound),
-        };
+        // A valid EcVolume always has .ecx open; the None arm can only fire
+        // after close()/destroy(), which is a use-after-close bug. Surface
+        // it as an error instead of silently returning NotFound so callers
+        // (e.g. journal_delete) fail loudly rather than reporting an
+        // idempotent no-op on a corrupt volume.
+        let ecx_file = self.ecx_file.as_ref().ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::Other,
+                format!(
+                    "ec volume {} has no open .ecx file (closed or corrupt)",
+                    self.volume_id.0
+                ),
+            )
+        })?;
 
         let entry_count = self.ecx_file_size as usize / NEEDLE_MAP_ENTRY_SIZE;
         if entry_count == 0 {
@@ -703,6 +713,12 @@ impl EcVolume {
     /// mark it deleted in .ecx, then remove the journal file. Mirrors Go's
     /// `RebuildEcxFile`, which is invoked from specific decode / rebuild
     /// gRPC handlers — it is intentionally **not** called on volume load.
+    ///
+    /// The rewrite is atomic with respect to the journal: if any individual
+    /// mark fails (other than "needle missing in .ecx", which is expected
+    /// and ignored), the .ecj file is left in place and the error is
+    /// propagated so tombstones are not lost. Only when every entry has
+    /// been folded into .ecx do we delete and recreate the journal.
     #[allow(dead_code)]
     fn rebuild_ecx_from_journal(&mut self) -> io::Result<()> {
         let ecj_path = self.ecj_file_name();
@@ -722,16 +738,26 @@ impl EcVolume {
                 break;
             }
             let needle_id = NeedleId::from_bytes(&data[start..start + NEEDLE_ID_SIZE]);
-            // Errors for individual entries are non-fatal (needle may not exist in .ecx)
-            let _ = self.mark_needle_deleted_in_ecx(needle_id);
+            // A needle that never made it into .ecx is fine (e.g. the
+            // delete raced against encode); any other IO error must abort
+            // the rebuild so the journal survives to be retried later.
+            match self.mark_needle_deleted_in_ecx(needle_id) {
+                Ok(_) => {}
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e),
+            }
         }
 
-        // Remove the .ecj file after replay (matches Go)
-        let _ = fs::remove_file(&ecj_path);
+        // Durably flush the newly-written tombstones before dropping the
+        // journal: the .ecx mutations above went through write_all_at and
+        // may still be in page cache.
+        if let Some(ref ecx_file) = self.ecx_file {
+            ecx_file.sync_all()?;
+        }
 
-        // Re-create .ecj for future deletions and reset the cached size so
-        // file_and_delete_count() stops reporting the pre-rebuild journal
-        // contents (which have now been folded into .ecx tombstones).
+        // All entries successfully folded in — safe to remove and recreate
+        // the .ecj file, then reset the cached size.
+        fs::remove_file(&ecj_path)?;
         let ecj_file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -765,6 +791,29 @@ impl EcVolume {
             } => (size_offset, old_size_bytes),
         };
 
+        // Durably flush the tombstone before we touch the journal so a
+        // crash between the two files cannot leave .ecj with an entry for
+        // a needle whose .ecx bytes were still in page cache. After this
+        // fsync the tombstone is the source of truth even if every .ecj
+        // step below fails: reads see "deleted", delete_count may drift by
+        // at most one (benign) and a retry hits AlreadyDeleted.
+        if let Some(ref ecx_file) = self.ecx_file {
+            if let Err(e) = ecx_file.sync_all() {
+                // Rollback the tombstone on fsync failure so the volume is
+                // not left in a half-applied state.
+                if let Err(rollback_err) = self.restore_ecx_size(size_offset, &old_size_bytes) {
+                    tracing::error!(
+                        volume_id = self.volume_id.0,
+                        needle_id = needle_id.0,
+                        rollback_error = %rollback_err,
+                        "failed to rollback ecx tombstone after ecx sync error"
+                    );
+                }
+                return Err(e);
+            }
+        }
+
+        let prev_ecj_size = self.ecj_file_size;
         let append_result: io::Result<()> = {
             let ecj_file = self
                 .ecj_file
@@ -783,6 +832,23 @@ impl EcVolume {
                 Ok(())
             }
             Err(e) => {
+                // write_all may have extended the file on disk before
+                // sync_all failed, so truncate back to the known-good size
+                // before restoring the .ecx tombstone. If truncation fails
+                // (extremely unlikely — same fd, known length), log and
+                // continue; ecj_file_size stays as the pre-append value,
+                // so the derived delete_count is correct even if the
+                // on-disk length drifts.
+                if let Some(ecj) = self.ecj_file.as_mut() {
+                    if let Err(trunc_err) = ecj.set_len(prev_ecj_size as u64) {
+                        tracing::error!(
+                            volume_id = self.volume_id.0,
+                            needle_id = needle_id.0,
+                            truncate_error = %trunc_err,
+                            "failed to truncate ecj after append failure"
+                        );
+                    }
+                }
                 if let Err(rollback_err) =
                     self.restore_ecx_size(size_offset, &old_size_bytes)
                 {
