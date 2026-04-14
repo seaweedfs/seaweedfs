@@ -63,9 +63,14 @@ func (wfs *WFS) Link(cancel <-chan struct{}, in *fuse.LinkIn, name string, out *
 		hlKey := string(oldEntry.HardLinkId)
 		lock := wfs.hardLinkLockTable.AcquireLock("link", hlKey, util.ExclusiveLock)
 		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
-		if fresh, freshStatus := wfs.maybeLoadEntry(oldEntryPath); freshStatus == fuse.OK && fresh != nil {
-			oldEntry = fresh
+		// Do not fall back to the pre-lock snapshot: if the source was
+		// deleted while we waited, we must abort instead of deriving
+		// the next counter from a stale entry.
+		fresh, freshStatus := wfs.maybeLoadEntry(oldEntryPath)
+		if freshStatus != fuse.OK {
+			return freshStatus
 		}
+		oldEntry = fresh
 	}
 
 	// update old file to hardlink mode

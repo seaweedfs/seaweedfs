@@ -200,9 +200,19 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		hlKey := string(entry.HardLinkId)
 		lock := wfs.hardLinkLockTable.AcquireLock("unlink", hlKey, util.ExclusiveLock)
 		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
-		if fresh, freshCode := wfs.maybeLoadEntry(entryFullPath); freshCode == fuse.OK && fresh != nil {
-			entry = fresh
+		// If another thread unlinked the entry while we waited for the
+		// lock, the file is already gone — return OK like the initial
+		// maybeLoadEntry path above. Do not fall back to the stale
+		// pre-lock snapshot: proceeding with its HardLinkCounter would
+		// reintroduce the stale-base update the lock is meant to prevent.
+		fresh, freshCode := wfs.maybeLoadEntry(entryFullPath)
+		if freshCode == fuse.ENOENT {
+			return fuse.OK
 		}
+		if freshCode != fuse.OK {
+			return freshCode
+		}
+		entry = fresh
 	}
 
 	// POSIX: enforce sticky bit on the parent directory.
