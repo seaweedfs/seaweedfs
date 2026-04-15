@@ -145,12 +145,16 @@ type Node interface {
 }
 
 type NodeImpl struct {
-	diskUsages   *DiskUsages
-	id           NodeId
-	parent       Node
+	diskUsages *DiskUsages
+	id         NodeId
+	parent     Node
 	sync.RWMutex // lock children
-	children     map[NodeId]Node
-	maxVolumeId  needle.VolumeId
+	children    map[NodeId]Node
+	// maxVolumeId uses atomic ops so UpAdjustMaxVolumeId (called from the
+	// volume server heartbeat path) and GetMaxVolumeId (called from the
+	// master's assign / warmup checks) can run concurrently without a
+	// data race on NodeImpl.
+	maxVolumeId atomic.Uint32
 
 	//for rack, data center, topology
 	nodeType string
@@ -391,16 +395,23 @@ func (n *NodeImpl) UpAdjustDiskUsageDelta(diskType types.DiskType, diskUsage *Di
 		n.parent.UpAdjustDiskUsageDelta(diskType, diskUsage)
 	}
 }
-func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) { //can be negative
-	if n.maxVolumeId < vid {
-		n.maxVolumeId = vid
-		if n.parent != nil {
-			n.parent.UpAdjustMaxVolumeId(vid)
+func (n *NodeImpl) UpAdjustMaxVolumeId(vid needle.VolumeId) {
+	target := uint32(vid)
+	for {
+		current := n.maxVolumeId.Load()
+		if current >= target {
+			return
 		}
+		if n.maxVolumeId.CompareAndSwap(current, target) {
+			break
+		}
+	}
+	if n.parent != nil {
+		n.parent.UpAdjustMaxVolumeId(vid)
 	}
 }
 func (n *NodeImpl) GetMaxVolumeId() needle.VolumeId {
-	return n.maxVolumeId
+	return needle.VolumeId(n.maxVolumeId.Load())
 }
 
 func (n *NodeImpl) LinkChildNode(node Node) {
