@@ -1236,24 +1236,29 @@ func (f *seaweedFile) Write(p []byte) (int, error) {
 		f.offset = int64(len(f.content))
 	}
 
-	// Bound the offset before any int conversion so a negative or wildly
-	// large int64 cannot overflow the `int(f.offset) + len(p)` arithmetic
-	// that sizes the grow below. maxBufferedWriteSize fits in int on every
-	// platform we target, so the cast on the next line is guaranteed safe.
+	// Reject pathological offsets and write sizes up front so every
+	// subsequent computation stays well below maxBufferedWriteSize and the
+	// int-width cast below cannot overflow even on 32-bit hosts.
 	if f.offset < 0 || f.offset > int64(maxBufferedWriteSize) {
 		return 0, billy.ErrNotSupported
 	}
-	endOffset := int(f.offset) + len(p)
-	if endOffset < 0 || endOffset > maxBufferedWriteSize {
+	if len(p) > maxBufferedWriteSize {
 		return 0, billy.ErrNotSupported
 	}
+	// Compute the end offset in int64 so the arithmetic cannot overflow;
+	// both operands are bounded above by maxBufferedWriteSize (64 MiB).
+	endOffset64 := f.offset + int64(len(p))
+	if endOffset64 > int64(maxBufferedWriteSize) {
+		return 0, billy.ErrNotSupported
+	}
+	endOffset := int(endOffset64)
 	if endOffset > len(f.content) {
 		// Use append so Go's amortized growth strategy kicks in instead of
 		// copying the entire buffer on every extending write.
 		f.content = append(f.content, make([]byte, endOffset-len(f.content))...)
 	}
 	copy(f.content[f.offset:], p)
-	f.offset = int64(endOffset)
+	f.offset = endOffset64
 	f.dirty = true
 	return len(p), nil
 }
