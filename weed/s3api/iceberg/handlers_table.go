@@ -173,10 +173,10 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 
 	// Authoritative existence check: ask the catalog whether a table is registered
 	// at this name. If it is, short-circuit with the existing table (idempotent
-	// CreateTable). If it is not, purge any leftover objects at the target path
-	// (e.g. from a prior DROP that did not clean up data files, or an earlier
-	// aborted CTAS) so engines that verify an empty location — Trino's CTAS in
-	// particular — can proceed. See issue #9074.
+	// CreateTable). Any leftover objects at the target path from a previous
+	// lifecycle of the same name are purged by handleDropTable on the way out —
+	// we deliberately do not clean storage here to keep CreateTable free of
+	// destructive side effects. See issue #9074.
 	existsReq := &s3tables.GetTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -198,9 +198,6 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", existsErr.Error())
 		return
-	}
-	if cleanupErr := s.cleanupStaleTableLocation(r.Context(), metadataBucket, metadataPath); cleanupErr != nil {
-		glog.V(1).Infof("Iceberg: failed to clean stale table location s3://%s/%s: %v", metadataBucket, metadataPath, cleanupErr)
 	}
 
 	// Stage-create persists metadata in the internal staged area and skips S3Tables registration.
@@ -519,18 +516,32 @@ func isNoSuchTableError(err error) bool {
 
 // cleanupStaleTableLocation purges any existing filer entry at the target
 // table path inside the regular S3 bucket so that engines which verify an
-// empty location (e.g. Trino CTAS) can proceed. Callers must have confirmed
-// via the catalog that no table is registered at this name — live tables
-// must never be touched by this helper. Missing paths are not an error.
+// empty location (e.g. Trino CTAS) can proceed after a DROP. Callers must
+// have confirmed via the catalog that no table is registered at this name —
+// live tables must never be touched by this helper. Missing paths are not
+// an error.
+//
+// The tablePath is validated to contain only safe, relative segments before
+// being joined with the bucket prefix, so a maliciously crafted location
+// (e.g. containing "..") cannot escape the bucket subtree and delete data
+// outside of it.
 func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string) error {
 	tablePath = strings.Trim(tablePath, "/")
 	if bucketName == "" || tablePath == "" {
 		return nil
 	}
+	// Reject absolute paths and any traversal segments. path.Clean would
+	// silently collapse "foo/../bar" into "bar", masking an attempted
+	// escape, so we check each raw segment explicitly.
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" || segment == "." || segment == ".." || strings.ContainsAny(segment, `\`) {
+			return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
+		}
+	}
 	parentDir := path.Join(s3_constants.DefaultBucketsPath, bucketName, path.Dir(tablePath))
 	name := path.Base(tablePath)
-	if name == "" || name == "." || name == "/" {
-		return nil
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
 	}
 	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
