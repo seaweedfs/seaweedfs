@@ -253,6 +253,59 @@ func TestDetectGlobalImbalance(t *testing.T) {
 	}
 }
 
+// TestDetectGlobalImbalance_HeterogeneousCapacity is a regression test for the
+// Phase 4 rebalancer. When nodes in the same rack have very different slot
+// capacities, the raw-average guard alone can allow moves that strictly
+// worsen utilization — for example, moving a shard from a large, barely-used
+// node to a small, nearly-full node just because the small node has fewer
+// shards in absolute terms.
+//
+// Scenario:
+//
+//	node1: 10 shards, freeSlots=90   → capacity 100, util 10%
+//	node2:  3 shards, freeSlots=2    → capacity  5, util 60%
+//
+// Raw counts say node1 is overloaded (10 vs 3), so the greedy algorithm
+// wants to move shards from node1 to node2. Without the capacity-weighted
+// guard, that pushes node2 to 5/5 (100% util) while node1 drops to 8/100
+// (8% util) — strictly worse by utilization. The correct behavior is to
+// leave the rack alone: any move from node1 (lower util) to node2 (higher
+// util) makes things worse.
+func TestDetectGlobalImbalance_HeterogeneousCapacity(t *testing.T) {
+	nodes := map[string]*ecNodeInfo{
+		"node1": {
+			nodeID: "node1", address: "node1:8080", rack: "dc1:rack1", freeSlots: 90,
+			ecShards: map[uint32]*ecVolumeInfo{
+				100: {collection: "col1", shardBits: 0x3FF}, // 10 shards
+			},
+		},
+		"node2": {
+			nodeID: "node2", address: "node2:8080", rack: "dc1:rack1", freeSlots: 2,
+			ecShards: map[uint32]*ecVolumeInfo{
+				200: {collection: "col1", shardBits: 0b111}, // 3 shards
+			},
+		},
+	}
+	racks := map[string]*ecRackInfo{
+		"dc1:rack1": {
+			nodes:     map[string]*ecNodeInfo{"node1": nodes["node1"], "node2": nodes["node2"]},
+			freeSlots: 92,
+		},
+	}
+
+	config := NewDefaultConfig()
+	config.ImbalanceThreshold = 0.01 // aggressive; ensures the loop would run
+	moves := detectGlobalImbalance(nodes, racks, config, nil)
+
+	if len(moves) != 0 {
+		t.Errorf("expected 0 moves (heterogeneous capacity would overfill node2), got %d", len(moves))
+		for _, move := range moves {
+			t.Logf("  move: shard %d.%d %s %s -> %s",
+				move.volumeID, move.shardID, move.phase, move.source.nodeID, move.target.nodeID)
+		}
+	}
+}
+
 func TestDetectGlobalImbalanceSkipsFullNodes(t *testing.T) {
 	// node2 has 0 free slots — should not be chosen as destination
 	nodes := map[string]*ecNodeInfo{

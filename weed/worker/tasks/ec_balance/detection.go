@@ -551,6 +551,15 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 
 		avgShards := ceilDivide(totalShards, len(rack.nodes))
 
+		// Snapshot each node's total shard capacity (current shards from allowed
+		// volumes plus any remaining free slots). Capacity is fixed for the
+		// duration of this loop — moves conserve total shards across the rack,
+		// so the denominator does not change as nodeShardCounts shift.
+		nodeCapacity := make(map[string]int, len(rack.nodes))
+		for nodeID, count := range nodeShardCounts {
+			nodeCapacity[nodeID] = count + rack.nodes[nodeID].freeSlots
+		}
+
 		// Iteratively move shards from most-loaded to least-loaded
 		for i := 0; i < 10; i++ { // cap iterations to avoid infinite loops
 			// Find min and max nodes, skipping full nodes for min
@@ -576,6 +585,24 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			}
 			if maxCount-minCount <= 1 {
 				break
+			}
+
+			// Capacity-weighted guard: when nodes in this rack have different
+			// slot capacities, the raw-average check above can still allow
+			// moves that overfill the lower-capacity node. Block moves that
+			// would flip which node is most-utilized — i.e., reject any move
+			// where the destination's post-move utilization would strictly
+			// exceed the source's post-move utilization. This mirrors the
+			// guard in weed/worker/tasks/balance/detection.go and prevents
+			// oscillation and destination overshoot on heterogeneous racks.
+			maxCap := nodeCapacity[maxNode.nodeID]
+			minCap := nodeCapacity[minNode.nodeID]
+			if maxCap > 0 && minCap > 0 {
+				newSrcUtil := float64(maxCount-1) / float64(maxCap)
+				newDstUtil := float64(minCount+1) / float64(minCap)
+				if newDstUtil > newSrcUtil {
+					break
+				}
 			}
 
 			// Pick a shard from maxNode that doesn't already exist on minNode
