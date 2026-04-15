@@ -60,7 +60,7 @@ jobs:
       run: |
         cd test/nfs
 
-        echo "🧪 Running NFS integration tests..."
+        echo "Running NFS integration tests..."
         echo "============================================"
 
         # Install test dependencies
@@ -70,26 +70,26 @@ jobs:
         go test -v -timeout=${{ env.TEST_TIMEOUT }} ./...
 
         echo "============================================"
-        echo "✅ NFS integration tests completed"
+        echo "NFS integration tests completed"
 
     - name: Test Summary
       if: always()
       run: |
-        echo "## 📁 NFS Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+        echo "## NFS Integration Test Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Test Coverage" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Read/Write Round Trip**: Basic file create + read" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Directory Operations**: Mkdir, ReadDirPlus, RmDir" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Nested Directories**: Deep tree creation and leaf I/O" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Rename**: Content preserved across rename" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Overwrite + Truncate**: Setattr(size=0) + shorter write" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Large Files**: 3 MiB binary round trip" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Edge Payloads**: All 256 byte values + empty files" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Symlinks**: Symlink + Lookup" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Missing Path**: Remove on missing entry errors cleanly" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **FSINFO**: Non-zero rtpref/wtpref advertised" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **Sequential Append**: Two-part concatenation" >> $GITHUB_STEP_SUMMARY
-        echo "- ✅ **ReadDir After Remove**: Meta cache does not serve stale entries" >> $GITHUB_STEP_SUMMARY
+        echo "- **Read/Write Round Trip**: Basic file create + read" >> $GITHUB_STEP_SUMMARY
+        echo "- **Directory Operations**: Mkdir, ReadDirPlus, RmDir" >> $GITHUB_STEP_SUMMARY
+        echo "- **Nested Directories**: Deep tree creation and leaf I/O" >> $GITHUB_STEP_SUMMARY
+        echo "- **Rename**: Content preserved across rename" >> $GITHUB_STEP_SUMMARY
+        echo "- **Overwrite + Truncate**: Setattr(size=0) + shorter write" >> $GITHUB_STEP_SUMMARY
+        echo "- **Large Files**: 3 MiB binary round trip" >> $GITHUB_STEP_SUMMARY
+        echo "- **Edge Payloads**: All 256 byte values + empty files" >> $GITHUB_STEP_SUMMARY
+        echo "- **Symlinks**: Symlink + Lookup" >> $GITHUB_STEP_SUMMARY
+        echo "- **Missing Path**: Remove on missing entry errors cleanly" >> $GITHUB_STEP_SUMMARY
+        echo "- **FSINFO**: Non-zero rtpref/wtpref advertised" >> $GITHUB_STEP_SUMMARY
+        echo "- **Sequential Append**: Two-part concatenation" >> $GITHUB_STEP_SUMMARY
+        echo "- **ReadDir After Remove**: Meta cache does not serve stale entries" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### Harness" >> $GITHUB_STEP_SUMMARY
         echo "Each test boots its own master + volume + filer + nfs subprocess" >> $GITHUB_STEP_SUMMARY
