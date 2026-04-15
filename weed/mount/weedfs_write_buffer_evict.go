@@ -14,6 +14,21 @@ package mount
 // finishes uploading, which only happens after the chunk fills or the
 // file closes.
 //
+// Performance note: this does a linear scan of fhMap.inode2fh looking
+// for the first handle with a writable chunk. The scan is bounded by
+// the number of open-for-write file handles at the moment Reserve
+// blocks, not by nrfiles in the workload: handles that have no dirty
+// pages fall through EvictOneWritableChunk in O(1) under their own
+// chunksLock, so the hot-path cost is just the map walk. The scan is
+// already serialized by the caller's single-flight `evicting` flag
+// (one eviction across the entire accountant at a time), and happens
+// only when Reserve is about to block — i.e., when the cap is actually
+// exhausted and we would otherwise park a writer — so the O(N) walk is
+// paid at most once per chunkSize drained, not per write. Replacing
+// the map with an LRU / dirty-set would trade this for per-AddPage
+// bookkeeping overhead on a hotter path; we keep the scan until a
+// profile shows it mattering at the scale users actually hit.
+//
 // Called from WriteBufferAccountant.Reserve with accountant.mu dropped.
 // Must not call anything that takes accountant.mu back; see the caller's
 // single-flight `evicting` flag for safety against concurrent invocation.
