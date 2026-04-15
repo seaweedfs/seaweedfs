@@ -1,6 +1,7 @@
 package iceberg
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -167,6 +168,35 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	metadataBucket, metadataPath, err := parseS3Location(location)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "InternalServerError", "Invalid table location: "+err.Error())
+		return
+	}
+
+	// Authoritative existence check: ask the catalog whether a table is registered
+	// at this name. If it is, short-circuit with the existing table (idempotent
+	// CreateTable). Any leftover objects at the target path from a previous
+	// lifecycle of the same name are purged by handleDropTable on the way out —
+	// we deliberately do not clean storage here to keep CreateTable free of
+	// destructive side effects. See issue #9074.
+	existsReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var existsResp s3tables.GetTableResponse
+	existsErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", existsReq, &existsResp, identityName)
+	})
+	if existsErr == nil {
+		// Table already registered. Return the existing definition so CTAS/IF NOT
+		// EXISTS flows see a stable response instead of a 409.
+		result := buildLoadTableResult(existsResp, bucketName, namespace, tableName)
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
+	if !isNoSuchTableError(existsErr) {
+		glog.V(1).Infof("Iceberg: CreateTable existence check failed for %s.%s: %v", flattenNamespacePath(namespace), tableName, existsErr)
+		writeError(w, http.StatusInternalServerError, "InternalServerError", existsErr.Error())
 		return
 	}
 
@@ -412,6 +442,25 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	// Extract identity from context
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
+	// Resolve the table's storage location from the catalog before the
+	// delete, so we can purge data files afterwards. The catalog is the
+	// authoritative owner of this mapping — if the table is not registered,
+	// there is nothing to clean up and DeleteTable will return NoSuchTable.
+	var storedMetadataLocation string
+	lookupReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var lookupResp s3tables.GetTableResponse
+	lookupErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", lookupReq, &lookupResp, identityName)
+	})
+	if lookupErr == nil {
+		storedMetadataLocation = lookupResp.MetadataLocation
+	}
+
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -433,7 +482,74 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Purge data files that lived under the dropped table's location, so a
+	// subsequent CREATE TABLE at the same name (issue #9074) does not trip
+	// Trino's "non-empty location" pre-check. We only purge when the catalog
+	// told us a location: if GetTable above failed, there is no mapping to
+	// trust and we leave storage alone.
+	if storedMetadataLocation != "" {
+		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
+			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {
+					glog.V(1).Infof("Iceberg: failed to purge dropped table location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
+				}
+			}
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// isNoSuchTableError reports whether an error from the S3 Tables manager
+// indicates the target table is not registered in the catalog.
+func isNoSuchTableError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) {
+		return tableErr.Type == s3tables.ErrCodeNoSuchTable || tableErr.Type == s3tables.ErrCodeNoSuchNamespace
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") || strings.Contains(msg, "no such table")
+}
+
+// cleanupStaleTableLocation purges any existing filer entry at the target
+// table path inside the regular S3 bucket so that engines which verify an
+// empty location (e.g. Trino CTAS) can proceed after a DROP. Callers must
+// have confirmed via the catalog that no table is registered at this name —
+// live tables must never be touched by this helper. Missing paths are not
+// an error.
+//
+// The tablePath is validated to contain only safe, relative segments before
+// being joined with the bucket prefix, so a maliciously crafted location
+// (e.g. containing "..") cannot escape the bucket subtree and delete data
+// outside of it.
+func (s *Server) cleanupStaleTableLocation(ctx context.Context, bucketName, tablePath string) error {
+	tablePath = strings.Trim(tablePath, "/")
+	if bucketName == "" || tablePath == "" {
+		return nil
+	}
+	// Reject absolute paths and any traversal segments. path.Clean would
+	// silently collapse "foo/../bar" into "bar", masking an attempted
+	// escape, so we check each raw segment explicitly.
+	for _, segment := range strings.Split(tablePath, "/") {
+		if segment == "" || segment == "." || segment == ".." || strings.ContainsAny(segment, `\`) {
+			return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
+		}
+	}
+	parentDir := path.Join(s3_constants.DefaultBucketsPath, bucketName, path.Dir(tablePath))
+	name := path.Base(tablePath)
+	if name == "" || name == "." || name == ".." || name == "/" {
+		return fmt.Errorf("cleanupStaleTableLocation: refusing unsafe table path %q", tablePath)
+	}
+	return s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		err := filer_pb.DoRemove(ctx, client, parentDir, name, true, true, true, false, nil)
+		if err == nil || errors.Is(err, filer_pb.ErrNotFound) {
+			return nil
+		}
+		return err
+	})
 }
 
 // newTableMetadata creates a new table.Metadata object with the given parameters.
