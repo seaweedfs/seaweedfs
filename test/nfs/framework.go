@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 	"github.com/stretchr/testify/require"
 	nfsclient "github.com/willscott/go-nfs-client/nfs"
 	"github.com/willscott/go-nfs-client/nfs/rpc"
@@ -80,16 +81,12 @@ func NewNfsTestFramework(t *testing.T, config *TestConfig) *NfsTestFramework {
 	tempDir, err := os.MkdirTemp("", "seaweedfs_nfs_test_")
 	require.NoError(t, err)
 
-	// Allocate distinct ports per run. Every weed component needs both an
-	// HTTP port and a gRPC port; we reserve them explicitly so we never hit
-	// the "port + 10000 > 65535" trap that the implicit default has.
-	masterPort := mustPickFreePort(t)
-	masterGrpc := mustPickFreePort(t)
-	volumePort := mustPickFreePort(t)
-	volumeGrpc := mustPickFreePort(t)
-	filerPort := mustPickFreePort(t)
-	filerGrpc := mustPickFreePort(t)
-	nfsPort := mustPickFreePort(t)
+	// testutil.MustAllocatePorts holds every listener open until the full
+	// batch has been reserved, which avoids the "close-then-hope" race my
+	// original per-port helper had. We need seven ports: four HTTP (master,
+	// volume, filer, nfs) and three gRPC (master, volume, filer — nfs has
+	// no gRPC endpoint).
+	ports := testutil.MustAllocatePorts(t, 7)
 
 	exportRoot := config.ExportRoot
 	if exportRoot == "" {
@@ -100,13 +97,13 @@ func NewNfsTestFramework(t *testing.T, config *TestConfig) *NfsTestFramework {
 		t:           t,
 		tempDir:     tempDir,
 		dataDir:     filepath.Join(tempDir, "data"),
-		masterAddr:  fmt.Sprintf("127.0.0.1:%d", masterPort),
-		masterGrpc:  masterGrpc,
-		volumeAddr:  fmt.Sprintf("127.0.0.1:%d", volumePort),
-		volumeGrpc:  volumeGrpc,
-		filerAddr:   fmt.Sprintf("127.0.0.1:%d", filerPort),
-		filerGrpc:   filerGrpc,
-		nfsAddr:     fmt.Sprintf("127.0.0.1:%d", nfsPort),
+		masterAddr:  fmt.Sprintf("127.0.0.1:%d", ports[0]),
+		masterGrpc:  ports[1],
+		volumeAddr:  fmt.Sprintf("127.0.0.1:%d", ports[2]),
+		volumeGrpc:  ports[3],
+		filerAddr:   fmt.Sprintf("127.0.0.1:%d", ports[4]),
+		filerGrpc:   ports[5],
+		nfsAddr:     fmt.Sprintf("127.0.0.1:%d", ports[6]),
 		exportRoot:  exportRoot,
 		weedBinary:  findWeedBinary(),
 		isSetup:     false,
@@ -135,22 +132,22 @@ func (f *NfsTestFramework) Setup(config *TestConfig) error {
 	if err := f.startMaster(config); err != nil {
 		return fmt.Errorf("failed to start master: %v", err)
 	}
-	if err := f.waitForService(f.masterAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("master not ready: %v", err)
+	if !testutil.WaitForPort(portFromAddr(f.masterAddr), testutil.SeaweedMiniStartupTimeout) {
+		return fmt.Errorf("master not ready at %s", f.masterAddr)
 	}
 
 	if err := f.startVolumeServer(config); err != nil {
 		return fmt.Errorf("failed to start volume server: %v", err)
 	}
-	if err := f.waitForService(f.volumeAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("volume server not ready: %v", err)
+	if !testutil.WaitForPort(portFromAddr(f.volumeAddr), testutil.SeaweedMiniStartupTimeout) {
+		return fmt.Errorf("volume server not ready at %s", f.volumeAddr)
 	}
 
 	if err := f.startFiler(config); err != nil {
 		return fmt.Errorf("failed to start filer: %v", err)
 	}
-	if err := f.waitForService(f.filerAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("filer not ready: %v", err)
+	if !testutil.WaitForPort(portFromAddr(f.filerAddr), testutil.SeaweedMiniStartupTimeout) {
+		return fmt.Errorf("filer not ready at %s", f.filerAddr)
 	}
 
 	// Pre-create the export root in the filer's namespace. The NFS server
@@ -166,8 +163,8 @@ func (f *NfsTestFramework) Setup(config *TestConfig) error {
 	if err := f.startNfsServer(config); err != nil {
 		return fmt.Errorf("failed to start NFS server: %v", err)
 	}
-	if err := f.waitForService(f.nfsAddr, 30*time.Second); err != nil {
-		return fmt.Errorf("NFS server not ready: %v", err)
+	if !testutil.WaitForPort(portFromAddr(f.nfsAddr), testutil.SeaweedMiniStartupTimeout) {
+		return fmt.Errorf("NFS server not ready at %s", f.nfsAddr)
 	}
 
 	// Let the NFS server finish wiring up its gRPC subscription to the filer
@@ -315,17 +312,11 @@ func (f *NfsTestFramework) startProcess(target **os.Process, config *TestConfig,
 	return nil
 }
 
-func (f *NfsTestFramework) waitForService(addr string, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", addr, 500*time.Millisecond)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("service at %s not ready within timeout", addr)
+// portFromAddr returns just the port number from a `host:port` string.
+// testutil.WaitForPort takes an int port, not a full address.
+func portFromAddr(addr string) int {
+	_, port := splitHostPort(addr)
+	return port
 }
 
 // ensureExportRootExists posts a placeholder file to f.exportRoot via the
@@ -384,19 +375,6 @@ func (f *NfsTestFramework) ensureExportRootExists() error {
 		return fmt.Errorf("filer DELETE %s returned status %d", filerURL, deleteResp.StatusCode)
 	}
 	return nil
-}
-
-// mustPickFreePort asks the kernel for an ephemeral port, closes the listener,
-// and returns the port number. There is a race between closing and the
-// subprocess reopening the port, but for local test runs it is effectively
-// collision-free and avoids the hardcoded-port collisions that bite
-// parallel test runs.
-func mustPickFreePort(t *testing.T) int {
-	t.Helper()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	defer listener.Close()
-	return listener.Addr().(*net.TCPAddr).Port
 }
 
 func splitHostPort(addr string) (string, int) {
