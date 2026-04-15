@@ -1277,3 +1277,78 @@ func TestDetection_RespectsClusterIdealUtilization(t *testing.T) {
 
 	t.Logf("tasks=%d, effective=%v, ideal=%.3f", len(tasks), effective, idealUtil)
 }
+
+// TestResolveBalanceDestination_UsesEffectiveCapacity verifies that
+// resolveBalanceDestination respects ActiveTopology's effective available
+// capacity — i.e., the destination check factors in pending and assigned
+// tasks already registered against the disk. Without this, the destination
+// planner reads a stale VolumeCount from the topology snapshot and keeps
+// approving the same disk even after many moves have been planned against
+// it within a single detection cycle.
+func TestResolveBalanceDestination_UsesEffectiveCapacity(t *testing.T) {
+	servers := []serverSpec{
+		{id: "src-node", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "dst-node", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("src-node", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	// dst-node starts with 8 volumes → 2 slots free
+	metrics = append(metrics, makeVolumes("dst-node", "hdd", "dc1", "rack1", "c1", 1000, 8)...)
+
+	at := buildTopology(servers, metrics)
+
+	// Simulate two prior balance moves already planned in this detection cycle
+	// that target dst-node:2. Effective capacity should drop to 0.
+	for i := 0; i < 2; i++ {
+		err := at.AddPendingTask(topology.TaskSpec{
+			TaskID:     fmt.Sprintf("pending-%d", i),
+			TaskType:   topology.TaskTypeBalance,
+			VolumeID:   uint32(9000 + i),
+			VolumeSize: 1024,
+			Sources: []topology.TaskSourceSpec{
+				{ServerID: "src-node", DiskID: 1},
+			},
+			Destinations: []topology.TaskDestinationSpec{
+				{ServerID: "dst-node", DiskID: 2},
+			},
+		})
+		if err != nil {
+			t.Fatalf("seeding pending task %d failed: %v", i, err)
+		}
+	}
+
+	candidate := &types.VolumeHealthMetrics{
+		VolumeID:      500,
+		Server:        "src-node",
+		ServerAddress: "src-node:8080",
+		DiskType:      "hdd",
+		Collection:    "c1",
+		Size:          1024,
+		DataCenter:    "dc1",
+		Rack:          "rack1",
+	}
+
+	if _, err := resolveBalanceDestination(at, candidate, "dst-node"); err == nil {
+		t.Error("expected resolveBalanceDestination to fail because dst-node's disk is effectively full " +
+			"(VolumeCount=8, MaxVolumeCount=10, 2 pending destination tasks)")
+	}
+
+	// Sanity check: a server with no pending tasks targeting it should still
+	// resolve successfully, proving the helper itself is working.
+	servers2 := []serverSpec{
+		{id: "src-node", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 100},
+		{id: "dst-node", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+	metrics2 := append([]*types.VolumeHealthMetrics(nil),
+		makeVolumes("src-node", "hdd", "dc1", "rack1", "c1", 1, 50)...)
+	metrics2 = append(metrics2, makeVolumes("dst-node", "hdd", "dc1", "rack1", "c1", 1000, 8)...)
+	at2 := buildTopology(servers2, metrics2)
+	plan, err := resolveBalanceDestination(at2, candidate, "dst-node")
+	if err != nil {
+		t.Fatalf("expected resolveBalanceDestination to succeed on fresh topology: %v", err)
+	}
+	if plan.TargetNode != "dst-node" {
+		t.Errorf("unexpected target node: got %q want %q", plan.TargetNode, "dst-node")
+	}
+}
