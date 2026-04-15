@@ -1,7 +1,12 @@
 {{- include "seaweedfs.compat" . -}}
-{{- if or .Values.s3.enabled .Values.filer.s3.enabled }}
-{{- if .Values.s3.metricsPort }}
-{{- if .Values.global.seaweedfs.monitoring.enabled }}
+{{- /*
+  Only the standalone S3 gateway (s3.enabled) exposes a "metrics" port on the
+  seaweedfs-s3 Service. When only the embedded filer S3 gateway is enabled
+  (filer.s3.enabled), the filer process itself exposes the metrics and is
+  already scraped by the filer ServiceMonitor, so creating an s3 ServiceMonitor
+  here would match 0 targets (issue #9080).
+*/ -}}
+{{- if and .Values.s3.enabled .Values.s3.metricsPort .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
@@ -30,6 +35,4 @@ spec:
       app.kubernetes.io/name: {{ template "seaweedfs.name" . }}
       app.kubernetes.io/instance: {{ .Release.Name }}
       app.kubernetes.io/component: s3
-{{- end }}
-{{- end }}
 {{- end }}
