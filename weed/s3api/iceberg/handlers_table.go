@@ -509,7 +509,8 @@ func isNoSuchTableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	if tableErr, ok := err.(*s3tables.S3TablesError); ok {
+	var tableErr *s3tables.S3TablesError
+	if errors.As(err, &tableErr) {
 		return tableErr.Type == s3tables.ErrCodeNoSuchTable || tableErr.Type == s3tables.ErrCodeNoSuchNamespace
 	}
 	msg := strings.ToLower(err.Error())
