@@ -1110,3 +1110,170 @@ func TestDetection_NodeFilter(t *testing.T) {
 
 	t.Logf("Created %d tasks within node-a,node-b scope", len(tasks))
 }
+
+// TestDetection_HeterogeneousMax_NoOvershootNoOscillation is a regression test
+// for a volume.balance bug in the plugin worker: when servers have different
+// MaxVolumeCount values and the cluster is near (but above) the imbalance
+// threshold, the greedy max→min algorithm could schedule moves that FLIP
+// which server is the most-utilized, producing oscillation across a single
+// detection cycle and pushing destination servers above the cluster-ideal
+// utilization.
+//
+// Setup:
+//
+//	node-a: 11 volumes, max=20  → util=0.55
+//	node-b:  5 volumes, max=10  → util=0.50
+//	ideal = 16/30 ≈ 0.533
+//
+// One naive move a→b leaves a=10/20=0.50 and b=6/10=0.60 — which flips the
+// imbalance and pushes b well above the cluster ideal. The next iteration
+// (without a per-move guard) would plan the reverse move, and so on.
+//
+// Invariants that must hold after detection:
+//  1. No destination's effective utilization exceeds the cluster-ideal ratio.
+//  2. Tasks flow in at most one direction between any server pair (no
+//     oscillation within a single detection cycle).
+//  3. The final imbalance (after applying all planned moves) is not strictly
+//     worse than the initial imbalance.
+func TestDetection_HeterogeneousMax_NoOvershootNoOscillation(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 11)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 5)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	// Strict threshold makes detection eager to move, exposing the overshoot
+	// bug when naive greedy selection is used.
+	conf := defaultConf()
+	conf.ImbalanceThreshold = 0.05
+
+	tasks, _, err := Detection(metrics, clusterInfo, conf, 50)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	maxCap := map[string]float64{"node-a": 20, "node-b": 10}
+	const idealUtil = 16.0 / 30.0 // 0.5333...
+
+	// (1) No destination server (recipient of at least one move) should end up
+	// above the cluster-ideal utilization. Source servers may remain slightly
+	// above ideal when no further beneficial move is possible — that is fine.
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	destinations := make(map[string]bool)
+	for _, task := range tasks {
+		if task.TypedParams != nil && len(task.TypedParams.Targets) > 0 {
+			addr := task.TypedParams.Targets[0].Node
+			// address → server id mapping matches buildTopology: "<id>:8080"
+			for _, s := range servers {
+				if s.id+":8080" == addr || s.id == addr {
+					destinations[s.id] = true
+					break
+				}
+			}
+		}
+	}
+	for server := range destinations {
+		util := float64(effective[server]) / maxCap[server]
+		if util > idealUtil+1e-9 {
+			t.Errorf("destination %s effective util %.3f exceeds cluster ideal %.3f (count=%d, cap=%.0f)",
+				server, util, idealUtil, effective[server], maxCap[server])
+		}
+	}
+
+	// (2) Tasks should never flow both directions between node-a and node-b.
+	aAsSource, bAsSource := 0, 0
+	for _, task := range tasks {
+		switch task.Server {
+		case "node-a":
+			aAsSource++
+		case "node-b":
+			bAsSource++
+		}
+	}
+	if aAsSource > 0 && bAsSource > 0 {
+		t.Errorf("detection oscillated: %d tasks with node-a as source and %d with node-b as source",
+			aAsSource, bAsSource)
+	}
+
+	// (3) Final imbalance must not be worse than initial imbalance.
+	initUtilA := 11.0 / 20.0 // 0.55
+	initUtilB := 5.0 / 10.0  // 0.50
+	initDiff := initUtilA - initUtilB
+
+	finalUtilA := float64(effective["node-a"]) / maxCap["node-a"]
+	finalUtilB := float64(effective["node-b"]) / maxCap["node-b"]
+	finalDiff := finalUtilA - finalUtilB
+	if finalDiff < 0 {
+		finalDiff = -finalDiff
+	}
+	if finalDiff > initDiff+1e-9 {
+		t.Errorf("detection made imbalance worse: initial diff %.3f, final diff %.3f (tasks=%d, effective=%v)",
+			initDiff, finalDiff, len(tasks), effective)
+	}
+
+	t.Logf("tasks=%d, effective=%v, final diff=%.3f (initial=%.3f)", len(tasks), effective, finalDiff, initDiff)
+}
+
+// TestDetection_RespectsClusterIdealUtilization verifies that in a 3-server
+// cluster with heterogeneous MaxVolumeCount values, detection does not push
+// any destination above its proportional fair share of the cluster-ideal
+// utilization. Without a per-move guard, the greedy algorithm happily fills
+// the most-underutilized disk well past the cluster ideal, mirroring the
+// real-world "nodes get filled up to ~99% capacity" failure mode reported
+// after the 4.17 upgrade.
+//
+// Setup:
+//
+//	node-a: 20 volumes, max=40  (util 0.50)
+//	node-b: 10 volumes, max=20  (util 0.50)
+//	node-c:  1 volume,  max=10  (util 0.10)   <- small, underloaded
+//	ideal = 31/70 ≈ 0.443
+//
+// A count-only greedy balancer would drain a and b into c until c.util reaches
+// ~0.5 (matching the heavier servers), pushing c's utilization above the
+// cluster ideal. The correct behavior is to stop moves to c once its
+// utilization reaches the cluster ideal.
+func TestDetection_RespectsClusterIdealUtilization(t *testing.T) {
+	servers := []serverSpec{
+		{id: "node-a", diskType: "hdd", diskID: 1, dc: "dc1", rack: "rack1", maxVolumes: 40},
+		{id: "node-b", diskType: "hdd", diskID: 2, dc: "dc1", rack: "rack1", maxVolumes: 20},
+		{id: "node-c", diskType: "hdd", diskID: 3, dc: "dc1", rack: "rack1", maxVolumes: 10},
+	}
+
+	var metrics []*types.VolumeHealthMetrics
+	metrics = append(metrics, makeVolumes("node-a", "hdd", "dc1", "rack1", "c1", 1, 20)...)
+	metrics = append(metrics, makeVolumes("node-b", "hdd", "dc1", "rack1", "c1", 100, 10)...)
+	metrics = append(metrics, makeVolumes("node-c", "hdd", "dc1", "rack1", "c1", 200, 1)...)
+
+	at := buildTopology(servers, metrics)
+	clusterInfo := &types.ClusterInfo{ActiveTopology: at}
+
+	tasks, _, err := Detection(metrics, clusterInfo, defaultConf(), 200)
+	if err != nil {
+		t.Fatalf("Detection failed: %v", err)
+	}
+
+	const idealUtil = 31.0 / 70.0 // 0.4428...
+	maxCap := map[string]float64{"node-a": 40, "node-b": 20, "node-c": 10}
+
+	effective := computeEffectiveCounts(servers, metrics, tasks)
+	for server, count := range effective {
+		util := float64(count) / maxCap[server]
+		// Allow one-volume slack to account for integer rounding on small caps:
+		// a server with cap=10 cannot land exactly on 0.443; the nearest counts
+		// are 4 (0.40) and 5 (0.50). The guard should stop at 4.
+		slack := 1.0 / maxCap[server]
+		if util > idealUtil+slack+1e-9 {
+			t.Errorf("server %s (cap=%.0f) effective util %.3f exceeds cluster ideal %.3f (+%.3f slack); count=%d",
+				server, maxCap[server], util, idealUtil, slack, count)
+		}
+	}
+
+	t.Logf("tasks=%d, effective=%v, ideal=%.3f", len(tasks), effective, idealUtil)
+}

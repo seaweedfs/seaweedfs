@@ -279,6 +279,38 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			break
 		}
 
+		// Per-move convergence guard: mirrors weed/shell/command_volume_balance.go
+		// to prevent oscillation and destination overshoot when MaxVolumeCount
+		// values are heterogeneous. Without this guard, the greedy max→min
+		// algorithm can schedule moves that flip which server is most-utilized
+		// (source becomes min, destination becomes max), producing A→B, B→A
+		// oscillation within a single detection cycle.
+		//
+		// Check: after the move, the destination's utilization must not strictly
+		// exceed the source's utilization. If it would, no single move can
+		// improve balance — stop here. This also handles heterogeneous capacity
+		// correctly by comparing post-move utilization ratios rather than raw
+		// counts. The integer discretization is handled automatically: when
+		// counts cannot match the ideal exactly, the check still admits moves
+		// that reduce the max/min gap without flipping it.
+		maxCap := serverMaxVolumes[maxServer]
+		minCap := serverMaxVolumes[minServer]
+		if allServersHaveMaxInfo && maxCap > 0 && minCap > 0 {
+			newSrcUtil := float64(effectiveCounts[maxServer]-1) / float64(maxCap)
+			newDstUtil := float64(effectiveCounts[minServer]+1) / float64(minCap)
+			if newDstUtil > newSrcUtil {
+				if len(results) == 0 {
+					glog.Infof("BALANCE [%s]: No tasks created - no beneficial move available. After move, dest %s util would be %.1f%% vs source %s util %.1f%%",
+						diskType, minServer, newDstUtil*100, maxServer, newSrcUtil*100)
+				} else {
+					glog.Infof("BALANCE [%s]: Created %d task(s), no more beneficial moves available. After move, dest %s util would be %.1f%% vs source %s util %.1f%%",
+						diskType, len(results), minServer, newDstUtil*100, maxServer, newSrcUtil*100)
+				}
+				balanced = true
+				break
+			}
+		}
+
 		// Select a volume from the overloaded server using per-server cursor
 		var selectedVolume *types.VolumeHealthMetrics
 		serverVols := volumesByServer[maxServer]
