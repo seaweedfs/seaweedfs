@@ -159,6 +159,9 @@ func presignPutURL(t *testing.T, bucket, key, checksumAlgorithm string) string {
 	putURL, err := url.Parse(fmt.Sprintf("%s/%s/%s", strings.TrimRight(defaultConfig.Endpoint, "/"), bucket, key))
 	require.NoError(t, err)
 	q := putURL.Query()
+	// PresignHTTP does not add X-Amz-Expires on its own; the caller must
+	// seed it so the signer picks it up into the canonical query string.
+	q.Set("X-Amz-Expires", "600")
 	if checksumAlgorithm != "" {
 		q.Set("x-amz-sdk-checksum-algorithm", checksumAlgorithm)
 	}
