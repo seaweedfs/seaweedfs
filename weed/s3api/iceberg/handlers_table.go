@@ -445,6 +445,25 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 	// Extract identity from context
 	identityName := s3_constants.GetIdentityNameFromContext(r)
 
+	// Resolve the table's storage location from the catalog before the
+	// delete, so we can purge data files afterwards. The catalog is the
+	// authoritative owner of this mapping — if the table is not registered,
+	// there is nothing to clean up and DeleteTable will return NoSuchTable.
+	var storedMetadataLocation string
+	lookupReq := &s3tables.GetTableRequest{
+		TableBucketARN: bucketARN,
+		Namespace:      namespace,
+		Name:           tableName,
+	}
+	var lookupResp s3tables.GetTableResponse
+	lookupErr := s.filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		mgrClient := s3tables.NewManagerClient(client)
+		return s.tablesManager.Execute(r.Context(), mgrClient, "GetTable", lookupReq, &lookupResp, identityName)
+	})
+	if lookupErr == nil {
+		storedMetadataLocation = lookupResp.MetadataLocation
+	}
+
 	deleteReq := &s3tables.DeleteTableRequest{
 		TableBucketARN: bucketARN,
 		Namespace:      namespace,
@@ -464,6 +483,21 @@ func (s *Server) handleDropTable(w http.ResponseWriter, r *http.Request) {
 		glog.V(1).Infof("Iceberg: DropTable error: %v", err)
 		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
 		return
+	}
+
+	// Purge data files that lived under the dropped table's location, so a
+	// subsequent CREATE TABLE at the same name (issue #9074) does not trip
+	// Trino's "non-empty location" pre-check. We only purge when the catalog
+	// told us a location: if GetTable above failed, there is no mapping to
+	// trust and we leave storage alone.
+	if storedMetadataLocation != "" {
+		if tableLoc := tableLocationFromMetadataLocation(storedMetadataLocation); tableLoc != "" {
+			if dataBucket, dataPath, parseErr := parseS3Location(tableLoc); parseErr == nil {
+				if cleanupErr := s.cleanupStaleTableLocation(r.Context(), dataBucket, dataPath); cleanupErr != nil {
+					glog.V(1).Infof("Iceberg: failed to purge dropped table location s3://%s/%s: %v", dataBucket, dataPath, cleanupErr)
+				}
+			}
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)
