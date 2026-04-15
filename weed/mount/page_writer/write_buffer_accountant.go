@@ -63,22 +63,34 @@ func (a *WriteBufferAccountant) Reserve(n int64) {
 		// on `evicting` so a stampede of blocked reservers doesn't iterate
 		// the fhMap concurrently.
 		if a.evictor != nil && !a.evicting {
-			evictor := a.evictor
-			a.evicting = true
-			a.mu.Unlock()
-			evicted := evictor(n)
-			a.mu.Lock()
-			a.evicting = false
-			a.cond.Broadcast()
-			if evicted {
-				if a.used+n <= a.cap || a.used == 0 {
-					break
-				}
+			a.runEvictorLocked(n)
+			// A concurrent Release may have brought used back under the
+			// cap during the evict window — re-check before waiting so we
+			// do not block on a broadcast that has already fired.
+			if a.used+n <= a.cap || a.used == 0 {
+				break
 			}
 		}
 		a.cond.Wait()
 	}
 	a.used += n
+}
+
+// runEvictorLocked is called with a.mu held and !a.evicting. It drops the
+// lock around the evictor invocation so uploader goroutines (which call
+// Release under the same lock) can make progress, and uses defer to
+// guarantee the `evicting` flag and the lock are restored even if the
+// evictor panics.
+func (a *WriteBufferAccountant) runEvictorLocked(n int64) {
+	evictor := a.evictor
+	a.evicting = true
+	a.mu.Unlock()
+	defer func() {
+		a.mu.Lock()
+		a.evicting = false
+		a.cond.Broadcast()
+	}()
+	evictor(n)
 }
 
 func (a *WriteBufferAccountant) Release(n int64) {
