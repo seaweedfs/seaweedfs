@@ -426,9 +426,12 @@ func detectCrossRackImbalance(vid uint32, collection string, nodes map[string]*e
 				})
 				movedFromRack++
 
-				// Reserve capacity on destination so it isn't picked again
+				// Reserve capacity on destination so it isn't picked again,
+				// and release one slot on the source so later volumes in this
+				// same detection run see its true available capacity.
 				rackShardCount[destNode.rack]++
 				rackShardCount[rackID]--
+				node.freeSlots++
 				destNode.freeSlots--
 			}
 		}
@@ -508,6 +511,7 @@ func detectWithinRackImbalance(vid uint32, collection string, nodes map[string]*
 				moved++
 				nodeShardCount[nodeID]--
 				nodeShardCount[destNode.nodeID]++
+				node.freeSlots++
 				destNode.freeSlots--
 			}
 		}
@@ -662,6 +666,7 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 					minInfo.shardBits |= shardBit
 					nodeShardCounts[maxNode.nodeID]--
 					nodeShardCounts[minNode.nodeID]++
+					maxNode.freeSlots++
 					minNode.freeSlots--
 					moved = true
 					break
