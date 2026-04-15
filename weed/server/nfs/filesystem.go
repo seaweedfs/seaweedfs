@@ -25,19 +25,13 @@ import (
 )
 
 const (
-	maxInlineWriteSize = 4 << 20
-	// maxBufferedWriteSize caps how much data a writable open may buffer in
-	// the NFS server before writing back to the filer. It is a per-file
-	// ceiling, not a global pool, so the worst-case memory footprint is
-	// roughly maxBufferedWriteSize * (concurrent writable handles). 64 MiB
-	// is enough to cover most NFSv3 clients that buffer ~1 MiB per WRITE
-	// and still keeps a few thousand concurrent writers comfortable on a
-	// filer host. Raising this limit trades RAM for support for larger
-	// whole-file rewrites; the long-term fix is streaming/multi-chunk
-	// writes rather than a bigger buffer.
-	maxBufferedWriteSize = 64 << 20
-	listEntriesPageSize  = 1024
-	maxSymlinkDepth      = 32
+	// maxInlineWriteSize is the legacy cutoff that decided whether a
+	// persisted write was inlined into entry.Content or uploaded as a
+	// chunk. The streaming write path always uploads chunks, so this
+	// constant is only used when reading back old inline-stored files.
+	maxInlineWriteSize  = 4 << 20
+	listEntriesPageSize = 1024
+	maxSymlinkDepth     = 32
 )
 
 type noopChunkCache struct{}
@@ -74,8 +68,6 @@ type seaweedFile struct {
 	offset      int64
 	writable    bool
 	appendOnly  bool
-	content     []byte
-	dirty       bool
 	closed      bool
 }
 
@@ -146,21 +138,23 @@ func (fs *seaweedFileSystem) openFile(ctx context.Context, filename string, flag
 		appendOnly:  writable && flag&os.O_APPEND != 0,
 	}
 	if writable {
-		if flag&os.O_TRUNC != 0 {
-			// O_TRUNC discards the existing data, so skip the filer read
-			// altogether — loading the old content just to throw it away
-			// burns network bandwidth and memory for no benefit.
-			file.content = nil
-			file.dirty = true
-		} else {
-			content, contentErr := fs.loadWritableContent(ctx, info)
-			if contentErr != nil {
-				return nil, contentErr
+		// O_TRUNC is effectively "rewrite from zero". Drop all chunks and
+		// inline content up front — but only if there is anything to drop,
+		// since a fresh empty file already satisfies the O_TRUNC semantics
+		// and an extra UpdateEntry would just churn metadata.
+		if flag&os.O_TRUNC != 0 && (filer.FileSize(info.entry) > 0 || len(info.entry.GetChunks()) > 0 || len(info.entry.Content) > 0) {
+			truncatedEntry, truncErr := fs.truncateEntryToSize(ctx, info.actualPath, 0)
+			if truncErr != nil {
+				return nil, truncErr
 			}
-			file.content = content
+			updatedInfo, infoErr := fs.materializeFileInfo(ctx, virtualPath, info.actualPath, truncatedEntry)
+			if infoErr != nil {
+				return nil, infoErr
+			}
+			file.info = updatedInfo
 		}
 		if flag&os.O_APPEND != 0 {
-			file.offset = int64(len(file.content))
+			file.offset = int64(filer.FileSize(file.info.entry))
 		}
 	}
 	return file, nil
@@ -768,36 +762,11 @@ func (fs *seaweedFileSystem) updateEntryAtPath(ctx context.Context, actualPath u
 	return fs.lookupEntry(ctx, actualPath)
 }
 
-func (fs *seaweedFileSystem) loadWritableContent(ctx context.Context, info *seaweedFileInfo) ([]byte, error) {
-	if info == nil || info.entry == nil {
-		return nil, os.ErrNotExist
-	}
-	if len(info.entry.Content) > 0 {
-		return bytes.Clone(info.entry.Content), nil
-	}
-
-	fileSize := info.size
-	if fileSize == 0 {
-		return nil, nil
-	}
-	if fileSize > maxBufferedWriteSize {
-		return nil, billy.ErrNotSupported
-	}
-
-	readFile := &seaweedFile{
-		fs:          fs,
-		virtualPath: info.virtualPath,
-		info:        info,
-	}
-	content := make([]byte, fileSize)
-	_, err := readFile.ReadAt(content, 0)
-	if err != nil && err != io.EOF {
-		return nil, err
-	}
-	return content, nil
-}
-
-func (fs *seaweedFileSystem) saveDataAsChunk(actualPath util.FullPath, content []byte) (*filer_pb.FileChunk, error) {
+// saveDataAsChunk uploads `content` to a volume server and returns a filer
+// FileChunk describing the resulting segment at the requested file offset.
+// The caller is responsible for wiring the returned chunk into the entry's
+// chunk list (typically via mutateEntry) and for updating FileSize.
+func (fs *seaweedFileSystem) saveDataAsChunk(actualPath util.FullPath, content []byte, fileOffset int64) (*filer_pb.FileChunk, error) {
 	uploader, err := fs.server.newUploader()
 	if err != nil {
 		return nil, fmt.Errorf("upload data: %w", err)
@@ -836,29 +805,72 @@ func (fs *seaweedFileSystem) saveDataAsChunk(actualPath util.FullPath, content [
 	if uploadResult.Error != "" {
 		return nil, fmt.Errorf("upload result: %s", uploadResult.Error)
 	}
-	return uploadResult.ToPbFileChunk(fileID, 0, time.Now().UnixNano()), nil
+	return uploadResult.ToPbFileChunk(fileID, fileOffset, time.Now().UnixNano()), nil
 }
 
-func (fs *seaweedFileSystem) persistContent(ctx context.Context, actualPath util.FullPath, content []byte) (*filer_pb.Entry, error) {
-	if len(content) > maxInlineWriteSize {
-		chunk, err := fs.saveDataAsChunk(actualPath, content)
+// appendStreamedChunk uploads `data` at `fileOffset` and atomically appends
+// the resulting chunk to the filer entry, extending FileSize if this write
+// grew the file. If the entry currently stores its payload inline in
+// entry.Content, that content is migrated to a chunk first so the chunk
+// list becomes the authoritative representation for the file.
+func (fs *seaweedFileSystem) appendStreamedChunk(ctx context.Context, info *seaweedFileInfo, data []byte, fileOffset int64) (*filer_pb.Entry, error) {
+	// Upload the caller's write as a chunk at the target offset.
+	newChunk, err := fs.saveDataAsChunk(info.actualPath, data, fileOffset)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the file still has inline content, migrate it to a chunk as well.
+	// We upload it outside of mutateEntry so the mutation closure stays
+	// synchronous and short.
+	var migratedInlineChunk *filer_pb.FileChunk
+	if info.entry != nil && len(info.entry.Content) > 0 {
+		migratedInlineChunk, err = fs.saveDataAsChunk(info.actualPath, info.entry.Content, 0)
 		if err != nil {
 			return nil, err
 		}
-		return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
-			entry.Content = nil
-			entry.Chunks = []*filer_pb.FileChunk{chunk}
-			entry.RemoteEntry = nil
-			entry.Attributes.FileSize = uint64(len(content))
-			touchEntryTimes(entry, true)
-		})
 	}
 
-	return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
-		entry.Content = bytes.Clone(content)
-		entry.Chunks = nil
+	newEnd := uint64(fileOffset) + uint64(len(data))
+	return fs.mutateEntry(ctx, info.actualPath, func(entry *filer_pb.Entry) {
+		if migratedInlineChunk != nil && len(entry.Content) > 0 {
+			entry.Chunks = append(entry.Chunks, migratedInlineChunk)
+			entry.Content = nil
+		}
+		entry.Chunks = append(entry.Chunks, newChunk)
 		entry.RemoteEntry = nil
-		entry.Attributes.FileSize = uint64(len(content))
+		if newEnd > entry.Attributes.FileSize {
+			entry.Attributes.FileSize = newEnd
+		}
+		touchEntryTimes(entry, true)
+	})
+}
+
+// truncateEntryToSize resizes the file to `size` by dropping chunks that
+// live entirely past the new size, clipping inline content, and updating
+// FileSize. Chunks that straddle the new size are left intact; the filer's
+// chunk-view layer clips the logical read window at FileSize.
+func (fs *seaweedFileSystem) truncateEntryToSize(ctx context.Context, actualPath util.FullPath, size int64) (*filer_pb.Entry, error) {
+	if size < 0 {
+		return nil, billy.ErrNotSupported
+	}
+	return fs.mutateEntry(ctx, actualPath, func(entry *filer_pb.Entry) {
+		kept := entry.Chunks[:0]
+		for _, chunk := range entry.Chunks {
+			if chunk.Offset >= size {
+				continue
+			}
+			kept = append(kept, chunk)
+		}
+		entry.Chunks = kept
+		if int64(len(entry.Content)) > size {
+			if size == 0 {
+				entry.Content = nil
+			} else {
+				entry.Content = entry.Content[:size]
+			}
+		}
+		entry.Attributes.FileSize = uint64(size)
 		touchEntryTimes(entry, true)
 	})
 }
@@ -1182,26 +1194,16 @@ func (fi *seaweedFileInfo) Sys() interface{} {
 func (f *seaweedFile) Name() string { return f.virtualPath }
 
 func (f *seaweedFile) Read(p []byte) (int, error) {
-	if f.writable {
-		if f.offset >= int64(len(f.content)) {
-			return 0, io.EOF
-		}
-		n := copy(p, f.content[f.offset:])
-		f.offset += int64(n)
-		if n < len(p) {
-			return n, io.EOF
-		}
-		return n, nil
-	}
 	n, err := f.ReadAt(p, f.offset)
 	f.offset += int64(n)
 	return n, err
 }
 
 func (f *seaweedFile) ReadAt(p []byte, off int64) (int, error) {
-	if f.writable {
-		return bytes.NewReader(f.content).ReadAt(p, off)
-	}
+	// Writable opens no longer carry a private in-memory copy of the
+	// content; reads always go through the filer entry's inline bytes or
+	// chunk list. Write() refreshes f.info after each append so a
+	// read-after-write in the same session sees the new data.
 	if len(f.info.entry.Content) > 0 {
 		reader := bytes.NewReader(f.info.entry.Content)
 		return reader.ReadAt(p, off)
@@ -1232,34 +1234,67 @@ func (f *seaweedFile) Write(p []byte) (int, error) {
 	if f.closed {
 		return 0, os.ErrClosed
 	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if f.offset < 0 {
+		return 0, billy.ErrNotSupported
+	}
 	if f.appendOnly {
-		f.offset = int64(len(f.content))
+		f.offset = int64(filer.FileSize(f.info.entry))
 	}
 
-	// Reject pathological offsets and write sizes up front so every
-	// subsequent computation stays well below maxBufferedWriteSize and the
-	// int-width cast below cannot overflow even on 32-bit hosts.
-	if f.offset < 0 || f.offset > int64(maxBufferedWriteSize) {
-		return 0, billy.ErrNotSupported
+	ctx := context.Background()
+	currentSize := int64(filer.FileSize(f.info.entry))
+	hasChunks := len(f.info.entry.GetChunks()) > 0
+
+	// Inline fast path — mirrors the filer HTTP upload handler's
+	// SaveToFilerLimit shortcut. As long as the file has no existing
+	// chunks and the post-write size still fits in the inline budget,
+	// we rewrite the `Content` bytes directly on the filer entry and
+	// skip the volume-server round-trip entirely. A write that would
+	// push the file beyond the inline limit, or a write to a file that
+	// already has chunks, falls through to the streaming path below.
+	postWriteSize := f.offset + int64(len(p))
+	if postWriteSize < currentSize {
+		postWriteSize = currentSize
 	}
-	if len(p) > maxBufferedWriteSize {
-		return 0, billy.ErrNotSupported
+	var updatedEntry *filer_pb.Entry
+	var err error
+	if !hasChunks && postWriteSize <= int64(maxInlineWriteSize) {
+		existing := f.info.entry.Content
+		merged := make([]byte, postWriteSize)
+		copy(merged, existing)
+		copy(merged[f.offset:], p)
+		updatedEntry, err = f.fs.mutateEntry(ctx, f.info.actualPath, func(entry *filer_pb.Entry) {
+			entry.Content = merged
+			entry.Chunks = nil
+			entry.RemoteEntry = nil
+			entry.Attributes.FileSize = uint64(len(merged))
+			touchEntryTimes(entry, true)
+		})
+	} else {
+		// Streaming path: upload the caller's bytes straight to a volume
+		// server and atomically append the resulting chunk to the filer
+		// entry. No per-file in-memory buffer is held; each Write call
+		// costs one AssignVolume + one chunk upload + one filer
+		// UpdateEntry, exactly like how `weed filer` HTTP uploads and
+		// the S3 gateway persist object data.
+		updatedEntry, err = f.fs.appendStreamedChunk(ctx, f.info, p, f.offset)
 	}
-	// Compute the end offset in int64 so the arithmetic cannot overflow;
-	// both operands are bounded above by maxBufferedWriteSize (64 MiB).
-	endOffset64 := f.offset + int64(len(p))
-	if endOffset64 > int64(maxBufferedWriteSize) {
-		return 0, billy.ErrNotSupported
+	if err != nil {
+		return 0, err
 	}
-	endOffset := int(endOffset64)
-	if endOffset > len(f.content) {
-		// Use append so Go's amortized growth strategy kicks in instead of
-		// copying the entire buffer on every extending write.
-		f.content = append(f.content, make([]byte, endOffset-len(f.content))...)
+
+	updatedInfo, err := f.fs.materializeFileInfo(ctx, f.virtualPath, f.info.actualPath, updatedEntry)
+	if err != nil {
+		return 0, err
 	}
-	copy(f.content[f.offset:], p)
-	f.offset = endOffset64
-	f.dirty = true
+	f.info = updatedInfo
+	// Invalidate any cached reader so a subsequent Read sees the new data.
+	f.reader = nil
+
+	f.offset += int64(len(p))
 	return len(p), nil
 }
 
@@ -1272,7 +1307,7 @@ func (f *seaweedFile) Seek(offset int64, whence int) (int64, error) {
 		nextOffset += offset
 	case io.SeekEnd:
 		if f.writable {
-			nextOffset = int64(len(f.content)) + offset
+			nextOffset = int64(filer.FileSize(f.info.entry)) + offset
 		} else {
 			nextOffset = f.info.size + offset
 		}
@@ -1296,20 +1331,9 @@ func (f *seaweedFile) Close() error {
 		return nil
 	}
 	f.closed = true
-	if !f.writable || !f.dirty {
-		return nil
-	}
-
-	updatedEntry, err := f.fs.persistContent(context.Background(), f.info.actualPath, f.content)
-	if err != nil {
-		return err
-	}
-	updatedInfo, err := f.fs.materializeFileInfo(context.Background(), f.virtualPath, f.info.actualPath, updatedEntry)
-	if err != nil {
-		return err
-	}
-	f.info = updatedInfo
-	f.dirty = false
+	// All dirty data is flushed to the filer synchronously inside Write
+	// (and inside Truncate), so Close has nothing to do beyond marking the
+	// handle as unusable.
 	return nil
 }
 func (f *seaweedFile) Lock() error   { return billy.ErrNotSupported }
@@ -1322,20 +1346,22 @@ func (f *seaweedFile) Truncate(size int64) error {
 	if f.fs != nil && f.fs.isReadOnly() {
 		return billy.ErrReadOnly
 	}
-	if size < 0 || size > maxBufferedWriteSize {
+	if size < 0 {
 		return billy.ErrNotSupported
 	}
-	target := int(size)
-	if target <= len(f.content) {
-		f.content = f.content[:target]
-	} else {
-		// Amortized growth via append is cheaper than a fresh make+copy
-		// every time Truncate expands the file.
-		f.content = append(f.content, make([]byte, target-len(f.content))...)
+	ctx := context.Background()
+	updatedEntry, err := f.fs.truncateEntryToSize(ctx, f.info.actualPath, size)
+	if err != nil {
+		return err
 	}
+	updatedInfo, err := f.fs.materializeFileInfo(ctx, f.virtualPath, f.info.actualPath, updatedEntry)
+	if err != nil {
+		return err
+	}
+	f.info = updatedInfo
+	f.reader = nil
 	if f.offset > size {
 		f.offset = size
 	}
-	f.dirty = true
 	return nil
 }
