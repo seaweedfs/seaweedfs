@@ -3,6 +3,7 @@ package checksum_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -146,15 +147,23 @@ func TestPresignedPutWithChecksumSHA256(t *testing.T) {
 
 	key := "presigned-sha256.txt"
 	body := []byte("hello seaweedfs checksum")
-	expected := base64.StdEncoding.EncodeToString(func() []byte {
-		h := sha256.Sum256(body)
-		return h[:]
-	}())
+	sha256Sum := sha256.Sum256(body)
+	expected := base64.StdEncoding.EncodeToString(sha256Sum[:])
+
+	// AWS SDK v2's flexible-checksum middleware signs a Content-MD5 header at
+	// presign time (it has no body to hash, so it seeds MD5-of-empty). When we
+	// later PUT the real body with a plain http.Client that Content-MD5 no
+	// longer matches and the server rejects with BadDigest. Pre-compute the
+	// MD5 of the real body and thread it into PutObjectInput.ContentMD5 so
+	// the signed header matches what we upload.
+	md5Sum := md5.Sum(body)
+	contentMD5 := base64.StdEncoding.EncodeToString(md5Sum[:])
 
 	presignClient := s3.NewPresignClient(client)
 	req, err := presignClient.PresignPutObject(context.TODO(), &s3.PutObjectInput{
 		Bucket:            aws.String(bucket),
 		Key:               aws.String(key),
+		ContentMD5:        aws.String(contentMD5),
 		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
 	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
 	require.NoError(t, err)
