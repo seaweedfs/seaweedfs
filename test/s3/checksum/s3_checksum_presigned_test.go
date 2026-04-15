@@ -121,11 +121,18 @@ func cleanupBucket(t *testing.T, client *s3.Client, name string) {
 // Crucially this path does NOT run any AWS SDK middleware, so the server must
 // compute and store the checksum based on the algorithm parameter that was
 // hoisted into the query string by the presigner.
-func uploadViaPresignedURL(t *testing.T, url string, body []byte) {
+//
+// extraHeaders are additional HTTP headers the presigner signed (e.g.
+// Content-MD5). Their values must exactly match what was signed or SigV4
+// verification will return SignatureDoesNotMatch.
+func uploadViaPresignedURL(t *testing.T, url string, body []byte, extraHeaders map[string]string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPut, url, bytes.NewReader(body))
 	require.NoError(t, err)
 	req.ContentLength = int64(len(body))
+	for k, v := range extraHeaders {
+		req.Header.Set(k, v)
+	}
 	resp, err := presignedHTTPClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -168,7 +175,7 @@ func TestPresignedPutWithChecksumSHA256(t *testing.T) {
 	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
 	require.NoError(t, err)
 
-	uploadViaPresignedURL(t, req.URL, body)
+	uploadViaPresignedURL(t, req.URL, body, map[string]string{"Content-MD5": contentMD5})
 
 	head, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket:       aws.String(bucket),
@@ -213,7 +220,7 @@ func TestPresignedPutWithoutChecksumAlgorithm(t *testing.T) {
 	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
 	require.NoError(t, err)
 
-	uploadViaPresignedURL(t, req.URL, body)
+	uploadViaPresignedURL(t, req.URL, body, nil)
 
 	head, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket:       aws.String(bucket),
