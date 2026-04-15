@@ -430,5 +430,5 @@ func (b *MessageQueueBroker) GetTopicSubscribers(ctx context.Context, request *m
 }
 
 func (b *MessageQueueBroker) isLockOwner() bool {
-	return b.lockAsBalancer.LockOwner() == b.option.BrokerAddress().String()
+	return pb.ServerAddress(b.lockAsBalancer.LockOwner()).Equals(b.option.BrokerAddress())
 }
