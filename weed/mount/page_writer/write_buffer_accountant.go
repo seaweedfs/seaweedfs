@@ -14,16 +14,38 @@ import (
 //
 // A nil receiver is treated as "unlimited" for backward compatibility.
 type WriteBufferAccountant struct {
-	mu   sync.Mutex
-	cond *sync.Cond
-	cap  int64 // 0 means unlimited
-	used int64
+	mu       sync.Mutex
+	cond     *sync.Cond
+	cap      int64 // 0 means unlimited
+	used     int64
+	evictor  func(needBytes int64) bool
+	evicting bool
 }
 
 func NewWriteBufferAccountant(capBytes int64) *WriteBufferAccountant {
 	a := &WriteBufferAccountant{cap: capBytes}
 	a.cond = sync.NewCond(&a.mu)
 	return a
+}
+
+// SetEvictor registers a callback that Reserve invokes when the cap would
+// otherwise block. The evictor is expected to force-seal at least one
+// writable chunk in some UploadPipeline, which turns a pinned-forever
+// writable chunk into a sealed chunk that the async uploader drains and
+// Releases. Without this hook, workloads that hold many files open for
+// write with less-than-chunkSize data in each (e.g. fio 4k randwrite with
+// nrfiles * chunkSize > cap) deadlock permanently, because writable chunks
+// only seal on close or when they fill.
+//
+// The evictor must not call Reserve on the same accountant or re-enter
+// Reserve transitively — it would deadlock on accountant.mu.
+func (a *WriteBufferAccountant) SetEvictor(fn func(needBytes int64) bool) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	a.evictor = fn
+	a.mu.Unlock()
 }
 
 // Reserve blocks until n bytes can be accounted for under the cap.
@@ -36,6 +58,24 @@ func (a *WriteBufferAccountant) Reserve(n int64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for a.used+n > a.cap && a.used > 0 {
+		// Before blocking, try to force-seal a writable chunk somewhere so
+		// its async upload path will eventually Release a slot. Single-flight
+		// on `evicting` so a stampede of blocked reservers doesn't iterate
+		// the fhMap concurrently.
+		if a.evictor != nil && !a.evicting {
+			evictor := a.evictor
+			a.evicting = true
+			a.mu.Unlock()
+			evicted := evictor(n)
+			a.mu.Lock()
+			a.evicting = false
+			a.cond.Broadcast()
+			if evicted {
+				if a.used+n <= a.cap || a.used == 0 {
+					break
+				}
+			}
+		}
 		a.cond.Wait()
 	}
 	a.used += n

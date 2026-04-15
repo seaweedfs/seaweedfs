@@ -7,6 +7,7 @@ type DirtyPages interface {
 	Destroy()
 	LockForRead(startOffset, stopOffset int64)
 	UnlockForRead(startOffset, stopOffset int64)
+	EvictOneWritableChunk() bool
 }
 
 func max(x, y int64) int64 {
