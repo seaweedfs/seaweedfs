@@ -3,6 +3,7 @@ package ec_balance
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"time"
 
@@ -544,13 +545,6 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			continue
 		}
 
-		// Check if imbalance exceeds threshold
-		if !exceedsImbalanceThreshold(nodeShardCounts, totalShards, len(rack.nodes), config.ImbalanceThreshold) {
-			continue
-		}
-
-		avgShards := ceilDivide(totalShards, len(rack.nodes))
-
 		// Snapshot each node's total shard capacity (current shards from allowed
 		// volumes plus any remaining free slots). Capacity is fixed for the
 		// duration of this loop — moves conserve total shards across the rack,
@@ -560,18 +554,42 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			nodeCapacity[nodeID] = count + rack.nodes[nodeID].freeSlots
 		}
 
-		// Iteratively move shards from most-loaded to least-loaded
+		// Check if imbalance exceeds threshold using utilization ratios
+		// (count/capacity), not raw shard counts. Raw counts would say a
+		// cluster is imbalanced whenever a large-capacity node holds more
+		// shards than a small-capacity node, even when both are at the
+		// same fractional fullness.
+		if !exceedsUtilImbalanceThreshold(nodeShardCounts, nodeCapacity, config.ImbalanceThreshold) {
+			continue
+		}
+
+		// Iteratively move shards from most-utilized to least-utilized
 		for i := 0; i < 10; i++ { // cap iterations to avoid infinite loops
-			// Find min and max nodes, skipping full nodes for min
+			// Find min and max nodes by utilization ratio. Min must have free
+			// slots so it can receive a shard; max can be any node with shards
+			// (we move shards out of it). Utilization-based selection is
+			// critical on heterogeneous racks: a large-capacity node with many
+			// shards in absolute terms may still be the LEAST utilized, and
+			// moving shards into it from a small, nearly-full node is the
+			// correct direction even though raw counts would suggest otherwise.
 			var minNode, maxNode *ecNodeInfo
-			minCount, maxCount := totalShards+1, -1
+			minUtil := math.Inf(1)
+			maxUtil := -1.0
+			var minCount, maxCount int
 			for nodeID, count := range nodeShardCounts {
 				node := rack.nodes[nodeID]
-				if count < minCount && node.freeSlots > 0 {
+				cap := nodeCapacity[nodeID]
+				if cap <= 0 {
+					continue
+				}
+				util := float64(count) / float64(cap)
+				if util < minUtil && node.freeSlots > 0 {
+					minUtil = util
 					minCount = count
 					minNode = node
 				}
-				if count > maxCount {
+				if util > maxUtil {
+					maxUtil = util
 					maxCount = count
 					maxNode = rack.nodes[nodeID]
 				}
@@ -580,29 +598,22 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 			if maxNode == nil || minNode == nil || maxNode.nodeID == minNode.nodeID {
 				break
 			}
-			if maxCount <= avgShards || minCount+1 > avgShards {
-				break
-			}
-			if maxCount-minCount <= 1 {
-				break
-			}
 
-			// Capacity-weighted guard: when nodes in this rack have different
-			// slot capacities, the raw-average check above can still allow
-			// moves that overfill the lower-capacity node. Block moves that
-			// would flip which node is most-utilized — i.e., reject any move
-			// where the destination's post-move utilization would strictly
-			// exceed the source's post-move utilization. This mirrors the
-			// guard in weed/worker/tasks/balance/detection.go and prevents
-			// oscillation and destination overshoot on heterogeneous racks.
+			// Per-move convergence guard: reject any move where the
+			// destination's post-move utilization would strictly exceed the
+			// source's post-move utilization. This mirrors the guard in
+			// weed/worker/tasks/balance/detection.go and terminates the loop
+			// once no further beneficial move exists, preventing oscillation
+			// and overshoot on heterogeneous racks.
 			maxCap := nodeCapacity[maxNode.nodeID]
 			minCap := nodeCapacity[minNode.nodeID]
-			if maxCap > 0 && minCap > 0 {
-				newSrcUtil := float64(maxCount-1) / float64(maxCap)
-				newDstUtil := float64(minCount+1) / float64(minCap)
-				if newDstUtil > newSrcUtil {
-					break
-				}
+			if maxCap <= 0 || minCap <= 0 {
+				break
+			}
+			newSrcUtil := float64(maxCount-1) / float64(maxCap)
+			newDstUtil := float64(minCount+1) / float64(minCap)
+			if newDstUtil > newSrcUtil {
+				break
 			}
 
 			// Pick a shard from maxNode that doesn't already exist on minNode
@@ -635,6 +646,20 @@ func detectGlobalImbalance(nodes map[string]*ecNodeInfo, racks map[string]*ecRac
 						targetDisk: 0,
 						phase:      "global",
 					})
+					// Update in-memory shard placement so the next iteration
+					// of this loop picks a different shard. Without this, the
+					// inner loop always finds the lowest-set bit and emits
+					// duplicate move requests for the same physical shard.
+					shardBit := uint32(1 << uint(shardID))
+					info.shardBits &^= shardBit
+					if minInfo == nil {
+						minInfo = &ecVolumeInfo{
+							collection: info.collection,
+							diskID:     info.diskID,
+						}
+						minNode.ecShards[vid] = minInfo
+					}
+					minInfo.shardBits |= shardBit
 					nodeShardCounts[maxNode.nodeID]--
 					nodeShardCounts[minNode.nodeID]++
 					minNode.freeSlots--
@@ -738,6 +763,41 @@ func exceedsImbalanceThreshold(counts map[string]int, total int, numGroups int, 
 
 	imbalanceRatio := float64(maxCount-minCount) / avg
 	return imbalanceRatio > threshold
+}
+
+// exceedsUtilImbalanceThreshold checks whether the per-node utilization ratio
+// (shard count / shard slot capacity) is skewed beyond the given threshold.
+// Unlike exceedsImbalanceThreshold, it compares fractional fullness rather
+// than raw counts so that racks with heterogeneous MaxVolumeCount are
+// evaluated correctly — a large-capacity node holding more shards than a
+// small-capacity node is not considered imbalanced if both are at the same
+// fractional fullness. Nodes with zero capacity are skipped.
+func exceedsUtilImbalanceThreshold(counts map[string]int, capacities map[string]int, threshold float64) bool {
+	minUtil := math.Inf(1)
+	maxUtil := -1.0
+	seen := 0
+	for nodeID, count := range counts {
+		cap := capacities[nodeID]
+		if cap <= 0 {
+			continue
+		}
+		util := float64(count) / float64(cap)
+		if util < minUtil {
+			minUtil = util
+		}
+		if util > maxUtil {
+			maxUtil = util
+		}
+		seen++
+	}
+	if seen < 2 || maxUtil <= 0 {
+		return false
+	}
+	avg := (maxUtil + minUtil) / 2
+	if avg == 0 {
+		return false
+	}
+	return (maxUtil-minUtil)/avg > threshold
 }
 
 // applyMovesToTopology simulates planned moves on the in-memory topology
