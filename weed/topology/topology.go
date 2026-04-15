@@ -156,11 +156,10 @@ func (t *Topology) IsWarmingUp() bool {
 	lastChange := t.lastLeaderChangeTime
 	hadVolumes := t.hadVolumesAtLeaderChange
 	t.lastLeaderChangeTimeLock.RUnlock()
-	if !hadVolumes {
+	if !hadVolumes || lastChange.IsZero() {
 		return false
 	}
-	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
-	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+	return time.Since(lastChange) < t.WarmupDuration()
 }
 
 // WarmupDuration returns the configured warmup duration based on pulse interval.
