@@ -29,10 +29,14 @@ identity, shared lock state, and restart-safe filehandles.
 
 - [x] Add a minimal filer-backed read-only filesystem adapter for NFS
 - [x] Add filer-backed metadata mutations and small inline-content writes for the experimental NFS adapter
-- [ ] Extract shared read/write helpers from mount, WebDAV, and SFTP
-  (deferred to a follow-up refactor PR — the NFS server currently has a
-  self-contained seaweedFileSystem; a unification pass would touch
-  weed/mount, weed/sftpd, and weed/server/webdav and is scoped separately)
+- [x] Extract shared read/write helpers from mount, WebDAV, and SFTP
+  (first pass landed: `filer.SaveGatewayDataAsChunk` is the shared
+  AssignVolume + volume-server upload helper used by both the NFS and
+  WebDAV gateways. The filer chunk-read path —
+  `filer.NonOverlappingVisibleIntervals` + `filer.ViewFromVisibleIntervals`
+  + `filer.NewChunkReaderAtFromClient` — was already shared. mount keeps
+  its own saveDataAsChunk because of the fileId pool and chunkCache
+  write-through, both of which are mount-specific)
 - [x] Standardize direct-volume read mode vs filer-proxy mode
 - [x] Reuse chunk cache and mutation stream helpers without FUSE dependencies
   (NFS server imports `weed/filer.ReaderCache` and `weed/util/chunk_cache`
@@ -46,11 +50,12 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Implement initial metadata operations against filer RPCs
 - [x] Implement initial namespace mutations and small-file inline writes for the experimental server
 - [x] Implement initial buffered large-file writes through `AssignVolume` and volume-server chunk uploads
-- [ ] Expand direct data-path reads/writes through volume servers beyond the current buffered fallback
-  (deferred: requires a streaming WRITE path that issues chunk uploads
-  incrementally instead of loading up to 64 MiB into `f.content` first;
-  tracked as a separate PR because it touches the write buffering model,
-  chunk-size policy, and error/rollback semantics)
+- [x] Expand direct data-path reads/writes through volume servers beyond the current buffered fallback
+  (streaming WRITE path landed: each NFS WRITE RPC now issues one
+  `AssignVolume` + one chunk upload + one filer `UpdateEntry`. No
+  whole-file buffer, no per-file size cap; small writes that fit the
+  4 MiB inline budget still take the inline fast path, matching the
+  filer HTTP handler's `SaveToFilerLimit` shortcut)
 - [x] Add export configuration and basic access controls
 
 ## Phase 4: HA correctness

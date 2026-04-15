@@ -15,7 +15,6 @@ import (
 	"golang.org/x/net/webdav"
 	"google.golang.org/grpc"
 
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -404,43 +403,26 @@ func (fs *WebDavFileSystem) Stat(ctx context.Context, name string) (os.FileInfo,
 }
 
 func (f *WebDavFile) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
-	uploader, uploaderErr := operation.NewUploader()
-	if uploaderErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, uploaderErr)
-		return nil, fmt.Errorf("upload data: %w", uploaderErr)
+	// Delegate to the shared filer-gateway helper so WebDAV, NFS, and
+	// any future filer-backed protocols go through one implementation of
+	// AssignVolume + volume-server upload.
+	chunk, err = filer.SaveGatewayDataAsChunk(filer.GatewayChunkUploadRequest{
+		FilerClient: f.fs,
+		Reader:      reader,
+		FullPath:    name,
+		Filename:    f.name,
+		Offset:      offset,
+		TsNs:        tsNs,
+		Collection:  f.fs.option.Collection,
+		Replication: f.fs.option.Replication,
+		DiskType:    f.fs.option.DiskType,
+		Cipher:      f.fs.option.Cipher,
+	})
+	if err != nil {
+		glog.V(0).Infof("upload data %v: %v", f.name, err)
+		return nil, err
 	}
-
-	fileId, uploadResult, flushErr, _ := uploader.UploadWithRetry(
-		f.fs,
-		&filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: f.fs.option.Replication,
-			Collection:  f.fs.option.Collection,
-			DiskType:    f.fs.option.DiskType,
-			Path:        name,
-		},
-		&operation.UploadOption{
-			Filename:          f.name,
-			Cipher:            f.fs.option.Cipher,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-		},
-		func(host, fileId string) string {
-			return fmt.Sprintf("http://%s/%s", host, fileId)
-		},
-		reader,
-	)
-
-	if flushErr != nil {
-		glog.V(0).Infof("upload data %v: %v", f.name, flushErr)
-		return nil, fmt.Errorf("upload data: %w", flushErr)
-	}
-	if uploadResult.Error != "" {
-		glog.V(0).Infof("upload failure %v: %v", f.name, flushErr)
-		return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
-	}
-	return uploadResult.ToPbFileChunk(fileId, offset, tsNs), nil
+	return chunk, nil
 }
 
 func (f *WebDavFile) Write(buf []byte) (int, error) {

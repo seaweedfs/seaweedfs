@@ -14,7 +14,6 @@ import (
 
 	billy "github.com/go-git/go-billy/v5"
 	"github.com/seaweedfs/seaweedfs/weed/filer"
-	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
@@ -766,46 +765,28 @@ func (fs *seaweedFileSystem) updateEntryAtPath(ctx context.Context, actualPath u
 // FileChunk describing the resulting segment at the requested file offset.
 // The caller is responsible for wiring the returned chunk into the entry's
 // chunk list (typically via mutateEntry) and for updating FileSize.
+//
+// The actual AssignVolume + HTTP upload is handled by
+// filer.SaveGatewayDataAsChunk so NFS, WebDAV, and future filer-backed
+// gateways share a single implementation of that code path.
 func (fs *seaweedFileSystem) saveDataAsChunk(actualPath util.FullPath, content []byte, fileOffset int64) (*filer_pb.FileChunk, error) {
 	uploader, err := fs.server.newUploader()
 	if err != nil {
 		return nil, fmt.Errorf("upload data: %w", err)
 	}
 
-	filename := actualPath.Name()
-	fileID, uploadResult, uploadErr, _ := uploader.UploadWithRetry(
-		fs,
-		&filer_pb.AssignVolumeRequest{
-			Count:      1,
-			DataCenter: fs.GetDataCenter(),
-			Path:       string(actualPath),
-		},
-		&operation.UploadOption{
-			Filename:          filename,
-			Cipher:            false,
-			IsInputCompressed: false,
-			MimeType:          "",
-			PairMap:           nil,
-		},
-		func(host, fileID string) string {
-			fileURL := fmt.Sprintf("http://%s/%s", host, fileID)
-			if fs.server.option.VolumeServerAccess == "filerProxy" {
-				fileURL = fmt.Sprintf("http://%s/?proxyChunkId=%s", fs.server.option.Filer.ToHttpAddress(), fileID)
-			}
-			return fileURL
-		},
-		util.NewBytesReader(content),
-	)
-	if uploadErr != nil {
-		return nil, fmt.Errorf("upload data: %w", uploadErr)
-	}
-	if uploadResult == nil {
-		return nil, errors.New("upload data: missing upload result")
-	}
-	if uploadResult.Error != "" {
-		return nil, fmt.Errorf("upload result: %s", uploadResult.Error)
-	}
-	return uploadResult.ToPbFileChunk(fileID, fileOffset, time.Now().UnixNano()), nil
+	return filer.SaveGatewayDataAsChunk(filer.GatewayChunkUploadRequest{
+		FilerClient:        fs,
+		Uploader:           uploader,
+		Reader:             util.NewBytesReader(content),
+		FullPath:           string(actualPath),
+		Filename:           actualPath.Name(),
+		Offset:             fileOffset,
+		TsNs:               time.Now().UnixNano(),
+		DataCenter:         fs.GetDataCenter(),
+		VolumeServerAccess: fs.server.option.VolumeServerAccess,
+		FilerHTTPAddress:   fs.server.option.Filer.ToHttpAddress(),
+	})
 }
 
 // appendStreamedChunk uploads `data` at `fileOffset` and atomically appends
