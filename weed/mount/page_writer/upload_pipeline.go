@@ -256,6 +256,34 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 	up.chunksLock.Lock()
 }
 
+// EvictOneWritableChunk force-seals the fullest writable chunk in this
+// pipeline, submitting it for async upload. Called by the accountant's
+// evictor when Reserve would block. Returns true if a chunk was sealed.
+// The fullest-chunk heuristic matches the over-limit path in SaveDataAt:
+// sealing the chunk closest to full maximizes the upload's usefulness
+// and avoids thrashing on repeatedly re-creating the same half-empty
+// chunk. Callers must not hold up.chunksLock.
+func (up *UploadPipeline) EvictOneWritableChunk() bool {
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
+	if len(up.writableChunks) == 0 {
+		return false
+	}
+	var bestIndex LogicChunkIndex
+	var bestBytes int64 = -1
+	for lci, wc := range up.writableChunks {
+		if b := wc.WrittenSize(); b > bestBytes {
+			bestIndex = lci
+			bestBytes = b
+		}
+	}
+	if bestBytes < 0 {
+		return false
+	}
+	up.moveToSealed(up.writableChunks[bestIndex], bestIndex)
+	return true
+}
+
 func (up *UploadPipeline) Shutdown() {
 	up.swapFile.FreeResource()
 

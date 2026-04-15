@@ -88,6 +88,10 @@ func (pages *ChunkedDirtyPages) Destroy() {
 	pages.uploadPipeline.Shutdown()
 }
 
+func (pages *ChunkedDirtyPages) EvictOneWritableChunk() bool {
+	return pages.uploadPipeline.EvictOneWritableChunk()
+}
+
 func (pages *ChunkedDirtyPages) LockForRead(startOffset, stopOffset int64) {
 	pages.uploadPipeline.LockForRead(startOffset, stopOffset)
 }

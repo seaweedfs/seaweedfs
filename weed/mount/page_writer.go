@@ -81,6 +81,10 @@ func (pw *PageWriter) Destroy() {
 	pw.randomWriter.Destroy()
 }
 
+func (pw *PageWriter) EvictOneWritableChunk() bool {
+	return pw.randomWriter.EvictOneWritableChunk()
+}
+
 func max(x, y int64) int64 {
 	if x > y {
 		return x

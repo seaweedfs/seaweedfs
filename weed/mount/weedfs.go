@@ -251,6 +251,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 	if option.WriteBufferSizeMB > 0 {
 		wfs.writeBufferAccountant = page_writer.NewWriteBufferAccountant(option.WriteBufferSizeMB * 1024 * 1024)
+		wfs.writeBufferAccountant.SetEvictor(wfs.evictOneWritableChunk)
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
