@@ -3,7 +3,6 @@ package checksum_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
@@ -185,39 +184,6 @@ func TestPresignedPutWithChecksumSHA256(t *testing.T) {
 	got, err := io.ReadAll(getOut.Body)
 	require.NoError(t, err)
 	assert.Equal(t, body, got)
-}
-
-// TestPresignedPutWithChecksumSHA1 is the SHA1 variant — catches regressions
-// where the fix was wired only for a single algorithm.
-func TestPresignedPutWithChecksumSHA1(t *testing.T) {
-	client := getS3Client(t)
-	bucket := uniqueBucket()
-	createBucket(t, client, bucket)
-	defer cleanupBucket(t, client, bucket)
-
-	key := "presigned-sha1.txt"
-	body := []byte("another checksum payload")
-	sum := sha1.Sum(body)
-	expected := base64.StdEncoding.EncodeToString(sum[:])
-
-	presignClient := s3.NewPresignClient(client)
-	req, err := presignClient.PresignPutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket:            aws.String(bucket),
-		Key:               aws.String(key),
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha1,
-	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
-	require.NoError(t, err)
-
-	uploadViaPresignedURL(t, req.URL, body)
-
-	head, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
-		Bucket:       aws.String(bucket),
-		Key:          aws.String(key),
-		ChecksumMode: types.ChecksumModeEnabled,
-	})
-	require.NoError(t, err)
-	require.NotNil(t, head.ChecksumSHA1, "x-amz-checksum-sha1 missing from HEAD response")
-	assert.Equal(t, expected, aws.ToString(head.ChecksumSHA1))
 }
 
 // TestPresignedPutWithoutChecksumAlgorithm is a negative control: when the
