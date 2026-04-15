@@ -3,17 +3,19 @@ package checksum_test
 import (
 	"bytes"
 	"context"
-	"crypto/md5"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -142,10 +144,49 @@ func uploadViaPresignedURL(t *testing.T, url string, body []byte, extraHeaders m
 		"presigned PUT failed: %d %s", resp.StatusCode, string(respBody))
 }
 
+// presignPutURL builds a presigned S3 PutObject URL using the low-level
+// SigV4 presigner, with an optional x-amz-sdk-checksum-algorithm query
+// parameter baked into the signed canonical query string.
+//
+// We use the raw signer instead of s3.PresignClient because the SDK's
+// flexible-checksum middleware tries to inject a Content-MD5 header for
+// flexible-checksum PutObject calls, and at presign time (no body) it seeds
+// MD5-of-empty, which then mismatches any real body uploaded through a plain
+// http.Client. The raw signer has no such middleware and produces exactly
+// the kind of URL a browser, curl caller, or custom client would receive.
+func presignPutURL(t *testing.T, bucket, key, checksumAlgorithm string) string {
+	t.Helper()
+	putURL, err := url.Parse(fmt.Sprintf("%s/%s/%s", strings.TrimRight(defaultConfig.Endpoint, "/"), bucket, key))
+	require.NoError(t, err)
+	q := putURL.Query()
+	if checksumAlgorithm != "" {
+		q.Set("x-amz-sdk-checksum-algorithm", checksumAlgorithm)
+	}
+	putURL.RawQuery = q.Encode()
+
+	req, err := http.NewRequest(http.MethodPut, putURL.String(), nil)
+	require.NoError(t, err)
+
+	signer := v4.NewSigner()
+	creds := aws.Credentials{
+		AccessKeyID:     defaultConfig.AccessKey,
+		SecretAccessKey: defaultConfig.SecretKey,
+	}
+	// For presigned URLs the AWS convention is UNSIGNED-PAYLOAD so the
+	// signer doesn't require a body-hash up front.
+	signedURL, _, err := signer.PresignHTTP(context.TODO(), creds, req,
+		"UNSIGNED-PAYLOAD", "s3", defaultConfig.Region, time.Now(),
+		func(o *v4.SignerOptions) {
+			o.DisableURIPathEscaping = true
+		})
+	require.NoError(t, err)
+	return signedURL
+}
+
 // TestPresignedPutWithChecksumSHA256 reproduces issue #9075: a presigned PUT
-// URL generated with ChecksumAlgorithm=SHA256 must result in the object being
-// stored with an x-amz-checksum-sha256 attribute, visible via HEAD when the
-// caller requests ChecksumMode=ENABLED.
+// URL that carries x-amz-sdk-checksum-algorithm=SHA256 in its query string
+// must cause the object to be stored with an x-amz-checksum-sha256 attribute,
+// visible via HEAD when the caller requests ChecksumMode=ENABLED.
 func TestPresignedPutWithChecksumSHA256(t *testing.T) {
 	client := getS3Client(t)
 	bucket := uniqueBucket()
@@ -157,25 +198,8 @@ func TestPresignedPutWithChecksumSHA256(t *testing.T) {
 	sha256Sum := sha256.Sum256(body)
 	expected := base64.StdEncoding.EncodeToString(sha256Sum[:])
 
-	// AWS SDK v2's flexible-checksum middleware signs a Content-MD5 header at
-	// presign time (it has no body to hash, so it seeds MD5-of-empty). When we
-	// later PUT the real body with a plain http.Client that Content-MD5 no
-	// longer matches and the server rejects with BadDigest. Pre-compute the
-	// MD5 of the real body and thread it into PutObjectInput.ContentMD5 so
-	// the signed header matches what we upload.
-	md5Sum := md5.Sum(body)
-	contentMD5 := base64.StdEncoding.EncodeToString(md5Sum[:])
-
-	presignClient := s3.NewPresignClient(client)
-	req, err := presignClient.PresignPutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket:            aws.String(bucket),
-		Key:               aws.String(key),
-		ContentMD5:        aws.String(contentMD5),
-		ChecksumAlgorithm: types.ChecksumAlgorithmSha256,
-	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
-	require.NoError(t, err)
-
-	uploadViaPresignedURL(t, req.URL, body, map[string]string{"Content-MD5": contentMD5})
+	signedURL := presignPutURL(t, bucket, key, "SHA256")
+	uploadViaPresignedURL(t, signedURL, body, nil)
 
 	head, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket:       aws.String(bucket),
@@ -213,14 +237,8 @@ func TestPresignedPutWithoutChecksumAlgorithm(t *testing.T) {
 	key := "presigned-nosum.txt"
 	body := []byte("no checksum requested")
 
-	presignClient := s3.NewPresignClient(client)
-	req, err := presignClient.PresignPutObject(context.TODO(), &s3.PutObjectInput{
-		Bucket: aws.String(bucket),
-		Key:    aws.String(key),
-	}, func(o *s3.PresignOptions) { o.Expires = 10 * time.Minute })
-	require.NoError(t, err)
-
-	uploadViaPresignedURL(t, req.URL, body, nil)
+	signedURL := presignPutURL(t, bucket, key, "")
+	uploadViaPresignedURL(t, signedURL, body, nil)
 
 	head, err := client.HeadObject(context.TODO(), &s3.HeadObjectInput{
 		Bucket:       aws.String(bucket),
