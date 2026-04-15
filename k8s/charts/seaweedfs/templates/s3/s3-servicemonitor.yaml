@@ -1,10 +1,8 @@
 {{- include "seaweedfs.compat" . -}}
 {{- /*
-  Only the standalone S3 gateway (s3.enabled) exposes a "metrics" port on the
-  seaweedfs-s3 Service. When only the embedded filer S3 gateway is enabled
-  (filer.s3.enabled), the filer process itself exposes the metrics and is
-  already scraped by the filer ServiceMonitor, so creating an s3 ServiceMonitor
-  here would match 0 targets (issue #9080).
+  The seaweedfs-s3 Service only gains a "metrics" port when the standalone S3
+  gateway is enabled. With only the embedded filer S3 gateway, metrics live on
+  the filer process and are already scraped by the filer ServiceMonitor.
 */ -}}
 {{- if and .Values.s3.enabled .Values.s3.metricsPort .Values.global.seaweedfs.monitoring.enabled }}
 apiVersion: monitoring.coreos.com/v1
