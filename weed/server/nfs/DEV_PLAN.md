@@ -30,8 +30,13 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Add a minimal filer-backed read-only filesystem adapter for NFS
 - [x] Add filer-backed metadata mutations and small inline-content writes for the experimental NFS adapter
 - [ ] Extract shared read/write helpers from mount, WebDAV, and SFTP
+  (deferred to a follow-up refactor PR — the NFS server currently has a
+  self-contained seaweedFileSystem; a unification pass would touch
+  weed/mount, weed/sftpd, and weed/server/webdav and is scoped separately)
 - [x] Standardize direct-volume read mode vs filer-proxy mode
-- [ ] Reuse chunk cache and mutation stream helpers without FUSE dependencies
+- [x] Reuse chunk cache and mutation stream helpers without FUSE dependencies
+  (NFS server imports `weed/filer.ReaderCache` and `weed/util/chunk_cache`
+  directly, with no `weed/mount` or go-fuse imports)
 
 ## Phase 3: NFS frontend
 
@@ -42,12 +47,19 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Implement initial namespace mutations and small-file inline writes for the experimental server
 - [x] Implement initial buffered large-file writes through `AssignVolume` and volume-server chunk uploads
 - [ ] Expand direct data-path reads/writes through volume servers beyond the current buffered fallback
+  (deferred: requires a streaming WRITE path that issues chunk uploads
+  incrementally instead of loading up to 64 MiB into `f.content` first;
+  tracked as a separate PR because it touches the write buffering model,
+  chunk-size policy, and error/rollback semantics)
 - [x] Add export configuration and basic access controls
 
 ## Phase 4: HA correctness
 
 - [x] Deterministic filehandle format based on filer-owned identity
 - [ ] Shared lock state and reclaim/grace handling
+  (blocked upstream — the `github.com/willscott/go-nfs` backend has no
+  NLM or NFSv4 lock state RPCs, so any shared-lock implementation needs
+  either a library change or an NFSv4 migration. See "Current Blockers")
 - [x] Metadata subscription-based invalidation in each NFS head
 - [x] Multi-head restart and failover tests
 
@@ -65,6 +77,8 @@ identity, shared lock state, and restart-safe filehandles.
 - [x] Read-only export and mount allowlist tests
 - [x] Metadata subscription invalidation tests
 - [ ] Lock tests
+  (blocked by the same upstream gap — without shared lock state there is
+  nothing to test; will land with the lock implementation PR)
 
 ## Current Blockers
 
