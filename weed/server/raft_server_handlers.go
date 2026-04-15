@@ -36,7 +36,7 @@ func (s *RaftServer) HealthzHandler(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
 		return
 	}
-	if s.serverAddr == leader {
+	if s.serverAddr.Equals(leader) {
 		expBackoff := backoff.NewExponentialBackOff()
 		expBackoff.InitialInterval = 20 * time.Millisecond
 		expBackoff.MaxInterval = 1 * time.Second

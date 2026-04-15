@@ -108,7 +108,7 @@ func (f *Filer) MaybeBootstrapFromOnePeer(self pb.ServerAddress, existingNodes [
 		return existingNodes[i].CreatedAtNs < existingNodes[j].CreatedAtNs
 	})
 	earliestNode := existingNodes[0]
-	if earliestNode.Address == string(self) {
+	if pb.ServerAddress(earliestNode.Address).Equals(self) {
 		return
 	}
 

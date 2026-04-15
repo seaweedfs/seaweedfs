@@ -267,7 +267,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		}
 		if resp != nil {
 			errorMessage = resp.Error
-			if resp.LockHostMovedTo != "" && resp.LockHostMovedTo != string(previousHostFiler) {
+			if resp.LockHostMovedTo != "" && !pb.ServerAddress(resp.LockHostMovedTo).Equals(previousHostFiler) {
 				// Only log if the host actually changed
 				glog.V(2).Infof("LOCK: Host changed from %s to %s for key=%s", previousHostFiler, resp.LockHostMovedTo, lock.key)
 				lock.hostFiler = pb.ServerAddress(resp.LockHostMovedTo)
@@ -289,7 +289,7 @@ func (lock *LiveLock) doLock(lockDuration time.Duration) (errorMessage string, e
 		return err
 	})
 
-	if err != nil && lock.hostFiler != lock.lc.seedFiler {
+	if err != nil && !lock.hostFiler.Equals(lock.lc.seedFiler) {
 		lock.consecutiveFailures++
 		// Fall back to seed filer after 3 consecutive connection failures
 		if lock.consecutiveFailures >= 3 {
