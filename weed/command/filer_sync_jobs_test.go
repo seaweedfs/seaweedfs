@@ -144,11 +144,11 @@ func TestFileUnderActiveDirConflict(t *testing.T) {
 		t.Error("unexpected conflict for file outside active directory")
 	}
 
-	// File at /dir1 itself (not under, at) should not conflict
-	// because IsUnder is strict: "/dir1".IsUnder("/dir1") == false
+	// File at /dir1 itself (not under, at) SHOULD conflict with an active
+	// barrier dir at /dir1 — same-path promotions must serialize.
 	atSame := makeResp("/", "dir1", false, 5, true)
-	if p.conflictsWith(atSame) {
-		t.Error("unexpected conflict for file at same path as directory (IsUnder is strict)")
+	if !p.conflictsWith(atSame) {
+		t.Error("expected conflict for file at same path as active barrier dir")
 	}
 }
 
@@ -200,10 +200,11 @@ func TestDirVsDirConflict(t *testing.T) {
 		t.Error("expected conflict for ancestor directory")
 	}
 
-	// Same directory should NOT conflict (IsUnder is strict, not equal)
+	// Same-path barrier dir SHOULD conflict: concurrent create/delete/rename
+	// on the same directory must serialize.
 	same := makeResp("/a", "b", true, 4, true)
-	if p.conflictsWith(same) {
-		t.Error("unexpected conflict for same directory (IsUnder is strict)")
+	if !p.conflictsWith(same) {
+		t.Error("expected conflict for same-path barrier directory")
 	}
 
 	// Sibling directory should not conflict
@@ -446,6 +447,81 @@ func TestNonBarrierDirUpdateDoesNotBlockDescendants(t *testing.T) {
 		del := makeResp("/", "a", true, 2, false)
 		if !p.conflictsWith(del) {
 			t.Error("barrier ancestor dir delete should wait for non-barrier descendant update")
+		}
+	})
+}
+
+// TestSamePathBarrierSerialization verifies the tightened same-path rules:
+// a barrier dir in flight at p serializes every other job at p (file, barrier
+// dir, or non-barrier update), and a file in flight at p serializes incoming
+// files and barrier dirs at p.
+func TestSamePathBarrierSerialization(t *testing.T) {
+	noop := func(resp *filer_pb.SubscribeMetadataResponse) error { return nil }
+
+	t.Run("barrier dir at p blocks same-path file", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeResp("/", "dir1", true, 1, true) // dir create
+		path, newPath, kind := extractJobInfo(active)
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		file := makeResp("/", "dir1", false, 2, true)
+		if !p.conflictsWith(file) {
+			t.Error("file at path of active barrier dir should conflict")
+		}
+	})
+
+	t.Run("barrier dir at p blocks another same-path barrier dir", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeResp("/", "dir1", true, 1, true) // dir create
+		path, newPath, kind := extractJobInfo(active)
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		del := makeResp("/", "dir1", true, 2, false) // dir delete, same path
+		if !p.conflictsWith(del) {
+			t.Error("concurrent create/delete on same dir path should conflict")
+		}
+	})
+
+	t.Run("barrier dir at p blocks non-barrier update at same path", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeResp("/", "dir1", true, 1, true) // dir create
+		path, newPath, kind := extractJobInfo(active)
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		upd := makeDirUpdateResp("/", "dir1", 2)
+		if !p.conflictsWith(upd) {
+			t.Error("attribute update on dir being created should wait for the create")
+		}
+	})
+
+	t.Run("file at p blocks same-path barrier dir", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeResp("/", "thing", false, 1, true) // file create at /thing
+		path, newPath, kind := extractJobInfo(active)
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		// Barrier dir at /thing (e.g. a file→dir promotion) must wait.
+		promoteDir := makeResp("/", "thing", true, 2, true)
+		if !p.conflictsWith(promoteDir) {
+			t.Error("barrier dir at path of active file should conflict")
+		}
+	})
+
+	t.Run("non-barrier update at p does NOT block same-path non-barrier update", func(t *testing.T) {
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeDirUpdateResp("/", "dir1", 1)
+		path, newPath, kind := extractJobInfo(active)
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		// Concurrent attribute bumps are allowed: last writer wins.
+		upd2 := makeDirUpdateResp("/", "dir1", 2)
+		if p.conflictsWith(upd2) {
+			t.Error("concurrent non-barrier dir updates should not conflict")
 		}
 	})
 }

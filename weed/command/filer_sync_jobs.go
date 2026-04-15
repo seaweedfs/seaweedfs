@@ -159,30 +159,37 @@ func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, kind jobKind) {
 
 // pathConflicts checks if a single path conflicts with any active job.
 // Conflict rules:
-//   - file vs file: exact same path
-//   - file vs barrier-dir ancestor: wait
-//   - barrier-dir vs any descendant (file or dir, barrier or not): wait
-//   - barrier-dir vs barrier-dir ancestor: wait
-//   - non-barrier-dir vs descendants: never conflicts
-//   - non-barrier-dir vs ancestors: only blocked by barrier ancestors
+//   - any kind vs same-path barrier dir: wait (a create/delete/rename on p
+//     must fully serialize against any other operation touching p, including
+//     non-barrier attribute updates and files at the same path)
+//   - file vs same-path file: wait
+//   - file vs same-path barrier dir: wait (covered by the barrier-at-p check
+//     above; also serializes a file-to-dir / dir-to-file promotion)
+//   - barrier dir vs same-path file: wait
+//   - barrier dir vs any descendant (file or dir, barrier or not): wait
+//   - barrier ancestor: always wait, regardless of incoming kind
+//   - non-barrier dir vs descendants: never conflicts
+//   - non-barrier dir vs same-path non-barrier dir: never conflicts (attribute
+//     bumps are "last writer wins"; this intentionally lets rapid mtime /
+//     xattr updates overlap)
 func (t *MetadataProcessor) pathConflicts(p util.FullPath, kind jobKind) bool {
-	switch kind {
-	case kindFile:
-		if t.activeFilePaths[p] > 0 {
-			return true
-		}
-	case kindBarrierDir:
-		// Any active job strictly under this directory?
-		if t.descendantCount[p] > 0 {
-			return true
-		}
-	case kindNonBarrierDir:
-		// Attribute-only dir updates don't wait for descendants. Same-path
-		// serialization against another non-barrier dir update is also
-		// intentionally skipped — concurrent attribute bumps on the same
-		// directory are safe under existing "last writer wins" semantics.
+	// A barrier dir in flight at p serializes every new job at p. This is the
+	// strictest same-path rule and applies regardless of incoming kind.
+	if t.activeBarrierDirPaths[p] > 0 {
+		return true
 	}
-	// Barrier ancestors always block, regardless of the incoming kind.
+	// A file in flight at p blocks new file or barrier-dir jobs at p. A
+	// non-barrier dir update at p is allowed through — by construction files
+	// and dirs at the same path only coexist across a promotion, which is a
+	// barrier event handled by the check above.
+	if t.activeFilePaths[p] > 0 && (kind == kindFile || kind == kindBarrierDir) {
+		return true
+	}
+	// Barrier dirs additionally wait for their whole in-flight subtree.
+	if kind == kindBarrierDir && t.descendantCount[p] > 0 {
+		return true
+	}
+	// Any barrier dir on a proper ancestor blocks everything under it.
 	for _, ancestor := range pathAncestors(p) {
 		if t.activeBarrierDirPaths[ancestor] > 0 {
 			return true
