@@ -61,6 +61,8 @@ type SyncOptions struct {
 	clientEpoch      atomic.Int32
 	debug            *bool
 	debugPort        *int
+	verifySync       *bool
+	modifyTimeAgo    *time.Duration
 }
 
 const (
@@ -121,6 +123,8 @@ func init() {
 	syncOptions.bSecurity = cmdFilerSynchronize.Flag.String("b.security", "", "security.toml file for filer B when clusters use different certificates")
 	syncOptions.debug = cmdFilerSynchronize.Flag.Bool("debug", false, "serves runtime profiling data via pprof on the port specified by -debug.port")
 	syncOptions.debugPort = cmdFilerSynchronize.Flag.Int("debug.port", 6060, "http port for debugging")
+	syncOptions.verifySync = cmdFilerSynchronize.Flag.Bool("verifySync", false, "verify sync by comparing entries between filer A and B, then exit")
+	syncOptions.modifyTimeAgo = cmdFilerSynchronize.Flag.Duration("modifyTimeAgo", 0, "in verifySync mode, only verify files modified before this duration ago (e.g. 1h)")
 	syncOptions.clientId = util.RandomInt32()
 }
 
@@ -185,6 +189,18 @@ func runFilerSynchronize(cmd *Command, args []string) bool {
 
 	filerA := pb.ServerAddress(*syncOptions.filerA)
 	filerB := pb.ServerAddress(*syncOptions.filerB)
+
+	// verifySync mode: compare entries and exit
+	if *syncOptions.verifySync {
+		err := runVerifySync(filerA, filerB, *syncOptions.aPath, *syncOptions.bPath,
+			*syncOptions.isActivePassive, *syncOptions.modifyTimeAgo,
+			grpcDialOptionA, grpcDialOptionB)
+		if err != nil {
+			glog.Errorf("verify sync error: %v", err)
+			return true
+		}
+		return true
+	}
 
 	// start filer.sync metrics server
 	go statsCollect.StartMetricsServer(*syncOptions.metricsHttpIp, *syncOptions.metricsHttpPort)
