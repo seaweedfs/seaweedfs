@@ -71,6 +71,7 @@ type Topology struct {
 	topologyIdLock sync.RWMutex
 
 	lastLeaderChangeTime     time.Time
+	hadVolumesAtLeaderChange bool
 	lastLeaderChangeTimeLock sync.RWMutex
 }
 
@@ -121,10 +122,17 @@ func (t *Topology) IsChildLocked() (bool, error) {
 }
 
 // SetLastLeaderChangeTime records the time of the most recent leader transition.
+// It also snapshots whether the topology already had known volumes at that
+// moment. IsWarmingUp uses the snapshot instead of the live MaxVolumeId so a
+// fresh cluster that happens to grow its first volume inside the warmup window
+// does not retroactively flip into "warming up" state — there is no prior
+// topology to wait for on a bootstrap.
 func (t *Topology) SetLastLeaderChangeTime(ts time.Time) {
+	hadVolumes := t.GetMaxVolumeId() > 0
 	t.lastLeaderChangeTimeLock.Lock()
 	defer t.lastLeaderChangeTimeLock.Unlock()
 	t.lastLeaderChangeTime = ts
+	t.hadVolumesAtLeaderChange = hadVolumes
 }
 
 // GetLastLeaderChangeTime returns the time of the most recent leader transition.
@@ -137,15 +145,21 @@ func (t *Topology) GetLastLeaderChangeTime() time.Time {
 // IsWarmingUp returns true if the master recently became leader and may not yet
 // have a complete topology. After a leader change or restart, volume servers need
 // up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
-// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
-// existing volumes to wait for.
+// Returns false on a fresh cluster start — i.e. when no volumes existed at the
+// time of the leader change — since there is no prior topology state to wait for.
+// Checking the *live* MaxVolumeId here would make a bootstrapping cluster flip
+// into warming-up the moment its first volume is grown, which manifested as a
+// 15-second window of spurious Unavailable errors on AssignVolume for workloads
+// that start writing immediately (see #8777).
 func (t *Topology) IsWarmingUp() bool {
-	if t.GetMaxVolumeId() == 0 {
+	t.lastLeaderChangeTimeLock.RLock()
+	lastChange := t.lastLeaderChangeTime
+	hadVolumes := t.hadVolumesAtLeaderChange
+	t.lastLeaderChangeTimeLock.RUnlock()
+	if !hadVolumes || lastChange.IsZero() {
 		return false
 	}
-	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
-	lastChange := t.GetLastLeaderChangeTime()
-	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+	return time.Since(lastChange) < t.WarmupDuration()
 }
 
 // WarmupDuration returns the configured warmup duration based on pulse interval.
