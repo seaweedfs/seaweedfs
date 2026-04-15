@@ -41,6 +41,12 @@ func TestTrinoCreateDropRecreateTable(t *testing.T) {
 
 	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS iceberg.%s", schemaName))
 	defer runTrinoSQLAllowNamespaceNotEmpty(t, env.trinoContainer, fmt.Sprintf("DROP SCHEMA IF EXISTS iceberg.%s", schemaName))
+	// Registered after the DROP SCHEMA defer so LIFO ordering drops the
+	// tables before the schema. Without this, a failure between the
+	// CREATE TABLE below and the explicit DROP later in the test would
+	// leak the table and block the deferred schema drop.
+	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS %s", qualified))
+	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS %s", ctasQualified))
 
 	createSQL := fmt.Sprintf(`CREATE TABLE %s (
 		id INTEGER,
@@ -95,7 +101,6 @@ AS SELECT * FROM %s`, ctasQualified, ctasLocation, qualified)
 
 	t.Logf(">>> CTAS %s FROM %s", ctasQualified, qualified)
 	runTrinoSQL(t, env.trinoContainer, ctasSQL)
-	defer runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS %s", ctasQualified))
 
 	countOutput = runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("SELECT count(*) FROM %s", ctasQualified))
 	if got := mustParseCSVInt64(t, countOutput); got != 1 {
@@ -112,7 +117,4 @@ AS SELECT * FROM %s`, ctasQualified, ctasLocation, qualified)
 	if got := mustParseCSVInt64(t, countOutput); got != 1 {
 		t.Fatalf("CTAS after drop-recreate: expected 1 row, got %d", got)
 	}
-
-	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS %s", ctasQualified))
-	runTrinoSQL(t, env.trinoContainer, fmt.Sprintf("DROP TABLE IF EXISTS %s", qualified))
 }
