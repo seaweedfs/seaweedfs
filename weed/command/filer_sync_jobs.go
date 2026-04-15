@@ -71,6 +71,13 @@ type MetadataProcessor struct {
 	// deliberately invisible to the ancestor check so that they don't
 	// serialize every file descendant.
 	activeBarrierDirPaths map[util.FullPath]int
+	// activeNonBarrierDirPaths counts active non-barrier dir jobs at each
+	// exact path. This is read *only* by incoming barrier dirs, so a
+	// delete/rename/create at p correctly waits for an in-flight chmod/
+	// xattr/mtime update at the same p. It is deliberately invisible to the
+	// ancestor check, so non-barrier updates still don't serialize file
+	// descendants.
+	activeNonBarrierDirPaths map[util.FullPath]int
 	// descendantCount counts active jobs (of any kind) strictly under each
 	// directory. Read by incoming barrier dirs so they wait for their whole
 	// subtree to drain before running, regardless of descendant kind.
@@ -83,12 +90,13 @@ type MetadataProcessor struct {
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
 	t := &MetadataProcessor{
-		fn:                    fn,
-		activeJobs:            make(map[int64]*syncJobPaths),
-		concurrencyLimit:      concurrency,
-		activeFilePaths:       make(map[util.FullPath]int),
-		activeBarrierDirPaths: make(map[util.FullPath]int),
-		descendantCount:       make(map[util.FullPath]int),
+		fn:                       fn,
+		activeJobs:               make(map[int64]*syncJobPaths),
+		concurrencyLimit:         concurrency,
+		activeFilePaths:          make(map[util.FullPath]int),
+		activeBarrierDirPaths:    make(map[util.FullPath]int),
+		activeNonBarrierDirPaths: make(map[util.FullPath]int),
+		descendantCount:          make(map[util.FullPath]int),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -120,9 +128,7 @@ func (t *MetadataProcessor) addPathToIndex(p util.FullPath, kind jobKind) {
 	case kindBarrierDir:
 		t.activeBarrierDirPaths[p]++
 	case kindNonBarrierDir:
-		// Not tracked in any exact-path index: attribute-only dir updates
-		// never cause ancestor blocking. They only contribute to
-		// descendantCount below so barrier ancestors still wait for them.
+		t.activeNonBarrierDirPaths[p]++
 	}
 	for _, ancestor := range pathAncestors(p) {
 		t.descendantCount[ancestor]++
@@ -146,7 +152,11 @@ func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, kind jobKind) {
 			t.activeBarrierDirPaths[p]--
 		}
 	case kindNonBarrierDir:
-		// Mirrors addPathToIndex: nothing to undo at the exact path.
+		if t.activeNonBarrierDirPaths[p] <= 1 {
+			delete(t.activeNonBarrierDirPaths, p)
+		} else {
+			t.activeNonBarrierDirPaths[p]--
+		}
 	}
 	for _, ancestor := range pathAncestors(p) {
 		if t.descendantCount[ancestor] <= 1 {
@@ -162,6 +172,9 @@ func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, kind jobKind) {
 //   - any kind vs same-path barrier dir: wait (a create/delete/rename on p
 //     must fully serialize against any other operation touching p, including
 //     non-barrier attribute updates and files at the same path)
+//   - incoming barrier dir vs same-path non-barrier dir update: wait (a
+//     delete/rename/create on p must wait for an in-flight chmod/xattr/mtime
+//     update at the same p to drain)
 //   - file vs same-path file: wait
 //   - file vs same-path barrier dir: wait (covered by the barrier-at-p check
 //     above; also serializes a file-to-dir / dir-to-file promotion)
@@ -176,6 +189,13 @@ func (t *MetadataProcessor) pathConflicts(p util.FullPath, kind jobKind) bool {
 	// A barrier dir in flight at p serializes every new job at p. This is the
 	// strictest same-path rule and applies regardless of incoming kind.
 	if t.activeBarrierDirPaths[p] > 0 {
+		return true
+	}
+	// An incoming barrier dir must also wait for any in-flight non-barrier
+	// dir update at the same path. Without this check, a delete or rename on
+	// a directory could overlap with an attribute bump in progress for the
+	// same directory.
+	if kind == kindBarrierDir && t.activeNonBarrierDirPaths[p] > 0 {
 		return true
 	}
 	// A file in flight at p blocks new file or barrier-dir jobs at p. A

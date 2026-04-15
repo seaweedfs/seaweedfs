@@ -511,6 +511,30 @@ func TestSamePathBarrierSerialization(t *testing.T) {
 		}
 	})
 
+	t.Run("non-barrier update at p blocks incoming barrier dir at same path", func(t *testing.T) {
+		// Regression test for a bug spotted in review: an in-flight
+		// attribute update on /dir1 must serialize against a later
+		// delete/rename/create on /dir1.
+		p := NewMetadataProcessor(noop, 100, 0)
+		active := makeDirUpdateResp("/", "dir1", 1)
+		path, newPath, kind := extractJobInfo(active)
+		if kind != kindNonBarrierDir {
+			t.Fatalf("expected kindNonBarrierDir, got %v", kind)
+		}
+		p.activeJobs[active.TsNs] = &syncJobPaths{path: path, newPath: newPath, kind: kind}
+		p.addPathToIndex(path, kind)
+
+		del := makeResp("/", "dir1", true, 2, false) // dir delete
+		if !p.conflictsWith(del) {
+			t.Error("barrier dir at path of active non-barrier update should conflict")
+		}
+		// Ensure the removal path also cleans up the non-barrier index.
+		p.removePathFromIndex(path, kind)
+		if len(p.activeNonBarrierDirPaths) != 0 {
+			t.Errorf("activeNonBarrierDirPaths not cleaned up, got %v", p.activeNonBarrierDirPaths)
+		}
+	})
+
 	t.Run("non-barrier update at p does NOT block same-path non-barrier update", func(t *testing.T) {
 		p := NewMetadataProcessor(noop, 100, 0)
 		active := makeDirUpdateResp("/", "dir1", 1)
