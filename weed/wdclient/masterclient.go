@@ -340,6 +340,14 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 			}
 		}
 	})
+	// The streaming KeepConnected channel is dedicated to this goroutine, but
+	// unrelated request-path callers (Assign, LookupVolume, ...) share a cached
+	// ClientConn to the same master address. When the stream dies behind a
+	// stable VIP (k8s Service, L4 LB) the cached channel can look healthy yet
+	// return cancelled RPCs; drop it so the next caller dials fresh.
+	if ctx.Err() == nil {
+		pb.InvalidateGrpcConnection(master.ToGrpcAddress())
+	}
 	if gprcErr != nil {
 		if isCanceledErr(gprcErr) || ctx.Err() != nil {
 			glog.V(1).Infof("%s.%s masterClient connection closed to %v: %v", mc.FilerGroup, mc.clientType, master, gprcErr)

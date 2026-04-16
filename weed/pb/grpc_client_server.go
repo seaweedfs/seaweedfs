@@ -247,6 +247,21 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+// InvalidateGrpcConnection drops any cached gRPC ClientConn for the given
+// address. Use when a higher-level signal (for example a streaming master
+// connection detecting its peer has died) indicates the cached channel is
+// stale, even though gRPC itself may still believe the channel is healthy.
+// Silently returns if no cached connection exists.
+func InvalidateGrpcConnection(address string) {
+	grpcClientsLock.Lock()
+	defer grpcClientsLock.Unlock()
+	if vgc, ok := grpcClients[address]; ok {
+		glog.V(1).Infof("Invalidating cached gRPC connection to %s", address)
+		vgc.Close()
+		delete(grpcClients, address)
+	}
+}
+
 // shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
 func shouldInvalidateConnection(err error) bool {
 	if err == nil {
