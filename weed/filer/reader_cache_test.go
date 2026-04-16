@@ -433,6 +433,46 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 	}
 }
 
+// TestReaderCacheDownloaderDedup tests that concurrent ReadChunkAt calls for
+// the same fileId result in only one network fetch (lookup call), because
+// the downloaders map deduplicates in-flight downloads.
+func TestReaderCacheDownloaderDedup(t *testing.T) {
+	cache := newMockChunkCacheForReaderCache()
+	var lookupCount int32
+	lookupGate := make(chan struct{})
+
+	lookupFn := func(ctx context.Context, fileId string) ([]string, error) {
+		atomic.AddInt32(&lookupCount, 1)
+		<-lookupGate
+		// Return an error so we don't need to mock the HTTP fetch.
+		return nil, fmt.Errorf("simulated lookup for %s", fileId)
+	}
+
+	rc := NewReaderCache(10, cache, lookupFn)
+	defer rc.destroy()
+
+	const numReaders = 10
+	var wg sync.WaitGroup
+	wg.Add(numReaders)
+
+	for i := 0; i < numReaders; i++ {
+		go func() {
+			defer wg.Done()
+			buffer := make([]byte, 100)
+			rc.ReadChunkAt(context.Background(), buffer, "dedup-file", nil, false, 0, 100, false)
+		}()
+	}
+
+	// Allow downloads to proceed.
+	close(lookupGate)
+	wg.Wait()
+
+	count := atomic.LoadInt32(&lookupCount)
+	if count != 1 {
+		t.Errorf("expected exactly 1 lookup call, got %d", count)
+	}
+}
+
 // TestSingleChunkCacherOneReaderCancelsOthersContinue tests that when one reader
 // cancels, other readers waiting on the same chunk continue to wait.
 func TestSingleChunkCacherOneReaderCancelsOthersContinue(t *testing.T) {

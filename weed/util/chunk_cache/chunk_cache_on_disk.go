@@ -114,6 +114,33 @@ func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
 	return LoadOrCreateChunkCacheVolume(v.fileName, v.sizeLimit)
 }
 
+// minFadviseSize is the minimum read size (in bytes) before we call fadvise
+// DONTNEED. For small reads the syscall overhead outweighs the benefit, and
+// the kernel's page cache may serve the data again sooner than we think.
+const minFadviseSize = 1 << 20 // 1 MiB
+
+// dropReadCache advises the kernel to drop page cache for the byte range
+// just read. This is best-effort; failures are logged at V(4).
+// Only applied for reads >= minFadviseSize to avoid syscall overhead on
+// small needle reads where the kernel page cache is more beneficial.
+func (v *ChunkCacheVolume) dropReadCache(offset int64, length int64) {
+	if length < minFadviseSize {
+		return
+	}
+	type fdProvider interface {
+		Fd() uintptr
+	}
+	if fp, ok := v.DataBackend.(fdProvider); ok {
+		fd := int(fp.Fd())
+		if fd < 0 {
+			return
+		}
+		if err := util.DropOSPageCache(fd, offset, length); err != nil {
+			glog.V(4).Infof("fadvise DONTNEED %s offset %d len %d: %v", v.fileName, offset, length, err)
+		}
+	}
+}
+
 func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 
 	nv, ok := v.nm.Get(key)
@@ -121,10 +148,11 @@ func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 		return nil, storage.ErrorNotFound
 	}
 	data := make([]byte, nv.Size)
-	if readSize, readErr := v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()); readErr != nil {
+	readOffset := nv.Offset.ToActualOffset()
+	if readSize, readErr := v.DataBackend.ReadAt(data, readOffset); readErr != nil {
 		if readSize != int(nv.Size) {
 			return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
-				v.fileName, nv.Offset.ToActualOffset(), nv.Offset.ToActualOffset()+int64(nv.Size), readErr)
+				v.fileName, readOffset, readOffset+int64(nv.Size), readErr)
 		}
 	} else {
 		if readSize != int(nv.Size) {
@@ -132,6 +160,7 @@ func (v *ChunkCacheVolume) GetNeedle(key types.NeedleId) ([]byte, error) {
 		}
 	}
 
+	v.dropReadCache(readOffset, int64(nv.Size))
 	return data, nil
 }
 
@@ -146,12 +175,13 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 		return nil, ErrorOutOfBounds
 	}
 	data := make([]byte, wanted)
+	readOffset := nv.Offset.ToActualOffset() + int64(offset)
 	var readSize int
 	var readErr error
-	if readSize, readErr = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); readErr != nil {
+	if readSize, readErr = v.DataBackend.ReadAt(data, readOffset); readErr != nil {
 		if readSize != wanted {
 			return nil, fmt.Errorf("read %s.dat [%d,%d): %v",
-				v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, readErr)
+				v.fileName, readOffset, int64(readOffset)+int64(wanted), readErr)
 		}
 	} else {
 		if readSize != wanted {
@@ -160,6 +190,9 @@ func (v *ChunkCacheVolume) getNeedleSlice(key types.NeedleId, offset, length uin
 	}
 	if readErr != nil && readSize == wanted {
 		readErr = nil
+	}
+	if readSize > 0 {
+		v.dropReadCache(readOffset, int64(readSize))
 	}
 	return data, readErr
 }
@@ -174,10 +207,11 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 		// should never happen, but better than panicking
 		return 0, ErrorOutOfBounds
 	}
-	if n, err = v.DataBackend.ReadAt(data, nv.Offset.ToActualOffset()+int64(offset)); err != nil {
+	readOffset := nv.Offset.ToActualOffset() + int64(offset)
+	if n, err = v.DataBackend.ReadAt(data, readOffset); err != nil {
 		if n != wanted {
 			return n, fmt.Errorf("read %s.dat [%d,%d): %v",
-				v.fileName, nv.Offset.ToActualOffset()+int64(offset), int(nv.Offset.ToActualOffset())+int(offset)+wanted, err)
+				v.fileName, readOffset, int64(readOffset)+int64(wanted), err)
 		}
 	} else {
 		if n != wanted {
@@ -186,6 +220,9 @@ func (v *ChunkCacheVolume) readNeedleSliceAt(data []byte, key types.NeedleId, of
 	}
 	if err != nil && n == wanted {
 		err = nil
+	}
+	if n > 0 {
+		v.dropReadCache(readOffset, int64(n))
 	}
 	return n, err
 }

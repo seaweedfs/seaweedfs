@@ -128,10 +128,42 @@ func (k *KafkaGoClient) ConsumeMessages(topicName string, expectedCount int) ([]
 	return messages, nil
 }
 
-// ConsumeWithGroup consumes messages using consumer group
+// ConsumeWithGroup consumes messages using consumer group.
+// Retries the initial join+fetch with a fresh reader if it fails before any
+// message is received — re-joining an existing group races with the previous
+// member's LeaveGroup / session cleanup and can surface as an i/o timeout on
+// the first FetchMessage.
 func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCount int) ([]kafka.Message, error) {
 	k.t.Helper()
 
+	const maxJoinAttempts = 3
+	var lastErr error
+	for attempt := 1; attempt <= maxJoinAttempts; attempt++ {
+		messages, err, progressed := k.consumeWithGroupOnce(topicName, groupID, expectedCount)
+		if err == nil {
+			return messages, nil
+		}
+		lastErr = err
+		// Only retry if we failed before any message was received. Once we've
+		// fetched at least one message, a partial result is more useful than a
+		// full retry (which would start over from the last committed offset).
+		if progressed {
+			return messages, err
+		}
+		if attempt == maxJoinAttempts {
+			break
+		}
+		backoff := time.Duration(500*(1<<(attempt-1))) * time.Millisecond
+		k.t.Logf("ConsumeWithGroup join attempt %d/%d failed (%v) — retrying after %v", attempt, maxJoinAttempts, err, backoff)
+		time.Sleep(backoff)
+	}
+	return nil, lastErr
+}
+
+// consumeWithGroupOnce runs a single consume attempt. Returns the messages
+// fetched, any error, and whether any message was received (used to decide
+// whether a retry is safe).
+func (k *KafkaGoClient) consumeWithGroupOnce(topicName, groupID string, expectedCount int) ([]kafka.Message, error, bool) {
 	reader := kafka.NewReader(kafka.ReaderConfig{
 		Brokers:        []string{k.brokerAddr},
 		Topic:          topicName,
@@ -142,7 +174,6 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 	})
 	defer reader.Close()
 
-	// Log the initial offset position
 	offset := reader.Offset()
 	k.t.Logf("Consumer group reader created for group %s, initial offset: %d", groupID, offset)
 
@@ -153,15 +184,13 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 
 	var messages []kafka.Message
 	for i := 0; i < expectedCount; i++ {
-		// Fetch then explicitly commit to better control commit timing
 		msg, err := reader.FetchMessage(ctx)
 		if err != nil {
-			return messages, fmt.Errorf("read message %d: %w", i, err)
+			return messages, fmt.Errorf("read message %d: %w", i, err), len(messages) > 0
 		}
 		messages = append(messages, msg)
 		k.t.Logf("  Fetched message %d: offset=%d, partition=%d", i, msg.Offset, msg.Partition)
 
-		// Commit with simple retry to handle transient connection churn
 		var commitErr error
 		for attempt := 0; attempt < 3; attempt++ {
 			commitErr = reader.CommitMessages(ctx, msg)
@@ -170,16 +199,15 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 				break
 			}
 			k.t.Logf("  Commit attempt %d failed for offset %d: %v", attempt+1, msg.Offset, commitErr)
-			// brief backoff
 			time.Sleep(time.Duration(50*(1<<attempt)) * time.Millisecond)
 		}
 		if commitErr != nil {
-			return messages, fmt.Errorf("committing message %d: %w", i, commitErr)
+			return messages, fmt.Errorf("committing message %d: %w", i, commitErr), true
 		}
 	}
 
 	k.t.Logf("Consumed %d messages from topic %s with group %s", len(messages), topicName, groupID)
-	return messages, nil
+	return messages, nil, true
 }
 
 // CreateTopic creates a topic using Sarama

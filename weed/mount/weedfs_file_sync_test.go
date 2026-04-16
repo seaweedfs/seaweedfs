@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -68,7 +69,8 @@ func TestShouldMergeChunks_JustOverDouble(t *testing.T) {
 }
 
 func TestShouldMergeChunks_ManifestExtendFileSize(t *testing.T) {
-	// Compacted chunks are small relative to file extended by manifest.
+	// One manifest extends the file. Total stored = 100 (regular) + 900
+	// (manifest) = 1000 vs 2*1000 = 2000 → no merge.
 	compacted := []*filer_pb.FileChunk{
 		{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 1},
 	}
@@ -77,12 +79,13 @@ func TestShouldMergeChunks_ManifestExtendFileSize(t *testing.T) {
 	}
 	_, _, merge := shouldMergeChunks(compacted, manifest)
 	if merge {
-		t.Fatal("manifest-extended file should not merge when compacted chunks are small")
+		t.Fatal("single manifest extending file should not merge")
 	}
 }
 
-func TestShouldMergeChunks_ManifestChunksSizeIgnored(t *testing.T) {
-	// Only compacted chunk sizes count toward totalChunkSize.
+func TestShouldMergeChunks_ManifestSizesCounted(t *testing.T) {
+	// Manifest sizes must count toward totalChunkSize so that overlapping
+	// manifests trigger merge.
 	compacted := []*filer_pb.FileChunk{
 		{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 1},
 	}
@@ -90,11 +93,35 @@ func TestShouldMergeChunks_ManifestChunksSizeIgnored(t *testing.T) {
 		{Offset: 0, Size: 100, FileId: "m", ModifiedTsNs: 2, IsChunkManifest: true},
 	}
 	total, _, merge := shouldMergeChunks(compacted, manifest)
-	if total != 100 {
-		t.Fatalf("totalChunkSize should only count compacted, got %d", total)
+	if total != 200 {
+		t.Fatalf("totalChunkSize should count compacted + manifests, got %d", total)
 	}
 	if merge {
-		t.Fatal("should not merge")
+		t.Fatal("2x total on 100-byte file should not merge (need >2x)")
+	}
+}
+
+func TestShouldMergeChunks_AccumulatedManifests(t *testing.T) {
+	// Simulates the real bug: multiple manifests each covering the full file
+	// accumulate across flush cycles. Without counting manifest sizes, the
+	// merge condition never fires and storage bloats indefinitely.
+	compacted := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 1000, FileId: "a", ModifiedTsNs: 100},
+	}
+	// 5 manifests each covering the full file — successive flush cycles
+	var manifests []*filer_pb.FileChunk
+	for i := 0; i < 5; i++ {
+		manifests = append(manifests, &filer_pb.FileChunk{
+			Offset: 0, Size: 1000, FileId: string(rune('m' + i)),
+			IsChunkManifest: true,
+		})
+	}
+	total, fileSize, merge := shouldMergeChunks(compacted, manifests)
+	// total = 1000 (regular) + 5*1000 (manifests) = 6000
+	// fileSize = 1000
+	// 6000 > 2*1000 → merge
+	if !merge {
+		t.Fatalf("accumulated overlapping manifests should trigger merge (total=%d fileSize=%d)", total, fileSize)
 	}
 }
 
@@ -277,6 +304,80 @@ func TestRandomWritesBloatDetection(t *testing.T) {
 				iter, merge, totalCompacted, reportedFileSize)
 		}
 	}
+}
+
+// TestFlushCycleManifestAccumulation simulates the flushMetadataToFiler
+// pipeline over multiple cycles with a small manifest batch threshold.
+// Each cycle adds a full pass of random writes, compacts, and manifestizes.
+// Verifies that shouldMergeChunks detects manifest bloat within a few cycles.
+func TestFlushCycleManifestAccumulation(t *testing.T) {
+	const (
+		fileSize  int64  = 10000
+		chunkSize uint64 = 1000
+		numSlots         = int(fileSize / int64(chunkSize)) // 10 offsets
+		batchSize        = 5                                // small batch to trigger manifestize
+	)
+
+	var entryChunks []*filer_pb.FileChunk
+	nextTs := int64(1)
+	nextKey := uint64(1)
+
+	for cycle := 0; cycle < 20; cycle++ {
+		// Each cycle: new writes at every offset (simulates a full random-write pass)
+		for slot := 0; slot < numSlots; slot++ {
+			entryChunks = append(entryChunks, &filer_pb.FileChunk{
+				Offset: int64(slot) * int64(chunkSize), Size: chunkSize,
+				FileId: fmt.Sprintf("%d,%x00000000", cycle+1, nextKey),
+				ModifiedTsNs: nextTs,
+				Fid: &filer_pb.FileId{VolumeId: uint32(cycle + 1), FileKey: nextKey, Cookie: 0},
+			})
+			nextTs++
+			nextKey++
+		}
+
+		// --- flush pipeline (mirrors flushMetadataToFiler) ---
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entryChunks)
+		compacted, _ := filer.CompactFileChunks(context.Background(), nil, nonManifestChunks)
+
+		_, _, merge := shouldMergeChunks(compacted, manifestChunks)
+		if merge {
+			t.Logf("cycle %d: merge correctly triggered (%d manifests, %d regular chunks)",
+				cycle, len(manifestChunks), len(compacted))
+			return
+		}
+
+		// Simulate MaybeManifestize with small batch:
+		// pack groups of batchSize regular chunks into manifest chunks.
+		numPacked := len(compacted) / batchSize
+		var newEntry []*filer_pb.FileChunk
+		newEntry = append(newEntry, manifestChunks...) // carry forward old manifests
+
+		for i := 0; i < numPacked; i++ {
+			batch := compacted[i*batchSize : (i+1)*batchSize]
+			var minOff int64 = math.MaxInt64
+			var maxEnd int64 = 0
+			for _, c := range batch {
+				if c.Offset < minOff {
+					minOff = c.Offset
+				}
+				if end := c.Offset + int64(c.Size); end > maxEnd {
+					maxEnd = end
+				}
+			}
+			nextKey++
+			newEntry = append(newEntry, &filer_pb.FileChunk{
+				Offset: minOff, Size: uint64(maxEnd - minOff),
+				FileId:          fmt.Sprintf("900,%x00000000", nextKey),
+				IsChunkManifest: true,
+				Fid:             &filer_pb.FileId{VolumeId: 900 + uint32(cycle), FileKey: nextKey, Cookie: 0},
+			})
+		}
+		// Leftover regular chunks that didn't fill a batch
+		remainder := compacted[numPacked*batchSize:]
+		newEntry = append(newEntry, remainder...)
+		entryChunks = newEntry
+	}
+	t.Fatal("merge never triggered after 20 flush cycles")
 }
 
 // TestVisibleContentPreservedAfterCompact verifies that CompactFileChunks
