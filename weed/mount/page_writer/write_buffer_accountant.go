@@ -2,6 +2,21 @@ package page_writer
 
 import (
 	"sync"
+	"sync/atomic"
+	"time"
+)
+
+const (
+	// softThresholdRatio is the fraction of cap at which soft throttling begins.
+	// At this level, writes sleep briefly to let uploaders drain.
+	softThresholdRatio = 0.8
+	// hardThresholdRatio is the fraction of cap at which hard throttling kicks in.
+	// Writes sleep longer to aggressively slow intake.
+	hardThresholdRatio = 0.95
+	// softThrottleDelay is the sleep duration when usage exceeds the soft threshold.
+	softThrottleDelay = 10 * time.Millisecond
+	// hardThrottleDelay is the sleep duration when usage exceeds the hard threshold.
+	hardThrottleDelay = 50 * time.Millisecond
 )
 
 // WriteBufferAccountant enforces a global byte budget across all
@@ -14,16 +29,25 @@ import (
 //
 // A nil receiver is treated as "unlimited" for backward compatibility.
 type WriteBufferAccountant struct {
-	mu       sync.Mutex
-	cond     *sync.Cond
-	cap      int64 // 0 means unlimited
-	used     int64
-	evictor  func(needBytes int64) bool
-	evicting bool
+	mu            sync.Mutex
+	cond          *sync.Cond
+	cap           int64 // 0 means unlimited
+	used          int64
+	softThreshold int64 // pre-computed: cap * softThresholdRatio
+	hardThreshold int64 // pre-computed: cap * hardThresholdRatio
+	evictor       func(needBytes int64) bool
+	evicting      bool
+
+	softThrottleCount atomic.Int64
+	hardThrottleCount atomic.Int64
 }
 
 func NewWriteBufferAccountant(capBytes int64) *WriteBufferAccountant {
-	a := &WriteBufferAccountant{cap: capBytes}
+	a := &WriteBufferAccountant{
+		cap:           capBytes,
+		softThreshold: int64(float64(capBytes) * softThresholdRatio),
+		hardThreshold: int64(float64(capBytes) * hardThresholdRatio),
+	}
 	a.cond = sync.NewCond(&a.mu)
 	return a
 }
@@ -57,6 +81,29 @@ func (a *WriteBufferAccountant) Reserve(n int64) {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+
+	// Graduated backpressure: slow writers before hitting the hard cap.
+	// Use projected usage (used + n) so that a single reservation crossing
+	// a threshold is throttled immediately rather than on the next call.
+	//
+	// This runs once per Reserve, not inside the blocking loop below.
+	// Once usage reaches the cap, the evictor + cond.Wait is the correct
+	// mechanism: it blocks until a sealed chunk upload frees space, which
+	// is strictly more efficient than repeated time-based sleeps that
+	// cannot free capacity on their own.
+	projected := a.used + n
+	if projected >= a.hardThreshold && a.used > 0 {
+		a.hardThrottleCount.Add(1)
+		a.mu.Unlock()
+		time.Sleep(hardThrottleDelay)
+		a.mu.Lock()
+	} else if projected >= a.softThreshold && a.used > 0 {
+		a.softThrottleCount.Add(1)
+		a.mu.Unlock()
+		time.Sleep(softThrottleDelay)
+		a.mu.Lock()
+	}
+
 	for a.used+n > a.cap && a.used > 0 {
 		// Before blocking, try to force-seal a writable chunk somewhere so
 		// its async upload path will eventually Release a slot. Single-flight
@@ -114,4 +161,20 @@ func (a *WriteBufferAccountant) Used() int64 {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.used
+}
+
+// SoftThrottleCount returns the number of times soft throttling was triggered.
+func (a *WriteBufferAccountant) SoftThrottleCount() int64 {
+	if a == nil {
+		return 0
+	}
+	return a.softThrottleCount.Load()
+}
+
+// HardThrottleCount returns the number of times hard throttling was triggered.
+func (a *WriteBufferAccountant) HardThrottleCount() int64 {
+	if a == nil {
+		return 0
+	}
+	return a.hardThrottleCount.Load()
 }

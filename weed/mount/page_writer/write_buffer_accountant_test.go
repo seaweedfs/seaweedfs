@@ -71,6 +71,116 @@ func TestWriteBufferAccountant_BlocksWhenOverCap(t *testing.T) {
 	}
 }
 
+func TestWriteBufferAccountant_SoftThrottle(t *testing.T) {
+	// Cap = 1000, soft threshold = 800. Reserve 850 (85%) then measure
+	// that the next Reserve is delayed by at least softThrottleDelay.
+	a := NewWriteBufferAccountant(1000)
+	a.Reserve(850)
+
+	start := time.Now()
+	a.Reserve(10) // should trigger soft throttle (used=850 > 800)
+	elapsed := time.Since(start)
+
+	if elapsed < softThrottleDelay {
+		t.Fatalf("expected Reserve to take >= %v (soft throttle), took %v", softThrottleDelay, elapsed)
+	}
+}
+
+func TestWriteBufferAccountant_HardThrottle(t *testing.T) {
+	// Cap = 1000, hard threshold = 950. Reserve 960 (96%) then measure
+	// that the next Reserve is delayed by at least hardThrottleDelay.
+	a := NewWriteBufferAccountant(1000)
+	a.Reserve(960)
+
+	start := time.Now()
+	a.Reserve(10) // should trigger hard throttle (used=960 > 950)
+	elapsed := time.Since(start)
+
+	if elapsed < hardThrottleDelay {
+		t.Fatalf("expected Reserve to take >= %v (hard throttle), took %v", hardThrottleDelay, elapsed)
+	}
+}
+
+func TestWriteBufferAccountant_NoThrottleBelowSoft(t *testing.T) {
+	// Cap = 1000, soft threshold = 800. Reserve 700 (70%) -- below soft
+	// threshold, so subsequent Reserve should return quickly.
+	a := NewWriteBufferAccountant(1000)
+	a.Reserve(700)
+
+	start := time.Now()
+	a.Reserve(10)
+	elapsed := time.Since(start)
+
+	if elapsed >= softThrottleDelay {
+		t.Fatalf("expected Reserve below soft threshold to avoid throttle delay (< %v), took %v", softThrottleDelay, elapsed)
+	}
+}
+
+func TestWriteBufferAccountant_ThrottleCounters(t *testing.T) {
+	a := NewWriteBufferAccountant(1000)
+
+	// Below soft -- no throttle
+	a.Reserve(700)
+	a.Reserve(10)
+	if a.SoftThrottleCount() != 0 || a.HardThrottleCount() != 0 {
+		t.Fatalf("expected no throttle counts below soft threshold, got soft=%d hard=%d",
+			a.SoftThrottleCount(), a.HardThrottleCount())
+	}
+
+	// Release back down, then fill to soft zone
+	a.Release(710)
+	a.Reserve(850) // now used=850, above soft (800)
+	a.Reserve(10)  // triggers soft throttle
+	if a.SoftThrottleCount() != 1 {
+		t.Fatalf("expected soft throttle count 1, got %d", a.SoftThrottleCount())
+	}
+	if a.HardThrottleCount() != 0 {
+		t.Fatalf("expected hard throttle count 0, got %d", a.HardThrottleCount())
+	}
+
+	// Release and fill to hard zone
+	a.Release(860)
+	a.Reserve(960) // now used=960, above hard (950)
+	a.Reserve(10)  // triggers hard throttle
+	if a.HardThrottleCount() != 1 {
+		t.Fatalf("expected hard throttle count 1, got %d", a.HardThrottleCount())
+	}
+}
+
+func TestWriteBufferAccountant_GraduatedRecovery(t *testing.T) {
+	// Fill to hard threshold, verify hard throttle. Release to soft zone,
+	// verify that throttle level decreases to soft.
+	a := NewWriteBufferAccountant(1000)
+
+	// Fill to hard zone (960 > 950)
+	a.Reserve(960)
+	start := time.Now()
+	a.Reserve(10) // hard throttle
+	elapsed := time.Since(start)
+	if elapsed < hardThrottleDelay {
+		t.Fatalf("expected hard throttle delay, got %v", elapsed)
+	}
+	if a.HardThrottleCount() != 1 {
+		t.Fatalf("expected hard throttle count 1, got %d", a.HardThrottleCount())
+	}
+
+	// Release down to soft zone: used = 970 - 130 = 840 (> 800 soft, < 950 hard)
+	a.Release(130)
+
+	start = time.Now()
+	a.Reserve(10) // should now be soft throttle
+	elapsed = time.Since(start)
+	if elapsed < softThrottleDelay {
+		t.Fatalf("expected soft throttle delay after recovery, got %v", elapsed)
+	}
+	if a.HardThrottleCount() != 1 {
+		t.Fatalf("expected hard throttle count to remain 1 after recovery, got %d", a.HardThrottleCount())
+	}
+	if a.SoftThrottleCount() != 1 {
+		t.Fatalf("expected soft throttle count 1 after recovery, got %d", a.SoftThrottleCount())
+	}
+}
+
 func TestWriteBufferAccountant_AllowsOversizeWhenEmpty(t *testing.T) {
 	// A single request larger than cap must succeed when nothing is in
 	// flight, otherwise a single file handle with a large chunk size would
