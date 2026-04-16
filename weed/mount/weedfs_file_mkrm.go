@@ -489,6 +489,7 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 	}
 
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		wfs.invalidateOpenMtimeCache(inode)
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
 			fhActiveLock := fh.wfs.fhLockTable.AcquireLock("truncateEntry", fh.fh, util.ExclusiveLock)
 			fh.ResetDirtyPages()

@@ -144,6 +144,14 @@ type WFS struct {
 	dirIdleEvict         time.Duration
 	fileIdPool           *FileIdPool
 
+	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
+	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
+	// Bounded to openMtimeCacheMaxSize entries; when full a random entry is
+	// evicted. This trades a small amount of cache-miss overhead for
+	// predictable memory usage on mounts that touch many files.
+	openMtimeMu    sync.Mutex
+	openMtimeCache map[uint64][2]int64
+
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
 	asyncFlushWg sync.WaitGroup
@@ -221,6 +229,7 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
+		openMtimeCache:    make(map[uint64][2]int64, 8192),
 		dirMtimeMap:       make(map[uint64]time.Time, 1024),
 		entryValidSec:    1,
 		attrValidSec:     1,
