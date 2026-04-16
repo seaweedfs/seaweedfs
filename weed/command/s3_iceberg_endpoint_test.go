@@ -14,7 +14,7 @@ func TestDeriveS3AdvertisedEndpoint(t *testing.T) {
 		want string
 	}{
 		{
-			name: "wildcard bind IP replaced with hostname or loopback",
+			name: "wildcard bind IP with no externalUrl does not advertise an endpoint",
 			opt: S3Options{
 				bindIp:        strp("0.0.0.0"),
 				port:          intp(8333),
@@ -22,6 +22,18 @@ func TestDeriveS3AdvertisedEndpoint(t *testing.T) {
 				tlsPrivateKey: strp(""),
 				externalUrl:   strp(""),
 			},
+			want: "",
+		},
+		{
+			name: "empty bind IP with no externalUrl does not advertise an endpoint",
+			opt: S3Options{
+				bindIp:        strp(""),
+				port:          intp(8333),
+				portHttps:     intp(0),
+				tlsPrivateKey: strp(""),
+				externalUrl:   strp(""),
+			},
+			want: "",
 		},
 		{
 			name: "explicit bind IP is kept",
@@ -83,14 +95,6 @@ func TestDeriveS3AdvertisedEndpoint(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			got := tc.opt.deriveS3AdvertisedEndpoint()
-			if tc.want == "" {
-				// Wildcard case: can't know the hostname, just assert we
-				// replaced the wildcard with something routable.
-				if got == "" || got == "http://:8333" || got == "http://0.0.0.0:8333" {
-					t.Fatalf("deriveS3AdvertisedEndpoint() = %q, want a non-wildcard URL", got)
-				}
-				return
-			}
 			if got != tc.want {
 				t.Fatalf("deriveS3AdvertisedEndpoint() = %q, want %q", got, tc.want)
 			}

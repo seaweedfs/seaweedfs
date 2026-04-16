@@ -52,7 +52,7 @@ func TestBuildFileIOConfig(t *testing.T) {
 		}
 	})
 
-	t.Run("endpoint is advertised with path-style-access", func(t *testing.T) {
+	t.Run("endpoint is advertised with path-style-access and region", func(t *testing.T) {
 		s := &Server{s3Endpoint: "http://seaweed.example:8333"}
 		got := s.buildFileIOConfig()
 		if got["s3.endpoint"] != "http://seaweed.example:8333" {
@@ -60,6 +60,9 @@ func TestBuildFileIOConfig(t *testing.T) {
 		}
 		if got["s3.path-style-access"] != "true" {
 			t.Fatalf("s3.path-style-access = %q, want %q", got["s3.path-style-access"], "true")
+		}
+		if got["s3.region"] == "" {
+			t.Fatalf("s3.region was empty, want a non-empty default so clients like DuckDB do not require AWS_REGION")
 		}
 	})
 }

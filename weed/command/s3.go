@@ -551,11 +551,17 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 }
 
 // deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
-// Iceberg catalog clients as part of LoadTable FileIO config. An explicit
-// -s3.externalUrl / S3_EXTERNAL_URL wins so reverse-proxy deployments are
-// honored. Otherwise the scheme follows the TLS configuration, wildcard
-// bind addresses (0.0.0.0 / ::) are replaced with a routable host, and
-// IPv6 literals are bracketed via util.JoinHostPort. See issue #9103.
+// Iceberg catalog clients as part of LoadTable FileIO config. To avoid
+// hijacking correctly-configured clients (Spark/Trino/PyIceberg all bring
+// their own s3.endpoint), advertising is strictly opt-in and returns ""
+// whenever no reliable value is available:
+//   - -s3.externalUrl / S3_EXTERNAL_URL wins and supports reverse-proxy
+//     deployments.
+//   - Otherwise the bind IP is used only when it is explicit and not a
+//     wildcard (0.0.0.0 / ::), with the scheme picked from TLS config and
+//     IPv6 literals bracketed via util.JoinHostPort.
+//
+// See issue #9103.
 func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
 	if ext := strings.TrimRight(s3opt.resolveExternalUrl(), "/"); ext != "" {
 		return ext
@@ -565,18 +571,9 @@ func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
 	if s3opt.bindIp != nil {
 		host = *s3opt.bindIp
 	}
-	wildcard := false
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
-		wildcard = true
-		if h, err := os.Hostname(); err == nil && h != "" {
-			host = h
-		} else {
-			host = "127.0.0.1"
-		}
-	}
-	if wildcard {
-		glog.V(0).Infof("Iceberg REST catalog: advertising S3 endpoint %q inferred from hostname because bind IP is a wildcard; set -s3.externalUrl or S3_EXTERNAL_URL if this is not reachable by remote clients", host)
+		return ""
 	}
 
 	scheme := "http"

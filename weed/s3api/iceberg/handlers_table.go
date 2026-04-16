@@ -391,12 +391,15 @@ func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketN
 
 // buildFileIOConfig returns the FileIO properties to advertise to catalog
 // clients so they can read the table's data files directly from S3 without
-// separately discovering the endpoint. See issue #9103.
+// separately discovering the endpoint. The region defaults to the same
+// value baked into table bucket ARNs so clients like DuckDB that require
+// a region on attach don't need to be told it out-of-band. See issue #9103.
 func (s *Server) buildFileIOConfig() iceberg.Properties {
 	config := make(iceberg.Properties)
 	if s.s3Endpoint != "" {
 		config["s3.endpoint"] = s.s3Endpoint
 		config["s3.path-style-access"] = "true"
+		config["s3.region"] = s3tables.DefaultRegion
 	}
 	return config
 }

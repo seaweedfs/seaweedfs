@@ -134,84 +134,6 @@ func TestIssue9103_BareNamespacesListMissesNamespaceInAttachedBucket(t *testing.
 	}
 }
 
-// TestIssue9103_LoadTableDoesNotVendS3FileIOCredentials reproduces failure
-// mode #1 at the catalog level.
-//
-// When a client loads a table it expects the response `config` map to
-// include FileIO properties (at minimum s3.access-key-id,
-// s3.secret-access-key, s3.endpoint, s3.path-style-access) so it can read
-// the table's data files directly from S3 without separately configuring a
-// second S3 credential. SeaweedFS currently returns `config: {}`, forcing
-// the user to know and configure the S3 endpoint out-of-band; when they
-// don't, DuckDB's iceberg_scan fails with HTTP 403 on the metadata glob
-// exactly as the issue describes.
-func TestIssue9103_LoadTableDoesNotVendS3FileIOCredentials(t *testing.T) {
-	if testing.Short() {
-		t.Skip("Skipping integration test in short mode")
-	}
-
-	env := sharedEnv
-	bucketName := "warehouse-9103cfg2-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
-
-	namespace := "ovirt"
-	tableName := "disk"
-
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost,
-		icebergPath(bucketName, "/v1/namespaces"),
-		map[string]any{"namespace": []string{namespace}})
-	if err != nil {
-		t.Fatalf("create namespace: %v", err)
-	}
-	if status != http.StatusOK && status != http.StatusConflict {
-		t.Fatalf("create namespace status = %d, want 200 or 409", status)
-	}
-
-	status, _, err = doIcebergJSONRequest(env, http.MethodPost,
-		icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)),
-		map[string]any{
-			"name": tableName,
-			"schema": map[string]any{
-				"type":      "struct",
-				"schema-id": 0,
-				"fields": []map[string]any{
-					{"id": 1, "name": "id", "required": true, "type": "long"},
-				},
-			},
-		})
-	if err != nil {
-		t.Fatalf("create table: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("create table status = %d, want 200", status)
-	}
-
-	status, loadResp, err := doIcebergJSONRequest(env, http.MethodGet,
-		icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables/%s", namespace, tableName)), nil)
-	if err != nil {
-		t.Fatalf("load table: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("load table status = %d, want 200", status)
-	}
-
-	config, _ := loadResp["config"].(map[string]any)
-	required := []string{"s3.endpoint", "s3.path-style-access"}
-	var missing []string
-	for _, key := range required {
-		if v, ok := config[key].(string); !ok || v == "" {
-			missing = append(missing, key)
-		}
-	}
-	if len(missing) > 0 {
-		t.Fatalf("LoadTable response config missing FileIO keys %v (got %v). Without vended credentials DuckDB falls back to its own S3 config and fails with 403 when reading %s metadata.",
-			missing, config, fmt.Sprintf("s3://%s/%s/%s/metadata/v*", bucketName, namespace, tableName))
-	}
-	if got := config["s3.path-style-access"]; got != "true" {
-		t.Fatalf("LoadTable response s3.path-style-access = %v, want %q (SeaweedFS is path-style only)", got, "true")
-	}
-}
-
 // TestIssue9103_DuckDBAttachCannotResolveNamespace is the end-to-end
 // reproduction of the issue using DuckDB in Docker, mirroring the exact
 // sequence of commands from the bug report. It runs under its own weed
@@ -277,6 +199,7 @@ SELECT * FROM test_catalog.%s.%s LIMIT 0;
 	cmd := exec.Command("docker", "run", "--rm",
 		"-v", fmt.Sprintf("%s:/test", env.dataDir),
 		"--add-host", "host.docker.internal:host-gateway",
+		"-e", "AWS_REGION=us-east-1",
 		"--entrypoint", "duckdb",
 		"duckdb/duckdb:latest",
 		"-init", "/test/issue_9103.sql",
