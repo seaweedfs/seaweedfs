@@ -28,6 +28,10 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Overrides: map[string]string{},
 	}
 	if warehouse := strings.TrimSpace(r.URL.Query().Get("warehouse")); warehouse != "" {
+		// Only the bucket portion of the warehouse URL is meaningful today —
+		// SeaweedFS table-bucket routing is bucket-scoped, so any sub-path
+		// (e.g. s3://bucket/prefix/) is ignored here and clients that try to
+		// scope a catalog under a sub-prefix will still land on the bucket.
 		if bucket, _, err := parseS3Location(warehouse); err == nil && bucket != "" {
 			config.Overrides["prefix"] = bucket
 			config.Defaults["warehouse"] = warehouse

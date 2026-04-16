@@ -18,7 +18,10 @@
 package catalog
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +29,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/seaweedfs/seaweedfs/test/testutil"
 )
 
 // TestIssue9103_ConfigDoesNotVendWarehousePrefix reproduces failure mode #2.
@@ -191,7 +196,7 @@ func TestIssue9103_LoadTableDoesNotVendS3FileIOCredentials(t *testing.T) {
 	}
 
 	config, _ := loadResp["config"].(map[string]any)
-	required := []string{"s3.endpoint"}
+	required := []string{"s3.endpoint", "s3.path-style-access"}
 	var missing []string
 	for _, key := range required {
 		if v, ok := config[key].(string); !ok || v == "" {
@@ -202,55 +207,38 @@ func TestIssue9103_LoadTableDoesNotVendS3FileIOCredentials(t *testing.T) {
 		t.Fatalf("LoadTable response config missing FileIO keys %v (got %v). Without vended credentials DuckDB falls back to its own S3 config and fails with 403 when reading %s metadata.",
 			missing, config, fmt.Sprintf("s3://%s/%s/%s/metadata/v*", bucketName, namespace, tableName))
 	}
+	if got := config["s3.path-style-access"]; got != "true" {
+		t.Fatalf("LoadTable response s3.path-style-access = %v, want %q (SeaweedFS is path-style only)", got, "true")
+	}
 }
 
 // TestIssue9103_DuckDBAttachCannotResolveNamespace is the end-to-end
 // reproduction of the issue using DuckDB in Docker, mirroring the exact
-// sequence of commands from the bug report. It is gated on Docker
-// availability because the CI matrix does not always have it.
+// sequence of commands from the bug report. It runs under its own weed
+// mini with IAM configured so the OAuth2 client_credentials flow that
+// DuckDB's iceberg extension requires actually works (the shared env has
+// no credentials registered). Gated on Docker availability.
 func TestIssue9103_DuckDBAttachCannotResolveNamespace(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	env := sharedEnv
-	if !env.dockerAvailable {
+	if !testutil.HasDocker() {
 		t.Skip("Docker not available, skipping DuckDB integration reproduction")
 	}
 
+	env := newOAuthTestEnv(t)
+	defer env.cleanup(t)
+	env.start(t)
+
 	bucketName := "test9103-" + randomSuffix()
-	createTableBucket(t, env, bucketName)
+	createTableBucketViaShell(t, env, bucketName)
 
 	namespace := "ovirt"
 	tableName := "disk"
 
-	status, _, err := doIcebergJSONRequest(env, http.MethodPost,
-		icebergPath(bucketName, "/v1/namespaces"),
-		map[string]any{"namespace": []string{namespace}})
-	if err != nil {
-		t.Fatalf("create namespace: %v", err)
-	}
-	if status != http.StatusOK && status != http.StatusConflict {
-		t.Fatalf("create namespace status = %d, want 200 or 409", status)
-	}
-
-	status, _, err = doIcebergJSONRequest(env, http.MethodPost,
-		icebergPath(bucketName, fmt.Sprintf("/v1/namespaces/%s/tables", namespace)),
-		map[string]any{
-			"name": tableName,
-			"schema": map[string]any{
-				"type":      "struct",
-				"schema-id": 0,
-				"fields": []map[string]any{
-					{"id": 1, "name": "id", "required": true, "type": "long"},
-				},
-			},
-		})
-	if err != nil {
-		t.Fatalf("create table: %v", err)
-	}
-	if status != http.StatusOK {
-		t.Fatalf("create table status = %d, want 200", status)
-	}
+	token := requestOAuthToken(t, env, env.accessKey, env.secretKey)
+	createNamespaceWithToken(t, env, token, bucketName, namespace)
+	createTableWithToken(t, env, token, bucketName, namespace, tableName)
 
 	sql := fmt.Sprintf(`
 INSTALL iceberg;
@@ -260,14 +248,14 @@ CREATE SECRET test_berg (
     TYPE ICEBERG,
     ENDPOINT 'http://host.docker.internal:%d',
     SCOPE 's3://%s/',
-    CLIENT_ID 'admin',
-    CLIENT_SECRET 'admin'
+    CLIENT_ID '%s',
+    CLIENT_SECRET '%s'
 );
 
 CREATE SECRET s3_berg (
     TYPE S3,
-    KEY_ID 'admin',
-    SECRET 'admin',
+    KEY_ID '%s',
+    SECRET '%s',
     ENDPOINT 'host.docker.internal:%d',
     URL_STYLE 'path',
     USE_SSL false,
@@ -276,7 +264,10 @@ CREATE SECRET s3_berg (
 
 ATTACH 's3://%s/' AS test_catalog (TYPE 'ICEBERG', secret test_berg);
 SELECT * FROM test_catalog.%s.%s LIMIT 0;
-`, env.icebergPort, bucketName, env.s3Port, bucketName, bucketName, namespace, tableName)
+`, env.icebergPort, bucketName,
+		env.accessKey, env.secretKey,
+		env.accessKey, env.secretKey, env.s3Port, bucketName,
+		bucketName, namespace, tableName)
 
 	sqlFile := filepath.Join(env.dataDir, "issue_9103.sql")
 	if err := os.WriteFile(sqlFile, []byte(sql), 0644); err != nil {
@@ -297,7 +288,9 @@ SELECT * FROM test_catalog.%s.%s LIMIT 0;
 	t.Logf("DuckDB output:\n%s", outStr)
 
 	if strings.Contains(outStr, "iceberg extension is not available") ||
-		strings.Contains(outStr, "Failed to load") {
+		strings.Contains(outStr, "Failed to load") ||
+		strings.Contains(outStr, "could not fetch extension") ||
+		strings.Contains(outStr, "failed to download") {
 		t.Skip("Iceberg extension not available in DuckDB Docker image")
 	}
 
@@ -309,6 +302,46 @@ SELECT * FROM test_catalog.%s.%s LIMIT 0;
 		}
 		t.Fatalf("DuckDB run failed for an unexpected reason: %v", runErr)
 	}
+}
+
+// createTableWithToken creates an Iceberg table using an OAuth bearer token.
+func createTableWithToken(t *testing.T, env *oauthTestEnv, token, bucketName, namespace, tableName string) {
+	t.Helper()
+
+	payload := map[string]any{
+		"name": tableName,
+		"schema": map[string]any{
+			"type":      "struct",
+			"schema-id": 0,
+			"fields": []map[string]any{
+				{"id": 1, "name": "id", "required": true, "type": "long"},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("marshal create-table payload: %v", err)
+	}
+
+	url := fmt.Sprintf("%s/v1/%s/namespaces/%s/tables", env.icebergURL(), bucketName, namespace)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("create request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("create table failed: status=%d body=%s", resp.StatusCode, respBody)
+	}
+	t.Logf("Created table %s.%s in bucket %s", namespace, tableName, bucketName)
 }
 
 // containsNamespace checks whether an Iceberg REST ListNamespaces response

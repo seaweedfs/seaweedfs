@@ -565,13 +565,18 @@ func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
 	if s3opt.bindIp != nil {
 		host = *s3opt.bindIp
 	}
+	wildcard := false
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
+		wildcard = true
 		if h, err := os.Hostname(); err == nil && h != "" {
 			host = h
 		} else {
 			host = "127.0.0.1"
 		}
+	}
+	if wildcard {
+		glog.V(0).Infof("Iceberg REST catalog: advertising S3 endpoint %q inferred from hostname because bind IP is a wildcard; set -s3.externalUrl or S3_EXTERNAL_URL if this is not reachable by remote clients", host)
 	}
 
 	scheme := "http"
