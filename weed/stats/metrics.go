@@ -370,6 +370,22 @@ var (
 			Help:      "Number of master server disconnections.",
 		}, []string{"address"})
 
+	VolumeServerFileReadFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_read_failures",
+			Help:      "Counter of overall failed file read requests from clients.",
+		})
+
+	VolumeServerFileWriteFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_write_failures",
+			Help:      "Counter of overall failed file write requests from clients.",
+		})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -537,6 +553,8 @@ func init() {
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)
 	Gather.MustRegister(VolumeServerInFlightUploadSize)
 	Gather.MustRegister(VolumeServerMasterDisconnections)
+	Gather.MustRegister(VolumeServerFileReadFailures)
+	Gather.MustRegister(VolumeServerFileWriteFailures)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)
