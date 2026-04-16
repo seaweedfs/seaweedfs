@@ -144,6 +144,10 @@ type WFS struct {
 	dirIdleEvict         time.Duration
 	fileIdPool           *FileIdPool
 
+	// openMtimeCache maps inode -> mtime (Unix seconds) from the last Open.
+	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
+	openMtimeCache sync.Map
+
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
 	asyncFlushWg sync.WaitGroup

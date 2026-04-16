@@ -64,7 +64,21 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = 0
-		// TODO https://github.com/libfuse/libfuse/blob/master/include/fuse_common.h#L64
+
+		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime
+		// has not changed since the last open.  This tells the kernel to
+		// preserve its existing page cache, avoiding redundant reads.
+		if in.Flags&fuse.O_ANYWRITE == 0 {
+			if entry := fileHandle.GetEntry(); entry != nil && entry.Attributes != nil {
+				currentMtime := entry.Attributes.Mtime
+				if prev, loaded := wfs.openMtimeCache.Load(in.NodeId); loaded {
+					if prev.(int64) == currentMtime {
+						out.OpenFlags |= fuse.FOPEN_KEEP_CACHE
+					}
+				}
+				wfs.openMtimeCache.Store(in.NodeId, currentMtime)
+			}
+		}
 	}
 	return status
 }
