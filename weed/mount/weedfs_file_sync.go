@@ -315,7 +315,7 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 	for {
 		n, readErr := io.ReadFull(reader, buf)
 		if n > 0 {
-			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, 0)
+			chunk, uploadErr := saveFunc(bytes.NewReader(buf[:n]), "", offset, 0, uint64(n))
 			if uploadErr != nil {
 				return nil, uploadErr
 			}

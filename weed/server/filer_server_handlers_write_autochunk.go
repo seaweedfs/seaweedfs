@@ -350,18 +350,13 @@ func (fs *FilerServer) saveMetaData(ctx context.Context, r *http.Request, fileNa
 
 func (fs *FilerServer) saveAsChunk(ctx context.Context, so *operation.StorageOption) filer.SaveDataAsChunkFunctionType {
 
-	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (*filer_pb.FileChunk, error) {
 		var fileId string
 		var uploadResult *operation.UploadResult
 
 		err := util.Retry("saveAsChunk", func() error {
 			// assign one file id for one chunk
-			// Chunk size isn't known until the reader is drained below, so
-			// pass 0 and let the master fall back to its 1 MB default
-			// estimate. saveAsChunk is used for manifest metadata where
-			// chunks are small, and for autochunk writes where the 1 MB
-			// default is a reasonable approximation.
-			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, 0)
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, expectedDataSize)
 			if assignErr != nil {
 				return assignErr
 			}
