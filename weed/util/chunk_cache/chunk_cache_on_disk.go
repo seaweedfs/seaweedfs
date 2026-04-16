@@ -114,10 +114,17 @@ func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
 	return LoadOrCreateChunkCacheVolume(v.fileName, v.sizeLimit)
 }
 
+// minFadviseSize is the minimum read size (in bytes) before we call fadvise
+// DONTNEED. For small reads the syscall overhead outweighs the benefit, and
+// the kernel's page cache may serve the data again sooner than we think.
+const minFadviseSize = 1 << 20 // 1 MiB
+
 // dropReadCache advises the kernel to drop page cache for the byte range
 // just read. This is best-effort; failures are logged at V(4).
+// Only applied for reads >= minFadviseSize to avoid syscall overhead on
+// small needle reads where the kernel page cache is more beneficial.
 func (v *ChunkCacheVolume) dropReadCache(offset int64, length int64) {
-	if length <= 0 {
+	if length < minFadviseSize {
 		return
 	}
 	type fdProvider interface {
