@@ -169,24 +169,12 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0}},
 							MaxValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 1}},
 						},
-						{
-							Name:        "min_volume_age_seconds",
-							Label:       "Min Volume Age (s)",
-							Description: "Only detect volumes older than this age.",
-							FieldType:   plugin_pb.ConfigFieldType_CONFIG_FIELD_TYPE_INT64,
-							Widget:      plugin_pb.ConfigWidget_CONFIG_WIDGET_NUMBER,
-							Required:    true,
-							MinValue:    &plugin_pb.ConfigValue{Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0}},
-						},
 					},
 				},
 			},
 			DefaultValues: map[string]*plugin_pb.ConfigValue{
 				"garbage_threshold": {
 					Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3},
-				},
-				"min_volume_age_seconds": {
-					Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 24 * 60 * 60},
 				},
 			},
 		},
@@ -205,9 +193,6 @@ func (h *VacuumHandler) Descriptor() *plugin_pb.JobTypeDescriptor {
 		WorkerDefaultValues: map[string]*plugin_pb.ConfigValue{
 			"garbage_threshold": {
 				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0.3},
-			},
-			"min_volume_age_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 24 * 60 * 60},
 			},
 		},
 	}
@@ -532,7 +517,6 @@ func (h *VacuumHandler) collectVolumeMetrics(
 func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Config {
 	config := vacuumtask.NewDefaultConfig()
 	config.GarbageThreshold = readDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
-	config.MinVolumeAgeSeconds = int(readInt64Config(values, "min_volume_age_seconds", int64(config.MinVolumeAgeSeconds)))
 	return config
 }
 
