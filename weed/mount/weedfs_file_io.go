@@ -71,12 +71,16 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 		if in.Flags&fuse.O_ANYWRITE == 0 {
 			if entry := fileHandle.GetEntry(); entry != nil && entry.Attributes != nil {
 				currentMtime := entry.Attributes.Mtime
-				if prev, loaded := wfs.openMtimeCache.Load(in.NodeId); loaded {
+				prev, loaded := wfs.openMtimeCache.Load(in.NodeId)
+				if loaded {
 					if prevMtime, ok := prev.(int64); ok && prevMtime == currentMtime {
 						out.OpenFlags |= fuse.FOPEN_KEEP_CACHE
+					} else {
+						wfs.openMtimeCache.Store(in.NodeId, currentMtime)
 					}
+				} else {
+					wfs.openMtimeCache.Store(in.NodeId, currentMtime)
 				}
-				wfs.openMtimeCache.Store(in.NodeId, currentMtime)
 			}
 		}
 	}
