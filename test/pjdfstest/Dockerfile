@@ -1,7 +1,7 @@
 FROM chrislusf/seaweedfs:e2e
 
-RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update && \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
     --no-install-recommends \
     --no-install-suggests \
     autoconf \

@@ -39,18 +39,32 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Build SeaweedFS e2e image
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+
+    - name: Build weed race binary
       run: |
         cd docker
-        make build_e2e || {
-          echo "Retrying without buildx cache..."
-          make binary_race
-          docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
-        }
+        make binary_race
+
+    - name: Build SeaweedFS e2e image
+      uses: docker/build-push-action@v6
+      with:
+        context: docker
+        file: docker/Dockerfile.e2e
+        tags: chrislusf/seaweedfs:e2e
+        load: true
+        cache-from: type=gha,scope=pjdfstest-e2e
+        cache-to: type=gha,mode=max,scope=pjdfstest-e2e
 
     - name: Build pjdfstest image
-      run: |
-        docker build -t chrislusf/seaweedfs:pjdfstest test/pjdfstest/
+      uses: docker/build-push-action@v6
+      with:
+        context: test/pjdfstest
+        tags: chrislusf/seaweedfs:pjdfstest
+        load: true
+        cache-from: type=gha,scope=pjdfstest-harness
+        cache-to: type=gha,mode=max,scope=pjdfstest-harness
 
     - name: Start SeaweedFS cluster
       run: |
