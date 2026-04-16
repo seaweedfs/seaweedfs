@@ -543,13 +543,6 @@ func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) 
 				}
 				return a.CreatedAt.Before(b.CreatedAt)
 			}
-		case "objects":
-			if a.ObjectCount != b.ObjectCount {
-				if desc {
-					return a.ObjectCount > b.ObjectCount
-				}
-				return a.ObjectCount < b.ObjectCount
-			}
 		case "logical_size":
 			if a.LogicalSize != b.LogicalSize {
 				if desc {
@@ -646,14 +639,11 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				// Determine collection name for this bucket
 				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
 
-				// Get size and object count from collection data
 				var physicalSize int64
 				var logicalSize int64
-				var objectCount int64
 				if collectionData, exists := collectionMap[collectionName]; exists {
 					physicalSize = collectionData.PhysicalSize
 					logicalSize = collectionData.LogicalSize
-					objectCount = collectionData.FileCount
 				}
 
 				// Get quota information from entry
@@ -695,7 +685,6 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					CreatedAt:          createdAt,
 					LogicalSize:        logicalSize,
 					PhysicalSize:       physicalSize,
-					ObjectCount:        objectCount,
 					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
@@ -750,7 +739,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	} else if data, ok := stats[collectionName]; ok {
 		details.Bucket.LogicalSize = data.LogicalSize
 		details.Bucket.PhysicalSize = data.PhysicalSize
-		details.Bucket.ObjectCount = data.FileCount
 	}
 
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {

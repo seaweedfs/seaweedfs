@@ -76,7 +76,6 @@ type S3Bucket struct {
 	CreatedAt          time.Time `json:"created_at"`
 	LogicalSize        int64     `json:"logical_size"`  // Actual data size (used space)
 	PhysicalSize       int64     `json:"physical_size"` // Total allocated volume space
-	ObjectCount        int64     `json:"object_count"`
 	LastModified       time.Time `json:"last_modified"`
 	Quota              int64     `json:"quota"`                // Quota in bytes, 0 means no quota
 	QuotaEnabled       bool      `json:"quota_enabled"`        // Whether quota is enabled

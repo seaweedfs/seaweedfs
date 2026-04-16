@@ -584,19 +584,17 @@ function exportBucketList() {
         return {
             name: cells[0].textContent.trim(),
             created: cells[1].textContent.trim(),
-            objects: cells[2].textContent.trim(),
-            size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim()
+            size: cells[2].textContent.trim(),
+            quota: cells[3].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
+        ['Name', 'Created', 'Size', 'Quota'].join(','),
         ...data.map(row => [
             row.name,
             row.created,
-            row.objects,
             row.size,
             row.quota
         ].join(','))
