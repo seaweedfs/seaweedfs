@@ -268,6 +268,13 @@ func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*
 	for _, chunk := range compactedChunks {
 		totalChunkSize += chunk.Size
 	}
+	// Count manifest coverage toward stored total. Each manifest holds
+	// sub-chunks on volume servers that cover approximately Size bytes.
+	// Without this, overlapping manifests accumulate undetected because
+	// the merge condition only saw the (small) non-manifest chunk total.
+	for _, chunk := range manifestChunks {
+		totalChunkSize += chunk.Size
+	}
 	allChunks := make([]*filer_pb.FileChunk, 0, len(compactedChunks)+len(manifestChunks))
 	allChunks = append(allChunks, compactedChunks...)
 	allChunks = append(allChunks, manifestChunks...)
