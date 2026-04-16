@@ -421,15 +421,24 @@ func (vl *VolumeLayout) AdjustActiveVolumeCountAfterRecovery(vid needle.VolumeId
 }
 
 func (vl *VolumeLayout) adjustActiveVolumeCount(vid needle.VolumeId, delta int64) {
+	// Copy the node list under the VolumeLayout lock, then release it before
+	// calling UpAdjustDiskUsageDelta. UpAdjustDiskUsageDelta walks up the
+	// topology tree taking per-level locks (e.g., DiskUsages.Lock on each
+	// node). Keeping vl.accessLock held across that tree walk is an
+	// unnecessary lock-ordering hazard — other call paths that hold a
+	// topology-level lock and then need vl.accessLock would deadlock.
 	vl.accessLock.RLock()
-	defer vl.accessLock.RUnlock()
-
 	vidLocations, found := vl.vid2location[vid]
 	if !found {
+		vl.accessLock.RUnlock()
 		return
 	}
+	nodes := make([]*DataNode, len(vidLocations.list))
+	copy(nodes, vidLocations.list)
+	vl.accessLock.RUnlock()
+
 	diskTypeStr := string(vl.diskType)
-	for _, dn := range vidLocations.list {
+	for _, dn := range nodes {
 		disk := dn.getOrCreateDisk(diskTypeStr)
 		disk.UpAdjustDiskUsageDelta(vl.diskType, &DiskUsageCounts{
 			activeVolumeCount: delta,
