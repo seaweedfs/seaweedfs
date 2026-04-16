@@ -74,6 +74,11 @@ type S3Options struct {
 	externalUrl               *string
 	defaultFileMode           *string
 	cacheSizeMB               *int64
+	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
+	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
+	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
+	// weed s3.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -453,10 +458,13 @@ func (s3opt *S3Options) startS3Server() bool {
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			onMiniClientsShutdown(func() {
-				httpS.Shutdown(context.Background())
-				grpcS.Stop()
-			})
+			if s3opt.shutdownCtx != nil {
+				go func() {
+					<-s3opt.shutdownCtx.Done()
+					httpS.Shutdown(context.Background())
+					grpcS.Stop()
+				}()
+			}
 			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
@@ -491,10 +499,13 @@ func (s3opt *S3Options) startS3Server() bool {
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		onMiniClientsShutdown(func() {
-			httpS.Shutdown(context.Background())
-			grpcS.Stop()
-		})
+		if s3opt.shutdownCtx != nil {
+			go func() {
+				<-s3opt.shutdownCtx.Done()
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			}()
+		}
 		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
@@ -523,9 +534,12 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	onMiniClientsShutdown(func() {
-		httpS.Shutdown(context.Background())
-	})
+	if s3opt.shutdownCtx != nil {
+		go func() {
+			<-s3opt.shutdownCtx.Done()
+			httpS.Shutdown(context.Background())
+		}()
+	}
 	// Serve on localhost as well if we're bound to a different interface
 	if icebergLocalListener != nil {
 		go func() {

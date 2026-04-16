@@ -84,6 +84,10 @@ type FilerOptions struct {
 	tusBasePath               *string
 	certProvider              certprovider.Provider
 	s3ConfigFile              *string // optional path to static S3 identity config
+	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
+	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
+	// and by weed mini; nil for standalone weed filer.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -549,10 +553,9 @@ func (fo *FilerOptions) startFiler() {
 			shutdownFiler()
 		})
 
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -595,10 +598,9 @@ func (fo *FilerOptions) startFiler() {
 			shutdownFiler()
 		})
 
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()

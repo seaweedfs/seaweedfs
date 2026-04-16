@@ -960,6 +960,13 @@ func runMini(cmd *Command, args []string) bool {
 	// before any service starts.
 	resetMiniClients()
 
+	// Master/volume/filer observe MiniClusterCtx so tests that cancel it
+	// tear those services down too. On Ctrl+C they rely on their own
+	// OnInterrupt hooks (see grace's LIFO ordering).
+	miniMasterOptions.shutdownCtx = MiniClusterCtx
+	miniOptions.v.shutdownCtx = MiniClusterCtx
+	miniFilerOptions.shutdownCtx = MiniClusterCtx
+
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
 	allServicesReady := make(chan struct{})
@@ -1019,17 +1026,27 @@ func startMiniServices(miniWhiteList []string, allServicesReady chan struct{}) {
 	// Wait for filer to be ready
 	waitForServiceReady("Filer", *miniFilerOptions.port, bindIp)
 
-	// Start S3 and WebDAV in parallel (both depend on filer)
+	// Start S3 and WebDAV in parallel (both depend on filer). Each observes
+	// miniClientsCtx so it shuts down first on Ctrl+C, tracked via
+	// trackMiniClient so runMini's interrupt hook can wait for them.
 	if *miniEnableS3 {
-		go startMiniService("S3", func() {
-			startS3Service()
-		}, *miniS3Options.port)
+		miniS3Options.shutdownCtx = miniClientsCtx()
+		done := trackMiniClient()
+		go func() {
+			defer done()
+			startMiniService("S3", startS3Service, *miniS3Options.port)
+		}()
 	}
 
 	if *miniEnableWebDAV {
-		go startMiniService("WebDAV", func() {
-			miniWebDavOptions.startWebDav()
-		}, *miniWebDavOptions.port)
+		miniWebDavOptions.shutdownCtx = miniClientsCtx()
+		done := trackMiniClient()
+		go func() {
+			defer done()
+			startMiniService("WebDAV", func() {
+				miniWebDavOptions.startWebDav()
+			}, *miniWebDavOptions.port)
+		}()
 	}
 
 	// Wait for services to be ready
