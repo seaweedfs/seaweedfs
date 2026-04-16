@@ -2,6 +2,7 @@ package mount
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -303,6 +304,80 @@ func TestRandomWritesBloatDetection(t *testing.T) {
 				iter, merge, totalCompacted, reportedFileSize)
 		}
 	}
+}
+
+// TestFlushCycleManifestAccumulation simulates the flushMetadataToFiler
+// pipeline over multiple cycles with a small manifest batch threshold.
+// Each cycle adds a full pass of random writes, compacts, and manifestizes.
+// Verifies that shouldMergeChunks detects manifest bloat within a few cycles.
+func TestFlushCycleManifestAccumulation(t *testing.T) {
+	const (
+		fileSize  int64  = 10000
+		chunkSize uint64 = 1000
+		numSlots         = int(fileSize / int64(chunkSize)) // 10 offsets
+		batchSize        = 5                                // small batch to trigger manifestize
+	)
+
+	var entryChunks []*filer_pb.FileChunk
+	nextTs := int64(1)
+	nextKey := uint64(1)
+
+	for cycle := 0; cycle < 20; cycle++ {
+		// Each cycle: new writes at every offset (simulates a full random-write pass)
+		for slot := 0; slot < numSlots; slot++ {
+			entryChunks = append(entryChunks, &filer_pb.FileChunk{
+				Offset: int64(slot) * int64(chunkSize), Size: chunkSize,
+				FileId: fmt.Sprintf("%d,%x00000000", cycle+1, nextKey),
+				ModifiedTsNs: nextTs,
+				Fid: &filer_pb.FileId{VolumeId: uint32(cycle + 1), FileKey: nextKey, Cookie: 0},
+			})
+			nextTs++
+			nextKey++
+		}
+
+		// --- flush pipeline (mirrors flushMetadataToFiler) ---
+		manifestChunks, nonManifestChunks := filer.SeparateManifestChunks(entryChunks)
+		compacted, _ := filer.CompactFileChunks(context.Background(), nil, nonManifestChunks)
+
+		_, _, merge := shouldMergeChunks(compacted, manifestChunks)
+		if merge {
+			t.Logf("cycle %d: merge correctly triggered (%d manifests, %d regular chunks)",
+				cycle, len(manifestChunks), len(compacted))
+			return
+		}
+
+		// Simulate MaybeManifestize with small batch:
+		// pack groups of batchSize regular chunks into manifest chunks.
+		numPacked := len(compacted) / batchSize
+		var newEntry []*filer_pb.FileChunk
+		newEntry = append(newEntry, manifestChunks...) // carry forward old manifests
+
+		for i := 0; i < numPacked; i++ {
+			batch := compacted[i*batchSize : (i+1)*batchSize]
+			var minOff int64 = math.MaxInt64
+			var maxEnd int64 = 0
+			for _, c := range batch {
+				if c.Offset < minOff {
+					minOff = c.Offset
+				}
+				if end := c.Offset + int64(c.Size); end > maxEnd {
+					maxEnd = end
+				}
+			}
+			nextKey++
+			newEntry = append(newEntry, &filer_pb.FileChunk{
+				Offset: minOff, Size: uint64(maxEnd - minOff),
+				FileId:          fmt.Sprintf("900,%x00000000", nextKey),
+				IsChunkManifest: true,
+				Fid:             &filer_pb.FileId{VolumeId: 900 + uint32(cycle), FileKey: nextKey, Cookie: 0},
+			})
+		}
+		// Leftover regular chunks that didn't fill a batch
+		remainder := compacted[numPacked*batchSize:]
+		newEntry = append(newEntry, remainder...)
+		entryChunks = newEntry
+	}
+	t.Fatal("merge never triggered after 20 flush cycles")
 }
 
 // TestVisibleContentPreservedAfterCompact verifies that CompactFileChunks
