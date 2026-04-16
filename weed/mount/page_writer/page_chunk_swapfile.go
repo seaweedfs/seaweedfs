@@ -5,7 +5,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -127,7 +126,7 @@ func (sc *SwapFileChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n in
 	}
 	//sc.memChunk.WriteDataAt(src, offset, tsNs)
 	sc.activityScore.MarkWrite()
-	sc.lastWriteTsNs.Store(time.Now().UnixNano())
+	sc.lastWriteTsNs.Store(tsNs)
 
 	return
 }

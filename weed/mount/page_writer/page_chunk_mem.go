@@ -3,7 +3,6 @@ package page_writer
 import (
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -52,7 +51,7 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	n = copy(mc.buf[innerOffset:], src)
 	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	mc.activityScore.MarkWrite()
-	mc.lastWriteTsNs.Store(time.Now().UnixNano())
+	mc.lastWriteTsNs.Store(tsNs)
 
 	return
 }

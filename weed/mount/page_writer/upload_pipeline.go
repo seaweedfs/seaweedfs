@@ -88,9 +88,15 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
-	// track write frontier for proactive flushing
-	if int64(logicChunkIndex) > atomic.LoadInt64(&up.lastWriteChunkIndex) {
-		atomic.StoreInt64(&up.lastWriteChunkIndex, int64(logicChunkIndex))
+	// track write frontier for proactive flushing (CAS to avoid regression)
+	for {
+		old := atomic.LoadInt64(&up.lastWriteChunkIndex)
+		if int64(logicChunkIndex) <= old {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&up.lastWriteChunkIndex, old, int64(logicChunkIndex)) {
+			break
+		}
 	}
 
 	pageChunk, found := up.writableChunks[logicChunkIndex]
@@ -195,10 +201,6 @@ func (up *UploadPipeline) MaybeReadDataAt(p []byte, off int64, tsNs int64) (maxS
 	maxStop = max(maxStop, writableMaxStop)
 
 	return
-}
-
-func (up *UploadPipeline) UploaderCount() int32 {
-	return atomic.LoadInt32(&up.uploaderCount)
 }
 
 func (up *UploadPipeline) FlushAll() {
