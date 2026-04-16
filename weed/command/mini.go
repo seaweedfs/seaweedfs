@@ -997,6 +997,10 @@ func runMini(cmd *Command, args []string) bool {
 	miniMasterOptions.shutdownCtx = MiniClusterCtx
 	miniOptions.v.shutdownCtx = MiniClusterCtx
 	miniFilerOptions.shutdownCtx = MiniClusterCtx
+	// Mini is a small/dev setup with short-lived RPCs; cap the filer's
+	// gRPC graceful-stop at 1s so Ctrl+C returns quickly instead of sitting
+	// on the default 10s waiting for background subscription streams.
+	miniFilerOptions.gracefulStopTimeout = 1 * time.Second
 
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready

@@ -88,6 +88,9 @@ type FilerOptions struct {
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
 	shutdownCtx context.Context
+	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
+	// stop before forcing the server to stop. Zero means the default of 10s.
+	gracefulStopTimeout time.Duration
 }
 
 func init() {
@@ -451,6 +454,10 @@ func (fo *FilerOptions) startFiler() {
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
 	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
+	gracefulTimeout := fo.gracefulStopTimeout
+	if gracefulTimeout <= 0 {
+		gracefulTimeout = 10 * time.Second
+	}
 	stopGrpcServer := func() {
 		glog.V(0).Infof("Gracefully stopping gRPC server")
 		stopped := make(chan struct{})
@@ -461,8 +468,8 @@ func (fo *FilerOptions) startFiler() {
 		select {
 		case <-stopped:
 			glog.V(0).Infof("gRPC server stopped gracefully")
-		case <-time.After(10 * time.Second):
-			glog.V(0).Infof("gRPC server graceful stop timed out, forcing stop")
+		case <-time.After(gracefulTimeout):
+			glog.V(0).Infof("gRPC server graceful stop timed out after %s, forcing stop", gracefulTimeout)
 			grpcS.Stop()
 		}
 	}
