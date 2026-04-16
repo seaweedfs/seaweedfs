@@ -3,6 +3,7 @@ package page_writer
 import (
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -21,6 +22,7 @@ type MemChunk struct {
 	chunkSize       int64
 	logicChunkIndex LogicChunkIndex
 	activityScore   *ActivityScore
+	lastWriteTsNs   atomic.Int64
 }
 
 func NewMemChunk(logicChunkIndex LogicChunkIndex, chunkSize int64) *MemChunk {
@@ -50,6 +52,7 @@ func (mc *MemChunk) WriteDataAt(src []byte, offset int64, tsNs int64) (n int) {
 	n = copy(mc.buf[innerOffset:], src)
 	mc.usage.MarkWritten(innerOffset, innerOffset+int64(n), tsNs)
 	mc.activityScore.MarkWrite()
+	mc.lastWriteTsNs.Store(time.Now().UnixNano())
 
 	return
 }
@@ -88,6 +91,10 @@ func (mc *MemChunk) WrittenSize() int64 {
 	defer mc.RUnlock()
 
 	return mc.usage.WrittenSize()
+}
+
+func (mc *MemChunk) LastWriteTsNs() int64 {
+	return mc.lastWriteTsNs.Load()
 }
 
 func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {

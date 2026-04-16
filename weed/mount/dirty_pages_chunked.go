@@ -92,6 +92,10 @@ func (pages *ChunkedDirtyPages) EvictOneWritableChunk() bool {
 	return pages.uploadPipeline.EvictOneWritableChunk()
 }
 
+func (pages *ChunkedDirtyPages) ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int) bool {
+	return pages.uploadPipeline.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, frontierLag)
+}
+
 func (pages *ChunkedDirtyPages) LockForRead(startOffset, stopOffset int64) {
 	pages.uploadPipeline.LockForRead(startOffset, stopOffset)
 }

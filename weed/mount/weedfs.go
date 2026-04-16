@@ -376,6 +376,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
+	go wfs.loopProactiveFlush()
 
 	if wfs.option.WritebackCache {
 		wfs.fileIdPool = NewFileIdPool(wfs)

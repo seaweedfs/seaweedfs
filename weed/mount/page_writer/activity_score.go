@@ -11,7 +11,7 @@ func NewActivityScore() *ActivityScore {
 	return &ActivityScore{}
 }
 
-func (as ActivityScore) MarkRead() {
+func (as *ActivityScore) MarkRead() {
 	now := time.Now().UnixNano()
 	deltaTime := (now - as.lastActiveTsNs) >> 30 // about number of seconds
 	as.lastActiveTsNs = now
@@ -22,7 +22,7 @@ func (as ActivityScore) MarkRead() {
 	}
 }
 
-func (as ActivityScore) MarkWrite() {
+func (as *ActivityScore) MarkWrite() {
 	now := time.Now().UnixNano()
 	deltaTime := (now - as.lastActiveTsNs) >> 30 // about number of seconds
 	as.lastActiveTsNs = now
@@ -33,7 +33,7 @@ func (as ActivityScore) MarkWrite() {
 	}
 }
 
-func (as ActivityScore) ActivityScore() int64 {
+func (as *ActivityScore) ActivityScore() int64 {
 	deltaTime := (time.Now().UnixNano() - as.lastActiveTsNs) >> 30 // about number of seconds
 	return as.decayedActivenessScore >> deltaTime
 }
