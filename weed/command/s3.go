@@ -453,14 +453,10 @@ func (s3opt *S3Options) startS3Server() bool {
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			if MiniClusterCtx != nil {
-				ctx := MiniClusterCtx
-				go func() {
-					<-ctx.Done()
-					httpS.Shutdown(context.Background())
-					grpcS.Stop()
-				}()
-			}
+			OnMiniClientsShutdown(func() {
+				httpS.Shutdown(context.Background())
+				grpcS.Stop()
+			})
 			if err = httpS.ServeTLS(s3ApiListener, "", ""); err != nil && err != http.ErrServerClosed {
 				glog.Fatalf("S3 API Server Fail to serve: %v", err)
 			}
@@ -495,13 +491,10 @@ func (s3opt *S3Options) startS3Server() bool {
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		if MiniClusterCtx != nil {
-			go func() {
-				<-MiniClusterCtx.Done()
-				httpS.Shutdown(context.Background())
-				grpcS.Stop()
-			}()
-		}
+		OnMiniClientsShutdown(func() {
+			httpS.Shutdown(context.Background())
+			grpcS.Stop()
+		})
 		if err = httpS.Serve(s3ApiListener); err != nil && err != http.ErrServerClosed {
 			glog.Fatalf("S3 API Server Fail to serve: %v", err)
 		}
@@ -530,12 +523,9 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	if MiniClusterCtx != nil {
-		go func() {
-			<-MiniClusterCtx.Done()
-			httpS.Shutdown(context.Background())
-		}()
-	}
+	OnMiniClientsShutdown(func() {
+		httpS.Shutdown(context.Background())
+	})
 	// Serve on localhost as well if we're bound to a different interface
 	if icebergLocalListener != nil {
 		go func() {

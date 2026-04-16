@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -64,7 +65,41 @@ var (
 	miniS3IamReadOnly *bool
 	// MiniClusterCtx is the context for the mini cluster. If set, the mini cluster will stop when the context is cancelled.
 	MiniClusterCtx context.Context
+	// MiniClientsShutdownCtx, when non-nil, is cancelled by weed mini on Ctrl+C
+	// so admin/s3/webdav shut down gracefully BEFORE filer/volume/master.
+	// It is separate from MiniClusterCtx so tests that set MiniClusterCtx to
+	// tear down the whole cluster at once are unaffected.
+	MiniClientsShutdownCtx context.Context
+	// miniClientsWg tracks admin/s3/webdav shutdown goroutines so the interrupt
+	// hook can wait for them to drain before returning.
+	miniClientsWg sync.WaitGroup
 )
+
+// OnMiniClientsShutdown invokes fn in a goroutine when either MiniClusterCtx
+// or MiniClientsShutdownCtx is cancelled, whichever fires first. No-op if
+// neither is set (i.e., not running inside weed mini). Registered fns are
+// tracked via miniClientsWg so weed mini can wait for them to finish.
+func OnMiniClientsShutdown(fn func()) {
+	var done1, done2 <-chan struct{}
+	if MiniClusterCtx != nil {
+		done1 = MiniClusterCtx.Done()
+	}
+	if MiniClientsShutdownCtx != nil {
+		done2 = MiniClientsShutdownCtx.Done()
+	}
+	if done1 == nil && done2 == nil {
+		return
+	}
+	miniClientsWg.Add(1)
+	go func() {
+		defer miniClientsWg.Done()
+		select {
+		case <-done1:
+		case <-done2:
+		}
+		fn()
+	}()
+}
 
 func init() {
 	cmdMini.Run = runMini // break init cycle
@@ -869,6 +904,15 @@ func runMini(cmd *Command, args []string) bool {
 
 	miniWhiteList := util.StringSplit(*miniWhiteListOption, ",")
 
+	// Install a cancellable context for admin/s3/webdav. Registered BEFORE
+	// services start so it is a no-op if already set externally (tests).
+	var cancelMiniClients context.CancelFunc
+	if MiniClientsShutdownCtx == nil {
+		var clientsCtx context.Context
+		clientsCtx, cancelMiniClients = context.WithCancel(context.Background())
+		MiniClientsShutdownCtx = clientsCtx
+	}
+
 	// Start all services with proper dependency coordination
 	// This channel will be closed when all services are fully ready
 	allServicesReady := make(chan struct{})
@@ -876,6 +920,28 @@ func runMini(cmd *Command, args []string) bool {
 
 	// Wait for all services to be fully running before printing welcome message
 	<-allServicesReady
+
+	// Register the clients-shutdown interrupt hook AFTER all services have
+	// registered theirs. Under grace's LIFO firing this hook runs FIRST on
+	// Ctrl+C, giving admin/s3/webdav a chance to drain before filer/volume/
+	// master's own hooks tear them down.
+	if cancelMiniClients != nil {
+		grace.OnInterrupt(func() {
+			glog.V(0).Infof("Shutting down admin/s3/webdav ...")
+			cancelMiniClients()
+			done := make(chan struct{})
+			go func() {
+				miniClientsWg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				glog.V(0).Infof("admin/s3/webdav shut down")
+			case <-time.After(10 * time.Second):
+				glog.V(0).Infof("timed out waiting for admin/s3/webdav to shut down")
+			}
+		})
+	}
 
 	// Print welcome message after all services are running
 	printWelcomeMessage()
@@ -999,11 +1065,21 @@ func startS3Service() {
 func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 	defer close(allServicesReady) // Ensure channel is always closed on all paths
 
-	var ctx context.Context
+	// Derive admin's context from MiniClusterCtx (tests) and MiniClientsShutdownCtx
+	// (weed mini CLI) so whichever fires first triggers admin shutdown.
+	parentCtx := context.Background()
 	if MiniClusterCtx != nil {
-		ctx = MiniClusterCtx
-	} else {
-		ctx = context.Background()
+		parentCtx = MiniClusterCtx
+	}
+	ctx, cancelAdminCtx := context.WithCancel(parentCtx)
+	if MiniClientsShutdownCtx != nil {
+		go func() {
+			select {
+			case <-ctx.Done():
+			case <-MiniClientsShutdownCtx.Done():
+				cancelAdminCtx()
+			}
+		}()
 	}
 
 	// Determine bind IP for health checks
@@ -1044,8 +1120,17 @@ func startMiniAdminWithWorker(allServicesReady chan struct{}) {
 		*miniAdminOptions.dataDir = filepath.Join(*miniDataFolders, "admin")
 	}
 
-	// Start admin server in background
+	// Start admin server in background. Track completion in miniClientsWg so
+	// the Ctrl+C handler in runMini can wait for graceful shutdown before
+	// tearing down filer/volume/master.
+	if MiniClientsShutdownCtx != nil {
+		miniClientsWg.Add(1)
+	}
 	go func() {
+		if MiniClientsShutdownCtx != nil {
+			defer miniClientsWg.Done()
+		}
+		defer cancelAdminCtx()
 		var icebergPort int
 		if miniS3Options.portIceberg != nil {
 			icebergPort = *miniS3Options.portIceberg
@@ -1189,13 +1274,11 @@ func startMiniWorker(workerDir string) {
 
 	// Metrics server is already started in the main init function above, so no need to start it again here
 
-	// Start the worker
-	if MiniClusterCtx != nil {
-		go func() {
-			<-MiniClusterCtx.Done()
-			workerInstance.Stop()
-		}()
-	}
+	// Start the worker. Stop it when either the test-provided MiniClusterCtx
+	// or the mini-internal MiniClientsShutdownCtx (Ctrl+C) is cancelled.
+	OnMiniClientsShutdown(func() {
+		workerInstance.Stop()
+	})
 	err = workerInstance.Start()
 	if err != nil {
 		glog.Fatalf("Failed to start worker: %v", err)

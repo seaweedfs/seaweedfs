@@ -137,12 +137,9 @@ func (wo *WebDavOption) startWebDav() bool {
 		glog.Fatalf("WebDav Server listener on %s error: %v", listenAddress, err)
 	}
 
-	if MiniClusterCtx != nil {
-		go func() {
-			<-MiniClusterCtx.Done()
-			httpS.Shutdown(context.Background())
-		}()
-	}
+	OnMiniClientsShutdown(func() {
+		httpS.Shutdown(context.Background())
+	})
 
 	if *wo.tlsPrivateKey != "" {
 		glog.V(0).Infof("Start Seaweed WebDav Server %s at https %s", version.Version(), listenAddress)
