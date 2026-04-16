@@ -42,6 +42,7 @@ func (wfs *WFS) proactiveFlushOnce() {
 	wfs.fhMap.RUnlock()
 
 	for _, fh := range handles {
-		fh.dirtyPages.ProactiveFlush(nowNs, idleNs, maxHoldNs, fillRatio, proactiveFrontierLag)
+		isSeq := fh.dirtyPages.writerPattern.IsSequentialMode()
+		fh.dirtyPages.ProactiveFlush(nowNs, idleNs, maxHoldNs, fillRatio, proactiveFrontierLag, isSeq)
 	}
 }

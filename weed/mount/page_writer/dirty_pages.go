@@ -8,7 +8,7 @@ type DirtyPages interface {
 	LockForRead(startOffset, stopOffset int64)
 	UnlockForRead(startOffset, stopOffset int64)
 	EvictOneWritableChunk() bool
-	ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int) bool
+	ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int, isSequential bool) bool
 }
 
 func max(x, y int64) int64 {

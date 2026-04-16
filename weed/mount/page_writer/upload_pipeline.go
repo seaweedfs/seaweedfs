@@ -28,7 +28,6 @@ type UploadPipeline struct {
 	readerCountCond     *sync.Cond
 	accountant          *WriteBufferAccountant
 	lastWriteChunkIndex int64 // atomic: highest LogicChunkIndex written
-	isSequential        int32 // atomic bool: 1 if sequential, 0 if random
 }
 
 type SealedChunk struct {
@@ -89,14 +88,9 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
 
-	// track write frontier and pattern for proactive flushing
+	// track write frontier for proactive flushing
 	if int64(logicChunkIndex) > atomic.LoadInt64(&up.lastWriteChunkIndex) {
 		atomic.StoreInt64(&up.lastWriteChunkIndex, int64(logicChunkIndex))
-	}
-	if isSequential {
-		atomic.StoreInt32(&up.isSequential, 1)
-	} else {
-		atomic.StoreInt32(&up.isSequential, 0)
 	}
 
 	pageChunk, found := up.writableChunks[logicChunkIndex]
@@ -307,7 +301,7 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 // chunk was sealed. The caller (ChunkFlusher) invokes this periodically so
 // that partially-written chunks drain continuously instead of piling up
 // until fsync.
-func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, maxHoldNs int64, fillRatio int64, frontierLag int) bool {
+func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, maxHoldNs int64, fillRatio int64, frontierLag int, isSequential bool) bool {
 	if atomic.LoadInt32(&up.uploaderCount) >= up.concurrentWriterMax/2 {
 		return false
 	}
@@ -320,7 +314,7 @@ func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, max
 	}
 
 	frontier := atomic.LoadInt64(&up.lastWriteChunkIndex)
-	isSeq := atomic.LoadInt32(&up.isSequential) != 0
+	isSeq := isSequential
 
 	var bestIdx LogicChunkIndex = -1
 	var bestBytes int64 = -1
