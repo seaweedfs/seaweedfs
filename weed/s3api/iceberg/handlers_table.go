@@ -214,7 +214,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 		result := LoadTableResult{
 			MetadataLocation: metadataLocation,
 			Metadata:         metadata,
-			Config:           make(iceberg.Properties),
+			Config:           s.buildFileIOConfig(),
 		}
 		writeJSON(w, http.StatusOK, result)
 		return
@@ -302,7 +302,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	result := LoadTableResult{
 		MetadataLocation: finalLocation,
 		Metadata:         metadata,
-		Config:           make(iceberg.Properties),
+		Config:           s.buildFileIOConfig(),
 	}
 	writeJSON(w, http.StatusOK, result)
 }

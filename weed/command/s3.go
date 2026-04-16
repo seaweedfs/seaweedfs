@@ -518,7 +518,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
-	icebergServer.SetS3Endpoint(deriveS3AdvertisedEndpoint(*s3opt.bindIp, *s3opt.port))
+	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
@@ -551,11 +551,20 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 }
 
 // deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
-// Iceberg catalog clients as part of LoadTable FileIO config. The wildcard
-// bind addresses (0.0.0.0 / ::) are replaced with a routable host so the
-// URL is actually reachable by remote clients. See issue #9103.
-func deriveS3AdvertisedEndpoint(bindIP string, port int) string {
-	host := bindIP
+// Iceberg catalog clients as part of LoadTable FileIO config. An explicit
+// -s3.externalUrl / S3_EXTERNAL_URL wins so reverse-proxy deployments are
+// honored. Otherwise the scheme follows the TLS configuration, wildcard
+// bind addresses (0.0.0.0 / ::) are replaced with a routable host, and
+// IPv6 literals are bracketed via util.JoinHostPort. See issue #9103.
+func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
+	if ext := strings.TrimRight(s3opt.resolveExternalUrl(), "/"); ext != "" {
+		return ext
+	}
+
+	host := ""
+	if s3opt.bindIp != nil {
+		host = *s3opt.bindIp
+	}
 	switch host {
 	case "", "0.0.0.0", "::", "[::]":
 		if h, err := os.Hostname(); err == nil && h != "" {
@@ -564,5 +573,17 @@ func deriveS3AdvertisedEndpoint(bindIP string, port int) string {
 			host = "127.0.0.1"
 		}
 	}
-	return fmt.Sprintf("http://%s:%d", host, port)
+
+	scheme := "http"
+	port := 0
+	if s3opt.port != nil {
+		port = *s3opt.port
+	}
+	if s3opt.tlsPrivateKey != nil && *s3opt.tlsPrivateKey != "" {
+		scheme = "https"
+		if s3opt.portHttps != nil && *s3opt.portHttps > 0 {
+			port = *s3opt.portHttps
+		}
+	}
+	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
 }
