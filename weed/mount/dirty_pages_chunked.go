@@ -1,10 +1,8 @@
 package mount
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"math"
 	"sync"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -35,19 +33,10 @@ func newMemoryChunkPages(fh *FileHandle, chunkSize int64) *ChunkedDirtyPages {
 	swapFileDir := fh.wfs.option.getUniqueCacheDirForWrite()
 
 	dirtyPages.uploadPipeline = page_writer.NewUploadPipeline(fh.wfs.concurrentWriters, chunkSize,
-		dirtyPages.saveChunkedFileIntervalToStorage, dirtyPages.readExistingChunkData,
-		fh.wfs.option.ConcurrentWriters, swapFileDir,
+		dirtyPages.saveChunkedFileIntervalToStorage, fh.wfs.option.ConcurrentWriters, swapFileDir,
 		fh.wfs.writeBufferAccountant)
 
 	return dirtyPages
-}
-
-// readExistingChunkData reads committed file data into buf at the given offset.
-// Called by the upload pipeline to fill unwritten gaps in partial chunks.
-func (pages *ChunkedDirtyPages) readExistingChunkData(buf []byte, fileOffset int64) {
-	if pages.fh.entryChunkGroup != nil {
-		pages.fh.entryChunkGroup.ReadDataAt(context.Background(), math.MaxInt64, buf, fileOffset)
-	}
 }
 
 func (pages *ChunkedDirtyPages) AddPage(offset int64, data []byte, isSequential bool, tsNs int64) error {

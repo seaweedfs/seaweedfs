@@ -118,29 +118,3 @@ func (mc *MemChunk) SaveContent(saveFn SaveToStorageFunc) {
 		})
 	}
 }
-
-func (mc *MemChunk) FillGaps(fill FillChunkFunc) {
-	mc.Lock()
-	defer mc.Unlock()
-
-	if mc.usage.IsComplete(mc.chunkSize) {
-		return
-	}
-
-	chunkBase := int64(mc.logicChunkIndex) * mc.chunkSize
-	var covered int64
-	for t := mc.usage.head.next; t != mc.usage.tail; t = t.next {
-		if covered < t.StartOffset {
-			fill(mc.buf[covered:t.StartOffset], chunkBase+covered)
-		}
-		if t.stopOffset > covered {
-			covered = t.stopOffset
-		}
-	}
-	if covered < mc.chunkSize {
-		fill(mc.buf[covered:mc.chunkSize], chunkBase+covered)
-	}
-
-	mc.usage = newChunkWrittenIntervalList()
-	mc.usage.MarkWritten(0, mc.chunkSize, mc.lastWriteTsNs.Load())
-}
