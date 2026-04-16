@@ -137,7 +137,7 @@ func (wo *WebDavOption) startWebDav() bool {
 		glog.Fatalf("WebDav Server listener on %s error: %v", listenAddress, err)
 	}
 
-	OnMiniClientsShutdown(func() {
+	onMiniClientsShutdown(func() {
 		httpS.Shutdown(context.Background())
 	})
 

@@ -453,7 +453,7 @@ func (s3opt *S3Options) startS3Server() bool {
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			OnMiniClientsShutdown(func() {
+			onMiniClientsShutdown(func() {
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			})
@@ -491,7 +491,7 @@ func (s3opt *S3Options) startS3Server() bool {
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		OnMiniClientsShutdown(func() {
+		onMiniClientsShutdown(func() {
 			httpS.Shutdown(context.Background())
 			grpcS.Stop()
 		})
@@ -523,7 +523,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	OnMiniClientsShutdown(func() {
+	onMiniClientsShutdown(func() {
 		httpS.Shutdown(context.Background())
 	})
 	// Serve on localhost as well if we're bound to a different interface
