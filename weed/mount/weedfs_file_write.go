@@ -89,7 +89,7 @@ func (wfs *WFS) Write(cancel <-chan struct{}, in *fuse.WriteIn, data []byte) (wr
 	fh.dirtyMetadata = true
 
 	// Invalidate the mtime cache so the next Open will not set FOPEN_KEEP_CACHE.
-	wfs.openMtimeCache.Delete(in.NodeId)
+	wfs.invalidateOpenMtimeCache(in.NodeId)
 
 	// POSIX: clear SUID/SGID bits on write by non-root users.
 	if in.Uid != 0 {
