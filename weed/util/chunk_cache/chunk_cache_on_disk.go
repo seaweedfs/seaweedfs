@@ -117,11 +117,17 @@ func (v *ChunkCacheVolume) Reset() (*ChunkCacheVolume, error) {
 // dropReadCache advises the kernel to drop page cache for the byte range
 // just read. This is best-effort; failures are logged at V(4).
 func (v *ChunkCacheVolume) dropReadCache(offset int64, length int64) {
+	if length <= 0 {
+		return
+	}
 	type fdProvider interface {
 		Fd() uintptr
 	}
 	if fp, ok := v.DataBackend.(fdProvider); ok {
 		fd := int(fp.Fd())
+		if fd < 0 {
+			return
+		}
 		if err := util.DropOSPageCache(fd, offset, length); err != nil {
 			glog.V(4).Infof("fadvise DONTNEED %s offset %d len %d: %v", v.fileName, offset, length, err)
 		}
