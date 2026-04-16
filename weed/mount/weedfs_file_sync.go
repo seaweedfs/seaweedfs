@@ -297,6 +297,9 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 
 	saveFunc := wfs.saveDataAsChunk(fileFullPath)
 	chunkSize := wfs.option.ChunkSizeLimit
+	if int64(fileSize) < chunkSize {
+		chunkSize = int64(fileSize)
+	}
 
 	var newChunks []*filer_pb.FileChunk
 	var offset int64
