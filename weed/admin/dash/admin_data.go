@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sort"
 	"time"
@@ -216,36 +217,65 @@ func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, topology)
 }
 
-// getMasterNodesStatus checks status of all master nodes
+// getMasterNodesStatus returns the full set of master nodes in the cluster.
+// It prefers the authoritative raft membership (RaftListClusterServers) and
+// falls back to the currently-connected master if the raft call fails, so the
+// dashboard never shows an empty list.
 func (s *AdminServer) getMasterNodesStatus() []MasterNode {
-	var masterNodes []MasterNode
+	masterMap := make(map[string]MasterNode)
+	raftCallSucceeded := false
 
-	// Since we have a single master address, create one entry
-	var isLeader bool = true // Assume leader since it's the only master we know about
-
-	// Try to get leader info from this master
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		_, err := client.GetMasterConfiguration(context.Background(), &master_pb.GetMasterConfigurationRequest{})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resp, err := client.RaftListClusterServers(ctx, &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
 			return err
 		}
-		// For now, assume this master is the leader since we can connect to it
-		isLeader = true
+		raftCallSucceeded = true
+		for _, server := range resp.ClusterServers {
+			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
+			// error, so pre-validate the raft address with net.SplitHostPort
+			// and skip malformed entries instead of taking the process down.
+			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
+				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
+				continue
+			}
+			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
+			masterMap[httpAddress] = MasterNode{
+				Address:  httpAddress,
+				IsLeader: server.IsLeader,
+			}
+		}
 		return nil
 	})
 
 	if err != nil {
-		isLeader = false
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		glog.Errorf("Failed to list raft cluster masters from %s: %v", currentMaster, err)
 	}
 
-	currentMaster := s.masterClient.GetMaster(context.Background())
-	if currentMaster != "" {
-		masterNodes = append(masterNodes, MasterNode{
-			Address:  pb.ServerAddress(currentMaster).ToHttpAddress(),
-			IsLeader: isLeader,
-		})
+	if len(masterMap) == 0 {
+		currentMaster := s.masterClient.GetMaster(context.Background())
+		if currentMaster != "" {
+			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
+			// A successful empty raft response means raft is not initialized
+			// (standalone/non-raft cluster); the only master IS the leader.
+			// A failed RPC means connectivity issue; do not claim leadership.
+			masterMap[addr] = MasterNode{
+				Address:  addr,
+				IsLeader: raftCallSucceeded,
+			}
+		}
 	}
 
+	masterNodes := make([]MasterNode, 0, len(masterMap))
+	for _, m := range masterMap {
+		masterNodes = append(masterNodes, m)
+	}
+	sort.Slice(masterNodes, func(i, j int) bool {
+		return masterNodes[i].Address < masterNodes[j].Address
+	})
 	return masterNodes
 }
 

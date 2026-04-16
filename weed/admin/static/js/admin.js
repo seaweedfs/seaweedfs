@@ -583,21 +583,23 @@ function exportBucketList() {
 
         return {
             name: cells[0].textContent.trim(),
-            created: cells[1].textContent.trim(),
-            objects: cells[2].textContent.trim(),
-            size: cells[3].textContent.trim(),
-            quota: cells[4].textContent.trim()
+            owner: cells[1].textContent.trim(),
+            created: cells[2].textContent.trim(),
+            logicalSize: cells[3].textContent.trim(),
+            physicalSize: cells[4].textContent.trim(),
+            quota: cells[5].textContent.trim()
         };
     }).filter(item => item !== null);
 
     // Convert to CSV
     const csv = [
-        ['Name', 'Created', 'Objects', 'Size', 'Quota'].join(','),
+        ['Name', 'Owner', 'Created', 'Logical Size', 'Physical Size', 'Quota'].join(','),
         ...data.map(row => [
             row.name,
+            row.owner,
             row.created,
-            row.objects,
-            row.size,
+            row.logicalSize,
+            row.physicalSize,
             row.quota
         ].join(','))
     ].join('\n');

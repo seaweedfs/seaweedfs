@@ -543,13 +543,6 @@ func (s *AdminServer) sortBuckets(buckets []S3Bucket, sortBy, sortOrder string) 
 				}
 				return a.CreatedAt.Before(b.CreatedAt)
 			}
-		case "objects":
-			if a.ObjectCount != b.ObjectCount {
-				if desc {
-					return a.ObjectCount > b.ObjectCount
-				}
-				return a.ObjectCount < b.ObjectCount
-			}
 		case "logical_size":
 			if a.LogicalSize != b.LogicalSize {
 				if desc {
@@ -646,14 +639,11 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 				// Determine collection name for this bucket
 				collectionName := getCollectionName(filerConfig.FilerGroup, bucketName)
 
-				// Get size and object count from collection data
 				var physicalSize int64
 				var logicalSize int64
-				var objectCount int64
 				if collectionData, exists := collectionMap[collectionName]; exists {
 					physicalSize = collectionData.PhysicalSize
 					logicalSize = collectionData.LogicalSize
-					objectCount = collectionData.FileCount
 				}
 
 				// Get quota information from entry
@@ -695,7 +685,6 @@ func (s *AdminServer) GetS3Buckets() ([]S3Bucket, error) {
 					CreatedAt:          createdAt,
 					LogicalSize:        logicalSize,
 					PhysicalSize:       physicalSize,
-					ObjectCount:        objectCount,
 					LastModified:       lastModified,
 					Quota:              quota,
 					QuotaEnabled:       quotaEnabled,
@@ -750,7 +739,6 @@ func (s *AdminServer) GetBucketDetails(bucketName string) (*BucketDetails, error
 	} else if data, ok := stats[collectionName]; ok {
 		details.Bucket.LogicalSize = data.LogicalSize
 		details.Bucket.PhysicalSize = data.PhysicalSize
-		details.Bucket.ObjectCount = data.FileCount
 	}
 
 	err = s.WithFilerClient(func(client filer_pb.SeaweedFilerClient) error {
@@ -1672,11 +1660,13 @@ type collectionStats struct {
 	FileCount    int64
 }
 
-// ecVolumeCounts is used to correctly combine EC volume counts reported by
-// multiple nodes. Every node holding any shard of an EC volume reports the
-// same file_count (total entries in the replicated .ecx), so we dedupe it
-// per volume id. In contrast, a needle delete is applied on exactly one
-// shard holder, so each node reports its own local tombstone count and the
+// ecVolumeCounts combines EC volume counts reported by multiple nodes.
+// Every node holding any shard of an EC volume reports the same file_count
+// (total entries in the replicated .ecx), so we dedupe it per volume id by
+// taking the max — a node that has not yet finished loading .ecx would
+// otherwise pin the aggregate at 0 and zero out the bucket object count.
+// In contrast, a needle delete is recorded locally on the shard holder
+// that served it, so each node reports its own tombstone count and the
 // true delete total is the sum across nodes.
 type ecVolumeCounts struct {
 	collection  string
@@ -1723,10 +1713,18 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 						data.LogicalSize += int64(shards.MinusParityShards().TotalSize())
 						collectionMap[collection] = data
 
+						// fileCount is volume-wide (same .ecx on every shard
+						// holder) so take the max to dedupe — a node that has
+						// not yet finished loading .ecx reports 0 and must not
+						// pin the aggregate. deleteCount is node-local and is
+						// summed across shard holders.
 						agg, ok := ecVolumeAgg[ecShardInfo.Id]
 						if !ok {
-							agg = &ecVolumeCounts{collection: collection, fileCount: ecShardInfo.FileCount}
+							agg = &ecVolumeCounts{collection: collection}
 							ecVolumeAgg[ecShardInfo.Id] = agg
+						}
+						if ecShardInfo.FileCount > agg.fileCount {
+							agg.fileCount = ecShardInfo.FileCount
 						}
 						agg.deleteCount += ecShardInfo.DeleteCount
 					}
@@ -1736,16 +1734,13 @@ func collectCollectionStats(topologyInfo *master_pb.TopologyInfo) map[string]col
 	}
 
 	// Fold EC per-volume counts into the collection totals. fileCount is
-	// already deduped (set once per volume), deleteCount is the sum of
-	// local tombstones across every node holding shards of the volume.
+	// deduped via max across every node reporting shards for the volume;
+	// deleteCount is summed across the same nodes.
 	for vid, agg := range ecVolumeAgg {
 		data := collectionMap[agg.collection]
 		if agg.fileCount >= agg.deleteCount {
 			data.FileCount += int64(agg.fileCount - agg.deleteCount)
 		} else {
-			// Should not happen in steady state — indicates a node reporting
-			// a stale fileCount, a skewed heartbeat, or a delete-counter bug.
-			// Defend the UI by skipping the add and surface the anomaly.
 			glog.Warningf("ec volume %d in collection %q: summed delete_count=%d exceeds file_count=%d; skipping object count",
 				vid, agg.collection, agg.deleteCount, agg.fileCount)
 		}
