@@ -356,7 +356,12 @@ func (fs *FilerServer) saveAsChunk(ctx context.Context, so *operation.StorageOpt
 
 		err := util.Retry("saveAsChunk", func() error {
 			// assign one file id for one chunk
-			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+			// Chunk size isn't known until the reader is drained below, so
+			// pass 0 and let the master fall back to its 1 MB default
+			// estimate. saveAsChunk is used for manifest metadata where
+			// chunks are small, and for autochunk writes where the 1 MB
+			// default is a reasonable approximation.
+			assignedFileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, 0)
 			if assignErr != nil {
 				return assignErr
 			}

@@ -454,16 +454,17 @@ func (s3a *S3ApiServer) putToFiler(r *http.Request, filePath string, dataReader 
 	}
 
 	// Create assign function for chunked upload
-	assignFunc := func(ctx context.Context, count int) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
+	assignFunc := func(ctx context.Context, count int, expectedDataSize uint64) (*operation.VolumeAssignRequest, *operation.AssignResult, error) {
 		var assignResult *filer_pb.AssignVolumeResponse
 		err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-				Count:       int32(count),
-				Replication: "",
-				Collection:  collection,
-				DiskType:    "",
-				DataCenter:  s3a.option.DataCenter,
-				Path:        filePath,
+				Count:            int32(count),
+				Replication:      "",
+				Collection:       collection,
+				DiskType:         "",
+				DataCenter:       s3a.option.DataCenter,
+				Path:             filePath,
+				ExpectedDataSize: expectedDataSize,
 			})
 			if err != nil {
 				return fmt.Errorf("assign volume: %w", err)

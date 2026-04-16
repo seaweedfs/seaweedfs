@@ -133,6 +133,14 @@ func (fs *FilerServer) doCacheRemoteObjectToLocalCluster(ctx context.Context, re
 		chunkSize = (entry.Remote.RemoteSize + 999) / 1000
 	}
 
+	// Now that chunkSize is known, hint it to the master so per-chunk
+	// assigns don't fall back to the 1 MB default estimate. Slightly over-
+	// estimates for the final partial chunk (< chunkSize) by design.
+	assignRequest.ExpectedDataSize = uint64(chunkSize)
+	if altRequest != nil {
+		altRequest.ExpectedDataSize = uint64(chunkSize)
+	}
+
 	dest := util.FullPath(remoteStorageMountedLocation.Path).Child(string(util.FullPath(req.Directory).Child(req.Name))[len(localMountedDir):])
 
 	var chunks []*filer_pb.FileChunk

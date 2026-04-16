@@ -383,7 +383,7 @@ func (fs *FilerServer) tusWriteData(ctx context.Context, session *TusSession, of
 		chunkData := chunkBuf[:n]
 
 		// Assign file ID from master for this sub-chunk
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, uint64(n))
 		if assignErr != nil {
 			uploadErr = fmt.Errorf("assign volume: %w", assignErr)
 			break
