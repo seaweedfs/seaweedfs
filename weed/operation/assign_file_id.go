@@ -70,7 +70,22 @@ func Assign(ctx context.Context, masterFn GetMasterFn, grpcDialOption grpc.DialO
 		lastError = util.RetryWithBackoff(deadlineCtx, "assign", remaining,
 			func(err error) bool {
 				st, ok := status.FromError(err)
-				return ok && st.Code() == codes.Unavailable
+				if !ok {
+					return false
+				}
+				switch st.Code() {
+				case codes.Unavailable:
+					return true
+				case codes.Canceled, codes.DeadlineExceeded:
+					// A stale cached gRPC channel (e.g., master restart behind
+					// a k8s Service VIP) can return Canceled/DeadlineExceeded
+					// immediately even though the caller's context is still
+					// live. The first failure invalidates the cached ClientConn
+					// via shouldInvalidateConnection; retry so the next attempt
+					// dials a fresh channel.
+					return deadlineCtx.Err() == nil
+				}
+				return false
 			},
 			func() error {
 				// Per-attempt timeout to prevent a single slow RPC from consuming the entire retry budget
