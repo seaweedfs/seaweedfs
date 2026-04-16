@@ -68,7 +68,8 @@ func TestShouldMergeChunks_JustOverDouble(t *testing.T) {
 }
 
 func TestShouldMergeChunks_ManifestExtendFileSize(t *testing.T) {
-	// Compacted chunks are small relative to file extended by manifest.
+	// One manifest extends the file. Total stored = 100 (regular) + 900
+	// (manifest) = 1000 vs 2*1000 = 2000 → no merge.
 	compacted := []*filer_pb.FileChunk{
 		{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 1},
 	}
@@ -77,12 +78,13 @@ func TestShouldMergeChunks_ManifestExtendFileSize(t *testing.T) {
 	}
 	_, _, merge := shouldMergeChunks(compacted, manifest)
 	if merge {
-		t.Fatal("manifest-extended file should not merge when compacted chunks are small")
+		t.Fatal("single manifest extending file should not merge")
 	}
 }
 
-func TestShouldMergeChunks_ManifestChunksSizeIgnored(t *testing.T) {
-	// Only compacted chunk sizes count toward totalChunkSize.
+func TestShouldMergeChunks_ManifestSizesCounted(t *testing.T) {
+	// Manifest sizes must count toward totalChunkSize so that overlapping
+	// manifests trigger merge.
 	compacted := []*filer_pb.FileChunk{
 		{Offset: 0, Size: 100, FileId: "a", ModifiedTsNs: 1},
 	}
@@ -90,11 +92,35 @@ func TestShouldMergeChunks_ManifestChunksSizeIgnored(t *testing.T) {
 		{Offset: 0, Size: 100, FileId: "m", ModifiedTsNs: 2, IsChunkManifest: true},
 	}
 	total, _, merge := shouldMergeChunks(compacted, manifest)
-	if total != 100 {
-		t.Fatalf("totalChunkSize should only count compacted, got %d", total)
+	if total != 200 {
+		t.Fatalf("totalChunkSize should count compacted + manifests, got %d", total)
 	}
 	if merge {
-		t.Fatal("should not merge")
+		t.Fatal("2x total on 100-byte file should not merge (need >2x)")
+	}
+}
+
+func TestShouldMergeChunks_AccumulatedManifests(t *testing.T) {
+	// Simulates the real bug: multiple manifests each covering the full file
+	// accumulate across flush cycles. Without counting manifest sizes, the
+	// merge condition never fires and storage bloats indefinitely.
+	compacted := []*filer_pb.FileChunk{
+		{Offset: 0, Size: 1000, FileId: "a", ModifiedTsNs: 100},
+	}
+	// 5 manifests each covering the full file — successive flush cycles
+	var manifests []*filer_pb.FileChunk
+	for i := 0; i < 5; i++ {
+		manifests = append(manifests, &filer_pb.FileChunk{
+			Offset: 0, Size: 1000, FileId: string(rune('m' + i)),
+			IsChunkManifest: true,
+		})
+	}
+	total, fileSize, merge := shouldMergeChunks(compacted, manifests)
+	// total = 1000 (regular) + 5*1000 (manifests) = 6000
+	// fileSize = 1000
+	// 6000 > 2*1000 → merge
+	if !merge {
+		t.Fatalf("accumulated overlapping manifests should trigger merge (total=%d fileSize=%d)", total, fileSize)
 	}
 }
 
