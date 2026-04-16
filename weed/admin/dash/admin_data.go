@@ -223,6 +223,7 @@ func (s *AdminServer) ShowOverview(w http.ResponseWriter, r *http.Request) {
 // dashboard never shows an empty list.
 func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	masterMap := make(map[string]MasterNode)
+	raftCallSucceeded := false
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -231,6 +232,7 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		if err != nil {
 			return err
 		}
+		raftCallSucceeded = true
 		for _, server := range resp.ClusterServers {
 			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
 			// error, so pre-validate the raft address with net.SplitHostPort
@@ -257,11 +259,12 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
-			// Do not claim leadership when raft state is unreachable —
-			// the UI should surface uncertainty rather than mislead operators.
+			// A successful empty raft response means raft is not initialized
+			// (standalone/non-raft cluster); the only master IS the leader.
+			// A failed RPC means connectivity issue; do not claim leadership.
 			masterMap[addr] = MasterNode{
 				Address:  addr,
-				IsLeader: false,
+				IsLeader: raftCallSucceeded,
 			}
 		}
 	}
