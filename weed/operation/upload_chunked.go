@@ -36,7 +36,7 @@ type ChunkedUploadOption struct {
 	Jwt             security.EncodedJwt
 	MimeType        string
 	Cipher          bool // encrypt data on volume servers
-	AssignFunc      func(ctx context.Context, count int) (*VolumeAssignRequest, *AssignResult, error)
+	AssignFunc      func(ctx context.Context, count int, expectedDataSize uint64) (*VolumeAssignRequest, *AssignResult, error)
 	UploadFunc      func(ctx context.Context, data []byte, option *UploadOption) (*UploadResult, error) // Optional: for testing
 }
 
@@ -146,7 +146,7 @@ uploadLoop:
 
 		// Upload chunk in parallel goroutine
 		wg.Add(1)
-		go func(offset int64, buf *bytes.Buffer) {
+		go func(offset int64, buf *bytes.Buffer, size int64) {
 			defer func() {
 				chunkBufferPool.Put(buf)
 				<-bytesBufferLimitChan
@@ -154,7 +154,7 @@ uploadLoop:
 			}()
 
 			// Assign volume for this chunk
-			_, assignResult, assignErr := opt.AssignFunc(ctx, 1)
+			_, assignResult, assignErr := opt.AssignFunc(ctx, 1, uint64(size))
 			if assignErr != nil {
 				uploadErrLock.Lock()
 				if uploadErr == nil {
@@ -235,7 +235,7 @@ uploadLoop:
 			fileChunks = append(fileChunks, chunk)
 			fileChunksLock.Unlock()
 
-		}(chunkOffset, bytesBuffer)
+		}(chunkOffset, bytesBuffer, dataSize)
 
 		// Update offset for next chunk
 		chunkOffset += dataSize

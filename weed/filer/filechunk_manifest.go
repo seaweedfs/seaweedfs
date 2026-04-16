@@ -270,7 +270,7 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 		}
 	}
 
-	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, 0)
+	manifestChunk, err = saveFunc(bytes.NewReader(data), "", 0, 0, uint64(len(data)))
 	if err != nil {
 		return nil, err
 	}
@@ -281,4 +281,4 @@ func mergeIntoManifest(saveFunc SaveDataAsChunkFunctionType, dataChunks []*filer
 	return
 }
 
-type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error)
+type SaveDataAsChunkFunctionType func(reader io.Reader, name string, offset int64, tsNs int64, expectedDataSize uint64) (chunk *filer_pb.FileChunk, err error)

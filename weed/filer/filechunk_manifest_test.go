@@ -132,7 +132,7 @@ func newTestManifestStore() *testManifestStore {
 }
 
 func (s *testManifestStore) saveFunc() SaveDataAsChunkFunctionType {
-	return func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
+	return func(reader io.Reader, name string, offset int64, tsNs int64, _ uint64) (*filer_pb.FileChunk, error) {
 		data, err := io.ReadAll(reader)
 		if err != nil {
 			return nil, err

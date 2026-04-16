@@ -553,7 +553,7 @@ func detectMimeType(f *os.File) string {
 	return mimeType
 }
 
-func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
+func (worker *FileCopyWorker) saveDataAsChunk(reader io.Reader, name string, offset int64, tsNs int64, _ uint64) (chunk *filer_pb.FileChunk, err error) {
 	uploader, uploaderErr := operation.NewUploader()
 	if uploaderErr != nil {
 		return nil, fmt.Errorf("upload data: %w", uploaderErr)
