@@ -39,18 +39,49 @@ jobs:
       with:
         go-version-file: 'go.mod'
 
-    - name: Build SeaweedFS e2e image
+    - name: Start local Docker registry
+      run: docker run -d --restart=always -p 5000:5000 --name registry registry:2
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v4
+      with:
+        driver-opts: network=host
+
+    - name: Build weed race binary
       run: |
         cd docker
-        make build_e2e || {
-          echo "Retrying without buildx cache..."
-          make binary_race
-          docker build --no-cache -t chrislusf/seaweedfs:e2e -f Dockerfile.e2e .
-        }
+        make binary_race
+
+    - name: Build SeaweedFS e2e image
+      uses: docker/build-push-action@v6
+      with:
+        context: docker
+        file: docker/Dockerfile.e2e
+        tags: localhost:5000/chrislusf/seaweedfs:e2e
+        push: true
+        cache-from: type=gha,scope=pjdfstest-e2e
+        cache-to: type=gha,mode=max,scope=pjdfstest-e2e
+
+    - name: Tag e2e image for docker compose
+      run: |
+        docker pull localhost:5000/chrislusf/seaweedfs:e2e
+        docker tag localhost:5000/chrislusf/seaweedfs:e2e chrislusf/seaweedfs:e2e
 
     - name: Build pjdfstest image
+      uses: docker/build-push-action@v6
+      with:
+        context: test/pjdfstest
+        build-contexts: |
+          chrislusf/seaweedfs:e2e=docker-image://localhost:5000/chrislusf/seaweedfs:e2e
+        tags: localhost:5000/chrislusf/seaweedfs:pjdfstest
+        push: true
+        cache-from: type=gha,scope=pjdfstest-harness
+        cache-to: type=gha,mode=max,scope=pjdfstest-harness
+
+    - name: Tag pjdfstest image for docker compose
       run: |
-        docker build -t chrislusf/seaweedfs:pjdfstest test/pjdfstest/
+        docker pull localhost:5000/chrislusf/seaweedfs:pjdfstest
+        docker tag localhost:5000/chrislusf/seaweedfs:pjdfstest chrislusf/seaweedfs:pjdfstest
 
     - name: Start SeaweedFS cluster
       run: |
