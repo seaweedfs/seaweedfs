@@ -41,19 +41,15 @@ func (g *SingleFlightGroup) Do(key string, fn func() ([]byte, error)) ([]byte, e
 	g.m[key] = c
 	g.mu.Unlock()
 
+	// Use defer to ensure cleanup even if fn panics. This prevents
+	// waiters from hanging indefinitely and removes the stale key.
+	defer func() {
+		g.mu.Lock()
+		delete(g.m, key)
+		c.wg.Done()
+		g.mu.Unlock()
+	}()
+
 	c.val, c.err = fn()
-
-	// Hold the lock while signalling completion and removing the key.
-	// This ensures that any goroutine currently in Do either:
-	//   - holds a reference to c and will receive the result via wg.Wait, or
-	//   - acquires the lock after delete and starts a fresh call.
-	// Without the lock, a new caller could find the key missing (after
-	// delete) and start a duplicate fn before wg.Done wakes existing
-	// waiters.
-	g.mu.Lock()
-	delete(g.m, key)
-	c.wg.Done()
-	g.mu.Unlock()
-
 	return c.val, c.err
 }
