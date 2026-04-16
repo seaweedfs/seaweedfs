@@ -12,20 +12,22 @@ import (
 type LogicChunkIndex int
 
 type UploadPipeline struct {
-	uploaderCount      int32
-	uploaderCountCond  *sync.Cond
-	filepath           util.FullPath
-	ChunkSize          int64
-	uploaders          *util.LimitedConcurrentExecutor
-	saveToStorageFn    SaveToStorageFunc
-	writableChunkLimit int
-	swapFile           *SwapFile
-	chunksLock         sync.Mutex
-	writableChunks     map[LogicChunkIndex]PageChunk
-	sealedChunks       map[LogicChunkIndex]*SealedChunk
-	activeReadChunks   map[LogicChunkIndex]int
-	readerCountCond    *sync.Cond
-	accountant         *WriteBufferAccountant
+	uploaderCount       int32
+	uploaderCountCond   *sync.Cond
+	filepath            util.FullPath
+	ChunkSize           int64
+	uploaders           *util.LimitedConcurrentExecutor
+	saveToStorageFn     SaveToStorageFunc
+	writableChunkLimit  int
+	concurrentWriterMax int32
+	swapFile            *SwapFile
+	chunksLock          sync.Mutex
+	writableChunks      map[LogicChunkIndex]PageChunk
+	sealedChunks        map[LogicChunkIndex]*SealedChunk
+	activeReadChunks    map[LogicChunkIndex]int
+	readerCountCond     *sync.Cond
+	accountant          *WriteBufferAccountant
+	lastWriteChunkIndex int64 // atomic: highest LogicChunkIndex written
 }
 
 type SealedChunk struct {
@@ -63,16 +65,17 @@ func (sc *SealedChunk) FreeReference(messageOnFree string) {
 // any synchronization.
 func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, bufferChunkLimit int, swapFileDir string, accountant *WriteBufferAccountant) *UploadPipeline {
 	t := &UploadPipeline{
-		ChunkSize:          chunkSize,
-		writableChunks:     make(map[LogicChunkIndex]PageChunk),
-		sealedChunks:       make(map[LogicChunkIndex]*SealedChunk),
-		uploaders:          writers,
-		uploaderCountCond:  sync.NewCond(&sync.Mutex{}),
-		saveToStorageFn:    saveToStorageFn,
-		activeReadChunks:   make(map[LogicChunkIndex]int),
-		writableChunkLimit: bufferChunkLimit,
-		swapFile:           NewSwapFile(swapFileDir, chunkSize),
-		accountant:         accountant,
+		ChunkSize:           chunkSize,
+		writableChunks:      make(map[LogicChunkIndex]PageChunk),
+		sealedChunks:        make(map[LogicChunkIndex]*SealedChunk),
+		uploaders:           writers,
+		uploaderCountCond:   sync.NewCond(&sync.Mutex{}),
+		saveToStorageFn:     saveToStorageFn,
+		activeReadChunks:    make(map[LogicChunkIndex]int),
+		writableChunkLimit:  bufferChunkLimit,
+		concurrentWriterMax: int32(bufferChunkLimit),
+		swapFile:            NewSwapFile(swapFileDir, chunkSize),
+		accountant:          accountant,
 	}
 	t.readerCountCond = sync.NewCond(&t.chunksLock)
 	return t
@@ -84,6 +87,17 @@ func (up *UploadPipeline) SaveDataAt(p []byte, off int64, isSequential bool, tsN
 	defer up.chunksLock.Unlock()
 
 	logicChunkIndex := LogicChunkIndex(off / up.ChunkSize)
+
+	// track write frontier for proactive flushing (CAS to avoid regression)
+	for {
+		old := atomic.LoadInt64(&up.lastWriteChunkIndex)
+		if int64(logicChunkIndex) <= old {
+			break
+		}
+		if atomic.CompareAndSwapInt64(&up.lastWriteChunkIndex, old, int64(logicChunkIndex)) {
+			break
+		}
+	}
 
 	pageChunk, found := up.writableChunks[logicChunkIndex]
 	if !found {
@@ -281,6 +295,59 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 		return false
 	}
 	up.moveToSealed(up.writableChunks[bestIndex], bestIndex)
+	return true
+}
+
+// ProactiveFlush seals at most one idle writable chunk that is unlikely to
+// receive further writes, submitting it for async upload. Returns true if a
+// chunk was sealed. The caller (ChunkFlusher) invokes this periodically so
+// that partially-written chunks drain continuously instead of piling up
+// until fsync.
+func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, maxHoldNs int64, fillRatio int64, frontierLag int, isSequential bool) bool {
+	if up.concurrentWriterMax <= 0 || atomic.LoadInt32(&up.uploaderCount)*2 >= up.concurrentWriterMax {
+		return false
+	}
+
+	up.chunksLock.Lock()
+	defer up.chunksLock.Unlock()
+
+	if len(up.writableChunks) == 0 {
+		return false
+	}
+
+	frontier := atomic.LoadInt64(&up.lastWriteChunkIndex)
+	isSeq := isSequential
+
+	var bestIdx LogicChunkIndex = -1
+	var bestBytes int64 = -1
+
+	for lci, chunk := range up.writableChunks {
+		lastWrite := chunk.LastWriteTsNs()
+		if lastWrite == 0 {
+			continue
+		}
+		age := nowNs - lastWrite
+		if age < idleThresholdNs {
+			continue
+		}
+		written := chunk.WrittenSize()
+		nearlyFull := written >= fillRatio
+		behindFrontier := isSeq && int64(lci) <= frontier-int64(frontierLag)
+		stale := age >= maxHoldNs
+
+		if !nearlyFull && !behindFrontier && !stale {
+			continue
+		}
+		if written > bestBytes {
+			bestIdx = lci
+			bestBytes = written
+		}
+	}
+	if bestIdx < 0 {
+		return false
+	}
+	glog.V(3).Infof("%s proactive flush chunk %d (%d bytes written)", up.filepath, bestIdx, bestBytes)
+	up.moveToSealed(up.writableChunks[bestIdx], bestIdx)
 	return true
 }
 

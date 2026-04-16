@@ -85,6 +85,10 @@ func (pw *PageWriter) EvictOneWritableChunk() bool {
 	return pw.randomWriter.EvictOneWritableChunk()
 }
 
+func (pw *PageWriter) ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio int64, frontierLag int, isSequential bool) bool {
+	return pw.randomWriter.ProactiveFlush(nowNs, idleThresholdNs, maxHoldNs, fillRatio, frontierLag, isSequential)
+}
+
 func max(x, y int64) int64 {
 	if x > y {
 		return x
