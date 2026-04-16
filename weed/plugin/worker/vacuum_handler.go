@@ -517,6 +517,7 @@ func (h *VacuumHandler) collectVolumeMetrics(
 func deriveVacuumConfig(values map[string]*plugin_pb.ConfigValue) *vacuumtask.Config {
 	config := vacuumtask.NewDefaultConfig()
 	config.GarbageThreshold = readDoubleConfig(values, "garbage_threshold", config.GarbageThreshold)
+	config.MinVolumeAgeSeconds = 0 // plugin worker does not filter by volume age
 	return config
 }
 
