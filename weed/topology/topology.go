@@ -354,7 +354,9 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		sizePerFile = expectedDataSize
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
-	volumeLayout.RecordAssign(vid, int64(pendingBytes))
+	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
+		volumeLayout.AdjustActiveVolumeCountForFull(vid)
+	}
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
 	return fileId, count, volumeLocationList, shouldGrow, nil
@@ -512,14 +514,18 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
 	}
-	// Update effective sizes for all reported volumes (decay pending estimates)
+	// Update effective sizes for all reported volumes (decay pending estimates).
+	// If decay brings a volume eagerly removed by RecordAssign back under the
+	// writable threshold, restore the matching activeVolumeCount.
 	for _, v := range volumeInfos {
 		if v.ReplicaPlacement == nil {
 			continue
 		}
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision)
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
+		}
 	}
 	return
 }

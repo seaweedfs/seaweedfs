@@ -108,7 +108,15 @@ type volumeSizeTracking struct {
 	reportedSize    uint64    // last heartbeat-reported size (dedup replicas)
 	compactRevision uint32    // detect compaction to reset instead of decay
 	lastUpdateTime  time.Time // dedup replicas within the same heartbeat cycle
+	fullSince       time.Time // non-zero while the volume is eagerly marked full by RecordAssign
 }
+
+// capacityRecoveryDelay is the minimum time a volume must stay out of the
+// writable list after being eagerly removed by RecordAssign before it can
+// be considered for re-addition by heartbeat-driven decay. Combined with
+// the effectiveSize hysteresis band, this avoids bouncing the volume in
+// and out of writable within a single burst of assigns.
+const capacityRecoveryDelay = 30 * time.Second
 
 // mapping from volume to its locations, inverted from server to volume
 type VolumeLayout struct {
@@ -210,7 +218,12 @@ func (vl *VolumeLayout) rememberOversizedVolume(v *storage.VolumeInfo, dn *DataN
 // If the compact revision changed, the size drop is from compaction (not
 // pending writes), so we reset effectiveSize to the reported size instead of
 // decaying.
-func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) {
+//
+// Returns recoveredToWritable = true when decay brought a volume that was
+// previously eagerly removed by RecordAssign back under the writable
+// threshold and this call re-added it to the writable list. The caller
+// should mirror the activeVolumeCount bookkeeping.
+func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint64, compactRevision uint32) (recoveredToWritable bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
@@ -225,7 +238,7 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 		}
 		vl.sizeTracking[vid] = st
 	} else if now.Sub(st.lastUpdateTime) < 2*time.Second {
-		return // duplicate replica in the same heartbeat cycle
+		return false // duplicate replica in the same heartbeat cycle
 	} else {
 		st.lastUpdateTime = now
 		st.reportedSize = reportedSize
@@ -240,11 +253,40 @@ func (vl *VolumeLayout) UpdateVolumeSize(vid needle.VolumeId, reportedSize uint6
 		}
 	}
 
-	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
+	crowdedThreshold := uint64(float64(vl.volumeSizeLimit) * VolumeGrowStrategy.Threshold)
+	if st.effectiveSize > crowdedThreshold {
 		vl.setVolumeCrowded(vid)
-	} else {
-		vl.removeFromCrowded(vid)
+		return false
 	}
+	vl.removeFromCrowded(vid)
+
+	// Recovery path: if we eagerly removed this volume from writables in
+	// RecordAssign, decay may now have brought effectiveSize back under
+	// the crowded threshold. Re-add it — but only after the recovery
+	// delay has elapsed, so a steady stream of assigns near the limit
+	// does not bounce the volume in and out of writables.
+	if st.fullSince.IsZero() {
+		return false
+	}
+	if now.Sub(st.fullSince) < capacityRecoveryDelay {
+		return false
+	}
+	if reportedSize >= vl.volumeSizeLimit {
+		return false // actual on-disk size still over limit; stay out
+	}
+	if vl.oversizedVolumes.IsTrue(vid) {
+		return false
+	}
+	if !vl.enoughCopies(vid) || !vl.isAllWritable(vid) {
+		return false
+	}
+	if !vl.setVolumeWritable(vid) {
+		return false // already writable (shouldn't happen, but be safe)
+	}
+	st.fullSince = time.Time{}
+	glog.V(0).Infof("Volume %d recovered to writable (effective=%d, reported=%d, limit=%d).",
+		vid, st.effectiveSize, reportedSize, vl.volumeSizeLimit)
+	return true
 }
 
 func (vl *VolumeLayout) UnRegisterVolume(v *storage.VolumeInfo, dn *DataNode) {
@@ -325,20 +367,82 @@ func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 }
 
 // RecordAssign adds the estimated byte size to the volume's tracked effective
-// size and marks it crowded if it crosses the threshold.
-func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
+// size and updates the volume's writable state:
+//
+//   - at the crowded threshold (e.g. 90%): marks crowded to trigger growth.
+//   - at the hard limit (100%): removes the volume from the writable list
+//     immediately so new assigns stop landing on it. Returns true if this
+//     call was what removed the volume, so the caller can mirror the
+//     disk-usage accounting done by Topology.SetVolumeCapacityFull.
+//
+// Removing eagerly here avoids waiting for the heartbeat-driven
+// CollectDeadNodeAndFullVolumes cycle (5–15s detection latency) during
+// which a fast writer could push the volume far past the configured limit.
+func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) (reachedCapacity bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
 	st := vl.sizeTracking[vid]
 	if st == nil {
-		return
+		return false
 	}
 	if pendingDelta > 0 {
 		st.effectiveSize += uint64(pendingDelta)
 	}
+	if st.effectiveSize >= vl.volumeSizeLimit {
+		if vl.removeFromWritable(vid) {
+			st.fullSince = time.Now()
+			glog.V(0).Infof("Volume %d reaches full capacity (effective=%d, limit=%d).",
+				vid, st.effectiveSize, vl.volumeSizeLimit)
+			return true
+		}
+		return false
+	}
 	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 		vl.setVolumeCrowded(vid)
+	}
+	return false
+}
+
+// AdjustActiveVolumeCountForFull decrements the active volume count on each
+// data node holding this volume. Mirrors the accounting done in
+// Topology.SetVolumeCapacityFull for the heartbeat-driven path. Call only
+// after RecordAssign returns true for the same vid.
+func (vl *VolumeLayout) AdjustActiveVolumeCountForFull(vid needle.VolumeId) {
+	vl.adjustActiveVolumeCount(vid, -1)
+}
+
+// AdjustActiveVolumeCountAfterRecovery increments the active volume count on
+// each data node holding this volume. Mirrors
+// AdjustActiveVolumeCountForFull for the recovery path. Call only after
+// UpdateVolumeSize returns true for the same vid.
+func (vl *VolumeLayout) AdjustActiveVolumeCountAfterRecovery(vid needle.VolumeId) {
+	vl.adjustActiveVolumeCount(vid, +1)
+}
+
+func (vl *VolumeLayout) adjustActiveVolumeCount(vid needle.VolumeId, delta int64) {
+	// Copy the node list under the VolumeLayout lock, then release it before
+	// calling UpAdjustDiskUsageDelta. UpAdjustDiskUsageDelta walks up the
+	// topology tree taking per-level locks (e.g., DiskUsages.Lock on each
+	// node). Keeping vl.accessLock held across that tree walk is an
+	// unnecessary lock-ordering hazard — other call paths that hold a
+	// topology-level lock and then need vl.accessLock would deadlock.
+	vl.accessLock.RLock()
+	vidLocations, found := vl.vid2location[vid]
+	if !found {
+		vl.accessLock.RUnlock()
+		return
+	}
+	nodes := make([]*DataNode, len(vidLocations.list))
+	copy(nodes, vidLocations.list)
+	vl.accessLock.RUnlock()
+
+	diskTypeStr := string(vl.diskType)
+	for _, dn := range nodes {
+		disk := dn.getOrCreateDisk(diskTypeStr)
+		disk.UpAdjustDiskUsageDelta(vl.diskType, &DiskUsageCounts{
+			activeVolumeCount: delta,
+		})
 	}
 }
 
