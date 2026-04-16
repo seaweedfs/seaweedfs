@@ -433,9 +433,10 @@ func TestSingleChunkCacherMultipleReadersWaitForDownload(t *testing.T) {
 	}
 }
 
-// TestReaderCacheSingleflightDedup tests that concurrent ReadChunkAt calls for
-// the same fileId result in only one network fetch (lookup call).
-func TestReaderCacheSingleflightDedup(t *testing.T) {
+// TestReaderCacheDownloaderDedup tests that concurrent ReadChunkAt calls for
+// the same fileId result in only one network fetch (lookup call), because
+// the downloaders map deduplicates in-flight downloads.
+func TestReaderCacheDownloaderDedup(t *testing.T) {
 	cache := newMockChunkCacheForReaderCache()
 	var lookupCount int32
 	lookupGate := make(chan struct{})
