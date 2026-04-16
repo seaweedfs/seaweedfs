@@ -215,6 +215,8 @@ func (s *AdminServer) getTopologyViaGRPC(topology *ClusterTopology) error {
 				dc := ecDel[vid]
 				if fc >= dc {
 					topology.TotalFiles += int64(fc - dc)
+				} else {
+					glog.Warningf("ec volume %d: summed delete_count=%d exceeds file_count=%d; skipping from TotalFiles", vid, dc, fc)
 				}
 			}
 		}

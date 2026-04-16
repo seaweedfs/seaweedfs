@@ -2,6 +2,7 @@ package dash
 
 import (
 	"context"
+	"net"
 	"net/http"
 	"sort"
 	"time"
@@ -224,11 +225,20 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 	masterMap := make(map[string]MasterNode)
 
 	err := s.WithMasterClient(func(client master_pb.SeaweedClient) error {
-		resp, err := client.RaftListClusterServers(context.Background(), &master_pb.RaftListClusterServersRequest{})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resp, err := client.RaftListClusterServers(ctx, &master_pb.RaftListClusterServersRequest{})
 		if err != nil {
 			return err
 		}
 		for _, server := range resp.ClusterServers {
+			// pb.GrpcAddressToServerAddress calls glog.Fatalf on a parse
+			// error, so pre-validate the raft address with net.SplitHostPort
+			// and skip malformed entries instead of taking the process down.
+			if _, _, splitErr := net.SplitHostPort(server.Address); splitErr != nil {
+				glog.Warningf("skip master with invalid raft address %q: %v", server.Address, splitErr)
+				continue
+			}
 			httpAddress := pb.GrpcAddressToServerAddress(server.Address)
 			masterMap[httpAddress] = MasterNode{
 				Address:  httpAddress,
@@ -247,9 +257,11 @@ func (s *AdminServer) getMasterNodesStatus() []MasterNode {
 		currentMaster := s.masterClient.GetMaster(context.Background())
 		if currentMaster != "" {
 			addr := pb.ServerAddress(currentMaster).ToHttpAddress()
+			// Do not claim leadership when raft state is unreachable —
+			// the UI should surface uncertainty rather than mislead operators.
 			masterMap[addr] = MasterNode{
 				Address:  addr,
-				IsLeader: true,
+				IsLeader: false,
 			}
 		}
 	}
