@@ -74,6 +74,11 @@ type S3Options struct {
 	externalUrl               *string
 	defaultFileMode           *string
 	cacheSizeMB               *int64
+	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
+	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
+	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
+	// weed s3.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -453,10 +458,9 @@ func (s3opt *S3Options) startS3Server() bool {
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			if MiniClusterCtx != nil {
-				ctx := MiniClusterCtx
+			if s3opt.shutdownCtx != nil {
 				go func() {
-					<-ctx.Done()
+					<-s3opt.shutdownCtx.Done()
 					httpS.Shutdown(context.Background())
 					grpcS.Stop()
 				}()
@@ -495,9 +499,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		if MiniClusterCtx != nil {
+		if s3opt.shutdownCtx != nil {
 			go func() {
-				<-MiniClusterCtx.Done()
+				<-s3opt.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -531,9 +535,9 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	if MiniClusterCtx != nil {
+	if s3opt.shutdownCtx != nil {
 		go func() {
-			<-MiniClusterCtx.Done()
+			<-s3opt.shutdownCtx.Done()
 			httpS.Shutdown(context.Background())
 		}()
 	}

@@ -74,6 +74,10 @@ type MasterOptions struct {
 	telemetryEnabled   *bool
 	debug              *bool
 	debugPort          *int
+	// shutdownCtx, when non-nil, tells startMaster to shut down once the ctx
+	// is cancelled. Used by integration tests and by weed mini; nil for
+	// standalone weed master.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -336,9 +340,8 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 			ms.Topo.HashicorpRaft.LeadershipTransfer()
 		}
 	})
-	ctx := MiniClusterCtx
-	if ctx != nil {
-		<-ctx.Done()
+	if masterOption.shutdownCtx != nil {
+		<-masterOption.shutdownCtx.Done()
 		ms.Shutdown()
 		grpcS.Stop()
 	} else {

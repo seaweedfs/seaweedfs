@@ -84,6 +84,13 @@ type FilerOptions struct {
 	tusBasePath               *string
 	certProvider              certprovider.Provider
 	s3ConfigFile              *string // optional path to static S3 identity config
+	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
+	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
+	// and by weed mini; nil for standalone weed filer.
+	shutdownCtx context.Context
+	// gracefulStopTimeout caps how long startFiler waits for gRPC graceful
+	// stop before forcing the server to stop. Zero means the default of 10s.
+	gracefulStopTimeout time.Duration
 }
 
 func init() {
@@ -446,8 +453,12 @@ func (fo *FilerOptions) startFiler() {
 	go grpcS.Serve(grpcL)
 	pb.ServeGrpcOnLocalSocket(grpcS, grpcPort)
 
-	// Register graceful shutdown for gRPC server to wait for active RPCs
-	grace.OnInterrupt(func() {
+	// Helper to gracefully stop the gRPC server, waiting for active RPCs.
+	gracefulTimeout := fo.gracefulStopTimeout
+	if gracefulTimeout <= 0 {
+		gracefulTimeout = 10 * time.Second
+	}
+	stopGrpcServer := func() {
 		glog.V(0).Infof("Gracefully stopping gRPC server")
 		stopped := make(chan struct{})
 		go func() {
@@ -457,11 +468,11 @@ func (fo *FilerOptions) startFiler() {
 		select {
 		case <-stopped:
 			glog.V(0).Infof("gRPC server stopped gracefully")
-		case <-time.After(10 * time.Second):
-			glog.V(0).Infof("gRPC server graceful stop timed out, forcing stop")
+		case <-time.After(gracefulTimeout):
+			glog.V(0).Infof("gRPC server graceful stop timed out after %s, forcing stop", gracefulTimeout)
 			grpcS.Stop()
 		}
-	})
+	}
 
 	var socketServer *http.Server
 	if runtime.GOOS != "windows" {
@@ -528,8 +539,12 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultMux, tlsConfig)
 
-		// Register shutdown hooks: stop all HTTP servers, then close filer database
+		// Register a single shutdown hook that runs the steps in the correct order:
+		// stop accepting new gRPC/HTTP requests, then close the filer database.
+		// Combining them into one hook keeps ordering intact regardless of how
+		// grace fires interrupt hooks (FIFO vs LIFO).
 		grace.OnInterrupt(func() {
+			stopGrpcServer()
 			glog.V(0).Infof("Gracefully stopping all HTTP servers")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -542,13 +557,12 @@ func (fo *FilerOptions) startFiler() {
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTPS server shutdown: %v", err)
 			}
+			shutdownFiler()
 		})
-		grace.OnInterrupt(shutdownFiler)
 
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -570,8 +584,12 @@ func (fo *FilerOptions) startFiler() {
 		}
 		httpS := newHttpServer(defaultMux, nil)
 
-		// Register shutdown hooks: stop all HTTP servers, then close filer database
+		// Register a single shutdown hook that runs the steps in the correct order:
+		// stop accepting new gRPC/HTTP requests, then close the filer database.
+		// Combining them into one hook keeps ordering intact regardless of how
+		// grace fires interrupt hooks (FIFO vs LIFO).
 		grace.OnInterrupt(func() {
+			stopGrpcServer()
 			glog.V(0).Infof("Gracefully stopping all HTTP servers")
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -584,13 +602,12 @@ func (fo *FilerOptions) startFiler() {
 			if err := httpS.Shutdown(shutdownCtx); err != nil {
 				glog.Warningf("HTTP server shutdown: %v", err)
 			}
+			shutdownFiler()
 		})
-		grace.OnInterrupt(shutdownFiler)
 
-		if MiniClusterCtx != nil {
-			ctx := MiniClusterCtx
+		if fo.shutdownCtx != nil {
 			go func() {
-				<-ctx.Done()
+				<-fo.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()

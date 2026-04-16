@@ -838,7 +838,11 @@ func (c *GrpcAdminClient) RequestTask(workerID string, capabilities []types.Task
 
 	for {
 		select {
-		case response := <-c.incoming:
+		case response, ok := <-c.incoming:
+			if !ok || response == nil {
+				// incoming was closed (e.g. during Disconnect).
+				return nil, fmt.Errorf("incoming channel closed")
+			}
 			glog.V(4).Infof("RESPONSE RECEIVED: Worker %s received response from admin server: %T", workerID, response.Message)
 			if taskAssign := response.GetTaskAssignment(); taskAssign != nil {
 				// Validate TaskId is not empty before processing
