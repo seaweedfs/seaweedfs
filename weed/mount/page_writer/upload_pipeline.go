@@ -18,6 +18,7 @@ type UploadPipeline struct {
 	ChunkSize           int64
 	uploaders           *util.LimitedConcurrentExecutor
 	saveToStorageFn     SaveToStorageFunc
+	fillChunkFn         FillChunkFunc
 	writableChunkLimit  int
 	concurrentWriterMax int32
 	swapFile            *SwapFile
@@ -63,7 +64,7 @@ func (sc *SealedChunk) FreeReference(messageOnFree string) {
 // The accountant is captured at construction so the pipeline's hot paths
 // (SaveDataAt, moveToSealed, Shutdown) can read up.accountant without
 // any synchronization.
-func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, bufferChunkLimit int, swapFileDir string, accountant *WriteBufferAccountant) *UploadPipeline {
+func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64, saveToStorageFn SaveToStorageFunc, fillChunkFn FillChunkFunc, bufferChunkLimit int, swapFileDir string, accountant *WriteBufferAccountant) *UploadPipeline {
 	t := &UploadPipeline{
 		ChunkSize:           chunkSize,
 		writableChunks:      make(map[LogicChunkIndex]PageChunk),
@@ -71,6 +72,7 @@ func NewUploadPipeline(writers *util.LimitedConcurrentExecutor, chunkSize int64,
 		uploaders:           writers,
 		uploaderCountCond:   sync.NewCond(&sync.Mutex{}),
 		saveToStorageFn:     saveToStorageFn,
+		fillChunkFn:         fillChunkFn,
 		activeReadChunks:    make(map[LogicChunkIndex]int),
 		writableChunkLimit:  bufferChunkLimit,
 		concurrentWriterMax: int32(bufferChunkLimit),
@@ -242,6 +244,11 @@ func (up *UploadPipeline) moveToSealed(memChunk PageChunk, logicChunkIndex Logic
 	// unlock before submitting the uploading jobs
 	up.chunksLock.Unlock()
 	up.uploaders.Execute(func() {
+		// fill unwritten gaps from existing file data so the chunk
+		// uploads as one complete piece instead of many fragments
+		if up.fillChunkFn != nil {
+			sealedChunk.chunk.FillGaps(up.fillChunkFn)
+		}
 		// first add to the file chunks
 		sealedChunk.chunk.SaveContent(up.saveToStorageFn)
 

@@ -215,3 +215,39 @@ func (sc *SwapFileChunk) SaveContent(saveFn SaveToStorageFunc) {
 	}
 
 }
+
+func (sc *SwapFileChunk) FillGaps(fill FillChunkFunc) {
+	sc.Lock()
+	defer sc.Unlock()
+
+	chunkSize := sc.swapfile.chunkSize
+	if sc.usage.IsComplete(chunkSize) {
+		return
+	}
+
+	chunkBase := int64(sc.logicChunkIndex) * chunkSize
+	swapBase := int64(sc.actualChunkIndex) * chunkSize
+	var covered int64
+	for t := sc.usage.head.next; t != sc.usage.tail; t = t.next {
+		if covered < t.StartOffset {
+			gapSize := t.StartOffset - covered
+			buf := mem.Allocate(int(gapSize))
+			fill(buf, chunkBase+covered)
+			sc.swapfile.file.WriteAt(buf, swapBase+covered)
+			mem.Free(buf)
+		}
+		if t.stopOffset > covered {
+			covered = t.stopOffset
+		}
+	}
+	if covered < chunkSize {
+		gapSize := chunkSize - covered
+		buf := mem.Allocate(int(gapSize))
+		fill(buf, chunkBase+covered)
+		sc.swapfile.file.WriteAt(buf, swapBase+covered)
+		mem.Free(buf)
+	}
+
+	sc.usage = newChunkWrittenIntervalList()
+	sc.usage.MarkWritten(0, chunkSize, sc.lastWriteTsNs.Load())
+}
