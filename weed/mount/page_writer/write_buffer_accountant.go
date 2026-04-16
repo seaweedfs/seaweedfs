@@ -85,6 +85,12 @@ func (a *WriteBufferAccountant) Reserve(n int64) {
 	// Graduated backpressure: slow writers before hitting the hard cap.
 	// Use projected usage (used + n) so that a single reservation crossing
 	// a threshold is throttled immediately rather than on the next call.
+	//
+	// This runs once per Reserve, not inside the blocking loop below.
+	// Once usage reaches the cap, the evictor + cond.Wait is the correct
+	// mechanism: it blocks until a sealed chunk upload frees space, which
+	// is strictly more efficient than repeated time-based sleeps that
+	// cannot free capacity on their own.
 	projected := a.used + n
 	if projected >= a.hardThreshold && a.used > 0 {
 		a.hardThrottleCount.Add(1)
