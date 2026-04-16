@@ -184,3 +184,54 @@ func TestCollectCollectionStatsECFileAndDeleteCountAggregation(t *testing.T) {
 		t.Errorf("LogicalSize: got %d, want 10000", got.LogicalSize)
 	}
 }
+
+// TestCollectCollectionStatsECFileCountMaxDedupe verifies that EC file_count
+// is taken as the max across reporting nodes rather than the first-seen
+// value. A node that has not yet finished loading .ecx reports file_count=0,
+// which previously poisoned the aggregate and rendered buckets backed by EC
+// volumes as "0 objects".
+func TestCollectCollectionStatsECFileCountMaxDedupe(t *testing.T) {
+	makeNode := func(bits uint32, sizes []int64, fileCount uint64) *master_pb.DataNodeInfo {
+		return &master_pb.DataNodeInfo{
+			DiskInfos: map[string]*master_pb.DiskInfo{
+				"disk1": {
+					EcShardInfos: []*master_pb.VolumeEcShardInformationMessage{
+						{
+							Id:          11,
+							Collection:  "bucket-b",
+							EcIndexBits: bits,
+							ShardSizes:  sizes,
+							FileCount:   fileCount,
+						},
+					},
+				},
+			},
+		}
+	}
+
+	topo := &master_pb.TopologyInfo{
+		DataCenterInfos: []*master_pb.DataCenterInfo{
+			{
+				RackInfos: []*master_pb.RackInfo{
+					{
+						// First-reporting node has a stale fileCount of 0,
+						// second node reports the authoritative 6.
+						DataNodeInfos: []*master_pb.DataNodeInfo{
+							makeNode((1<<0)|(1<<1)|(1<<2)|(1<<3)|(1<<4)|(1<<5)|(1<<6), []int64{1, 1, 1, 1, 1, 1, 1}, 0),
+							makeNode((1<<7)|(1<<8)|(1<<9)|(1<<10)|(1<<11)|(1<<12)|(1<<13), []int64{1, 1, 1, 1, 1, 1, 1}, 6),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	stats := collectCollectionStats(topo)
+	got, ok := stats["bucket-b"]
+	if !ok {
+		t.Fatalf("expected collection bucket-b in stats, got: %v", stats)
+	}
+	if got.FileCount != 6 {
+		t.Errorf("FileCount: got %d, want 6 (max across reporters)", got.FileCount)
+	}
+}
