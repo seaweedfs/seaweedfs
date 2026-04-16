@@ -19,7 +19,7 @@ type KeyedTimestamp struct {
 
 func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssignment, stopCh chan struct{}, onDataMessageFn OnDataMessageFn) error {
 	// connect to the partition broker
-	return pb.WithBrokerGrpcClient(true, assigned.LeaderBroker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+	err := pb.WithBrokerGrpcClient(true, assigned.LeaderBroker, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 
 		subscribeClient, err := client.SubscribeMessage(context.Background())
 		if err != nil {
@@ -130,6 +130,14 @@ func (sub *TopicSubscriber) onEachPartition(assigned *mq_pb.BrokerPartitionAssig
 		}
 
 	})
+	// The streaming subscribe uses a dedicated connection, but unrelated
+	// request-path callers share a cached ClientConn to the same broker.
+	// When the stream dies (including a broker restart behind a stable VIP)
+	// drop the cached channel so the next caller dials fresh.
+	if err != nil {
+		pb.InvalidateGrpcConnection(assigned.LeaderBroker)
+	}
+	return err
 }
 
 func findPartitionOffset(partitionOffsets []*schema_pb.PartitionOffset, partition *schema_pb.Partition) *schema_pb.PartitionOffset {

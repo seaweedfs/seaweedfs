@@ -107,6 +107,13 @@ func (ma *MetaAggregator) loopSubscribeToOneFiler(f *Filer, self pb.ServerAddres
 				errLvl = glog.Level(4)
 			}
 			glog.V(errLvl).Infof("subscribing remote %s meta change: %v", peer, err)
+			// The streaming subscribe uses a dedicated connection, but
+			// doSubscribeToOneFiler also issues non-streaming calls
+			// (readFilerStoreSignature, updateOffset, ...) over the shared
+			// cached ClientConn to this peer. When the peer restarts behind
+			// a stable VIP, that cached channel can look healthy yet return
+			// cancelled RPCs; drop it so the next iteration dials fresh.
+			pb.InvalidateGrpcConnection(peer.ToGrpcAddress())
 		}
 		if lastTsNs < nextLastTsNs {
 			lastTsNs = nextLastTsNs

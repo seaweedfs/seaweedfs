@@ -23,7 +23,7 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 	}
 
 	// connect to the lock owner
-	return pb.WithBrokerGrpcClient(true, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+	err := pb.WithBrokerGrpcClient(true, brokerBalancer, b.grpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 		stream, err := client.PublisherToPubBalancer(context.Background())
 		if err != nil {
 			return fmt.Errorf("connect to balancer %v: %w", brokerBalancer, err)
@@ -65,6 +65,15 @@ func (b *MessageQueueBroker) BrokerConnectToBalancer(brokerBalancer string, stop
 			time.Sleep(time.Millisecond*5000 + time.Duration(rand.IntN(1000))*time.Millisecond)
 		}
 	})
+	// The PublisherToPubBalancer stream runs on a dedicated connection, but
+	// other broker-to-balancer RPCs share a cached ClientConn to this address.
+	// When the balancer restarts behind a stable VIP that cached channel can
+	// look healthy yet return cancelled RPCs; drop it so the next connect
+	// cycle dials fresh.
+	if err != nil {
+		pb.InvalidateGrpcConnection(brokerBalancer)
+	}
+	return err
 }
 
 func (b *MessageQueueBroker) KeepConnectedToBrokerBalancer(newBrokerBalancerCh chan string) {
