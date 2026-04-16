@@ -111,8 +111,8 @@ func TestWriteBufferAccountant_NoThrottleBelowSoft(t *testing.T) {
 	a.Reserve(10)
 	elapsed := time.Since(start)
 
-	if elapsed >= 5*time.Millisecond {
-		t.Fatalf("expected Reserve below soft threshold to be fast (< 5ms), took %v", elapsed)
+	if elapsed >= softThrottleDelay {
+		t.Fatalf("expected Reserve below soft threshold to avoid throttle delay (< %v), took %v", softThrottleDelay, elapsed)
 	}
 }
 
@@ -173,8 +173,8 @@ func TestWriteBufferAccountant_GraduatedRecovery(t *testing.T) {
 	if elapsed < softThrottleDelay {
 		t.Fatalf("expected soft throttle delay after recovery, got %v", elapsed)
 	}
-	if elapsed >= hardThrottleDelay {
-		t.Fatalf("expected soft (not hard) throttle after recovery, got %v", elapsed)
+	if a.HardThrottleCount() != 1 {
+		t.Fatalf("expected hard throttle count to remain 1 after recovery, got %d", a.HardThrottleCount())
 	}
 	if a.SoftThrottleCount() != 1 {
 		t.Fatalf("expected soft throttle count 1 after recovery, got %d", a.SoftThrottleCount())

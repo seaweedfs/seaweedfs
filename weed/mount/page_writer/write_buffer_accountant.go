@@ -83,12 +83,15 @@ func (a *WriteBufferAccountant) Reserve(n int64) {
 	defer a.mu.Unlock()
 
 	// Graduated backpressure: slow writers before hitting the hard cap.
-	if a.used > a.hardThreshold {
+	// Use projected usage (used + n) so that a single reservation crossing
+	// a threshold is throttled immediately rather than on the next call.
+	projected := a.used + n
+	if projected >= a.hardThreshold && a.used > 0 {
 		a.hardThrottleCount.Add(1)
 		a.mu.Unlock()
 		time.Sleep(hardThrottleDelay)
 		a.mu.Lock()
-	} else if a.used > a.softThreshold {
+	} else if projected >= a.softThreshold && a.used > 0 {
 		a.softThrottleCount.Add(1)
 		a.mu.Unlock()
 		time.Sleep(softThrottleDelay)
