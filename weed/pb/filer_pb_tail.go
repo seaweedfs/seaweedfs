@@ -45,13 +45,7 @@ type ProcessMetadataFunc func(resp *filer_pb.SubscribeMetadataResponse) error
 func FollowMetadata(filerAddress ServerAddress, grpcDialOption grpc.DialOption, option *MetadataFollowOption, processEventFn ProcessMetadataFunc) error {
 
 	err := WithFilerClient(true, option.SelfSignature, filerAddress, grpcDialOption, makeSubscribeMetadataFunc(option, processEventFn))
-	// The streaming subscribe runs on a dedicated connection, but unrelated
-	// request-path callers (s3, mount, webdav, ...) share a cached ClientConn
-	// to the same filer. When the subscribe stream dies behind a stable VIP
-	// (k8s Service, L4 LB) the cached channel can look healthy yet return
-	// cancelled RPCs; drop it so the next caller dials fresh.
 	if err != nil {
-		InvalidateGrpcConnection(filerAddress.ToGrpcAddress())
 		return fmt.Errorf("subscribing filer meta change: %w", err)
 	}
 	return err

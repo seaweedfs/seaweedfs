@@ -36,7 +36,7 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 			glog.V(0).Infof("found broker coordinator: %v", brokerLeader)
 
 			// connect to the balancer
-			coordErr := pb.WithBrokerGrpcClient(true, brokerLeader, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
+			pb.WithBrokerGrpcClient(true, brokerLeader, sub.SubscriberConfig.GrpcDialOption, func(client mq_pb.SeaweedMessagingClient) error {
 
 				stream, err := client.SubscriberToSubCoordinator(sub.ctx)
 				if err != nil {
@@ -96,14 +96,6 @@ func (sub *TopicSubscriber) doKeepConnectedToSubCoordinator() {
 					glog.V(0).Infof("Received assignment: %+v", resp)
 				}
 			})
-			// The streaming SubscriberToSubCoordinator call uses a dedicated
-			// connection, but FindBrokerLeader above reuses a cached ClientConn
-			// to the same broker address. If the broker restarted behind a
-			// stable VIP, that cached channel can look healthy yet return
-			// cancelled RPCs; drop it so the next iteration dials fresh.
-			if coordErr != nil {
-				pb.InvalidateGrpcConnection(brokerLeader)
-			}
 		}
 		glog.V(0).Infof("subscriber %s/%s waiting for more assignments", sub.ContentConfig.Topic, sub.SubscriberConfig.ConsumerGroup)
 		if waitTime < 10*time.Second {
