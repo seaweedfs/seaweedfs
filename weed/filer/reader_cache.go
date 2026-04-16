@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	util_http "github.com/seaweedfs/seaweedfs/weed/util/http"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
@@ -18,8 +19,9 @@ type ReaderCache struct {
 	chunkCache     chunk_cache.ChunkCache
 	lookupFileIdFn wdclient.LookupFileIdFunctionType
 	sync.Mutex
-	downloaders map[string]*SingleChunkCacher
-	limit       int
+	downloaders  map[string]*SingleChunkCacher
+	limit        int
+	fetchGroup   util.SingleFlightGroup
 }
 
 type SingleChunkCacher struct {
@@ -178,6 +180,10 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 // startCaching downloads the chunk data in the background.
 // It does NOT hold the lock during the HTTP download to allow concurrent readers
 // to wait efficiently using the done channel.
+//
+// The network fetch is wrapped in a per-ReaderCache singleflight group keyed
+// by fileId, so concurrent downloads of the same chunk share a single HTTP
+// round-trip.
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
 	defer s.wg.Done()
@@ -191,25 +197,28 @@ func (s *SingleChunkCacher) startCaching() {
 	// cancelled, it would abort the download and cause errors for all other waiting readers.
 	// The download should always complete once started to serve all potential consumers.
 
-	// Lookup file ID without holding the lock
-	urlStrings, err := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
-	if err != nil {
-		s.Lock()
-		s.err = fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, err)
-		s.Unlock()
-		return
-	}
+	// Use singleflight to deduplicate concurrent network fetches for the
+	// same chunk. If another goroutine is already fetching this fileId,
+	// we wait for that result instead of issuing a redundant request.
+	data, err := s.parent.fetchGroup.Do(s.chunkFileId, func() ([]byte, error) {
+		urlStrings, lookupErr := s.parent.lookupFileIdFn(context.Background(), s.chunkFileId)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("operation LookupFileId %s failed, err: %v", s.chunkFileId, lookupErr)
+		}
 
-	// Allocate buffer and download without holding the lock
-	// This allows multiple downloads to proceed in parallel
-	data := mem.Allocate(s.chunkSize)
-	_, fetchErr := util_http.RetriedFetchChunkData(context.Background(), data, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+		buf := mem.Allocate(s.chunkSize)
+		_, fetchErr := util_http.RetriedFetchChunkData(context.Background(), buf, urlStrings, s.cipherKey, s.isGzipped, true, 0, s.chunkFileId)
+		if fetchErr != nil {
+			mem.Free(buf)
+			return nil, fetchErr
+		}
+		return buf, nil
+	})
 
 	// Now acquire lock to update state
 	s.Lock()
-	if fetchErr != nil {
-		mem.Free(data)
-		s.err = fetchErr
+	if err != nil {
+		s.err = err
 	} else {
 		s.data = data
 		if s.shouldCache {
