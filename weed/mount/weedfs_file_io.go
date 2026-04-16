@@ -72,7 +72,7 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 			if entry := fileHandle.GetEntry(); entry != nil && entry.Attributes != nil {
 				currentMtime := entry.Attributes.Mtime
 				if prev, loaded := wfs.openMtimeCache.Load(in.NodeId); loaded {
-					if prev.(int64) == currentMtime {
+					if prevMtime, ok := prev.(int64); ok && prevMtime == currentMtime {
 						out.OpenFlags |= fuse.FOPEN_KEEP_CACHE
 					}
 				}
