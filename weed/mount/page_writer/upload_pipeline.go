@@ -302,7 +302,7 @@ func (up *UploadPipeline) EvictOneWritableChunk() bool {
 // that partially-written chunks drain continuously instead of piling up
 // until fsync.
 func (up *UploadPipeline) ProactiveFlush(nowNs int64, idleThresholdNs int64, maxHoldNs int64, fillRatio int64, frontierLag int, isSequential bool) bool {
-	if atomic.LoadInt32(&up.uploaderCount) >= up.concurrentWriterMax/2 {
+	if up.concurrentWriterMax <= 0 || atomic.LoadInt32(&up.uploaderCount)*2 >= up.concurrentWriterMax {
 		return false
 	}
 
