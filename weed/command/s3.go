@@ -518,6 +518,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
+	icebergServer.SetS3Endpoint(deriveS3AdvertisedEndpoint(*s3opt.bindIp, *s3opt.port))
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
@@ -547,4 +548,21 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
 		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
 	}
+}
+
+// deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
+// Iceberg catalog clients as part of LoadTable FileIO config. The wildcard
+// bind addresses (0.0.0.0 / ::) are replaced with a routable host so the
+// URL is actually reachable by remote clients. See issue #9103.
+func deriveS3AdvertisedEndpoint(bindIP string, port int) string {
+	host := bindIP
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		if h, err := os.Hostname(); err == nil && h != "" {
+			host = h
+		} else {
+			host = "127.0.0.1"
+		}
+	}
+	return fmt.Sprintf("http://%s:%d", host, port)
 }

@@ -190,7 +190,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 	if existsErr == nil {
 		// Table already registered. Return the existing definition so CTAS/IF NOT
 		// EXISTS flows see a stable response instead of a 409.
-		result := buildLoadTableResult(existsResp, bucketName, namespace, tableName)
+		result := s.buildLoadTableResult(existsResp, bucketName, namespace, tableName)
 		writeJSON(w, http.StatusOK, result)
 		return
 	}
@@ -262,7 +262,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
@@ -281,7 +281,7 @@ func (s *Server) handleCreateTable(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusConflict, "AlreadyExistsException", err.Error())
 				return
 			}
-			result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+			result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
 			writeJSON(w, http.StatusOK, result)
 			return
 		}
@@ -347,11 +347,11 @@ func (s *Server) handleLoadTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result := buildLoadTableResult(getResp, bucketName, namespace, tableName)
+	result := s.buildLoadTableResult(getResp, bucketName, namespace, tableName)
 	writeJSON(w, http.StatusOK, result)
 }
 
-func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
+func (s *Server) buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, namespace []string, tableName string) LoadTableResult {
 	location := tableLocationFromMetadataLocation(getResp.MetadataLocation)
 	if location == "" {
 		location = fmt.Sprintf("s3://%s/%s", bucketName, path.Join(flattenNamespacePath(namespace), tableName))
@@ -385,8 +385,20 @@ func buildLoadTableResult(getResp s3tables.GetTableResponse, bucketName string, 
 	return LoadTableResult{
 		MetadataLocation: getResp.MetadataLocation,
 		Metadata:         metadata,
-		Config:           make(iceberg.Properties),
+		Config:           s.buildFileIOConfig(),
 	}
+}
+
+// buildFileIOConfig returns the FileIO properties to advertise to catalog
+// clients so they can read the table's data files directly from S3 without
+// separately discovering the endpoint. See issue #9103.
+func (s *Server) buildFileIOConfig() iceberg.Properties {
+	config := make(iceberg.Properties)
+	if s.s3Endpoint != "" {
+		config["s3.endpoint"] = s.s3Endpoint
+		config["s3.path-style-access"] = "true"
+	}
+	return config
 }
 
 // handleTableExists checks if a table exists.
