@@ -280,7 +280,7 @@ func TestCompactResolvedOverlappingManifests(t *testing.T) {
 	}
 
 	// Resolve all manifests into sub-chunks
-	allChunks := append(manifest1, manifest2...)
+	allChunks := append(append([]*filer_pb.FileChunk{}, manifest1...), manifest2...)
 	dataChunks, _, err := store.resolveAll(allChunks)
 	if err != nil {
 		t.Fatal(err)
