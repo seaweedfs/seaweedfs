@@ -142,7 +142,6 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
-	fileIdPool           *FileIdPool
 
 	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
 	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
@@ -386,11 +385,6 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
 	go wfs.loopProactiveFlush()
-
-	if wfs.option.WritebackCache {
-		wfs.fileIdPool = NewFileIdPool(wfs)
-		glog.V(0).Infof("file ID pool enabled for writeback cache (batch=%d)", wfs.fileIdPool.batchSize)
-	}
 
 	return nil
 }
