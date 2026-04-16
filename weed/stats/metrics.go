@@ -369,6 +369,21 @@ var (
 			Name:      "master_disconnections",
 			Help:      "Number of master server disconnections.",
 		}, []string{"address"})
+	VolumeServerFileReadFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_read_failures",
+			Help:      "Counter of overall failed file read requests from clients.",
+		})
+
+	VolumeServerFileWriteFailures = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "file_write_failures",
+			Help:      "Counter of overall failed file write requests from clients.",
+		})
 
 	VolumeServerFileReadFailures = prometheus.NewCounter(
 		prometheus.CounterOpts{
