@@ -168,7 +168,7 @@ func TestEmitVacuumDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
 	config := vacuumtask.NewDefaultConfig()
 	config.GarbageThreshold = 0.3
-	config.MinVolumeAgeSeconds = int((24 * time.Hour).Seconds())
+	config.MinVolumeAgeSeconds = 0
 
 	metrics := []*workertypes.VolumeHealthMetrics{
 		{

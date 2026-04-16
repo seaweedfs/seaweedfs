@@ -282,48 +282,34 @@ func emitVacuumDetectionDecisionTrace(
 		return nil
 	}
 
-	minVolumeAge := time.Duration(workerConfig.MinVolumeAgeSeconds) * time.Second
 	totalVolumes := len(metrics)
 
-	debugCount := 0
 	skippedDueToGarbage := 0
-	skippedDueToAge := 0
 	for _, metric := range metrics {
 		if metric == nil {
 			continue
 		}
-		if metric.GarbageRatio >= workerConfig.GarbageThreshold && metric.Age >= minVolumeAge {
+		if metric.GarbageRatio >= workerConfig.GarbageThreshold {
 			continue
 		}
-		if debugCount < 5 {
-			if metric.GarbageRatio < workerConfig.GarbageThreshold {
-				skippedDueToGarbage++
-			}
-			if metric.Age < minVolumeAge {
-				skippedDueToAge++
-			}
-		}
-		debugCount++
+		skippedDueToGarbage++
 	}
 
 	summaryMessage := ""
 	summaryStage := "decision_summary"
 	if len(results) == 0 {
 		summaryMessage = fmt.Sprintf(
-			"VACUUM: No tasks created for %d volumes. Threshold=%.2f%%, MinAge=%s. Skipped: %d (garbage<threshold), %d (age<minimum)",
+			"VACUUM: No tasks created for %d volumes. Threshold=%.2f%%. Skipped: %d (garbage<threshold)",
 			totalVolumes,
 			workerConfig.GarbageThreshold*100,
-			minVolumeAge,
 			skippedDueToGarbage,
-			skippedDueToAge,
 		)
 	} else {
 		summaryMessage = fmt.Sprintf(
-			"VACUUM: Created %d task(s) from %d volumes. Threshold=%.2f%%, MinAge=%s",
+			"VACUUM: Created %d task(s) from %d volumes. Threshold=%.2f%%",
 			len(results),
 			totalVolumes,
 			workerConfig.GarbageThreshold*100,
-			minVolumeAge,
 		)
 	}
 
@@ -337,14 +323,8 @@ func emitVacuumDetectionDecisionTrace(
 		"garbage_threshold_percent": {
 			Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: workerConfig.GarbageThreshold * 100},
 		},
-		"min_volume_age_seconds": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(workerConfig.MinVolumeAgeSeconds)},
-		},
 		"skipped_garbage": {
 			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedDueToGarbage)},
-		},
-		"skipped_age": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(skippedDueToAge)},
 		},
 	})); err != nil {
 		return err
@@ -360,12 +340,10 @@ func emitVacuumDetectionDecisionTrace(
 			continue
 		}
 		message := fmt.Sprintf(
-			"VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%), age=%s (need ≥%s)",
+			"VACUUM: Volume %d: garbage=%.2f%% (need ≥%.2f%%)",
 			metric.VolumeID,
 			metric.GarbageRatio*100,
 			workerConfig.GarbageThreshold*100,
-			metric.Age.Truncate(time.Minute),
-			minVolumeAge.Truncate(time.Minute),
 		)
 		if err := sender.SendActivity(BuildDetectorActivity("decision_volume", message, map[string]*plugin_pb.ConfigValue{
 			"volume_id": {
@@ -376,12 +354,6 @@ func emitVacuumDetectionDecisionTrace(
 			},
 			"required_garbage_percent": {
 				Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: workerConfig.GarbageThreshold * 100},
-			},
-			"age_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(metric.Age.Seconds())},
-			},
-			"required_age_seconds": {
-				Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: int64(minVolumeAge.Seconds())},
 			},
 		})); err != nil {
 			return err
