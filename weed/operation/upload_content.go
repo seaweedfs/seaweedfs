@@ -188,6 +188,12 @@ func (uploader *Uploader) UploadWithRetry(filerClient filer_pb.FilerClient, assi
 		glog.V(4).Infof("upload read %d bytes from %s", len(data), uploadOption.SourceUrl)
 	}
 
+	// Tell the master the real chunk size so its effectiveSize accounting
+	// doesn't fall back to the 1 MB DefaultNeedleSizeEstimate per fid.
+	if assignRequest.ExpectedDataSize == 0 {
+		assignRequest.ExpectedDataSize = uint64(len(data))
+	}
+
 	fileId, uploadResult, err = uploader.uploadWithRetryData(func() (fileId string, host string, auth security.EncodedJwt, err error) {
 		// grpc assign volume
 		if grpcAssignErr := filerClient.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
