@@ -354,7 +354,9 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		sizePerFile = expectedDataSize
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
-	volumeLayout.RecordAssign(vid, int64(pendingBytes))
+	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
+		volumeLayout.AdjustActiveVolumeCountForFull(vid)
+	}
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
 	return fileId, count, volumeLocationList, shouldGrow, nil

@@ -325,20 +325,60 @@ func (vl *VolumeLayout) isCrowdedVolume(v *storage.VolumeInfo) bool {
 }
 
 // RecordAssign adds the estimated byte size to the volume's tracked effective
-// size and marks it crowded if it crosses the threshold.
-func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) {
+// size and updates the volume's writable state:
+//
+//   - at the crowded threshold (e.g. 90%): marks crowded to trigger growth.
+//   - at the hard limit (100%): removes the volume from the writable list
+//     immediately so new assigns stop landing on it. Returns true if this
+//     call was what removed the volume, so the caller can mirror the
+//     disk-usage accounting done by Topology.SetVolumeCapacityFull.
+//
+// Removing eagerly here avoids waiting for the heartbeat-driven
+// CollectDeadNodeAndFullVolumes cycle (5–15s detection latency) during
+// which a fast writer could push the volume far past the configured limit.
+func (vl *VolumeLayout) RecordAssign(vid needle.VolumeId, pendingDelta int64) (reachedCapacity bool) {
 	vl.accessLock.Lock()
 	defer vl.accessLock.Unlock()
 
 	st := vl.sizeTracking[vid]
 	if st == nil {
-		return
+		return false
 	}
 	if pendingDelta > 0 {
 		st.effectiveSize += uint64(pendingDelta)
 	}
+	if st.effectiveSize >= vl.volumeSizeLimit {
+		if vl.removeFromWritable(vid) {
+			glog.V(0).Infof("Volume %d reaches full capacity (effective=%d, limit=%d).",
+				vid, st.effectiveSize, vl.volumeSizeLimit)
+			return true
+		}
+		return false
+	}
 	if float64(st.effectiveSize) > float64(vl.volumeSizeLimit)*VolumeGrowStrategy.Threshold {
 		vl.setVolumeCrowded(vid)
+	}
+	return false
+}
+
+// AdjustActiveVolumeCountForFull decrements the active volume count on each
+// data node holding this volume. Mirrors the accounting done in
+// Topology.SetVolumeCapacityFull for the heartbeat-driven path. Call only
+// after RecordAssign returns true for the same vid.
+func (vl *VolumeLayout) AdjustActiveVolumeCountForFull(vid needle.VolumeId) {
+	vl.accessLock.RLock()
+	defer vl.accessLock.RUnlock()
+
+	vidLocations, found := vl.vid2location[vid]
+	if !found {
+		return
+	}
+	diskTypeStr := string(vl.diskType)
+	for _, dn := range vidLocations.list {
+		disk := dn.getOrCreateDisk(diskTypeStr)
+		disk.UpAdjustDiskUsageDelta(vl.diskType, &DiskUsageCounts{
+			activeVolumeCount: -1,
+		})
 	}
 }
 

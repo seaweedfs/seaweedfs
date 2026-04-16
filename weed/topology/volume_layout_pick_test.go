@@ -313,6 +313,59 @@ func TestRecordAssignMarksCrowded(t *testing.T) {
 	}
 }
 
+func TestRecordAssignReachingCapacityRemovesFromWritable(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":5000, "replication":"000"},
+          {"id":2, "size":5000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+
+	writable, _ := vl.GetWritableVolumeCount()
+	if writable != 2 {
+		t.Fatalf("expected 2 writable volumes initially, got %d", writable)
+	}
+	// Each volume counts as active initially.
+	initialActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+
+	// Push vid 1 past the hard limit (5000 + 5000 = 10000 == limit).
+	reachedCapacity := vl.RecordAssign(1, 5000)
+	if !reachedCapacity {
+		t.Fatalf("RecordAssign should return true when effectiveSize reaches limit")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+
+	writable, _ = vl.GetWritableVolumeCount()
+	if writable != 1 {
+		t.Errorf("expected 1 writable after eager removal, got %d", writable)
+	}
+	// activeVolumeCount should be decremented for the data node holding vid 1.
+	afterActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if afterActive != initialActive-1 {
+		t.Errorf("expected activeVolumeCount=%d, got %d", initialActive-1, afterActive)
+	}
+
+	// A second RecordAssign on the already-removed volume should not return
+	// true again (no double accounting).
+	if vl.RecordAssign(1, 10000) {
+		t.Errorf("RecordAssign should not report reachedCapacity twice for the same removal")
+	}
+	afterSecond := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if afterSecond != afterActive {
+		t.Errorf("activeVolumeCount changed on second RecordAssign: before=%d after=%d", afterActive, afterSecond)
+	}
+}
+
 func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	layout := `
 {
