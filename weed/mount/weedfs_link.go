@@ -231,9 +231,9 @@ func (wfs *WFS) syncHardLinkSiblings(inode uint64, authoritativeEntry *filer_pb.
 			glog.V(4).Infof("syncHardLinkSiblings update %s: %v", p, err)
 		}
 	}
-	if wfs.fuseServer != nil {
-		if status := wfs.fuseServer.InodeNotify(inode, 0, -1); status != fuse.OK {
-			glog.V(4).Infof("syncHardLinkSiblings invalidate inode %d: %v", inode, status)
-		}
-	}
+	// Note: we deliberately do NOT call fuseServer.InodeNotify here. That
+	// call would be made from the FUSE Link request handler goroutine, and
+	// writes onto the same /dev/fuse fd that the kernel is still waiting to
+	// read the Link reply from — causing a self-notify deadlock. The kernel
+	// will re-stat siblings once its attr-cache TTL expires.
 }
