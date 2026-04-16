@@ -261,19 +261,27 @@ func (wfs *WFS) flushMetadataToFiler(fh *FileHandle, dir, name string, uid, gid 
 	return err
 }
 
+// shouldMergeChunks reports whether the non-manifest chunks are bloated
+// enough to justify re-reading and re-uploading the file. The condition
+// is: sum of compacted chunk sizes > 2 * logical file size.
+func shouldMergeChunks(compactedChunks []*filer_pb.FileChunk, manifestChunks []*filer_pb.FileChunk) (totalChunkSize, fileSize uint64, merge bool) {
+	for _, chunk := range compactedChunks {
+		totalChunkSize += chunk.Size
+	}
+	allChunks := make([]*filer_pb.FileChunk, 0, len(compactedChunks)+len(manifestChunks))
+	allChunks = append(allChunks, compactedChunks...)
+	allChunks = append(allChunks, manifestChunks...)
+	fileSize = filer.TotalSize(allChunks)
+	merge = fileSize > 0 && totalChunkSize > 2*fileSize
+	return
+}
+
 // maybeMergeChunks re-reads and re-uploads file data as properly sized chunks
 // when the total stored chunk data significantly exceeds the logical file size,
 // which happens after many random writes create partially-overlapping small chunks.
 func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*filer_pb.FileChunk, manifestChunks []*filer_pb.FileChunk) ([]*filer_pb.FileChunk, error) {
-	var totalChunkSize uint64
-	for _, chunk := range compactedChunks {
-		totalChunkSize += chunk.Size
-	}
-
-	allChunks := append(compactedChunks, manifestChunks...)
-	fileSize := filer.TotalSize(allChunks)
-
-	if fileSize == 0 || totalChunkSize <= 2*fileSize {
+	totalChunkSize, fileSize, merge := shouldMergeChunks(compactedChunks, manifestChunks)
+	if !merge {
 		return nil, nil
 	}
 
@@ -281,6 +289,9 @@ func (wfs *WFS) maybeMergeChunks(fileFullPath util.FullPath, compactedChunks []*
 		float64(totalChunkSize)/float64(fileSize), fileFullPath, len(compactedChunks), totalChunkSize, fileSize)
 
 	ctx := context.Background()
+	allChunks := make([]*filer_pb.FileChunk, 0, len(compactedChunks)+len(manifestChunks))
+	allChunks = append(allChunks, compactedChunks...)
+	allChunks = append(allChunks, manifestChunks...)
 	reader := filer.NewChunkStreamReaderFromLookup(ctx, wfs.LookupFn(), allChunks)
 	defer reader.Close()
 
