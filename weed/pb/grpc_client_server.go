@@ -254,11 +254,14 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 // Silently returns if no cached connection exists.
 func InvalidateGrpcConnection(address string) {
 	grpcClientsLock.Lock()
-	defer grpcClientsLock.Unlock()
-	if vgc, ok := grpcClients[address]; ok {
+	vgc, ok := grpcClients[address]
+	if ok {
+		delete(grpcClients, address)
+	}
+	grpcClientsLock.Unlock()
+	if ok {
 		glog.V(1).Infof("Invalidating cached gRPC connection to %s", address)
 		vgc.Close()
-		delete(grpcClients, address)
 	}
 }
 

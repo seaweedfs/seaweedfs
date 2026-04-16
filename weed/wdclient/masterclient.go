@@ -345,7 +345,9 @@ func (mc *MasterClient) tryConnectToMaster(ctx context.Context, master pb.Server
 	// ClientConn to the same master address. When the stream dies behind a
 	// stable VIP (k8s Service, L4 LB) the cached channel can look healthy yet
 	// return cancelled RPCs; drop it so the next caller dials fresh.
-	if ctx.Err() == nil {
+	// Only do this on actual stream error — on a healthy leader redirect
+	// (gprcErr == nil) the cached channel is still fine.
+	if gprcErr != nil && ctx.Err() == nil {
 		pb.InvalidateGrpcConnection(master.ToGrpcAddress())
 	}
 	if gprcErr != nil {
