@@ -518,6 +518,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
+	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
@@ -547,4 +548,44 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
 		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
 	}
+}
+
+// deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
+// Iceberg catalog clients as part of LoadTable FileIO config. To avoid
+// hijacking correctly-configured clients (Spark/Trino/PyIceberg all bring
+// their own s3.endpoint), advertising is strictly opt-in and returns ""
+// whenever no reliable value is available:
+//   - -s3.externalUrl / S3_EXTERNAL_URL wins and supports reverse-proxy
+//     deployments.
+//   - Otherwise the bind IP is used only when it is explicit and not a
+//     wildcard (0.0.0.0 / ::), with the scheme picked from TLS config and
+//     IPv6 literals bracketed via util.JoinHostPort.
+//
+// See issue #9103.
+func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
+	if ext := strings.TrimRight(s3opt.resolveExternalUrl(), "/"); ext != "" {
+		return ext
+	}
+
+	host := ""
+	if s3opt.bindIp != nil {
+		host = *s3opt.bindIp
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return ""
+	}
+
+	scheme := "http"
+	port := 0
+	if s3opt.port != nil {
+		port = *s3opt.port
+	}
+	if s3opt.tlsPrivateKey != nil && *s3opt.tlsPrivateKey != "" {
+		scheme = "https"
+		if s3opt.portHttps != nil && *s3opt.portHttps > 0 {
+			port = *s3opt.portHttps
+		}
+	}
+	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
 }

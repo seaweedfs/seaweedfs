@@ -14,11 +14,28 @@ import (
 )
 
 // handleConfig returns catalog configuration.
+//
+// When a client passes ?warehouse=s3://<bucket>/, the Iceberg REST spec
+// expects the server to echo a catalog identifier back as overrides.prefix
+// so subsequent calls use /v1/{prefix}/... and land on the right table
+// bucket. Without this, clients like DuckDB's ATTACH flow fall back to an
+// unprefixed path that resolves to the wrong bucket and report phantom
+// "schema does not exist" errors. See issue #9103.
 func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	config := CatalogConfig{
 		Defaults:  map[string]string{},
 		Overrides: map[string]string{},
+	}
+	if warehouse := strings.TrimSpace(r.URL.Query().Get("warehouse")); warehouse != "" {
+		// Only the bucket portion of the warehouse URL is meaningful today —
+		// SeaweedFS table-bucket routing is bucket-scoped, so any sub-path
+		// (e.g. s3://bucket/prefix/) is ignored here and clients that try to
+		// scope a catalog under a sub-prefix will still land on the bucket.
+		if bucket, _, err := parseS3Location(warehouse); err == nil && bucket != "" {
+			config.Overrides["prefix"] = bucket
+			config.Defaults["warehouse"] = warehouse
+		}
 	}
 	if err := json.NewEncoder(w).Encode(config); err != nil {
 		glog.Warningf("handleConfig: Failed to encode config: %v", err)
