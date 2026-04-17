@@ -531,9 +531,15 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 				fail(fmt.Sprintf("lookup source: %v", lookupErr))
 				return nil
 			}
-			downloadURL := fmt.Sprintf("http://%s/%s", downloadURLs[0], oldFidStr)
-
-			resp, reader, readErr := readUrl(downloadURL)
+			var resp *http.Response
+			var reader io.ReadCloser
+			var readErr error
+			for _, serverURL := range downloadURLs {
+				resp, reader, readErr = readUrl(fmt.Sprintf("http://%s/%s", serverURL, oldFidStr))
+				if readErr == nil {
+					break
+				}
+			}
 			if readErr != nil {
 				fail(fmt.Sprintf("download: %v", readErr))
 				return nil
