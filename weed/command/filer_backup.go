@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	nethttp "net/http"
@@ -8,10 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/replication/repl_util"
+	"github.com/seaweedfs/seaweedfs/weed/replication/sink"
 	"github.com/seaweedfs/seaweedfs/weed/replication/source"
 	"github.com/seaweedfs/seaweedfs/weed/security"
 	"github.com/seaweedfs/seaweedfs/weed/util"
@@ -35,6 +38,7 @@ type FilerBackupOptions struct {
 	ignore404Error      *bool
 	timeAgo             *time.Duration
 	retentionDays       *int
+	initialSnapshot     *bool
 }
 
 var (
@@ -57,6 +61,7 @@ func init() {
 	filerBackupOptions.retentionDays = cmdFilerBackup.Flag.Int("retentionDays", 0, "incremental backup retention days")
 	filerBackupOptions.disableErrorRetry = cmdFilerBackup.Flag.Bool("disableErrorRetry", false, "disables errors retry, only logs will print")
 	filerBackupOptions.ignore404Error = cmdFilerBackup.Flag.Bool("ignore404Error", true, "ignore 404 errors from filer")
+	filerBackupOptions.initialSnapshot = cmdFilerBackup.Flag.Bool("initialSnapshot", false, "before subscribing to metadata updates, walk the live filer tree under -filerPath and seed the destination. Only runs on a fresh sync (no prior checkpoint and -timeAgo is 0). After the walk, subscription starts from the walk-start timestamp so concurrent changes are still captured.")
 }
 
 var cmdFilerBackup = &Command{
@@ -69,6 +74,11 @@ var cmdFilerBackup = &Command{
 
 	If restarted and "-timeAgo" is not set, the synchronization will resume from the previous checkpoints, persisted every minute.
 	A fresh sync will start from the earliest metadata logs. To reset the checkpoints, just set "-timeAgo" to a high value.
+
+	On a fresh sync the metadata event log only re-materializes files that still exist on the source; entries that were
+	created and later deleted are replayed as a create-then-delete pair and therefore never appear on the destination.
+	Pass "-initialSnapshot" to walk the live filer tree first and seed the destination with the current tree, then
+	subscribe from the walk-start timestamp. The walk only runs when there is no prior checkpoint.
 
 `,
 }
@@ -123,17 +133,22 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 
 	// get start time for the data sink
 	startFrom := time.Unix(0, 0)
+	isFreshSync := true
 	sinkId := util.HashStringToLong(dataSink.GetName() + dataSink.GetSinkToDirectory())
 	if timeAgo.Milliseconds() == 0 {
 		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
 			glog.V(0).Infof("starting from %v", startFrom)
-		} else {
+		} else if lastOffsetTsNs > 0 {
 			startFrom = time.Unix(0, lastOffsetTsNs)
+			isFreshSync = false
 			glog.V(0).Infof("resuming from %v", startFrom)
+		} else {
+			glog.V(0).Infof("starting from %v (no prior checkpoint)", startFrom)
 		}
 	} else {
 		startFrom = time.Now().Add(-timeAgo)
+		isFreshSync = false
 		glog.V(0).Infof("start time is set to %v", startFrom)
 	}
 
@@ -149,6 +164,24 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		return fmt.Errorf("SSE initialization failed: %v", err)
 	}
 	dataSink.SetSourceFiler(filerSource)
+
+	// When the destination has no prior checkpoint and the user opted in to an
+	// initial snapshot, walk the live filer tree first and seed the destination
+	// with the current entries. This avoids the "only new files appear" pitfall
+	// of replaying the metadata event log: entries created-then-deleted before
+	// the walk leave no trace, so a re-backup after wiping the destination
+	// reflects what is actually live on the source instead of an empty tree.
+	if *backupOption.initialSnapshot && isFreshSync {
+		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink)
+		if err != nil {
+			return fmt.Errorf("initial snapshot: %w", err)
+		}
+		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), snapshotTsNs); err != nil {
+			return fmt.Errorf("persist initial snapshot offset: %w", err)
+		}
+		startFrom = time.Unix(0, snapshotTsNs)
+		glog.V(0).Infof("initialSnapshot done; subscribing from %v", startFrom)
+	}
 
 	var processEventFn func(*filer_pb.SubscribeMetadataResponse) error
 	if *backupOption.ignore404Error {
@@ -240,4 +273,91 @@ func isIgnorable404(err error) bool {
 	return strings.Contains(errStr, ignorable404ErrString) ||
 		strings.Contains(errStr, "LookupFileId") ||
 		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
+}
+
+// runInitialSnapshot walks the live filer tree under sourcePath and seeds the
+// destination via the sink. The snapshot timestamp is captured before the walk
+// starts so any create/update/delete that races with the walk is still caught
+// by the subscription that runs afterward (sink CreateEntry is idempotent for
+// all builtin sinks, so replaying a concurrent create from the subscription
+// over an entry already written by the walk is safe).
+func runInitialSnapshot(
+	grpcAddress string,
+	filerSource *source.FilerSource,
+	sourcePath string,
+	targetPath string,
+	excludePaths []string,
+	reExcludeFileName *regexp.Regexp,
+	excludeFileNames []*wildcard.WildcardMatcher,
+	excludePathPatterns []*wildcard.WildcardMatcher,
+	dataSink sink.ReplicationSink,
+) (int64, error) {
+	snapshotTsNs := time.Now().UnixNano()
+	glog.V(0).Infof("initialSnapshot: walking %s on %s -> %s (snapshotTsNs=%d)", sourcePath, grpcAddress, targetPath, snapshotTsNs)
+
+	var entryCount, byteCount int64
+	start := time.Now()
+	lastLog := start
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := filer_pb.TraverseBfs(ctx, filerSource, util.FullPath(sourcePath), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
+		parent := string(parentPath)
+		if parent == filer.SystemLogDir || strings.HasPrefix(parent, filer.SystemLogDir+"/") {
+			return nil
+		}
+		if matchesExcludePath(parent, excludePaths) {
+			return nil
+		}
+		if isEntryExcluded(parent, entry, reExcludeFileName, excludeFileNames, excludePathPatterns) {
+			return nil
+		}
+
+		sourceKey := parentPath.Child(entry.Name)
+		if !util.IsEqualOrUnder(string(sourceKey), sourcePath) {
+			return nil
+		}
+
+		targetKey := initialSnapshotTargetKey(dataSink, targetPath, sourcePath, sourceKey, entry)
+		if err := dataSink.CreateEntry(targetKey, entry, nil); err != nil {
+			return fmt.Errorf("seed %s: %w", targetKey, err)
+		}
+
+		entryCount++
+		if entry.Attributes != nil {
+			byteCount += int64(entry.Attributes.FileSize)
+		}
+		if now := time.Now(); now.Sub(lastLog) >= 5*time.Second {
+			lastLog = now
+			elapsed := now.Sub(start).Seconds()
+			if elapsed == 0 {
+				elapsed = 1
+			}
+			glog.V(0).Infof("initialSnapshot: %d entries / %d bytes seeded (%.1f/sec)", entryCount, byteCount, float64(entryCount)/elapsed)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	glog.V(0).Infof("initialSnapshot: done — %d entries / %d bytes in %v", entryCount, byteCount, time.Since(start))
+	return snapshotTsNs, nil
+}
+
+// initialSnapshotTargetKey mirrors buildKey from filer_sync.go but works from a
+// raw (sourceKey, entry) pair instead of an EventNotification. Kept close to
+// runInitialSnapshot so the mapping from source path to destination key stays
+// in one place for the seed path.
+func initialSnapshotTargetKey(dataSink sink.ReplicationSink, targetPath, sourcePath string, sourceKey util.FullPath, entry *filer_pb.Entry) string {
+	relative := string(sourceKey)[len(sourcePath):]
+	if !dataSink.IsIncremental() {
+		return escapeKey(util.Join(targetPath, relative))
+	}
+	var mTime int64
+	if entry.Attributes != nil {
+		mTime = entry.Attributes.Mtime
+	}
+	dateKey := time.Unix(mTime, 0).Format("2006-01-02")
+	return escapeKey(util.Join(targetPath, dateKey, relative))
 }
