@@ -21,6 +21,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	s3_constants "github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // ErrDeleteMarker is returned when the latest version is a delete marker (expected condition)
@@ -1052,41 +1054,10 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: found %d entries in %s", len(entries), versionsDir)
 
-	// Find the most recent remaining version (latest timestamp in version ID)
-	var latestVersionId string
-	var latestVersionFileName string
-	var latestVersionEntry *filer_pb.Entry
-	hasDeleteMarkers := false
-
-	for _, entry := range entries {
-		if entry.Extended == nil {
-			continue
-		}
-
-		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
-		if !hasVersionId {
-			continue
-		}
-
-		versionId := string(versionIdBytes)
-
-		// Skip delete markers when finding latest content version
-		isDeleteMarkerBytes, _ := entry.Extended[s3_constants.ExtDeleteMarkerKey]
-		if string(isDeleteMarkerBytes) == "true" {
-			hasDeleteMarkers = true
-			continue
-		}
-
-		// Compare version IDs chronologically using unified comparator (handles both old and new formats)
-		// compareVersionIds returns negative if first arg is newer
-		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
-			glog.V(1).Infof("updateLatestVersionAfterDeletion: found newer version %s (file: %s)", versionId, entry.Name)
-			latestVersionId = versionId
-			latestVersionFileName = entry.Name
-			latestVersionEntry = entry
-		} else {
-			glog.V(1).Infof("updateLatestVersionAfterDeletion: skipping older or equal version %s", versionId)
-		}
+	// Find the most recent remaining non-delete-marker version.
+	latestVersionEntry, latestVersionId, latestVersionFileName, hasDeleteMarkers := selectLatestContentVersion(entries)
+	if latestVersionEntry != nil {
+		glog.V(1).Infof("updateLatestVersionAfterDeletion: selected latest content version %s (file: %s)", latestVersionId, latestVersionFileName)
 	}
 
 	// Update the .versions directory metadata
@@ -1283,10 +1254,97 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	latestVersionPath := versionsObjectPath + "/" + latestVersionFile
 	latestVersionEntry, err := s3a.getEntry(bucketDir, latestVersionPath)
 	if err != nil {
+		// The pointer refers to a version file that no longer exists. Rather than
+		// surfacing a hard error that requires manual repair, rescan the .versions
+		// directory and self-heal the pointer to whatever remains.
+		if errors.Is(err, filer_pb.ErrNotFound) || status.Code(err) == codes.NotFound {
+			healed, healErr := s3a.healStaleLatestVersionPointer(bucket, normalizedObject, versionsEntry, latestVersionFile)
+			if healErr == nil {
+				return healed, nil
+			}
+			return nil, fmt.Errorf("stale latest-version pointer for %s/%s (file %s) could not self-heal: %w", bucket, normalizedObject, latestVersionFile, healErr)
+		}
 		return nil, fmt.Errorf("failed to get latest version file %s: %v", latestVersionPath, err)
 	}
 
 	return latestVersionEntry, nil
+}
+
+// selectLatestContentVersion walks the provided .versions directory entries and
+// returns the newest non-delete-marker entry together with its version id and
+// file name. Delete markers are tracked separately so callers can distinguish
+// "no content version remains" from "directory is empty". Returns nil for
+// latestEntry when no content version is present.
+func selectLatestContentVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, hasDeleteMarkers bool) {
+	for _, entry := range entries {
+		if entry == nil || entry.Extended == nil {
+			continue
+		}
+
+		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
+		if !hasVersionId {
+			continue
+		}
+
+		if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
+			hasDeleteMarkers = true
+			continue
+		}
+
+		versionId := string(versionIdBytes)
+		// compareVersionIds returns negative when the first arg is newer
+		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
+			latestVersionId = versionId
+			latestVersionFileName = entry.Name
+			latestEntry = entry
+		}
+	}
+	return
+}
+
+// healStaleLatestVersionPointer is invoked when the .versions directory metadata
+// points to a version file that no longer exists. It rescans the directory,
+// picks the newest remaining content version, updates the directory pointer
+// metadata best-effort, and returns the rescanned entry. If no content version
+// remains (only delete markers or an empty directory) an error is returned and
+// the caller treats the object as not found.
+func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry, stalePointerFile string) (*filer_pb.Entry, error) {
+	bucketDir := s3a.bucketDir(bucket)
+	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
+	versionsDir := bucketDir + "/" + versionsObjectPath
+
+	glog.Warningf("healStaleLatestVersionPointer: stale pointer for %s/%s - version file %q missing, rescanning %s", bucket, normalizedObject, stalePointerFile, versionsDir)
+
+	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", versionsDir, err)
+	}
+
+	latestEntry, latestVersionId, latestVersionFileName, _ := selectLatestContentVersion(entries)
+	if latestEntry == nil {
+		return nil, fmt.Errorf("no remaining content version in %s", versionsDir)
+	}
+
+	if versionsEntry.Extended == nil {
+		versionsEntry.Extended = make(map[string][]byte)
+	}
+	versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
+	versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
+	setCachedListMetadata(versionsEntry, latestEntry)
+
+	if mkErr := s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
+		updatedEntry.Extended = versionsEntry.Extended
+		updatedEntry.Attributes = versionsEntry.Attributes
+		updatedEntry.Chunks = versionsEntry.Chunks
+	}); mkErr != nil {
+		// Persisting the repair is best-effort. Surface a warning but still
+		// return the rescanned entry so the read succeeds; a subsequent write
+		// on the object will persist a fresh pointer.
+		glog.Warningf("healStaleLatestVersionPointer: failed to persist repaired pointer for %s/%s: %v (returning rescanned entry)", bucket, normalizedObject, mkErr)
+	} else {
+		glog.V(1).Infof("healStaleLatestVersionPointer: repaired pointer for %s/%s to version %s (file %s)", bucket, normalizedObject, latestVersionId, latestVersionFileName)
+	}
+	return latestEntry, nil
 }
 
 // getLatestVersionEntryFromDirectoryEntry creates a logical entry for list operations using cached metadata
