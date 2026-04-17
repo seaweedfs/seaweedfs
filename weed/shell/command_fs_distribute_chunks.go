@@ -7,6 +7,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strings"
 
@@ -86,7 +87,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	targetNodeCount := fsDistributeCommand.Int("nodes", 0, "number of nodes to distribute across (0 = all nodes)")
 	mode := fsDistributeCommand.String("mode", "primary", "distribution mode: primary, replica, round-robin")
 	if err = fsDistributeCommand.Parse(args); err != nil {
-		return nil
+		return err
 	}
 
 	if *filePath == "" {
@@ -192,7 +193,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	copiesCount := make(map[string]int)
 
 	for i, chunk := range chunks {
-		vid := chunk.Fid.GetVolumeId()
+		var vid uint32
+		if chunk.Fid == nil {
+			fileId, parseErr := needle.ParseFileIdFromString(chunk.GetFileIdString())
+			if parseErr != nil {
+				return fmt.Errorf("failed to parse file id for chunk %d: %v", i, parseErr)
+			}
+			vid = uint32(fileId.VolumeId)
+		} else {
+			vid = chunk.Fid.GetVolumeId()
+		}
 		owner, ok := volumeToOwner[vid]
 		if !ok {
 			return fmt.Errorf("volume %d not found in topology", vid)
@@ -368,14 +378,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 					continue
 				}
 				vid := chunk.Fid.GetVolumeId()
-				onThisNode := false
-				for _, n := range volumeNodesList[vid] {
-					if n == over.node {
-						onThisNode = true
-						break
-					}
-				}
-				if !onThisNode {
+				if !slices.Contains(volumeNodesList[vid], over.node) {
 					continue
 				}
 				sort.Slice(copiesUnder, func(i, j int) bool {
