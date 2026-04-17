@@ -26,8 +26,7 @@ func init() {
 	Commands = append(Commands, &commandFsDistributeChunks{})
 }
 
-type commandFsDistributeChunks struct {
-}
+type commandFsDistributeChunks struct{}
 
 func (c *commandFsDistributeChunks) Name() string {
 	return "fs.distributeChunks"
@@ -81,6 +80,11 @@ type chunkMove struct {
 	toNode     string
 }
 
+type movedChunkRecord struct {
+	oldFidStr string
+	oldVid    needle.VolumeId
+}
+
 func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
 	fsDistributeCommand := flag.NewFlagSet(c.Name(), flag.ContinueOnError)
@@ -91,7 +95,6 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	if err = fsDistributeCommand.Parse(args); err != nil {
 		return err
 	}
-
 	if *filePath == "" {
 		return fmt.Errorf("-path is required")
 	}
@@ -101,52 +104,157 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	infoAboutSimulationMode(writer, *apply, "-apply")
 
-	// ===== 1. Look up the file entry =====
 	path, err := commandEnv.parseUrl(*filePath)
 	if err != nil {
 		return err
 	}
 	dir, name := util.FullPath(path).DirAndName()
 
-	var entry *filer_pb.Entry
-	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, lookupErr := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
-			Directory: dir,
-			Name:      name,
-		})
-		if lookupErr != nil {
-			return lookupErr
-		}
-		entry = resp.Entry
-		return nil
-	})
+	entry, err := lookupFileEntry(commandEnv, dir, name)
 	if err != nil {
 		return fmt.Errorf("lookup %s: %v", path, err)
 	}
-	if entry.IsDirectory {
-		return fmt.Errorf("%s is a directory", path)
-	}
 
-	chunks := entry.GetChunks()
+	chunks, err := validateChunks(entry)
+	if err != nil {
+		return err
+	}
 	if len(chunks) == 0 {
 		fmt.Fprintf(writer, "File has no chunks (possibly stored inline)\n")
 		return nil
 	}
 
+	volumeInfoMap, volumeNodesList, volumeToOwner, nodeList, err := collectVolumeTopology(commandEnv)
+	if err != nil {
+		return err
+	}
+
+	if len(nodeList) < 2 {
+		return fmt.Errorf("need at least 2 volume nodes, found %d", len(nodeList))
+	}
+	if *targetNodeCount < 0 {
+		return fmt.Errorf("-nodes must be >= 0 (0 = all nodes)")
+	}
+	if *targetNodeCount > len(nodeList) {
+		return fmt.Errorf("-nodes=%d exceeds available nodes (%d)", *targetNodeCount, len(nodeList))
+	}
+
+	chunkToNode, ownerCount, copiesCount, err := buildDistributionCounts(chunks, volumeToOwner, volumeNodesList)
+	if err != nil {
+		return err
+	}
+
+	activeNodeList, activeSet := selectActiveNodes(nodeList, ownerCount, *targetNodeCount)
+
+	totalChunks := len(chunks)
+	totalNodes := len(activeNodeList)
+	totalCopies := 0
+	for _, cnt := range copiesCount {
+		totalCopies += cnt
+	}
+
+	fmt.Fprintf(writer, "\nFile: %s\n", path)
+	fmt.Fprintf(writer, "Total chunks: %d, Total nodes: %d, Mode: %s\n", totalChunks, totalNodes, *mode)
+	printCurrentDistribution(writer, nodeList, ownerCount, copiesCount, activeSet, *targetNodeCount, *mode, totalChunks, totalNodes, totalCopies)
+
+	moves, ownerTarget := planDistribution(*mode, writer, activeNodeList, nodeList, activeSet, ownerCount, copiesCount, chunkToNode, chunks, volumeNodesList, totalChunks, totalNodes, totalCopies)
+
+	if len(moves) == 0 {
+		fmt.Fprintf(writer, "\nAlready well distributed. No moves needed.\n")
+		return nil
+	}
+
+	allRelevantNodes := relevantNodes(nodeList, activeSet, ownerCount)
+	printRedistributionPlan(writer, allRelevantNodes, ownerCount, ownerTarget, len(moves))
+
+	if !*apply {
+		fmt.Fprintf(writer, "\nTo apply, add -apply flag\n")
+		return nil
+	}
+
+	fmt.Fprintf(writer, "\nExecuting redistribution...\n")
+	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
+
+	movedRecords, err := executeChunkMoves(commandEnv, writer, moves, volumeInfoMap)
+	if err != nil {
+		return err
+	}
+	if len(movedRecords) == 0 {
+		fmt.Fprintf(writer, "\nNo chunks were moved successfully.\n")
+		return nil
+	}
+
+	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", len(movedRecords))
+	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
+			Directory: dir,
+			Entry:     entry,
+		})
+	})
+	if err != nil {
+		fmt.Fprintf(writer, "FAILED to update filer metadata: %v\n", err)
+		fmt.Fprintf(writer, "WARNING: New chunks were uploaded but metadata was not updated.\n")
+		fmt.Fprintf(writer, "The original file is still intact. New chunks are orphaned.\n")
+		return err
+	}
+	fmt.Fprintf(writer, "Filer metadata updated successfully.\n")
+
+	deleteOldChunks(commandEnv, writer, movedRecords)
+
+	fmt.Fprintf(writer, "\nRedistribution complete. %d chunks moved.\n", len(movedRecords))
+	return nil
+}
+
+// lookupFileEntry fetches the filer entry for the given directory and name.
+func lookupFileEntry(commandEnv *CommandEnv, dir, name string) (*filer_pb.Entry, error) {
+	var entry *filer_pb.Entry
+	err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
+		resp, err := filer_pb.LookupEntry(context.Background(), client, &filer_pb.LookupDirectoryEntryRequest{
+			Directory: dir,
+			Name:      name,
+		})
+		if err != nil {
+			return err
+		}
+		entry = resp.Entry
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if entry.IsDirectory {
+		return nil, fmt.Errorf("%s/%s is a directory", dir, name)
+	}
+	return entry, nil
+}
+
+// validateChunks returns the chunks of an entry, rejecting chunk-manifest files.
+func validateChunks(entry *filer_pb.Entry) ([]*filer_pb.FileChunk, error) {
+	chunks := entry.GetChunks()
 	for _, chunk := range chunks {
 		if chunk.IsChunkManifest {
-			return fmt.Errorf("file uses chunk manifests (very large file). Not yet supported")
+			return nil, fmt.Errorf("file uses chunk manifests (very large file). Not yet supported")
 		}
 	}
+	return chunks, nil
+}
 
-	// ===== 2. Collect topology =====
+// collectVolumeTopology queries the master for cluster topology and returns per-volume
+// metadata, per-volume node lists, per-volume ownership, and the sorted node list.
+func collectVolumeTopology(commandEnv *CommandEnv) (
+	volumeInfoMap map[uint32]*master_pb.VolumeInformationMessage,
+	volumeNodesList map[uint32][]string,
+	volumeToOwner map[uint32]string,
+	nodeList []string,
+	err error,
+) {
 	topoInfo, _, err := collectTopologyInfo(commandEnv, 0)
 	if err != nil {
-		return fmt.Errorf("collect topology: %v", err)
+		return nil, nil, nil, nil, fmt.Errorf("collect topology: %v", err)
 	}
 
-	volumeInfoMap := make(map[uint32]*master_pb.VolumeInformationMessage)
-	volumeNodesList := make(map[uint32][]string)
+	volumeInfoMap = make(map[uint32]*master_pb.VolumeInformationMessage)
+	volumeNodesList = make(map[uint32][]string)
 	allNodes := make(map[string]bool)
 
 	for _, dc := range topoInfo.GetDataCenterInfos() {
@@ -166,40 +274,37 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		}
 	}
 
-	volumeToOwner := make(map[uint32]string)
+	volumeToOwner = make(map[uint32]string)
 	for vid, nodes := range volumeNodesList {
 		sort.Strings(nodes)
 		volumeToOwner[vid] = nodes[int(vid)%len(nodes)]
 	}
 
-	nodeList := make([]string, 0, len(allNodes))
+	nodeList = make([]string, 0, len(allNodes))
 	for node := range allNodes {
 		nodeList = append(nodeList, node)
 	}
 	sort.Strings(nodeList)
 
-	if len(nodeList) < 2 {
-		return fmt.Errorf("need at least 2 volume nodes, found %d", len(nodeList))
-	}
+	return volumeInfoMap, volumeNodesList, volumeToOwner, nodeList, nil
+}
 
-	if *targetNodeCount < 0 {
-		return fmt.Errorf("-nodes must be >= 0 (0 = all nodes)")
-	}
-	if *targetNodeCount > len(nodeList) {
-		return fmt.Errorf("-nodes=%d exceeds available nodes (%d)", *targetNodeCount, len(nodeList))
-	}
-
-	// ===== 3. Build distribution counts =====
-	chunkToNode := make(map[int]string)
-	ownerCount := make(map[string]int)
-	copiesCount := make(map[string]int)
+// buildDistributionCounts maps each chunk to its owning node and tallies owner/copy counts.
+func buildDistributionCounts(
+	chunks []*filer_pb.FileChunk,
+	volumeToOwner map[uint32]string,
+	volumeNodesList map[uint32][]string,
+) (chunkToNode map[int]string, ownerCount map[string]int, copiesCount map[string]int, err error) {
+	chunkToNode = make(map[int]string)
+	ownerCount = make(map[string]int)
+	copiesCount = make(map[string]int)
 
 	for i, chunk := range chunks {
 		var vid uint32
 		if chunk.Fid == nil {
 			fileId, parseErr := needle.ParseFileIdFromString(chunk.GetFileIdString())
 			if parseErr != nil {
-				return fmt.Errorf("failed to parse file id for chunk %d: %v", i, parseErr)
+				return nil, nil, nil, fmt.Errorf("failed to parse file id for chunk %d: %v", i, parseErr)
 			}
 			vid = uint32(fileId.VolumeId)
 		} else {
@@ -207,7 +312,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		}
 		owner, ok := volumeToOwner[vid]
 		if !ok {
-			return fmt.Errorf("volume %d not found in topology", vid)
+			return nil, nil, nil, fmt.Errorf("volume %d not found in topology", vid)
 		}
 		chunkToNode[i] = owner
 		ownerCount[owner]++
@@ -215,10 +320,14 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 			copiesCount[node]++
 		}
 	}
+	return chunkToNode, ownerCount, copiesCount, nil
+}
 
-	// Select target nodes
-	activeNodeList := nodeList
-	if *targetNodeCount > 0 && *targetNodeCount < len(nodeList) {
+// selectActiveNodes picks up to targetNodeCount nodes to participate in redistribution.
+// When targetNodeCount is 0 all nodes are active.
+func selectActiveNodes(nodeList []string, ownerCount map[string]int, targetNodeCount int) (activeNodeList []string, activeSet map[string]bool) {
+	activeNodeList = nodeList
+	if targetNodeCount > 0 && targetNodeCount < len(nodeList) {
 		var withChunks, withoutChunks []string
 		for _, node := range nodeList {
 			if ownerCount[node] > 0 {
@@ -227,7 +336,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 				withoutChunks = append(withoutChunks, node)
 			}
 		}
-		n := *targetNodeCount
+		n := targetNodeCount
 		if len(withChunks) >= n {
 			sort.Slice(withChunks, func(i, j int) bool {
 				return ownerCount[withChunks[i]] > ownerCount[withChunks[j]]
@@ -239,105 +348,81 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		sort.Strings(activeNodeList)
 	}
 
-	activeSet := make(map[string]bool)
+	activeSet = make(map[string]bool, len(activeNodeList))
 	for _, node := range activeNodeList {
 		activeSet[node] = true
 	}
+	return activeNodeList, activeSet
+}
 
-	totalChunks := len(chunks)
-	totalNodes := len(activeNodeList)
-	totalCopies := 0
-	for _, cnt := range copiesCount {
-		totalCopies += cnt
-	}
-
-	// ===== 4. Print current distribution =====
-	fmt.Fprintf(writer, "\nFile: %s\n", path)
-	fmt.Fprintf(writer, "Total chunks: %d, Total nodes: %d, Mode: %s\n", totalChunks, totalNodes, *mode)
-
-	fmt.Fprintf(writer, "\nCurrent distribution:\n")
+// printCurrentDistribution writes the per-node chunk/copy table to writer.
+func printCurrentDistribution(
+	writer io.Writer,
+	nodeList []string,
+	ownerCount, copiesCount map[string]int,
+	activeSet map[string]bool,
+	targetNodeCount int,
+	mode string,
+	totalChunks, totalNodes, totalCopies int,
+) {
 	maxOwner := 0
 	for _, cnt := range ownerCount {
 		if cnt > maxOwner {
 			maxOwner = cnt
 		}
 	}
+
+	fmt.Fprintf(writer, "\nCurrent distribution:\n")
 	for _, node := range nodeList {
 		oc := ownerCount[node]
 		cc := copiesCount[node]
 		bar := strings.Repeat("#", int(math.Ceil(float64(oc)*30/math.Max(float64(maxOwner), 1))))
-		shortNode := strings.Split(node, ".")[0]
 		marker := " "
-		if *targetNodeCount > 0 && !activeSet[node] {
+		if targetNodeCount > 0 && !activeSet[node] {
 			marker = "-"
 		}
-		if *mode == "replica" {
-			fmt.Fprintf(writer, "  %s %-20s %4d chunks  %4d copies  %-30s\n", marker, shortNode, oc, cc, bar)
+		if mode == "replica" {
+			fmt.Fprintf(writer, "  %s %-20s %4d chunks  %4d copies  %-30s\n", marker, shortName(node), oc, cc, bar)
 		} else {
-			fmt.Fprintf(writer, "  %s %-20s %4d chunks  %-30s\n", marker, shortNode, oc, bar)
+			fmt.Fprintf(writer, "  %s %-20s %4d chunks  %-30s\n", marker, shortName(node), oc, bar)
 		}
 	}
 	fmt.Fprintf(writer, "  Ideal: ~%.0f chunks per node", math.Ceil(float64(totalChunks)/float64(totalNodes)))
-	if *mode == "replica" {
+	if mode == "replica" {
 		fmt.Fprintf(writer, ", ~%.0f copies per node", math.Ceil(float64(totalCopies)/float64(totalNodes)))
 	}
 	fmt.Fprintln(writer)
+}
 
-	// ===== 5. Calculate redistribution plan (mode-dependent) =====
-	var moves []chunkMove
-
+// planDistribution computes the set of chunk moves required for the chosen mode.
+func planDistribution(
+	mode string,
+	writer io.Writer,
+	activeNodeList, nodeList []string,
+	activeSet map[string]bool,
+	ownerCount, copiesCount map[string]int,
+	chunkToNode map[int]string,
+	chunks []*filer_pb.FileChunk,
+	volumeNodesList map[uint32][]string,
+	totalChunks, totalNodes, totalCopies int,
+) (moves []chunkMove, ownerTarget map[string]int) {
 	type nodeExcess struct {
 		node   string
 		excess int
 	}
 
-	allRelevantNodes := make([]string, 0, len(nodeList))
-	for _, node := range nodeList {
-		if activeSet[node] || ownerCount[node] > 0 {
-			allRelevantNodes = append(allRelevantNodes, node)
-		}
-	}
+	allRelevantNodes := relevantNodes(nodeList, activeSet, ownerCount)
+	ownerTarget = make(map[string]int)
 
-	ownerTarget := make(map[string]int)
-
-	switch *mode {
+	switch mode {
 	case "primary":
-		// Balance owner-based chunk count
-		ownerMin := totalChunks / totalNodes
-		ownerRemainder := totalChunks % totalNodes
-		for i, node := range activeNodeList {
-			if i < ownerRemainder {
-				ownerTarget[node] = ownerMin + 1
-			} else {
-				ownerTarget[node] = ownerMin
-			}
-		}
-		for _, node := range nodeList {
-			if !activeSet[node] && ownerCount[node] > 0 {
-				ownerTarget[node] = 0
-			}
-		}
+		ownerTarget = computeOwnerTarget(activeNodeList, nodeList, activeSet, totalChunks, totalNodes)
 		moves = planOwnerMoves(ownerCount, ownerTarget, chunkToNode, chunks, allRelevantNodes)
 
 	case "replica":
-		// Step 1: owner balance
-		ownerMin := totalChunks / totalNodes
-		ownerRemainder := totalChunks % totalNodes
-		for i, node := range activeNodeList {
-			if i < ownerRemainder {
-				ownerTarget[node] = ownerMin + 1
-			} else {
-				ownerTarget[node] = ownerMin
-			}
-		}
-		for _, node := range nodeList {
-			if !activeSet[node] && ownerCount[node] > 0 {
-				ownerTarget[node] = 0
-			}
-		}
+		ownerTarget = computeOwnerTarget(activeNodeList, nodeList, activeSet, totalChunks, totalNodes)
 		moves = planOwnerMoves(ownerCount, ownerTarget, chunkToNode, chunks, allRelevantNodes)
 
-		// Step 2: copies balance (additional moves)
 		copiesMin := totalCopies / totalNodes
 		copiesRemainder := totalCopies % totalNodes
 		copiesTarget := make(map[string]int)
@@ -413,7 +498,6 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		}
 
 	case "round-robin":
-		// Sort chunks by offset, assign to nodes in round-robin order
 		type chunkWithIndex struct {
 			index  int
 			offset int64
@@ -429,7 +513,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		for i, sc := range sortedChunks {
 			targetNode := activeNodeList[i%totalNodes]
 			currentOwner := chunkToNode[sc.index]
-			ownerTarget[targetNode]++ // build target for display
+			ownerTarget[targetNode]++
 			if currentOwner != targetNode {
 				moves = append(moves, chunkMove{
 					chunkIndex: sc.index,
@@ -440,7 +524,6 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 			}
 		}
 
-		// Print round-robin assignment
 		fmt.Fprintf(writer, "\nRound-robin assignment (sequential read optimized):\n")
 		fmt.Fprintf(writer, "  First assignments: ")
 		for pos := range sortedChunks {
@@ -448,12 +531,11 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 				fmt.Fprintf(writer, "... ")
 				break
 			}
-			targetNode := activeNodeList[pos%totalNodes]
-			fmt.Fprintf(writer, "%s ", strings.Split(targetNode, ".")[0])
+			fmt.Fprintf(writer, "%s ", shortName(activeNodeList[pos%totalNodes]))
 		}
 		fmt.Fprintf(writer, "\n  Pattern: ")
 		for i := 0; i < totalNodes && i < 6; i++ {
-			fmt.Fprintf(writer, "%s ", strings.Split(activeNodeList[i], ".")[0])
+			fmt.Fprintf(writer, "%s ", shortName(activeNodeList[i]))
 		}
 		if totalNodes > 6 {
 			fmt.Fprintf(writer, "...")
@@ -461,13 +543,12 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		fmt.Fprintf(writer, "(repeating)\n")
 	}
 
-	if len(moves) == 0 {
-		fmt.Fprintf(writer, "\nAlready well distributed. No moves needed.\n")
-		return nil
-	}
+	return moves, ownerTarget
+}
 
-	// ===== 6. Print redistribution plan =====
-	fmt.Fprintf(writer, "\nRedistribution plan: %d chunks to move\n", len(moves))
+// printRedistributionPlan writes the before/after chunk count table for each node.
+func printRedistributionPlan(writer io.Writer, allRelevantNodes []string, ownerCount, ownerTarget map[string]int, numMoves int) {
+	fmt.Fprintf(writer, "\nRedistribution plan: %d chunks to move\n", numMoves)
 	for _, node := range allRelevantNodes {
 		current := ownerCount[node]
 		target := ownerTarget[node]
@@ -476,32 +557,60 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		if diff > 0 {
 			sign = "+"
 		}
-		shortNode := strings.Split(node, ".")[0]
-		fmt.Fprintf(writer, "  %-25s %4d -> %4d  (%s%d)\n", shortNode, current, target, sign, diff)
+		fmt.Fprintf(writer, "  %-25s %4d -> %4d  (%s%d)\n", shortName(node), current, target, sign, diff)
 	}
+}
 
-	if !*apply {
-		fmt.Fprintf(writer, "\nTo apply, add -apply flag\n")
-		return nil
+// relevantNodes returns nodes that are either active or currently hold chunks.
+func relevantNodes(nodeList []string, activeSet map[string]bool, ownerCount map[string]int) []string {
+	relevant := make([]string, 0, len(nodeList))
+	for _, node := range nodeList {
+		if activeSet[node] || ownerCount[node] > 0 {
+			relevant = append(relevant, node)
+		}
 	}
+	return relevant
+}
 
-	// ===== 7. Execute moves =====
-	fmt.Fprintf(writer, "\nExecuting redistribution...\n")
+// shortName returns the hostname portion (before the first ".") of a node ID.
+func shortName(nodeID string) string {
+	return strings.Split(nodeID, ".")[0]
+}
 
-	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
-
-	type movedChunkRecord struct {
-		oldFidStr string
-		oldVid    needle.VolumeId
+// computeOwnerTarget returns the target chunk count per node for owner-based balancing.
+func computeOwnerTarget(activeNodeList, nodeList []string, activeSet map[string]bool, totalChunks, totalNodes int) map[string]int {
+	target := make(map[string]int)
+	perNode := totalChunks / totalNodes
+	remainder := totalChunks % totalNodes
+	for i, node := range activeNodeList {
+		if i < remainder {
+			target[node] = perNode + 1
+		} else {
+			target[node] = perNode
+		}
 	}
-	var movedRecords []movedChunkRecord
+	for _, node := range nodeList {
+		if !activeSet[node] {
+			target[node] = 0
+		}
+	}
+	return target
+}
 
+// executeChunkMoves runs all moves concurrently and returns the records of successfully moved chunks.
+func executeChunkMoves(
+	commandEnv *CommandEnv,
+	writer io.Writer,
+	moves []chunkMove,
+	volumeInfoMap map[uint32]*master_pb.VolumeInformationMessage,
+) ([]movedChunkRecord, error) {
 	uploader, err := operation.NewUploader()
 	if err != nil {
-		return fmt.Errorf("create uploader: %v", err)
+		return nil, fmt.Errorf("create uploader: %v", err)
 	}
 
 	var mu sync.Mutex
+	var movedRecords []movedChunkRecord
 	ewg := NewErrorWaitGroup(DefaultMaxParallelization)
 
 	for i, mv := range moves {
@@ -510,8 +619,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 			oldFidStr := chunk.GetFileIdString()
 			prefix := fmt.Sprintf("  [%d/%d] Moving %s from %s to %s",
 				i+1, len(moves), oldFidStr,
-				strings.Split(mv.fromNode, ".")[0],
-				strings.Split(mv.toNode, ".")[0],
+				shortName(mv.fromNode), shortName(mv.toNode),
 			)
 
 			fail := func(msg string) {
@@ -531,6 +639,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 				fail(fmt.Sprintf("lookup source: %v", lookupErr))
 				return nil
 			}
+
 			var resp *http.Response
 			var reader io.ReadCloser
 			var readErr error
@@ -631,31 +740,13 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		})
 	}
 	_ = ewg.Wait()
+	return movedRecords, nil
+}
 
-	if len(movedRecords) == 0 {
-		fmt.Fprintf(writer, "\nNo chunks were moved successfully.\n")
-		return nil
-	}
-
-	// ===== 8. Update filer metadata =====
-	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", len(movedRecords))
-	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
-			Directory: dir,
-			Entry:     entry,
-		})
-	})
-	if err != nil {
-		fmt.Fprintf(writer, "FAILED to update filer metadata: %v\n", err)
-		fmt.Fprintf(writer, "WARNING: New chunks were uploaded but metadata was not updated.\n")
-		fmt.Fprintf(writer, "The original file is still intact. New chunks are orphaned.\n")
-		return err
-	}
-	fmt.Fprintf(writer, "Filer metadata updated successfully.\n")
-
-	// ===== 9. Delete old chunks =====
-	// Send DELETE to only ONE volume server per chunk.
-	// SeaweedFS's ReplicatedDelete propagates the deletion to all replicas automatically.
+// deleteOldChunks deletes the original chunks after a successful metadata update.
+// DELETE is sent to only one volume server per chunk; SeaweedFS ReplicatedDelete
+// propagates the deletion to all replicas automatically.
+func deleteOldChunks(commandEnv *CommandEnv, writer io.Writer, movedRecords []movedChunkRecord) {
 	fmt.Fprintf(writer, "\nDeleting old chunks from source volumes...\n")
 	deleteFailCount := 0
 	for _, rec := range movedRecords {
@@ -692,12 +783,9 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	} else {
 		fmt.Fprintf(writer, "All old chunks deleted successfully.\n")
 	}
-
-	fmt.Fprintf(writer, "\nRedistribution complete. %d chunks moved.\n", len(movedRecords))
-	return nil
 }
 
-// planOwnerMoves generates moves to balance owner-based chunk distribution
+// planOwnerMoves generates moves to balance owner-based chunk distribution.
 func planOwnerMoves(ownerCount, ownerTarget map[string]int, chunkToNode map[int]string, chunks []*filer_pb.FileChunk, allRelevantNodes []string) []chunkMove {
 	type nodeExcess struct {
 		node   string
