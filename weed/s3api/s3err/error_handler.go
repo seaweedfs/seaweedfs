@@ -54,6 +54,29 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }
 
+// WriteErrorResponseWithMessage writes an S3 error response that uses the
+// standard error code mapping (status + Code) but overrides the default
+// Message with a caller-supplied description. Useful when the generic
+// Description hides why the request was rejected (e.g. which POST policy
+// condition failed).
+func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, errorCode ErrorCode, message string) {
+	r, reqID := request_id.Ensure(r)
+	vars := mux.Vars(r)
+	bucket := vars["bucket"]
+	object := vars["object"]
+	if strings.HasPrefix(object, "/") {
+		object = object[1:]
+	}
+
+	apiError := GetAPIError(errorCode)
+	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object, reqID)
+	if message != "" {
+		errorResponse.Message = message
+	}
+	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
+	PostLog(r, apiError.HTTPStatusCode, errorCode)
+}
+
 func getRESTErrorResponse(err APIError, resource string, bucket, object, requestID string) RESTErrorResponse {
 	return RESTErrorResponse{
 		Code:       err.Code,

@@ -488,6 +488,8 @@ func TestPostPolicyBucketHandler_PolicyViolationReturns403(t *testing.T) {
 		"403 response must not set a redirect Location header")
 	assert.Contains(t, rec.Body.String(), "AccessDenied",
 		"response body should identify AccessDenied; actual body: %s", rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "Policy Condition failed",
+		"response body should carry the specific policy-failure message; actual body: %s", rec.Body.String())
 	// Guard against the signing setup silently failing before the policy
 	// branch ever runs, which would make the 403 assertion meaningless.
 	assert.NotContains(t, rec.Body.String(), "SignatureDoesNotMatch",
