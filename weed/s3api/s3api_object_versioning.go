@@ -1339,11 +1339,13 @@ func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry
 }
 
 // healStaleLatestVersionPointer is invoked when the .versions directory metadata
-// points to a version file that no longer exists. It rescans the directory,
-// picks the newest remaining content version, updates the directory pointer
-// metadata best-effort, and returns the rescanned entry. If no content version
-// remains (only delete markers or an empty directory) an error is returned and
-// the caller treats the object as not found.
+// points to a version file that no longer exists. It paginates the directory,
+// picks the chronologically newest remaining entry (content version or delete
+// marker), updates the directory pointer metadata best-effort, and returns the
+// rescanned entry. Downstream handlers detect ExtDeleteMarkerKey on the
+// returned entry and render NoSuchKey, so promoting a delete marker preserves
+// correct S3 semantics. If no version-tagged entry remains an error is
+// returned and the caller surfaces it as not found.
 func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject string, versionsEntry *filer_pb.Entry, stalePointerFile string) (*filer_pb.Entry, error) {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := normalizedObject + s3_constants.VersionsFolder
@@ -1351,17 +1353,42 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 
 	glog.Warningf("healStaleLatestVersionPointer: stale pointer for %s/%s - version file %q missing, rescanning %s", bucket, normalizedObject, stalePointerFile, versionsDir)
 
-	entries, _, err := s3a.list(versionsDir, "", "", false, 1000)
-	if err != nil {
-		return nil, fmt.Errorf("list %s: %w", versionsDir, err)
-	}
-
+	// Paginate through all version entries and keep a running best candidate.
+	// A single-shot list would miss the true latest when old-format (raw
+	// timestamp) version ids spill past one page, since filesystem order is
+	// lexicographic-ascending = oldest-first for that format.
+	//
 	// Pick the chronologically newest entry regardless of type. Promoting a
 	// delete marker is correct: S3 semantics treat it as the current version
 	// and the caller renders NoSuchKey (with x-amz-delete-marker) from the
 	// returned entry. Restricting to content versions here would "undelete"
 	// the object by promoting an older content version over a newer marker.
-	latestEntry, latestVersionId, latestVersionFileName, isDeleteMarker := selectLatestVersion(entries)
+	var (
+		latestEntry           *filer_pb.Entry
+		latestVersionId       string
+		latestVersionFileName string
+		isDeleteMarker        bool
+		startFrom             string
+	)
+	for {
+		entries, isLast, err := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		if err != nil {
+			return nil, fmt.Errorf("list %s: %w", versionsDir, err)
+		}
+		if pageEntry, pageId, pageFile, pageDM := selectLatestVersion(entries); pageEntry != nil {
+			if latestEntry == nil || compareVersionIds(pageId, latestVersionId) < 0 {
+				latestEntry = pageEntry
+				latestVersionId = pageId
+				latestVersionFileName = pageFile
+				isDeleteMarker = pageDM
+			}
+		}
+		if isLast || len(entries) == 0 {
+			break
+		}
+		startFrom = entries[len(entries)-1].Name
+	}
+
 	if latestEntry == nil {
 		return nil, fmt.Errorf("no remaining version in %s", versionsDir)
 	}
