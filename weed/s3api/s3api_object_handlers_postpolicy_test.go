@@ -2,15 +2,19 @@ package s3api
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -382,4 +386,45 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 				"Path should contain properly separated bucket and key")
 		})
 	}
+}
+
+// TestPostPolicyFailureReturns403 verifies that when CheckPostPolicy rejects a
+// request, the handler branch writes HTTP 403 AccessDenied instead of the old
+// 307 Temporary Redirect. The 307 behavior caused clients to re-POST and
+// obscured the policy violation; 403 is the correct AWS S3 response.
+func TestPostPolicyFailureReturns403(t *testing.T) {
+	// Build a POST policy that requires key == "required.txt".
+	expiration := time.Now().UTC().Add(1 * time.Hour)
+	policyJSON := fmt.Sprintf(
+		`{"expiration":"%s","conditions":[["eq","$bucket","test-bucket"],["eq","$key","required.txt"]]}`,
+		expiration.Format("2006-01-02T15:04:05.000Z"),
+	)
+
+	postPolicyForm, err := policy.ParsePostPolicyForm(policyJSON)
+	assert.NoError(t, err, "policy should parse")
+
+	// Form sends a different key, violating the eq $key condition.
+	formValues := make(http.Header)
+	formValues.Set("Bucket", "test-bucket")
+	formValues.Set("Key", "wrong.txt")
+
+	err = policy.CheckPostPolicy(formValues, postPolicyForm)
+	assert.Error(t, err, "CheckPostPolicy should reject mismatched key")
+
+	// Verify the handler branch's response: WriteErrorResponse with
+	// ErrAccessDenied produces a 403 status, not 307.
+	req := httptest.NewRequest(http.MethodPost, "/test-bucket", nil)
+	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+	rec := httptest.NewRecorder()
+
+	s3err.WriteErrorResponse(rec, req, s3err.ErrAccessDenied)
+
+	assert.Equal(t, http.StatusForbidden, rec.Code,
+		"CheckPostPolicy failures must map to 403 AccessDenied, not 307 redirect")
+	assert.NotEqual(t, http.StatusTemporaryRedirect, rec.Code,
+		"must not return 307 Temporary Redirect on policy violation")
+	assert.Empty(t, rec.Header().Get("Location"),
+		"403 response must not set a redirect Location header")
+	assert.Contains(t, rec.Body.String(), "AccessDenied",
+		"response body should identify AccessDenied")
 }

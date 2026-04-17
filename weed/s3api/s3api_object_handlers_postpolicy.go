@@ -97,8 +97,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 
 		// Make sure formValues adhere to policy restrictions.
 		if err = policy.CheckPostPolicy(formValues, postPolicyForm); err != nil {
-			w.Header().Set("Location", r.URL.Path)
-			w.WriteHeader(http.StatusTemporaryRedirect)
+			glog.V(3).Infof("PostPolicy check failed for bucket %s: %v", bucket, err)
+			s3err.WriteErrorResponse(w, r, s3err.ErrAccessDenied)
 			return
 		}
 
