@@ -277,8 +277,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 			if !condPassed {
 				return fmt.Errorf("Invalid according to Policy: Policy Condition failed")
 			}
-		} else if strings.HasPrefix(policy.Key, "$x-amz-meta-") || strings.HasPrefix(policy.Key, "$x-amz-") {
-			// This covers all conditions X-Amz-Meta-* and X-Amz-*
+		} else if strings.HasPrefix(policy.Key, "$x-amz-") {
 			// Check if policy condition is satisfied
 			condPassed = checkPolicyCond(op, formValues.Get(formCanonicalName), policy.Value)
 			if !condPassed {
