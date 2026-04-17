@@ -140,13 +140,13 @@ func TestReproIssue7912(t *testing.T) {
 		require.NoError(t, err)
 		// Attacker injects these headers after signing; they are not part of
 		// SignedHeaders, so SigV4 verification still passes.
-		r4.Header.Set("X-SeaweedFS-Principal", "arn:aws:iam::123456789012:root")
-		r4.Header.Set("X-SeaweedFS-Session-Token", "spoofed-session-token")
+		r4.Header.Set(s3_constants.SeaweedFSPrincipalHeader, "arn:aws:iam::123456789012:root")
+		r4.Header.Set(s3_constants.SeaweedFSSessionTokenHeader, "spoofed-session-token")
 
 		_, errCode4 := iam.AuthSignatureOnly(r4)
 		assert.Equal(t, s3err.ErrNone, errCode4)
-		assert.Empty(t, r4.Header.Get("X-SeaweedFS-Principal"), "client-supplied X-SeaweedFS-Principal must be stripped")
-		assert.Empty(t, r4.Header.Get("X-SeaweedFS-Session-Token"), "client-supplied X-SeaweedFS-Session-Token must be stripped")
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSPrincipalHeader), "client-supplied X-SeaweedFS-Principal must be stripped")
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSSessionTokenHeader), "client-supplied X-SeaweedFS-Session-Token must be stripped")
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {
