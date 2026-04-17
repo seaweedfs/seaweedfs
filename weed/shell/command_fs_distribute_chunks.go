@@ -458,7 +458,10 @@ func planDistribution(
 				if alreadyMoving[idx] {
 					continue
 				}
-				vid := chunk.Fid.GetVolumeId()
+				vid, vidErr := chunkVolumeId(chunk)
+				if vidErr != nil {
+					continue
+				}
 				if !slices.Contains(volumeNodesList[vid], over.node) {
 					continue
 				}
@@ -564,6 +567,19 @@ func relevantNodes(nodeList []string, activeSet map[string]bool, ownerCount map[
 		}
 	}
 	return relevant
+}
+
+// chunkVolumeId extracts the volume ID from a chunk, falling back to parsing
+// the legacy FileId string when Fid is nil.
+func chunkVolumeId(chunk *filer_pb.FileChunk) (uint32, error) {
+	if chunk.Fid != nil {
+		return chunk.Fid.GetVolumeId(), nil
+	}
+	fileId, err := needle.ParseFileIdFromString(chunk.GetFileIdString())
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse file id %q: %v", chunk.GetFileIdString(), err)
+	}
+	return uint32(fileId.VolumeId), nil
 }
 
 // shortName returns the hostname portion (before the first ".") of a node ID.
@@ -678,9 +694,11 @@ func executeChunkMoves(
 			}
 
 			var replication, collection string
-			if vInfo, ok := volumeInfoMap[chunk.Fid.GetVolumeId()]; ok {
-				replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
-				collection = vInfo.GetCollection()
+			if vid, vidErr := chunkVolumeId(chunk); vidErr == nil {
+				if vInfo, ok := volumeInfoMap[vid]; ok {
+					replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
+					collection = vInfo.GetCollection()
+				}
 			}
 
 			assignResult, assignErr := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
