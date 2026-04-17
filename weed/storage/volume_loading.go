@@ -248,9 +248,15 @@ func (v *Volume) load(alsoLoadIndex bool, createDatIfMissing bool, needleMapKind
 		// disk I/O. A violation marks the volume read-only so a corrupt
 		// .idx left over from a crashed batched write does not silently
 		// power vacuum to drop reachable data. See issue #8928.
+		//
+		// Allow a single needle-padding cycle (NeedlePaddingSize) of slack
+		// to match the v4→v3 compaction off-by-one tolerance in
+		// readNeedleTail / ReadBytes: that bug can inflate MaximumNeedleEnd
+		// by up to one alignment unit per affected entry. Real corruption
+		// (issue #8928) overshoots by megabytes, not bytes.
 		if !v.HasRemoteFile() && v.nm != nil && v.DataBackend != nil {
 			if datSize, _, statErr := v.DataBackend.GetStat(); statErr == nil && datSize > 0 {
-				if maxEnd := v.nm.MaxNeedleEnd(); maxEnd > datSize {
+				if maxEnd := v.nm.MaxNeedleEnd(); maxEnd > datSize+int64(types.NeedlePaddingSize) {
 					v.noWriteOrDelete = true
 					glog.V(0).Infof("volume %d: idx references end=%d but .dat is %d bytes; marking readonly",
 						v.Id, maxEnd, datSize)
