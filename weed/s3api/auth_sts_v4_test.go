@@ -28,8 +28,8 @@ func TestAuthorizeWithIAMSessionTokenExtraction(t *testing.T) {
 		}
 
 		// Extract tokens the same way authorizeWithIAM does
-		sessionToken := req.Header.Get("X-SeaweedFS-Session-Token")
-		principal := req.Header.Get("X-SeaweedFS-Principal")
+		sessionToken := req.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
+		principal := req.Header.Get(s3_constants.SeaweedFSPrincipalHeader)
 
 		assert.Equal(t, "jwt-token-123", sessionToken, "Should extract JWT session token from header")
 		assert.Equal(t, "arn:aws:iam::user/test", principal, "Should extract principal from header")
@@ -44,8 +44,8 @@ func TestAuthorizeWithIAMSessionTokenExtraction(t *testing.T) {
 		}
 
 		// Extract tokens the same way authorizeWithIAM does
-		sessionToken := req.Header.Get("X-SeaweedFS-Session-Token")
-		principal := req.Header.Get("X-SeaweedFS-Principal")
+		sessionToken := req.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
+		principal := req.Header.Get(s3_constants.SeaweedFSPrincipalHeader)
 
 		// If JWT token is empty, should fallback to X-Amz-Security-Token
 		if sessionToken == "" {
@@ -63,7 +63,7 @@ func TestAuthorizeWithIAMSessionTokenExtraction(t *testing.T) {
 		}
 
 		// Extract tokens the same way authorizeWithIAM does
-		sessionToken := req.Header.Get("X-SeaweedFS-Session-Token")
+		sessionToken := req.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
 		if sessionToken == "" {
 			sessionToken = req.Header.Get("X-Amz-Security-Token")
 			if sessionToken == "" {
@@ -85,7 +85,7 @@ func TestAuthorizeWithIAMSessionTokenExtraction(t *testing.T) {
 		}
 
 		// Extract tokens the same way authorizeWithIAM does
-		sessionToken := req.Header.Get("X-SeaweedFS-Session-Token")
+		sessionToken := req.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
 		if sessionToken == "" {
 			sessionToken = req.Header.Get("X-Amz-Security-Token")
 		}

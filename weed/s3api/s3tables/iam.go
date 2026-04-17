@@ -79,7 +79,7 @@ func hasSessionToken(r *http.Request) bool {
 }
 
 func extractSessionToken(r *http.Request) string {
-	if token := r.Header.Get("X-SeaweedFS-Session-Token"); token != "" {
+	if token := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader); token != "" {
 		return token
 	}
 	if token := r.Header.Get("X-Amz-Security-Token"); token != "" {
@@ -94,7 +94,7 @@ func (h *S3TablesHandler) authorizeIAMAction(r *http.Request, identityPolicyName
 		glog.V(2).Infof("S3Tables: %v", err)
 		return false, err
 	}
-	principal := r.Header.Get("X-SeaweedFS-Principal")
+	principal := r.Header.Get(s3_constants.SeaweedFSPrincipalHeader)
 	if principal == "" {
 		principal = getIdentityPrincipalArn(r)
 	}
