@@ -128,17 +128,8 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 	}
 	r.Header.Set("Content-Type", contentType)
 
-	// Add s3 postpolicy support header
-	for k, _ := range formValues {
-		if k == "Cache-Control" || k == "Expires" || k == "Content-Disposition" {
-			r.Header.Set(k, formValues.Get(k))
-			continue
-		}
-
-		if strings.HasPrefix(k, s3_constants.AmzUserMetaPrefix) {
-			r.Header.Set(k, formValues.Get(k))
-		}
-	}
+	// Forward validated POST form fields to the underlying PUT as headers.
+	applyPostPolicyFormHeaders(r, formValues)
 
 	etag, errCode, sseMetadata := s3a.putToFiler(r, filePath, fileBody, bucket, object, 1, nil)
 
@@ -178,6 +169,58 @@ func (s3a *S3ApiServer) PostPolicyBucketHandler(w http.ResponseWriter, r *http.R
 		s3err.WriteEmptyResponse(w, r, http.StatusNoContent)
 	}
 
+}
+
+// postPolicyReservedFormFields are multipart form fields that are part of the
+// POST Object auth/policy mechanism (or handled explicitly elsewhere in the
+// handler) and must not be forwarded to the upload as HTTP headers. Keys are
+// already run through http.CanonicalHeaderKey before lookup.
+var postPolicyReservedFormFields = map[string]struct{}{
+	// POST policy signature (V2)
+	"Policy":         {},
+	"Signature":      {},
+	"Awsaccesskeyid": {},
+	// POST policy signature (V4)
+	"X-Amz-Signature":      {},
+	"X-Amz-Credential":     {},
+	"X-Amz-Algorithm":      {},
+	"X-Amz-Date":           {},
+	"X-Amz-Security-Token": {},
+	// Target descriptors
+	"Key":    {},
+	"File":   {},
+	"Bucket": {},
+	// Success actions (handled elsewhere in the handler)
+	"Success_action_redirect": {},
+	"Success_action_status":   {},
+	"Redirect":                {},
+	// Content-Type is resolved separately above (from form or file part)
+	"Content-Type": {},
+}
+
+// applyPostPolicyFormHeaders forwards validated POST Object form fields to the
+// request headers so they are applied to the resulting PUT. Reserved fields
+// that are part of the POST policy mechanism itself (signature, key, etc.) are
+// skipped. The acl form field is translated to the X-Amz-Acl header to match
+// how AWS promotes the form value to the underlying PUT.
+func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
+	for k := range formValues {
+		if _, reserved := postPolicyReservedFormFields[k]; reserved {
+			continue
+		}
+		v := formValues.Get(k)
+		switch {
+		case k == "Acl":
+			r.Header.Set(s3_constants.AmzCannedAcl, v)
+		case k == "Cache-Control",
+			k == "Expires",
+			k == "Content-Disposition",
+			k == "Content-Encoding":
+			r.Header.Set(k, v)
+		case strings.HasPrefix(k, "X-Amz-"):
+			r.Header.Set(k, v)
+		}
+	}
 }
 
 // Extract form fields and file data from a HTTP POST Policy
