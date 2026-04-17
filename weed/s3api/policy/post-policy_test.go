@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"testing"
 	"time"
 	"unicode/utf8"
 )
@@ -375,4 +376,117 @@ func getScope(t time.Time, region string) string {
 		"aws4_request",
 	}, "/")
 	return scope
+}
+
+// buildParsedPolicy is a small test helper that assembles a JSON policy
+// document with the supplied condition snippets and parses it into a
+// PostPolicyForm. Using ParsePostPolicyForm avoids having to construct the
+// anonymous struct in PostPolicyForm.Conditions.Policies directly.
+func buildParsedPolicy(t *testing.T, conditions string) PostPolicyForm {
+	t.Helper()
+	expiration := time.Now().UTC().Add(24 * time.Hour).Format(iso8601TimeFormat)
+	raw := fmt.Sprintf(`{"expiration":"%s","conditions":[%s]}`, expiration, conditions)
+	ppf, err := ParsePostPolicyForm(raw)
+	if err != nil {
+		t.Fatalf("ParsePostPolicyForm failed: %v\npolicy: %s", err, raw)
+	}
+	return ppf
+}
+
+// TestCheckPostPolicy_RejectsUnknownConditionKey verifies that a policy
+// containing a condition key that is neither in startsWithConds nor prefixed
+// with $x-amz- is rejected instead of being silently accepted.
+func TestCheckPostPolicy_RejectsUnknownConditionKey(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$foo","bar"]`)
+
+	form := http.Header{}
+	form.Set("Foo", "bar")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error for unknown condition key, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown condition key") {
+		t.Fatalf("expected 'unknown condition key' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "$foo") {
+		t.Fatalf("expected error to name the offending key, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_RejectsExtraXAmzFormField verifies that stray X-Amz-*
+// form fields (beyond the reserved auth/signing ones) are rejected when no
+// matching policy condition is declared.
+func TestCheckPostPolicy_RejectsExtraXAmzFormField(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$bucket","mybucket"]`)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Storage-Class", "STANDARD")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error for extra X-Amz-Storage-Class field, got nil")
+	}
+	if !strings.Contains(err.Error(), "Extra input fields") {
+		t.Fatalf("expected 'Extra input fields' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "X-Amz-Storage-Class") {
+		t.Fatalf("expected error to name the offending field, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_AllowsXAmzAuthFields verifies that the reserved
+// auth/signing X-Amz-* headers are accepted even when no policy condition
+// mentions them, because clients must always send these.
+func TestCheckPostPolicy_AllowsXAmzAuthFields(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$bucket","mybucket"]`)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Signature", "deadbeef")
+	form.Set("X-Amz-Credential", "AKIA/20260417/us-east-1/s3/aws4_request")
+	form.Set("X-Amz-Algorithm", "AWS4-HMAC-SHA256")
+	form.Set("X-Amz-Date", "20260417T000000Z")
+	form.Set("X-Amz-Security-Token", "session-token")
+
+	if err := CheckPostPolicy(form, ppf); err != nil {
+		t.Fatalf("expected no error with only reserved auth fields, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_AllowsMatchingXAmzField verifies that an X-Amz-* form
+// field is accepted when there is a matching equality policy condition.
+func TestCheckPostPolicy_AllowsMatchingXAmzField(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$bucket","mybucket"],["eq","$x-amz-storage-class","STANDARD"]`)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Storage-Class", "STANDARD")
+
+	if err := CheckPostPolicy(form, ppf); err != nil {
+		t.Fatalf("expected no error for matching X-Amz-Storage-Class, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_ExistingXAmzMetaCheckStillWorks is a regression test
+// for the pre-existing behavior: a stray X-Amz-Meta-* form field without a
+// matching condition is still rejected.
+func TestCheckPostPolicy_ExistingXAmzMetaCheckStillWorks(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$bucket","mybucket"]`)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Meta-Foo", "bar")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error for extra X-Amz-Meta-Foo field, got nil")
+	}
+	if !strings.Contains(err.Error(), "Extra input fields") {
+		t.Fatalf("expected 'Extra input fields' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "X-Amz-Meta-Foo") {
+		t.Fatalf("expected error to name the offending field, got: %v", err)
+	}
 }
