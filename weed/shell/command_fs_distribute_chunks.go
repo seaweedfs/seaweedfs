@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
@@ -500,118 +501,130 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		return fmt.Errorf("create uploader: %v", err)
 	}
 
+	var mu sync.Mutex
+	ewg := NewErrorWaitGroup(DefaultMaxParallelization)
+
 	for i, mv := range moves {
-		chunk := mv.chunk
-		oldFidStr := chunk.GetFileIdString()
+		ewg.Add(func() error {
+			chunk := mv.chunk
+			oldFidStr := chunk.GetFileIdString()
+			prefix := fmt.Sprintf("  [%d/%d] Moving %s from %s to %s",
+				i+1, len(moves), oldFidStr,
+				strings.Split(mv.fromNode, ".")[0],
+				strings.Split(mv.toNode, ".")[0],
+			)
 
-		fmt.Fprintf(writer, "  [%d/%d] Moving %s from %s to %s ...",
-			i+1, len(moves),
-			oldFidStr,
-			strings.Split(mv.fromNode, ".")[0],
-			strings.Split(mv.toNode, ".")[0],
-		)
-
-		oldFid, parseErr := needle.ParseFileIdFromString(oldFidStr)
-		if parseErr != nil {
-			fmt.Fprintf(writer, " FAILED (parse fid: %v)\n", parseErr)
-			continue
-		}
-
-		downloadURLs, lookupErr := commandEnv.MasterClient.LookupVolumeServerUrl(oldFid.VolumeId.String())
-		if lookupErr != nil || len(downloadURLs) == 0 {
-			fmt.Fprintf(writer, " FAILED (lookup source: %v)\n", lookupErr)
-			continue
-		}
-		downloadURL := fmt.Sprintf("http://%s/%s", downloadURLs[0], oldFidStr)
-
-		resp, reader, readErr := readUrl(downloadURL)
-		if readErr != nil {
-			fmt.Fprintf(writer, " FAILED (download: %v)\n", readErr)
-			continue
-		}
-
-		contentType := resp.Header.Get("Content-Type")
-		isCompressed := resp.Header.Get("Content-Encoding") == "gzip"
-		md5Hash := resp.Header.Get("Content-MD5")
-		var filename string
-		if cd := resp.Header.Get("Content-Disposition"); len(cd) > 0 {
-			if before, after, found := strings.Cut(cd, "filename="); found {
-				_ = before
-				filename = strings.Trim(after, "\"")
+			fail := func(msg string) {
+				mu.Lock()
+				fmt.Fprintf(writer, "%s ... FAILED (%s)\n", prefix, msg)
+				mu.Unlock()
 			}
-		}
 
-		var replication, collection string
-		if vInfo, ok := volumeInfoMap[chunk.Fid.GetVolumeId()]; ok {
-			replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
-			collection = vInfo.GetCollection()
-		}
+			oldFid, parseErr := needle.ParseFileIdFromString(oldFidStr)
+			if parseErr != nil {
+				fail(fmt.Sprintf("parse fid: %v", parseErr))
+				return nil
+			}
 
-		assignResult, assignErr := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
-			&operation.VolumeAssignRequest{
-				Count:       1,
-				Replication: replication,
-				Collection:  collection,
-				DataNode:    mv.toNode,
+			downloadURLs, lookupErr := commandEnv.MasterClient.LookupVolumeServerUrl(oldFid.VolumeId.String())
+			if lookupErr != nil || len(downloadURLs) == 0 {
+				fail(fmt.Sprintf("lookup source: %v", lookupErr))
+				return nil
+			}
+			downloadURL := fmt.Sprintf("http://%s/%s", downloadURLs[0], oldFidStr)
+
+			resp, reader, readErr := readUrl(downloadURL)
+			if readErr != nil {
+				fail(fmt.Sprintf("download: %v", readErr))
+				return nil
+			}
+
+			contentType := resp.Header.Get("Content-Type")
+			isCompressed := resp.Header.Get("Content-Encoding") == "gzip"
+			md5Hash := resp.Header.Get("Content-MD5")
+			var filename string
+			if cd := resp.Header.Get("Content-Disposition"); len(cd) > 0 {
+				if before, after, found := strings.Cut(cd, "filename="); found {
+					_ = before
+					filename = strings.Trim(after, "\"")
+				}
+			}
+
+			var replication, collection string
+			if vInfo, ok := volumeInfoMap[chunk.Fid.GetVolumeId()]; ok {
+				replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
+				collection = vInfo.GetCollection()
+			}
+
+			assignResult, assignErr := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
+				&operation.VolumeAssignRequest{
+					Count:       1,
+					Replication: replication,
+					Collection:  collection,
+					DataNode:    mv.toNode,
+				})
+			if assignErr != nil {
+				reader.Close()
+				util_http.CloseResponse(resp)
+				fail(fmt.Sprintf("assign: %v", assignErr))
+				return nil
+			}
+
+			uploadURL := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
+
+			var jwt security.EncodedJwt
+			if assignResult.Auth != "" {
+				jwt = assignResult.Auth
+			} else {
+				v := util.GetViper()
+				signingKey := v.GetString("jwt.signing.key")
+				if signingKey != "" {
+					expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
+					jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, assignResult.Fid)
+				}
+			}
+
+			_, uploadErr, _ := uploader.Upload(context.Background(), reader, &operation.UploadOption{
+				UploadUrl:         uploadURL,
+				Filename:          filename,
+				IsInputCompressed: isCompressed,
+				Cipher:            false,
+				MimeType:          contentType,
+				Md5:               md5Hash,
+				Jwt:               jwt,
 			})
-		if assignErr != nil {
 			reader.Close()
 			util_http.CloseResponse(resp)
-			fmt.Fprintf(writer, " FAILED (assign: %v)\n", assignErr)
-			continue
-		}
 
-		uploadURL := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
-
-		var jwt security.EncodedJwt
-		if assignResult.Auth != "" {
-			jwt = assignResult.Auth
-		} else {
-			v := util.GetViper()
-			signingKey := v.GetString("jwt.signing.key")
-			if signingKey != "" {
-				expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
-				jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, assignResult.Fid)
+			if uploadErr != nil {
+				fail(fmt.Sprintf("upload: %v", uploadErr))
+				return nil
 			}
-		}
 
-		_, uploadErr, _ := uploader.Upload(context.Background(), reader, &operation.UploadOption{
-			UploadUrl:         uploadURL,
-			Filename:          filename,
-			IsInputCompressed: isCompressed,
-			Cipher:            false,
-			MimeType:          contentType,
-			Md5:               md5Hash,
-			Jwt:               jwt,
+			newFid, fidParseErr := needle.ParseFileIdFromString(assignResult.Fid)
+			if fidParseErr != nil {
+				fail(fmt.Sprintf("parse new fid: %v", fidParseErr))
+				return nil
+			}
+
+			mu.Lock()
+			movedRecords = append(movedRecords, movedChunkRecord{
+				oldFidStr: oldFidStr,
+				oldVid:    oldFid.VolumeId,
+			})
+			chunk.Fid = &filer_pb.FileId{
+				VolumeId: uint32(newFid.VolumeId),
+				FileKey:  uint64(newFid.Key),
+				Cookie:   uint32(newFid.Cookie),
+			}
+			chunk.FileId = ""
+			fmt.Fprintf(writer, "%s ... OK -> %s\n", prefix, assignResult.Fid)
+			mu.Unlock()
+
+			return nil
 		})
-		reader.Close()
-		util_http.CloseResponse(resp)
-
-		if uploadErr != nil {
-			fmt.Fprintf(writer, " FAILED (upload: %v)\n", uploadErr)
-			continue
-		}
-
-		newFid, fidParseErr := needle.ParseFileIdFromString(assignResult.Fid)
-		if fidParseErr != nil {
-			fmt.Fprintf(writer, " FAILED (parse new fid: %v)\n", fidParseErr)
-			continue
-		}
-
-		movedRecords = append(movedRecords, movedChunkRecord{
-			oldFidStr: oldFidStr,
-			oldVid:    oldFid.VolumeId,
-		})
-
-		chunk.Fid = &filer_pb.FileId{
-			VolumeId: uint32(newFid.VolumeId),
-			FileKey:  uint64(newFid.Key),
-			Cookie:   uint32(newFid.Cookie),
-		}
-		chunk.FileId = ""
-
-		fmt.Fprintf(writer, " OK -> %s\n", assignResult.Fid)
 	}
+	_ = ewg.Wait()
 
 	if len(movedRecords) == 0 {
 		fmt.Fprintf(writer, "\nNo chunks were moved successfully.\n")
