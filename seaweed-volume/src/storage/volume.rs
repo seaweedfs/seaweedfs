@@ -19,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tracing::warn;
 
+use crate::storage::idx;
 use crate::storage::needle::needle::{self, get_actual_size, Needle, NeedleError};
 use crate::storage::needle_map::{CompactNeedleMap, NeedleMap, NeedleMapKind, RedbNeedleMap};
 use crate::storage::super_block::{ReplicaPlacement, SuperBlock, SUPER_BLOCK_SIZE};
@@ -1752,6 +1753,12 @@ impl Volume {
 
         let version = self.version();
 
+        // Structural check: every entry's (offset + actual size) must fit inside .dat.
+        // The tail check below only inspects the last 10 entries, so corruption deeper
+        // in the .idx (e.g. left over from a crashed batched write) would otherwise go
+        // undetected and only surface later as vacuum EOF errors. See issue #8928.
+        self.verify_index_fits_in_dat(&idx_path, version)?;
+
         // Check last 10 index entries (matching Go's CheckVolumeDataIntegrity).
         // Go starts healthyIndexSize = indexSize and reduces on EOF.
         // On success: break (err != ErrorSizeMismatch when err == nil).
@@ -1849,6 +1856,55 @@ impl Volume {
             )));
         }
 
+        Ok(())
+    }
+
+    /// Single linear scan of the .idx file confirming that every entry's
+    /// referenced byte range (offset + actual size) fits inside the current .dat.
+    /// A violation means the .idx records data that cannot exist on disk, e.g.
+    /// when a previous batched write rolled back the .dat after the matching
+    /// .idx entry had already been appended. Mirrors Go's verifyIndexFitsInDat.
+    fn verify_index_fits_in_dat(
+        &self,
+        idx_path: &str,
+        version: Version,
+    ) -> Result<(), VolumeError> {
+        let dat_size = self.current_dat_file_size().map_err(VolumeError::Io)? as i64;
+
+        let mut idx_file = File::open(idx_path)?;
+        let mut violations: u64 = 0;
+        let mut first_report = String::new();
+
+        idx::walk_index_file(&mut idx_file, 0, |key, offset, size| {
+            if offset.is_zero() || size.is_deleted() || !size.is_valid() {
+                return Ok(());
+            }
+            let needle_end = offset.to_actual_offset() + get_actual_size(size, version);
+            if needle_end > dat_size {
+                violations += 1;
+                if first_report.is_empty() {
+                    first_report = format!(
+                        "idx entry key={} offset={} size={} ends at {}, .dat size {}",
+                        key,
+                        offset.to_actual_offset(),
+                        size.0,
+                        needle_end,
+                        dat_size,
+                    );
+                }
+            }
+            Ok(())
+        })?;
+
+        if violations > 0 {
+            return Err(VolumeError::Io(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} index entries reference data past end of .dat ({})",
+                    violations, first_report
+                ),
+            )));
+        }
         Ok(())
     }
 
@@ -2683,6 +2739,8 @@ impl Volume {
         }
         entries.sort_by_key(|(_, offset, _)| *offset);
 
+        let mut skipped_needles: u64 = 0;
+        let mut skipped_data_bytes: u64 = 0;
         for (id, offset, size) in entries {
             // Progress callback
             if !progress_fn(offset.to_actual_offset()) {
@@ -2699,7 +2757,42 @@ impl Volume {
                 id,
                 ..Needle::default()
             };
-            self.read_needle_data_at(&mut n, offset.to_actual_offset(), size)?;
+            match self.read_needle_data_at(&mut n, offset.to_actual_offset(), size) {
+                Ok(()) => {}
+                Err(e) => {
+                    // Record EIO for health monitoring (parity with Go's checkReadWriteError).
+                    // A real disk-level IO error means the underlying volume is in a bad
+                    // state — bail so a human notices, rather than silently dropping data
+                    // that may simply be transiently unavailable.
+                    if let VolumeError::Io(ref io_err) = e {
+                        self.check_read_write_error(Some(io_err));
+                        if io_err.raw_os_error() == Some(5) {
+                            return Err(VolumeError::Io(io::Error::new(
+                                io_err.kind(),
+                                format!("cannot hydrate needle from file: {}", io_err),
+                            )));
+                        }
+                    }
+                    // Otherwise the .idx references bytes that .dat doesn't (or can't)
+                    // produce — past EOF, CRC mismatch, malformed header. The data was
+                    // already unreachable via the read path, so dropping the entry
+                    // during compaction makes the post-vacuum volume consistent.
+                    // See issue #8928.
+                    skipped_needles += 1;
+                    if size.is_valid() {
+                        skipped_data_bytes += size.0 as u64;
+                    }
+                    warn!(
+                        volume_id = self.id.0,
+                        key = id.0,
+                        offset = offset.to_actual_offset(),
+                        size = size.0,
+                        error = %e,
+                        "vacuum: dropping unreadable needle"
+                    );
+                    continue;
+                }
+            }
 
             // Skip TTL-expired needles using the volume's TTL (matches Go's volume_vacuum.go)
             if n.has_ttl() {
@@ -2719,6 +2812,15 @@ impl Volume {
             // Update new index
             new_nm.put(id, Offset::from_actual_offset(new_offset), n.size)?;
             new_offset += bytes.len() as i64;
+        }
+
+        if skipped_needles > 0 {
+            warn!(
+                volume_id = self.id.0,
+                skipped_needles,
+                skipped_data_bytes,
+                "vacuum: dropped unreadable index entries during compaction"
+            );
         }
 
         dst.sync_all()?;
@@ -3708,6 +3810,121 @@ mod tests {
 
         // Cleanup should be a no-op
         v.cleanup_compact().unwrap();
+    }
+
+    /// Vacuum compaction must tolerate an .idx entry whose offset points past
+    /// the end of the .dat file (the failure mode in issue #8928). The bad
+    /// entry is silently dropped from the resulting .cpx; healthy needles
+    /// survive untouched.
+    #[test]
+    fn test_compact_by_index_drops_dangling_needle() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        // Write a handful of healthy needles to establish a baseline .dat/.idx.
+        for i in 1..=5u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("payload-{}", i).into_bytes(),
+                data_size: format!("payload-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let dat_size = v.dat_file_size().unwrap();
+        let bad_key = NeedleId(9999);
+        let bad_offset = Offset::from_actual_offset((dat_size + 1024 * 1024) as i64);
+        let bad_size = Size(2048);
+        v.nm
+            .as_mut()
+            .expect("needle map present")
+            .put(bad_key, bad_offset, bad_size)
+            .unwrap();
+        v.nm.as_ref().unwrap().sync().unwrap();
+
+        // Vacuum must succeed in spite of the dangling entry.
+        v.compact_by_index(0, 0, |_| true)
+            .expect("compact_by_index should tolerate dangling entries");
+
+        // Walk the resulting .cpx and confirm the bad key was dropped while
+        // every healthy key made it through.
+        let cpx_path = v.file_name(".cpx");
+        let mut cpx = File::open(&cpx_path).unwrap();
+        let mut kept: Vec<u64> = Vec::new();
+        idx::walk_index_file(&mut cpx, 0, |key, _, size| {
+            if !size.is_deleted() {
+                kept.push(key.0);
+            }
+            Ok(())
+        })
+        .unwrap();
+
+        assert!(
+            !kept.contains(&bad_key.0),
+            "dangling key {} should have been dropped from .cpx, got {:?}",
+            bad_key.0,
+            kept
+        );
+        for i in 1..=5u64 {
+            assert!(
+                kept.contains(&i),
+                "healthy key {} missing from compacted .cpx, got {:?}",
+                i,
+                kept
+            );
+        }
+    }
+
+    /// The startup integrity check must reject an .idx whose entries point
+    /// past the end of the .dat — the deeper-than-tail corruption shape from
+    /// issue #8928 that the existing last-10-entries scan cannot see.
+    #[test]
+    fn test_verify_index_fits_in_dat_detects_dangling_entry() {
+        let tmp = TempDir::new().unwrap();
+        let dir = tmp.path().to_str().unwrap();
+        let mut v = make_test_volume(dir);
+
+        for i in 1..=4u64 {
+            let mut n = Needle {
+                id: NeedleId(i),
+                cookie: Cookie(i as u32),
+                data: format!("data-{}", i).into_bytes(),
+                data_size: format!("data-{}", i).len() as u32,
+                ..Needle::default()
+            };
+            v.write_needle(&mut n, true).unwrap();
+        }
+        v.sync_to_disk().unwrap();
+
+        let idx_path = v.file_name(".idx");
+        let version = v.version();
+
+        // Healthy volume passes the structural check.
+        v.verify_index_fits_in_dat(&idx_path, version)
+            .expect("healthy volume should pass structural check");
+
+        // Inject a dangling entry and re-run: now the check must fire.
+        let dat_size = v.dat_file_size().unwrap();
+        let bad_offset = Offset::from_actual_offset((dat_size + 4 * 1024 * 1024) as i64);
+        v.nm
+            .as_mut()
+            .expect("needle map present")
+            .put(NeedleId(9999), bad_offset, Size(1024))
+            .unwrap();
+        v.nm.as_ref().unwrap().sync().unwrap();
+
+        let err = v
+            .verify_index_fits_in_dat(&idx_path, version)
+            .expect_err("structural check should have failed for dangling idx entry");
+        assert!(
+            format!("{}", err).contains("past end of .dat"),
+            "unexpected error message: {}",
+            err
+        );
     }
 
     #[test]

@@ -9,6 +9,8 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/pb/volume_server_pb"
 	"github.com/seaweedfs/seaweedfs/weed/storage/backend"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
+	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
+	"github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
 
 func TestScrubVolumeData(t *testing.T) {
@@ -76,5 +78,66 @@ func TestScrubVolumeData(t *testing.T) {
 				t.Errorf("expected errors %v, got %v", tc.wantErrs, gotErrs)
 			}
 		})
+	}
+}
+
+// TestVerifyIndexFitsInDat ensures the structural startup check rejects an
+// .idx that references bytes past the end of the .dat — the corruption shape
+// described in issue #8928. The pre-existing tail check only inspects the
+// last 10 entries, so this guards against deeper-in-the-file rot.
+func TestVerifyIndexFitsInDat(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	// A handful of healthy needles establishes a baseline .dat/.idx.
+	for i := 1; i <= 4; i++ {
+		n := newRandomNeedle(uint64(i))
+		if _, _, _, err := v.writeNeedle2(n, true, false); err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+	}
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	// Sanity: a healthy volume passes the new structural check.
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	if err := verifyIndexFitsInDat(idxFile, v.DataBackend, v.Version()); err != nil {
+		idxFile.Close()
+		t.Fatalf("healthy volume should pass structural check, got %v", err)
+	}
+	idxFile.Close()
+
+	// Inject a dangling entry and rerun: now the check must fire.
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat .dat: %v", err)
+	}
+	bogusOffset := types.ToOffset(datSize + 4*1024*1024)
+	if err := v.nm.Put(types.Uint64ToNeedleId(9999), bogusOffset, types.Size(1024)); err != nil {
+		t.Fatalf("inject dangling idx entry: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx after inject: %v", err)
+	}
+
+	idxFile, err = os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("reopen .idx: %v", err)
+	}
+	defer idxFile.Close()
+	err = verifyIndexFitsInDat(idxFile, v.DataBackend, v.Version())
+	if err == nil {
+		t.Fatalf("structural check should have failed for dangling idx entry")
 	}
 }

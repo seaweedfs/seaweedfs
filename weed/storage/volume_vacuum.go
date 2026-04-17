@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -493,6 +495,10 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	}
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
+	var (
+		skippedNeedles   int
+		skippedDataBytes uint64
+	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
@@ -510,7 +516,24 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		n := new(needle.Needle)
 		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, opts.version); err != nil {
 			v.checkReadWriteError(err)
-			return fmt.Errorf("cannot hydrate needle from file: %w", err)
+			// A real disk-level IO error means the underlying volume is in a
+			// bad state — bail so a human notices, rather than silently
+			// dropping data that may simply be transiently unavailable.
+			if errors.Is(err, syscall.EIO) {
+				return fmt.Errorf("cannot hydrate needle from file: %w", err)
+			}
+			// Otherwise the .idx references bytes that .dat doesn't (or can't)
+			// produce — past EOF, CRC mismatch, malformed header. The data was
+			// already unreachable via the read path, so dropping the entry
+			// during compaction makes the post-vacuum volume consistent.
+			// See issue #8928.
+			skippedNeedles++
+			if size.IsValid() {
+				skippedDataBytes += uint64(size)
+			}
+			glog.Warningf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
+				v.Id, value.Key, offset.ToActualOffset(), size, err)
+			return nil
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(opts.superBlock.Ttl.Minutes()*60) {
@@ -533,6 +556,10 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	if skippedNeedles > 0 {
+		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
+			v.Id, skippedNeedles, skippedDataBytes)
+	}
 	if v.Ttl.String() == "" && v.nm != nil {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
@@ -540,6 +567,14 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		}
 		if v.nm.ContentSize() > v.nm.DeletedSize() {
 			expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
+			// Skipped needles still contribute to the source-side ContentSize but
+			// were not written to the destination, so subtract them before the
+			// safety check to avoid a false positive.
+			if skippedDataBytes >= expectedContentSize {
+				expectedContentSize = 0
+			} else {
+				expectedContentSize -= skippedDataBytes
+			}
 			if expectedContentSize > uint64(dstDatSize) {
 				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
 					v.Id.String(), dstDatSize, expectedContentSize)
