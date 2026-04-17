@@ -74,6 +74,24 @@ pub enum VolumeError {
     StreamingUnsupported,
 }
 
+/// Returns true when a needle read failed because the on-disk bytes are
+/// unreadable in a permanent way (offset past EOF, header corruption, CRC
+/// mismatch, malformed v2/v3/v4 fields). Vacuum can safely drop such entries
+/// during compaction. Anything else (real disk EIO, ERROR_CRC on Windows,
+/// network timeouts, EROFS, etc.) is transient or environmental and must
+/// abort the compaction so an operator notices.
+fn is_skippable_needle_read_error(e: &VolumeError) -> bool {
+    match e {
+        VolumeError::Io(io_err) => io_err.kind() == io::ErrorKind::UnexpectedEof,
+        VolumeError::Needle(NeedleError::SizeMismatch { .. }) => true,
+        VolumeError::Needle(NeedleError::CrcMismatch { .. }) => true,
+        VolumeError::Needle(NeedleError::IndexOutOfRange(_)) => true,
+        VolumeError::Needle(NeedleError::TailTooShort) => true,
+        VolumeError::SizeMismatch => true,
+        _ => false,
+    }
+}
+
 // ============================================================================
 // VolumeInfo (.vif persistence)
 // ============================================================================
@@ -2761,23 +2779,22 @@ impl Volume {
                 Ok(()) => {}
                 Err(e) => {
                     // Record EIO for health monitoring (parity with Go's checkReadWriteError).
-                    // A real disk-level IO error means the underlying volume is in a bad
-                    // state — bail so a human notices, rather than silently dropping data
-                    // that may simply be transiently unavailable.
                     if let VolumeError::Io(ref io_err) = e {
                         self.check_read_write_error(Some(io_err));
-                        if io_err.raw_os_error() == Some(5) {
-                            return Err(VolumeError::Io(io::Error::new(
-                                io_err.kind(),
-                                format!("cannot hydrate needle from file: {}", io_err),
-                            )));
-                        }
                     }
-                    // Otherwise the .idx references bytes that .dat doesn't (or can't)
-                    // produce — past EOF, CRC mismatch, malformed header. The data was
-                    // already unreachable via the read path, so dropping the entry
-                    // during compaction makes the post-vacuum volume consistent.
+                    // Only drop the entry when the failure is one of the well-
+                    // known permanent-corruption shapes. A transient disk fault,
+                    // a tiered-read timeout, or a Windows hardware error (which
+                    // surfaces as a generic Io rather than UnexpectedEof) must
+                    // abort so an operator notices, rather than silently
+                    // compacting away data that might come back on retry.
                     // See issue #8928.
+                    if !is_skippable_needle_read_error(&e) {
+                        return Err(VolumeError::Io(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("cannot hydrate needle from file: {}", e),
+                        )));
+                    }
                     skipped_needles += 1;
                     if size.is_valid() {
                         skipped_data_bytes += size.0 as u64;

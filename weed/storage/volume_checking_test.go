@@ -37,8 +37,8 @@ func TestScrubVolumeData(t *testing.T) {
 			version:   needle.Version3,
 			want:      27,
 			wantErrs: []error{
-				fmt.Errorf("needle 3 on volume 0: invalid CRC for needle 3 (got 0b243a0d, want 4af853fb), data on disk corrupted"),
-				fmt.Errorf("needle 48 on volume 0: invalid CRC for needle 30 (got 3c40e8d5, want 5077fea1), data on disk corrupted"),
+				fmt.Errorf("needle 3 on volume 0: invalid CRC for needle 3 (got 0b243a0d, want 4af853fb), data on disk corrupted: needle data corrupted"),
+				fmt.Errorf("needle 48 on volume 0: invalid CRC for needle 30 (got 3c40e8d5, want 5077fea1), data on disk corrupted: needle data corrupted"),
 				fmt.Errorf("data file size for volume 0 (942864) doesn't match the size for 27 needles read (942856)"),
 			},
 		},
@@ -92,6 +92,7 @@ func TestVerifyIndexFitsInDat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("volume creation: %v", err)
 	}
+	defer v.Close()
 
 	// A handful of healthy needles establishes a baseline .dat/.idx.
 	for i := 1; i <= 4; i++ {

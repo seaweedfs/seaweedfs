@@ -27,6 +27,12 @@ const (
 var ErrorSizeMismatch = errors.New("size mismatch")
 var ErrorSizeInvalid = errors.New("size invalid")
 
+// ErrorCorrupted marks a needle whose on-disk bytes cannot be parsed because
+// of data corruption: bad CRC, malformed v2/v3/v4 headers, or out-of-range
+// fields. Wrap errors with %w so callers (e.g. vacuum compaction) can
+// distinguish "the bytes are bad" from a genuine I/O fault.
+var ErrorCorrupted = errors.New("needle data corrupted")
+
 func (n *Needle) DiskSize(version Version) int64 {
 	return GetActualSize(n.Size, version)
 }
@@ -106,7 +112,7 @@ func (n *Needle) readNeedleDataVersion2(bytes []byte) (err error) {
 		index = index + 4
 		if int(n.DataSize)+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return fmt.Errorf("index out of range %d", 1)
+			return fmt.Errorf("index out of range %d: %w", 1, ErrorCorrupted)
 		}
 		n.Data = bytes[index : index+int(n.DataSize)]
 		index = index + int(n.DataSize)
@@ -125,7 +131,7 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 		index = index + 1
 		if int(n.NameSize)+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 2)
+			return index, fmt.Errorf("index out of range %d: %w", 2, ErrorCorrupted)
 		}
 		n.Name = bytes[index : index+int(n.NameSize)]
 		index = index + int(n.NameSize)
@@ -135,7 +141,7 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 		index = index + 1
 		if int(n.MimeSize)+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 3)
+			return index, fmt.Errorf("index out of range %d: %w", 3, ErrorCorrupted)
 		}
 		n.Mime = bytes[index : index+int(n.MimeSize)]
 		index = index + int(n.MimeSize)
@@ -143,7 +149,7 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 	if index < lenBytes && n.HasLastModifiedDate() {
 		if LastModifiedBytesLength+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 4)
+			return index, fmt.Errorf("index out of range %d: %w", 4, ErrorCorrupted)
 		}
 		n.LastModified = util.BytesToUint64(bytes[index : index+LastModifiedBytesLength])
 		index = index + LastModifiedBytesLength
@@ -151,7 +157,7 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 	if index < lenBytes && n.HasTtl() {
 		if TtlBytesLength+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 5)
+			return index, fmt.Errorf("index out of range %d: %w", 5, ErrorCorrupted)
 		}
 		n.Ttl = LoadTTLFromBytes(bytes[index : index+TtlBytesLength])
 		index = index + TtlBytesLength
@@ -159,13 +165,13 @@ func (n *Needle) readNeedleDataVersion2NonData(bytes []byte) (index int, err err
 	if index < lenBytes && n.HasPairs() {
 		if 2+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 6)
+			return index, fmt.Errorf("index out of range %d: %w", 6, ErrorCorrupted)
 		}
 		n.PairsSize = util.BytesToUint16(bytes[index : index+2])
 		index += 2
 		if int(n.PairsSize)+index > lenBytes {
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorIndexOutOfRange).Inc()
-			return index, fmt.Errorf("index out of range %d", 7)
+			return index, fmt.Errorf("index out of range %d: %w", 7, ErrorCorrupted)
 		}
 		end := index + int(n.PairsSize)
 		n.Pairs = bytes[index:end]

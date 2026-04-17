@@ -3,9 +3,9 @@ package storage
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
-	"syscall"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -18,6 +18,24 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// isSkippableNeedleReadError returns true when a needle read failed because
+// the on-disk bytes are unreadable in a permanent way (offset past EOF, header
+// corruption, CRC mismatch, malformed v2/v3/v4 fields). Vacuum can safely drop
+// such entries during compaction. Anything else (real disk EIO on Unix,
+// ERROR_CRC / ERROR_IO_DEVICE on Windows, network timeouts, EROFS, etc.) is
+// transient or environmental and must abort the compaction so an operator
+// notices, rather than silently dropping recoverable data.
+func isSkippableNeedleReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, needle.ErrorSizeMismatch) ||
+		errors.Is(err, needle.ErrorSizeInvalid) ||
+		errors.Is(err, needle.ErrorCorrupted)
+}
 
 type ProgressFunc func(processed int64) bool
 
@@ -516,17 +534,14 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		n := new(needle.Needle)
 		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, opts.version); err != nil {
 			v.checkReadWriteError(err)
-			// A real disk-level IO error means the underlying volume is in a
-			// bad state — bail so a human notices, rather than silently
-			// dropping data that may simply be transiently unavailable.
-			if errors.Is(err, syscall.EIO) {
+			// Only drop the entry when the failure is one of the well-known
+			// permanent-corruption shapes. A transient disk fault, a tiered
+			// read timeout, or a Windows hardware error (ERROR_CRC etc.) must
+			// abort so an operator notices, rather than silently compacting
+			// away data that might come back on retry. See issue #8928.
+			if !isSkippableNeedleReadError(err) {
 				return fmt.Errorf("cannot hydrate needle from file: %w", err)
 			}
-			// Otherwise the .idx references bytes that .dat doesn't (or can't)
-			// produce — past EOF, CRC mismatch, malformed header. The data was
-			// already unreachable via the read path, so dropping the entry
-			// during compaction makes the post-vacuum volume consistent.
-			// See issue #8928.
 			skippedNeedles++
 			if size.IsValid() {
 				skippedDataBytes += uint64(size)
