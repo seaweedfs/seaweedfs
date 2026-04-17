@@ -1,7 +1,10 @@
 FROM openjdk:11-jdk-slim
 
-# Install Maven
-RUN apt-get update && apt-get install -y maven && rm -rf /var/lib/apt/lists/*
+# Install Maven. Acquire::Retries + Timeout survive transient apt-mirror
+# flakes (matches the pattern PR #9106 used for pjdfstest).
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y maven \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 

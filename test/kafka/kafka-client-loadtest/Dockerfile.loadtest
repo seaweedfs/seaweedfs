@@ -19,8 +19,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /kafka-loadtest ./cmd/loadtest
 # Stage 2: Runtime
 FROM ubuntu:22.04
 
-# Install runtime dependencies
-RUN apt-get update && apt-get install -y \
+# Install runtime dependencies. Acquire::Retries + Timeout survive transient
+# Ubuntu apt-mirror flakes that otherwise turn into outright build failures
+# in CI (matches the pattern PR #9106 used for pjdfstest).
+RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
+    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
     ca-certificates \
     curl \
     jq \
