@@ -80,10 +80,6 @@ type chunkMove struct {
 	toNode     string
 }
 
-type movedChunkRecord struct {
-	oldFidStr string
-	oldVid    needle.VolumeId
-}
 
 func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, writer io.Writer) (err error) {
 
@@ -175,16 +171,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	fmt.Fprintf(writer, "\nExecuting redistribution...\n")
 	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
-	movedRecords, err := executeChunkMoves(commandEnv, writer, moves, volumeInfoMap)
+	movedCount, err := executeChunkMoves(commandEnv, writer, moves, volumeInfoMap)
 	if err != nil {
 		return err
 	}
-	if len(movedRecords) == 0 {
+	if movedCount == 0 {
 		fmt.Fprintf(writer, "\nNo chunks were moved successfully.\n")
 		return nil
 	}
 
-	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", len(movedRecords))
+	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", movedCount)
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
 			Directory: dir,
@@ -199,9 +195,7 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 	}
 	fmt.Fprintf(writer, "Filer metadata updated successfully.\n")
 
-	deleteOldChunks(commandEnv, writer, movedRecords)
-
-	fmt.Fprintf(writer, "\nRedistribution complete. %d chunks moved.\n", len(movedRecords))
+	fmt.Fprintf(writer, "\nRedistribution complete. %d chunks moved.\n", movedCount)
 	return nil
 }
 
@@ -597,20 +591,22 @@ func computeOwnerTarget(activeNodeList, nodeList []string, activeSet map[string]
 	return target
 }
 
-// executeChunkMoves runs all moves concurrently and returns the records of successfully moved chunks.
+// executeChunkMoves runs all moves concurrently and returns the number of successfully moved chunks.
+// Old chunk cleanup is handled automatically by the filer: filer.UpdateEntry calls
+// deleteChunksIfNotNew which removes chunks present in the old entry but not the new one.
 func executeChunkMoves(
 	commandEnv *CommandEnv,
 	writer io.Writer,
 	moves []chunkMove,
 	volumeInfoMap map[uint32]*master_pb.VolumeInformationMessage,
-) ([]movedChunkRecord, error) {
+) (int, error) {
 	uploader, err := operation.NewUploader()
 	if err != nil {
-		return nil, fmt.Errorf("create uploader: %v", err)
+		return 0, fmt.Errorf("create uploader: %v", err)
 	}
 
 	var mu sync.Mutex
-	var movedRecords []movedChunkRecord
+	movedCount := 0
 	ewg := NewErrorWaitGroup(DefaultMaxParallelization)
 
 	for i, mv := range moves {
@@ -640,20 +636,21 @@ func executeChunkMoves(
 				return nil
 			}
 
+			// dlCancel must be called after reader.Close() — the response body is
+			// streamed into the uploader, so cancelling the context before the
+			// body is fully consumed causes "context canceled" upload failures.
+			dlCtx, dlCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 			var resp *http.Response
 			var reader io.ReadCloser
 			var readErr error
 			for _, serverURL := range downloadURLs {
-				dlCtx, dlCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 				var dlReq *http.Request
 				dlReq, readErr = http.NewRequestWithContext(dlCtx, http.MethodGet, fmt.Sprintf("http://%s/%s", serverURL, oldFidStr), nil)
 				if readErr != nil {
-					dlCancel()
 					continue
 				}
 				dlReq.Header.Add("Accept-Encoding", "gzip")
 				resp, readErr = util_http.GetGlobalHttpClient().Do(dlReq)
-				dlCancel()
 				if readErr == nil && resp.StatusCode >= 400 {
 					util_http.CloseResponse(resp)
 					readErr = fmt.Errorf("download %s: %s", serverURL, resp.Status)
@@ -664,6 +661,7 @@ func executeChunkMoves(
 				}
 			}
 			if readErr != nil {
+				dlCancel()
 				fail(fmt.Sprintf("download: %v", readErr))
 				return nil
 			}
@@ -695,6 +693,7 @@ func executeChunkMoves(
 			if assignErr != nil {
 				reader.Close()
 				util_http.CloseResponse(resp)
+				dlCancel()
 				fail(fmt.Sprintf("assign: %v", assignErr))
 				return nil
 			}
@@ -724,6 +723,7 @@ func executeChunkMoves(
 			})
 			reader.Close()
 			util_http.CloseResponse(resp)
+			dlCancel()
 
 			if uploadErr != nil {
 				fail(fmt.Sprintf("upload: %v", uploadErr))
@@ -737,10 +737,7 @@ func executeChunkMoves(
 			}
 
 			mu.Lock()
-			movedRecords = append(movedRecords, movedChunkRecord{
-				oldFidStr: oldFidStr,
-				oldVid:    oldFid.VolumeId,
-			})
+			movedCount++
 			chunk.Fid = &filer_pb.FileId{
 				VolumeId: uint32(newFid.VolumeId),
 				FileKey:  uint64(newFid.Key),
@@ -754,49 +751,7 @@ func executeChunkMoves(
 		})
 	}
 	_ = ewg.Wait()
-	return movedRecords, nil
-}
-
-// deleteOldChunks deletes the original chunks after a successful metadata update.
-// DELETE is sent to only one volume server per chunk; SeaweedFS ReplicatedDelete
-// propagates the deletion to all replicas automatically.
-func deleteOldChunks(commandEnv *CommandEnv, writer io.Writer, movedRecords []movedChunkRecord) {
-	fmt.Fprintf(writer, "\nDeleting old chunks from source volumes...\n")
-	deleteFailCount := 0
-	for _, rec := range movedRecords {
-		serverURLs, lookupErr := commandEnv.MasterClient.LookupVolumeServerUrl(rec.oldVid.String())
-		if lookupErr != nil || len(serverURLs) == 0 {
-			fmt.Fprintf(writer, "  WARNING: cannot lookup volume server for %s: %v\n", rec.oldFidStr, lookupErr)
-			deleteFailCount++
-			continue
-		}
-		deleteURL := fmt.Sprintf("http://%s/%s", serverURLs[0], rec.oldFidStr)
-		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		delReq, delReqErr := http.NewRequestWithContext(delCtx, http.MethodDelete, deleteURL, nil)
-		if delReqErr != nil {
-			delCancel()
-			fmt.Fprintf(writer, "  WARNING: failed to build delete request for %s: %v\n", rec.oldFidStr, delReqErr)
-			deleteFailCount++
-			continue
-		}
-		delResp, delErr := util_http.GetGlobalHttpClient().Do(delReq)
-		delCancel()
-		if delErr != nil {
-			fmt.Fprintf(writer, "  WARNING: failed to delete %s: %v\n", rec.oldFidStr, delErr)
-			deleteFailCount++
-			continue
-		}
-		delResp.Body.Close()
-		if delResp.StatusCode >= 400 {
-			fmt.Fprintf(writer, "  WARNING: delete %s returned %s\n", rec.oldFidStr, delResp.Status)
-			deleteFailCount++
-		}
-	}
-	if deleteFailCount > 0 {
-		fmt.Fprintf(writer, "%d old chunks failed to delete (orphaned on volume servers)\n", deleteFailCount)
-	} else {
-		fmt.Fprintf(writer, "All old chunks deleted successfully.\n")
-	}
+	return movedCount, nil
 }
 
 // planOwnerMoves generates moves to balance owner-based chunk distribution.
