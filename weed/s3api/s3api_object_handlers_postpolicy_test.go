@@ -332,17 +332,39 @@ func TestApplyPostPolicyFormHeaders_ForwardsAcl(t *testing.T) {
 	assert.Empty(t, r.Header.Get("Acl"))
 }
 
-// TestApplyPostPolicyFormHeaders_ForwardsContentEncoding ensures the
-// Content-Encoding form field is copied to the request header.
-func TestApplyPostPolicyFormHeaders_ForwardsContentEncoding(t *testing.T) {
-	r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
-	formValues := canonicalFormValues(map[string]string{
-		"Content-Encoding": "gzip",
-	})
+// TestApplyPostPolicyFormHeaders_ForwardsContentHeaders ensures the
+// Content-Encoding and Content-Language form fields are copied to the
+// request header so they reach the underlying PUT.
+func TestApplyPostPolicyFormHeaders_ForwardsContentHeaders(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		value  string
+	}{
+		{
+			name:   "Content-Encoding",
+			header: "Content-Encoding",
+			value:  "gzip",
+		},
+		{
+			name:   "Content-Language",
+			header: "Content-Language",
+			value:  "en-US",
+		},
+	}
 
-	applyPostPolicyFormHeaders(r, formValues)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/bucket", nil)
+			formValues := canonicalFormValues(map[string]string{
+				tt.header: tt.value,
+			})
 
-	assert.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
+			applyPostPolicyFormHeaders(r, formValues)
+
+			assert.Equal(t, tt.value, r.Header.Get(tt.header))
+		})
+	}
 }
 
 // TestApplyPostPolicyFormHeaders_ForwardsXAmzHeaders ensures arbitrary

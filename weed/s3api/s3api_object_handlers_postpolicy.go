@@ -215,7 +215,8 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 		case k == "Cache-Control",
 			k == "Expires",
 			k == "Content-Disposition",
-			k == "Content-Encoding":
+			k == "Content-Encoding",
+			k == "Content-Language":
 			r.Header.Set(k, v)
 		case strings.HasPrefix(k, "X-Amz-"):
 			r.Header.Set(k, v)
