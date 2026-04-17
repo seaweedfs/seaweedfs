@@ -1037,7 +1037,12 @@ func (s3a *S3ApiServer) deleteSpecificObjectVersion(bucket, object, versionId st
 	return nil
 }
 
-// updateLatestVersionAfterDeletion finds the new latest version after deleting the current latest
+// updateLatestVersionAfterDeletion finds the new latest version after deleting
+// the current latest. The pointer may refer to a delete marker: if a delete
+// marker is chronologically newer than the most recent remaining content
+// version, S3 semantics treat the object as deleted and the pointer must
+// reflect that. Restricting the scan to content versions here would resurrect
+// the object by promoting an older content version over a newer delete marker.
 func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) error {
 	bucketDir := s3a.bucketDir(bucket)
 	versionsObjectPath := object + s3_constants.VersionsFolder
@@ -1045,20 +1050,40 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 
 	glog.V(1).Infof("updateLatestVersionAfterDeletion: updating latest version for %s/%s, listing %s", bucket, object, versionsDir)
 
-	// List all remaining version files in the .versions directory
-	entries, isLast, err := s3a.list(versionsDir, "", "", false, 1000)
-	if err != nil {
-		glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
-		return fmt.Errorf("failed to list versions: %v", err)
+	// Paginate through all remaining entries and keep a running best candidate.
+	// A single-shot list would miss the true latest for old-format (raw
+	// timestamp) version ids when the directory exceeds one page, since filer
+	// order is lexicographic-ascending = oldest-first for that format.
+	var (
+		latestVersionEntry    *filer_pb.Entry
+		latestVersionId       string
+		latestVersionFileName string
+		latestIsDeleteMarker  bool
+		totalEntries          int
+		startFrom             string
+	)
+	for {
+		entries, isLast, err := s3a.list(versionsDir, "", startFrom, false, filer.PaginationSize)
+		if err != nil {
+			glog.Errorf("updateLatestVersionAfterDeletion: failed to list versions in %s: %v", versionsDir, err)
+			return fmt.Errorf("failed to list versions: %v", err)
+		}
+		totalEntries += len(entries)
+		if pageEntry, pageId, pageFile, pageDM := selectLatestVersion(entries); pageEntry != nil {
+			if latestVersionEntry == nil || compareVersionIds(pageId, latestVersionId) < 0 {
+				latestVersionEntry = pageEntry
+				latestVersionId = pageId
+				latestVersionFileName = pageFile
+				latestIsDeleteMarker = pageDM
+			}
+		}
+		if isLast || len(entries) == 0 {
+			break
+		}
+		startFrom = entries[len(entries)-1].Name
 	}
 
-	glog.V(1).Infof("updateLatestVersionAfterDeletion: found %d entries in %s", len(entries), versionsDir)
-
-	// Find the most recent remaining non-delete-marker version.
-	latestVersionEntry, latestVersionId, latestVersionFileName, hasDeleteMarkers := selectLatestContentVersion(entries)
-	if latestVersionEntry != nil {
-		glog.V(1).Infof("updateLatestVersionAfterDeletion: selected latest content version %s (file: %s)", latestVersionId, latestVersionFileName)
-	}
+	glog.V(1).Infof("updateLatestVersionAfterDeletion: scanned %d entries in %s", totalEntries, versionsDir)
 
 	// Update the .versions directory metadata
 	versionsEntry, err := s3a.getEntry(bucketDir, versionsObjectPath)
@@ -1070,16 +1095,14 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		versionsEntry.Extended = make(map[string][]byte)
 	}
 
-	if latestVersionId != "" {
-		// Update metadata to point to new latest version
+	if latestVersionEntry != nil {
+		// Update metadata to point at the new latest (content version or
+		// delete marker — whichever is chronologically newest).
 		versionsEntry.Extended[s3_constants.ExtLatestVersionIdKey] = []byte(latestVersionId)
 		versionsEntry.Extended[s3_constants.ExtLatestVersionFileNameKey] = []byte(latestVersionFileName)
-
-		// Update cached list metadata from the new latest version entry
 		setCachedListMetadata(versionsEntry, latestVersionEntry)
 
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s", bucket, object, latestVersionId)
-		// Update the .versions directory entry with new latest version metadata
+		glog.V(2).Infof("updateLatestVersionAfterDeletion: new latest version for %s/%s is %s (deleteMarker=%v)", bucket, object, latestVersionId, latestIsDeleteMarker)
 		err = s3a.mkFile(bucketDir, versionsObjectPath, versionsEntry.Chunks, func(updatedEntry *filer_pb.Entry) {
 			updatedEntry.Extended = versionsEntry.Extended
 			updatedEntry.Attributes = versionsEntry.Attributes
@@ -1088,13 +1111,11 @@ func (s3a *S3ApiServer) updateLatestVersionAfterDeletion(bucket, object string) 
 		if err != nil {
 			return fmt.Errorf("failed to update .versions directory metadata: %v", err)
 		}
-	} else if hasDeleteMarkers || !isLast {
-		// Delete markers still exist in the .versions directory, or the listing was
-		// truncated so there may be more entries. Either way, keep the directory.
-		glog.V(2).Infof("updateLatestVersionAfterDeletion: no content versions found for %s/%s but .versions directory still has entries (deleteMarkers=%v, isLast=%v), keeping directory",
-			bucket, object, hasDeleteMarkers, isLast)
 	} else {
-		// No entries at all - delete the .versions directory entirely
+		// No version-tagged entries remain - delete the .versions directory.
+		// rm is non-recursive, so any stray non-version entries will cause
+		// rm to fail; we log and continue, treating the directory cleanup as
+		// best-effort since the version data is already gone.
 		glog.V(2).Infof("updateLatestVersionAfterDeletion: no versions left for %s/%s, deleting .versions directory", bucket, object)
 
 		err = s3a.rm(bucketDir, versionsObjectPath, true, false)
@@ -1390,7 +1411,10 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 	}
 
 	if latestEntry == nil {
-		return nil, fmt.Errorf("no remaining version in %s", versionsDir)
+		// Wrap filer_pb.ErrNotFound so callers can distinguish genuine
+		// object-absence (nothing left to promote) from scan failures
+		// (I/O errors during list) via errors.Is.
+		return nil, fmt.Errorf("%w: no remaining version in %s", filer_pb.ErrNotFound, versionsDir)
 	}
 
 	if versionsEntry.Extended == nil {
