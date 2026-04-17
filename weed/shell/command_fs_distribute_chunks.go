@@ -488,13 +488,6 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 	defer util_http.GetGlobalHttpClient().CloseIdleConnections()
 
-	var replication, collection string
-	firstVid := chunks[0].Fid.GetVolumeId()
-	if vInfo, ok := volumeInfoMap[firstVid]; ok {
-		replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
-		collection = vInfo.GetCollection()
-	}
-
 	type movedChunkRecord struct {
 		oldFidStr string
 		oldVid    needle.VolumeId
@@ -545,6 +538,12 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 				_ = before
 				filename = strings.Trim(after, "\"")
 			}
+		}
+
+		var replication, collection string
+		if vInfo, ok := volumeInfoMap[chunk.Fid.GetVolumeId()]; ok {
+			replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
+			collection = vInfo.GetCollection()
 		}
 
 		assignResult, assignErr := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
