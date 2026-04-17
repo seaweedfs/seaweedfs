@@ -2,19 +2,21 @@ package s3api
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/policy"
+	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
-	"github.com/seaweedfs/seaweedfs/weed/s3api/s3err"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -388,43 +390,108 @@ func TestPostPolicyBucketHandlerKeyExtraction(t *testing.T) {
 	}
 }
 
-// TestPostPolicyFailureReturns403 verifies that when CheckPostPolicy rejects a
-// request, the handler branch writes HTTP 403 AccessDenied instead of the old
-// 307 Temporary Redirect. The 307 behavior caused clients to re-POST and
-// obscured the policy violation; 403 is the correct AWS S3 response.
-func TestPostPolicyFailureReturns403(t *testing.T) {
-	// Build a POST policy that requires key == "required.txt".
-	expiration := time.Now().UTC().Add(1 * time.Hour)
-	policyJSON := fmt.Sprintf(
-		`{"expiration":"%s","conditions":[["eq","$bucket","test-bucket"],["eq","$key","required.txt"]]}`,
-		expiration.Format("2006-01-02T15:04:05.000Z"),
+// TestPostPolicyBucketHandler_PolicyViolationReturns403 drives the handler
+// end-to-end with a signed multipart POST whose policy conditions cannot be
+// satisfied by the form fields. It verifies the handler responds 403
+// AccessDenied with no Location redirect, rather than the old 307 Temporary
+// Redirect that obscured the policy failure.
+func TestPostPolicyBucketHandler_PolicyViolationReturns403(t *testing.T) {
+	const (
+		accessKey  = "AKIATESTTESTTEST"
+		secretKey  = "secret-key-for-tests"
+		region     = "us-east-1"
+		service    = "s3"
+		testBucket = "test-bucket"
 	)
 
-	postPolicyForm, err := policy.ParsePostPolicyForm(policyJSON)
-	assert.NoError(t, err, "policy should parse")
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	err := iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{
+			Name:        "tester",
+			Credentials: []*iam_pb.Credential{{AccessKey: accessKey, SecretKey: secretKey}},
+			Actions:     []string{"Admin", "Read", "Write"},
+		}},
+	})
+	assert.NoError(t, err, "loadS3ApiConfiguration should succeed")
 
-	// Form sends a different key, violating the eq $key condition.
-	formValues := make(http.Header)
-	formValues.Set("Bucket", "test-bucket")
-	formValues.Set("Key", "wrong.txt")
+	s3a := &S3ApiServer{
+		option: &S3ApiServerOption{BucketsPath: "/buckets"},
+		iam:    iam,
+	}
+	// Pre-populate the bucket registry so validateTableBucketObjectPath sees
+	// a non-table bucket without needing a live filer connection.
+	s3a.bucketRegistry = &BucketRegistry{
+		metadataCache: map[string]*BucketMetaData{
+			testBucket: {Name: testBucket, IsTableBucket: false},
+		},
+		notFound: make(map[string]struct{}),
+		s3a:      s3a,
+	}
 
-	err = policy.CheckPostPolicy(formValues, postPolicyForm)
-	assert.Error(t, err, "CheckPostPolicy should reject mismatched key")
+	now := time.Now().UTC()
+	amzDate := now.Format(iso8601Format)
+	yyyymmddStr := now.Format(yyyymmdd)
+	credential := fmt.Sprintf("%s/%s/%s/%s/aws4_request", accessKey, yyyymmddStr, region, service)
+	expiration := now.Add(1 * time.Hour).Format("2006-01-02T15:04:05.000Z")
 
-	// Verify the handler branch's response: WriteErrorResponse with
-	// ErrAccessDenied produces a 403 status, not 307.
-	req := httptest.NewRequest(http.MethodPost, "/test-bucket", nil)
-	req = mux.SetURLVars(req, map[string]string{"bucket": "test-bucket"})
+	policyJSON := fmt.Sprintf(
+		`{"expiration":"%s","conditions":[`+
+			`["eq","$bucket","%s"],`+
+			`["eq","$key","required.txt"],`+
+			`["eq","$x-amz-credential","%s"],`+
+			`["eq","$x-amz-algorithm","AWS4-HMAC-SHA256"],`+
+			`["eq","$x-amz-date","%s"]`+
+			`]}`,
+		expiration, testBucket, credential, amzDate,
+	)
+	encodedPolicy := base64.StdEncoding.EncodeToString([]byte(policyJSON))
+
+	signingKey := getSigningKey(secretKey, yyyymmddStr, region, service)
+	signature := getSignature(signingKey, encodedPolicy)
+	// Sanity-check: the signature must be valid hex of the expected length so
+	// that doesPolicySignatureV4Match does not trip on formatting.
+	_, decodeErr := hex.DecodeString(signature)
+	assert.NoError(t, decodeErr, "computed signature should be hex-encoded")
+
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	assert.NoError(t, writer.WriteField("bucket", testBucket))
+	// Deliberately mismatch the policy's required key to force a violation.
+	assert.NoError(t, writer.WriteField("key", "wrong.txt"))
+	assert.NoError(t, writer.WriteField("x-amz-credential", credential))
+	assert.NoError(t, writer.WriteField("x-amz-algorithm", "AWS4-HMAC-SHA256"))
+	assert.NoError(t, writer.WriteField("x-amz-date", amzDate))
+	assert.NoError(t, writer.WriteField("policy", encodedPolicy))
+	assert.NoError(t, writer.WriteField("x-amz-signature", signature))
+
+	filePart, err := writer.CreateFormFile("file", "payload.txt")
+	assert.NoError(t, err)
+	_, err = filePart.Write([]byte("contents that should never be uploaded"))
+	assert.NoError(t, err)
+	assert.NoError(t, writer.Close())
+
+	req := httptest.NewRequest(http.MethodPost, "/"+testBucket, &buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req = mux.SetURLVars(req, map[string]string{"bucket": testBucket})
 	rec := httptest.NewRecorder()
 
-	s3err.WriteErrorResponse(rec, req, s3err.ErrAccessDenied)
+	s3a.PostPolicyBucketHandler(rec, req)
 
 	assert.Equal(t, http.StatusForbidden, rec.Code,
-		"CheckPostPolicy failures must map to 403 AccessDenied, not 307 redirect")
+		"policy violation must return 403, actual body: %s", rec.Body.String())
 	assert.NotEqual(t, http.StatusTemporaryRedirect, rec.Code,
 		"must not return 307 Temporary Redirect on policy violation")
 	assert.Empty(t, rec.Header().Get("Location"),
 		"403 response must not set a redirect Location header")
 	assert.Contains(t, rec.Body.String(), "AccessDenied",
-		"response body should identify AccessDenied")
+		"response body should identify AccessDenied; actual body: %s", rec.Body.String())
+	// Guard against the signing setup silently failing before the policy
+	// branch ever runs, which would make the 403 assertion meaningless.
+	assert.NotContains(t, rec.Body.String(), "SignatureDoesNotMatch",
+		"signature must match so the handler reaches the policy-check branch")
+	assert.NotContains(t, rec.Body.String(), "InvalidAccessKeyId",
+		"access key must be known so the handler reaches the policy-check branch")
 }
