@@ -1337,9 +1337,11 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	var found bool
 	var amzAuthType string
 
-	// SECURITY: Prevent clients from spoofing internal IAM headers
+	// SECURITY: Prevent clients from spoofing internal IAM headers.
 	// These headers are only set by the server after successful JWT authentication
-	// Clearing them here prevents privilege escalation via header injection
+	// and are trusted by downstream authorization (including S3Tables IAM checks
+	// reached via AuthSignatureOnly). Clearing them here — the shared entry point
+	// for every auth path — prevents privilege escalation via header injection.
 	r.Header.Del("X-SeaweedFS-Principal")
 	r.Header.Del("X-SeaweedFS-Session-Token")
 
@@ -1478,61 +1480,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 // AuthSignatureOnly performs only signature verification without any authorization checks.
 // This is used for IAM API operations where authorization is handled separately based on
-// the specific IAM action (e.g., self-service vs admin operations).
+// the specific IAM action (e.g., self-service vs admin operations). It delegates to
+// authenticateRequestInternal so the internal-IAM-header stripping and the auth-type
+// dispatch stay in one place — any future fix applied there automatically covers
+// S3Tables, UnifiedPostHandler, and the other AuthSignatureOnly callers.
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
-
-	// SECURITY: Prevent clients from spoofing internal IAM headers.
-	// These headers are only set by the server after successful JWT authentication
-	// and are trusted by downstream authorization (e.g. S3Tables IAM checks).
-	// Clearing them here prevents privilege escalation via header injection on
-	// callers that use AuthSignatureOnly (S3Tables routes, UnifiedPostHandler).
-	r.Header.Del("X-SeaweedFS-Principal")
-	r.Header.Del("X-SeaweedFS-Session-Token")
-
-	var identity *Identity
-	var s3Err s3err.ErrorCode
-	var authType string
-	switch getRequestAuthType(r) {
-	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
-		return identity, s3err.ErrAccessDenied
-	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
-		identity, s3Err = iam.isReqAuthenticatedV2(r)
-		authType = "SigV2"
-	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-
-	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
-		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
-		if iam.iamIntegration != nil {
-			identity, s3Err = iam.authenticateJWTWithIAM(r)
-			authType = "Jwt"
-		} else {
-			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
-			return identity, s3err.ErrNotImplemented
-		}
-	case authTypeAnonymous:
-		if ident, found := iam.LookupAnonymous(); found {
-			return ident, s3err.ErrNone
-		}
-		return nil, s3err.ErrAccessDenied
-	default:
-		return identity, s3err.ErrNotImplemented
-	}
-
-	if len(authType) > 0 {
-		r.Header.Set(s3_constants.AmzAuthType, authType)
-	}
+	identity, s3Err, _ := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
