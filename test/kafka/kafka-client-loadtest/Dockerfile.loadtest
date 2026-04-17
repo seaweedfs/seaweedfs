@@ -17,23 +17,18 @@ COPY test/kafka/kafka-client-loadtest/ ./
 RUN CGO_ENABLED=0 GOOS=linux go build -o /kafka-loadtest ./cmd/loadtest
 
 # Stage 2: Runtime
-FROM ubuntu:22.04
+# Use alpine so we don't depend on Ubuntu apt mirrors, which intermittently
+# refuse connections from GitHub Actions runners and fail the CI build.
+# All runtime dependencies we need (ca-certificates, curl, jq, bash, nc)
+# are in the Alpine main repo.
+FROM alpine:3.20
 
-# Install runtime dependencies. Acquire::Retries + Timeout survive transient
-# Ubuntu apt-mirror flakes that otherwise turn into outright build failures
-# in CI. --no-install-recommends / --no-install-suggests keep the image
-# small and the attack surface narrow (matches PR #9106's pjdfstest pattern).
-RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
-    && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
-    --no-install-recommends \
-    --no-install-suggests \
+RUN apk add --no-cache \
     ca-certificates \
     curl \
     jq \
     bash \
-    netcat \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    netcat-openbsd
 
 # Copy built binary from builder stage
 COPY --from=builder /kafka-loadtest /usr/local/bin/kafka-loadtest
