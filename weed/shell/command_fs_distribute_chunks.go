@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
@@ -646,8 +647,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 			continue
 		}
 		deleteURL := fmt.Sprintf("http://%s/%s", serverURLs[0], rec.oldFidStr)
-		delReq, _ := http.NewRequest(http.MethodDelete, deleteURL, nil)
+		delCtx, delCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		delReq, delReqErr := http.NewRequestWithContext(delCtx, http.MethodDelete, deleteURL, nil)
+		if delReqErr != nil {
+			delCancel()
+			fmt.Fprintf(writer, "  WARNING: failed to build delete request for %s: %v\n", rec.oldFidStr, delReqErr)
+			deleteFailCount++
+			continue
+		}
 		delResp, delErr := util_http.GetGlobalHttpClient().Do(delReq)
+		delCancel()
 		if delErr != nil {
 			fmt.Fprintf(writer, "  WARNING: failed to delete %s: %v\n", rec.oldFidStr, delErr)
 			deleteFailCount++
