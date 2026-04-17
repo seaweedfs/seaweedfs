@@ -287,7 +287,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 			// Unknown condition key: neither in startsWithConds nor a $x-amz-*
 			// prefixed key. AWS rejects these outright instead of silently
 			// treating the condition as satisfied.
-			return fmt.Errorf("Invalid according to Policy: Policy Condition failed: unknown condition key %s", policy.Key)
+			return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]: unknown condition key", op, policy.Key, "")
 		}
 	}
 
