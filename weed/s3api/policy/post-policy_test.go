@@ -563,6 +563,75 @@ func TestCheckPostPolicy_PrefixStemEnforcesValuePrefix(t *testing.T) {
 	}
 }
 
+// TestCheckPostPolicy_ExactAndPrefixBothEnforced covers a field that is
+// simultaneously covered by an exact-key condition and a prefix-stem
+// condition. Both must be satisfied; exact-match alone does not let the
+// field skip the stem's value-prefix check.
+func TestCheckPostPolicy_ExactAndPrefixBothEnforced(t *testing.T) {
+	ppf := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],`+
+			`["eq","$x-amz-meta-tag","gold"],`+
+			`["starts-with","$x-amz-meta-","lvl-"]`,
+	)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	// Satisfies the exact eq condition but not the starts-with stem.
+	form.Set("X-Amz-Meta-Tag", "gold")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error: exact-match field must still satisfy overlapping prefix stem, got nil")
+	}
+	if !strings.Contains(err.Error(), "Policy Condition failed") {
+		t.Fatalf("expected 'Policy Condition failed' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "lvl-") {
+		t.Fatalf("expected error to reference the stem's value prefix, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_MultiplePrefixStemsAllEnforced covers a field that
+// matches multiple starts-with prefix stems. All stems must hold; a value
+// that satisfies one but not the other must be rejected.
+func TestCheckPostPolicy_MultiplePrefixStemsAllEnforced(t *testing.T) {
+	ppf := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],`+
+			`["starts-with","$x-amz-meta-","pfx-"],`+
+			`["starts-with","$x-amz-meta-color-","red-"]`,
+	)
+
+	// Satisfies the broader stem but not the color- stem's value prefix.
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Meta-Color-Main", "pfx-green")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error: field must satisfy every matching prefix stem, got nil")
+	}
+	if !strings.Contains(err.Error(), "Policy Condition failed") {
+		t.Fatalf("expected 'Policy Condition failed' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "red-") {
+		t.Fatalf("expected error to reference the failing value prefix, got: %v", err)
+	}
+
+	// A policy with compatible stems (broad allows anything, narrow
+	// requires "red-") accepts a value honoring both.
+	compatible := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],`+
+			`["starts-with","$x-amz-meta-",""],`+
+			`["starts-with","$x-amz-meta-color-","red-"]`,
+	)
+	okForm := http.Header{}
+	okForm.Set("Bucket", "mybucket")
+	okForm.Set("X-Amz-Meta-Color-Main", "red-main")
+	if err := CheckPostPolicy(okForm, compatible); err != nil {
+		t.Fatalf("expected no error when value satisfies both compatible stems, got: %v", err)
+	}
+}
+
 // TestCheckPostPolicy_UnknownKeyErrorIncludesPolicyValue ensures the
 // unknown-condition error surfaces the policy value in its [op, key, value]
 // trailer so operators can tell which of several unknown keys failed.

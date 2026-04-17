@@ -268,9 +268,13 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 	}
 	// Reject any X-Amz-* form field that has no matching policy condition,
 	// except for the reserved auth/signing fields clients must always send.
-	// For fields matched by a prefix-stem rule, also enforce the required
-	// value prefix up front; the main condition loop below skips those
-	// stems since there is no single form field whose value maps to them.
+	// A field may be covered by an exact-key condition, by any number of
+	// prefix-stem rules, or both. Check every applicable rule: AWS requires
+	// all matching conditions to be satisfied, so exact-match coverage does
+	// not let a field skip the value-prefix enforcement of overlapping
+	// starts-with stems, and multiple stems on the same field must all hold.
+	// Prefix-stem conditions are then skipped in the main loop below because
+	// no single form field corresponds to the prefix itself.
 	for key := range formValues {
 		if !strings.HasPrefix(key, "X-Amz-") {
 			continue
@@ -278,10 +282,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		if postPolicyAuthFields[key] {
 			continue
 		}
-		if policyXAmzKeys[key] {
-			continue
-		}
-		matched := false
+		matched := policyXAmzKeys[key]
 		for _, rule := range policyXAmzPrefixes {
 			if !strings.HasPrefix(key, rule.namePrefix) {
 				continue
@@ -290,7 +291,6 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 			if !strings.HasPrefix(formValues.Get(key), rule.valuePrefix) {
 				return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]", policyCondStartsWith, rule.policyKey, rule.valuePrefix)
 			}
-			break
 		}
 		if !matched {
 			return fmt.Errorf("Invalid according to Policy: Extra input fields: %s", key)
