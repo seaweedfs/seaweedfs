@@ -64,7 +64,7 @@ func (n *Needle) ReadBytes(bytes []byte, offset int64, size Size, version Versio
 			return ErrorSizeMismatch
 		}
 		stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorSizeMismatch).Inc()
-		return fmt.Errorf("entry not found: offset %d found id %x size %d, expected size %d", offset, n.Id, n.Size, size)
+		return fmt.Errorf("%w: entry not found: offset %d found id %x size %d, expected size %d", ErrorSizeMismatch, offset, n.Id, n.Size, size)
 	}
 	if version == Version1 {
 		n.Data = bytes[NeedleHeaderSize : NeedleHeaderSize+size]
