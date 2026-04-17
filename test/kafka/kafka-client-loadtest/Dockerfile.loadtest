@@ -21,14 +21,18 @@ FROM ubuntu:22.04
 
 # Install runtime dependencies. Acquire::Retries + Timeout survive transient
 # Ubuntu apt-mirror flakes that otherwise turn into outright build failures
-# in CI (matches the pattern PR #9106 used for pjdfstest).
+# in CI. --no-install-recommends / --no-install-suggests keep the image
+# small and the attack surface narrow (matches PR #9106's pjdfstest pattern).
 RUN apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update \
     && DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y \
+    --no-install-recommends \
+    --no-install-suggests \
     ca-certificates \
     curl \
     jq \
     bash \
     netcat \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built binary from builder stage
