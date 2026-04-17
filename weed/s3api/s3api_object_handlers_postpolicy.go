@@ -208,18 +208,17 @@ func applyPostPolicyFormHeaders(r *http.Request, formValues http.Header) {
 		if _, reserved := postPolicyReservedFormFields[k]; reserved {
 			continue
 		}
-		v := formValues.Get(k)
 		switch {
 		case k == "Acl":
-			r.Header.Set(s3_constants.AmzCannedAcl, v)
+			r.Header.Set(s3_constants.AmzCannedAcl, formValues.Get(k))
 		case k == "Cache-Control",
 			k == "Expires",
 			k == "Content-Disposition",
 			k == "Content-Encoding",
 			k == "Content-Language":
-			r.Header.Set(k, v)
+			r.Header.Set(k, formValues.Get(k))
 		case strings.HasPrefix(k, "X-Amz-"):
-			r.Header.Set(k, v)
+			r.Header.Set(k, formValues.Get(k))
 		}
 	}
 }
