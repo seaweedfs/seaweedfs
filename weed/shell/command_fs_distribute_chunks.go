@@ -562,12 +562,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 		uploadURL := fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid)
 
-		v := util.GetViper()
-		signingKey := v.GetString("jwt.signing.key")
 		var jwt security.EncodedJwt
-		if signingKey != "" {
-			expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
-			jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, assignResult.Fid)
+		if assignResult.Auth != "" {
+			jwt = assignResult.Auth
+		} else {
+			v := util.GetViper()
+			signingKey := v.GetString("jwt.signing.key")
+			if signingKey != "" {
+				expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
+				jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, assignResult.Fid)
+			}
 		}
 
 		_, uploadErr, _ := uploader.Upload(context.Background(), reader, &operation.UploadOption{
