@@ -291,6 +291,14 @@ func (iam *IdentityAccessManagement) verifyV4Signature(r *http.Request, shouldCh
 		return nil, nil, "", nil, errCode
 	}
 
+	// 5a. Reject requests that carry x-amz-* headers outside of SignedHeaders.
+	// Without this check a presigned-URL holder can inject unsigned headers
+	// (x-amz-tagging, x-amz-acl, x-amz-meta-*, x-amz-storage-class, x-amz-object-lock-*,
+	// x-amz-server-side-encryption*, etc.) that downstream handlers still persist.
+	if errCode = verifySignedHeadersCoverage(r, authInfo.SignedHeaders, authInfo.IsPresigned); errCode != s3err.ErrNone {
+		return nil, nil, "", nil, errCode
+	}
+
 	// 6. Get the query string for the canonical request
 	queryStr := getCanonicalQueryString(r, authInfo.IsPresigned)
 
@@ -756,6 +764,60 @@ func (iam *IdentityAccessManagement) doesPolicySignatureV4Match(formValues http.
 
 	// Verify signature.
 	if !compareSignatureV4(newSignature, formValues.Get("X-Amz-Signature")) {
+		return s3err.ErrSignatureDoesNotMatch
+	}
+	return s3err.ErrNone
+}
+
+// sigV4PayloadHashHeader is x-amz-content-sha256. It participates in the
+// canonical request via the payload-hash line regardless of whether it is
+// listed in SignedHeaders, so tampering with it still breaks the signature.
+// It is therefore exempted from the "all x-amz-* headers must be signed" rule
+// for both header-based and presigned requests.
+const sigV4PayloadHashHeader = "x-amz-content-sha256"
+
+// presignedSigV4ProtocolHeaders lists SigV4 protocol parameters that are
+// conveyed in the presigned URL's query string. Some clients and proxies echo
+// them as request headers; those duplicates do not influence signature
+// computation or object persistence and are exempted from the
+// "all x-amz-* headers must be signed" rule for presigned requests only.
+var presignedSigV4ProtocolHeaders = map[string]struct{}{
+	"x-amz-algorithm":     {},
+	"x-amz-credential":    {},
+	"x-amz-date":          {},
+	"x-amz-expires":       {},
+	"x-amz-signedheaders": {},
+	"x-amz-signature":     {},
+}
+
+// verifySignedHeadersCoverage rejects requests that carry x-amz-* headers
+// outside of the SignedHeaders list. AWS SigV4 requires every x-amz-* header
+// present in the request to be covered by the signature; without this check a
+// presigned-URL holder can add unsigned headers (ACL, tagging, storage class,
+// user metadata, encryption options, object lock) that the server still
+// persists to object metadata.
+func verifySignedHeadersCoverage(r *http.Request, signedHeaders []string, isPresigned bool) s3err.ErrorCode {
+	signedSet := make(map[string]struct{}, len(signedHeaders))
+	for _, h := range signedHeaders {
+		signedSet[strings.ToLower(h)] = struct{}{}
+	}
+	for name := range r.Header {
+		lower := strings.ToLower(name)
+		if !strings.HasPrefix(lower, "x-amz-") {
+			continue
+		}
+		if _, ok := signedSet[lower]; ok {
+			continue
+		}
+		if lower == sigV4PayloadHashHeader {
+			continue
+		}
+		if isPresigned {
+			if _, exempt := presignedSigV4ProtocolHeaders[lower]; exempt {
+				continue
+			}
+		}
+		glog.V(2).Infof("reject %s %s: unsigned header %q not in SignedHeaders", r.Method, r.URL.Path, name)
 		return s3err.ErrSignatureDoesNotMatch
 	}
 	return s3err.ErrNone
