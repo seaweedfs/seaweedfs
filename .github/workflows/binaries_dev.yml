@@ -4,6 +4,10 @@ on:
   push:
     branches: [ master ]
 
+concurrency:
+  group: binaries-dev-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
