@@ -440,19 +440,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 
 		// Print round-robin assignment
 		fmt.Fprintf(writer, "\nRound-robin assignment (sequential read optimized):\n")
-		fmt.Fprintf(writer, "  Offset order: ")
-		shown := 0
-		for _, sc := range sortedChunks {
-			if shown >= 12 {
-				fmt.Fprintf(writer, "...")
+		fmt.Fprintf(writer, "  First assignments: ")
+		for pos := range sortedChunks {
+			if pos >= 12 {
+				fmt.Fprintf(writer, "... ")
 				break
 			}
-			targetNode := activeNodeList[sc.index%totalNodes]
-			// Use actual round-robin index, not chunk index
-			_ = targetNode
-			shown++
+			targetNode := activeNodeList[pos%totalNodes]
+			fmt.Fprintf(writer, "%s ", strings.Split(targetNode, ".")[0])
 		}
-		// Show the pattern
+		fmt.Fprintf(writer, "\n  Pattern: ")
 		for i := 0; i < totalNodes && i < 6; i++ {
 			fmt.Fprintf(writer, "%s ", strings.Split(activeNodeList[i], ".")[0])
 		}
