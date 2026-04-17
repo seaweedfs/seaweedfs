@@ -362,6 +362,14 @@ var (
 			Help:      "In flight total upload size.",
 		})
 
+	VolumeServerMasterDisconnections = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "volumeServer",
+			Name:      "master_disconnections",
+			Help:      "Number of master server disconnections.",
+		}, []string{"address"})
+
 	S3RequestCounter = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: Namespace,
@@ -528,6 +536,7 @@ func init() {
 	Gather.MustRegister(VolumeServerConcurrentUploadLimit)
 	Gather.MustRegister(VolumeServerInFlightDownloadSize)
 	Gather.MustRegister(VolumeServerInFlightUploadSize)
+	Gather.MustRegister(VolumeServerMasterDisconnections)
 
 	Gather.MustRegister(S3RequestCounter)
 	Gather.MustRegister(S3HandlerCounter)

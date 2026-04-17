@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/operation"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 
 	"google.golang.org/grpc"
 
@@ -84,6 +85,7 @@ func (vs *VolumeServer) heartbeat() {
 					time.Sleep(vs.pulsePeriod)
 				}
 
+				stats.VolumeServerMasterDisconnections.WithLabelValues(master.String()).Inc()
 				newLeader = ""
 				vs.store.MasterAddress = ""
 			} else {
