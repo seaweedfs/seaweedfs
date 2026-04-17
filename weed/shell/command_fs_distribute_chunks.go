@@ -694,11 +694,9 @@ func executeChunkMoves(
 			}
 
 			var replication, collection string
-			if vid, vidErr := chunkVolumeId(chunk); vidErr == nil {
-				if vInfo, ok := volumeInfoMap[vid]; ok {
-					replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
-					collection = vInfo.GetCollection()
-				}
+			if vInfo, ok := volumeInfoMap[uint32(oldFid.VolumeId)]; ok {
+				replication = fmt.Sprintf("%03d", vInfo.GetReplicaPlacement())
+				collection = vInfo.GetCollection()
 			}
 
 			assignResult, assignErr := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
