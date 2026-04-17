@@ -84,11 +84,14 @@ func NewFuseTestFramework(t *testing.T, config *TestConfig) *FuseTestFramework {
 
 // freePort asks the OS for a free TCP port in a range where the gRPC
 // offset (port + 10000) won't collide with well-known ports.
+// Stay below the Linux ephemeral floor (32768) so the kernel does not
+// reuse the chosen port for an outbound connection between close() here
+// and re-bind in the child "weed mini" process.
 func freePort(t *testing.T) int {
 	t.Helper()
 	const (
 		minServicePort = 20000
-		maxServicePort = 55535
+		maxServicePort = 32000
 	)
 
 	portCount := maxServicePort - minServicePort + 1
@@ -247,6 +250,7 @@ func (f *FuseTestFramework) startMini(config *TestConfig) error {
 		"mini",
 		"-dir=" + f.dataDir,
 		"-ip=127.0.0.1",
+		"-ip.bind=127.0.0.1",
 		"-filer.port=" + strconv.Itoa(f.filerPort),
 		"-s3=false",
 		"-webdav=false",
