@@ -490,3 +490,43 @@ func TestCheckPostPolicy_ExistingXAmzMetaCheckStillWorks(t *testing.T) {
 		t.Fatalf("expected error to name the offending field, got: %v", err)
 	}
 }
+
+// TestCheckPostPolicy_AllowsStartsWithPrefixStem covers the AWS convention
+// where ["starts-with","$x-amz-meta-",""] permits any X-Amz-Meta-* form
+// field. Without prefix-stem handling, such fields would be wrongly
+// rejected as "Extra input fields".
+func TestCheckPostPolicy_AllowsStartsWithPrefixStem(t *testing.T) {
+	ppf := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],["starts-with","$x-amz-meta-",""]`,
+	)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Meta-Foo", "bar")
+	form.Set("X-Amz-Meta-Another", "baz")
+
+	if err := CheckPostPolicy(form, ppf); err != nil {
+		t.Fatalf("expected no error for prefix-matched meta fields, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_PrefixStemDoesNotCoverOtherPrefixes ensures the
+// prefix allowance is scoped: a starts-with stem for x-amz-meta- must not
+// whitelist unrelated x-amz-* fields like x-amz-storage-class.
+func TestCheckPostPolicy_PrefixStemDoesNotCoverOtherPrefixes(t *testing.T) {
+	ppf := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],["starts-with","$x-amz-meta-",""]`,
+	)
+
+	form := http.Header{}
+	form.Set("Bucket", "mybucket")
+	form.Set("X-Amz-Storage-Class", "STANDARD")
+
+	err := CheckPostPolicy(form, ppf)
+	if err == nil {
+		t.Fatalf("expected error for X-Amz-Storage-Class not covered by meta prefix, got nil")
+	}
+	if !strings.Contains(err.Error(), "X-Amz-Storage-Class") {
+		t.Fatalf("expected error to name X-Amz-Storage-Class, got: %v", err)
+	}
+}

@@ -233,14 +233,23 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 	if !postPolicyForm.Expiration.After(time.Now().UTC()) {
 		return fmt.Errorf("Invalid according to Policy: Policy expired")
 	}
-	// Track every $x-amz-* key that appears in the policy, in canonical form.
-	// This covers both $x-amz-meta-* and other $x-amz-* conditions.
+	// Track $x-amz-* policy conditions in canonical form. A starts-with
+	// condition on a key that itself ends with "-" and has an empty value
+	// (e.g. ["starts-with","$x-amz-meta-",""]) is the AWS convention for
+	// allowing any form field sharing that prefix; capture those as prefix
+	// stems rather than exact names.
 	policyXAmzKeys := make(map[string]bool)
+	var policyXAmzPrefixes []string
 	for _, policy := range postPolicyForm.Conditions.Policies {
-		if strings.HasPrefix(policy.Key, "$x-amz-") {
-			formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(policy.Key, "$"))
-			policyXAmzKeys[formCanonicalName] = true
+		if !strings.HasPrefix(policy.Key, "$x-amz-") {
+			continue
 		}
+		formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(policy.Key, "$"))
+		if policy.Operator == policyCondStartsWith && strings.HasSuffix(policy.Key, "-") && policy.Value == "" {
+			policyXAmzPrefixes = append(policyXAmzPrefixes, formCanonicalName)
+			continue
+		}
+		policyXAmzKeys[formCanonicalName] = true
 	}
 	// Reject any X-Amz-* form field that has no matching policy condition,
 	// except for the reserved auth/signing fields clients must always send.
@@ -251,7 +260,17 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		if postPolicyAuthFields[key] {
 			continue
 		}
-		if !policyXAmzKeys[key] {
+		if policyXAmzKeys[key] {
+			continue
+		}
+		covered := false
+		for _, prefix := range policyXAmzPrefixes {
+			if strings.HasPrefix(key, prefix) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
 			return fmt.Errorf("Invalid according to Policy: Extra input fields: %s", key)
 		}
 	}
