@@ -1,12 +1,14 @@
 package shell
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -215,6 +217,9 @@ func lookupFileEntry(commandEnv *CommandEnv, dir, name string) (*filer_pb.Entry,
 	})
 	if err != nil {
 		return nil, err
+	}
+	if entry == nil {
+		return nil, fmt.Errorf("lookup for %s/%s returned no entry", dir, name)
 	}
 	if entry.IsDirectory {
 		return nil, fmt.Errorf("%s/%s is a directory", dir, name)
@@ -433,9 +438,12 @@ func planDistribution(
 			alreadyMoving[mv.chunkIndex] = true
 		}
 
+		// local copy so the planner does not mutate the caller's copiesCount
+		localCopiesCount := maps.Clone(copiesCount)
+
 		var copiesOver, copiesUnder []nodeExcess
 		for _, node := range activeNodeList {
-			diff := copiesCount[node] - copiesTarget[node]
+			diff := localCopiesCount[node] - copiesTarget[node]
 			if diff > 0 {
 				copiesOver = append(copiesOver, nodeExcess{node, diff})
 			} else if diff < 0 {
@@ -478,7 +486,7 @@ func planDistribution(
 						})
 						alreadyMoving[idx] = true
 						for _, srcNode := range volumeNodesList[vid] {
-							copiesCount[srcNode]--
+							localCopiesCount[srcNode]--
 							for k := range copiesOver {
 								if copiesOver[k].node == srcNode {
 									copiesOver[k].excess--
@@ -486,7 +494,7 @@ func planDistribution(
 							}
 						}
 						copiesUnder[j].excess--
-						copiesCount[copiesUnder[j].node]++
+						localCopiesCount[copiesUnder[j].node]++
 						over.excess--
 						break
 					}
@@ -687,10 +695,21 @@ func executeChunkMoves(
 			md5Hash := resp.Header.Get("Content-MD5")
 			var filename string
 			if cd := resp.Header.Get("Content-Disposition"); len(cd) > 0 {
-				if before, after, found := strings.Cut(cd, "filename="); found {
-					_ = before
+				if _, after, found := strings.Cut(cd, "filename="); found {
 					filename = strings.Trim(after, "\"")
 				}
+			}
+
+			// Buffer the full response body so the download context can be
+			// cancelled before the upload starts — otherwise the 5-minute
+			// dlCtx timeout would also cancel the (potentially slow) upload.
+			bodyBytes, readBodyErr := io.ReadAll(reader)
+			reader.Close()
+			util_http.CloseResponse(resp)
+			dlCancel()
+			if readBodyErr != nil {
+				fail(fmt.Sprintf("read body: %v", readBodyErr))
+				return nil
 			}
 
 			var replication, collection string
@@ -707,9 +726,6 @@ func executeChunkMoves(
 					DataNode:    mv.toNode,
 				})
 			if assignErr != nil {
-				reader.Close()
-				util_http.CloseResponse(resp)
-				dlCancel()
 				fail(fmt.Sprintf("assign: %v", assignErr))
 				return nil
 			}
@@ -728,7 +744,7 @@ func executeChunkMoves(
 				}
 			}
 
-			_, uploadErr, _ := uploader.Upload(context.Background(), reader, &operation.UploadOption{
+			_, uploadErr, _ := uploader.Upload(context.Background(), bytes.NewReader(bodyBytes), &operation.UploadOption{
 				UploadUrl:         uploadURL,
 				Filename:          filename,
 				IsInputCompressed: isCompressed,
@@ -737,9 +753,6 @@ func executeChunkMoves(
 				Md5:               md5Hash,
 				Jwt:               jwt,
 			})
-			reader.Close()
-			util_http.CloseResponse(resp)
-			dlCancel()
 
 			if uploadErr != nil {
 				fail(fmt.Sprintf("upload: %v", uploadErr))
