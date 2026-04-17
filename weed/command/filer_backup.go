@@ -183,7 +183,11 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 		if err != nil {
 			return fmt.Errorf("initial snapshot: %w", err)
 		}
-		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId), snapshotTsNs); err != nil {
+		// The walk can take hours on large trees; retry the tiny KV write a
+		// handful of times before giving up so a flaky filer KV doesn't force
+		// the whole walk to repeat on the next retry loop iteration.
+		if err := persistSnapshotOffset(grpcDialOption, sourceFiler, int32(sinkId), snapshotTsNs); err != nil {
+			glog.Errorf("initialSnapshot: FAILED to persist offset %d for sinkId %d after retries: %v — the next retry will redo the full walk", snapshotTsNs, sinkId, err)
 			return fmt.Errorf("persist initial snapshot offset: %w", err)
 		}
 		startFrom = time.Unix(0, snapshotTsNs)
@@ -280,6 +284,31 @@ func isIgnorable404(err error) bool {
 	return strings.Contains(errStr, ignorable404ErrString) ||
 		strings.Contains(errStr, "LookupFileId") ||
 		(strings.Contains(errStr, "volume id") && strings.Contains(errStr, "not found"))
+}
+
+// persistSnapshotOffset writes the snapshot high-water mark to the source
+// filer's KV, retrying a few times with exponential backoff on transient
+// errors. Losing this write forces a full re-walk on the next retry loop
+// iteration, so a small retry budget here is far cheaper than paying the
+// walk cost again on a large tree.
+func persistSnapshotOffset(grpcDialOption grpc.DialOption, sourceFiler pb.ServerAddress, sinkId int32, tsNs int64) error {
+	const attempts = 4
+	backoff := 500 * time.Millisecond
+	var lastErr error
+	for i := 1; i <= attempts; i++ {
+		if err := setOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, sinkId, tsNs); err == nil {
+			return nil
+		} else {
+			lastErr = err
+			if i == attempts {
+				break
+			}
+			glog.V(0).Infof("initialSnapshot: setOffset attempt %d/%d failed: %v (retrying in %v)", i, attempts, err, backoff)
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	return lastErr
 }
 
 // runInitialSnapshot walks the live filer tree under sourcePath and seeds the
