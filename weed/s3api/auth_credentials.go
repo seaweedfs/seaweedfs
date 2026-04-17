@@ -1482,6 +1482,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
 
+	// SECURITY: Prevent clients from spoofing internal IAM headers.
+	// These headers are only set by the server after successful JWT authentication
+	// and are trusted by downstream authorization (e.g. S3Tables IAM checks).
+	// Clearing them here prevents privilege escalation via header injection on
+	// callers that use AuthSignatureOnly (S3Tables routes, UnifiedPostHandler).
+	r.Header.Del("X-SeaweedFS-Principal")
+	r.Header.Del("X-SeaweedFS-Session-Token")
+
 	var identity *Identity
 	var s3Err s3err.ErrorCode
 	var authType string
