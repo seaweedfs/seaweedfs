@@ -81,11 +81,12 @@ func TestScrubVolumeData(t *testing.T) {
 	}
 }
 
-// TestVerifyIndexFitsInDat ensures the structural startup check rejects an
-// .idx that references bytes past the end of the .dat — the corruption shape
-// described in issue #8928. The pre-existing tail check only inspects the
-// last 10 entries, so this guards against deeper-in-the-file rot.
-func TestVerifyIndexFitsInDat(t *testing.T) {
+// TestMaxNeedleEnd ensures the needle map's MaxNeedleEnd accumulator lets
+// volume.load() detect an .idx that references bytes past the end of the .dat
+// — the deeper-than-tail corruption shape from issue #8928 that the existing
+// last-10-entries scan cannot see. The check is populated by the load walk
+// and read by volume.load() to flip the volume read-only.
+func TestMaxNeedleEnd(t *testing.T) {
 	dir := t.TempDir()
 
 	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
@@ -108,22 +109,30 @@ func TestVerifyIndexFitsInDat(t *testing.T) {
 		t.Fatalf("sync .idx: %v", err)
 	}
 
-	// Sanity: a healthy volume passes the new structural check.
-	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
-	if err != nil {
-		t.Fatalf("open .idx: %v", err)
-	}
-	if err := verifyIndexFitsInDat(idxFile, v.DataBackend, v.Version()); err != nil {
-		idxFile.Close()
-		t.Fatalf("healthy volume should pass structural check, got %v", err)
-	}
-	idxFile.Close()
-
-	// Inject a dangling entry and rerun: now the check must fire.
 	datSize, _, err := v.DataBackend.GetStat()
 	if err != nil {
 		t.Fatalf("stat .dat: %v", err)
 	}
+
+	// Sanity: a fresh load over the healthy .idx puts MaxNeedleEnd inside
+	// the .dat.
+	idxFile, err := os.OpenFile(v.FileName(".idx"), os.O_RDONLY, 0644)
+	if err != nil {
+		t.Fatalf("open .idx: %v", err)
+	}
+	healthyNm, err := LoadCompactNeedleMap(idxFile, v.Version())
+	idxFile.Close()
+	if err != nil {
+		t.Fatalf("load healthy .idx: %v", err)
+	}
+	healthyEnd := healthyNm.MaxNeedleEnd()
+	if healthyEnd <= 0 || healthyEnd > datSize {
+		t.Fatalf("healthy volume should have MaxNeedleEnd (%d) in (0, dat_size=%d]", healthyEnd, datSize)
+	}
+
+	// Inject a dangling entry by appending to the .idx, then reload. The
+	// walk should observe MaxNeedleEnd past dat_size — exactly the signal
+	// volume.load uses to mark the volume read-only.
 	bogusOffset := types.ToOffset(datSize + 4*1024*1024)
 	if err := v.nm.Put(types.Uint64ToNeedleId(9999), bogusOffset, types.Size(1024)); err != nil {
 		t.Fatalf("inject dangling idx entry: %v", err)
@@ -137,8 +146,12 @@ func TestVerifyIndexFitsInDat(t *testing.T) {
 		t.Fatalf("reopen .idx: %v", err)
 	}
 	defer idxFile.Close()
-	err = verifyIndexFitsInDat(idxFile, v.DataBackend, v.Version())
-	if err == nil {
-		t.Fatalf("structural check should have failed for dangling idx entry")
+	badNm, err := LoadCompactNeedleMap(idxFile, v.Version())
+	if err != nil {
+		t.Fatalf("reload .idx after inject: %v", err)
+	}
+	badEnd := badNm.MaxNeedleEnd()
+	if badEnd <= datSize {
+		t.Fatalf("after dangling-entry inject MaxNeedleEnd (%d) should exceed dat_size (%d)", badEnd, datSize)
 	}
 }

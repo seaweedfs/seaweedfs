@@ -122,13 +122,10 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if indexSize == 0 {
 		return 0, nil
 	}
-	// Structural check: every entry's (offset + actual size) must fit inside .dat.
-	// The tail check below only inspects the last 10 entries, so corruption deeper
-	// in the .idx (e.g. left over from a crashed batched write) would otherwise go
-	// undetected and only surface later as vacuum EOF errors. See issue #8928.
-	if structuralErr := verifyIndexFitsInDat(indexFile, v.DataBackend, v.Version()); structuralErr != nil {
-		return 0, fmt.Errorf("verifyIndexFitsInDat %s failed: %w", indexFile.Name(), structuralErr)
-	}
+	// The deeper-than-tail structural check (every (offset + actual size)
+	// fits inside .dat — issue #8928) lives in volume.load(): it reads
+	// MaximumNeedleEnd from the needle map after the load walk, so we don't
+	// need a redundant linear scan of the .idx here.
 	healthyIndexSize := indexSize
 	for i := 1; i <= 10 && indexSize >= int64(i)*types.NeedleMapEntrySize; i++ {
 		// check and fix last 10 entries
@@ -172,48 +169,6 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	return lastAppendAtNs, nil
 }
 
-// verifyIndexFitsInDat does a single linear scan of the .idx file and
-// confirms that every entry's referenced byte range (offset + actual size)
-// fits inside the current .dat file. A violation means the .idx records data
-// that cannot exist on disk, e.g. when a previous batched write rolled back
-// the .dat after the corresponding .idx entry had already been appended.
-//
-// Returns nil if all entries fit. Otherwise returns an error that names the
-// total number of violating entries and details the first one.
-func verifyIndexFitsInDat(indexFile *os.File, datBackend backend.BackendStorageFile, version needle.Version) error {
-	if datBackend == nil {
-		return nil
-	}
-	datSize, _, err := datBackend.GetStat()
-	if err != nil {
-		return fmt.Errorf("stat dat: %w", err)
-	}
-	var (
-		violations  int
-		firstReport string
-	)
-	walkErr := idx.WalkIndexFile(indexFile, 0, func(key types.NeedleId, offset types.Offset, size types.Size) error {
-		if offset.IsZero() || size.IsDeleted() || !size.IsValid() {
-			return nil
-		}
-		needleEnd := offset.ToActualOffset() + needle.GetActualSize(size, version)
-		if needleEnd > datSize {
-			violations++
-			if firstReport == "" {
-				firstReport = fmt.Sprintf("idx entry key=%d offset=%d size=%d ends at %d, .dat size %d",
-					key, offset.ToActualOffset(), size, needleEnd, datSize)
-			}
-		}
-		return nil
-	})
-	if walkErr != nil {
-		return fmt.Errorf("walk idx: %w", walkErr)
-	}
-	if violations > 0 {
-		return fmt.Errorf("%d index entries reference data past end of .dat (%s)", violations, firstReport)
-	}
-	return nil
-}
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {
