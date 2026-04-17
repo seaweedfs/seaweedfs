@@ -644,8 +644,22 @@ func executeChunkMoves(
 			var reader io.ReadCloser
 			var readErr error
 			for _, serverURL := range downloadURLs {
-				resp, reader, readErr = readUrl(fmt.Sprintf("http://%s/%s", serverURL, oldFidStr))
+				dlCtx, dlCancel := context.WithTimeout(context.Background(), 5*time.Minute)
+				var dlReq *http.Request
+				dlReq, readErr = http.NewRequestWithContext(dlCtx, http.MethodGet, fmt.Sprintf("http://%s/%s", serverURL, oldFidStr), nil)
+				if readErr != nil {
+					dlCancel()
+					continue
+				}
+				dlReq.Header.Add("Accept-Encoding", "gzip")
+				resp, readErr = util_http.GetGlobalHttpClient().Do(dlReq)
+				dlCancel()
+				if readErr == nil && resp.StatusCode >= 400 {
+					util_http.CloseResponse(resp)
+					readErr = fmt.Errorf("download %s: %s", serverURL, resp.Status)
+				}
 				if readErr == nil {
+					reader = resp.Body
 					break
 				}
 			}
