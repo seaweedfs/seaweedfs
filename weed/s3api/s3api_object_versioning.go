@@ -1291,42 +1291,6 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 	return latestVersionEntry, nil
 }
 
-// selectLatestContentVersion walks the provided .versions directory entries and
-// returns the newest non-delete-marker entry together with its version id and
-// file name. Delete markers are tracked separately so callers can distinguish
-// "no content version remains" from "directory is empty". Returns nil for
-// latestEntry when no content version is present.
-//
-// This mirrors the existing post-deletion semantics used by
-// updateLatestVersionAfterDeletion, which deliberately limits the pointer to a
-// content version so that list output continues to show a live "latest".
-func selectLatestContentVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, hasDeleteMarkers bool) {
-	for _, entry := range entries {
-		if entry == nil || entry.Extended == nil {
-			continue
-		}
-
-		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
-		if !hasVersionId {
-			continue
-		}
-
-		if string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true" {
-			hasDeleteMarkers = true
-			continue
-		}
-
-		versionId := string(versionIdBytes)
-		// compareVersionIds returns negative when the first arg is newer
-		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
-			latestVersionId = versionId
-			latestVersionFileName = entry.Name
-			latestEntry = entry
-		}
-	}
-	return
-}
-
 // selectLatestVersion returns the chronologically newest entry with a version
 // id, including delete markers. isDeleteMarker reflects whether the selected
 // entry is a delete marker. Returns nil for latestEntry when the directory
