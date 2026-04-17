@@ -179,7 +179,7 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	// the walk leave no trace, so a re-backup after wiping the destination
 	// reflects what is actually live on the source instead of an empty tree.
 	if *backupOption.initialSnapshot && isFreshSync {
-		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink)
+		snapshotTsNs, err := runInitialSnapshot(sourceFiler.ToGrpcAddress(), filerSource, sourcePath, targetPath, excludePaths, reExcludeFileName, excludeFileNames, excludePathPatterns, dataSink, *backupOption.ignore404Error)
 		if err != nil {
 			return fmt.Errorf("initial snapshot: %w", err)
 		}
@@ -335,9 +335,15 @@ func runInitialSnapshot(
 	excludeFileNames []*wildcard.WildcardMatcher,
 	excludePathPatterns []*wildcard.WildcardMatcher,
 	dataSink sink.ReplicationSink,
+	ignore404Error bool,
 ) (int64, error) {
-	snapshotTsNs := time.Now().UnixNano()
-	glog.V(0).Infof("initialSnapshot: walking %s on %s -> %s (snapshotTsNs=%d)", sourcePath, grpcAddress, targetPath, snapshotTsNs)
+	// Metadata events are stamped server-side, so the backup host clock may be
+	// ahead of the filer's. Take `now - 1min` as the subscription watermark so
+	// a fast client clock can't skip events that fire during/right-after the
+	// walk. meta_aggregator.go uses the same 1-minute margin on initial peer
+	// traversal; see the note there on why duplicate replay is harmless.
+	snapshotTsNs := time.Now().Add(-time.Minute).UnixNano()
+	glog.V(0).Infof("initialSnapshot: walking %s on %s -> %s (snapshotTsNs=%d, -1m skew margin applied)", sourcePath, grpcAddress, targetPath, snapshotTsNs)
 
 	// TraverseBfs fans the callback out across 5 worker goroutines, so counter
 	// updates and the progress-log gate need to be safe under concurrent access.
@@ -351,23 +357,38 @@ func runInitialSnapshot(
 
 	err := filer_pb.TraverseBfs(ctx, filerSource, util.FullPath(sourcePath), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 		parent := string(parentPath)
-		if parent == filer.SystemLogDir || strings.HasPrefix(parent, filer.SystemLogDir+"/") {
+		sourceKey := parentPath.Child(entry.Name)
+		source := string(sourceKey)
+		// Check exclusion on the entry's own path too — otherwise a walked
+		// directory whose full path is SystemLogDir or a user-excluded path
+		// still gets seeded (only its children would be skipped by the parent
+		// check).
+		if parent == filer.SystemLogDir || strings.HasPrefix(parent, filer.SystemLogDir+"/") ||
+			source == filer.SystemLogDir || strings.HasPrefix(source, filer.SystemLogDir+"/") {
 			return nil
 		}
-		if matchesExcludePath(parent, excludePaths) {
+		if matchesExcludePath(parent, excludePaths) || matchesExcludePath(source, excludePaths) {
 			return nil
 		}
 		if isEntryExcluded(parent, entry, reExcludeFileName, excludeFileNames, excludePathPatterns) {
 			return nil
 		}
 
-		sourceKey := parentPath.Child(entry.Name)
-		if !util.IsEqualOrUnder(string(sourceKey), sourcePath) {
+		if !util.IsEqualOrUnder(source, sourcePath) {
 			return nil
 		}
 
 		targetKey := initialSnapshotTargetKey(dataSink, targetPath, sourcePath, sourceKey, entry)
 		if err := dataSink.CreateEntry(targetKey, entry, nil); err != nil {
+			// A file can be listed by TraverseBfs and then deleted before
+			// CreateEntry reads its chunks. The follow phase ignores 404s when
+			// -ignore404Error is set; apply the same policy here so the walk
+			// doesn't abort (and trigger a full re-walk on retry) just because
+			// a single entry disappeared mid-snapshot.
+			if ignore404Error && isIgnorable404(err) {
+				glog.V(0).Infof("initialSnapshot: source entry %s disappeared, ignore it: %s", sourceKey, err.Error())
+				return nil
+			}
 			return fmt.Errorf("seed %s: %w", targetKey, err)
 		}
 
