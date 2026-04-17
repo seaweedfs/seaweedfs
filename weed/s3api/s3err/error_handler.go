@@ -40,6 +40,15 @@ func WriteEmptyResponse(w http.ResponseWriter, r *http.Request, statusCode int) 
 }
 
 func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorCode) {
+	WriteErrorResponseWithMessage(w, r, errorCode, "")
+}
+
+// WriteErrorResponseWithMessage writes an S3 error response that uses the
+// standard error code mapping (status + Code). When message is non-empty,
+// it overrides the default Message field so the caller can surface why the
+// request was rejected (e.g. which POST policy condition failed) instead
+// of the generic APIError Description.
+func WriteErrorResponseWithMessage(w http.ResponseWriter, r *http.Request, errorCode ErrorCode, message string) {
 	r, reqID := request_id.Ensure(r)
 	vars := mux.Vars(r)
 	bucket := vars["bucket"]
@@ -50,6 +59,9 @@ func WriteErrorResponse(w http.ResponseWriter, r *http.Request, errorCode ErrorC
 
 	apiError := GetAPIError(errorCode)
 	errorResponse := getRESTErrorResponse(apiError, r.URL.Path, bucket, object, reqID)
+	if message != "" {
+		errorResponse.Message = message
+	}
 	WriteXMLResponse(w, r, apiError.HTTPStatusCode, errorResponse)
 	PostLog(r, apiError.HTTPStatusCode, errorCode)
 }
