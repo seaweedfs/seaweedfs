@@ -1275,6 +1275,10 @@ func (s3a *S3ApiServer) doGetLatestObjectVersion(bucket, object string, maxRetri
 // file name. Delete markers are tracked separately so callers can distinguish
 // "no content version remains" from "directory is empty". Returns nil for
 // latestEntry when no content version is present.
+//
+// This mirrors the existing post-deletion semantics used by
+// updateLatestVersionAfterDeletion, which deliberately limits the pointer to a
+// content version so that list output continues to show a live "latest".
 func selectLatestContentVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, hasDeleteMarkers bool) {
 	for _, entry := range entries {
 		if entry == nil || entry.Extended == nil {
@@ -1302,6 +1306,38 @@ func selectLatestContentVersion(entries []*filer_pb.Entry) (latestEntry *filer_p
 	return
 }
 
+// selectLatestVersion returns the chronologically newest entry with a version
+// id, including delete markers. isDeleteMarker reflects whether the selected
+// entry is a delete marker. Returns nil for latestEntry when the directory
+// contains no version-id-tagged entries.
+//
+// This is the correct selector for the self-heal path: the .versions pointer
+// tracks the current-version-regardless-of-type (see createDeleteMarker), and
+// promoting a delete marker keeps S3 semantics — downstream handlers observe
+// ExtDeleteMarkerKey on the returned entry and respond with NoSuchKey.
+func selectLatestVersion(entries []*filer_pb.Entry) (latestEntry *filer_pb.Entry, latestVersionId, latestVersionFileName string, isDeleteMarker bool) {
+	for _, entry := range entries {
+		if entry == nil || entry.Extended == nil {
+			continue
+		}
+
+		versionIdBytes, hasVersionId := entry.Extended[s3_constants.ExtVersionIdKey]
+		if !hasVersionId {
+			continue
+		}
+
+		versionId := string(versionIdBytes)
+		// compareVersionIds returns negative when the first arg is newer
+		if latestVersionId == "" || compareVersionIds(versionId, latestVersionId) < 0 {
+			latestVersionId = versionId
+			latestVersionFileName = entry.Name
+			latestEntry = entry
+			isDeleteMarker = string(entry.Extended[s3_constants.ExtDeleteMarkerKey]) == "true"
+		}
+	}
+	return
+}
+
 // healStaleLatestVersionPointer is invoked when the .versions directory metadata
 // points to a version file that no longer exists. It rescans the directory,
 // picks the newest remaining content version, updates the directory pointer
@@ -1320,9 +1356,14 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		return nil, fmt.Errorf("list %s: %w", versionsDir, err)
 	}
 
-	latestEntry, latestVersionId, latestVersionFileName, _ := selectLatestContentVersion(entries)
+	// Pick the chronologically newest entry regardless of type. Promoting a
+	// delete marker is correct: S3 semantics treat it as the current version
+	// and the caller renders NoSuchKey (with x-amz-delete-marker) from the
+	// returned entry. Restricting to content versions here would "undelete"
+	// the object by promoting an older content version over a newer marker.
+	latestEntry, latestVersionId, latestVersionFileName, isDeleteMarker := selectLatestVersion(entries)
 	if latestEntry == nil {
-		return nil, fmt.Errorf("no remaining content version in %s", versionsDir)
+		return nil, fmt.Errorf("no remaining version in %s", versionsDir)
 	}
 
 	if versionsEntry.Extended == nil {
@@ -1342,7 +1383,7 @@ func (s3a *S3ApiServer) healStaleLatestVersionPointer(bucket, normalizedObject s
 		// on the object will persist a fresh pointer.
 		glog.Warningf("healStaleLatestVersionPointer: failed to persist repaired pointer for %s/%s: %v (returning rescanned entry)", bucket, normalizedObject, mkErr)
 	} else {
-		glog.V(1).Infof("healStaleLatestVersionPointer: repaired pointer for %s/%s to version %s (file %s)", bucket, normalizedObject, latestVersionId, latestVersionFileName)
+		glog.V(1).Infof("healStaleLatestVersionPointer: repaired pointer for %s/%s to version %s (file %s, deleteMarker=%v)", bucket, normalizedObject, latestVersionId, latestVersionFileName, isDeleteMarker)
 	}
 	return latestEntry, nil
 }
