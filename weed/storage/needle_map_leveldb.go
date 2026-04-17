@@ -12,6 +12,7 @@ import (
 	"github.com/syndtr/goleveldb/leveldb/opt"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 
 	"github.com/syndtr/goleveldb/leveldb"
@@ -39,7 +40,7 @@ type LevelDbNeedleMap struct {
 	recordCount uint64
 }
 
-func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options, ldbTimeout int64) (m *LevelDbNeedleMap, err error) {
+func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Options, ldbTimeout int64, version needle.Version) (m *LevelDbNeedleMap, err error) {
 	m = &LevelDbNeedleMap{dbFileName: dbFileName}
 	m.indexFile = indexFile
 	if !isLevelDbFresh(dbFileName, indexFile) {
@@ -72,7 +73,7 @@ func NewLevelDbNeedleMap(dbFileName string, indexFile *os.File, opts *opt.Option
 			return
 		}
 	}
-	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
+	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile, version)
 	if indexLoadError != nil {
 		return nil, indexLoadError
 	}
@@ -334,6 +335,10 @@ func (m *LevelDbNeedleMap) UpdateNeedleMap(v *Volume, indexFile *os.File, opts *
 
 func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startFrom uint64) (err error) {
 	glog.V(0).Infof("loading idx to leveldb from offset %d for file: %s", startFrom, indexFile.Name())
+	version := needle.GetCurrentVersion()
+	if v != nil {
+		version = v.Version()
+	}
 	dbFileName := v.FileName(".cpldb")
 	db, dbErr := leveldb.OpenFile(dbFileName, nil)
 	defer func() {
@@ -356,6 +361,7 @@ func (m *LevelDbNeedleMap) DoOffsetLoading(v *Volume, indexFile *os.File, startF
 
 	err = idx.WalkIndexFile(indexFile, startFrom, func(key NeedleId, offset Offset, size Size) (e error) {
 		m.mapMetric.FileCounter++
+		m.mapMetric.MaybeSetMaxNeedleEnd(offset, size, version)
 		bytes := make([]byte, NeedleIdSize)
 		NeedleIdToBytes(bytes[0:NeedleIdSize], key)
 		// fresh loading

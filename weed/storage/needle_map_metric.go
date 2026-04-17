@@ -7,6 +7,7 @@ import (
 	"sync/atomic"
 
 	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	boom "github.com/tylertreat/BoomFilters"
 )
@@ -17,6 +18,12 @@ type mapMetric struct {
 	DeletionByteCounter uint64 `json:"DeletionByteCounter"`
 	FileByteCounter     uint64 `json:"FileByteCounter"`
 	MaximumFileKey      uint64 `json:"MaxFileKey"`
+	// MaximumNeedleEnd is the largest (offset.ToActualOffset() +
+	// GetActualSize(size, version)) seen during the index walk. It is used
+	// at volume load to verify that no .idx entry references bytes past
+	// the end of the .dat — the deeper-than-tail corruption shape from
+	// issue #8928 — without paying for a second linear scan of the index.
+	MaximumNeedleEnd int64 `json:"MaxNeedleEnd"`
 }
 
 func (mm *mapMetric) logDelete(deletedByteCount Size) {
@@ -92,7 +99,27 @@ func (mm *mapMetric) MaybeSetMaxFileKey(key NeedleId) {
 	}
 }
 
-func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
+// MaybeSetMaxNeedleEnd updates MaximumNeedleEnd if the supplied entry's
+// (offset + actual size) is larger than what we have seen so far. Skips
+// deleted/zero-offset entries because they don't reserve space in .dat.
+func (mm *mapMetric) MaybeSetMaxNeedleEnd(offset Offset, size Size, version needle.Version) {
+	if mm == nil || offset.IsZero() || !size.IsValid() {
+		return
+	}
+	end := offset.ToActualOffset() + needle.GetActualSize(size, version)
+	if end > atomic.LoadInt64(&mm.MaximumNeedleEnd) {
+		atomic.StoreInt64(&mm.MaximumNeedleEnd, end)
+	}
+}
+
+func (mm *mapMetric) MaxNeedleEnd() int64 {
+	if mm == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&mm.MaximumNeedleEnd)
+}
+
+func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric, version needle.Version) error {
 	var bf *boom.BloomFilter
 	buf := make([]byte, NeedleIdSize)
 	err := reverseWalkIndexFile(r, func(entryCount int64) {
@@ -100,6 +127,7 @@ func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 	}, func(key NeedleId, offset Offset, size Size) error {
 
 		mm.MaybeSetMaxFileKey(key)
+		mm.MaybeSetMaxNeedleEnd(offset, size, version)
 		NeedleIdToBytes(buf, key)
 		if size.IsValid() {
 			mm.FileByteCounter += uint64(size)
@@ -124,9 +152,9 @@ func needleMapMetricFromIndexFile(r *os.File, mm *mapMetric) error {
 	return err
 }
 
-func newNeedleMapMetricFromIndexFile(r *os.File) (mm *mapMetric, err error) {
+func newNeedleMapMetricFromIndexFile(r *os.File, version needle.Version) (mm *mapMetric, err error) {
 	mm = &mapMetric{}
-	err = needleMapMetricFromIndexFile(r, mm)
+	err = needleMapMetricFromIndexFile(r, mm, version)
 	return
 }
 

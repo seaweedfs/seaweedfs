@@ -5,6 +5,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/storage/erasure_coding"
+	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle_map"
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 )
@@ -16,7 +17,7 @@ type SortedFileNeedleMap struct {
 	dbFileSize   int64
 }
 
-func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *SortedFileNeedleMap, err error) {
+func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File, version needle.Version) (m *SortedFileNeedleMap, err error) {
 	m = &SortedFileNeedleMap{baseFileName: indexBaseFileName}
 	m.indexFile = indexFile
 	fileName := indexBaseFileName + ".sdx"
@@ -33,7 +34,7 @@ func NewSortedFileNeedleMap(indexBaseFileName string, indexFile *os.File) (m *So
 	dbStat, _ := m.dbFile.Stat()
 	m.dbFileSize = dbStat.Size()
 	glog.V(1).Infof("Loading %s...", indexFile.Name())
-	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile)
+	mm, indexLoadError := newNeedleMapMetricFromIndexFile(indexFile, version)
 	if indexLoadError != nil {
 		_ = m.dbFile.Close()
 		return nil, indexLoadError

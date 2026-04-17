@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"time"
@@ -16,6 +18,24 @@ import (
 	. "github.com/seaweedfs/seaweedfs/weed/storage/types"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
+
+// isSkippableNeedleReadError returns true when a needle read failed because
+// the on-disk bytes are unreadable in a permanent way (offset past EOF, header
+// corruption, CRC mismatch, malformed v2/v3/v4 fields). Vacuum can safely drop
+// such entries during compaction. Anything else (real disk EIO on Unix,
+// ERROR_CRC / ERROR_IO_DEVICE on Windows, network timeouts, EROFS, etc.) is
+// transient or environmental and must abort the compaction so an operator
+// notices, rather than silently dropping recoverable data.
+func isSkippableNeedleReadError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, needle.ErrorSizeMismatch) ||
+		errors.Is(err, needle.ErrorSizeInvalid) ||
+		errors.Is(err, needle.ErrorCorrupted)
+}
 
 type ProgressFunc func(processed int64) bool
 
@@ -493,6 +513,10 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	}
 
 	writeThrottler := util.NewWriteThrottler(opts.MaxBytesPerSecond)
+	var (
+		skippedNeedles   int
+		skippedDataBytes uint64
+	)
 	err = oldNm.AscendingVisit(func(value needle_map.NeedleValue) error {
 
 		offset, size := value.Offset, value.Size
@@ -510,7 +534,21 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		n := new(needle.Needle)
 		if err := n.ReadData(srcDatBackend, offset.ToActualOffset(), size, opts.version); err != nil {
 			v.checkReadWriteError(err)
-			return fmt.Errorf("cannot hydrate needle from file: %w", err)
+			// Only drop the entry when the failure is one of the well-known
+			// permanent-corruption shapes. A transient disk fault, a tiered
+			// read timeout, or a Windows hardware error (ERROR_CRC etc.) must
+			// abort so an operator notices, rather than silently compacting
+			// away data that might come back on retry. See issue #8928.
+			if !isSkippableNeedleReadError(err) {
+				return fmt.Errorf("cannot hydrate needle from file: %w", err)
+			}
+			skippedNeedles++
+			if size.IsValid() {
+				skippedDataBytes += uint64(size)
+			}
+			glog.Warningf("vacuum volume %d: dropping unreadable needle key=%d offset=%d size=%d: %v",
+				v.Id, value.Key, offset.ToActualOffset(), size, err)
+			return nil
 		}
 
 		if n.HasTtl() && now >= n.LastModified+uint64(opts.superBlock.Ttl.Minutes()*60) {
@@ -533,6 +571,10 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 	if err != nil {
 		return err
 	}
+	if skippedNeedles > 0 {
+		glog.Warningf("vacuum volume %d: dropped %d unreadable index entries (%d data bytes) during compaction",
+			v.Id, skippedNeedles, skippedDataBytes)
+	}
 	if v.Ttl.String() == "" && v.nm != nil {
 		dstDatSize, _, err := dstDatBackend.GetStat()
 		if err != nil {
@@ -540,6 +582,14 @@ func (v *Volume) copyDataBasedOnIndexFile(opts *CompactOptions) (err error) {
 		}
 		if v.nm.ContentSize() > v.nm.DeletedSize() {
 			expectedContentSize := v.nm.ContentSize() - v.nm.DeletedSize()
+			// Skipped needles still contribute to the source-side ContentSize but
+			// were not written to the destination, so subtract them before the
+			// safety check to avoid a false positive.
+			if skippedDataBytes >= expectedContentSize {
+				expectedContentSize = 0
+			} else {
+				expectedContentSize -= skippedDataBytes
+			}
 			if expectedContentSize > uint64(dstDatSize) {
 				return fmt.Errorf("volume %s unexpected new data size: %d does not match size of content minus deleted: %d",
 					v.Id.String(), dstDatSize, expectedContentSize)
