@@ -530,3 +530,56 @@ func TestCheckPostPolicy_PrefixStemDoesNotCoverOtherPrefixes(t *testing.T) {
 		t.Fatalf("expected error to name X-Amz-Storage-Class, got: %v", err)
 	}
 }
+
+// TestCheckPostPolicy_PrefixStemEnforcesValuePrefix covers a starts-with
+// prefix-stem policy with a non-empty required value prefix: matching
+// fields must have values that satisfy the value prefix.
+func TestCheckPostPolicy_PrefixStemEnforcesValuePrefix(t *testing.T) {
+	ppf := buildParsedPolicy(t,
+		`["eq","$bucket","mybucket"],["starts-with","$x-amz-meta-","pfx-"]`,
+	)
+
+	// Value satisfies the required prefix: accepted.
+	okForm := http.Header{}
+	okForm.Set("Bucket", "mybucket")
+	okForm.Set("X-Amz-Meta-Foo", "pfx-bar")
+	if err := CheckPostPolicy(okForm, ppf); err != nil {
+		t.Fatalf("expected no error when meta value matches required prefix, got: %v", err)
+	}
+
+	// Value does not satisfy the required prefix: rejected as policy failure.
+	badForm := http.Header{}
+	badForm.Set("Bucket", "mybucket")
+	badForm.Set("X-Amz-Meta-Foo", "other")
+	err := CheckPostPolicy(badForm, ppf)
+	if err == nil {
+		t.Fatalf("expected error when meta value misses required prefix, got nil")
+	}
+	if !strings.Contains(err.Error(), "Policy Condition failed") {
+		t.Fatalf("expected 'Policy Condition failed' error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pfx-") {
+		t.Fatalf("expected error to reference the required value prefix, got: %v", err)
+	}
+}
+
+// TestCheckPostPolicy_UnknownKeyErrorIncludesPolicyValue ensures the
+// unknown-condition error surfaces the policy value in its [op, key, value]
+// trailer so operators can tell which of several unknown keys failed.
+func TestCheckPostPolicy_UnknownKeyErrorIncludesPolicyValue(t *testing.T) {
+	ppf := buildParsedPolicy(t, `["eq","$foo","custom-value"]`)
+
+	err := CheckPostPolicy(http.Header{}, ppf)
+	if err == nil {
+		t.Fatalf("expected error for unknown condition key, got nil")
+	}
+	if !strings.Contains(err.Error(), "custom-value") {
+		t.Fatalf("expected error to include policy.Value 'custom-value', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "$foo") {
+		t.Fatalf("expected error to include policy.Key '$foo', got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "unknown condition key") {
+		t.Fatalf("expected 'unknown condition key' suffix, got: %v", err)
+	}
+}

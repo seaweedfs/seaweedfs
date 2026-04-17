@@ -215,6 +215,16 @@ func checkPolicyCond(op string, input1, input2 string) bool {
 	return false
 }
 
+// xAmzPrefixRule captures a starts-with policy condition whose key ends in
+// "-" and therefore matches a prefix of form field names, e.g.
+// ["starts-with","$x-amz-meta-","pfx-"]. Any form field whose name starts
+// with namePrefix must have a value starting with valuePrefix.
+type xAmzPrefixRule struct {
+	policyKey   string
+	namePrefix  string
+	valuePrefix string
+}
+
 // postPolicyAuthFields enumerates the X-Amz-* form fields that clients are
 // required to send with every POST Object request for signing/authentication.
 // These must be accepted even when no matching policy condition is declared.
@@ -234,25 +244,33 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		return fmt.Errorf("Invalid according to Policy: Policy expired")
 	}
 	// Track $x-amz-* policy conditions in canonical form. A starts-with
-	// condition on a key that itself ends with "-" and has an empty value
-	// (e.g. ["starts-with","$x-amz-meta-",""]) is the AWS convention for
-	// allowing any form field sharing that prefix; capture those as prefix
-	// stems rather than exact names.
+	// condition on a key that itself ends with "-" (e.g.
+	// ["starts-with","$x-amz-meta-","pfx-"]) is the AWS convention for
+	// allowing any form field sharing that name prefix; capture the name
+	// prefix together with its required value prefix so the extras check
+	// can both accept matching fields and enforce the value constraint.
 	policyXAmzKeys := make(map[string]bool)
-	var policyXAmzPrefixes []string
+	var policyXAmzPrefixes []xAmzPrefixRule
 	for _, policy := range postPolicyForm.Conditions.Policies {
 		if !strings.HasPrefix(policy.Key, "$x-amz-") {
 			continue
 		}
 		formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(policy.Key, "$"))
-		if policy.Operator == policyCondStartsWith && strings.HasSuffix(policy.Key, "-") && policy.Value == "" {
-			policyXAmzPrefixes = append(policyXAmzPrefixes, formCanonicalName)
+		if policy.Operator == policyCondStartsWith && strings.HasSuffix(policy.Key, "-") {
+			policyXAmzPrefixes = append(policyXAmzPrefixes, xAmzPrefixRule{
+				policyKey:   policy.Key,
+				namePrefix:  formCanonicalName,
+				valuePrefix: policy.Value,
+			})
 			continue
 		}
 		policyXAmzKeys[formCanonicalName] = true
 	}
 	// Reject any X-Amz-* form field that has no matching policy condition,
 	// except for the reserved auth/signing fields clients must always send.
+	// For fields matched by a prefix-stem rule, also enforce the required
+	// value prefix up front; the main condition loop below skips those
+	// stems since there is no single form field whose value maps to them.
 	for key := range formValues {
 		if !strings.HasPrefix(key, "X-Amz-") {
 			continue
@@ -263,14 +281,18 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		if policyXAmzKeys[key] {
 			continue
 		}
-		covered := false
-		for _, prefix := range policyXAmzPrefixes {
-			if strings.HasPrefix(key, prefix) {
-				covered = true
-				break
+		matched := false
+		for _, rule := range policyXAmzPrefixes {
+			if !strings.HasPrefix(key, rule.namePrefix) {
+				continue
 			}
+			matched = true
+			if !strings.HasPrefix(formValues.Get(key), rule.valuePrefix) {
+				return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]", policyCondStartsWith, rule.policyKey, rule.valuePrefix)
+			}
+			break
 		}
-		if !covered {
+		if !matched {
 			return fmt.Errorf("Invalid according to Policy: Extra input fields: %s", key)
 		}
 	}
@@ -285,6 +307,13 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 		formCanonicalName := http.CanonicalHeaderKey(strings.TrimPrefix(policy.Key, "$"))
 		// Operator for the current policy condition
 		op := policy.Operator
+		// Prefix-stem x-amz-* conditions (key ending in "-" with starts-with)
+		// are validated above against every matching form field; skip them
+		// here so we do not fail on the non-existent literal form field whose
+		// name equals the prefix itself.
+		if strings.HasPrefix(policy.Key, "$x-amz-") && op == policyCondStartsWith && strings.HasSuffix(policy.Key, "-") {
+			continue
+		}
 		// If the current policy condition is known
 		if startsWithSupported, condFound := startsWithConds[policy.Key]; condFound {
 			// Check if the current condition supports starts-with operator
@@ -306,7 +335,7 @@ func CheckPostPolicy(formValues http.Header, postPolicyForm PostPolicyForm) erro
 			// Unknown condition key: neither in startsWithConds nor a $x-amz-*
 			// prefixed key. AWS rejects these outright instead of silently
 			// treating the condition as satisfied.
-			return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]: unknown condition key", op, policy.Key, "")
+			return fmt.Errorf("Invalid according to Policy: Policy Condition failed: [%s, %s, %s]: unknown condition key", op, policy.Key, policy.Value)
 		}
 	}
 
