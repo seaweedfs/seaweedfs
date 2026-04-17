@@ -128,4 +128,14 @@ func TestInitialSnapshotTargetKey(t *testing.T) {
 	if gotTrail != "/backup/file.txt" {
 		t.Errorf("trailing-slash sourcePath: got %q, want %q", gotTrail, "/backup/file.txt")
 	}
+
+	// Edge cases CodeRabbit called out: sourceKey equal to sourcePath
+	// (non-trailing and trailing variants). Real TraverseBfs walks never emit
+	// the root itself, but the helper must not panic if something else does.
+	if got := initialSnapshotTargetKey(mirror, "/backup", "/data", util.FullPath("/data"), &filer_pb.Entry{}); got != "/backup" {
+		t.Errorf("sourceKey == sourcePath (no slash): got %q, want %q", got, "/backup")
+	}
+	if got := initialSnapshotTargetKey(mirror, "/backup", "/data/", util.FullPath("/data"), &filer_pb.Entry{}); got != "/backup" {
+		t.Errorf("sourceKey == sourcePath (trailing slash mismatch): got %q, want %q", got, "/backup")
+	}
 }

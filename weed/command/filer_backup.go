@@ -140,7 +140,12 @@ func doFilerBackup(grpcDialOption grpc.DialOption, backupOption *FilerBackupOpti
 	if timeAgo.Milliseconds() == 0 {
 		lastOffsetTsNs, err := getOffset(grpcDialOption, sourceFiler, BackupKeyPrefix, int32(sinkId))
 		if err != nil {
-			glog.V(0).Infof("starting from %v", startFrom)
+			// A KV read failure is ambiguous — a checkpoint may well exist but the
+			// source filer is temporarily unreachable. Don't treat that as a fresh
+			// sync; otherwise runFilerBackup's retry loop would redo the full
+			// -initialSnapshot walk on every transient error.
+			isFreshSync = false
+			glog.V(0).Infof("starting from %v (offset read failed: %v)", startFrom, err)
 		} else if lastOffsetTsNs > 0 {
 			startFrom = time.Unix(0, lastOffsetTsNs)
 			isFreshSync = false
@@ -283,6 +288,14 @@ func isIgnorable404(err error) bool {
 // by the subscription that runs afterward (sink CreateEntry is idempotent for
 // all builtin sinks, so replaying a concurrent create from the subscription
 // over an entry already written by the walk is safe).
+//
+// Note on excludes: TraverseBfs enumerates every directory and enqueues its
+// children unconditionally before the callback runs, so the exclude filters
+// below only prevent *processing* of excluded entries — they do not prune the
+// listing RPCs for excluded subtrees. For small system excludes (SystemLogDir)
+// that is fine; for large user-supplied excludes (say an archive directory
+// with millions of files), the listing cost can dominate the snapshot. A
+// proper prune signal through TraverseBfs is a separate change.
 func runInitialSnapshot(
 	grpcAddress string,
 	filerSource *source.FilerSource,
@@ -365,7 +378,20 @@ func runInitialSnapshot(
 // runInitialSnapshot so the mapping from source path to destination key stays
 // in one place for the seed path.
 func initialSnapshotTargetKey(dataSink sink.ReplicationSink, targetPath, sourcePath string, sourceKey util.FullPath, entry *filer_pb.Entry) string {
-	relative := string(sourceKey)[len(sourcePath):]
+	// Normalize to a trailing-slash base so trimming never depends on whether
+	// the caller passed sourcePath with or without one, and never indexes past
+	// the end of sourceKey (IsEqualOrUnder upstream admits the equal case).
+	base := strings.TrimSuffix(sourcePath, "/") + "/"
+	sk := string(sourceKey)
+	var relative string
+	switch {
+	case strings.HasPrefix(sk, base):
+		relative = sk[len(base):]
+	case sk == strings.TrimSuffix(sourcePath, "/"):
+		relative = ""
+	default:
+		relative = strings.TrimPrefix(sk, "/")
+	}
 	if !dataSink.IsIncremental() {
 		return escapeKey(util.Join(targetPath, relative))
 	}
