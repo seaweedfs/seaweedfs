@@ -7,6 +7,8 @@ import (
 	nethttp "net/http"
 	"regexp"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -295,8 +297,11 @@ func runInitialSnapshot(
 	snapshotTsNs := time.Now().UnixNano()
 	glog.V(0).Infof("initialSnapshot: walking %s on %s -> %s (snapshotTsNs=%d)", sourcePath, grpcAddress, targetPath, snapshotTsNs)
 
-	var entryCount, byteCount int64
+	// TraverseBfs fans the callback out across 5 worker goroutines, so counter
+	// updates and the progress-log gate need to be safe under concurrent access.
+	var entryCount, byteCount atomic.Int64
 	start := time.Now()
+	var logMu sync.Mutex
 	lastLog := start
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -324,24 +329,34 @@ func runInitialSnapshot(
 			return fmt.Errorf("seed %s: %w", targetKey, err)
 		}
 
-		entryCount++
+		curEntries := entryCount.Add(1)
+		var curBytes int64
 		if entry.Attributes != nil {
-			byteCount += int64(entry.Attributes.FileSize)
+			curBytes = byteCount.Add(int64(entry.Attributes.FileSize))
+		} else {
+			curBytes = byteCount.Load()
 		}
-		if now := time.Now(); now.Sub(lastLog) >= 5*time.Second {
+
+		now := time.Now()
+		logMu.Lock()
+		shouldLog := now.Sub(lastLog) >= 5*time.Second
+		if shouldLog {
 			lastLog = now
+		}
+		logMu.Unlock()
+		if shouldLog {
 			elapsed := now.Sub(start).Seconds()
 			if elapsed == 0 {
 				elapsed = 1
 			}
-			glog.V(0).Infof("initialSnapshot: %d entries / %d bytes seeded (%.1f/sec)", entryCount, byteCount, float64(entryCount)/elapsed)
+			glog.V(0).Infof("initialSnapshot: %d entries / %d bytes seeded (%.1f/sec)", curEntries, curBytes, float64(curEntries)/elapsed)
 		}
 		return nil
 	})
 	if err != nil {
 		return 0, err
 	}
-	glog.V(0).Infof("initialSnapshot: done — %d entries / %d bytes in %v", entryCount, byteCount, time.Since(start))
+	glog.V(0).Infof("initialSnapshot: done — %d entries / %d bytes in %v", entryCount.Load(), byteCount.Load(), time.Since(start))
 	return snapshotTsNs, nil
 }
 
