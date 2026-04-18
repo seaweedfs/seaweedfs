@@ -1,6 +1,7 @@
 package mount
 
 import (
+	"bytes"
 	"context"
 	"crypto/md5"
 	"encoding/hex"
@@ -13,9 +14,18 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_peer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
+
+// errPeerReadSkipped signals that the read didn't go through the peer
+// path for a benign reason (local cache hit, no peer owner, etc.) rather
+// than a genuine failure. Callers fall through to the volume path just
+// as they would for a real error, but suppress the "peer read failed"
+// log that would otherwise mislead operators into thinking peer sharing
+// is broken.
+var errPeerReadSkipped = fmt.Errorf("peer read skipped (not an error)")
 
 // peerLookupTimeout bounds the ChunkLookup RPC. Short because the result
 // is consumed on the read critical path.
@@ -61,12 +71,22 @@ func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []by
 	if targetChunk == nil {
 		return 0, 0, fmt.Errorf("no leaf chunk for offset %d", offset)
 	}
+	// Reject reads that cross a chunk boundary. We only fetch one chunk
+	// here, and the caller (readFromChunks) maps a short non-error
+	// return to "success, zero-fill the rest" — which would silently
+	// corrupt reads that should actually span two chunks. Bail so the
+	// fallback ReadDataAt path can handle the multi-chunk case
+	// correctly. See weedfs_file_read.go short-read semantics.
+	chunkEnd := targetChunk.Offset + int64(targetChunk.Size)
+	if readStop > chunkEnd {
+		return 0, 0, errPeerReadSkipped
+	}
 
 	// Fail fast when the chunk is already cached locally: the fallback
 	// ReadDataAt path will satisfy the read from chunkCache with no RPCs,
 	// so dialing a peer (ChunkLookup + FetchChunk) would be pure overhead.
 	if fh.wfs.chunkCache != nil && fh.wfs.chunkCache.IsInCache(targetChunk.FileId, true) {
-		return 0, 0, fmt.Errorf("chunk already cached locally")
+		return 0, 0, errPeerReadSkipped
 	}
 
 	selfAddr := ""
@@ -111,7 +131,25 @@ func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []by
 		if chunkOffset >= int64(len(data)) {
 			return 0, 0, fmt.Errorf("peer returned short chunk")
 		}
-		copied := copy(buff, data[chunkOffset:])
+		// Cap the copy to whichever is smaller: the caller's buffer, or
+		// the remaining bytes before logical EOF (readStop already
+		// clamped to fileSize). FileChunk.Size can legitimately exceed
+		// the logical file length when the last chunk is partially
+		// written and the filer stored the full padded buffer, so a
+		// naïve copy(buff, data[chunkOffset:]) would return bytes past
+		// EOF. The caller treats a short non-error return as success
+		// and zero-fills the tail, so returning too many bytes here is
+		// a correctness bug, not just wasted I/O.
+		remaining := readStop - offset
+		available := int64(len(data)) - chunkOffset
+		maxCopy := int64(len(buff))
+		if remaining < maxCopy {
+			maxCopy = remaining
+		}
+		if available < maxCopy {
+			maxCopy = available
+		}
+		copied := copy(buff[:maxCopy], data[chunkOffset:chunkOffset+maxCopy])
 		return int64(copied), targetChunk.ModifiedTsNs, nil
 	}
 	return 0, 0, fmt.Errorf("no peer served fid %s", targetChunk.FileId)
@@ -216,6 +254,7 @@ func fetchChunkFromPeer(ctx context.Context, dial MountPeerDialer, peerAddr, fid
 	stream, err := client.FetchChunk(callCtx, &mount_peer_pb.FetchChunkRequest{
 		FileId:       fid,
 		ExpectedEtag: expectedETag,
+		ExpectedSize: expectedSize,
 	})
 	if err != nil {
 		return nil, err
@@ -254,12 +293,32 @@ func fetchChunkFromPeer(ctx context.Context, dial MountPeerDialer, peerAddr, fid
 	}
 
 	// Per-chunk integrity check — the peer is treated as untrusted.
+	// FileChunk.ETag is UploadResult.ContentMd5, which is base64 of the
+	// raw 16-byte MD5 (see weed/operation/upload_content.go:64 and
+	// filer's ETagChunks which decodes via util.Base64Md5ToBytes).
+	// Compare raw digests so we don't reject every valid peer response
+	// because of an encoding mismatch.
 	if expectedETag != "" {
-		sum := md5.Sum(buf)
-		got := hex.EncodeToString(sum[:])
-		if got != expectedETag {
-			return nil, fmt.Errorf("etag mismatch: peer=%s got=%s want=%s", peerAddr, got, expectedETag)
+		got := md5.Sum(buf)
+		if !etagMatchesMD5(expectedETag, got[:]) {
+			return nil, fmt.Errorf("etag mismatch: peer=%s got=%x want=%s", peerAddr, got, expectedETag)
 		}
 	}
 	return buf, nil
+}
+
+// etagMatchesMD5 compares a stored FileChunk.ETag string to a raw 16-byte
+// MD5 digest. FileChunk.ETag is produced as base64(md5) on upload, but
+// some older chunks (and tests) use hex(md5). Accept either.
+func etagMatchesMD5(etag string, rawMD5 []byte) bool {
+	if len(rawMD5) != md5.Size {
+		return false
+	}
+	if dec := util.Base64Md5ToBytes(etag); len(dec) == md5.Size {
+		return bytes.Equal(dec, rawMD5)
+	}
+	if dec, err := hex.DecodeString(etag); err == nil && len(dec) == md5.Size {
+		return bytes.Equal(dec, rawMD5)
+	}
+	return false
 }

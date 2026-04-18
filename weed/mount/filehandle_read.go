@@ -84,7 +84,12 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 			glog.V(4).Infof("peer read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 			return int64(totalRead), ts, nil
 		}
-		glog.V(4).Infof("peer read failed for %s, falling back to volume: %v", fileFullPath, err)
+		// Skip the "failed" log for benign skip reasons (local cache
+		// hit, no peer owner yet, etc.) — the cache/volume fallback is
+		// the expected outcome, not a failure.
+		if err != errPeerReadSkipped {
+			glog.V(4).Infof("peer read failed for %s, falling back to volume: %v", fileFullPath, err)
+		}
 	}
 
 	// Fall back to normal chunk reading

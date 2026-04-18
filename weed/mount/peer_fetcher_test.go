@@ -3,36 +3,40 @@ package mount
 import (
 	"context"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
-	"net"
 	"testing"
 
-	"github.com/seaweedfs/seaweedfs/weed/pb/mount_peer_pb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 // newTestFetchServer stands up a minimal MountPeer gRPC server that only
-// serves FetchChunk out of a fakeChunkCache. Useful for exercising the
-// fetcher side without a full WFS.
+// serves FetchChunk out of a fakeChunkCache. Goes through the same
+// PeerGrpcServer.Start path production uses (via pb.NewGrpcServer with
+// the standard keepalive + msg-size options) so future default server
+// options are exercised by these tests too.
 func newTestFetchServer(t *testing.T, cache *fakeChunkCache) (addr string, stop func()) {
 	t.Helper()
 	dir := NewPeerDirectory()
 	srv := NewPeerGrpcServer(cache, dir, nil, "")
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
+	if err := srv.Start("127.0.0.1:0"); err != nil {
+		t.Fatalf("start: %v", err)
 	}
-	srv.listener = ln
-	srv.grpcS = grpc.NewServer()
-	mount_peer_pb.RegisterMountPeerServer(srv.grpcS, srv)
-	go srv.grpcS.Serve(ln)
-	return ln.Addr().String(), func() { srv.Stop() }
+	return srv.Addr(), func() { srv.Stop() }
 }
 
 func etagOf(b []byte) string {
 	sum := md5.Sum(b)
 	return hex.EncodeToString(sum[:])
+}
+
+// etagOfBase64 mirrors how the real upload path produces FileChunk.ETag:
+// base64 of the raw 16-byte MD5 digest. Kept alongside the hex form so
+// we can test that both encodings work end-to-end.
+func etagOfBase64(b []byte) string {
+	sum := md5.Sum(b)
+	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
 func TestFetchChunkFromPeer_Hit(t *testing.T) {
@@ -44,6 +48,26 @@ func TestFetchChunkFromPeer_Hit(t *testing.T) {
 
 	dial := DefaultMountPeerDialer(grpc.WithTransportCredentials(insecure.NewCredentials()))
 	got, err := fetchChunkFromPeer(context.Background(), dial, addr, "3,abc", uint64(len(payload)), etagOf(payload))
+	if err != nil {
+		t.Fatalf("fetch: %v", err)
+	}
+	if string(got) != string(payload) {
+		t.Errorf("bytes mismatch: got %q want %q", got, payload)
+	}
+}
+
+// TestFetchChunkFromPeer_Base64Etag mirrors the real upload path where
+// FileChunk.ETag is base64(md5) rather than hex(md5). A regression
+// there would reject every valid peer response in production.
+func TestFetchChunkFromPeer_Base64Etag(t *testing.T) {
+	cache := newFakeChunkCache()
+	payload := []byte("base64-etag peer bytes")
+	cache.Put("3,b64", payload)
+	addr, stop := newTestFetchServer(t, cache)
+	defer stop()
+
+	dial := DefaultMountPeerDialer(grpc.WithTransportCredentials(insecure.NewCredentials()))
+	got, err := fetchChunkFromPeer(context.Background(), dial, addr, "3,b64", uint64(len(payload)), etagOfBase64(payload))
 	if err != nil {
 		t.Fatalf("fetch: %v", err)
 	}
