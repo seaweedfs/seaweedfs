@@ -356,6 +356,12 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 		EnableDistributedLock: option.distributedLock != nil && *option.distributedLock,
 		WritebackCache:        option.writebackCache != nil && *option.writebackCache,
 		PosixDirNlink:         option.posixDirNlink != nil && *option.posixDirNlink,
+		// Peer chunk sharing
+		PeerEnabled:   option.peerEnabled != nil && *option.peerEnabled,
+		PeerListen:    peerStringOrEmpty(option.peerListen),
+		PeerAdvertise:  peerStringOrEmpty(option.peerAdvertise),
+		PeerDataCenter: peerStringOrEmpty(option.peerDataCenter),
+		PeerRack:       peerStringOrEmpty(option.peerRack),
 	})
 
 	// create mount root
@@ -410,4 +416,11 @@ func RunMount(option *MountOptions, umask os.FileMode) bool {
 	seaweedFileSystem.ClearCacheDir()
 
 	return true
+}
+
+func peerStringOrEmpty(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }
