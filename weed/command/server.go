@@ -130,6 +130,7 @@ func init() {
 	filerOptions.diskType = cmdServer.Flag.String("filer.disk", "", "[hdd|ssd|<tag>] hard drive or solid state drive or any tag")
 	filerOptions.exposeDirectoryData = cmdServer.Flag.Bool("filer.exposeDirectoryData", true, "expose directory data via filer. If false, filer UI will be innaccessible.")
 	filerOptions.tusBasePath = cmdServer.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	filerOptions.mountPeerRegistryEnable = cmdServer.Flag.Bool("filer.peer.registry.enable", true, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1). Idle cost is near-zero; set false to disable.")
 
 	serverOptions.v.port = cmdServer.Flag.Int("volume.port", 8080, "volume server http listen port")
 	serverOptions.v.portGrpc = cmdServer.Flag.Int("volume.port.grpc", 0, "volume server grpc listen port")
