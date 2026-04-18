@@ -5,6 +5,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"google.golang.org/grpc"
 )
@@ -15,9 +16,9 @@ import (
 type fakeFilerClient struct {
 	filer_pb.SeaweedFilerClient // embed for methods we don't need
 
-	mu              sync.Mutex
-	registerCalls   []filer_pb.MountRegisterRequest
-	listResponse    filer_pb.MountListResponse
+	mu            sync.Mutex
+	registerCalls []filer_pb.MountRegisterRequest
+	listResponse  filer_pb.MountListResponse
 }
 
 func (f *fakeFilerClient) MountRegister(ctx context.Context, req *filer_pb.MountRegisterRequest, opts ...grpc.CallOption) (*filer_pb.MountRegisterResponse, error) {
@@ -34,12 +35,27 @@ func (f *fakeFilerClient) MountList(ctx context.Context, req *filer_pb.MountList
 	return &resp, nil
 }
 
-type fakeWfs struct {
-	client *fakeFilerClient
+// fakeFilerFleet maps each addr to its own fakeFilerClient so a test can
+// simulate several filers with different registered/listed state.
+type fakeFilerFleet struct {
+	clients map[pb.ServerAddress]*fakeFilerClient
 }
 
-func (w *fakeWfs) WithFilerClient(streamingMode bool, fn func(client filer_pb.SeaweedFilerClient) error) error {
-	return fn(w.client)
+func (f *fakeFilerFleet) dial(ctx context.Context, addr pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
+	c, ok := f.clients[addr]
+	if !ok {
+		// Treat unknown filer as "reachable but empty" — lets tests omit
+		// pre-populating a client when they don't care.
+		c = &fakeFilerClient{}
+		f.clients[addr] = c
+	}
+	return fn(c)
+}
+
+func singleFilerFleet(c *fakeFilerClient) ([]pb.ServerAddress, filerDialFn) {
+	addr := pb.ServerAddress("filer-1:18888")
+	fleet := &fakeFilerFleet{clients: map[pb.ServerAddress]*fakeFilerClient{addr: c}}
+	return []pb.ServerAddress{addr}, fleet.dial
 }
 
 func TestPeerRegistrar_StartPopulatesSeedsFromFiler(t *testing.T) {
@@ -51,11 +67,9 @@ func TestPeerRegistrar_StartPopulatesSeedsFromFiler(t *testing.T) {
 			},
 		},
 	}
-	w := &fakeWfs{client: fc}
+	filers, dial := singleFilerFleet(fc)
 
-	r := NewPeerRegistrar(w, "self:18080", "dc1", "r1")
-	// Avoid starting the real tickers — use the synchronous initial
-	// calls that Start does.
+	r := NewPeerRegistrar(filers, dial, "self:18080", "dc1", "r1")
 	if err := r.registerOnce(context.Background()); err != nil {
 		t.Fatalf("registerOnce: %v", err)
 	}
@@ -84,8 +98,8 @@ func TestPeerRegistrar_StartPopulatesSeedsFromFiler(t *testing.T) {
 
 func TestPeerRegistrar_HeartbeatTTLMatchesConfig(t *testing.T) {
 	fc := &fakeFilerClient{}
-	w := &fakeWfs{client: fc}
-	r := NewPeerRegistrar(w, "self:18080", "", "")
+	filers, dial := singleFilerFleet(fc)
+	r := NewPeerRegistrar(filers, dial, "self:18080", "", "")
 
 	if err := r.registerOnce(context.Background()); err != nil {
 		t.Fatalf("registerOnce: %v", err)
@@ -103,7 +117,94 @@ func TestPeerRegistrar_HeartbeatTTLMatchesConfig(t *testing.T) {
 }
 
 func TestPeerRegistrar_StopIsIdempotent(t *testing.T) {
-	r := NewPeerRegistrar(&fakeWfs{client: &fakeFilerClient{}}, "self:18080", "", "")
+	filers, dial := singleFilerFleet(&fakeFilerClient{})
+	r := NewPeerRegistrar(filers, dial, "self:18080", "", "")
 	r.Stop()
 	r.Stop() // second call must be a no-op (no panic)
+}
+
+// TestPeerRegistrar_RegisterBroadcastsToAllFilers guards the core
+// multi-filer property: a single registerOnce must hit every configured
+// filer so mounts pointing at different filers still converge.
+func TestPeerRegistrar_RegisterBroadcastsToAllFilers(t *testing.T) {
+	fc1 := &fakeFilerClient{}
+	fc2 := &fakeFilerClient{}
+	fc3 := &fakeFilerClient{}
+	a1, a2, a3 := pb.ServerAddress("f1:18888"), pb.ServerAddress("f2:18888"), pb.ServerAddress("f3:18888")
+	fleet := &fakeFilerFleet{clients: map[pb.ServerAddress]*fakeFilerClient{a1: fc1, a2: fc2, a3: fc3}}
+
+	r := NewPeerRegistrar([]pb.ServerAddress{a1, a2, a3}, fleet.dial, "self:18080", "", "")
+	if err := r.registerOnce(context.Background()); err != nil {
+		t.Fatalf("registerOnce: %v", err)
+	}
+
+	for addr, fc := range fleet.clients {
+		fc.mu.Lock()
+		if len(fc.registerCalls) != 1 {
+			t.Errorf("filer %s: got %d register calls, want 1", addr, len(fc.registerCalls))
+		}
+		fc.mu.Unlock()
+	}
+}
+
+// TestPeerRegistrar_ListMergesAcrossFilers guards cross-filer convergence:
+// mount A registered on filer-1, mount B on filer-2; a registrar that
+// lists both filers must see both mounts.
+func TestPeerRegistrar_ListMergesAcrossFilers(t *testing.T) {
+	fc1 := &fakeFilerClient{
+		listResponse: filer_pb.MountListResponse{
+			Mounts: []*filer_pb.MountInfo{{PeerAddr: "mount-a:18080", Rack: "r1", LastSeenNs: 200}},
+		},
+	}
+	fc2 := &fakeFilerClient{
+		listResponse: filer_pb.MountListResponse{
+			Mounts: []*filer_pb.MountInfo{{PeerAddr: "mount-b:18080", Rack: "r2", LastSeenNs: 200}},
+		},
+	}
+	a1, a2 := pb.ServerAddress("f1:18888"), pb.ServerAddress("f2:18888")
+	fleet := &fakeFilerFleet{clients: map[pb.ServerAddress]*fakeFilerClient{a1: fc1, a2: fc2}}
+
+	r := NewPeerRegistrar([]pb.ServerAddress{a1, a2}, fleet.dial, "self:18080", "", "")
+	if err := r.listOnce(context.Background()); err != nil {
+		t.Fatalf("listOnce: %v", err)
+	}
+
+	seeds := r.Seeds()
+	if len(seeds) != 2 {
+		t.Fatalf("want 2 merged seeds, got %d: %+v", len(seeds), seeds)
+	}
+	addrs := map[string]bool{}
+	for _, s := range seeds {
+		addrs[s.PeerAddr] = true
+	}
+	if !addrs["mount-a:18080"] || !addrs["mount-b:18080"] {
+		t.Errorf("merged seeds missing an entry: %+v", addrs)
+	}
+}
+
+// TestPeerRegistrar_ListMergeKeepsNewestLastSeen guards the dedupe rule:
+// the same mount reported by two filers collapses to one entry, keeping
+// the freshest LastSeenNs for liveness-ordering decisions.
+func TestPeerRegistrar_ListMergeKeepsNewestLastSeen(t *testing.T) {
+	fc1 := &fakeFilerClient{
+		listResponse: filer_pb.MountListResponse{
+			Mounts: []*filer_pb.MountInfo{{PeerAddr: "mount-a:18080", Rack: "r1", LastSeenNs: 100}},
+		},
+	}
+	fc2 := &fakeFilerClient{
+		listResponse: filer_pb.MountListResponse{
+			Mounts: []*filer_pb.MountInfo{{PeerAddr: "mount-a:18080", Rack: "r1", LastSeenNs: 500}},
+		},
+	}
+	a1, a2 := pb.ServerAddress("f1:18888"), pb.ServerAddress("f2:18888")
+	fleet := &fakeFilerFleet{clients: map[pb.ServerAddress]*fakeFilerClient{a1: fc1, a2: fc2}}
+
+	r := NewPeerRegistrar([]pb.ServerAddress{a1, a2}, fleet.dial, "self:18080", "", "")
+	if err := r.listOnce(context.Background()); err != nil {
+		t.Fatalf("listOnce: %v", err)
+	}
+	seeds := r.Seeds()
+	if len(seeds) != 1 {
+		t.Fatalf("want 1 deduped seed, got %d", len(seeds))
+	}
 }
