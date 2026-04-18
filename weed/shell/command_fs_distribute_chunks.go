@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/operation"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/master_pb"
@@ -53,6 +54,10 @@ func (c *commandFsDistributeChunks) Help() string {
 	               consecutive chunks are on different nodes for I/O pipelining.
 	               Recommended for replication environments as it does not depend on
 	               ownership calculation.
+
+	Files using chunk manifests (very large files) are handled by resolving manifests
+	to the underlying data chunks, redistributing those, then re-manifestizing before
+	updating the filer. Old manifest + data chunks are garbage-collected by the filer.
 
 	# analyze current distribution (dry-run, primary mode)
 	fs.distributeChunks -path=/buckets/my-bucket/large-file.dat
@@ -113,13 +118,16 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		return fmt.Errorf("lookup %s: %v", path, err)
 	}
 
-	chunks, err := validateChunks(entry)
+	chunks, hadManifest, err := resolveEntryDataChunks(commandEnv, entry)
 	if err != nil {
 		return err
 	}
 	if len(chunks) == 0 {
 		fmt.Fprintf(writer, "File has no chunks (possibly stored inline)\n")
 		return nil
+	}
+	if hadManifest {
+		fmt.Fprintf(writer, "Resolved chunk manifests: %d top-level chunk(s) -> %d data chunks.\n", len(entry.GetChunks()), len(chunks))
 	}
 
 	volumeInfoMap, volumeNodesList, volumeToOwner, nodeList, err := collectVolumeTopology(commandEnv)
@@ -182,6 +190,18 @@ func (c *commandFsDistributeChunks) Do(args []string, commandEnv *CommandEnv, wr
 		return nil
 	}
 
+	finalChunks := chunks
+	if hadManifest {
+		remanifested, manErr := filer.MaybeManifestize(newShellSaveAsChunk(commandEnv), chunks)
+		if manErr != nil {
+			fmt.Fprintf(writer, "WARNING: re-manifestize failed: %v. Writing flat chunk list.\n", manErr)
+		} else {
+			finalChunks = remanifested
+			fmt.Fprintf(writer, "Re-manifestized %d data chunks into %d top-level chunk(s).\n", len(chunks), len(finalChunks))
+		}
+	}
+	entry.Chunks = finalChunks
+
 	fmt.Fprintf(writer, "\nUpdating filer metadata (%d chunks moved)...\n", movedCount)
 	err = commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		return filer_pb.UpdateEntry(context.Background(), client, &filer_pb.UpdateEntryRequest{
@@ -227,15 +247,20 @@ func lookupFileEntry(commandEnv *CommandEnv, dir, name string) (*filer_pb.Entry,
 	return entry, nil
 }
 
-// validateChunks returns the chunks of an entry, rejecting chunk-manifest files.
-func validateChunks(entry *filer_pb.Entry) ([]*filer_pb.FileChunk, error) {
+// resolveEntryDataChunks returns the flattened data chunks of an entry. If the
+// entry contains manifest chunks, their contents are resolved. hadManifest
+// signals whether any manifest chunks were resolved, so the caller knows to
+// re-manifestize after redistribution.
+func resolveEntryDataChunks(commandEnv *CommandEnv, entry *filer_pb.Entry) (dataChunks []*filer_pb.FileChunk, hadManifest bool, err error) {
 	chunks := entry.GetChunks()
-	for _, chunk := range chunks {
-		if chunk.IsChunkManifest {
-			return nil, fmt.Errorf("file uses chunk manifests (very large file). Not yet supported")
-		}
+	if !filer.HasChunkManifest(chunks) {
+		return chunks, false, nil
 	}
-	return chunks, nil
+	dataChunks, _, err = filer.ResolveChunkManifest(context.Background(), filer.LookupFn(commandEnv), chunks, 0, math.MaxInt64)
+	if err != nil {
+		return nil, true, fmt.Errorf("resolve chunk manifest: %v", err)
+	}
+	return dataChunks, true, nil
 }
 
 // collectVolumeTopology queries the master for cluster topology and returns per-volume
@@ -781,6 +806,50 @@ func executeChunkMoves(
 	}
 	_ = ewg.Wait()
 	return movedCount, nil
+}
+
+// newShellSaveAsChunk returns a SaveDataAsChunk function for use with
+// filer.MaybeManifestize from shell context. The master selects placement —
+// manifest chunks are metadata and don't need fan-out distribution.
+func newShellSaveAsChunk(commandEnv *CommandEnv) filer.SaveDataAsChunkFunctionType {
+	return filer.SaveDataAsChunkFunctionType(func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
+		uploader, err := operation.NewUploader()
+		if err != nil {
+			return nil, fmt.Errorf("create uploader: %v", err)
+		}
+		data, err := io.ReadAll(reader)
+		if err != nil {
+			return nil, fmt.Errorf("read manifest data: %v", err)
+		}
+		assignResult, err := operation.Assign(context.Background(), commandEnv.MasterClient.GetMaster, commandEnv.option.GrpcDialOption,
+			&operation.VolumeAssignRequest{Count: 1})
+		if err != nil {
+			return nil, fmt.Errorf("assign manifest chunk: %v", err)
+		}
+		var jwt security.EncodedJwt
+		if assignResult.Auth != "" {
+			jwt = assignResult.Auth
+		} else {
+			v := util.GetViper()
+			signingKey := v.GetString("jwt.signing.key")
+			if signingKey != "" {
+				expiresAfterSec := v.GetInt("jwt.signing.expires_after_seconds")
+				jwt = security.GenJwtForVolumeServer(security.SigningKey(signingKey), expiresAfterSec, assignResult.Fid)
+			}
+		}
+		uploadResult, uploadErr, _ := uploader.Upload(context.Background(), bytes.NewReader(data), &operation.UploadOption{
+			UploadUrl: fmt.Sprintf("http://%s/%s", assignResult.Url, assignResult.Fid),
+			Filename:  name,
+			Jwt:       jwt,
+		})
+		if uploadErr != nil {
+			return nil, fmt.Errorf("upload manifest chunk: %v", uploadErr)
+		}
+		if uploadResult.Error != "" {
+			return nil, fmt.Errorf("upload manifest chunk: %s", uploadResult.Error)
+		}
+		return uploadResult.ToPbFileChunk(assignResult.Fid, offset, tsNs), nil
+	})
 }
 
 // planOwnerMoves generates moves to balance owner-based chunk distribution.
