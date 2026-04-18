@@ -104,6 +104,10 @@ func (bc *BrokerClient) Close() error {
 
 // HealthCheck verifies the broker connection is working
 func (bc *BrokerClient) HealthCheck() error {
+	if bc.client == nil {
+		return fmt.Errorf("broker client not connected")
+	}
+
 	var lastErr error
 	for attempt := 1; attempt <= brokerHealthCheckAttempts; attempt++ {
 		ctx, cancel := context.WithTimeout(bc.ctx, brokerHealthCheckTimeout)
