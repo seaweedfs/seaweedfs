@@ -9,7 +9,7 @@ import (
 )
 
 func TestMountRegister_DisabledIsNoOp(t *testing.T) {
-	fs := &FilerServer{} // peerRegistry nil → registry disabled
+	fs := &FilerServer{} // mountPeerRegistry nil → registry disabled
 	_, err := fs.MountRegister(context.Background(), &filer_pb.MountRegisterRequest{
 		PeerAddr:   "mount-a:18080",
 		TtlSeconds: 30,
@@ -27,7 +27,7 @@ func TestMountRegister_DisabledIsNoOp(t *testing.T) {
 }
 
 func TestMountRegister_EnabledStoresAndLists(t *testing.T) {
-	fs := &FilerServer{peerRegistry: filer.NewPeerRegistry()}
+	fs := &FilerServer{mountPeerRegistry: filer.NewMountPeerRegistry()}
 
 	if _, err := fs.MountRegister(context.Background(), &filer_pb.MountRegisterRequest{
 		PeerAddr:   "mount-a:18080",
@@ -68,7 +68,7 @@ func TestMountRegister_EnabledStoresAndLists(t *testing.T) {
 }
 
 func TestMountRegister_RenewIsIdempotent(t *testing.T) {
-	fs := &FilerServer{peerRegistry: filer.NewPeerRegistry()}
+	fs := &FilerServer{mountPeerRegistry: filer.NewMountPeerRegistry()}
 	for i := 0; i < 5; i++ {
 		if _, err := fs.MountRegister(context.Background(), &filer_pb.MountRegisterRequest{
 			PeerAddr:   "mount-a:18080",
