@@ -140,6 +140,9 @@ type WFS struct {
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	peerRegistrar        *PeerRegistrar
+	peerDirectory        *PeerDirectory
+	peerGrpcServer       *PeerGrpcServer
+	peerDirectoryStop    chan struct{} // closed on unmount to stop the sweeper goroutine
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
@@ -337,6 +340,17 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerGrpcServer != nil {
+			wfs.peerGrpcServer.Stop()
+		}
+		if wfs.peerDirectoryStop != nil {
+			select {
+			case <-wfs.peerDirectoryStop:
+				// already closed
+			default:
+				close(wfs.peerDirectoryStop)
+			}
+		}
 		if wfs.peerRegistrar != nil {
 			wfs.peerRegistrar.Stop()
 		}
@@ -360,13 +374,13 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	}
 
 	// Peer chunk sharing: register with every configured filer's mount
-	// registry. PR 3 resolved the advertise address; pass it through so
-	// the registrar heartbeats a reachable identity rather than a wildcard
-	// bind. Broadcasting to the full filer set is what lets mounts pointing
-	// at different filers see each other — each filer's registry is
-	// in-memory and there is no filer-to-filer sync. The gRPC server that
-	// serves ChunkAnnounce/Lookup/FetchChunk is started later (PR 5); until
-	// then the registrar is a no-op beyond heartbeats.
+	// registry + start the single gRPC server that handles ChunkAnnounce /
+	// ChunkLookup / FetchChunk. Broadcasting registration to the full
+	// filer set is what lets mounts pointing at different filers see
+	// each other — each filer's registry is in-memory with no
+	// filer-to-filer sync, so the registrar reconstructs the union
+	// client-side. One port, one identity — the advertise address
+	// resolved in PR #3 is used for everything.
 	if option.PeerEnabled {
 		selfAddr, err := ResolvePeerAdvertiseAddr(option.PeerListen, option.PeerAdvertise)
 		if err != nil {
@@ -385,6 +399,34 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.peerRegistrar = NewPeerRegistrar(option.FilerAddresses, dial, selfAddr, option.PeerDataCenter, option.PeerRack)
 			if err := wfs.peerRegistrar.Start(context.Background()); err != nil {
 				glog.Warningf("peer registrar start: %v", err)
+			}
+
+			wfs.peerDirectory = NewPeerDirectory()
+			// Wire TLS/mTLS from security.toml's grpc.mount section so
+			// cross-host peer RPCs are authenticated + encrypted. When
+			// the section is empty both options come back nil and the
+			// server runs plaintext — intentional for dev/test.
+			peerTLSCreds, peerTLSVerify := security.LoadServerTLS(util.GetViper(), "grpc.mount")
+			var peerServerOpts []grpc.ServerOption
+			if peerTLSCreds != nil {
+				peerServerOpts = append(peerServerOpts, peerTLSCreds)
+			}
+			if peerTLSVerify != nil {
+				peerServerOpts = append(peerServerOpts, peerTLSVerify)
+			}
+			wfs.peerGrpcServer = NewPeerGrpcServer(
+				wfs.chunkCache,
+				wfs.peerDirectory,
+				wfs.peerRegistrar.OwnerFor,
+				selfAddr,
+				peerServerOpts...,
+			)
+			if err := wfs.peerGrpcServer.Start(option.PeerListen); err != nil {
+				glog.Warningf("peer grpc start: %v", err)
+				wfs.peerGrpcServer = nil
+			} else {
+				wfs.peerDirectoryStop = make(chan struct{})
+				go wfs.runPeerDirectorySweeper(wfs.peerDirectoryStop)
 			}
 		}
 	}
