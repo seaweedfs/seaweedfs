@@ -82,6 +82,16 @@ type Option struct {
 	RdmaMaxConcurrent int
 	RdmaTimeoutMs     int
 
+	// Peer chunk sharing options (design-weed-mount-peer-chunk-sharing.md).
+	// When PeerEnabled is false (default), the mount runs exactly as today.
+	// One gRPC port carries everything: directory RPCs (ChunkAnnounce /
+	// ChunkLookup) and streaming FetchChunk byte transfers.
+	PeerEnabled    bool
+	PeerListen     string // host:port to bind the peer gRPC server
+	PeerAdvertise  string // externally reachable host:port (optional; defaults to auto-detected host + PeerListen port)
+	PeerDataCenter string // optional data-center label advertised to peers
+	PeerRack       string // optional rack label advertised to peers (finer than DC)
+
 	// Directory cache refresh/eviction controls
 	DirIdleEvictSec int
 
