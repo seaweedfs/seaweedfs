@@ -6,6 +6,7 @@ import (
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 // mountPeerRegistrySweepInterval is how often the filer evicts expired mount
@@ -25,6 +26,7 @@ func (fs *FilerServer) runMountPeerRegistrySweeper() {
 		if evicted := fs.mountPeerRegistry.Sweep(); evicted > 0 {
 			glog.V(2).Infof("peer registry: evicted %d stale entries", evicted)
 		}
+		stats.FilerMountRegistryEntries.Set(float64(fs.mountPeerRegistry.Len()))
 	}
 }
 
@@ -40,6 +42,7 @@ func (fs *FilerServer) MountRegister(ctx context.Context, req *filer_pb.MountReg
 	}
 	ttl := time.Duration(req.TtlSeconds) * time.Second
 	fs.mountPeerRegistry.Register(req.PeerAddr, req.DataCenter, req.Rack, ttl)
+	stats.FilerMountRegistryEntries.Set(float64(fs.mountPeerRegistry.Len()))
 	return &filer_pb.MountRegisterResponse{}, nil
 }
 

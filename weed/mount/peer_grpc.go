@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_peer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"github.com/seaweedfs/seaweedfs/weed/util/chunk_cache"
 	"github.com/seaweedfs/seaweedfs/weed/util/mem"
 	"google.golang.org/grpc"
@@ -150,6 +151,7 @@ func (s *PeerGrpcServer) FetchChunk(req *mount_peer_pb.FetchChunkRequest, stream
 
 	n, err := s.cache.ReadChunkAt(buf, fid, 0)
 	if err != nil || n <= 0 {
+		stats.MountPeerServeTotal.WithLabelValues("miss").Inc()
 		return status.Errorf(codes.NotFound, "fid %s not cached", fid)
 	}
 
@@ -164,6 +166,8 @@ func (s *PeerGrpcServer) FetchChunk(req *mount_peer_pb.FetchChunkRequest, stream
 			return sendErr
 		}
 	}
+	stats.MountPeerServeTotal.WithLabelValues("hit").Inc()
+	stats.MountPeerServeBytesTotal.Add(float64(n))
 	return nil
 }
 
@@ -190,5 +194,7 @@ func (wfs *WFS) runPeerDirectorySweeper() {
 		if evicted := dir.Sweep(); evicted > 0 {
 			glog.V(2).Infof("peer directory: evicted %d expired entries", evicted)
 		}
+		_, _, _, _, entries := dir.Stats()
+		stats.MountPeerDirectoryEntries.Set(float64(entries))
 	}
 }

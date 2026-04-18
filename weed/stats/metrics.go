@@ -489,6 +489,64 @@ var (
 			Name:      "upload_error_total",
 			Help:      "Counter of upload errors by HTTP status code. Code 0 means transport error (no response received).",
 		}, []string{"code"})
+
+	// ── Peer chunk sharing (design-weed-mount-peer-chunk-sharing.md) ──
+
+	MountPeerFetchTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "fetch_total",
+			Help:      "Outgoing peer FetchChunk attempts by outcome (success|not_found|etag_mismatch|error).",
+		}, []string{"result"})
+
+	MountPeerFetchBytesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "fetch_bytes_total",
+			Help:      "Total chunk bytes received from peers via FetchChunk.",
+		})
+
+	MountPeerServeTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "serve_total",
+			Help:      "Inbound FetchChunk requests by outcome (hit|miss).",
+		}, []string{"result"})
+
+	MountPeerServeBytesTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "serve_bytes_total",
+			Help:      "Total chunk bytes served to peers via FetchChunk.",
+		})
+
+	MountPeerFallbackTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "fallback_to_volume_total",
+			Help:      "Count of reads that tried tryPeerRead and fell through to the volume-server path.",
+		})
+
+	MountPeerDirectoryEntries = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "mount_peer",
+			Name:      "directory_entries",
+			Help:      "Number of (fid, holder) entries this mount is currently tracking as an HRW directory owner.",
+		})
+
+	FilerMountRegistryEntries = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Namespace: Namespace,
+			Subsystem: "filer",
+			Name:      "mount_registry_entries",
+			Help:      "Number of live mount servers currently registered in the filer's peer registry.",
+		})
 )
 
 func init() {
@@ -554,6 +612,14 @@ func init() {
 	Gather.MustRegister(S3BucketObjectCountGauge)
 
 	Gather.MustRegister(UploadErrorCounter)
+
+	Gather.MustRegister(MountPeerFetchTotal)
+	Gather.MustRegister(MountPeerFetchBytesTotal)
+	Gather.MustRegister(MountPeerServeTotal)
+	Gather.MustRegister(MountPeerServeBytesTotal)
+	Gather.MustRegister(MountPeerFallbackTotal)
+	Gather.MustRegister(MountPeerDirectoryEntries)
+	Gather.MustRegister(FilerMountRegistryEntries)
 
 	go bucketMetricTTLControl()
 }

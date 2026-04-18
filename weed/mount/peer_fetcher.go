@@ -13,6 +13,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_peer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -93,8 +94,18 @@ func (fh *FileHandle) tryPeerRead(ctx context.Context, fileSize int64, buff []by
 		data, ferr := fetchChunkFromPeer(ctx, dial, h.addr, targetChunk.FileId, targetChunk.Size, targetChunk.ETag)
 		if ferr != nil {
 			glog.V(2).Infof("peer-fetch %s from %s: %v", targetChunk.FileId, h.addr, ferr)
+			switch {
+			case status.Code(ferr) == codes.NotFound || ferr.Error() == "peer not cached":
+				stats.MountPeerFetchTotal.WithLabelValues("not_found").Inc()
+			case isEtagMismatch(ferr):
+				stats.MountPeerFetchTotal.WithLabelValues("etag_mismatch").Inc()
+			default:
+				stats.MountPeerFetchTotal.WithLabelValues("error").Inc()
+			}
 			continue
 		}
+		stats.MountPeerFetchTotal.WithLabelValues("success").Inc()
+		stats.MountPeerFetchBytesTotal.Add(float64(len(data)))
 		fh.wfs.chunkCache.SetChunk(targetChunk.FileId, data)
 		if fh.wfs.peerAnnouncer != nil {
 			fh.wfs.peerAnnouncer.EnqueueAnnounce(targetChunk.FileId)
@@ -248,4 +259,8 @@ func fetchChunkFromPeer(ctx context.Context, dial MountPeerDialer, peerAddr, fid
 		}
 	}
 	return buf, nil
+}
+
+func isEtagMismatch(err error) bool {
+	return err != nil && len(err.Error()) >= 13 && err.Error()[:13] == "etag mismatch"
 }

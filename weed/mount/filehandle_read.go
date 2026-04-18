@@ -9,6 +9,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/stats"
 )
 
 func (fh *FileHandle) lockForRead(startOffset int64, size int) {
@@ -84,6 +85,7 @@ func (fh *FileHandle) readFromChunksWithContext(ctx context.Context, buff []byte
 			glog.V(4).Infof("peer read successful for %s [%d,%d] %d", fileFullPath, offset, offset+int64(totalRead), totalRead)
 			return int64(totalRead), ts, nil
 		}
+		stats.MountPeerFallbackTotal.Inc()
 		glog.V(4).Infof("peer read failed for %s, falling back to volume: %v", fileFullPath, err)
 	}
 
