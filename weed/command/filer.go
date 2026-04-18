@@ -84,6 +84,7 @@ type FilerOptions struct {
 	tusBasePath               *string
 	certProvider              certprovider.Provider
 	s3ConfigFile              *string // optional path to static S3 identity config
+	peerRegistryEnable        *bool   // accept MountRegister/MountList RPCs (peer chunk sharing tier 1)
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
 	// HTTP/gRPC servers once the ctx is cancelled. Used by integration tests
 	// and by weed mini; nil for standalone weed filer.
@@ -126,6 +127,7 @@ func init() {
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
+	f.peerRegistryEnable = cmdFiler.Flag.Bool("peer.registry.enable", false, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1)")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
@@ -386,6 +388,7 @@ func (fo *FilerOptions) startFiler() {
 		AllowedOrigins:            strings.Split(*fo.allowedOrigins, ","),
 		TusBasePath:               *fo.tusBasePath,
 		CredentialManager:         credentialManager,
+		PeerRegistryEnabled:       *fo.peerRegistryEnable,
 	})
 	if nfs_err != nil {
 		glog.Fatalf("Filer startup error: %v", nfs_err)
