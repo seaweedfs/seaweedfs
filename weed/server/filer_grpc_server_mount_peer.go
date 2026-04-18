@@ -56,6 +56,7 @@ func (fs *FilerServer) MountList(ctx context.Context, req *filer_pb.MountListReq
 	for _, e := range entries {
 		resp.Mounts = append(resp.Mounts, &filer_pb.MountInfo{
 			PeerAddr:   e.PeerAddr,
+			DataCenter: e.DataCenter,
 			Rack:       e.Rack,
 			LastSeenNs: e.LastSeenNs,
 		})

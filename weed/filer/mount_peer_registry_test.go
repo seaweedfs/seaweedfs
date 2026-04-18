@@ -69,8 +69,16 @@ func TestMountPeerRegistry_ExpirationDropsEntry(t *testing.T) {
 	if len(list) != 0 {
 		t.Errorf("expected 0 entries after expiry, got %d", len(list))
 	}
+	// List no longer deletes — it's RLock-only so concurrent callers can
+	// proceed in parallel. Sweep is the sole reclamation path.
+	if n := r.Len(); n != 1 {
+		t.Errorf("List should not delete expired entries; Len=%d want 1", n)
+	}
+	if evicted := r.Sweep(); evicted != 1 {
+		t.Errorf("Sweep should have evicted the expired entry; got %d", evicted)
+	}
 	if n := r.Len(); n != 0 {
-		t.Errorf("List should have swept expired entry; Len=%d", n)
+		t.Errorf("after Sweep, Len=%d want 0", n)
 	}
 }
 

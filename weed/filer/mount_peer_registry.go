@@ -92,17 +92,19 @@ func (r *MountPeerRegistry) Register(peerAddr, dataCenter, rack string, ttl time
 	entry.expiry = now.Add(ttl)
 }
 
-// List returns all entries that have not yet expired, in no particular order.
-// Expired entries encountered are evicted as a side effect.
+// List returns all entries that have not yet expired, in no particular
+// order. Expired entries are filtered out of the response but NOT deleted
+// here — Sweep handles that under a write lock on its own schedule. List
+// is called on every mount's MountList refresh (30 s cadence per mount)
+// so keeping it RLock-only lets concurrent callers proceed in parallel.
 func (r *MountPeerRegistry) List() []MountPeerInfo {
 	now := r.clock()
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	result := make([]MountPeerInfo, 0, len(r.entries))
-	for addr, entry := range r.entries {
+	for _, entry := range r.entries {
 		if !entry.expiry.After(now) {
-			delete(r.entries, addr)
-			continue
+			continue // Sweep will clean this up
 		}
 		result = append(result, MountPeerInfo{
 			PeerAddr:   entry.peerAddr,
