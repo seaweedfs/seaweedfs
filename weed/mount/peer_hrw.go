@@ -5,9 +5,12 @@ import (
 )
 
 // SeedPeer is a mount server present in the filer's mount registry.
+// DataCenter and Rack ride along so downstream locality-aware decisions
+// (peer re-ranking in the fetcher) don't have to re-query the filer.
 type SeedPeer struct {
-	PeerAddr string
-	Rack     string
+	PeerAddr   string
+	DataCenter string
+	Rack       string
 }
 
 // OwnerFor returns the peer_addr of the mount that is the HRW-assigned
