@@ -108,6 +108,10 @@ func (s *PeerGrpcServer) Addr() string {
 	return s.listener.Addr().String()
 }
 
+// SelfAddr returns the advertise address this server was constructed with —
+// the identity the fetcher compares against to avoid dialing itself.
+func (s *PeerGrpcServer) SelfAddr() string { return s.selfAddr }
+
 // ChunkAnnounce accepts holder entries for fids this mount owns; rejects
 // others so the caller can retry against the correct owner.
 func (s *PeerGrpcServer) ChunkAnnounce(ctx context.Context, req *mount_peer_pb.ChunkAnnounceRequest) (*mount_peer_pb.ChunkAnnounceResponse, error) {
