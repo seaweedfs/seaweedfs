@@ -10,6 +10,14 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
+const (
+	consumerGroupHeartbeatInterval = 2 * time.Second
+	consumerGroupSessionTimeout    = 6 * time.Second
+	consumerGroupRebalanceTimeout  = 6 * time.Second
+	consumerGroupJoinBackoff       = 250 * time.Millisecond
+	consumerGroupAttemptTimeout    = 15 * time.Second
+)
+
 // KafkaGoClient wraps kafka-go client with test utilities
 type KafkaGoClient struct {
 	brokerAddr string
@@ -136,7 +144,7 @@ func (k *KafkaGoClient) ConsumeMessages(topicName string, expectedCount int) ([]
 func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCount int) ([]kafka.Message, error) {
 	k.t.Helper()
 
-	const maxJoinAttempts = 3
+	const maxJoinAttempts = 5
 	var lastErr error
 	for attempt := 1; attempt <= maxJoinAttempts; attempt++ {
 		messages, err, progressed := k.consumeWithGroupOnce(topicName, groupID, expectedCount)
@@ -164,22 +172,34 @@ func (k *KafkaGoClient) ConsumeWithGroup(topicName, groupID string, expectedCoun
 // fetched, any error, and whether any message was received (used to decide
 // whether a retry is safe).
 func (k *KafkaGoClient) consumeWithGroupOnce(topicName, groupID string, expectedCount int) ([]kafka.Message, error, bool) {
+	// Give each reader its own ClientID so restarts do not get mistaken for the
+	// still-shutting-down reader they are replacing.
+	dialer := &kafka.Dialer{
+		ClientID: fmt.Sprintf("seaweedfs-e2e-%s-%d", groupID, time.Now().UnixNano()),
+		Timeout:  10 * time.Second,
+	}
+
 	reader := kafka.NewReader(kafka.ReaderConfig{
-		Brokers:        []string{k.brokerAddr},
-		Topic:          topicName,
-		GroupID:        groupID,
-		MinBytes:       1,
-		MaxBytes:       10e6,
-		CommitInterval: 500 * time.Millisecond,
+		Brokers:           []string{k.brokerAddr},
+		Dialer:            dialer,
+		Topic:             topicName,
+		GroupID:           groupID,
+		MinBytes:          1,
+		MaxBytes:          10e6,
+		CommitInterval:    500 * time.Millisecond,
+		HeartbeatInterval: consumerGroupHeartbeatInterval,
+		SessionTimeout:    consumerGroupSessionTimeout,
+		RebalanceTimeout:  consumerGroupRebalanceTimeout,
+		JoinGroupBackoff:  consumerGroupJoinBackoff,
 	})
 	defer reader.Close()
 
 	offset := reader.Offset()
 	k.t.Logf("Consumer group reader created for group %s, initial offset: %d", groupID, offset)
 
-	// Increased timeout for consumer groups - they require coordinator discovery,
-	// offset fetching, and offset commits which can be slow in CI environments
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// Keep each attempt short enough that a retry can outlive a stale group
+	// member instead of burning most of the overall test timeout on one try.
+	ctx, cancel := context.WithTimeout(context.Background(), consumerGroupAttemptTimeout)
 	defer cancel()
 
 	var messages []kafka.Message

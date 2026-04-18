@@ -21,6 +21,12 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/util"
 )
 
+const (
+	brokerHealthCheckTimeout  = 5 * time.Second
+	brokerHealthCheckAttempts = 3
+	brokerHealthCheckBackoff  = 250 * time.Millisecond
+)
+
 // NewBrokerClientWithFilerAccessor creates a client with a shared filer accessor
 func NewBrokerClientWithFilerAccessor(brokerAddress string, filerClientAccessor *filer_client.FilerClientAccessor) (*BrokerClient, error) {
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,17 +104,22 @@ func (bc *BrokerClient) Close() error {
 
 // HealthCheck verifies the broker connection is working
 func (bc *BrokerClient) HealthCheck() error {
-	// Create a timeout context for health check
-	ctx, cancel := context.WithTimeout(bc.ctx, 2*time.Second)
-	defer cancel()
-
-	// Try to list topics as a health check
-	_, err := bc.client.ListTopics(ctx, &mq_pb.ListTopicsRequest{})
-	if err != nil {
-		return fmt.Errorf("broker health check failed: %v", err)
+	var lastErr error
+	for attempt := 1; attempt <= brokerHealthCheckAttempts; attempt++ {
+		ctx, cancel := context.WithTimeout(bc.ctx, brokerHealthCheckTimeout)
+		_, err := bc.client.FindBrokerLeader(ctx, &mq_pb.FindBrokerLeaderRequest{})
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		if attempt == brokerHealthCheckAttempts {
+			break
+		}
+		time.Sleep(time.Duration(attempt) * brokerHealthCheckBackoff)
 	}
 
-	return nil
+	return fmt.Errorf("broker health check failed after %d attempts: %v", brokerHealthCheckAttempts, lastErr)
 }
 
 // GetPartitionRangeInfo gets comprehensive range information from SeaweedMQ broker's native range manager
