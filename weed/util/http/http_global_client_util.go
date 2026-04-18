@@ -33,6 +33,28 @@ var (
 	loadJwtConfigOnce        sync.Once
 )
 
+func AppendQueryParameter(rawURL, key, value string) string {
+	encoded := url.Values{key: []string{value}}.Encode()
+	fragment := ""
+	if fragmentIndex := strings.Index(rawURL, "#"); fragmentIndex >= 0 {
+		fragment = rawURL[fragmentIndex:]
+		rawURL = rawURL[:fragmentIndex]
+	}
+
+	var result string
+	switch {
+	case strings.Contains(rawURL, "?"):
+		if strings.HasSuffix(rawURL, "?") || strings.HasSuffix(rawURL, "&") {
+			result = rawURL + encoded
+		} else {
+			result = rawURL + "&" + encoded
+		}
+	default:
+		result = rawURL + "?" + encoded
+	}
+	return result + fragment
+}
+
 func loadJwtConfig() {
 	v := util.GetViper()
 	jwtSigningReadKey = security.SigningKey(v.GetString("jwt.signing.read.key"))
@@ -545,7 +567,7 @@ func RetriedFetchChunkData(ctx context.Context, buffer []byte, urlStrings []stri
 			if strings.Contains(urlString, "%") {
 				urlString = url.PathEscape(urlString)
 			}
-			shouldRetry, err = ReadUrlAsStream(ctx, urlString+"?readDeleted=true", string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
+			shouldRetry, err = ReadUrlAsStream(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), string(jwt), cipherKey, isGzipped, isFullChunk, offset, len(buffer), func(data []byte) {
 				// Check for context cancellation during data processing
 				select {
 				case <-ctx.Done():
@@ -608,7 +630,7 @@ func retriedFetchChunkDataDirect(ctx context.Context, buffer []byte, urlStrings 
 			default:
 			}
 
-			n, shouldRetry, err = readUrlDirectToBuffer(ctx, urlString+"?readDeleted=true", jwt, buffer)
+			n, shouldRetry, err = readUrlDirectToBuffer(ctx, AppendQueryParameter(urlString, "readDeleted", "true"), jwt, buffer)
 			if err == nil {
 				return n, nil
 			}

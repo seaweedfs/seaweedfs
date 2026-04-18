@@ -84,17 +84,11 @@ func TestDeriveVacuumConfigAllowsZeroValues(t *testing.T) {
 		"garbage_threshold": {
 			Kind: &plugin_pb.ConfigValue_DoubleValue{DoubleValue: 0},
 		},
-		"min_volume_age_seconds": {
-			Kind: &plugin_pb.ConfigValue_Int64Value{Int64Value: 0},
-		},
 	}
 
 	cfg := deriveVacuumConfig(values)
 	if cfg.GarbageThreshold != 0 {
 		t.Fatalf("expected garbage_threshold 0, got %v", cfg.GarbageThreshold)
-	}
-	if cfg.MinVolumeAgeSeconds != 0 {
-		t.Fatalf("expected min_volume_age_seconds 0, got %d", cfg.MinVolumeAgeSeconds)
 	}
 }
 
@@ -174,7 +168,7 @@ func TestEmitVacuumDetectionDecisionTraceNoTasks(t *testing.T) {
 	sender := &recordingDetectionSender{}
 	config := vacuumtask.NewDefaultConfig()
 	config.GarbageThreshold = 0.3
-	config.MinVolumeAgeSeconds = int((24 * time.Hour).Seconds())
+	config.MinVolumeAgeSeconds = 0
 
 	metrics := []*workertypes.VolumeHealthMetrics{
 		{

@@ -71,12 +71,12 @@ spec:
       {{- end }}
       enableServiceLinks: false
       serviceAccountName: {{ $volume.serviceAccountName | default (include "seaweedfs.serviceAccountName" $) | quote }} # for deleting statefulset pods after migration
-      {{- $initContainers_exists := include "volume.initContainers_exists" $ -}}
+      {{- $initContainers_exists := include "seaweedfs.volume.initContainers_exists" $ -}}
       {{- if $initContainers_exists }}
       initContainers:
         {{- if $volume.idx }}
         - name: seaweedfs-vol-move-idx
-          image: {{ template "volume.image" $ }}
+          image: {{ template "seaweedfs.volume.image" $ }}
           imagePullPolicy: {{ $.Values.global.seaweedfs.imagePullPolicy | default "IfNotPresent" }}
           command: [ '/bin/sh', '-c' ]
           args: [ '{{range $dir :=  $volume.dataDirs }}if ls /{{$dir.name}}/*.idx  >/dev/null 2>&1; then mv /{{$dir.name}}/*.idx /idx/ ; fi; {{end}}' ]
@@ -104,7 +104,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "volume.image" $ }}
+          image: {{ template "seaweedfs.volume.image" $ }}
           imagePullPolicy: {{ default "IfNotPresent" $.Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_NAME
@@ -274,7 +274,7 @@ spec:
           securityContext: {{- omit $volume.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
       {{- if $volume.sidecars }}
-      {{- include "common.tplvalues.render" (dict "value" (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.sidecars) "context" $) | nindent 8 }}
+      {{- include "seaweedfs.tplvalues.render" (dict "value" (printf "{{ $volumeName := \"%s\" }}%s" $volumeName $volume.sidecars) "context" $) | nindent 8 }}
       {{- end }}
       volumes:
 

@@ -279,6 +279,38 @@ func detectForDiskType(diskType string, diskMetrics []*types.VolumeHealthMetrics
 			break
 		}
 
+		// Per-move convergence guard: mirrors weed/shell/command_volume_balance.go
+		// to prevent oscillation and destination overshoot when MaxVolumeCount
+		// values are heterogeneous. Without this guard, the greedy max→min
+		// algorithm can schedule moves that flip which server is most-utilized
+		// (source becomes min, destination becomes max), producing A→B, B→A
+		// oscillation within a single detection cycle.
+		//
+		// Check: after the move, the destination's utilization must not strictly
+		// exceed the source's utilization. If it would, no single move can
+		// improve balance — stop here. This also handles heterogeneous capacity
+		// correctly by comparing post-move utilization ratios rather than raw
+		// counts. The integer discretization is handled automatically: when
+		// counts cannot match the ideal exactly, the check still admits moves
+		// that reduce the max/min gap without flipping it.
+		maxCap := serverMaxVolumes[maxServer]
+		minCap := serverMaxVolumes[minServer]
+		if allServersHaveMaxInfo && maxCap > 0 && minCap > 0 {
+			newSrcUtil := float64(effectiveCounts[maxServer]-1) / float64(maxCap)
+			newDstUtil := float64(effectiveCounts[minServer]+1) / float64(minCap)
+			if newDstUtil > newSrcUtil {
+				if len(results) == 0 {
+					glog.Infof("BALANCE [%s]: No tasks created - no beneficial move available. After move, dest %s util would be %.1f%% vs source %s util %.1f%%",
+						diskType, minServer, newDstUtil*100, maxServer, newSrcUtil*100)
+				} else {
+					glog.Infof("BALANCE [%s]: Created %d task(s), no more beneficial moves available. After move, dest %s util would be %.1f%% vs source %s util %.1f%%",
+						diskType, len(results), minServer, newDstUtil*100, maxServer, newSrcUtil*100)
+				}
+				balanced = true
+				break
+			}
+		}
+
 		// Select a volume from the overloaded server using per-server cursor
 		var selectedVolume *types.VolumeHealthMetrics
 		serverVols := volumesByServer[maxServer]
@@ -507,47 +539,58 @@ func createBalanceTask(diskType string, selectedVolume *types.VolumeHealthMetric
 
 // resolveBalanceDestination resolves the destination for a balance operation
 // when the target server is already known (chosen by the detection loop's
-// effective volume counts). It finds the appropriate disk and address for the
-// target server in the topology.
+// effective volume counts). It finds a disk on the target server that can
+// accept another volume after accounting for ALL pending and assigned tasks
+// on that disk (via ActiveTopology.GetEffectiveAvailableCapacity) — not the
+// static VolumeCount from the topology snapshot. This keeps destination
+// planning consistent with the loop's effective-count bookkeeping and
+// prevents over-scheduling when multiple moves are planned within the same
+// detection cycle.
 func resolveBalanceDestination(activeTopology *topology.ActiveTopology, selectedVolume *types.VolumeHealthMetrics, targetServer string) (*topology.DestinationPlan, error) {
-	topologyInfo := activeTopology.GetTopologyInfo()
-	if topologyInfo == nil {
-		return nil, fmt.Errorf("no topology info available")
+	nodeDisks := activeTopology.GetNodeDisks(targetServer)
+	if len(nodeDisks) == 0 {
+		return nil, fmt.Errorf("target server %s not found in topology", targetServer)
 	}
 
-	// Find the target node in the topology and get its disk info
-	for _, dc := range topologyInfo.DataCenterInfos {
-		for _, rack := range dc.RackInfos {
-			for _, node := range rack.DataNodeInfos {
-				if node.Id != targetServer {
-					continue
-				}
-				// Find an available disk matching the volume's disk type
-				for diskTypeName, diskInfo := range node.DiskInfos {
-					if diskTypeName != selectedVolume.DiskType {
-						continue
-					}
-					if diskInfo.MaxVolumeCount > 0 && diskInfo.VolumeCount >= diskInfo.MaxVolumeCount {
-						continue // disk is full
-					}
-					targetAddress, err := util.ResolveServerAddress(node.Id, activeTopology)
-					if err != nil {
-						return nil, fmt.Errorf("failed to resolve address for target server %s: %v", node.Id, err)
-					}
-					return &topology.DestinationPlan{
-						TargetNode:    node.Id,
-						TargetAddress: targetAddress,
-						TargetDisk:    diskInfo.DiskId,
-						TargetRack:    rack.Id,
-						TargetDC:      dc.Id,
-						ExpectedSize:  selectedVolume.Size,
-					}, nil
-				}
-				return nil, fmt.Errorf("target server %s has no available disk of type %s", targetServer, selectedVolume.DiskType)
+	var eligibleDisk *topology.DiskInfo
+	for _, disk := range nodeDisks {
+		if disk == nil || disk.DiskInfo == nil {
+			continue
+		}
+		if disk.DiskType != selectedVolume.DiskType {
+			continue
+		}
+		// Use effective capacity so that prior moves planned in this same
+		// detection cycle (already registered as pending tasks) reduce the
+		// available slots. A disk with VolumeCount << MaxVolumeCount in the
+		// topology snapshot can still be effectively full if many in-flight
+		// tasks already target it.
+		if disk.DiskInfo.MaxVolumeCount > 0 {
+			available := activeTopology.GetEffectiveAvailableCapacity(disk.NodeID, disk.DiskID)
+			if available <= 0 {
+				continue
 			}
 		}
+		eligibleDisk = disk
+		break
 	}
-	return nil, fmt.Errorf("target server %s not found in topology", targetServer)
+
+	if eligibleDisk == nil {
+		return nil, fmt.Errorf("target server %s has no available disk of type %s", targetServer, selectedVolume.DiskType)
+	}
+
+	targetAddress, err := util.ResolveServerAddress(eligibleDisk.NodeID, activeTopology)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve address for target server %s: %v", eligibleDisk.NodeID, err)
+	}
+	return &topology.DestinationPlan{
+		TargetNode:    eligibleDisk.NodeID,
+		TargetAddress: targetAddress,
+		TargetDisk:    eligibleDisk.DiskID,
+		TargetRack:    eligibleDisk.Rack,
+		TargetDC:      eligibleDisk.DataCenter,
+		ExpectedSize:  selectedVolume.Size,
+	}, nil
 }
 
 // planBalanceDestination plans the destination for a balance operation using

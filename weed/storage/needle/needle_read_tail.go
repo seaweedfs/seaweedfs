@@ -18,7 +18,7 @@ func (n *Needle) readNeedleTail(needleBody []byte, version Version) error {
 			// with seaweed version using crc.Value() instead of uint32(crc), which appears in commit 056c480eb
 			// and switch appeared in version 3.09.
 			stats.VolumeServerHandlerCounter.WithLabelValues(stats.ErrorCRC).Inc()
-			return fmt.Errorf("invalid CRC for needle %v (got %08x, want %08x), data on disk corrupted", n.Id, dataChecksum, expectedChecksum)
+			return fmt.Errorf("invalid CRC for needle %v (got %08x, want %08x), data on disk corrupted: %w", n.Id, dataChecksum, expectedChecksum, ErrorCorrupted)
 		}
 		n.Checksum = dataChecksum
 	} else {

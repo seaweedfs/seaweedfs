@@ -433,7 +433,13 @@ func TestPickForWrite(t *testing.T) {
 						continue
 					}
 					volumeGrowOption.DataNode = dn
-					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl, 0)
+					// Small expectedDataSize hint: this test iterates many times
+					// and the layout uses a 32KB volume size limit. With hint=0
+					// (default 1MB pendingDelta), RecordAssign would exceed the
+					// limit on the first call and eagerly remove the volume
+					// from writable. Keep the hint tiny so effectiveSize stays
+					// below the limit across all iterations.
+					fileId, count, _, shouldGrow, err := topo.PickForWrite(1, volumeGrowOption, vl, 1024)
 					if dc == "dc0" {
 						if err == nil || count != 0 || !shouldGrow {
 							fmt.Println(dc, r, dn, "pick for write should be with error")

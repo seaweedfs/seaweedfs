@@ -136,12 +136,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                             </a>
                                         </th>
                                         <th>
-                                            <a href="#" onclick="sortTable('objects')" class="text-decoration-none text-dark">
-                                                Objects
-                                                @getSortIcon("objects", data.SortBy, data.SortOrder)
-                                            </a>
-                                        </th>
-                                        <th>
                                             <a href="#" onclick="sortTable('logical_size')" class="text-decoration-none text-dark">
                                                 Logical Size
                                                 @getSortIcon("logical_size", data.SortBy, data.SortOrder)
@@ -179,7 +173,6 @@ templ S3Buckets(data dash.S3BucketsData) {
                                                 }
                                             </td>
                                             <td>{bucket.CreatedAt.Format("2006-01-02 15:04")}</td>
-                                            <td>{fmt.Sprintf("%d", bucket.ObjectCount)}</td>
                                             <td>
                                                 <div>{formatBytes(bucket.LogicalSize)}</div>
                                                 if bucket.PhysicalSize > 0 && bucket.LogicalSize > 0 && bucket.PhysicalSize > bucket.LogicalSize {
@@ -1114,7 +1107,6 @@ function displayBucketDetails(data) {
         '<tr><td><strong>Last Modified:</strong></td><td>' + formatDate(bucket.last_modified) + '<\/td><\/tr>',
         '<tr><td><strong>Logical Size:</strong></td><td>' + formatBytes(bucket.logical_size) + '<\/td><\/tr>',
         '<tr><td><strong>Physical Size:</strong></td><td>' + formatBytes(bucket.physical_size) + usageHtml + '<\/td><\/tr>',
-        '<tr><td><strong>Object Count:</strong></td><td>' + bucket.object_count + '<\/td><\/tr>',
         '<\/table>',
         '<\/div>',
         '<div class="col-md-6">',
@@ -1190,13 +1182,12 @@ function displayBucketDetails(data) {
 
                 const buckets = data.buckets || [];
                 const csvContent = "data:text/csv;charset=utf-8," +
-                    "Name,Owner,Logical Size,Physical Size,Object Count,Created,Quota,Versioning,Object Lock\n" +
+                    "Name,Owner,Logical Size,Physical Size,Created,Quota,Versioning,Object Lock\n" +
                     buckets.map(b => [
                         escapeCsvField(b.name),
                         escapeCsvField(b.owner),
                         escapeCsvField(formatBytes(b.logical_size)),
                         escapeCsvField(formatBytes(b.physical_size)),
-                        escapeCsvField(b.object_count),
                         escapeCsvField(b.created_at),
                         escapeCsvField(b.quota_enabled ? formatBytes(b.quota) : 'No quota'),
                         escapeCsvField(b.versioning_status || 'Not configured'),

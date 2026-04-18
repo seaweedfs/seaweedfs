@@ -313,6 +313,191 @@ func TestRecordAssignMarksCrowded(t *testing.T) {
 	}
 }
 
+func TestRecordAssignReachingCapacityRemovesFromWritable(t *testing.T) {
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":5000, "replication":"000"},
+          {"id":2, "size":5000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+
+	writable, _ := vl.GetWritableVolumeCount()
+	if writable != 2 {
+		t.Fatalf("expected 2 writable volumes initially, got %d", writable)
+	}
+	// Each volume counts as active initially.
+	initialActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+
+	// Push vid 1 past the hard limit (5000 + 5000 = 10000 == limit).
+	reachedCapacity := vl.RecordAssign(1, 5000)
+	if !reachedCapacity {
+		t.Fatalf("RecordAssign should return true when effectiveSize reaches limit")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+
+	writable, _ = vl.GetWritableVolumeCount()
+	if writable != 1 {
+		t.Errorf("expected 1 writable after eager removal, got %d", writable)
+	}
+	// activeVolumeCount should be decremented for the data node holding vid 1.
+	afterActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if afterActive != initialActive-1 {
+		t.Errorf("expected activeVolumeCount=%d, got %d", initialActive-1, afterActive)
+	}
+
+	// A second RecordAssign on the already-removed volume should not return
+	// true again (no double accounting).
+	if vl.RecordAssign(1, 10000) {
+		t.Errorf("RecordAssign should not report reachedCapacity twice for the same removal")
+	}
+	afterSecond := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	if afterSecond != afterActive {
+		t.Errorf("activeVolumeCount changed on second RecordAssign: before=%d after=%d", afterActive, afterSecond)
+	}
+}
+
+// advanceSizeTrackingClock backdates a volume's time-sensitive fields by d
+// so heartbeat decay and the recovery delay fire on the next update.
+func advanceSizeTrackingClock(vl *VolumeLayout, vid needle.VolumeId, d time.Duration) {
+	vl.accessLock.Lock()
+	defer vl.accessLock.Unlock()
+	st := vl.sizeTracking[vid]
+	if st == nil {
+		return
+	}
+	if !st.lastUpdateTime.IsZero() {
+		st.lastUpdateTime = st.lastUpdateTime.Add(-d)
+	}
+	if !st.fullSince.IsZero() {
+		st.fullSince = st.fullSince.Add(-d)
+	}
+}
+
+func TestUpdateVolumeSizeRecoversEagerlyRemovedVolume(t *testing.T) {
+	// Two writable volumes, each at 40% of a 10000-byte limit. Push vid 1
+	// past the hard limit via RecordAssign, then heartbeat with an
+	// unchanged reported size so decay shrinks effectiveSize below the
+	// crowded threshold (90% of limit). After the recovery delay, the
+	// volume should be re-added to writables and activeVolumeCount
+	// restored.
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":4000, "replication":"000"},
+          {"id":2, "size":4000, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	topo, vl := setupPickTest(t, layout, 10000)
+
+	initialActive := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount
+	initialWritables, _ := vl.GetWritableVolumeCount()
+
+	// Push vid 1 past the limit (effective = 4000 + 6000 = 10000).
+	if !vl.RecordAssign(1, 6000) {
+		t.Fatalf("RecordAssign should return true at the limit")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+
+	w, _ := vl.GetWritableVolumeCount()
+	if w != initialWritables-1 {
+		t.Fatalf("expected %d writables after eager removal, got %d", initialWritables-1, w)
+	}
+
+	// Before the recovery delay, a heartbeat that lets decay run should
+	// *not* re-add the volume (even though effectiveSize would now be
+	// under the threshold).
+	advanceSizeTrackingClock(vl, 1, 3*time.Second) // past the 2s dedup window, but before 30s delay
+	if vl.UpdateVolumeSize(1, 4000, 0) {
+		t.Fatalf("recovery should not fire before capacityRecoveryDelay")
+	}
+	w, _ = vl.GetWritableVolumeCount()
+	if w != initialWritables-1 {
+		t.Errorf("writable count should not change before delay, got %d", w)
+	}
+
+	// Now skip past the recovery delay. Decay the gap further until
+	// effectiveSize drops below the crowded threshold (9000).
+	for i := 0; i < 6; i++ {
+		advanceSizeTrackingClock(vl, 1, 10*time.Second)
+		recovered := vl.UpdateVolumeSize(1, 4000, 0)
+		if recovered {
+			vl.AdjustActiveVolumeCountAfterRecovery(1)
+			break
+		}
+	}
+
+	w, _ = vl.GetWritableVolumeCount()
+	if w != initialWritables {
+		t.Errorf("expected recovery to restore %d writables, got %d", initialWritables, w)
+	}
+	if got := topo.diskUsages.usages[types.HardDriveType].activeVolumeCount; got != initialActive {
+		t.Errorf("expected activeVolumeCount restored to %d, got %d", initialActive, got)
+	}
+
+	// fullSince should have been cleared so a subsequent heartbeat doesn't
+	// try to recover again.
+	advanceSizeTrackingClock(vl, 1, 60*time.Second)
+	if vl.UpdateVolumeSize(1, 4000, 0) {
+		t.Errorf("recovery should not re-fire after the volume is already writable")
+	}
+}
+
+func TestUpdateVolumeSizeNoRecoveryWhenDiskStillOversized(t *testing.T) {
+	// Volume reported at 95% of limit and pushed past limit by RecordAssign.
+	// Even after the recovery delay and decay, reportedSize remains >= limit
+	// (real on-disk size is over limit), so recovery must not fire.
+	layout := `
+{
+  "dc1":{
+    "rack1":{
+      "server1":{
+        "volumes":[
+          {"id":1, "size":9500, "replication":"000"}
+        ],
+        "limit":10
+      }
+    }
+  }
+}
+`
+	_, vl := setupPickTest(t, layout, 10000)
+
+	if !vl.RecordAssign(1, 500) {
+		t.Fatalf("RecordAssign should hit the limit (9500 + 500 = 10000)")
+	}
+	vl.AdjustActiveVolumeCountForFull(1)
+
+	// Plenty of time elapsed — but reported stays at 10500 (over limit).
+	for i := 0; i < 5; i++ {
+		advanceSizeTrackingClock(vl, 1, 10*time.Second)
+		if vl.UpdateVolumeSize(1, 10500, 0) {
+			t.Fatalf("recovery must not fire when reported >= limit")
+		}
+	}
+	w, _ := vl.GetWritableVolumeCount()
+	if w != 0 {
+		t.Errorf("expected 0 writables (volume legitimately full), got %d", w)
+	}
+}
+
 func TestHeartbeatDecaysPendingSize(t *testing.T) {
 	layout := `
 {

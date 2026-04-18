@@ -91,7 +91,7 @@ func (p *TopicPublisher) onEachAssignments(generation int, assignments []*mq_pb.
 		if hasExistingJob {
 			var existingJob *EachPartitionPublishJob
 			existingJob = p.jobs[i]
-			if existingJob.BrokerPartitionAssignment.LeaderBroker == assignment.LeaderBroker {
+			if pb.ServerAddress(existingJob.BrokerPartitionAssignment.LeaderBroker).Equals(pb.ServerAddress(assignment.LeaderBroker)) {
 				existingJob.generation = generation
 				jobs = append(jobs, existingJob)
 				continue

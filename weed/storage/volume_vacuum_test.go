@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/storage/idx"
 	"github.com/seaweedfs/seaweedfs/weed/storage/needle"
 	"github.com/seaweedfs/seaweedfs/weed/storage/super_block"
 	"github.com/seaweedfs/seaweedfs/weed/storage/types"
@@ -231,6 +232,90 @@ func TestCleanupCompactRemovesTempFiles(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "1.cpldb")); !os.IsNotExist(err) {
 		t.Fatalf("expected cleanup to remove .cpldb, got err=%v", err)
 	}
+}
+
+// TestCompactByIndex_DropsDanglingNeedle verifies that vacuum compaction
+// tolerates an .idx entry whose offset points past the end of the .dat file
+// (the failure mode reported in issue #8928). The bad entry should be silently
+// dropped from the resulting .cpx, while every healthy needle is preserved.
+func TestCompactByIndex_DropsDanglingNeedle(t *testing.T) {
+	dir := t.TempDir()
+
+	v, err := NewVolume(dir, dir, "", 1, NeedleMapInMemory, &super_block.ReplicaPlacement{}, &needle.TTL{}, 0, needle.GetCurrentVersion(), 0, 0)
+	if err != nil {
+		t.Fatalf("volume creation: %v", err)
+	}
+
+	const goodNeedleCount = 8
+	infos := make([]*needleInfo, goodNeedleCount)
+	for i := 1; i <= goodNeedleCount; i++ {
+		n := newRandomNeedle(uint64(i))
+		_, size, _, err := v.writeNeedle2(n, true, false)
+		if err != nil {
+			t.Fatalf("write needle %d: %v", i, err)
+		}
+		infos[i-1] = &needleInfo{size: size, crc: n.Checksum}
+	}
+
+	if err := v.DataBackend.Sync(); err != nil {
+		t.Fatalf("sync .dat: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx: %v", err)
+	}
+
+	datSize, _, err := v.DataBackend.GetStat()
+	if err != nil {
+		t.Fatalf("stat .dat: %v", err)
+	}
+
+	// Inject an .idx entry that points 1 MB past the end of the .dat. The
+	// bad entry must go through nm.Put so it ends up in both the in-memory
+	// map and the on-disk .idx — exactly the corruption pattern in #8928.
+	badKey := types.Uint64ToNeedleId(uint64(goodNeedleCount + 100))
+	badOffset := types.ToOffset(datSize + 1024*1024)
+	badSize := types.Size(2048)
+	if err := v.nm.Put(badKey, badOffset, badSize); err != nil {
+		t.Fatalf("inject bad idx entry: %v", err)
+	}
+	if err := v.nm.Sync(); err != nil {
+		t.Fatalf("sync .idx after inject: %v", err)
+	}
+
+	if err := v.CompactByIndex(nil); err != nil {
+		t.Fatalf("CompactByIndex should tolerate dangling entries, got: %v", err)
+	}
+
+	// Walk the new index and confirm the dangling entry was dropped while
+	// all of the original keys made it through.
+	cpx, err := os.Open(filepath.Join(dir, "1.cpx"))
+	if err != nil {
+		t.Fatalf("open .cpx: %v", err)
+	}
+	defer cpx.Close()
+	keptKeys := map[types.NeedleId]bool{}
+	if err := idx.WalkIndexFile(cpx, 0, func(key types.NeedleId, _ types.Offset, size types.Size) error {
+		if !size.IsDeleted() {
+			keptKeys[key] = true
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("walk .cpx: %v", err)
+	}
+	if keptKeys[badKey] {
+		t.Fatalf("dangling key %d should have been dropped from .cpx", badKey)
+	}
+	for i := 1; i <= goodNeedleCount; i++ {
+		if infos[i-1].size == 0 {
+			continue
+		}
+		k := types.Uint64ToNeedleId(uint64(i))
+		if !keptKeys[k] {
+			t.Fatalf("healthy key %d missing from compacted .cpx", k)
+		}
+	}
+
+	v.Close()
 }
 
 func doSomeWritesDeletes(i int, v *Volume, t *testing.T, infos []*needleInfo) {

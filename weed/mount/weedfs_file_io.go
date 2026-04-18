@@ -64,7 +64,15 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
 	if status == fuse.OK {
 		out.Fh = uint64(fileHandle.fh)
 		out.OpenFlags = 0
-		// TODO https://github.com/libfuse/libfuse/blob/master/include/fuse_common.h#L64
+
+		// For read-only opens, set FOPEN_KEEP_CACHE when the file's mtime
+		// has not changed since the last open.  This tells the kernel to
+		// preserve its existing page cache, avoiding redundant reads.
+		if in.Flags&fuse.O_ANYWRITE == 0 {
+			if entry := fileHandle.GetEntry(); entry != nil && entry.Attributes != nil {
+				wfs.applyKeepCacheFlag(in.NodeId, entry, out)
+			}
+		}
 	}
 	return status
 }
@@ -94,6 +102,36 @@ func (wfs *WFS) Open(cancel <-chan struct{}, in *fuse.OpenIn, out *fuse.OpenOut)
  * @param ino the inode number
  * @param fi file information
  */
+const openMtimeCacheMaxSize = 8192
+
+// applyKeepCacheFlag compares the entry's mtime (seconds + nanoseconds) against
+// the last-seen value and sets FOPEN_KEEP_CACHE when unchanged.
+func (wfs *WFS) applyKeepCacheFlag(inode uint64, entry *LockedEntry, out *fuse.OpenOut) {
+	currentMtime := [2]int64{entry.Attributes.Mtime, int64(entry.Attributes.MtimeNs)}
+	wfs.openMtimeMu.Lock()
+	prev, loaded := wfs.openMtimeCache[inode]
+	if loaded && prev == currentMtime {
+		out.OpenFlags |= fuse.FOPEN_KEEP_CACHE
+	} else {
+		if len(wfs.openMtimeCache) >= openMtimeCacheMaxSize {
+			for k := range wfs.openMtimeCache {
+				delete(wfs.openMtimeCache, k)
+				break
+			}
+		}
+		wfs.openMtimeCache[inode] = currentMtime
+	}
+	wfs.openMtimeMu.Unlock()
+}
+
+// invalidateOpenMtimeCache removes an inode's cached mtime so the next Open
+// does not set FOPEN_KEEP_CACHE with stale kernel page cache data.
+func (wfs *WFS) invalidateOpenMtimeCache(inode uint64) {
+	wfs.openMtimeMu.Lock()
+	delete(wfs.openMtimeCache, inode)
+	wfs.openMtimeMu.Unlock()
+}
+
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
 	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
 		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)

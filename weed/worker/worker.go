@@ -465,16 +465,14 @@ func (w *Worker) handleStart(cmd workerCommand) {
 }
 
 func (w *Worker) Stop() error {
-	resp := make(chan error)
-	w.cmds <- workerCommand{
-		action: ActionStop,
-		resp:   resp,
-	}
-	if err := <-resp; err != nil {
-		return err
-	}
+	// Snapshot the admin client BEFORE ActionStop terminates the manager loop.
+	// Once the loop exits, any further w.cmds send (getTaskLoad, getAdmin, etc.)
+	// would deadlock because no one reads w.cmds anymore.
+	adminClient := w.getAdmin()
 
-	// Wait for tasks to finish
+	// Best-effort task drain: wait up to 30s for in-flight tasks to finish.
+	// Still done BEFORE ActionStop so getTaskLoad can round-trip through the
+	// manager loop.
 	timeout := time.NewTimer(30 * time.Second)
 	defer timeout.Stop()
 out:
@@ -487,8 +485,18 @@ out:
 		}
 	}
 
-	// Disconnect from admin server
-	if adminClient := w.getAdmin(); adminClient != nil {
+	// Terminate the manager loop.
+	resp := make(chan error)
+	w.cmds <- workerCommand{
+		action: ActionStop,
+		resp:   resp,
+	}
+	if err := <-resp; err != nil {
+		return err
+	}
+
+	// Disconnect from admin server.
+	if adminClient != nil {
 		if err := adminClient.Disconnect(); err != nil {
 			glog.Errorf("Error disconnecting from admin server: %v", err)
 		}

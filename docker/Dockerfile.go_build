@@ -56,8 +56,8 @@ COPY --from=builder /go/src/github.com/seaweedfs/seaweedfs/docker/entrypoint.sh 
 # To disable: docker run -e GODEBUG=fips140=off ...
 
 # Install dependencies and create non-root user
-RUN apk upgrade --no-cache zlib && \
-    apk add --no-cache fuse curl su-exec libgcc && \
+RUN apk upgrade --no-cache && \
+    apk add --no-cache fuse curl su-exec libgcc libcrypto3 libssl3 && \
     addgroup -g 1000 seaweed && \
     adduser -D -u 1000 -G seaweed seaweed
 

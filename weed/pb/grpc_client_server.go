@@ -247,6 +247,24 @@ func requestIDUnaryInterceptor() grpc.UnaryServerInterceptor {
 	}
 }
 
+// InvalidateGrpcConnection drops any cached gRPC ClientConn for the given
+// address. Use when a higher-level signal (for example a streaming master
+// connection detecting its peer has died) indicates the cached channel is
+// stale, even though gRPC itself may still believe the channel is healthy.
+// Silently returns if no cached connection exists.
+func InvalidateGrpcConnection(address string) {
+	grpcClientsLock.Lock()
+	vgc, ok := grpcClients[address]
+	if ok {
+		delete(grpcClients, address)
+	}
+	grpcClientsLock.Unlock()
+	if ok {
+		glog.V(1).Infof("Invalidating cached gRPC connection to %s", address)
+		vgc.Close()
+	}
+}
+
 // shouldInvalidateConnection checks if an error indicates the cached connection should be invalidated
 func shouldInvalidateConnection(err error) bool {
 	if err == nil {
@@ -283,38 +301,45 @@ func WithGrpcClient(streamingMode bool, signature int32, fn func(*grpc.ClientCon
 			return fmt.Errorf("getOrCreateConnection %s: %v", address, err)
 		}
 		executionErr := fn(vgc.ClientConn)
-		if executionErr != nil {
-			if shouldInvalidateConnection(executionErr) {
-				grpcClientsLock.Lock()
-				if t, ok := grpcClients[address]; ok {
-					if t.version == vgc.version {
-						glog.V(1).Infof("Removing cached gRPC connection to %s due to error: %v", address, executionErr)
-						vgc.Close()
-						delete(grpcClients, address)
-					}
-				}
-				grpcClientsLock.Unlock()
+		if executionErr != nil && shouldInvalidateConnection(executionErr) {
+			grpcClientsLock.Lock()
+			t, ok := grpcClients[address]
+			shouldClose := ok && t.version == vgc.version
+			if shouldClose {
+				delete(grpcClients, address)
+			}
+			grpcClientsLock.Unlock()
+			if shouldClose {
+				glog.V(1).Infof("Removing cached gRPC connection to %s due to error: %v", address, executionErr)
+				vgc.Close()
 			}
 		}
 		return executionErr
-	} else {
-		ctx := context.Background()
-		if signature != 0 {
-			// Optimize: Use AppendToOutgoingContext instead of creating new map
-			ctx = metadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", signature))
-		}
-		grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
-		if err != nil {
-			return fmt.Errorf("fail to dial %s: %v", address, err)
-		}
-		defer grpcConnection.Close()
-		executionErr := fn(grpcConnection)
-		if executionErr != nil {
-			return executionErr
-		}
-		return nil
 	}
 
+	// Streaming mode: dedicate a fresh ClientConn to this call.
+	ctx := context.Background()
+	if signature != 0 {
+		// Optimize: Use AppendToOutgoingContext instead of creating new map
+		ctx = metadata.AppendToOutgoingContext(ctx, "sw-client-id", fmt.Sprintf("%d", signature))
+	}
+	grpcConnection, err := GrpcDial(ctx, address, waitForReady, opts...)
+	if err != nil {
+		return fmt.Errorf("fail to dial %s: %v", address, err)
+	}
+	defer grpcConnection.Close()
+	executionErr := fn(grpcConnection)
+	if executionErr != nil {
+		// The streaming channel is dedicated to this caller, but unrelated
+		// request-path callers share a cached non-streaming ClientConn to the
+		// same peer. When the stream fails, drop that cached channel so the
+		// next caller dials fresh: this recovers cases where a stable L4
+		// endpoint (k8s Service VIP, external LB) hides a peer restart from
+		// the transport layer, leaving the cached ClientConn healthy-looking
+		// but silently cancelling RPCs.
+		InvalidateGrpcConnection(address)
+	}
+	return executionErr
 }
 
 func hostAndPort(address string) (host string, port uint64, err error) {

@@ -641,11 +641,6 @@ func recordValueToMapWithAvroContext(recordValue *schema_pb.RecordValue, preserv
 	return result
 }
 
-// schemaValueToGoValue converts a schema Value back to a Go value
-func schemaValueToGoValue(value *schema_pb.Value) interface{} {
-	return schemaValueToGoValueWithAvroContext(value, false)
-}
-
 // schemaValueToGoValueWithAvroContext converts a schema Value back to a Go value
 // with optional Avro union format preservation
 func schemaValueToGoValueWithAvroContext(value *schema_pb.Value, preserveAvroUnions bool) interface{} {

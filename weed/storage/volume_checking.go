@@ -122,6 +122,10 @@ func CheckVolumeDataIntegrity(v *Volume, indexFile *os.File) (lastAppendAtNs uin
 	if indexSize == 0 {
 		return 0, nil
 	}
+	// The deeper-than-tail structural check (every (offset + actual size)
+	// fits inside .dat — issue #8928) lives in volume.load(): it reads
+	// MaximumNeedleEnd from the needle map after the load walk, so we don't
+	// need a redundant linear scan of the .idx here.
 	healthyIndexSize := indexSize
 	for i := 1; i <= 10 && indexSize >= int64(i)*types.NeedleMapEntrySize; i++ {
 		// check and fix last 10 entries
@@ -164,6 +168,7 @@ func doCheckAndFixVolumeData(v *Volume, indexFile *os.File, indexOffset int64) (
 	}
 	return lastAppendAtNs, nil
 }
+
 
 func verifyIndexFileIntegrity(indexFile *os.File) (indexSize int64, err error) {
 	if indexSize, err = util.GetFileSize(indexFile); err == nil {

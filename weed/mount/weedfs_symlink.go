@@ -29,6 +29,11 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 	entryFullPath := dirPath.Child(name)
 
 	now := time.Now().Unix()
+	// Pre-allocate the mount's local inode so the filer stores the same
+	// object identity we report to the kernel below. Without this, the filer
+	// assigns its own inode and subsequent cached reads would disagree with
+	// the inode we return from Symlink.
+	inode := wfs.inodeToPath.AllocateInode(entryFullPath, now)
 	request := &filer_pb.CreateEntryRequest{
 		Directory: string(dirPath),
 		Entry: &filer_pb.Entry{
@@ -42,6 +47,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 				Uid:           header.Uid,
 				Gid:           header.Gid,
 				SymlinkTarget: target,
+				Inode:         inode,
 			},
 		},
 		Signatures:               []int32{wfs.signature},
@@ -71,7 +77,7 @@ func (wfs *WFS) Symlink(cancel <-chan struct{}, header *fuse.InHeader, target st
 		return fuse.EIO
 	}
 
-	inode := wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, 0, true)
+	inode = wfs.inodeToPath.Lookup(entryFullPath, request.Entry.Attributes.Crtime, false, false, inode, true)
 
 	wfs.outputPbEntry(out, inode, request.Entry)
 

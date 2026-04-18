@@ -74,6 +74,9 @@ func (wfs *WFS) SetAttr(cancel <-chan struct{}, input *fuse.SetAttrIn, out *fuse
 
 	if size, ok := input.GetSize(); ok {
 		glog.V(4).Infof("%v setattr set size=%v chunks=%d", path, size, len(entry.GetChunks()))
+		// Invalidate the open-mtime cache so the next Open does not set
+		// FOPEN_KEEP_CACHE with stale kernel page cache data.
+		wfs.invalidateOpenMtimeCache(input.NodeId)
 		if size < filer.FileSize(entry) {
 			// fmt.Printf("truncate %v \n", fullPath)
 			var chunks []*filer_pb.FileChunk

@@ -36,6 +36,10 @@ type WebDavOption struct {
 	cacheDir       *string
 	cacheSizeMB    *int64
 	maxMB          *int
+	// shutdownCtx, when non-nil, tells startWebDav to gracefully shut down the
+	// HTTP server once the ctx is cancelled. Used by weed mini; nil for
+	// standalone weed webdav.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -137,9 +141,9 @@ func (wo *WebDavOption) startWebDav() bool {
 		glog.Fatalf("WebDav Server listener on %s error: %v", listenAddress, err)
 	}
 
-	if MiniClusterCtx != nil {
+	if wo.shutdownCtx != nil {
 		go func() {
-			<-MiniClusterCtx.Done()
+			<-wo.shutdownCtx.Done()
 			httpS.Shutdown(context.Background())
 		}()
 	}

@@ -629,7 +629,7 @@ func (fs *FilerServer) createManifestChunk(ctx context.Context, dataChunks []*fi
 	// Save the manifest data as a new chunk
 	saveFunc := func(reader io.Reader, name string, offset int64, tsNs int64) (chunk *filer_pb.FileChunk, err error) {
 		// Assign a new file ID
-		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so)
+		fileId, urlLocation, auth, assignErr := fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if assignErr != nil {
 			return nil, fmt.Errorf("failed to assign file ID for manifest: %w", assignErr)
 		}
@@ -730,7 +730,7 @@ func (fs *FilerServer) batchLookupVolumeLocations(ctx context.Context, chunks []
 // streamCopyChunk copies a chunk using streaming to minimize memory usage
 func (fs *FilerServer) streamCopyChunk(ctx context.Context, srcChunk *filer_pb.FileChunk, so *operation.StorageOption, client *http.Client, locations []operation.Location) (*filer_pb.FileChunk, error) {
 	// Assign a new file ID for destination
-	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so)
+	fileId, urlLocation, auth, err := fs.assignNewFileInfo(ctx, so, srcChunk.Size)
 	if err != nil {
 		return nil, fmt.Errorf("failed to assign new file ID: %w", err)
 	}

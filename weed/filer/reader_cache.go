@@ -178,6 +178,10 @@ func newSingleChunkCacher(parent *ReaderCache, fileId string, cipherKey []byte, 
 // startCaching downloads the chunk data in the background.
 // It does NOT hold the lock during the HTTP download to allow concurrent readers
 // to wait efficiently using the done channel.
+//
+// Concurrent downloads of the same chunk are already deduplicated by the
+// ReaderCache.downloaders map (guarded by the ReaderCache mutex). Each fileId
+// has at most one active SingleChunkCacher at any time.
 func (s *SingleChunkCacher) startCaching() {
 	s.wg.Add(1)
 	defer s.wg.Done()

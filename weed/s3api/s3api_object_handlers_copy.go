@@ -956,7 +956,7 @@ func (s3a *S3ApiServer) copySingleChunk(chunk *filer_pb.FileChunk, dstPath strin
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -986,7 +986,7 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := originalChunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, rangeChunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -1015,16 +1015,17 @@ func (s3a *S3ApiServer) copySingleChunkForRange(originalChunk, rangeChunk *filer
 }
 
 // assignNewVolume assigns a new volume for the chunk
-func (s3a *S3ApiServer) assignNewVolume(dstPath string) (*filer_pb.AssignVolumeResponse, error) {
+func (s3a *S3ApiServer) assignNewVolume(dstPath string, expectedDataSize uint64) (*filer_pb.AssignVolumeResponse, error) {
 	var assignResult *filer_pb.AssignVolumeResponse
 	err := s3a.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
 		resp, err := client.AssignVolume(context.Background(), &filer_pb.AssignVolumeRequest{
-			Count:       1,
-			Replication: "",
-			Collection:  "",
-			DiskType:    "",
-			DataCenter:  s3a.option.DataCenter,
-			Path:        dstPath,
+			Count:            1,
+			Replication:      "",
+			Collection:       "",
+			DiskType:         "",
+			DataCenter:       s3a.option.DataCenter,
+			Path:             dstPath,
+			ExpectedDataSize: expectedDataSize,
 		})
 		if err != nil {
 			return fmt.Errorf("assign volume: %w", err)
@@ -1251,9 +1252,9 @@ func (s3a *S3ApiServer) setChunkFileId(chunk *filer_pb.FileChunk, assignResult *
 }
 
 // prepareChunkCopy prepares a chunk for copying by assigning a new volume and looking up the source URL
-func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string) (*filer_pb.AssignVolumeResponse, string, error) {
+func (s3a *S3ApiServer) prepareChunkCopy(sourceFileId, dstPath string, expectedDataSize uint64) (*filer_pb.AssignVolumeResponse, string, error) {
 	// Assign new volume
-	assignResult, err := s3a.assignNewVolume(dstPath)
+	assignResult, err := s3a.assignNewVolume(dstPath, expectedDataSize)
 	if err != nil {
 		return nil, "", fmt.Errorf("assign volume: %w", err)
 	}
@@ -1447,7 +1448,7 @@ func (s3a *S3ApiServer) copyMultipartSSEKMSChunk(chunk *filer_pb.FileChunk, dest
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -1546,7 +1547,7 @@ func (s3a *S3ApiServer) copyMultipartSSECChunk(chunk *filer_pb.FileChunk, copySo
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1827,7 +1828,7 @@ func (s3a *S3ApiServer) copyCrossEncryptionChunk(chunk *filer_pb.FileChunk, sour
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -2169,7 +2170,7 @@ func (s3a *S3ApiServer) copyChunkWithReencryption(chunk *filer_pb.FileChunk, cop
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}
@@ -2388,7 +2389,7 @@ func (s3a *S3ApiServer) copyChunkWithSSEKMSReencryption(chunk *filer_pb.FileChun
 
 	// Prepare chunk copy (assign new volume and get source URL)
 	fileId := chunk.GetFileIdString()
-	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath)
+	assignResult, srcUrl, err := s3a.prepareChunkCopy(fileId, dstPath, chunk.Size)
 	if err != nil {
 		return nil, err
 	}

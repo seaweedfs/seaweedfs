@@ -17,6 +17,7 @@ import (
 	"github.com/seaweedfs/seaweedfs/weed/filer"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/mount/meta_cache"
+	"github.com/seaweedfs/seaweedfs/weed/mount/page_writer"
 	"github.com/seaweedfs/seaweedfs/weed/pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
 	"github.com/seaweedfs/seaweedfs/weed/pb/mount_pb"
@@ -49,6 +50,7 @@ type Option struct {
 	CacheDirForRead             string
 	CacheSizeMBForRead          int64
 	CacheDirForWrite            string
+	WriteBufferSizeMB           int64
 	CacheMetaTTlSec             int
 	DataCenter                  string
 	Umask                       os.FileMode
@@ -113,6 +115,7 @@ type WFS struct {
 	metaCache            *meta_cache.MetaCache
 	stats                statsCache
 	chunkCache           *chunk_cache.TieredChunkCache
+	writeBufferAccountant *page_writer.WriteBufferAccountant
 	signature            int32
 	concurrentWriters    *util.LimitedConcurrentExecutor
 	copyBufferPool       sync.Pool
@@ -123,6 +126,7 @@ type WFS struct {
 	fuseServer           *fuse.Server
 	IsOverQuota          bool
 	fhLockTable          *util.LockTable[FileHandleId]
+	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
 	FilerConf            *filer.FilerConf
@@ -138,7 +142,14 @@ type WFS struct {
 	dirHotWindow         time.Duration
 	dirHotThreshold      int
 	dirIdleEvict         time.Duration
-	fileIdPool           *FileIdPool
+
+	// openMtimeCache maps inode -> [mtime_sec, mtime_ns] from the last Open.
+	// Used to decide whether to set FOPEN_KEEP_CACHE on subsequent opens.
+	// Bounded to openMtimeCacheMaxSize entries; when full a random entry is
+	// evicted. This trades a small amount of cache-miss overhead for
+	// predictable memory usage on mounts that touch many files.
+	openMtimeMu    sync.Mutex
+	openMtimeCache map[uint64][2]int64
 
 	// asyncFlushWg tracks pending background flush work items for writebackCache mode.
 	// Must be waited on before unmount cleanup to prevent data loss.
@@ -213,9 +224,11 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		filerClient:       filerClient, // nil for proxy mode, initialized for direct access
 		pendingAsyncFlush: make(map[uint64]chan struct{}),
 		fhLockTable:       util.NewLockTable[FileHandleId](),
+		hardLinkLockTable: util.NewLockTable[string](),
 		posixLocks:        NewPosixLockTable(),
 		refreshingDirs:    make(map[util.FullPath]struct{}),
 		atimeMap:          make(map[uint64]time.Time, 8192),
+		openMtimeCache:    make(map[uint64][2]int64, 8192),
 		dirMtimeMap:       make(map[uint64]time.Time, 1024),
 		entryValidSec:    1,
 		attrValidSec:     1,
@@ -243,6 +256,10 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 	wfs.option.setupUniqueCacheDirectory()
 	if option.CacheSizeMBForRead > 0 {
 		wfs.chunkCache = chunk_cache.NewTieredChunkCache(256, option.getUniqueCacheDirForRead(), option.CacheSizeMBForRead, 1024*1024)
+	}
+	if option.WriteBufferSizeMB > 0 {
+		wfs.writeBufferAccountant = page_writer.NewWriteBufferAccountant(option.WriteBufferSizeMB * 1024 * 1024)
+		wfs.writeBufferAccountant.SetEvictor(wfs.evictOneWritableChunk)
 	}
 
 	wfs.metaCache = meta_cache.NewMetaCache(path.Join(option.getUniqueCacheDirForRead(), "meta"), option.UidGidMapper,
@@ -367,11 +384,7 @@ func (wfs *WFS) StartBackgroundTasks() error {
 	go wfs.loopCheckQuota()
 	go wfs.loopFlushDirtyMetadata()
 	go wfs.loopEvictIdleDirCache()
-
-	if wfs.option.WritebackCache {
-		wfs.fileIdPool = NewFileIdPool(wfs)
-		glog.V(0).Infof("file ID pool enabled for writeback cache (batch=%d)", wfs.fileIdPool.batchSize)
-	}
+	go wfs.loopProactiveFlush()
 
 	return nil
 }

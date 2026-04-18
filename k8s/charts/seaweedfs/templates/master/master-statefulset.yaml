@@ -80,7 +80,7 @@ spec:
       {{- end }}
       containers:
         - name: seaweedfs
-          image: {{ template "master.image" . }}
+          image: {{ template "seaweedfs.master.image" . }}
           imagePullPolicy: {{ default "IfNotPresent" .Values.global.seaweedfs.imagePullPolicy }}
           env:
             - name: POD_IP
@@ -251,7 +251,7 @@ spec:
           securityContext: {{- omit .Values.master.containerSecurityContext "enabled" | toYaml | nindent 12 }}
           {{- end }}
         {{- if .Values.master.sidecars }}
-        {{- include "common.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
+        {{- include "seaweedfs.tplvalues.render" (dict "value" .Values.master.sidecars "context" $) | nindent 8 }}
         {{- end }}
       volumes:
         {{- if eq .Values.master.logs.type "hostPath" }}
@@ -312,7 +312,7 @@ spec:
       nodeSelector:
         {{ tpl .Values.master.nodeSelector . | indent 8 | trim }}
       {{- end }}
-  {{- $pvc_exists := include "master.pvc_exists" . -}}
+  {{- $pvc_exists := include "seaweedfs.master.pvc_exists" . -}}
   {{- if $pvc_exists }}
   volumeClaimTemplates:
     {{- if eq .Values.master.data.type "persistentVolumeClaim"}}

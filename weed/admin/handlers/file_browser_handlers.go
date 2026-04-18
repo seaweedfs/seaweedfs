@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -398,7 +399,7 @@ func (h *FileBrowserHandlers) uploadFileToFiler(filePath string, fileHeader *mul
 
 	// Create the upload URL - the httpClient will normalize to the correct scheme (http/https)
 	// based on the https.client configuration in security.toml
-	uploadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	uploadURL := filerFileURL(filerHttpAddress, cleanFilePath)
 
 	// Normalize the URL scheme based on TLS configuration
 	uploadURL, err = h.httpClient.NormalizeHttpScheme(uploadURL)
@@ -503,12 +504,14 @@ func (h *FileBrowserHandlers) validateAndCleanFilePath(filePath string) (string,
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 
-	// Additional validation: ensure path doesn't contain dangerous characters
-	if strings.ContainsAny(cleanPath, "\x00\r\n") {
-		return "", fmt.Errorf("path contains invalid characters")
-	}
-
 	return cleanPath, nil
+}
+
+// filerFileURL joins the filer HTTP address with a validated file path, URL-escaping
+// the path so that control characters and other bytes that are legal in S3 object keys
+// cannot inject into the HTTP request target.
+func filerFileURL(filerHttpAddress, cleanFilePath string) string {
+	return filerHttpAddress + (&url.URL{Path: cleanFilePath}).EscapedPath()
 }
 
 // fetchFileContent fetches file content from the filer and returns the content or an error.
@@ -529,7 +532,7 @@ func (h *FileBrowserHandlers) fetchFileContent(filePath string, timeout time.Dur
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	fileURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to construct file URL: %w", err)
@@ -597,7 +600,7 @@ func (h *FileBrowserHandlers) DownloadFile(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Create the download URL with proper scheme based on TLS configuration
-	downloadURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	downloadURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	downloadURL, err = h.httpClient.NormalizeHttpScheme(downloadURL)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to construct download URL: "+err.Error())
@@ -1043,7 +1046,7 @@ func (h *FileBrowserHandlers) isLikelyTextFile(filePath string, maxCheckSize int
 	}
 
 	// Create the file URL with proper scheme based on TLS configuration
-	fileURL := fmt.Sprintf("%s%s", filerHttpAddress, cleanFilePath)
+	fileURL := filerFileURL(filerHttpAddress, cleanFilePath)
 	fileURL, err = h.httpClient.NormalizeHttpScheme(fileURL)
 	if err != nil {
 		glog.Errorf("Failed to normalize URL scheme: %v", err)

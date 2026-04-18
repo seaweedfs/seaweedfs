@@ -40,6 +40,7 @@ type Server struct {
 	prefix              string // optional prefix for routes
 	authenticator       S3Authenticator
 	credentialValidator CredentialValidator
+	s3Endpoint          string // http(s):// URL advertised in LoadTable FileIO config
 }
 
 // NewServer creates a new Iceberg REST Catalog server.
@@ -56,6 +57,13 @@ func NewServer(filerClient FilerClient, authenticator S3Authenticator) *Server {
 // SetCredentialValidator sets the credential validator for OAuth token support.
 func (s *Server) SetCredentialValidator(cv CredentialValidator) {
 	s.credentialValidator = cv
+}
+
+// SetS3Endpoint configures the S3 endpoint URL to vend to clients as part of
+// the LoadTable FileIO config, so they can read table data files directly
+// without separately discovering the S3 API address. See issue #9103.
+func (s *Server) SetS3Endpoint(endpoint string) {
+	s.s3Endpoint = endpoint
 }
 
 // RegisterRoutes registers Iceberg REST API routes on the provided router.

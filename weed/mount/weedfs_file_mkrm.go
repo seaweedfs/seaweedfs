@@ -188,6 +188,33 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 		return fuse.EPERM
 	}
 
+	// For hard-linked files, serialize all concurrent mutations on the
+	// same HardLinkId so the filer-side blob decrement and the mount-side
+	// sibling cache sync are observed atomically by other unlinkers.
+	// Without this, two concurrent unlinks on different links of the same
+	// file both read the same pre-decrement counter and both stamp their
+	// siblings to counter-1, leaving the cache one higher than the blob.
+	// Re-load the entry under the lock so we see any sibling update a
+	// prior holder just applied.
+	if entry != nil && len(entry.HardLinkId) > 0 {
+		hlKey := string(entry.HardLinkId)
+		lock := wfs.hardLinkLockTable.AcquireLock("unlink", hlKey, util.ExclusiveLock)
+		defer wfs.hardLinkLockTable.ReleaseLock(hlKey, lock)
+		// If another thread unlinked the entry while we waited for the
+		// lock, the file is already gone — return OK like the initial
+		// maybeLoadEntry path above. Do not fall back to the stale
+		// pre-lock snapshot: proceeding with its HardLinkCounter would
+		// reintroduce the stale-base update the lock is meant to prevent.
+		fresh, freshCode := wfs.maybeLoadEntry(entryFullPath)
+		if freshCode == fuse.ENOENT {
+			return fuse.OK
+		}
+		if freshCode != fuse.OK {
+			return freshCode
+		}
+		entry = fresh
+	}
+
 	// POSIX: enforce sticky bit on the parent directory.
 	if dirEntry, dirCode := wfs.maybeLoadEntry(dirFullPath); dirCode == fuse.OK && dirEntry != nil && dirEntry.Attributes != nil {
 		targetUid := uint32(0)
@@ -248,7 +275,35 @@ func (wfs *WFS) Unlink(cancel <-chan struct{}, header *fuse.InHeader, name strin
 	wfs.inodeToPath.TouchDirectory(dirFullPath)
 	wfs.touchDirMtimeCtimeBest(dirFullPath)
 
+	// For hard-linked files, the filer's DeleteHardLink decremented the
+	// shared blob, but the sibling link entries in the local metacache
+	// still carry the pre-unlink HardLinkCounter, and the kernel has
+	// cached attrs on the shared inode. Resolve the shared inode before
+	// removing the path from inodeToPath, then propagate the decrement
+	// to every sibling cache entry and invalidate the kernel attr cache
+	// so subsequent lstats on other links see the new nlink — pjdfstest
+	// link/00.t asserts this after `unlink n0` leaves n1/n2 behind.
+	isHardLink := entry != nil && entry.Attributes != nil && len(entry.HardLinkId) > 0 && entry.HardLinkCounter > 1
+	var sharedInode uint64
+	if isHardLink {
+		sharedInode = entry.Attributes.Inode
+		if sharedInode == 0 {
+			if resolved, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+				sharedInode = resolved
+			}
+		}
+	}
+
 	wfs.inodeToPath.RemovePath(entryFullPath)
+
+	if isHardLink && sharedInode != 0 {
+		decremented := proto.Clone(entry).(*filer_pb.Entry)
+		decremented.HardLinkCounter = entry.HardLinkCounter - 1
+		now := time.Now()
+		decremented.Attributes.Ctime = now.Unix()
+		decremented.Attributes.CtimeNs = int32(now.Nanosecond())
+		wfs.syncHardLinkSiblings(sharedInode, decremented, entryFullPath)
+	}
 
 	return fuse.OK
 
@@ -434,6 +489,7 @@ func (wfs *WFS) truncateEntry(entryFullPath util.FullPath, entry *filer_pb.Entry
 	}
 
 	if inode, found := wfs.inodeToPath.GetInode(entryFullPath); found {
+		wfs.invalidateOpenMtimeCache(inode)
 		if fh, fhFound := wfs.fhMap.FindFileHandle(inode); fhFound {
 			fhActiveLock := fh.wfs.fhLockTable.AcquireLock("truncateEntry", fh.fh, util.ExclusiveLock)
 			fh.ResetDirtyPages()

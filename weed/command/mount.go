@@ -22,6 +22,7 @@ type MountOptions struct {
 	cacheDirForRead      *string
 	cacheDirForWrite     *string
 	cacheSizeMBForRead   *int64
+	writeBufferSizeMB    *int64
 	dataCenter           *string
 	allowOthers          *bool
 	defaultPermissions   *bool
@@ -97,6 +98,7 @@ func init() {
 	mountOptions.cacheDirForRead = cmdMount.Flag.String("cacheDir", os.TempDir(), "local cache directory for file chunks and meta data")
 	mountOptions.cacheSizeMBForRead = cmdMount.Flag.Int64("cacheCapacityMB", 128, "file chunk read cache capacity in MB")
 	mountOptions.cacheDirForWrite = cmdMount.Flag.String("cacheDirWrite", "", "buffer writes mostly for large files")
+	mountOptions.writeBufferSizeMB = cmdMount.Flag.Int64("writeBufferSizeMB", 0, "global cap on the per-mount write buffer (memory + swap) in MB, 0 means unlimited. Bounds /tmp growth when volume uploads stall")
 	mountOptions.cacheMetaTtlSec = cmdMount.Flag.Int("cacheMetaTtlSec", 60, "metadata cache validity seconds")
 	mountOptions.dataCenter = cmdMount.Flag.String("dataCenter", "", "prefer to write to the data center")
 	mountOptions.allowOthers = cmdMount.Flag.Bool("allowOthers", true, "allows other users to access the file system")

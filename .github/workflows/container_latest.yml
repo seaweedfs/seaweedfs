@@ -232,7 +232,7 @@ jobs:
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
       - name: Build ${{ matrix.platform }} ${{ matrix.variant }}
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.1.0
         env:
           DOCKER_BUILDKIT: 1
         with:
@@ -322,7 +322,7 @@ jobs:
           buildkitd-config: /tmp/buildkitd.toml
       - name: Build local scan image tarball
         if: needs.setup.outputs.publish != 'true'
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v7.1.0
         env:
           DOCKER_BUILDKIT: 1
         with:

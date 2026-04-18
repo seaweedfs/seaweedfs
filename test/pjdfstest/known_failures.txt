@@ -6,17 +6,3 @@
 # A failure in any test NOT listed here will cause the CI job to fail,
 # catching regressions immediately.
 
-# ── Directory rename permission edge case ──────────────────────────────
-# Cross-directory rename of a subdirectory with restricted permissions
-# causes cascading test failures within the test file.
-tests/rename/21.t
-
-# ── Hard link nlink count inconsistencies ────────────────────────────
-# link/00.t and unlink/00.t fail nlink assertions (e.g. expected nlink=2,
-# got nlink=3) after hard link creation/removal. This is a filer-side hard
-# link counter issue, not a mount mtime/ctime problem. The failures are
-# deterministic and surfaced by caching changes that affect the order in
-# which entries are loaded into the local meta cache.
-tests/link/00.t
-tests/unlink/00.t
-

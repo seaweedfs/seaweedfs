@@ -39,7 +39,7 @@ require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
 	github.com/hashicorp/go-uuid v1.0.3 // indirect
-	github.com/jackc/pgx/v5 v5.8.0
+	github.com/jackc/pgx/v5 v5.9.0
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jinzhu/copier v0.4.0
@@ -92,14 +92,14 @@ require (
 	gocloud.dev v0.45.0
 	gocloud.dev/pubsub/natspubsub v0.45.0
 	gocloud.dev/pubsub/rabbitpubsub v0.45.0
-	golang.org/x/crypto v0.49.0
+	golang.org/x/crypto v0.50.0
 	golang.org/x/exp v0.0.0-20260218203240-3dfff04db8fa
 	golang.org/x/image v0.38.0
-	golang.org/x/net v0.52.0
+	golang.org/x/net v0.53.0
 	golang.org/x/oauth2 v0.36.0
-	golang.org/x/sys v0.42.0
-	golang.org/x/text v0.35.0 // indirect
-	golang.org/x/tools v0.42.0 // indirect
+	golang.org/x/sys v0.43.0
+	golang.org/x/text v0.36.0 // indirect
+	golang.org/x/tools v0.43.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/api v0.274.0
 	google.golang.org/genproto v0.0.0-20260316180232-0b37fe3546d5 // indirect
@@ -118,18 +118,19 @@ require (
 	github.com/Jille/raft-grpc-transport v1.6.1
 	github.com/ThreeDotsLabs/watermill v1.5.1
 	github.com/a-h/templ v0.3.977
-	github.com/apache/cassandra-gocql-driver/v2 v2.0.0
+	github.com/apache/cassandra-gocql-driver/v2 v2.1.0
 	github.com/apache/iceberg-go v0.5.0
 	github.com/apple/foundationdb/bindings/go v0.0.0-20250911184653-27f7192f47c3
 	github.com/arangodb/go-driver v1.6.9
 	github.com/armon/go-metrics v0.4.1
 	github.com/aws/aws-sdk-go-v2 v1.41.5
-	github.com/aws/aws-sdk-go-v2/config v1.32.13
+	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.98.0
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.99.0
 	github.com/cognusion/imaging v1.0.2
 	github.com/fluent/fluent-logger-golang v1.10.1
 	github.com/getsentry/sentry-go v0.44.1
+	github.com/go-git/go-billy/v5 v5.6.2
 	github.com/go-ldap/ldap/v3 v3.4.13
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/flatbuffers/go v0.0.0-20230108230133-3b8644d32c50
@@ -152,9 +153,11 @@ require (
 	github.com/tarantool/go-tarantool/v2 v2.4.2
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/tikv/client-go/v2 v2.0.7
+	github.com/willscott/go-nfs v0.0.3
+	github.com/willscott/go-nfs-client v0.0.0-20251022144359-801f10d98886
 	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/ydb-platform/ydb-go-sdk-auth-environ v0.5.1
-	github.com/ydb-platform/ydb-go-sdk/v3 v3.125.3
+	github.com/ydb-platform/ydb-go-sdk/v3 v3.134.0
 	go.etcd.io/etcd/client/pkg/v3 v3.6.10
 	go.uber.org/atomic v1.11.0
 	golang.org/x/sync v0.20.0
@@ -209,7 +212,6 @@ require (
 	github.com/dromara/dongle v1.0.1 // indirect
 	github.com/gin-gonic/gin v1.11.0 // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.8-0.20250403174932-29230038a667 // indirect
-	github.com/go-git/go-billy/v5 v5.6.2 // indirect
 	github.com/goccy/go-yaml v1.18.0 // indirect
 	github.com/golang/geo v0.0.0-20210211234256-740aa86cb551 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
@@ -256,6 +258,7 @@ require (
 	github.com/pquerna/otp v1.5.0 // indirect
 	github.com/pterm/pterm v0.12.82 // indirect
 	github.com/quic-go/quic-go v0.57.0 // indirect
+	github.com/rasky/go-xdr v0.0.0-20170124162913-1a41d1a06c93 // indirect
 	github.com/rclone/Proton-API-Bridge v1.0.1-0.20260127174007-77f974840d11 // indirect
 	github.com/rclone/go-proton-api v1.0.1-0.20260127173028-eb465cac3b18 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
@@ -282,8 +285,8 @@ require (
 	go.uber.org/mock v0.5.2 // indirect
 	go.yaml.in/yaml/v2 v2.4.3 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
-	golang.org/x/mod v0.33.0 // indirect
-	golang.org/x/telemetry v0.0.0-20260209163413-e7419c687ee4 // indirect
+	golang.org/x/mod v0.34.0 // indirect
+	golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c // indirect
 	gonum.org/v1/gonum v0.17.0 // indirect
 )
 
@@ -476,7 +479,7 @@ require (
 	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
 	github.com/xanzy/ssh-agent v0.3.3 // indirect
 	github.com/yandex-cloud/go-genproto v0.0.0-20211115083454-9ca41db5ed9e // indirect
-	github.com/ydb-platform/ydb-go-genproto v0.0.0-20251125145508-6d7ef87db5cb // indirect
+	github.com/ydb-platform/ydb-go-genproto v0.0.0-20260311095541-ebbf792c1180 // indirect
 	github.com/ydb-platform/ydb-go-yc v0.12.1 // indirect
 	github.com/ydb-platform/ydb-go-yc-metadata v0.6.1 // indirect
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0 // indirect
@@ -496,7 +499,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.43.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
-	golang.org/x/term v0.41.0
+	golang.org/x/term v0.42.0
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260316180232-0b37fe3546d5 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260319201613-d00831a3d3e7 // indirect

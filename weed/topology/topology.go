@@ -71,6 +71,7 @@ type Topology struct {
 	topologyIdLock sync.RWMutex
 
 	lastLeaderChangeTime     time.Time
+	hadVolumesAtLeaderChange bool
 	lastLeaderChangeTimeLock sync.RWMutex
 }
 
@@ -121,10 +122,17 @@ func (t *Topology) IsChildLocked() (bool, error) {
 }
 
 // SetLastLeaderChangeTime records the time of the most recent leader transition.
+// It also snapshots whether the topology already had known volumes at that
+// moment. IsWarmingUp uses the snapshot instead of the live MaxVolumeId so a
+// fresh cluster that happens to grow its first volume inside the warmup window
+// does not retroactively flip into "warming up" state — there is no prior
+// topology to wait for on a bootstrap.
 func (t *Topology) SetLastLeaderChangeTime(ts time.Time) {
+	hadVolumes := t.GetMaxVolumeId() > 0
 	t.lastLeaderChangeTimeLock.Lock()
 	defer t.lastLeaderChangeTimeLock.Unlock()
 	t.lastLeaderChangeTime = ts
+	t.hadVolumesAtLeaderChange = hadVolumes
 }
 
 // GetLastLeaderChangeTime returns the time of the most recent leader transition.
@@ -137,15 +145,21 @@ func (t *Topology) GetLastLeaderChangeTime() time.Time {
 // IsWarmingUp returns true if the master recently became leader and may not yet
 // have a complete topology. After a leader change or restart, volume servers need
 // up to WarmupPulseMultiplier heartbeat intervals to reconnect and report their volumes.
-// Returns false on a fresh cluster start (MaxVolumeId == 0) since there are no
-// existing volumes to wait for.
+// Returns false on a fresh cluster start — i.e. when no volumes existed at the
+// time of the leader change — since there is no prior topology state to wait for.
+// Checking the *live* MaxVolumeId here would make a bootstrapping cluster flip
+// into warming-up the moment its first volume is grown, which manifested as a
+// 15-second window of spurious Unavailable errors on AssignVolume for workloads
+// that start writing immediately (see #8777).
 func (t *Topology) IsWarmingUp() bool {
-	if t.GetMaxVolumeId() == 0 {
+	t.lastLeaderChangeTimeLock.RLock()
+	lastChange := t.lastLeaderChangeTime
+	hadVolumes := t.hadVolumesAtLeaderChange
+	t.lastLeaderChangeTimeLock.RUnlock()
+	if !hadVolumes || lastChange.IsZero() {
 		return false
 	}
-	warmupDuration := time.Duration(t.pulse*WarmupPulseMultiplier) * time.Second
-	lastChange := t.GetLastLeaderChangeTime()
-	return !lastChange.IsZero() && time.Since(lastChange) < warmupDuration
+	return time.Since(lastChange) < t.WarmupDuration()
 }
 
 // WarmupDuration returns the configured warmup duration based on pulse interval.
@@ -340,7 +354,9 @@ func (t *Topology) PickForWrite(requestedCount uint64, option *VolumeGrowOption,
 		sizePerFile = expectedDataSize
 	}
 	pendingBytes := min(uint64(count)*sizePerFile, uint64(math.MaxInt64))
-	volumeLayout.RecordAssign(vid, int64(pendingBytes))
+	if volumeLayout.RecordAssign(vid, int64(pendingBytes)) {
+		volumeLayout.AdjustActiveVolumeCountForFull(vid)
+	}
 	nextFileId := t.Sequence.NextFileId(requestedCount)
 	fileId = needle.NewFileId(vid, nextFileId, rand.Uint32()).String()
 	return fileId, count, volumeLocationList, shouldGrow, nil
@@ -498,14 +514,18 @@ func (t *Topology) SyncDataNodeRegistration(volumes []*master_pb.VolumeInformati
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
 		vl.EnsureCorrectWritables(&v)
 	}
-	// Update effective sizes for all reported volumes (decay pending estimates)
+	// Update effective sizes for all reported volumes (decay pending estimates).
+	// If decay brings a volume eagerly removed by RecordAssign back under the
+	// writable threshold, restore the matching activeVolumeCount.
 	for _, v := range volumeInfos {
 		if v.ReplicaPlacement == nil {
 			continue
 		}
 		diskType := types.ToDiskType(v.DiskType)
 		vl := t.GetVolumeLayout(v.Collection, v.ReplicaPlacement, v.Ttl, diskType)
-		vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision)
+		if vl.UpdateVolumeSize(v.Id, v.Size, v.CompactRevision) {
+			vl.AdjustActiveVolumeCountAfterRecovery(v.Id)
+		}
 	}
 	return
 }

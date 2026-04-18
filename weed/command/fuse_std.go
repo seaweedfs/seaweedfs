@@ -189,6 +189,12 @@ func runFuse(cmd *Command, args []string) bool {
 			}
 		case "cacheDirWrite":
 			mountOptions.cacheDirForWrite = &parameter.value
+		case "writeBufferSizeMB":
+			if parsed, err := strconv.ParseInt(parameter.value, 0, 64); err == nil {
+				mountOptions.writeBufferSizeMB = &parsed
+			} else {
+				panic(fmt.Errorf("writeBufferSizeMB: %s", err))
+			}
 		case "dataCenter":
 			mountOptions.dataCenter = &parameter.value
 		case "allowOthers":

@@ -208,7 +208,7 @@ func (fs *FilerServer) dataToChunkWithSSE(ctx context.Context, r *http.Request, 
 
 	err := util.Retry("filerDataToChunk", func() error {
 		// assign one file id for one chunk
-		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so)
+		fileId, urlLocation, auth, uploadErr = fs.assignNewFileInfo(ctx, so, uint64(len(data)))
 		if uploadErr != nil {
 			glog.V(4).InfofCtx(ctx, "retry later due to assign error: %v", uploadErr)
 			stats.FilerHandlerCounter.WithLabelValues(stats.ChunkAssignRetry).Inc()

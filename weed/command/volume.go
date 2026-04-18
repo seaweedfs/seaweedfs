@@ -1,6 +1,7 @@
 package command
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -75,6 +76,10 @@ type VolumeServerOptions struct {
 	ldbTimeout                  *int64
 	debug                       *bool
 	debugPort                   *int
+	// shutdownCtx, when non-nil, tells startVolumeServer to shut down once the
+	// ctx is cancelled. Used by integration tests and by weed mini; nil for
+	// standalone weed volume.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -327,11 +332,10 @@ func (v VolumeServerOptions) startVolumeServer(volumeFolders, maxVolumeCounts, v
 		stopChan <- true
 	})
 
-	ctx := MiniClusterCtx
-	if ctx != nil {
+	if v.shutdownCtx != nil {
 		select {
 		case <-stopChan:
-		case <-ctx.Done():
+		case <-v.shutdownCtx.Done():
 			shutdown(publicHttpDown, clusterHttpServer, grpcS, volumeServer)
 		}
 	} else {

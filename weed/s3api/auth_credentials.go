@@ -1337,11 +1337,13 @@ func (iam *IdentityAccessManagement) authenticateRequestInternal(r *http.Request
 	var found bool
 	var amzAuthType string
 
-	// SECURITY: Prevent clients from spoofing internal IAM headers
+	// SECURITY: Prevent clients from spoofing internal IAM headers.
 	// These headers are only set by the server after successful JWT authentication
-	// Clearing them here prevents privilege escalation via header injection
-	r.Header.Del("X-SeaweedFS-Principal")
-	r.Header.Del("X-SeaweedFS-Session-Token")
+	// and are trusted by downstream authorization (including S3Tables IAM checks
+	// reached via AuthSignatureOnly). Clearing them here — the shared entry point
+	// for every auth path — prevents privilege escalation via header injection.
+	r.Header.Del(s3_constants.SeaweedFSPrincipalHeader)
+	r.Header.Del(s3_constants.SeaweedFSSessionTokenHeader)
 
 	reqAuthType := getRequestAuthType(r)
 
@@ -1413,8 +1415,14 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 	// through buckets and checking permissions for each. Skip the global check here.
 	policyAllows := false
 
-	if action == s3_constants.ACTION_LIST && bucket == "" && identity.Name != s3_constants.AccountAnonymousId {
-		// ListBuckets operation for authenticated users - authorization handled per-bucket in the handler
+	if action == s3_constants.ACTION_LIST && bucket == "" &&
+		(identity.Name != s3_constants.AccountAnonymousId || identity.hasListAction()) {
+		// ListBuckets operation - authorization handled per-bucket in the handler.
+		// For authenticated users this is always deferred to the handler. For the
+		// anonymous identity we only defer when it actually carries a List action
+		// (e.g. "List:prefix-*"); otherwise fall through to the global check so
+		// an anonymous caller with no permissions is rejected outright rather
+		// than receiving an empty ListAllMyBuckets result.
 	} else {
 		// First check bucket policy if one exists
 		// Bucket policies can grant or deny access to specific users/principals
@@ -1472,53 +1480,13 @@ func (iam *IdentityAccessManagement) authRequestWithAuthType(r *http.Request, ac
 
 // AuthSignatureOnly performs only signature verification without any authorization checks.
 // This is used for IAM API operations where authorization is handled separately based on
-// the specific IAM action (e.g., self-service vs admin operations).
+// the specific IAM action (e.g., self-service vs admin operations). It delegates to
+// authenticateRequestInternal so the internal-IAM-header stripping and the auth-type
+// dispatch stay in one place — any future fix applied there automatically covers
+// S3Tables, UnifiedPostHandler, and the other AuthSignatureOnly callers.
 // Returns the authenticated identity and any signature verification error.
 func (iam *IdentityAccessManagement) AuthSignatureOnly(r *http.Request) (*Identity, s3err.ErrorCode) {
-
-	var identity *Identity
-	var s3Err s3err.ErrorCode
-	var authType string
-	switch getRequestAuthType(r) {
-	case authTypeUnknown:
-		glog.V(3).Infof("unknown auth type")
-		r.Header.Set(s3_constants.AmzAuthType, "Unknown")
-		return identity, s3err.ErrAccessDenied
-	case authTypePresignedV2, authTypeSignedV2:
-		glog.V(3).Infof("v2 auth type")
-		identity, s3Err = iam.isReqAuthenticatedV2(r)
-		authType = "SigV2"
-	case authTypeStreamingSigned, authTypeSigned, authTypePresigned:
-		glog.V(3).Infof("v4 auth type")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-
-	case authTypeStreamingUnsigned:
-		glog.V(3).Infof("unsigned streaming upload")
-		identity, s3Err = iam.reqSignatureV4Verify(r)
-		authType = "SigV4"
-	case authTypeJWT:
-		glog.V(3).Infof("jwt auth type detected, iamIntegration != nil? %t", iam.iamIntegration != nil)
-		r.Header.Set(s3_constants.AmzAuthType, "Jwt")
-		if iam.iamIntegration != nil {
-			identity, s3Err = iam.authenticateJWTWithIAM(r)
-			authType = "Jwt"
-		} else {
-			glog.V(2).Infof("IAM integration is nil, returning ErrNotImplemented")
-			return identity, s3err.ErrNotImplemented
-		}
-	case authTypeAnonymous:
-		if ident, found := iam.LookupAnonymous(); found {
-			return ident, s3err.ErrNone
-		}
-		return nil, s3err.ErrAccessDenied
-	default:
-		return identity, s3err.ErrNotImplemented
-	}
-
-	if len(authType) > 0 {
-		r.Header.Set(s3_constants.AmzAuthType, authType)
-	}
+	identity, s3Err, _ := iam.authenticateRequestInternal(r)
 	if s3Err != s3err.ErrNone {
 		return identity, s3Err
 	}
@@ -1590,6 +1558,29 @@ func (identity *Identity) CanDo(action Action, bucket string, objectKey string) 
 	return false
 }
 
+// hasListAction reports whether the identity carries any List-scoped legacy
+// action (e.g. "List", "List:*", "List:prefix-*") or has administrative
+// privileges. Used to decide whether a ListBuckets request from an anonymous
+// identity should be deferred to the per-bucket check in the handler or
+// denied at the global auth layer.
+func (identity *Identity) hasListAction() bool {
+	if identity == nil {
+		return false
+	}
+	if identity.isAdmin() {
+		return true
+	}
+	listPrefix := string(s3_constants.ACTION_LIST)
+	listPrefixWithColon := listPrefix + ":"
+	for _, a := range identity.Actions {
+		act := string(a)
+		if act == listPrefix || strings.HasPrefix(act, listPrefixWithColon) {
+			return true
+		}
+	}
+	return false
+}
+
 func (identity *Identity) isAdmin() bool {
 	if identity == nil {
 		return false
@@ -1602,7 +1593,7 @@ func (identity *Identity) isAdmin() bool {
 func buildPrincipalARN(identity *Identity, r *http.Request) string {
 	// Check if principal ARN was already set by JWT authentication
 	if r != nil {
-		if principalARN := r.Header.Get("X-SeaweedFS-Principal"); principalARN != "" {
+		if principalARN := r.Header.Get(s3_constants.SeaweedFSPrincipalHeader); principalARN != "" {
 			glog.V(4).Infof("buildPrincipalARN: Using principal ARN from header: %s", principalARN)
 			return principalARN
 		}
@@ -1803,6 +1794,83 @@ func (iam *IdentityAccessManagement) syncRuntimePoliciesToIAMManager(ctx context
 	return manager.SyncRuntimePolicies(ctx, policies)
 }
 
+// PruneBucketFromConfiguration removes any identity actions scoped to the given
+// bucket (e.g. "Read:bucket", "Write:bucket/prefix") from the persisted S3 IAM
+// configuration. Wildcarded resources and global actions are preserved because
+// they may cover other buckets. Static (read-only) identities are not touched.
+//
+// Updates are applied per-identity via the credential store's UpdateUser path,
+// which rewrites only the affected user record. This avoids a full-config
+// read-modify-write cycle that could clobber unrelated concurrent IAM edits.
+// Returns true if any identity was updated.
+func (iam *IdentityAccessManagement) PruneBucketFromConfiguration(ctx context.Context, bucket string) (bool, error) {
+	if iam == nil || iam.credentialManager == nil || bucket == "" {
+		return false, nil
+	}
+	usernames, err := iam.credentialManager.ListUsers(ctx)
+	if err != nil {
+		return false, err
+	}
+	changed := false
+	var firstErr error
+	for _, username := range usernames {
+		if iam.IsStaticIdentity(username) {
+			continue
+		}
+		ident, err := iam.credentialManager.GetUser(ctx, username)
+		if err != nil {
+			if errors.Is(err, credential.ErrUserNotFound) {
+				continue
+			}
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		if ident == nil || ident.IsStatic {
+			continue
+		}
+		kept := ident.Actions[:0]
+		pruned := false
+		for _, a := range ident.Actions {
+			if actionScopedToBucket(a, bucket) {
+				pruned = true
+				continue
+			}
+			kept = append(kept, a)
+		}
+		if !pruned {
+			continue
+		}
+		ident.Actions = kept
+		if err := iam.credentialManager.UpdateUser(ctx, username, ident); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		changed = true
+	}
+	// In-memory identities refresh via the filer metadata subscription
+	// (onIamConfigChange), which fans the update out to every S3 server.
+	return changed, firstErr
+}
+
+// actionScopedToBucket reports whether a configured action string like
+// "Read:bucket" or "Write:bucket/prefix" is scoped exclusively to the given
+// bucket. Wildcard resources are never considered scoped to a single bucket.
+func actionScopedToBucket(action, bucket string) bool {
+	idx := strings.Index(action, ":")
+	if idx < 0 {
+		return false
+	}
+	resource := action[idx+1:]
+	if strings.ContainsAny(resource, "*?") {
+		return false
+	}
+	return resource == bucket || strings.HasPrefix(resource, bucket+"/")
+}
+
 // LoadS3ApiConfigurationFromCredentialManager loads configuration using the credential manager
 func (iam *IdentityAccessManagement) LoadS3ApiConfigurationFromCredentialManager() error {
 	glog.V(1).Infof("Loading S3 API configuration from credential manager")
@@ -1894,8 +1962,8 @@ func (iam *IdentityAccessManagement) authenticateJWTWithIAM(r *http.Request) (*I
 	}
 
 	// Store session info in request headers for later authorization
-	r.Header.Set("X-SeaweedFS-Session-Token", iamIdentity.SessionToken)
-	r.Header.Set("X-SeaweedFS-Principal", iamIdentity.Principal)
+	r.Header.Set(s3_constants.SeaweedFSSessionTokenHeader, iamIdentity.SessionToken)
+	r.Header.Set(s3_constants.SeaweedFSPrincipalHeader, iamIdentity.Principal)
 
 	return identity, s3err.ErrNone
 }
@@ -2015,7 +2083,7 @@ func (iam *IdentityAccessManagement) VerifyActionPermission(r *http.Request, ide
 	// JWT/STS identities (no Actions or having a session token) use IAM authorization.
 	// IMPORTANT: We MUST prioritize IAM authorization for any request with a session token
 	// to ensure that session policies are correctly enforced.
-	hasSessionToken := r.Header.Get("X-SeaweedFS-Session-Token") != "" ||
+	hasSessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader) != "" ||
 		r.Header.Get("X-Amz-Security-Token") != "" ||
 		r.URL.Query().Get("X-Amz-Security-Token") != ""
 	iam.m.RLock()
@@ -2061,9 +2129,9 @@ func (iam *IdentityAccessManagement) authorizeWithIAM(r *http.Request, identity 
 	ctx := r.Context()
 
 	// Get session info from request headers
-	// First check for JWT-based authentication headers (X-SeaweedFS-Session-Token)
-	sessionToken := r.Header.Get("X-SeaweedFS-Session-Token")
-	principal := r.Header.Get("X-SeaweedFS-Principal")
+	// First check for JWT-based authentication headers (SeaweedFSSessionTokenHeader)
+	sessionToken := r.Header.Get(s3_constants.SeaweedFSSessionTokenHeader)
+	principal := r.Header.Get(s3_constants.SeaweedFSPrincipalHeader)
 
 	// Fallback to AWS Signature V4 STS token if JWT token not present
 	// This handles the case where STS AssumeRoleWithWebIdentity generates temporary credentials

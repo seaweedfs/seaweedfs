@@ -57,6 +57,7 @@ func (f *Filer) assignAndUpload(targetFile string, data []byte) (*operation.Assi
 		Replication:         util.Nvl(f.metaLogReplication, rule.Replication),
 		DiskType:            rule.DiskType,
 		WritableVolumeCount: rule.VolumeGrowthCount,
+		ExpectedDataSize:    uint64(len(data)),
 	}
 
 	assignResult, err := operation.Assign(context.Background(), f.GetMaster, f.GrpcDialOption, assignRequest)

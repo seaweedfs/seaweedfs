@@ -27,10 +27,32 @@ func (h *tsMinHeap) Pop() any {
 	return x
 }
 
+// jobKind classifies a sync job for conflict detection. Directory events are
+// split into "barrier" (create/delete/rename) and "non-barrier" (in-place
+// attribute update) so that attribute-only directory updates — which do not
+// reshape the namespace — no longer serialize every file operation in the
+// subtree.
+type jobKind int
+
+const (
+	// kindFile is a regular file event.
+	kindFile jobKind = iota
+	// kindBarrierDir is a directory create, delete, or rename. It acts as a
+	// subtree barrier: it waits for all active descendants to drain, and it
+	// blocks every event under it from being admitted until it completes.
+	kindBarrierDir
+	// kindNonBarrierDir is a directory attribute update (mtime/xattr/chmod
+	// with the same parent and name). It does not block descendants and is
+	// not blocked by ancestor directories, but it still bumps the ancestor
+	// descendant counters so an incoming barrier dir on an ancestor path
+	// still waits for it to drain.
+	kindNonBarrierDir
+)
+
 type syncJobPaths struct {
-	path        util.FullPath
-	newPath     util.FullPath // empty for non-renames
-	isDirectory bool
+	path    util.FullPath
+	newPath util.FullPath // empty for non-renames
+	kind    jobKind
 }
 
 type MetadataProcessor struct {
@@ -44,9 +66,21 @@ type MetadataProcessor struct {
 	// Indexes for O(depth) conflict detection, replacing O(n) linear scan.
 	// activeFilePaths counts active file jobs at each exact path.
 	activeFilePaths map[util.FullPath]int
-	// activeDirPaths counts active directory jobs at each exact path.
-	activeDirPaths map[util.FullPath]int
-	// descendantCount counts active jobs (file or dir) strictly under each directory.
+	// activeBarrierDirPaths counts active barrier-dir jobs at each exact
+	// path. Only barrier dirs are tracked here; non-barrier dir updates are
+	// deliberately invisible to the ancestor check so that they don't
+	// serialize every file descendant.
+	activeBarrierDirPaths map[util.FullPath]int
+	// activeNonBarrierDirPaths counts active non-barrier dir jobs at each
+	// exact path. This is read *only* by incoming barrier dirs, so a
+	// delete/rename/create at p correctly waits for an in-flight chmod/
+	// xattr/mtime update at the same p. It is deliberately invisible to the
+	// ancestor check, so non-barrier updates still don't serialize file
+	// descendants.
+	activeNonBarrierDirPaths map[util.FullPath]int
+	// descendantCount counts active jobs (of any kind) strictly under each
+	// directory. Read by incoming barrier dirs so they wait for their whole
+	// subtree to drain before running, regardless of descendant kind.
 	descendantCount map[util.FullPath]int
 
 	// tsHeap is a min-heap of active job timestamps with lazy deletion,
@@ -56,12 +90,13 @@ type MetadataProcessor struct {
 
 func NewMetadataProcessor(fn pb.ProcessMetadataFunc, concurrency int, offsetTsNs int64) *MetadataProcessor {
 	t := &MetadataProcessor{
-		fn:               fn,
-		activeJobs:       make(map[int64]*syncJobPaths),
-		concurrencyLimit: concurrency,
-		activeFilePaths:  make(map[util.FullPath]int),
-		activeDirPaths:   make(map[util.FullPath]int),
-		descendantCount:  make(map[util.FullPath]int),
+		fn:                       fn,
+		activeJobs:               make(map[int64]*syncJobPaths),
+		concurrencyLimit:         concurrency,
+		activeFilePaths:          make(map[util.FullPath]int),
+		activeBarrierDirPaths:    make(map[util.FullPath]int),
+		activeNonBarrierDirPaths: make(map[util.FullPath]int),
+		descendantCount:          make(map[util.FullPath]int),
 	}
 	t.processedTsWatermark.Store(offsetTsNs)
 	t.activeJobsCond = sync.NewCond(&t.activeJobsLock)
@@ -86,11 +121,14 @@ func pathAncestors(p util.FullPath) []util.FullPath {
 
 // addPathToIndex registers a path in the conflict detection indexes.
 // Must be called under activeJobsLock.
-func (t *MetadataProcessor) addPathToIndex(p util.FullPath, isDirectory bool) {
-	if isDirectory {
-		t.activeDirPaths[p]++
-	} else {
+func (t *MetadataProcessor) addPathToIndex(p util.FullPath, kind jobKind) {
+	switch kind {
+	case kindFile:
 		t.activeFilePaths[p]++
+	case kindBarrierDir:
+		t.activeBarrierDirPaths[p]++
+	case kindNonBarrierDir:
+		t.activeNonBarrierDirPaths[p]++
 	}
 	for _, ancestor := range pathAncestors(p) {
 		t.descendantCount[ancestor]++
@@ -99,18 +137,25 @@ func (t *MetadataProcessor) addPathToIndex(p util.FullPath, isDirectory bool) {
 
 // removePathFromIndex unregisters a path from the conflict detection indexes.
 // Must be called under activeJobsLock.
-func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, isDirectory bool) {
-	if isDirectory {
-		if t.activeDirPaths[p] <= 1 {
-			delete(t.activeDirPaths, p)
-		} else {
-			t.activeDirPaths[p]--
-		}
-	} else {
+func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, kind jobKind) {
+	switch kind {
+	case kindFile:
 		if t.activeFilePaths[p] <= 1 {
 			delete(t.activeFilePaths, p)
 		} else {
 			t.activeFilePaths[p]--
+		}
+	case kindBarrierDir:
+		if t.activeBarrierDirPaths[p] <= 1 {
+			delete(t.activeBarrierDirPaths, p)
+		} else {
+			t.activeBarrierDirPaths[p]--
+		}
+	case kindNonBarrierDir:
+		if t.activeNonBarrierDirPaths[p] <= 1 {
+			delete(t.activeNonBarrierDirPaths, p)
+		} else {
+			t.activeNonBarrierDirPaths[p]--
 		}
 	}
 	for _, ancestor := range pathAncestors(p) {
@@ -123,26 +168,50 @@ func (t *MetadataProcessor) removePathFromIndex(p util.FullPath, isDirectory boo
 }
 
 // pathConflicts checks if a single path conflicts with any active job.
-// Conflict rules match pairShouldWaitFor:
-//   - file vs file: exact same path
-//   - file vs dir: file.IsUnder(dir)
-//   - dir vs file: file.IsUnder(dir)
-//   - dir vs dir: either IsUnder the other
-func (t *MetadataProcessor) pathConflicts(p util.FullPath, isDirectory bool) bool {
-	if isDirectory {
-		// Any active job (file or dir) strictly under this directory?
-		if t.descendantCount[p] > 0 {
-			return true
-		}
-	} else {
-		// Exact same file already active?
-		if t.activeFilePaths[p] > 0 {
-			return true
-		}
+// Conflict rules:
+//   - any kind vs same-path barrier dir: wait (a create/delete/rename on p
+//     must fully serialize against any other operation touching p, including
+//     non-barrier attribute updates and files at the same path)
+//   - incoming barrier dir vs same-path non-barrier dir update: wait (a
+//     delete/rename/create on p must wait for an in-flight chmod/xattr/mtime
+//     update at the same p to drain)
+//   - file vs same-path file: wait
+//   - file vs same-path barrier dir: wait (covered by the barrier-at-p check
+//     above; also serializes a file-to-dir / dir-to-file promotion)
+//   - barrier dir vs same-path file: wait
+//   - barrier dir vs any descendant (file or dir, barrier or not): wait
+//   - barrier ancestor: always wait, regardless of incoming kind
+//   - non-barrier dir vs descendants: never conflicts
+//   - non-barrier dir vs same-path non-barrier dir: never conflicts (attribute
+//     bumps are "last writer wins"; this intentionally lets rapid mtime /
+//     xattr updates overlap)
+func (t *MetadataProcessor) pathConflicts(p util.FullPath, kind jobKind) bool {
+	// A barrier dir in flight at p serializes every new job at p. This is the
+	// strictest same-path rule and applies regardless of incoming kind.
+	if t.activeBarrierDirPaths[p] > 0 {
+		return true
 	}
-	// Any active directory that is a proper ancestor of p?
+	// An incoming barrier dir must also wait for any in-flight non-barrier
+	// dir update at the same path. Without this check, a delete or rename on
+	// a directory could overlap with an attribute bump in progress for the
+	// same directory.
+	if kind == kindBarrierDir && t.activeNonBarrierDirPaths[p] > 0 {
+		return true
+	}
+	// A file in flight at p blocks new file or barrier-dir jobs at p. A
+	// non-barrier dir update at p is allowed through — by construction files
+	// and dirs at the same path only coexist across a promotion, which is a
+	// barrier event handled by the check above.
+	if t.activeFilePaths[p] > 0 && (kind == kindFile || kind == kindBarrierDir) {
+		return true
+	}
+	// Barrier dirs additionally wait for their whole in-flight subtree.
+	if kind == kindBarrierDir && t.descendantCount[p] > 0 {
+		return true
+	}
+	// Any barrier dir on a proper ancestor blocks everything under it.
 	for _, ancestor := range pathAncestors(p) {
-		if t.activeDirPaths[ancestor] > 0 {
+		if t.activeBarrierDirPaths[ancestor] > 0 {
 			return true
 		}
 	}
@@ -150,11 +219,11 @@ func (t *MetadataProcessor) pathConflicts(p util.FullPath, isDirectory bool) boo
 }
 
 func (t *MetadataProcessor) conflictsWith(resp *filer_pb.SubscribeMetadataResponse) bool {
-	p, newPath, isDirectory := extractPathsFromMetadata(resp)
-	if t.pathConflicts(p, isDirectory) {
+	p, newPath, kind := extractJobInfo(resp)
+	if t.pathConflicts(p, kind) {
 		return true
 	}
-	if newPath != "" && t.pathConflicts(newPath, isDirectory) {
+	if newPath != "" && t.pathConflicts(newPath, kind) {
 		return true
 	}
 	return false
@@ -172,13 +241,13 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		t.activeJobsCond.Wait()
 	}
 
-	p, newPath, isDirectory := extractPathsFromMetadata(resp)
-	jobPaths := &syncJobPaths{path: p, newPath: newPath, isDirectory: isDirectory}
+	p, newPath, kind := extractJobInfo(resp)
+	jobPaths := &syncJobPaths{path: p, newPath: newPath, kind: kind}
 
 	t.activeJobs[resp.TsNs] = jobPaths
-	t.addPathToIndex(p, isDirectory)
+	t.addPathToIndex(p, kind)
 	if newPath != "" {
-		t.addPathToIndex(newPath, isDirectory)
+		t.addPathToIndex(newPath, kind)
 	}
 
 	heap.Push(&t.tsHeap, resp.TsNs)
@@ -195,9 +264,9 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 		defer t.activeJobsLock.Unlock()
 
 		delete(t.activeJobs, resp.TsNs)
-		t.removePathFromIndex(jobPaths.path, jobPaths.isDirectory)
+		t.removePathFromIndex(jobPaths.path, jobPaths.kind)
 		if jobPaths.newPath != "" {
-			t.removePathFromIndex(jobPaths.newPath, jobPaths.isDirectory)
+			t.removePathFromIndex(jobPaths.newPath, jobPaths.kind)
 		}
 
 		// Lazy-clean stale entries from heap top (already-completed jobs).
@@ -216,28 +285,47 @@ func (t *MetadataProcessor) AddSyncJob(resp *filer_pb.SubscribeMetadataResponse)
 	}()
 }
 
-func extractPathsFromMetadata(resp *filer_pb.SubscribeMetadataResponse) (p, newPath util.FullPath, isDirectory bool) {
+// extractJobInfo derives the conflict-detection path(s) and job kind for a
+// metadata event. A rename returns both the source and destination paths; all
+// other event shapes return only the primary path.
+func extractJobInfo(resp *filer_pb.SubscribeMetadataResponse) (p, newPath util.FullPath, kind jobKind) {
 	oldEntry := resp.EventNotification.OldEntry
 	newEntry := resp.EventNotification.NewEntry
 	// create
 	if filer_pb.IsCreate(resp) {
 		p = util.FullPath(resp.Directory).Child(newEntry.Name)
-		isDirectory = newEntry.IsDirectory
+		kind = classifyDirEvent(newEntry.IsDirectory, false)
 		return
 	}
 	if filer_pb.IsDelete(resp) {
 		p = util.FullPath(resp.Directory).Child(oldEntry.Name)
-		isDirectory = oldEntry.IsDirectory
+		kind = classifyDirEvent(oldEntry.IsDirectory, false)
 		return
 	}
 	if filer_pb.IsUpdate(resp) {
 		p = util.FullPath(resp.Directory).Child(newEntry.Name)
-		isDirectory = newEntry.IsDirectory
+		// In-place attribute update: non-barrier when the entry is a dir.
+		kind = classifyDirEvent(newEntry.IsDirectory, true)
 		return
 	}
-	// renaming
+	// renaming: the namespace is reshaped on both sides, so a directory
+	// rename is a barrier on both source and destination.
 	p = util.FullPath(resp.Directory).Child(oldEntry.Name)
-	isDirectory = oldEntry.IsDirectory
 	newPath = util.FullPath(resp.EventNotification.NewParentPath).Child(newEntry.Name)
+	kind = classifyDirEvent(oldEntry.IsDirectory, false)
 	return
+}
+
+// classifyDirEvent maps an entry's (isDirectory, isAttributeUpdate) pair to a
+// jobKind. Attribute-only updates on directories are the only non-barrier
+// case; everything else on a directory (create/delete/rename) is a barrier,
+// and everything on a file is kindFile.
+func classifyDirEvent(isDirectory, isAttributeUpdate bool) jobKind {
+	if !isDirectory {
+		return kindFile
+	}
+	if isAttributeUpdate {
+		return kindNonBarrierDir
+	}
+	return kindBarrierDir
 }

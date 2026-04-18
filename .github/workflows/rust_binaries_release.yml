@@ -89,7 +89,7 @@ jobs:
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
@@ -166,7 +166,7 @@ jobs:
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_${{ matrix.asset_suffix }}.tar.gz
@@ -235,7 +235,7 @@ jobs:
 
       - name: Upload release assets
         if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             weed-volume_large_disk_windows_amd64.zip

@@ -132,6 +132,33 @@ func TestCheckaAnonymousRequestAuthType(t *testing.T) {
 
 }
 
+// TestAnonymousListBucketsWithPrefixAction verifies that an anonymous identity
+// holding a prefix-scoped List action (e.g. "List:prefix-*") is not denied at
+// the global auth layer when issuing ListBuckets. The per-bucket permission
+// check happens inside ListBucketsHandler, so the global auth step must let
+// the request through.
+//
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/9072
+func TestAnonymousListBucketsWithPrefixAction(t *testing.T) {
+	iam := &IdentityAccessManagement{
+		hashes:       make(map[string]*sync.Pool),
+		hashCounters: make(map[string]*int32),
+	}
+	_ = iam.loadS3ApiConfiguration(&iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name:    s3_constants.AccountAnonymousId,
+				Actions: []string{"Read:prefix-*", "List:prefix-*"},
+			},
+		},
+	})
+
+	req := mustNewRequest(http.MethodGet, "http://127.0.0.1:9000/", 0, nil, t)
+	if _, s3Error := iam.authRequest(req, s3_constants.ACTION_LIST); s3Error != s3err.ErrNone {
+		t.Errorf("anonymous ListBuckets with prefix-scoped List action: want ErrNone, got %d", s3Error)
+	}
+}
+
 func TestCheckAdminRequestAuthType(t *testing.T) {
 	iam := &IdentityAccessManagement{
 		hashes:       make(map[string]*sync.Pool),

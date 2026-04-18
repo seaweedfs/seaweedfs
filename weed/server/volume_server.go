@@ -142,6 +142,7 @@ func NewVolumeServer(adminMux, publicMux *http.ServeMux, ip string,
 
 	stats.VolumeServerConcurrentDownloadLimit.Set(float64(vs.concurrentDownloadLimit))
 	stats.VolumeServerConcurrentUploadLimit.Set(float64(vs.concurrentUploadLimit))
+	stats.VolumeServerStartTimeSeconds.Set(float64(time.Now().Unix()))
 
 	go vs.heartbeat()
 	go stats.LoopPushingMetric("volumeServer", util.JoinHostPort(ip, port), vs.metricsAddress, vs.metricsIntervalSec)

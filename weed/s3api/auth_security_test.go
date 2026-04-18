@@ -129,6 +129,24 @@ func TestReproIssue7912(t *testing.T) {
 		// No Authorization header
 		_, errCode3 := iam.AuthSignatureOnly(r3)
 		assert.Equal(t, s3err.ErrAccessDenied, errCode3, "AuthSignatureOnly should be denied with unsigned streaming if no auth header")
+
+		// Verify fix: client-supplied X-SeaweedFS-Principal / X-SeaweedFS-Session-Token
+		// headers must be stripped, otherwise a signed low-privilege caller could
+		// spoof the principal that downstream IAM authorization (e.g. S3Tables
+		// CreateTableBucket) evaluates against.
+		r4 := httptest.NewRequest(http.MethodGet, "http://localhost:8333/", nil)
+		r4.Host = "localhost:8333"
+		err = signRawHTTPRequest(context.Background(), r4, "readonly_access_key", "readonly_secret_key", "us-east-1")
+		require.NoError(t, err)
+		// Attacker injects these headers after signing; they are not part of
+		// SignedHeaders, so SigV4 verification still passes.
+		r4.Header.Set(s3_constants.SeaweedFSPrincipalHeader, "arn:aws:iam::123456789012:root")
+		r4.Header.Set(s3_constants.SeaweedFSSessionTokenHeader, "spoofed-session-token")
+
+		_, errCode4 := iam.AuthSignatureOnly(r4)
+		assert.Equal(t, s3err.ErrNone, errCode4)
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSPrincipalHeader), "client-supplied X-SeaweedFS-Principal must be stripped")
+		assert.Empty(t, r4.Header.Get(s3_constants.SeaweedFSSessionTokenHeader), "client-supplied X-SeaweedFS-Session-Token must be stripped")
 	})
 
 	t.Run("Wrong secret key", func(t *testing.T) {

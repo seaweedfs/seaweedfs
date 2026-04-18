@@ -73,6 +73,12 @@ type S3Options struct {
 	cipher                    *bool
 	externalUrl               *string
 	defaultFileMode           *string
+	cacheSizeMB               *int64
+	// shutdownCtx, when non-nil, tells startS3Server/startIcebergServer to
+	// gracefully shut down their HTTP/gRPC servers once the ctx is cancelled.
+	// Used by weed mini to orchestrate an ordered shutdown; nil for standalone
+	// weed s3.
+	shutdownCtx context.Context
 }
 
 func init() {
@@ -109,6 +115,7 @@ func init() {
 	s3StandaloneOptions.cipher = cmdS3.Flag.Bool("encryptVolumeData", false, "encrypt data on volume servers")
 	s3StandaloneOptions.externalUrl = cmdS3.Flag.String("externalUrl", "", "the external URL clients use to connect (e.g. https://api.example.com:9000). Used for S3 signature verification behind a reverse proxy. Falls back to S3_EXTERNAL_URL env var.")
 	s3StandaloneOptions.defaultFileMode = cmdS3.Flag.String("defaultFileMode", "", "default file mode for S3 uploaded objects, e.g. 0660, 0644, 0666")
+	s3StandaloneOptions.cacheSizeMB = cmdS3.Flag.Int64("cacheCapacityMB", 0, "in-memory chunk cache capacity in MB for S3 GETs shared across requests (0 disables)")
 }
 
 var cmdS3 = &Command{
@@ -343,6 +350,7 @@ func (s3opt *S3Options) startS3Server() bool {
 		GrpcPort:                  *s3opt.portGrpc,
 		ExternalUrl:               s3opt.resolveExternalUrl(),
 		DefaultFileMode:           defaultFileMode,
+		CacheSizeMB:               *s3opt.cacheSizeMB,
 	})
 	if s3ApiServer_err != nil {
 		glog.Fatalf("S3 API Server startup error: %v", s3ApiServer_err)
@@ -450,10 +458,9 @@ func (s3opt *S3Options) startS3Server() bool {
 				}()
 			}
 			httpS := newHttpServer(router, tlsConfig)
-			if MiniClusterCtx != nil {
-				ctx := MiniClusterCtx
+			if s3opt.shutdownCtx != nil {
 				go func() {
-					<-ctx.Done()
+					<-s3opt.shutdownCtx.Done()
 					httpS.Shutdown(context.Background())
 					grpcS.Stop()
 				}()
@@ -492,9 +499,9 @@ func (s3opt *S3Options) startS3Server() bool {
 			}()
 		}
 		httpS := newHttpServer(router, nil)
-		if MiniClusterCtx != nil {
+		if s3opt.shutdownCtx != nil {
 			go func() {
-				<-MiniClusterCtx.Done()
+				<-s3opt.shutdownCtx.Done()
 				httpS.Shutdown(context.Background())
 				grpcS.Stop()
 			}()
@@ -515,6 +522,7 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	// Create Iceberg server using the S3ApiServer as filer client
 	icebergServer := iceberg.NewServer(s3ApiServer, s3ApiServer)
 	icebergServer.SetCredentialValidator(s3ApiServer)
+	icebergServer.SetS3Endpoint(s3opt.deriveS3AdvertisedEndpoint())
 	icebergServer.RegisterRoutes(icebergRouter)
 
 	listenAddress := fmt.Sprintf("%s:%d", *s3opt.bindIp, *s3opt.portIceberg)
@@ -527,9 +535,9 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	glog.V(0).Infof("Start Iceberg REST Catalog Server at http://%s", listenAddress)
 
 	httpS := newHttpServer(icebergRouter, nil)
-	if MiniClusterCtx != nil {
+	if s3opt.shutdownCtx != nil {
 		go func() {
-			<-MiniClusterCtx.Done()
+			<-s3opt.shutdownCtx.Done()
 			httpS.Shutdown(context.Background())
 		}()
 	}
@@ -544,4 +552,44 @@ func (s3opt *S3Options) startIcebergServer(s3ApiServer *s3api.S3ApiServer) {
 	if err = httpS.Serve(icebergListener); err != nil && err != http.ErrServerClosed {
 		glog.Fatalf("Iceberg REST Catalog Server Fail to serve: %v", err)
 	}
+}
+
+// deriveS3AdvertisedEndpoint builds the S3 endpoint URL to advertise to
+// Iceberg catalog clients as part of LoadTable FileIO config. To avoid
+// hijacking correctly-configured clients (Spark/Trino/PyIceberg all bring
+// their own s3.endpoint), advertising is strictly opt-in and returns ""
+// whenever no reliable value is available:
+//   - -s3.externalUrl / S3_EXTERNAL_URL wins and supports reverse-proxy
+//     deployments.
+//   - Otherwise the bind IP is used only when it is explicit and not a
+//     wildcard (0.0.0.0 / ::), with the scheme picked from TLS config and
+//     IPv6 literals bracketed via util.JoinHostPort.
+//
+// See issue #9103.
+func (s3opt *S3Options) deriveS3AdvertisedEndpoint() string {
+	if ext := strings.TrimRight(s3opt.resolveExternalUrl(), "/"); ext != "" {
+		return ext
+	}
+
+	host := ""
+	if s3opt.bindIp != nil {
+		host = *s3opt.bindIp
+	}
+	switch host {
+	case "", "0.0.0.0", "::", "[::]":
+		return ""
+	}
+
+	scheme := "http"
+	port := 0
+	if s3opt.port != nil {
+		port = *s3opt.port
+	}
+	if s3opt.tlsPrivateKey != nil && *s3opt.tlsPrivateKey != "" {
+		scheme = "https"
+		if s3opt.portHttps != nil && *s3opt.portHttps > 0 {
+			port = *s3opt.portHttps
+		}
+	}
+	return fmt.Sprintf("%s://%s", scheme, util.JoinHostPort(host, port))
 }

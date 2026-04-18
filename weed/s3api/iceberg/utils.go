@@ -101,10 +101,22 @@ func writeError(w http.ResponseWriter, status int, errType, message string) {
 
 // getBucketFromPrefix extracts table bucket name from prefix parameter.
 // For now, we use the prefix as the table bucket name.
+//
+// The Iceberg REST spec lets clients identify a catalog either by embedding
+// its prefix in the URL (/v1/{prefix}/...) or by passing ?warehouse=s3://
+// <bucket>/ as a query parameter. Clients that skip the /v1/config handshake
+// (or ignore its overrides) still routinely send the warehouse parameter on
+// every request, so honor it as a fallback before the env-var default.
+// See issue #9103.
 func getBucketFromPrefix(r *http.Request) string {
 	vars := mux.Vars(r)
 	if prefix := vars["prefix"]; prefix != "" {
 		return prefix
+	}
+	if warehouse := strings.TrimSpace(r.URL.Query().Get("warehouse")); warehouse != "" {
+		if bucket, _, err := parseS3Location(warehouse); err == nil && bucket != "" {
+			return bucket
+		}
 	}
 	if bucket := os.Getenv("S3TABLES_DEFAULT_BUCKET"); bucket != "" {
 		return bucket
