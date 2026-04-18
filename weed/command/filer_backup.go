@@ -423,32 +423,13 @@ func runInitialSnapshot(
 	return snapshotTsNs, nil
 }
 
-// initialSnapshotTargetKey mirrors buildKey from filer_sync.go but works from a
-// raw (sourceKey, entry) pair instead of an EventNotification. Kept close to
-// runInitialSnapshot so the mapping from source path to destination key stays
-// in one place for the seed path.
+// initialSnapshotTargetKey pulls the entry mtime and delegates to the shared
+// destKey helper in filer_sync.go so the walk and the event-log path produce
+// the same destination key for the same source entry.
 func initialSnapshotTargetKey(dataSink sink.ReplicationSink, targetPath, sourcePath string, sourceKey util.FullPath, entry *filer_pb.Entry) string {
-	// Normalize to a trailing-slash base so trimming never depends on whether
-	// the caller passed sourcePath with or without one, and never indexes past
-	// the end of sourceKey (IsEqualOrUnder upstream admits the equal case).
-	base := strings.TrimSuffix(sourcePath, "/") + "/"
-	sk := string(sourceKey)
-	var relative string
-	switch {
-	case strings.HasPrefix(sk, base):
-		relative = sk[len(base):]
-	case sk == strings.TrimSuffix(sourcePath, "/"):
-		relative = ""
-	default:
-		relative = strings.TrimPrefix(sk, "/")
-	}
-	if !dataSink.IsIncremental() {
-		return escapeKey(util.Join(targetPath, relative))
-	}
 	var mTime int64
 	if entry.Attributes != nil {
 		mTime = entry.Attributes.Mtime
 	}
-	dateKey := time.Unix(mTime, 0).Format("2006-01-02")
-	return escapeKey(util.Join(targetPath, dateKey, relative))
+	return destKey(dataSink, targetPath, sourcePath, sourceKey, mTime)
 }

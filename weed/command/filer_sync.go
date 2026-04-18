@@ -653,21 +653,39 @@ func genProcessFunction(sourcePath string, targetPath string, excludePaths []str
 	return processEventFn
 }
 
-func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification, targetPath string, sourceKey util.FullPath, sourcePath string) (key string) {
-	if !dataSink.IsIncremental() {
-		key = util.Join(targetPath, string(sourceKey)[len(sourcePath):])
-	} else {
-		var mTime int64
-		if message.NewEntry != nil {
-			mTime = message.NewEntry.Attributes.Mtime
-		} else if message.OldEntry != nil {
-			mTime = message.OldEntry.Attributes.Mtime
-		}
-		dateKey := time.Unix(mTime, 0).Format("2006-01-02")
-		key = util.Join(targetPath, dateKey, string(sourceKey)[len(sourcePath):])
+func buildKey(dataSink sink.ReplicationSink, message *filer_pb.EventNotification, targetPath string, sourceKey util.FullPath, sourcePath string) string {
+	var mTime int64
+	if message.NewEntry != nil && message.NewEntry.Attributes != nil {
+		mTime = message.NewEntry.Attributes.Mtime
+	} else if message.OldEntry != nil && message.OldEntry.Attributes != nil {
+		mTime = message.OldEntry.Attributes.Mtime
 	}
+	return destKey(dataSink, targetPath, sourcePath, sourceKey, mTime)
+}
 
-	return escapeKey(key)
+// destKey derives the sink-side key for a source entry. Shared between the
+// event-log path (buildKey) and the initialSnapshot walk (both paths need the
+// same target layout so a walk-seeded file and an event-replayed file resolve
+// to the same destination key). Normalizing to a trailing-slash base avoids
+// indexing past the end of sourceKey when callers differ on trailing-slash
+// conventions or when sourceKey equals sourcePath exactly.
+func destKey(dataSink sink.ReplicationSink, targetPath, sourcePath string, sourceKey util.FullPath, mTime int64) string {
+	base := strings.TrimSuffix(sourcePath, "/") + "/"
+	sk := string(sourceKey)
+	var relative string
+	switch {
+	case strings.HasPrefix(sk, base):
+		relative = sk[len(base):]
+	case sk == strings.TrimSuffix(sourcePath, "/"):
+		relative = ""
+	default:
+		relative = strings.TrimPrefix(sk, "/")
+	}
+	if !dataSink.IsIncremental() {
+		return escapeKey(util.Join(targetPath, relative))
+	}
+	dateKey := time.Unix(mTime, 0).Format("2006-01-02")
+	return escapeKey(util.Join(targetPath, dateKey, relative))
 }
 
 // isEntryExcluded checks whether a single side (old or new) of an event is excluded
