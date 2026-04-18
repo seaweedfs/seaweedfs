@@ -311,7 +311,7 @@ func initMiniFilerFlags() {
 	miniFilerOptions.allowedOrigins = cmdMini.Flag.String("filer.allowedOrigins", "*", "comma separated list of allowed origins")
 	miniFilerOptions.exposeDirectoryData = cmdMini.Flag.Bool("filer.exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	miniFilerOptions.tusBasePath = cmdMini.Flag.String("filer.tusBasePath", "/.tus", "TUS resumable upload endpoint base path")
-	miniFilerOptions.mountPeerRegistryEnable = cmdMini.Flag.Bool("filer.peer.registry.enable", true, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1). Idle cost is near-zero; set false to disable.")
+	miniFilerOptions.mountPeerRegistryEnable = cmdMini.Flag.Bool("filer.mount.p2p", true, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1). Idle cost is near-zero; set false to disable.")
 }
 
 // initMiniVolumeFlags initializes Volume server flag options

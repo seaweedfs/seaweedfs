@@ -127,7 +127,7 @@ func init() {
 	f.allowedOrigins = cmdFiler.Flag.String("allowedOrigins", "*", "comma separated list of allowed origins")
 	f.exposeDirectoryData = cmdFiler.Flag.Bool("exposeDirectoryData", true, "whether to return directory metadata and content in Filer UI")
 	f.tusBasePath = cmdFiler.Flag.String("tusBasePath", "/.tus", "TUS resumable upload endpoint base path (e.g., /.tus)")
-	f.mountPeerRegistryEnable = cmdFiler.Flag.Bool("peer.registry.enable", true, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1). Idle cost is near-zero; set false to disable.")
+	f.mountPeerRegistryEnable = cmdFiler.Flag.Bool("mount.p2p", true, "accept MountRegister/MountList RPCs from weed mount clients for peer chunk sharing (tier 1). Idle cost is near-zero; set false to disable.")
 
 	// start s3 on filer
 	filerStartS3 = cmdFiler.Flag.Bool("s3", false, "whether to start S3 gateway")
