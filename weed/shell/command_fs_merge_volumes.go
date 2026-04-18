@@ -119,6 +119,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				return nil
 			}
 			entryPath := parentPath.Child(entry.Name)
+			entryChanged := false
 			for i, chunk := range entry.Chunks {
 				if chunk.IsChunkManifest {
 					newChunk, changed, mErr := c.rewriteManifestChunk(context.Background(), commandEnv, lookupFn, plan, entryPath, chunk, *apply)
@@ -130,12 +131,7 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 						continue
 					}
 					entry.Chunks[i] = newChunk
-					if uErr := filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
-						Directory: string(parentPath),
-						Entry:     entry,
-					}); uErr != nil {
-						fmt.Printf("failed to update %s: %v\n", entryPath, uErr)
-					}
+					entryChanged = true
 					continue
 				}
 
@@ -149,16 +145,18 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				if !*apply {
 					continue
 				}
-				if err = moveChunk(chunk, toVolumeId, commandEnv.MasterClient); err != nil {
-					fmt.Printf("failed to move %s/%s: %v\n", entryPath, chunk.GetFileIdString(), err)
+				if mvErr := moveChunk(chunk, toVolumeId, commandEnv.MasterClient); mvErr != nil {
+					fmt.Printf("failed to move %s(%s): %v\n", entryPath, chunk.GetFileIdString(), mvErr)
 					continue
 				}
-
-				if err = filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
+				entryChanged = true
+			}
+			if entryChanged {
+				if uErr := filer_pb.UpdateEntry(context.Background(), filerClient, &filer_pb.UpdateEntryRequest{
 					Directory: string(parentPath),
 					Entry:     entry,
-				}); err != nil {
-					fmt.Printf("failed to update %s: %v\n", entryPath, err)
+				}); uErr != nil {
+					fmt.Printf("failed to update %s: %v\n", entryPath, uErr)
 				}
 			}
 			return nil
@@ -364,6 +362,7 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 		}
 		fmt.Printf("move %s(%s) [inside manifest %s]\n", entryPath, sub.GetFileIdString(), chunk.GetFileIdString())
 		if !apply {
+			anySubChanged = true
 			continue
 		}
 		if mErr := moveChunk(sub, toVid, commandEnv.MasterClient); mErr != nil {
@@ -382,21 +381,24 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 
 	fmt.Printf("rewrite manifest %s(%s)\n", entryPath, chunk.GetFileIdString())
 	if !apply {
-		return chunk, false, nil
+		// Propagate "would change" so nested callers also announce their
+		// rewrites in dry-run mode. The top-level caller gates any actual
+		// filer writes on *apply, so returning true here is safe.
+		return chunk, true, nil
 	}
 
 	filer_pb.BeforeEntrySerialization(subChunks)
+	defer filer_pb.AfterEntryDeserialization(subChunks)
 	data, err := proto.Marshal(&filer_pb.FileChunkManifest{Chunks: subChunks})
 	if err != nil {
 		return chunk, false, fmt.Errorf("marshal manifest: %w", err)
 	}
-	filer_pb.AfterEntryDeserialization(subChunks)
 
 	collection := ""
 	if info, ok := c.volumes[manifestVid]; ok {
 		collection = info.Collection
 	}
-	newChunk, err := c.uploadManifestChunk(ctx, commandEnv, entryPath, collection, data)
+	newChunk, err := c.uploadManifestChunk(ctx, commandEnv, entryPath, collection, plan, data)
 	if err != nil {
 		return chunk, false, fmt.Errorf("upload new manifest: %w", err)
 	}
@@ -413,30 +415,46 @@ func (c *commandFsMergeVolumes) rewriteManifestChunk(
 }
 
 // uploadManifestChunk assigns a fresh file id via the filer and uploads the
-// given manifest bytes to the chosen volume server.
+// given manifest bytes to the chosen volume server. If the filer picks a
+// volume that is a source in the merge plan, the assignment is rejected and
+// retried up to manifestAssignAttempts times — otherwise the replacement
+// manifest would land on the very volume this command is trying to empty.
 func (c *commandFsMergeVolumes) uploadManifestChunk(
 	ctx context.Context,
 	commandEnv *CommandEnv,
 	entryPath util.FullPath,
 	collection string,
+	plan map[needle.VolumeId]needle.VolumeId,
 	data []byte,
 ) (*filer_pb.FileChunk, error) {
+	const manifestAssignAttempts = 10
 	var assignResp *filer_pb.AssignVolumeResponse
 	if err := commandEnv.WithFilerClient(false, func(client filer_pb.SeaweedFilerClient) error {
-		resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
-			Count:            1,
-			Collection:       collection,
-			Path:             string(entryPath),
-			ExpectedDataSize: uint64(len(data)),
-		})
-		if err != nil {
-			return err
+		for attempt := 1; attempt <= manifestAssignAttempts; attempt++ {
+			resp, err := client.AssignVolume(ctx, &filer_pb.AssignVolumeRequest{
+				Count:            1,
+				Collection:       collection,
+				Path:             string(entryPath),
+				ExpectedDataSize: uint64(len(data)),
+			})
+			if err != nil {
+				return err
+			}
+			if resp.Error != "" {
+				return fmt.Errorf("%s", resp.Error)
+			}
+			fid, parseErr := filer_pb.ToFileIdObject(resp.FileId)
+			if parseErr != nil {
+				return fmt.Errorf("parse assigned fid %q: %w", resp.FileId, parseErr)
+			}
+			if _, isSource := plan[needle.VolumeId(fid.VolumeId)]; !isSource {
+				assignResp = resp
+				return nil
+			}
+			fmt.Printf("rejecting manifest assignment to merge-source volume %d (attempt %d/%d)\n",
+				fid.VolumeId, attempt, manifestAssignAttempts)
 		}
-		if resp.Error != "" {
-			return fmt.Errorf("%s", resp.Error)
-		}
-		assignResp = resp
-		return nil
+		return fmt.Errorf("filer kept assigning manifest uploads to merge-source volumes after %d attempts", manifestAssignAttempts)
 	}); err != nil {
 		return nil, fmt.Errorf("assign volume: %w", err)
 	}
