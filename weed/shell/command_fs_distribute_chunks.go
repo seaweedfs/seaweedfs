@@ -812,7 +812,7 @@ func executeChunkMoves(
 // filer.MaybeManifestize from shell context. The master selects placement —
 // manifest chunks are metadata and don't need fan-out distribution.
 func newShellSaveAsChunk(commandEnv *CommandEnv) filer.SaveDataAsChunkFunctionType {
-	return filer.SaveDataAsChunkFunctionType(func(reader io.Reader, name string, offset int64, tsNs int64) (*filer_pb.FileChunk, error) {
+	return filer.SaveDataAsChunkFunctionType(func(reader io.Reader, name string, offset int64, tsNs int64, _ uint64) (*filer_pb.FileChunk, error) {
 		uploader, err := operation.NewUploader()
 		if err != nil {
 			return nil, fmt.Errorf("create uploader: %v", err)
