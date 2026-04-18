@@ -116,7 +116,11 @@ func (bc *BrokerClient) HealthCheck() error {
 		if attempt == brokerHealthCheckAttempts {
 			break
 		}
-		time.Sleep(time.Duration(attempt) * brokerHealthCheckBackoff)
+		select {
+		case <-bc.ctx.Done():
+			return bc.ctx.Err()
+		case <-time.After(time.Duration(attempt) * brokerHealthCheckBackoff):
+		}
 	}
 
 	return fmt.Errorf("broker health check failed after %d attempts: %v", brokerHealthCheckAttempts, lastErr)
