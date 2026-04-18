@@ -142,6 +142,8 @@ type WFS struct {
 	peerRegistrar        *PeerRegistrar
 	peerDirectory        *PeerDirectory
 	peerGrpcServer       *PeerGrpcServer
+	peerAnnouncer        *PeerAnnouncer
+	peerConnPool         *PeerConnPool
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
@@ -339,6 +341,12 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerAnnouncer != nil {
+			wfs.peerAnnouncer.Stop()
+		}
+		if wfs.peerConnPool != nil {
+			wfs.peerConnPool.Close()
+		}
 		if wfs.peerGrpcServer != nil {
 			wfs.peerGrpcServer.Stop()
 		}
@@ -397,6 +405,20 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 				wfs.peerGrpcServer = nil
 			} else {
 				go wfs.runPeerDirectorySweeper()
+
+				// Shared connection pool + announcer. Pool reuses one
+				// grpc.ClientConn per owner mount across both the
+				// announcer flush and (next PR) the fetcher's
+				// ChunkLookup + FetchChunk calls.
+				wfs.peerConnPool = NewPeerConnPool()
+				wfs.peerAnnouncer = NewPeerAnnouncer(
+					selfAddr,
+					option.PeerDataCenter,
+					option.PeerRack,
+					wfs.peerRegistrar.OwnerFor,
+					wfs.peerConnPool.Dialer(),
+				)
+				wfs.peerAnnouncer.Start()
 			}
 		}
 	}
