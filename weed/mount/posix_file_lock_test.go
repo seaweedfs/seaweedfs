@@ -2,6 +2,9 @@ package mount
 
 import (
 	"math"
+	"runtime"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -613,5 +616,59 @@ func TestAdjacencyNoOverflowAtMaxUint64(t *testing.T) {
 	}
 	if ownerLocks != 2 {
 		t.Fatalf("expected 2 separate locks (no overflow merge), got %d", ownerLocks)
+	}
+}
+
+// TestConcurrentFlockChurnPreservesMutualExclusion exercises the race between
+// getOrCreateInodeLocks returning an inodeLocks pointer and a concurrent
+// maybeCleanupInode removing that inodeLocks from the map. A caller holding
+// a stale pointer could insert its lock into the orphaned inodeLocks while a
+// subsequent caller created a fresh inodeLocks in the map, causing two owners
+// to simultaneously believe they held the same whole-file exclusive flock.
+func TestConcurrentFlockChurnPreservesMutualExclusion(t *testing.T) {
+	plt := NewPosixLockTable()
+	const (
+		inode      = uint64(42)
+		numWorkers = 16
+		iterations = 500
+	)
+	var (
+		wg          sync.WaitGroup
+		holders     atomic.Int32
+		overlapSeen atomic.Int32
+	)
+
+	for w := 0; w < numWorkers; w++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			owner := uint64(100 + id)
+			lock := lockRange{
+				Start:   0,
+				End:     math.MaxUint64,
+				Typ:     syscall.F_WRLCK,
+				Owner:   owner,
+				Pid:     uint32(id + 1),
+				IsFlock: true,
+			}
+			unlock := lock
+			unlock.Typ = syscall.F_UNLCK
+			for i := 0; i < iterations; i++ {
+				for plt.SetLk(inode, lock) != fuse.OK {
+					runtime.Gosched()
+				}
+				if holders.Add(1) != 1 {
+					overlapSeen.Add(1)
+				}
+				runtime.Gosched()
+				holders.Add(-1)
+				plt.SetLk(inode, unlock)
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	if n := overlapSeen.Load(); n != 0 {
+		t.Fatalf("flock overlap detected %d times: two owners simultaneously granted the same exclusive lock", n)
 	}
 }

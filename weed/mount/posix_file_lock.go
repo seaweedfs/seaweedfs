@@ -27,6 +27,12 @@ type inodeLocks struct {
 	locks    []lockRange   // currently held locks, sorted by Start
 	waiters  []*lockWaiter // blocked SetLkw callers
 	wakeRefs int           // woken waiters still retrying on this inodeLocks
+	// dead marks an inodeLocks that has been removed from the table's map.
+	// A caller holding a pointer returned by getInodeLocks/getOrCreateInodeLocks
+	// must recheck this flag after acquiring il.mu: if true, the pointer is
+	// orphaned and must be refreshed from the table so findConflict runs
+	// against the live state.
+	dead bool
 }
 
 // lockWaiter represents a blocked SetLkw caller.
@@ -68,7 +74,10 @@ func (plt *PosixLockTable) getInodeLocks(inode uint64) *inodeLocks {
 }
 
 // maybeCleanupInode removes the inodeLocks entry if it has no locks, no waiters,
-// and no woken waiters still retrying against this inodeLocks.
+// and no woken waiters still retrying against this inodeLocks. The removed
+// inodeLocks is marked dead so any caller that is mid-way through acquiring
+// il.mu with a stale pointer will notice and refetch from the map instead of
+// mutating an orphaned instance (which would be invisible to future callers).
 func (plt *PosixLockTable) maybeCleanupInode(inode uint64, il *inodeLocks) {
 	// Caller must NOT hold il.mu. We acquire both locks in the correct order.
 	plt.mu.Lock()
@@ -76,7 +85,10 @@ func (plt *PosixLockTable) maybeCleanupInode(inode uint64, il *inodeLocks) {
 	il.mu.Lock()
 	defer il.mu.Unlock()
 	if len(il.locks) == 0 && len(il.waiters) == 0 && il.wakeRefs == 0 {
-		delete(plt.inodes, inode)
+		if plt.inodes[inode] == il {
+			delete(plt.inodes, inode)
+		}
+		il.dead = true
 	}
 }
 
@@ -276,6 +288,13 @@ func (plt *PosixLockTable) SetLk(inode uint64, lk lockRange) fuse.Status {
 			return fuse.OK
 		}
 		il.mu.Lock()
+		if il.dead {
+			// Orphaned by a concurrent cleanup: any lock we may have held
+			// is gone with it, and there is no point waking waiters on a
+			// detached inodeLocks.
+			il.mu.Unlock()
+			return fuse.OK
+		}
 		removeLocks(il, func(existing lockRange) bool {
 			return existing.Owner == lk.Owner && existing.IsFlock == lk.IsFlock
 		}, lk.Start, lk.End)
@@ -285,15 +304,21 @@ func (plt *PosixLockTable) SetLk(inode uint64, lk lockRange) fuse.Status {
 		return fuse.OK
 	}
 
-	il := plt.getOrCreateInodeLocks(inode)
-	il.mu.Lock()
-	if _, found := findConflict(il.locks, lk); found {
+	for {
+		il := plt.getOrCreateInodeLocks(inode)
+		il.mu.Lock()
+		if il.dead {
+			il.mu.Unlock()
+			continue
+		}
+		if _, found := findConflict(il.locks, lk); found {
+			il.mu.Unlock()
+			return fuse.EAGAIN
+		}
+		insertAndCoalesce(il, lk)
 		il.mu.Unlock()
-		return fuse.EAGAIN
+		return fuse.OK
 	}
-	insertAndCoalesce(il, lk)
-	il.mu.Unlock()
-	return fuse.OK
 }
 
 // SetLkw attempts a blocking lock. It waits until the lock can be acquired
@@ -307,6 +332,15 @@ func (plt *PosixLockTable) SetLkw(inode uint64, lk lockRange, cancel <-chan stru
 	var waiter *lockWaiter
 	for {
 		il.mu.Lock()
+		if il.dead {
+			// The inodeLocks we were holding was orphaned by a concurrent
+			// cleanup. Refetch the live instance from the table and retry.
+			// A dead il never has waiters or wakeRefs (the cleanup condition
+			// requires both to be zero), so waiter is guaranteed nil here.
+			il.mu.Unlock()
+			il = plt.getOrCreateInodeLocks(inode)
+			continue
+		}
 		releaseWakeRef(il, waiter)
 		if _, found := findConflict(il.locks, lk); !found {
 			insertAndCoalesce(il, lk)
