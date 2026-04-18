@@ -139,6 +139,7 @@ type WFS struct {
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
+	peerRegistrar        *PeerRegistrar
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
@@ -336,6 +337,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerRegistrar != nil {
+			wfs.peerRegistrar.Stop()
+		}
 	})
 
 	// Initialize RDMA client if enabled
@@ -352,6 +356,23 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.rdmaClient = rdmaClient
 			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
 				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
+		}
+	}
+
+	// Peer chunk sharing: register with the filer's mount registry.
+	// PR 3 resolved the advertise address; pass it through so the registrar
+	// heartbeats a reachable identity rather than a wildcard bind. The gRPC
+	// server that serves ChunkAnnounce/Lookup/FetchChunk is started later
+	// (PR 5); until then the registrar is a no-op beyond heartbeats.
+	if option.PeerEnabled {
+		selfAddr, err := ResolvePeerAdvertiseAddr(option.PeerListen, option.PeerAdvertise)
+		if err != nil {
+			glog.Warningf("peer: cannot resolve advertise addr: %v", err)
+		} else {
+			wfs.peerRegistrar = NewPeerRegistrar(wfs, selfAddr, option.PeerDataCenter, option.PeerRack)
+			if err := wfs.peerRegistrar.Start(context.Background()); err != nil {
+				glog.Warningf("peer registrar start: %v", err)
+			}
 		}
 	}
 
