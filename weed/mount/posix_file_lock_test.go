@@ -780,7 +780,19 @@ func TestConcurrentFlockChurnPreservesMutualExclusion(t *testing.T) {
 			unlock.Typ = syscall.F_UNLCK
 			token := int64(id + 1)
 			for i := 0; i < iterations; i++ {
-				for plt.SetLk(inode, lock) != fuse.OK {
+				// SetLk(WRLCK) may only return OK (granted) or EAGAIN
+				// (conflict); anything else indicates a bug and the test
+				// must fail rather than spin. Use Errorf + return because
+				// Fatalf is not safe from a non-test goroutine.
+				for {
+					s := plt.SetLk(inode, lock)
+					if s == fuse.OK {
+						break
+					}
+					if s != fuse.EAGAIN {
+						t.Errorf("worker %d iter %d: unexpected SetLk(WRLCK) status %v", id, i, s)
+						return
+					}
 					runtime.Gosched()
 				}
 				// Claim the slot. If Swap observes a non-zero predecessor,
@@ -797,7 +809,10 @@ func TestConcurrentFlockChurnPreservesMutualExclusion(t *testing.T) {
 				if !holder.CompareAndSwap(token, 0) {
 					overlapSeen.Add(1)
 				}
-				plt.SetLk(inode, unlock)
+				if s := plt.SetLk(inode, unlock); s != fuse.OK {
+					t.Errorf("worker %d iter %d: unexpected SetLk(UNLCK) status %v", id, i, s)
+					return
+				}
 			}
 		}(w)
 	}
