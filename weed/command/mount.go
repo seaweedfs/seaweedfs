@@ -52,6 +52,13 @@ type MountOptions struct {
 	rdmaMaxConcurrent *int
 	rdmaTimeoutMs     *int
 
+	// Peer chunk sharing options (design-weed-mount-peer-chunk-sharing.md).
+	peerEnabled      *bool
+	peerListen       *string
+	peerAdvertise    *string
+	peerDataCenter   *string
+	peerRack         *string
+
 	dirIdleEvictSec *int
 
 	// Distributed lock for cross-mount write coordination
@@ -128,6 +135,13 @@ func init() {
 	mountOptions.rdmaReadOnly = cmdMount.Flag.Bool("rdma.readOnly", false, "use RDMA for reads only (writes use HTTP)")
 	mountOptions.rdmaMaxConcurrent = cmdMount.Flag.Int("rdma.maxConcurrent", 64, "max concurrent RDMA operations")
 	mountOptions.rdmaTimeoutMs = cmdMount.Flag.Int("rdma.timeoutMs", 5000, "RDMA operation timeout in milliseconds")
+
+	// Peer chunk sharing flags.
+	mountOptions.peerEnabled = cmdMount.Flag.Bool("peer.enable", false, "opt in to peer chunk sharing — mount serves its chunk cache to other mounts and fetches from peers instead of volume servers when available")
+	mountOptions.peerListen = cmdMount.Flag.String("peer.listen", ":18080", "bind address for peer gRPC (directory RPCs + FetchChunk streaming)")
+	mountOptions.peerAdvertise = cmdMount.Flag.String("peer.advertise", "", "externally-reachable host:port other mounts use to reach this one (defaults to autodetected host + -peer.listen port)")
+	mountOptions.peerDataCenter = cmdMount.Flag.String("peer.dataCenter", "", "optional data-center label advertised to peers; used with -peer.rack for two-level locality ranking")
+	mountOptions.peerRack = cmdMount.Flag.String("peer.rack", "", "optional rack label advertised to peers")
 
 	mountOptions.dirIdleEvictSec = cmdMount.Flag.Int("dirIdleEvictSec", 600, "seconds to evict idle cached directories (0 to disable)")
 
