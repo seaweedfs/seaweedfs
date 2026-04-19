@@ -139,6 +139,7 @@ type WFS struct {
 	hardLinkLockTable    *util.LockTable[string]
 	posixLocks           *PosixLockTable
 	rdmaClient           *RDMAMountClient
+	peerRegistrar        *PeerRegistrar
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
 	refreshMu            sync.Mutex
@@ -336,6 +337,9 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerRegistrar != nil {
+			wfs.peerRegistrar.Stop()
+		}
 	})
 
 	// Initialize RDMA client if enabled
@@ -352,6 +356,36 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			wfs.rdmaClient = rdmaClient
 			glog.Infof("RDMA acceleration enabled: sidecar=%s, maxConcurrent=%d, timeout=%dms",
 				option.RdmaSidecarAddr, option.RdmaMaxConcurrent, option.RdmaTimeoutMs)
+		}
+	}
+
+	// Peer chunk sharing: register with every configured filer's mount
+	// registry. PR 3 resolved the advertise address; pass it through so
+	// the registrar heartbeats a reachable identity rather than a wildcard
+	// bind. Broadcasting to the full filer set is what lets mounts pointing
+	// at different filers see each other — each filer's registry is
+	// in-memory and there is no filer-to-filer sync. The gRPC server that
+	// serves ChunkAnnounce/Lookup/FetchChunk is started later (PR 5); until
+	// then the registrar is a no-op beyond heartbeats.
+	if option.PeerEnabled {
+		selfAddr, err := ResolvePeerAdvertiseAddr(option.PeerListen, option.PeerAdvertise)
+		if err != nil {
+			// Downstream code treats PeerEnabled as "peer infrastructure
+			// is ready": later PRs wire the gRPC server, fetcher hook,
+			// and announcer from this flag. If we can't resolve a
+			// reachable self-address those components would nil-deref
+			// or advertise garbage, so disable the feature instead of
+			// limping along half-initialized.
+			glog.Warningf("peer: cannot resolve advertise addr, disabling peer sharing: %v", err)
+			option.PeerEnabled = false
+		} else {
+			dial := func(ctx context.Context, addr pb.ServerAddress, fn func(client filer_pb.SeaweedFilerClient) error) error {
+				return pb.WithGrpcFilerClient(false, 0, addr, option.GrpcDialOption, fn)
+			}
+			wfs.peerRegistrar = NewPeerRegistrar(option.FilerAddresses, dial, selfAddr, option.PeerDataCenter, option.PeerRack)
+			if err := wfs.peerRegistrar.Start(context.Background()); err != nil {
+				glog.Warningf("peer registrar start: %v", err)
+			}
 		}
 	}
 
