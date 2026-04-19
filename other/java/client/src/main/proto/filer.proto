@@ -86,6 +86,13 @@ service SeaweedFiler {
     }
     rpc ReplicateLock(ReplicateLockRequest) returns (ReplicateLockResponse) {
     }
+
+    // Peer chunk sharing — tier 1: mount-server registry.
+    // See design-weed-mount-peer-chunk-sharing.md for details.
+    rpc MountRegister (MountRegisterRequest) returns (MountRegisterResponse) {
+    }
+    rpc MountList (MountListRequest) returns (MountListResponse) {
+    }
 }
 
 //////////////////////////////////////////////////
@@ -197,6 +204,10 @@ message FuseAttributes {
     bytes md5 = 14;
     uint32 rdev = 16;
     uint64 inode = 17;
+    int64 ctime = 18; // unix time in seconds, inode change time
+    int32 mtime_ns = 19; // nanosecond component of mtime (0-999999999)
+    int32 ctime_ns = 20; // nanosecond component of ctime (0-999999999)
+    int32 crtime_ns = 21; // nanosecond component of crtime (0-999999999)
 }
 
 message CreateEntryRequest {
@@ -596,4 +607,32 @@ message StreamMutateEntryResponse {
     }
     string error = 7; // human-readable error message when the operation failed
     int32 errno = 8;  // POSIX errno (e.g. ENOENT=2, ENOTEMPTY=66) for direct FUSE status mapping
+}
+
+//////////////////////////////////////////////////
+// Peer chunk sharing — mount-server registry
+//////////////////////////////////////////////////
+
+message MountRegisterRequest {
+    string peer_addr = 1;    // host:port where this mount serves peer chunk requests
+    string rack = 2;         // locality label (rack); used for peer ranking
+    int32 ttl_seconds = 3;   // how long the filer should keep this entry without a heartbeat
+    string data_center = 4;  // locality label (data center); coarser than rack
+}
+
+message MountRegisterResponse {
+}
+
+message MountListRequest {
+}
+
+message MountListResponse {
+    repeated MountInfo mounts = 1;
+}
+
+message MountInfo {
+    string peer_addr = 1;
+    string rack = 2;
+    int64 last_seen_ns = 3;
+    string data_center = 4;
 }

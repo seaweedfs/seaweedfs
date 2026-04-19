@@ -46,6 +46,8 @@ const (
 	SeaweedFiler_FindLockOwner_FullMethodName                   = "/filer_pb.SeaweedFiler/FindLockOwner"
 	SeaweedFiler_TransferLocks_FullMethodName                   = "/filer_pb.SeaweedFiler/TransferLocks"
 	SeaweedFiler_ReplicateLock_FullMethodName                   = "/filer_pb.SeaweedFiler/ReplicateLock"
+	SeaweedFiler_MountRegister_FullMethodName                   = "/filer_pb.SeaweedFiler/MountRegister"
+	SeaweedFiler_MountList_FullMethodName                       = "/filer_pb.SeaweedFiler/MountList"
 )
 
 // SeaweedFilerClient is the client API for SeaweedFiler service.
@@ -80,6 +82,10 @@ type SeaweedFilerClient interface {
 	// distributed lock management internal use only
 	TransferLocks(ctx context.Context, in *TransferLocksRequest, opts ...grpc.CallOption) (*TransferLocksResponse, error)
 	ReplicateLock(ctx context.Context, in *ReplicateLockRequest, opts ...grpc.CallOption) (*ReplicateLockResponse, error)
+	// Peer chunk sharing — tier 1: mount-server registry.
+	// See design-weed-mount-peer-chunk-sharing.md for details.
+	MountRegister(ctx context.Context, in *MountRegisterRequest, opts ...grpc.CallOption) (*MountRegisterResponse, error)
+	MountList(ctx context.Context, in *MountListRequest, opts ...grpc.CallOption) (*MountListResponse, error)
 }
 
 type seaweedFilerClient struct {
@@ -408,6 +414,26 @@ func (c *seaweedFilerClient) ReplicateLock(ctx context.Context, in *ReplicateLoc
 	return out, nil
 }
 
+func (c *seaweedFilerClient) MountRegister(ctx context.Context, in *MountRegisterRequest, opts ...grpc.CallOption) (*MountRegisterResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MountRegisterResponse)
+	err := c.cc.Invoke(ctx, SeaweedFiler_MountRegister_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *seaweedFilerClient) MountList(ctx context.Context, in *MountListRequest, opts ...grpc.CallOption) (*MountListResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(MountListResponse)
+	err := c.cc.Invoke(ctx, SeaweedFiler_MountList_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SeaweedFilerServer is the server API for SeaweedFiler service.
 // All implementations must embed UnimplementedSeaweedFilerServer
 // for forward compatibility.
@@ -440,6 +466,10 @@ type SeaweedFilerServer interface {
 	// distributed lock management internal use only
 	TransferLocks(context.Context, *TransferLocksRequest) (*TransferLocksResponse, error)
 	ReplicateLock(context.Context, *ReplicateLockRequest) (*ReplicateLockResponse, error)
+	// Peer chunk sharing — tier 1: mount-server registry.
+	// See design-weed-mount-peer-chunk-sharing.md for details.
+	MountRegister(context.Context, *MountRegisterRequest) (*MountRegisterResponse, error)
+	MountList(context.Context, *MountListRequest) (*MountListResponse, error)
 	mustEmbedUnimplementedSeaweedFilerServer()
 }
 
@@ -530,6 +560,12 @@ func (UnimplementedSeaweedFilerServer) TransferLocks(context.Context, *TransferL
 }
 func (UnimplementedSeaweedFilerServer) ReplicateLock(context.Context, *ReplicateLockRequest) (*ReplicateLockResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ReplicateLock not implemented")
+}
+func (UnimplementedSeaweedFilerServer) MountRegister(context.Context, *MountRegisterRequest) (*MountRegisterResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MountRegister not implemented")
+}
+func (UnimplementedSeaweedFilerServer) MountList(context.Context, *MountListRequest) (*MountListResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MountList not implemented")
 }
 func (UnimplementedSeaweedFilerServer) mustEmbedUnimplementedSeaweedFilerServer() {}
 func (UnimplementedSeaweedFilerServer) testEmbeddedByValue()                      {}
@@ -992,6 +1028,42 @@ func _SeaweedFiler_ReplicateLock_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _SeaweedFiler_MountRegister_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MountRegisterRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).MountRegister(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedFiler_MountRegister_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).MountRegister(ctx, req.(*MountRegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _SeaweedFiler_MountList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MountListRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SeaweedFilerServer).MountList(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: SeaweedFiler_MountList_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SeaweedFilerServer).MountList(ctx, req.(*MountListRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // SeaweedFiler_ServiceDesc is the grpc.ServiceDesc for SeaweedFiler service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1082,6 +1154,14 @@ var SeaweedFiler_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ReplicateLock",
 			Handler:    _SeaweedFiler_ReplicateLock_Handler,
+		},
+		{
+			MethodName: "MountRegister",
+			Handler:    _SeaweedFiler_MountRegister_Handler,
+		},
+		{
+			MethodName: "MountList",
+			Handler:    _SeaweedFiler_MountList_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{
