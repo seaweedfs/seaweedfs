@@ -84,6 +84,7 @@ type FilerOption struct {
 	TusBasePath               string
 	S3ConfigFile              string // optional path to static S3 identity config file
 	CredentialManager         *credential.CredentialManager
+	MountPeerRegistryEnabled       bool // opt-in: accept MountRegister/MountList RPCs
 }
 
 type FilerServer struct {
@@ -120,6 +121,10 @@ type FilerServer struct {
 
 	// credential manager for IAM operations
 	CredentialManager *credential.CredentialManager
+
+	// mountPeerRegistry is nil unless FilerOption.MountPeerRegistryEnabled is true.
+	// When populated, it backs the MountRegister / MountList RPCs.
+	mountPeerRegistry *filer.MountPeerRegistry
 }
 
 func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption) (fs *FilerServer, err error) {
@@ -158,6 +163,10 @@ func NewFilerServer(defaultMux, readonlyMux *http.ServeMux, option *FilerOption)
 		inFlightDataLimitCond: sync.NewCond(new(sync.Mutex)),
 		recentCopyRequests:    make(map[string]recentCopyRequest),
 		CredentialManager:     option.CredentialManager,
+	}
+	if option.MountPeerRegistryEnabled {
+		fs.mountPeerRegistry = filer.NewMountPeerRegistry()
+		go fs.runMountPeerRegistrySweeper()
 	}
 	fs.listenersCond = sync.NewCond(&fs.listenersLock)
 
