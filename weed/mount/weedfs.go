@@ -142,6 +142,8 @@ type WFS struct {
 	peerRegistrar        *PeerRegistrar
 	peerDirectory        *PeerDirectory
 	peerGrpcServer       *PeerGrpcServer
+	peerAnnouncer        *PeerAnnouncer
+	peerConnPool         *PeerConnPool
 	peerDirectoryStop    chan struct{} // closed on unmount to stop the sweeper goroutine
 	FilerConf            *filer.FilerConf
 	filerClient          *wdclient.FilerClient // Cached volume location client
@@ -340,6 +342,12 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 		if wfs.rdmaClient != nil {
 			wfs.rdmaClient.Close()
 		}
+		if wfs.peerAnnouncer != nil {
+			wfs.peerAnnouncer.Stop()
+		}
+		if wfs.peerConnPool != nil {
+			wfs.peerConnPool.Close()
+		}
 		if wfs.peerGrpcServer != nil {
 			wfs.peerGrpcServer.Stop()
 		}
@@ -427,6 +435,32 @@ func NewSeaweedFileSystem(option *Option) *WFS {
 			} else {
 				wfs.peerDirectoryStop = make(chan struct{})
 				go wfs.runPeerDirectorySweeper(wfs.peerDirectoryStop)
+
+				// Shared connection pool + announcer. Pool reuses one
+				// grpc.ClientConn per owner mount across both the
+				// announcer flush and the fetcher's ChunkLookup +
+				// FetchChunk calls. Transport credentials come from
+				// option.GrpcDialOption (security.LoadClientTLS), so
+				// peer dials match the TLS posture the server wants.
+				wfs.peerConnPool = NewPeerConnPool(option.GrpcDialOption)
+				wfs.peerAnnouncer = NewPeerAnnouncer(
+					selfAddr,
+					option.PeerDataCenter,
+					option.PeerRack,
+					wfs.peerRegistrar.OwnerFor,
+					wfs.peerConnPool.Dialer(),
+					wfs.peerDirectory,
+				)
+				// Close the write→announce race: between SetChunk and
+				// the flush tick (up to 15 s) the cache can LRU-evict
+				// the chunk. Skip announcing fids we no longer hold.
+				if wfs.chunkCache != nil {
+					cache := wfs.chunkCache
+					wfs.peerAnnouncer.SetCachePresence(func(fid string) bool {
+						return cache.IsInCache(fid, true)
+					})
+				}
+				wfs.peerAnnouncer.Start()
 			}
 		}
 	}

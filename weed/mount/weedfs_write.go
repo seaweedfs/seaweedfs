@@ -57,8 +57,28 @@ func (wfs *WFS) saveDataAsChunk(fullPath util.FullPath) filer.SaveDataAsChunkFun
 			return nil, fmt.Errorf("upload result: %v", uploadResult.Error)
 		}
 
-		if offset == 0 {
+		// When peer sharing is enabled we need EVERY chunk in the
+		// local cache so we can actually serve it back to peers on
+		// FetchChunk — otherwise the directory would advertise us as
+		// a holder and the fetcher would get NOT_FOUND from our
+		// chunk cache. When peer sharing is off we preserve the
+		// original behavior of caching only the first chunk (small
+		// files) to avoid blowing the cache on large uploads. Both
+		// paths gate on chunkCache != nil: -cacheCapacityMB=0 disables
+		// the cache entirely, in which case SetChunk would panic.
+		shouldCache := wfs.chunkCache != nil && (offset == 0 || wfs.peerAnnouncer != nil)
+		if shouldCache {
 			wfs.chunkCache.SetChunk(fileId, data)
+		}
+		// Announce every uploaded chunk so the tier-2 directory fills
+		// in as the file is written. Without this, the per-fetch
+		// announce path only bootstraps after someone else has already
+		// pulled a chunk via peer — which can't happen if nobody has
+		// told the directory who holds the chunk. Skip the announce
+		// when we couldn't cache (no point advertising bytes we can't
+		// actually serve back).
+		if wfs.peerAnnouncer != nil && shouldCache {
+			wfs.peerAnnouncer.EnqueueAnnounce(fileId)
 		}
 
 		chunk = uploadResult.ToPbFileChunk(fileId, offset, tsNs)
