@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"syscall"
+	"time"
 
 	"github.com/seaweedfs/go-fuse/v2/fuse"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
@@ -25,21 +26,22 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	}
 
 	glog.V(1).Infof("save entry: %v", request)
-	resp, err := wfs.streamUpdateEntry(context.Background(), request)
+
+	var resp *filer_pb.UpdateEntryResponse
+	err := retryMetadataFlush(func() error {
+		var callErr error
+		resp, callErr = wfs.streamUpdateEntry(context.Background(), request)
+		return callErr
+	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+		glog.Warningf("saveEntry %s: retrying UpdateEntry (attempt %d/%d) after %v: %v",
+			path, nextAttempt, totalAttempts, backoff, err)
+	})
+
 	if err != nil {
-		err = fmt.Errorf("UpdateEntry dir %s: %v", path, err)
-	} else {
-		event := resp.GetMetadataEvent()
-		if event == nil {
-			event = metadataUpdateEvent(parentDir, entry)
-		}
-		if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
-			glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
-			wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
-		}
-	}
-	if err != nil {
-		// glog.V(0).Infof("saveEntry %s: %v", path, err)
+		// Wrap with %w so grpcErrorToFuseStatus can still unwrap the gRPC status
+		// (e.g. codes.Canceled → ETIMEDOUT). Using %v would stringify the error and
+		// status.FromError would fall through to the default EIO.
+		err = fmt.Errorf("UpdateEntry dir %s: %w", path, err)
 		fuseStatus := grpcErrorToFuseStatus(err)
 		if fuseStatus == fuse.EIO {
 			glog.Errorf("saveEntry failed for %s: %v (returning EIO)", path, err)
@@ -47,6 +49,15 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 			glog.V(1).Infof("saveEntry failed for %s: %v (returning %v)", path, err, fuseStatus)
 		}
 		return fuseStatus
+	}
+
+	event := resp.GetMetadataEvent()
+	if event == nil {
+		event = metadataUpdateEvent(parentDir, entry)
+	}
+	if applyErr := wfs.applyLocalMetadataEvent(context.Background(), event); applyErr != nil {
+		glog.Warningf("saveEntry %s: best-effort metadata apply failed: %v", path, applyErr)
+		wfs.inodeToPath.InvalidateChildrenCache(util.FullPath(parentDir))
 	}
 
 	return fuse.OK
