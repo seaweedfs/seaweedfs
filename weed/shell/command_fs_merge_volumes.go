@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"slices"
@@ -113,23 +114,33 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	lookupFn := filer.LookupFn(commandEnv)
 
+	// Hard-linked siblings share ONE chunk list via a KV blob keyed by
+	// HardLinkId (see weed/filer/filerstore_hardlink.go): UpdateEntry's
+	// setHardLink() rewrites that blob, and every sibling read goes through
+	// maybeReadHardLink() which overrides the per-entry chunks with the
+	// blob's. So moving a chunk and calling UpdateEntry on one sibling
+	// propagates the new fids to every other sibling automatically —
+	// provided we do it exactly once per HardLinkId. Processing every
+	// sibling would race: the first succeeds, the next would either
+	// re-download an already-moved (and possibly already-deleted) source
+	// needle or double-queue the same fid for deletion. Track the ids we
+	// have already handled so BFS workers in different directories can
+	// synchronize without a global lock.
+	var processedHardLinks sync.Map
+
 	return commandEnv.WithFilerClient(false, func(filerClient filer_pb.SeaweedFilerClient) error {
 		return filer_pb.TraverseBfs(context.Background(), commandEnv, util.FullPath(dir), func(parentPath util.FullPath, entry *filer_pb.Entry) error {
 			if entry.IsDirectory {
 				return nil
 			}
 			entryPath := parentPath.Child(entry.Name)
-			// Hard-linked entries share their chunk list with sibling entries,
-			// but the filer's UpdateEntry only rewrites one entry at a time —
-			// moving a chunk here would leave every other hard-linked sibling
-			// pointing at a fid that either is about to be deleted (by the
-			// filer's own garbage step after UpdateEntry) or that we'll delete
-			// ourselves in deleteMovedSourceNeedles below. Either way the
-			// siblings break. Skip the entry and let the operator handle
-			// hard-linked files explicitly (e.g. copy-then-unlink first).
 			if len(entry.HardLinkId) > 0 {
-				fmt.Printf("skip hard-linked entry %s (HardLinkId=%x)\n", entryPath, entry.HardLinkId)
-				return nil
+				if _, seen := processedHardLinks.LoadOrStore(string(entry.HardLinkId), struct{}{}); seen {
+					// Another sibling already carried the HardLinkId through
+					// the move + UpdateEntry path; the shared KV blob has the
+					// new fids, so this sibling is already correct on read.
+					return nil
+				}
 			}
 			entryChanged := false
 			// Every successful moveChunk or rewriteManifestChunk leaves the old
@@ -229,20 +240,37 @@ func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv,
 		}
 		for _, loc := range locations {
 			results := operation.DeleteFileIdsAtOneVolumeServer(loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, false)
+			// Summarize per server: an unreachable volume server returns one
+			// error per needle, which for manifest-heavy files can mean
+			// hundreds of near-identical lines. Keep the first error as the
+			// example and report a single line with the total count.
+			var firstErr, firstFid string
+			errCount := 0
 			for _, r := range results {
 				// StatusNotModified (304) means DeleteVolumeNeedle returned
 				// size 0 — the needle was already gone when we arrived.
 				// StatusNotFound (404) comes from the cookie-check path when
 				// ReadVolumeNeedle can't find the needle. Both are benign
 				// races against a concurrent fsck purge or a replica that
-				// had already reconciled, so skip the warning. Cast to int
-				// because r.Status is an int32 protobuf field and linters
-				// flag the mixed-type compare even though Go's untyped-constant
-				// rules make it valid.
+				// had already reconciled, so skip them. Cast to int because
+				// r.Status is an int32 protobuf field and linters flag the
+				// mixed-type compare even though Go's untyped-constant rules
+				// make it valid.
 				status := int(r.Status)
-				if r.Error != "" && status != http.StatusNotModified && status != http.StatusNotFound {
-					fmt.Printf("source cleanup %s: delete %s on %v: %s\n", entryPath, r.FileId, loc.ServerAddress(), r.Error)
+				if r.Error == "" || status == http.StatusNotModified || status == http.StatusNotFound {
+					continue
 				}
+				if errCount == 0 {
+					firstErr = r.Error
+					firstFid = r.FileId
+				}
+				errCount++
+			}
+			if errCount == 1 {
+				fmt.Printf("source cleanup %s: delete %s on %v: %s\n", entryPath, firstFid, loc.ServerAddress(), firstErr)
+			} else if errCount > 1 {
+				fmt.Printf("source cleanup %s: %d/%d needles failed on %v (e.g. %s: %s)\n",
+					entryPath, errCount, len(fids), loc.ServerAddress(), firstFid, firstErr)
 			}
 		}
 	}
