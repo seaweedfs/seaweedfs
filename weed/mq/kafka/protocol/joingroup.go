@@ -924,8 +924,16 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 	glog.V(2).Infof("[SYNCGROUP] Member=%s Leader=%s GroupState=%s HasAssignments=%v MemberCount=%d Gen=%d",
 		request.MemberID, group.Leader, group.State, len(request.GroupAssignments) > 0, len(group.Members), request.GenerationID)
 
-	if request.MemberID == group.Leader && len(request.GroupAssignments) > 0 {
+	if request.MemberID == group.Leader {
 		// Leader is providing assignments - process and store them.
+		// We don't gate on len(request.GroupAssignments) > 0 here: if the
+		// leader sends an empty assignments array while the group has
+		// members, every member is "missing" from the assignment map and
+		// the coverage check below will reject with REBALANCE_IN_PROGRESS
+		// — catching the accidental-empty-assignment case instead of
+		// silently falling through to the server-side-assignment branch
+		// (which exists only as a "should not happen with Sarama"
+		// fallback).
 
 		// Before committing, verify the leader's assignment covers every
 		// current member. A late joiner can arrive either during the
