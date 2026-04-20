@@ -110,10 +110,10 @@ func newCreateTestWFS(t *testing.T) (*WFS, *createEntryTestServer) {
 	}
 
 	wfs := &WFS{
-		option:      option,
-		signature:   1,
-		inodeToPath: NewInodeToPath(root, 0),
-		fhMap:       NewFileHandleToInode(),
+		option:            option,
+		signature:         1,
+		inodeToPath:       NewInodeToPath(root, 0),
+		fhMap:             NewFileHandleToInode(),
 		fhLockTable:       util.NewLockTable[FileHandleId](),
 		hardLinkLockTable: util.NewLockTable[string](),
 	}
@@ -201,6 +201,53 @@ func TestCreateCreatesAndOpensFile(t *testing.T) {
 	}
 	if snapshot.mode != 0o640 {
 		t.Fatalf("CreateEntry mode = %o, want %o", snapshot.mode, 0o640)
+	}
+}
+
+func TestReleaseFlushesDirtyCreateIfFlushWasSkipped(t *testing.T) {
+	wfs, testServer := newCreateTestWFS(t)
+
+	out := &fuse.CreateOut{}
+	status := wfs.Create(make(chan struct{}), &fuse.CreateIn{
+		InHeader: fuse.InHeader{
+			NodeId: 1,
+			Caller: fuse.Caller{
+				Owner: fuse.Owner{
+					Uid: 123,
+					Gid: 456,
+				},
+			},
+		},
+		Flags: syscall.O_WRONLY | syscall.O_CREAT,
+		Mode:  0o640,
+	}, "release_flush.txt", out)
+	if status != fuse.OK {
+		t.Fatalf("Create status = %v, want OK", status)
+	}
+
+	wfs.Release(make(chan struct{}), &fuse.ReleaseIn{
+		InHeader: fuse.InHeader{
+			NodeId: out.NodeId,
+			Caller: fuse.Caller{Owner: fuse.Owner{Uid: 123, Gid: 456}},
+		},
+		Fh: out.Fh,
+	})
+
+	snapshot := testServer.snapshot()
+	if snapshot.directory != "/" {
+		t.Fatalf("CreateEntry directory = %q, want %q", snapshot.directory, "/")
+	}
+	if snapshot.name != "release_flush.txt" {
+		t.Fatalf("CreateEntry name = %q, want %q", snapshot.name, "release_flush.txt")
+	}
+	if snapshot.uid != 123 || snapshot.gid != 456 {
+		t.Fatalf("CreateEntry uid/gid = %d/%d, want 123/456", snapshot.uid, snapshot.gid)
+	}
+	if snapshot.mode != 0o640 {
+		t.Fatalf("CreateEntry mode = %o, want %o", snapshot.mode, 0o640)
+	}
+	if fh := wfs.GetHandle(FileHandleId(out.Fh)); fh != nil {
+		t.Fatal("Release should remove the file handle after fallback flush")
 	}
 }
 

@@ -1,6 +1,9 @@
 package mount
 
-import "github.com/seaweedfs/go-fuse/v2/fuse"
+import (
+	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+)
 
 /**
 	 * Open a file
@@ -133,6 +136,14 @@ func (wfs *WFS) invalidateOpenMtimeCache(inode uint64) {
 }
 
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
+	// Flush is usually sent before Release, but the FUSE protocol does not
+	// guarantee it. Do not drop a dirty handle solely because Flush was skipped.
+	if fh := wfs.GetHandle(FileHandleId(in.Fh)); fh != nil && fh.dirtyMetadata && !fh.asyncFlushPending {
+		allowAsync := in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK == 0
+		if status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
+			glog.Warningf("release fh %d inode %d: dirty flush failed: %v", in.Fh, in.NodeId, status)
+		}
+	}
 	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
 		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)
 	}
