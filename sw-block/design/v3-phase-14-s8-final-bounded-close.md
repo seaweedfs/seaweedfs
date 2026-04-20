@@ -143,22 +143,24 @@ S8 can close P14 with L3 blockers only if the blockers are genuinely P15 product
 
 ## 7. V2 Port Plan
 
-### Port now
+### Classify now (S8 scope), port deferred to P15
+
+S8 **does not port testrunner machinery into the V3 tree** (round-2 doc-consistency fix, aligned with `v3-phase-14-s8-v2-scenario-classification.md` §2). The items below are the V2 muscles S8 inventories and classifies; actual porting is a P15 Final Gate (Cluster Validation Agent) deliverable, not an S8 one.
 
 1. `weed/storage/blockvol/testrunner/`
-   - runner architecture, scenario YAML shape, action vocabulary, artifact collection, report generation
+   - **classify now**: runner architecture, scenario YAML shape, action vocabulary, artifact collection, report generation — recorded as PORT-MECHANISM in the classification table. **Port in P15 Final Gate.**
 
 2. `weed/storage/blockvol/testrunner/scenarios/public` and selected internal scenarios
-   - restart, failover, partition, crash, and evidence scenario shapes
+   - **classify now**: map each scenario shape to RUNNABLE-P14 / BLOCKED-FRONTEND / BLOCKED-OPS / BLOCKED-HA / BLOCKED-PERF. **Port in P15 Final Gate.**
 
 3. `weed/storage/blockvol/test/component/`
-   - component harness structure and failure-injection style
+   - **classify now**: component harness structure and failure-injection style. **Port in P15 T1 Frontend + Data Path** as that track's real-route harness.
 
 4. `weed/server/qa_block_*`
-   - coverage taxonomy and route scenario ideas
+   - **classify now**: coverage taxonomy and route scenario ideas as reference for the evidence matrix (§5). **Port only as applicable per P15 track needs.**
 
 5. `learn/test` evidence convention
-   - manifest, result, report, run notes
+   - **classify now**: manifest / result / report / run-notes convention referenced as the target shape for future P15 evidence bundles. **Adopt when P15 ships real L3/L4 runs.**
 
 ### Do not port
 
