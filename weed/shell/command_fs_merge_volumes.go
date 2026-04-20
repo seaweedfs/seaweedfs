@@ -119,6 +119,18 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 				return nil
 			}
 			entryPath := parentPath.Child(entry.Name)
+			// Hard-linked entries share their chunk list with sibling entries,
+			// but the filer's UpdateEntry only rewrites one entry at a time —
+			// moving a chunk here would leave every other hard-linked sibling
+			// pointing at a fid that either is about to be deleted (by the
+			// filer's own garbage step after UpdateEntry) or that we'll delete
+			// ourselves in deleteMovedSourceNeedles below. Either way the
+			// siblings break. Skip the entry and let the operator handle
+			// hard-linked files explicitly (e.g. copy-then-unlink first).
+			if len(entry.HardLinkId) > 0 {
+				fmt.Printf("skip hard-linked entry %s (HardLinkId=%x)\n", entryPath, entry.HardLinkId)
+				return nil
+			}
 			entryChanged := false
 			// Every successful moveChunk or rewriteManifestChunk leaves the old
 			// needle sitting on its source volume as a silent orphan — until
