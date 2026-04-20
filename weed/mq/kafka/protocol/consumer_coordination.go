@@ -157,66 +157,84 @@ func (h *Handler) handleLeaveGroup(correlationID uint32, apiVersion uint16, requ
 	// Update group's last activity
 	group.LastActivity = time.Now()
 
-	// Validate member exists
-	member, exists := group.Members[request.MemberID]
-	if !exists {
-		return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
+	// Normalize to a list of leaving members. v0-v2 carry a single MemberID at
+	// the top level; v3+ carry an array. parseLeaveGroupRequest already copies
+	// Members[0] to MemberID for back-compat, but the full list must be honored
+	// so batch departures (KIP-345) don't leave stale phantoms in the group.
+	leavingMembers := request.Members
+	if len(leavingMembers) == 0 {
+		leavingMembers = []LeaveGroupMember{{
+			MemberID:        request.MemberID,
+			GroupInstanceID: request.GroupInstanceID,
+		}}
 	}
 
-	// For static members, only remove if GroupInstanceID matches or is not provided
-	if h.groupCoordinator.IsStaticMember(member) {
-		if request.GroupInstanceID != "" && *member.GroupInstanceID != request.GroupInstanceID {
-			return h.buildLeaveGroupErrorResponse(correlationID, ErrorCodeFencedInstanceID, apiVersion), nil
+	memberResponses := make([]LeaveGroupMemberResponse, 0, len(leavingMembers))
+	removedAny := false
+	leaderLeft := false
+
+	for _, leaving := range leavingMembers {
+		member, exists := group.Members[leaving.MemberID]
+		if !exists {
+			memberResponses = append(memberResponses, LeaveGroupMemberResponse{
+				MemberID:        leaving.MemberID,
+				GroupInstanceID: leaving.GroupInstanceID,
+				ErrorCode:       ErrorCodeUnknownMemberID,
+			})
+			continue
 		}
-		// Unregister static member
-		h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+
+		if h.groupCoordinator.IsStaticMember(member) {
+			if leaving.GroupInstanceID != "" && *member.GroupInstanceID != leaving.GroupInstanceID {
+				memberResponses = append(memberResponses, LeaveGroupMemberResponse{
+					MemberID:        leaving.MemberID,
+					GroupInstanceID: leaving.GroupInstanceID,
+					ErrorCode:       ErrorCodeFencedInstanceID,
+				})
+				continue
+			}
+			h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+		}
+
+		if group.Leader == leaving.MemberID {
+			leaderLeft = true
+		}
+		delete(group.Members, leaving.MemberID)
+		removedAny = true
+		memberResponses = append(memberResponses, LeaveGroupMemberResponse{
+			MemberID:        leaving.MemberID,
+			GroupInstanceID: leaving.GroupInstanceID,
+			ErrorCode:       ErrorCodeNone,
+		})
 	}
 
-	// Remove the member from the group
-	delete(group.Members, request.MemberID)
-
-	// Update group state based on remaining members
-	if len(group.Members) == 0 {
-		// Group becomes empty
-		group.State = consumer.GroupStateEmpty
-		group.Generation++
-		group.Leader = ""
-	} else {
-		// Trigger rebalancing for remaining members
-		group.State = consumer.GroupStatePreparingRebalance
-		group.Generation++
-
-		// If the leaving member was the leader, select a new leader
-		if group.Leader == request.MemberID {
-			// Select first remaining member as new leader
-			for memberID := range group.Members {
-				group.Leader = memberID
-				break
+	if removedAny {
+		// One group-state transition applied after processing all departures.
+		if len(group.Members) == 0 {
+			group.State = consumer.GroupStateEmpty
+			group.Generation++
+			group.Leader = ""
+		} else {
+			group.State = consumer.GroupStatePreparingRebalance
+			group.Generation++
+			if leaderLeft {
+				for memberID := range group.Members {
+					group.Leader = memberID
+					break
+				}
+			}
+			for _, m := range group.Members {
+				m.State = consumer.MemberStatePending
 			}
 		}
-
-		// Mark remaining members as pending to trigger rebalancing
-		for _, member := range group.Members {
-			member.State = consumer.MemberStatePending
-		}
+		h.updateGroupSubscriptionFromMembers(group)
 	}
 
-	// Update group's subscribed topics (may have changed with member leaving)
-	h.updateGroupSubscriptionFromMembers(group)
-
-	// Build successful response
 	response := LeaveGroupResponse{
 		CorrelationID: correlationID,
 		ErrorCode:     ErrorCodeNone,
-		Members: []LeaveGroupMemberResponse{
-			{
-				MemberID:        request.MemberID,
-				GroupInstanceID: request.GroupInstanceID,
-				ErrorCode:       ErrorCodeNone,
-			},
-		},
+		Members:       memberResponses,
 	}
-
 	return h.buildLeaveGroupResponse(response, apiVersion), nil
 }
 
@@ -569,8 +587,67 @@ func (h *Handler) buildLeaveGroupResponse(response LeaveGroupResponse, apiVersio
 		return h.buildLeaveGroupV0Response(response)
 	}
 
-	// For v1+ use the full response format
+	// v4+ uses flexible encoding (compact strings/arrays + tagged fields).
+	if IsFlexibleVersion(uint16(APIKeyLeaveGroup), apiVersion) {
+		return h.buildLeaveGroupFlexibleResponse(response)
+	}
+
+	// v1-v3 use the full non-flexible response format.
 	return h.buildLeaveGroupFullResponse(response)
+}
+
+// buildLeaveGroupFlexibleResponse encodes a LeaveGroup response for v4+ clients,
+// which negotiate flexible versions. Fields:
+//
+//	throttle_time_ms (int32)
+//	error_code       (int16)
+//	members          (compact_array of {member_id: compact_string,
+//	                                    group_instance_id: compact_nullable_string,
+//	                                    error_code: int16, _tagged_fields})
+//	_tagged_fields
+func (h *Handler) buildLeaveGroupFlexibleResponse(response LeaveGroupResponse) []byte {
+	estimatedSize := 16
+	for _, m := range response.Members {
+		estimatedSize += len(m.MemberID) + len(m.GroupInstanceID) + 10
+	}
+	result := make([]byte, 0, estimatedSize)
+
+	// throttle_time_ms
+	result = append(result, 0, 0, 0, 0)
+
+	// error_code
+	errorCodeBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(errorCodeBytes, uint16(response.ErrorCode))
+	result = append(result, errorCodeBytes...)
+
+	// members: compact array
+	result = append(result, CompactArrayLength(uint32(len(response.Members)))...)
+	for _, m := range response.Members {
+		// member_id: compact string
+		result = append(result, CompactStringLength(len(m.MemberID))...)
+		result = append(result, []byte(m.MemberID)...)
+
+		// group_instance_id: compact nullable string
+		if m.GroupInstanceID == "" {
+			result = append(result, 0) // null
+		} else {
+			result = append(result, CompactStringLength(len(m.GroupInstanceID))...)
+			result = append(result, []byte(m.GroupInstanceID)...)
+		}
+
+		// member error_code
+		memberErrorBytes := make([]byte, 2)
+		binary.BigEndian.PutUint16(memberErrorBytes, uint16(m.ErrorCode))
+		result = append(result, memberErrorBytes...)
+
+		// per-member _tagged_fields (empty)
+		result = append(result, 0)
+	}
+
+	// response-level _tagged_fields (empty)
+	result = append(result, 0)
+
+	return result
 }
 
 func (h *Handler) buildLeaveGroupV0Response(response LeaveGroupResponse) []byte {

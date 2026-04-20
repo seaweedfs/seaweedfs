@@ -49,12 +49,20 @@ func testConsumerGroupBasicFunctionality(t *testing.T, addr string) {
 	err = client.ProduceMessages(topicName, messages)
 	testutil.AssertNoError(t, err, "Failed to produce messages")
 
-	// Test with multiple consumers in the same group
+	// Test with multiple consumers in the same group. The messages channel is
+	// shared so the assertion can verify total-consumed/no-duplicates across the
+	// group. Each consumer gets its own handler (and its own ready channel) so
+	// we can wait for each distinct consumer to reach Setup, rather than
+	// relying on a single close() that only signals once.
 	numConsumers := 3
-	handler := &ConsumerGroupHandler{
-		messages: make(chan *sarama.ConsumerMessage, len(messages)),
-		ready:    make(chan bool),
-		t:        t,
+	handlers := make([]*ConsumerGroupHandler, numConsumers)
+	sharedMessages := make(chan *sarama.ConsumerMessage, len(messages))
+	for i := 0; i < numConsumers; i++ {
+		handlers[i] = &ConsumerGroupHandler{
+			messages: sharedMessages,
+			ready:    make(chan bool),
+			t:        t,
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -72,35 +80,32 @@ func testConsumerGroupBasicFunctionality(t *testing.T, addr string) {
 			}
 			defer consumerGroup.Close()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 			defer cancel()
 
 			runConsumeLoop(t, ctx, fmt.Sprintf("Consumer%d", consumerID),
-				consumerGroup, []string{topicName}, handler)
+				consumerGroup, []string{topicName}, handlers[consumerID])
 		}(i)
 	}
 
-	// Wait for consumers to be ready. Multi-consumer rebalance can take a few
-	// heartbeat intervals (default 3s) as the initial leader receives
-	// REBALANCE_IN_PROGRESS from its heartbeat and re-joins, so allow
-	// enough headroom.
-	readyCount := 0
-	for readyCount < numConsumers {
+	// Wait for each consumer to be ready. Multi-consumer rebalance can take
+	// a few heartbeat intervals (default 3s) as the initial leader receives
+	// REBALANCE_IN_PROGRESS from its heartbeat and re-joins, so allow headroom.
+	for i := 0; i < numConsumers; i++ {
 		select {
-		case <-handler.ready:
-			readyCount++
+		case <-handlers[i].ready:
 		case <-time.After(20 * time.Second):
-			t.Fatalf("Timeout waiting for consumers to be ready")
+			t.Fatalf("Timeout waiting for consumer %d to be ready", i)
 		}
 	}
 
 	// Collect consumed messages
 	consumedMessages := make([]*sarama.ConsumerMessage, 0, len(messages))
-	messageTimeout := time.After(10 * time.Second)
+	messageTimeout := time.After(15 * time.Second)
 
 	for len(consumedMessages) < len(messages) {
 		select {
-		case msg := <-handler.messages:
+		case msg := <-sharedMessages:
 			consumedMessages = append(consumedMessages, msg)
 		case err := <-consumerErrors:
 			t.Fatalf("Consumer error: %v", err)

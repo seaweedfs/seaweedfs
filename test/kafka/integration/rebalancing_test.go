@@ -48,7 +48,7 @@ func testSingleConsumerAllPartitions(t *testing.T, addr, topicName, groupID stri
 	handler := &RebalanceTestHandler{
 		messages:    make(chan *sarama.ConsumerMessage, 20),
 		ready:       make(chan bool),
-		assignments: make(chan []int32, 5),
+		assignments: make(chan []int32, 1),
 		t:           t,
 	}
 
@@ -113,7 +113,7 @@ func testTwoConsumersRebalance(t *testing.T, addr, topicName, groupID string) {
 	handler1 := &RebalanceTestHandler{
 		messages:    make(chan *sarama.ConsumerMessage, 20),
 		ready:       make(chan bool),
-		assignments: make(chan []int32, 5),
+		assignments: make(chan []int32, 1),
 		t:           t,
 		name:        "Consumer1",
 	}
@@ -147,7 +147,7 @@ func testTwoConsumersRebalance(t *testing.T, addr, topicName, groupID string) {
 	handler2 := &RebalanceTestHandler{
 		messages:    make(chan *sarama.ConsumerMessage, 20),
 		ready:       make(chan bool),
-		assignments: make(chan []int32, 5),
+		assignments: make(chan []int32, 1),
 		t:           t,
 		name:        "Consumer2",
 	}
@@ -238,7 +238,7 @@ func testConsumerLeaveRebalance(t *testing.T, addr, topicName, groupID string) {
 	handler1 := &RebalanceTestHandler{
 		messages:    make(chan *sarama.ConsumerMessage, 20),
 		ready:       make(chan bool),
-		assignments: make(chan []int32, 5),
+		assignments: make(chan []int32, 1),
 		t:           t,
 		name:        "Consumer1",
 	}
@@ -246,7 +246,7 @@ func testConsumerLeaveRebalance(t *testing.T, addr, topicName, groupID string) {
 	handler2 := &RebalanceTestHandler{
 		messages:    make(chan *sarama.ConsumerMessage, 20),
 		ready:       make(chan bool),
-		assignments: make(chan []int32, 5),
+		assignments: make(chan []int32, 1),
 		t:           t,
 		name:        "Consumer2",
 	}
@@ -314,7 +314,7 @@ func testMultipleConsumersJoin(t *testing.T, addr, topicName, groupID string) {
 		handlers[i] = &RebalanceTestHandler{
 			messages:    make(chan *sarama.ConsumerMessage, 20),
 			ready:       make(chan bool),
-			assignments: make(chan []int32, 5),
+			assignments: make(chan []int32, 1),
 			t:           t,
 			name:        fmt.Sprintf("Consumer%d", i),
 		}

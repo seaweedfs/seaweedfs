@@ -175,7 +175,12 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	// across rejoins. Replacing the struct clobbered member.Assignment, so the next
 	// non-leader SyncGroup returned an empty assignment and the consumer re-looped.
 	member, existing := group.Members[memberID]
-	if !existing {
+	// Snapshot pre-mutation state so we can roll back if the join is rejected
+	// (e.g. INCONSISTENT_GROUP_PROTOCOL) without corrupting an existing member.
+	var previousMember consumer.GroupMember
+	if existing {
+		previousMember = *member
+	} else {
 		member = &consumer.GroupMember{
 			ID:       memberID,
 			JoinedAt: time.Now(),
@@ -251,12 +256,20 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 
 	// If a protocol is already selected for the group, reject joins that do not support it.
 	if len(existingProtocols) > 0 && (groupProtocol == "" || groupProtocol != group.Protocol) {
-		// Rollback member addition and static registration before returning error
-		delete(group.Members, memberID)
-		if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
-			h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+		if existing {
+			// Existing member rejoined with an incompatible protocol — restore the
+			// pre-mutation snapshot rather than deleting, so we don't corrupt the
+			// group state for a member that was already part of it.
+			restored := previousMember
+			group.Members[memberID] = &restored
+		} else {
+			// New member was never actually part of the group: drop and unregister.
+			delete(group.Members, memberID)
+			if member.GroupInstanceID != nil && *member.GroupInstanceID != "" {
+				h.groupCoordinator.UnregisterStaticMemberLocked(group, *member.GroupInstanceID)
+			}
 		}
-		// Recompute group subscription without the rejected member
+		// Recompute group subscription with the member state restored to pre-join.
 		h.updateGroupSubscription(group)
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
 	}
