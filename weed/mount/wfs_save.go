@@ -28,11 +28,11 @@ func (wfs *WFS) saveEntry(path util.FullPath, entry *filer_pb.Entry) (code fuse.
 	glog.V(1).Infof("save entry: %v", request)
 
 	var resp *filer_pb.UpdateEntryResponse
-	err := retryMetadataFlush(func() error {
+	err := retryMetadataFlushIf(func() error {
 		var callErr error
 		resp, callErr = wfs.streamUpdateEntry(context.Background(), request)
 		return callErr
-	}, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
+	}, isRetryableFilerError, func(nextAttempt, totalAttempts int, backoff time.Duration, err error) {
 		glog.Warningf("saveEntry %s: retrying UpdateEntry (attempt %d/%d) after %v: %v",
 			path, nextAttempt, totalAttempts, backoff, err)
 	})
