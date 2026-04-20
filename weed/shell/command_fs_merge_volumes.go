@@ -230,14 +230,17 @@ func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv,
 		for _, loc := range locations {
 			results := operation.DeleteFileIdsAtOneVolumeServer(loc.ServerAddress(), commandEnv.option.GrpcDialOption, fids, false)
 			for _, r := range results {
-				// StatusNotModified means the needle was already deleted
-				// (e.g. a concurrent fsck purge or a replica that had
-				// already reconciled). That's the desired end state, so
-				// don't warn about it. Cast to int because r.Status is
-				// an int32 protobuf field and linters flag the mixed-type
-				// compare even though Go's untyped-constant rules make it
-				// valid.
-				if r.Error != "" && int(r.Status) != http.StatusNotModified {
+				// StatusNotModified (304) means DeleteVolumeNeedle returned
+				// size 0 — the needle was already gone when we arrived.
+				// StatusNotFound (404) comes from the cookie-check path when
+				// ReadVolumeNeedle can't find the needle. Both are benign
+				// races against a concurrent fsck purge or a replica that
+				// had already reconciled, so skip the warning. Cast to int
+				// because r.Status is an int32 protobuf field and linters
+				// flag the mixed-type compare even though Go's untyped-constant
+				// rules make it valid.
+				status := int(r.Status)
+				if r.Error != "" && status != http.StatusNotModified && status != http.StatusNotFound {
 					fmt.Printf("source cleanup %s: delete %s on %v: %s\n", entryPath, r.FileId, loc.ServerAddress(), r.Error)
 				}
 			}
