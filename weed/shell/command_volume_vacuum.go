@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,35 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 		}
 	} else {
 		volumeIdInts = append(volumeIdInts, 0)
+	}
+
+	// Reject unknown ids up front. The master's VacuumVolume RPC silently
+	// iterates matching volumes, so a typo or an already-deleted volume just
+	// returns success — making this command look like it worked when nothing
+	// happened.
+	if *volumeIds != "" {
+		topo, _, err := collectTopologyInfo(commandEnv, 0)
+		if err != nil {
+			return fmt.Errorf("collect topology: %w", err)
+		}
+		known := make(map[uint32]bool)
+		eachDataNode(topo, func(_ DataCenterId, _ RackId, dn *master_pb.DataNodeInfo) {
+			for _, disk := range dn.DiskInfos {
+				for _, vi := range disk.VolumeInfos {
+					known[vi.Id] = true
+				}
+			}
+		})
+		var missing []uint32
+		for _, vid := range volumeIdInts {
+			if !known[vid] {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+			return fmt.Errorf("volume(s) not found on master: %v", missing)
+		}
 	}
 
 	for _, volumeId := range volumeIdInts {

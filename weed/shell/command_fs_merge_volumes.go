@@ -75,6 +75,21 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 
 	c.reloadVolumesInfo(commandEnv.MasterClient)
 
+	// Reject unknown ids before createMergePlan silently produces an empty plan
+	// and we print just the "max volume size" header. That output is
+	// indistinguishable from a legitimate "nothing to merge" and hides typos,
+	// already-deleted volumes, and stale scripts.
+	if fromVolumeId != 0 {
+		if _, err := c.getVolumeInfoById(fromVolumeId); err != nil {
+			return fmt.Errorf("fromVolumeId %d not found on master", fromVolumeId)
+		}
+	}
+	if toVolumeId != 0 {
+		if _, err := c.getVolumeInfoById(toVolumeId); err != nil {
+			return fmt.Errorf("toVolumeId %d not found on master", toVolumeId)
+		}
+	}
+
 	if fromVolumeId != 0 && toVolumeId != 0 {
 		if fromVolumeId == toVolumeId {
 			return fmt.Errorf("no volume id changes, %d == %d", fromVolumeId, toVolumeId)

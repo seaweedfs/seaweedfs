@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,8 +162,27 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return fmt.Errorf("failed to collect all volume locations: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("read filer buckets path: %w", err)
+	// If the operator specified -volumeId, reject unknown ids up front instead
+	// of silently filtering them out and reporting "no orphan data". A silent
+	// success on a missing volume looks identical to a clean volume and hides
+	// typos, already-deleted volumes, and stale scripts.
+	if len(c.volumeIds) > 0 {
+		known := make(map[uint32]bool)
+		for _, vidMap := range dataNodeVolumeIdToVInfo {
+			for vid := range vidMap {
+				known[vid] = true
+			}
+		}
+		var missing []uint32
+		for vid := range c.volumeIds {
+			if !known[vid] {
+				missing = append(missing, vid)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
+			return fmt.Errorf("volume(s) not found on master: %v", missing)
+		}
 	}
 
 	var collectCutoffFromAtNs int64 = 0
