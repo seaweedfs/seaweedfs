@@ -70,6 +70,17 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		dir = strings.TrimRight(dir, "/")
 	}
 
+	// flag.Uint is a 64-bit uint on amd64 but needle.VolumeId is uint32, so a
+	// value that overflows (e.g. 4294967297) silently wraps to a valid id
+	// like 1. Reject instead of wrapping.
+	const maxVolumeID = uint(^uint32(0))
+	if *fromVolumeArg > maxVolumeID {
+		return fmt.Errorf("fromVolumeId %d exceeds max volume id %d", *fromVolumeArg, maxVolumeID)
+	}
+	if *toVolumeArg > maxVolumeID {
+		return fmt.Errorf("toVolumeId %d exceeds max volume id %d", *toVolumeArg, maxVolumeID)
+	}
+
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
 	toVolumeId := needle.VolumeId(*toVolumeArg)
 
