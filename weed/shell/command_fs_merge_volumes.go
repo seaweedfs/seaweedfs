@@ -70,10 +70,38 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 		dir = strings.TrimRight(dir, "/")
 	}
 
+	// flag.Uint is a 64-bit uint on amd64 but needle.VolumeId is uint32, so a
+	// value that overflows (e.g. 4294967297) silently wraps to a valid id
+	// like 1. Reject instead of wrapping.
+	const maxVolumeID = uint(^uint32(0))
+	if *fromVolumeArg > maxVolumeID {
+		return fmt.Errorf("fromVolumeId %d exceeds max volume id %d", *fromVolumeArg, maxVolumeID)
+	}
+	if *toVolumeArg > maxVolumeID {
+		return fmt.Errorf("toVolumeId %d exceeds max volume id %d", *toVolumeArg, maxVolumeID)
+	}
+
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
 	toVolumeId := needle.VolumeId(*toVolumeArg)
 
-	c.reloadVolumesInfo(commandEnv.MasterClient)
+	if err = c.reloadVolumesInfo(commandEnv.MasterClient); err != nil {
+		return fmt.Errorf("reload volumes info: %w", err)
+	}
+
+	// Reject unknown ids before createMergePlan silently produces an empty plan
+	// and we print just the "max volume size" header. That output is
+	// indistinguishable from a legitimate "nothing to merge" and hides typos,
+	// already-deleted volumes, and stale scripts.
+	if fromVolumeId != 0 {
+		if _, err := c.getVolumeInfoById(fromVolumeId); err != nil {
+			return fmt.Errorf("fromVolumeId %d not found on master", fromVolumeId)
+		}
+	}
+	if toVolumeId != 0 {
+		if _, err := c.getVolumeInfoById(toVolumeId); err != nil {
+			return fmt.Errorf("toVolumeId %d not found on master", toVolumeId)
+		}
+	}
 
 	if fromVolumeId != 0 && toVolumeId != 0 {
 		if fromVolumeId == toVolumeId {
