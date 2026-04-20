@@ -115,6 +115,12 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		return nil
 	}
 
+	// The command struct is a singleton registered in init(), so any state
+	// not bound to a flag persists across shell invocations. Reset the
+	// unresolved-manifest counter so a previous failed run can't permanently
+	// suppress -reallyDeleteFromVolume in this session.
+	c.unresolvedManifestEntries.Store(0)
+
 	if err = commandEnv.confirmIsLocked(args); err != nil {
 		return
 	}
@@ -272,6 +278,13 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
 			if resolveErr != nil {
+				// Cancellation/deadline isn't manifest corruption; surface it
+				// so the BFS bails out cleanly without polluting the
+				// unresolved-manifest counter (which would otherwise block
+				// purges and mislead the operator about the failure cause).
+				if errors.Is(resolveErr, context.Canceled) || errors.Is(resolveErr, context.DeadlineExceeded) {
+					return resolveErr
+				}
 				// A single broken manifest used to abort the whole traversal,
 				// leaving the operator with no way to identify orphans without
 				// first fixing the broken file. Instead, record only the
