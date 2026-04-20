@@ -59,7 +59,6 @@ type TestEnvironment struct {
 	filerPort           int
 	s3Port              int
 	icebergRestPort     int
-	risingwavePort      int
 	bindIP              string
 	accessKey           string
 	secretKey           string
@@ -114,12 +113,11 @@ func (env *TestEnvironment) StartSeaweedFS(t *testing.T) {
 		t.Fatalf("failed to create temp directory: %v", err)
 	}
 
-	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg", "RisingWave"})
+	ports := testutil.MustFreeMiniPorts(t, []string{"Master", "Filer", "S3", "Iceberg"})
 	env.masterPort = ports[0]
 	env.filerPort = ports[1]
 	env.s3Port = ports[2]
 	env.icebergRestPort = ports[3]
-	env.risingwavePort = ports[4]
 
 	env.bindIP = testutil.FindBindIP()
 
@@ -183,7 +181,6 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 
 	cmd := exec.Command("docker", "run", "-d",
 		"--name", containerName,
-		"-p", fmt.Sprintf("%d:4566", env.risingwavePort),
 		"--add-host", "host.docker.internal:host-gateway",
 		"-e", "AWS_ACCESS_KEY_ID="+env.accessKey,
 		"-e", "AWS_SECRET_ACCESS_KEY="+env.secretKey,
@@ -210,12 +207,9 @@ func (env *TestEnvironment) StartRisingWave(t *testing.T) {
 		t.Fatalf("failed to start postgres sidecar: %v\n%s", err, string(output))
 	}
 
-	// Wait for RisingWave port to be open on host
-	if !testutil.WaitForPort(env.risingwavePort, 120*time.Second) {
-		t.Fatalf("timed out waiting for RisingWave port %d to be open", env.risingwavePort)
-	}
-
 	// Wait for RisingWave to be truly ready via psql in the sidecar.
+	// The sidecar shares RisingWave's network namespace, so it reaches
+	// 4566 directly without a host port mapping.
 	if !env.waitForRisingWave(120 * time.Second) {
 		t.Fatalf("timed out waiting for RisingWave to be ready via psql")
 	}
