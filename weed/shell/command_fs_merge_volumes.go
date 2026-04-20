@@ -221,8 +221,11 @@ func (c *commandFsMergeVolumes) deleteMovedSourceNeedles(commandEnv *CommandEnv,
 				// StatusNotModified means the needle was already deleted
 				// (e.g. a concurrent fsck purge or a replica that had
 				// already reconciled). That's the desired end state, so
-				// don't warn about it.
-				if r.Error != "" && r.Status != http.StatusNotModified {
+				// don't warn about it. Cast to int because r.Status is
+				// an int32 protobuf field and linters flag the mixed-type
+				// compare even though Go's untyped-constant rules make it
+				// valid.
+				if r.Error != "" && int(r.Status) != http.StatusNotModified {
 					fmt.Printf("source cleanup %s: delete %s on %v: %s\n", entryPath, r.FileId, loc.ServerAddress(), r.Error)
 				}
 			}
