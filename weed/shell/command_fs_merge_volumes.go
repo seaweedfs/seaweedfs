@@ -73,7 +73,9 @@ func (c *commandFsMergeVolumes) Do(args []string, commandEnv *CommandEnv, writer
 	fromVolumeId := needle.VolumeId(*fromVolumeArg)
 	toVolumeId := needle.VolumeId(*toVolumeArg)
 
-	c.reloadVolumesInfo(commandEnv.MasterClient)
+	if err = c.reloadVolumesInfo(commandEnv.MasterClient); err != nil {
+		return fmt.Errorf("reload volumes info: %w", err)
+	}
 
 	// Reject unknown ids before createMergePlan silently produces an empty plan
 	// and we print just the "max volume size" header. That output is

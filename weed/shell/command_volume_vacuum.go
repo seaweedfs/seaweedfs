@@ -80,13 +80,19 @@ func (c *commandVacuum) Do(args []string, commandEnv *CommandEnv, writer io.Writ
 				}
 			}
 		})
-		var missing []uint32
+		// Dedupe via a set so "volume.vacuum -volumeId 5,5,5" on a missing
+		// volume 5 reports [5] once instead of [5 5 5].
+		missingSet := make(map[uint32]bool)
 		for _, vid := range volumeIdInts {
 			if !known[vid] {
-				missing = append(missing, vid)
+				missingSet[vid] = true
 			}
 		}
-		if len(missing) > 0 {
+		if len(missingSet) > 0 {
+			missing := make([]uint32, 0, len(missingSet))
+			for vid := range missingSet {
+				missing = append(missing, vid)
+			}
 			sort.Slice(missing, func(i, j int) bool { return missing[i] < missing[j] })
 			return fmt.Errorf("volume(s) not found on master: %v", missing)
 		}
