@@ -371,6 +371,13 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 	isEcVolumeReplicas := make(map[uint32]bool)
 	isReadOnlyReplicas := make(map[uint32]bool)
 	serverReplicas := make(map[uint32][]pb.ServerAddress)
+	// Phase 1: collect orphan fids from every replica of every volume.
+	// The purge step runs in Phase 2, AFTER every replica has contributed.
+	// Running purge inside this loop (as the original code did) meant the
+	// first replica's orphans were deleted before later replicas could
+	// participate in the intersection — so the "only purge fids seen on
+	// all replicas" safety net only worked by accident, and purge also
+	// fired multiple times per volume (once per data-node iteration).
 	for dataNodeId, volumeIdToVInfo := range dataNodeVolumeIdToVInfo {
 		for volumeId, vinfo := range volumeIdToVInfo {
 			inUseCount, orphanFileIds, orphanDataSize, checkErr := c.oneVolumeFileIdsSubtractFilerFileIds(dataNodeId, volumeId, &vinfo, modifyFrom, cutoffFrom)
@@ -407,18 +414,24 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 			}
 			serverReplicas[volumeId] = append(serverReplicas[volumeId], vinfo.server)
 		}
+	}
 
+	// Phase 2: purge. At most one call to purgeFileIdsForOneVolume per
+	// volume — that helper already fans out to all replica locations via
+	// MasterClient.GetLocations, so iterating serverReplicas here (as the
+	// old code did) would issue N*N delete RPCs for N replicas.
+	if applyPurging {
 		for volumeId, orphanReplicaFileIds := range volumeIdOrphanFileIds {
-			if !(applyPurging && len(orphanReplicaFileIds) > 0) {
+			if len(orphanReplicaFileIds) == 0 {
 				continue
 			}
-			orphanFileIds := []string{}
+			orphanFileIds := make([]string, 0, len(orphanReplicaFileIds))
 			for fid, foundInAllReplicas := range orphanReplicaFileIds {
-				if !isSeveralReplicas[volumeId] || *c.forcePurging || (isSeveralReplicas[volumeId] && foundInAllReplicas) {
+				if !isSeveralReplicas[volumeId] || *c.forcePurging || foundInAllReplicas {
 					orphanFileIds = append(orphanFileIds, fid)
 				}
 			}
-			if !(len(orphanFileIds) > 0) {
+			if len(orphanFileIds) == 0 {
 				continue
 			}
 			if *c.verbose {
@@ -429,27 +442,27 @@ func (c *commandVolumeFsck) findExtraChunksInVolumeServers(dataNodeVolumeIdToVIn
 				fmt.Fprintf(c.writer, "skip purging for Erasure Coded volume %d.\n", volumeId)
 				continue
 			}
-			for _, server := range serverReplicas[volumeId] {
-				needleVID := needle.VolumeId(volumeId)
 
-				if isReadOnlyReplicas[volumeId] {
-					err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false)
-					if err != nil {
-						return fmt.Errorf("mark volume %d read/write: %v", volumeId, err)
+			if isReadOnlyReplicas[volumeId] {
+				// Every replica needs to be writable before the purge RPC
+				// fans out; revert each one on return regardless of where
+				// we bail out.
+				needleVID := needle.VolumeId(volumeId)
+				for _, server := range serverReplicas[volumeId] {
+					if err := markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, true, false); err != nil {
+						return fmt.Errorf("mark volume %d on %v read/write: %v", volumeId, server, err)
 					}
 					fmt.Fprintf(c.writer, "temporarily marked %d on server %v writable for forced purge\n", volumeId, server)
 					defer markVolumeWritable(c.env.option.GrpcDialOption, needleVID, server, false, false)
-
-					fmt.Fprintf(c.writer, "marked %d on server %v writable for forced purge\n", volumeId, server)
 				}
+			}
 
-				if *c.verbose {
-					fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
-				}
+			if *c.verbose {
+				fmt.Fprintf(c.writer, "purging files from volume %d\n", volumeId)
+			}
 
-				if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
-					return fmt.Errorf("purging volume %d: %v", volumeId, err)
-				}
+			if err := c.purgeFileIdsForOneVolume(volumeId, orphanFileIds); err != nil {
+				return fmt.Errorf("purging volume %d: %v", volumeId, err)
 			}
 		}
 	}
