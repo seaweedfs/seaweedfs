@@ -45,18 +45,19 @@ const (
 )
 
 type commandVolumeFsck struct {
-	env                      *CommandEnv
-	writer                   io.Writer
-	bucketsPath              string
-	collection               *string
-	volumeIds                map[uint32]bool
-	tempFolder               string
-	verbose                  *bool
-	forcePurging             *bool
-	skipEcVolumes            *bool
-	findMissingChunksInFiler *bool
-	verifyNeedle             *bool
-	filerSigningKey          string
+	env                       *CommandEnv
+	writer                    io.Writer
+	bucketsPath               string
+	collection                *string
+	volumeIds                 map[uint32]bool
+	tempFolder                string
+	verbose                   *bool
+	forcePurging              *bool
+	skipEcVolumes             *bool
+	findMissingChunksInFiler  *bool
+	verifyNeedle              *bool
+	filerSigningKey           string
+	unresolvedManifestEntries int
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -219,8 +220,19 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		if err = c.collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo, false, 0, 0); err != nil {
 			return fmt.Errorf("failed to collect file ids from filer: %w", err)
 		}
+		// If any entry's manifest could not be resolved, our in-use fid set
+		// is missing the sub-chunks behind it. Purging orphans now would
+		// delete live data referenced only via the unresolved manifest, so
+		// disable -reallyDeleteFromVolume for this run and tell the operator
+		// to fix the broken entries first.
+		applyPurgingEffective := *applyPurging
+		if c.unresolvedManifestEntries > 0 && applyPurgingEffective {
+			fmt.Fprintf(c.writer, "WARNING: %d entry(ies) had unresolvable chunk manifests; refusing to apply -reallyDeleteFromVolume to avoid deleting live sub-chunks. Fix the entries listed above (e.g. delete or repair them) and re-run.\n",
+				c.unresolvedManifestEntries)
+			applyPurgingEffective = false
+		}
 		// volume file ids subtract filer file ids
-		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, *applyPurging, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
+		if err = c.findExtraChunksInVolumeServers(dataNodeVolumeIdToVInfo, applyPurgingEffective, uint64(collectModifyFromAtNs), uint64(collectCutoffFromAtNs)); err != nil {
 			return fmt.Errorf("findExtraChunksInVolumeServers: %w", err)
 		}
 	}
@@ -259,7 +271,19 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			}
 			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
 			if resolveErr != nil {
-				return fmt.Errorf("failed to ResolveChunkManifest: %+v", resolveErr)
+				// A single broken manifest used to abort the whole traversal,
+				// leaving the operator with no way to identify orphans without
+				// first fixing the broken file. Instead, record only the
+				// top-level chunk fids (data chunks plus the manifest needles
+				// themselves — sub-chunks behind the unreadable manifest are
+				// unknown), warn, and keep going. The unresolved counter blocks
+				// any purge step downstream so we never delete a sub-chunk we
+				// couldn't account for.
+				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; purging will be disabled\n",
+					util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
+				c.unresolvedManifestEntries++
+				dataChunks = entry.Entry.GetChunks()
+				manifestChunks = nil
 			}
 			dataChunks = append(dataChunks, manifestChunks...)
 			for _, chunk := range dataChunks {
