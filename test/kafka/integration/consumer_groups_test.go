@@ -75,21 +75,21 @@ func testConsumerGroupBasicFunctionality(t *testing.T, addr string) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 
-			err = consumerGroup.Consume(ctx, []string{topicName}, handler)
-			if err != nil && err != context.DeadlineExceeded {
-				consumerErrors <- fmt.Errorf("consumer %d: consumption error: %v", consumerID, err)
-				return
-			}
+			runConsumeLoop(t, ctx, fmt.Sprintf("Consumer%d", consumerID),
+				consumerGroup, []string{topicName}, handler)
 		}(i)
 	}
 
-	// Wait for consumers to be ready
+	// Wait for consumers to be ready. Multi-consumer rebalance can take a few
+	// heartbeat intervals (default 3s) as the initial leader receives
+	// REBALANCE_IN_PROGRESS from its heartbeat and re-joins, so allow
+	// enough headroom.
 	readyCount := 0
 	for readyCount < numConsumers {
 		select {
 		case <-handler.ready:
 			readyCount++
-		case <-time.After(5 * time.Second):
+		case <-time.After(20 * time.Second):
 			t.Fatalf("Timeout waiting for consumers to be ready")
 		}
 	}

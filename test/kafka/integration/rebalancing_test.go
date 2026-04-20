@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -10,6 +11,25 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/seaweedfs/seaweedfs/test/kafka/internal/testutil"
 )
+
+// runConsumeLoop drives consumerGroup.Consume in a for-loop until ctx is cancelled
+// or the group is closed. This is the idiomatic Sarama pattern: Consume returns
+// when a rebalance cancels the session, and the caller is expected to re-enter.
+// Tests that observe rebalance behaviour MUST loop — otherwise the consumer goroutine
+// exits on the first rebalance and never sees the post-rebalance assignment.
+func runConsumeLoop(t *testing.T, ctx context.Context, name string, cg sarama.ConsumerGroup, topics []string, handler sarama.ConsumerGroupHandler) {
+	for {
+		if err := cg.Consume(ctx, topics, handler); err != nil {
+			if ctx.Err() != nil || errors.Is(err, sarama.ErrClosedConsumerGroup) {
+				return
+			}
+			t.Logf("%s Consume returned: %v (will retry)", name, err)
+		}
+		if ctx.Err() != nil {
+			return
+		}
+	}
+}
 
 func testSingleConsumerAllPartitions(t *testing.T, addr, topicName, groupID string) {
 	config := sarama.NewConfig()
@@ -101,12 +121,7 @@ func testTwoConsumersRebalance(t *testing.T, addr, topicName, groupID string) {
 	ctx1, cancel1 := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel1()
 
-	go func() {
-		err := consumerGroup1.Consume(ctx1, []string{topicName}, handler1)
-		if err != nil && err != context.DeadlineExceeded {
-			t.Logf("Consumer1 error: %v", err)
-		}
-	}()
+	go runConsumeLoop(t, ctx1, "Consumer1", consumerGroup1, []string{topicName}, handler1)
 
 	// Wait for first consumer to be ready and get initial assignment
 	<-handler1.ready
@@ -140,12 +155,7 @@ func testTwoConsumersRebalance(t *testing.T, addr, topicName, groupID string) {
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel2()
 
-	go func() {
-		err := consumerGroup2.Consume(ctx2, []string{topicName}, handler2)
-		if err != nil && err != context.DeadlineExceeded {
-			t.Logf("Consumer2 error: %v", err)
-		}
-	}()
+	go runConsumeLoop(t, ctx2, "Consumer2", consumerGroup2, []string{topicName}, handler2)
 
 	// Wait for second consumer to be ready
 	<-handler2.ready
@@ -246,20 +256,9 @@ func testConsumerLeaveRebalance(t *testing.T, addr, topicName, groupID string) {
 
 	ctx2, cancel2 := context.WithTimeout(context.Background(), 30*time.Second)
 
-	// Start both consumers
-	go func() {
-		err := consumerGroup1.Consume(ctx1, []string{topicName}, handler1)
-		if err != nil && err != context.DeadlineExceeded {
-			t.Logf("Consumer1 error: %v", err)
-		}
-	}()
-
-	go func() {
-		err := consumerGroup2.Consume(ctx2, []string{topicName}, handler2)
-		if err != nil && err != context.DeadlineExceeded {
-			t.Logf("Consumer2 error: %v", err)
-		}
-	}()
+	// Start both consumers with loops so they survive rebalance session exits.
+	go runConsumeLoop(t, ctx1, "Consumer1", consumerGroup1, []string{topicName}, handler1)
+	go runConsumeLoop(t, ctx2, "Consumer2", consumerGroup2, []string{topicName}, handler2)
 
 	// Wait for both consumers to be ready
 	<-handler1.ready
@@ -323,10 +322,8 @@ func testMultipleConsumersJoin(t *testing.T, addr, topicName, groupID string) {
 		contexts[i], cancels[i] = context.WithTimeout(context.Background(), 45*time.Second)
 
 		go func(idx int) {
-			err := consumers[idx].Consume(contexts[idx], []string{topicName}, handlers[idx])
-			if err != nil && err != context.DeadlineExceeded {
-				t.Logf("Consumer%d error: %v", idx, err)
-			}
+			runConsumeLoop(t, contexts[idx], fmt.Sprintf("Consumer%d", idx),
+				consumers[idx], []string{topicName}, handlers[idx])
 		}(i)
 	}
 
@@ -339,26 +336,43 @@ func testMultipleConsumersJoin(t *testing.T, addr, topicName, groupID string) {
 		}
 	}()
 
-	// Wait for all consumers to be ready
+	// Wait for all consumers to be ready. Four consumers racing in produces
+	// several rebalance rounds; each round costs ~HeartbeatInterval (3s) before
+	// the prior leader sees REBALANCE_IN_PROGRESS and rejoins. Give enough
+	// headroom for the group to converge.
 	for i := 0; i < numConsumers; i++ {
 		select {
 		case <-handlers[i].ready:
 			t.Logf("Consumer%d ready", i)
-		case <-time.After(15 * time.Second):
+		case <-time.After(30 * time.Second):
 			t.Fatalf("Timeout waiting for Consumer%d to be ready", i)
 		}
 	}
 
-	// Collect final assignments from all consumers
+	// Collect the settled assignment for each consumer. Because each consumer's
+	// Consume() returns and re-enters on every rebalance, Setup fires multiple
+	// times while the group converges and the handler's assignments channel
+	// accumulates several snapshots. Drain it and keep the most recent value.
 	assignments := make([][]int32, numConsumers)
+	deadline := time.Now().Add(20 * time.Second)
 	for i := 0; i < numConsumers; i++ {
 		select {
 		case partitions := <-handlers[i].assignments:
 			assignments[i] = partitions
-			t.Logf("Consumer%d final assignment: %v", i, partitions)
-		case <-time.After(20 * time.Second):
+		case <-time.After(time.Until(deadline)):
 			t.Errorf("Timeout waiting for Consumer%d assignment", i)
+			continue
 		}
+	drain:
+		for {
+			select {
+			case partitions := <-handlers[i].assignments:
+				assignments[i] = partitions
+			case <-time.After(3 * time.Second):
+				break drain
+			}
+		}
+		t.Logf("Consumer%d final assignment: %v", i, assignments[i])
 	}
 
 	// Verify all partitions are assigned exactly once
@@ -418,13 +432,20 @@ func (h *RebalanceTestHandler) Setup(session sarama.ConsumerGroupSession) error 
 		}
 	}
 
-	select {
-	case h.assignments <- partitions:
-	default:
-		// Channel might be full, that's ok
+	// Always publish the latest assignment. If the channel is full, drain one
+	// stale value first so readers see the most recent rebalance outcome (not
+	// whatever arrived first while the group was still converging).
+	for {
+		select {
+		case h.assignments <- partitions:
+			return nil
+		default:
+			select {
+			case <-h.assignments:
+			default:
+			}
+		}
 	}
-
-	return nil
 }
 
 func (h *RebalanceTestHandler) Cleanup(sarama.ConsumerGroupSession) error {

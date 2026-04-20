@@ -83,14 +83,15 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	var isNewMember bool
 	var existingMember *consumer.GroupMember
 
-	// Use the actual ClientID from Kafka protocol header for unique member ID generation
-	clientKey := connContext.ClientID
-	if clientKey == "" {
-		// Fallback to deterministic key if ClientID not available
-		clientKey = fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
-		glog.Warningf("[JoinGroup] No ClientID in ConnectionContext for group %s, using fallback: %s", request.GroupID, clientKey)
+	// Dedup and memberID generation must be scoped per-connection, not per-ClientID:
+	// two Sarama consumers in the same process share the default ClientID ("sarama"),
+	// so keying on ClientID alone collapses them into a single member and breaks rebalancing.
+	connectionKey := connContext.ConnectionID
+	if connectionKey == "" {
+		connectionKey = fmt.Sprintf("%s-%d-%s", request.GroupID, request.SessionTimeout, request.ProtocolType)
+		glog.Warningf("[JoinGroup] No ConnectionID in ConnectionContext for group %s, using fallback: %s", request.GroupID, connectionKey)
 	} else {
-		glog.V(1).Infof("[JoinGroup] Using ClientID from ConnectionContext for group %s: %s", request.GroupID, clientKey)
+		glog.V(1).Infof("[JoinGroup] Using ConnectionID %s (ClientID=%q) for group %s", connectionKey, connContext.ClientID, request.GroupID)
 	}
 
 	// Check for static membership first
@@ -107,22 +108,23 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 	} else {
 		// Dynamic membership logic
 		if request.MemberID == "" {
-			// New member - check if we already have a member for this client
+			// New member - reuse the existing slot only if the SAME TCP connection
+			// is rejoining with an empty MemberID (e.g. retry after the gateway
+			// evicted it). Matching on ClientID would collapse distinct consumers
+			// that share a default ClientID.
 			var existingMemberID string
 			for existingID, member := range group.Members {
-				if member.ClientID == clientKey && !h.groupCoordinator.IsStaticMember(member) {
+				if member.ConnectionID == connectionKey && !h.groupCoordinator.IsStaticMember(member) {
 					existingMemberID = existingID
 					break
 				}
 			}
 
 			if existingMemberID != "" {
-				// Reuse existing member ID for this client
 				memberID = existingMemberID
 				isNewMember = false
 			} else {
-				// Generate new deterministic member ID
-				memberID = h.groupCoordinator.GenerateMemberID(clientKey, "consumer")
+				memberID = h.groupCoordinator.GenerateMemberID(connectionKey, "consumer")
 				isNewMember = true
 			}
 		} else {
@@ -164,24 +166,31 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 		groupInstanceID = &request.GroupInstanceID
 	}
 
-	member := &consumer.GroupMember{
-		ID:               memberID,
-		ClientID:         clientKey,  // Use actual Kafka ClientID for unique member identification
-		ClientHost:       clientHost, // Now extracted from actual connection
-		GroupInstanceID:  groupInstanceID,
-		SessionTimeout:   request.SessionTimeout,
-		RebalanceTimeout: request.RebalanceTimeout,
-		Subscription:     h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols),
-		State:            consumer.MemberStatePending,
-		LastHeartbeat:    time.Now(),
-		JoinedAt:         time.Now(),
-	}
-
-	// Add or update the member in the group before computing subscriptions or leader
 	if group.Members == nil {
 		group.Members = make(map[string]*consumer.GroupMember)
 	}
-	group.Members[memberID] = member
+
+	// Update existing member in place rather than replacing it, so the assignment
+	// (and any other state the leader populated in a prior SyncGroup) is preserved
+	// across rejoins. Replacing the struct clobbered member.Assignment, so the next
+	// non-leader SyncGroup returned an empty assignment and the consumer re-looped.
+	member, existing := group.Members[memberID]
+	if !existing {
+		member = &consumer.GroupMember{
+			ID:       memberID,
+			JoinedAt: time.Now(),
+		}
+		group.Members[memberID] = member
+	}
+	member.ClientID = connContext.ClientID
+	member.ConnectionID = connectionKey
+	member.ClientHost = clientHost
+	member.GroupInstanceID = groupInstanceID
+	member.SessionTimeout = request.SessionTimeout
+	member.RebalanceTimeout = request.RebalanceTimeout
+	member.Subscription = h.extractSubscriptionFromProtocolsEnhanced(request.GroupProtocols)
+	member.State = consumer.MemberStatePending
+	member.LastHeartbeat = time.Now()
 
 	// Store consumer group and member ID in connection context for use in fetch requests
 	connContext.ConsumerGroup = request.GroupID
@@ -885,12 +894,22 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		}
 		glog.V(2).Infof("[SYNCGROUP] Leader assignments processed successfully, group now STABLE")
 	} else if request.MemberID != group.Leader && len(request.GroupAssignments) == 0 {
-		// Non-leader member requesting its assignment
-		// CRITICAL FIX: Non-leader members should ALWAYS wait for leader's client-side assignments
-		// This is the correct behavior for Sarama and other client-side assignment protocols
-		glog.V(3).Infof("[SYNCGROUP] Non-leader %s waiting for/retrieving assignment in group %s (state=%s)",
-			request.MemberID, request.GroupID, group.State)
-		// Assignment will be retrieved from member.Assignment below
+		// Non-leader member requesting its assignment. Real Kafka blocks this
+		// call until the leader's SyncGroup arrives; the gateway doesn't hold the
+		// request, so if the leader hasn't published assignments for the current
+		// generation we return REBALANCE_IN_PROGRESS and let Sarama back off and
+		// retry the join/sync cycle (Consumer.Group.Rebalance.Retry.Max=4,
+		// Backoff=2s by default). If the member already has a non-empty
+		// assignment (steady-state re-sync) or the group has reached Stable
+		// (e.g. fewer partitions than members, so empty is a valid answer),
+		// serve member.Assignment directly.
+		if group.State != consumer.GroupStateStable && len(member.Assignment) == 0 {
+			glog.V(2).Infof("[SYNCGROUP] Non-leader %s in group %s: leader not ready (state=%s), returning REBALANCE_IN_PROGRESS",
+				request.MemberID, request.GroupID, group.State)
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+		}
+		glog.V(3).Infof("[SYNCGROUP] Non-leader %s retrieving assignment in group %s (state=%s assignment_len=%d)",
+			request.MemberID, request.GroupID, group.State, len(member.Assignment))
 	} else {
 		// Trigger partition assignment using built-in strategy (server-side assignment)
 		// This should only happen for server-side assignment protocols (not Sarama's client-side)
