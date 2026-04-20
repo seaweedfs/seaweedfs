@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/seaweedfs/seaweedfs/weed/filer"
@@ -57,7 +58,7 @@ type commandVolumeFsck struct {
 	findMissingChunksInFiler  *bool
 	verifyNeedle              *bool
 	filerSigningKey           string
-	unresolvedManifestEntries int
+	unresolvedManifestEntries atomic.Int64
 }
 
 func (c *commandVolumeFsck) Name() string {
@@ -226,9 +227,9 @@ func (c *commandVolumeFsck) Do(args []string, commandEnv *CommandEnv, writer io.
 		// disable -reallyDeleteFromVolume for this run and tell the operator
 		// to fix the broken entries first.
 		applyPurgingEffective := *applyPurging
-		if c.unresolvedManifestEntries > 0 && applyPurgingEffective {
+		if unresolved := c.unresolvedManifestEntries.Load(); unresolved > 0 && applyPurgingEffective {
 			fmt.Fprintf(c.writer, "WARNING: %d entry(ies) had unresolvable chunk manifests; refusing to apply -reallyDeleteFromVolume to avoid deleting live sub-chunks. Fix the entries listed above (e.g. delete or repair them) and re-run.\n",
-				c.unresolvedManifestEntries)
+				unresolved)
 			applyPurgingEffective = false
 		}
 		// volume file ids subtract filer file ids
@@ -269,7 +270,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 			if *c.verbose && entry.Entry.IsDirectory {
 				fmt.Fprintf(c.writer, "checking directory %s\n", util.NewFullPath(entry.Dir, entry.Entry.Name))
 			}
-			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(context.Background(), filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
+			dataChunks, manifestChunks, resolveErr := filer.ResolveChunkManifest(ctx, filer.LookupFn(c.env), entry.Entry.GetChunks(), 0, math.MaxInt64)
 			if resolveErr != nil {
 				// A single broken manifest used to abort the whole traversal,
 				// leaving the operator with no way to identify orphans without
@@ -281,7 +282,7 @@ func (c *commandVolumeFsck) collectFilerFileIdAndPaths(dataNodeVolumeIdToVInfo m
 				// couldn't account for.
 				fmt.Fprintf(c.writer, "WARNING: ResolveChunkManifest failed for %s: %v — recording top-level chunk fids only; purging will be disabled\n",
 					util.NewFullPath(entry.Dir, entry.Entry.Name), resolveErr)
-				c.unresolvedManifestEntries++
+				c.unresolvedManifestEntries.Add(1)
 				dataChunks = entry.Entry.GetChunks()
 				manifestChunks = nil
 			}
