@@ -3,6 +3,9 @@ package grpc
 import (
 	"context"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/pb/iam_pb"
 )
@@ -50,6 +53,12 @@ func (store *IamGrpcStore) GetUser(ctx context.Context, username string) (*iam_p
 		identity = resp.Identity
 		return nil
 	})
+	// The filer-side handler returns gRPC NotFound when the user is absent;
+	// translate back to the package sentinel so callers can use
+	// errors.Is(err, credential.ErrUserNotFound) uniformly across stores.
+	if err != nil && status.Code(err) == codes.NotFound {
+		return nil, credential.ErrUserNotFound
+	}
 	return identity, err
 }
 
