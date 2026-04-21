@@ -64,24 +64,14 @@ func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
 	}
 }
 
-// isDiskAvailable checks if a disk can accept new tasks.
-//
-// Cross-task-type conflicts are intentionally NOT checked here. Different job
-// types (Balance, ErasureCoding, Vacuum) operate on different volumes — the
-// per-volume safety guarantee is enforced one layer up by HasAnyTask at task
-// detection time. Per-disk load shaping is handled separately by
-// MaxConcurrentTasksPerDisk and capacity reservation.
-//
-// A previous implementation declared Balance/EC/Vacuum mutually exclusive per
-// disk, which on small clusters could permanently exclude a disk from EC
-// placement whenever any unrelated balance task was in flight (see #9147).
+// isDiskAvailable checks if a disk can accept new tasks. Per-volume safety is
+// enforced by HasAnyTask at detection time, so cross-type tasks on the same
+// disk are intentionally not considered conflicting (see #9147).
 func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) bool {
-	// Check if disk has too many pending and active tasks
 	activeLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
 	if MaxConcurrentTasksPerDisk > 0 && activeLoad >= MaxConcurrentTasksPerDisk {
 		return false
 	}
-
 	return true
 }
 

@@ -351,18 +351,10 @@ func TestDiskLoadCalculation(t *testing.T) {
 	assert.Equal(t, 1, targetDisk.LoadCount)
 }
 
-// TestCrossTypeTasksDoNotBlockPerDisk verifies that an in-flight task of one
-// type on a disk does not exclude the disk from accepting tasks of a different
-// type. Per-volume safety is the responsibility of HasAnyTask at detection time.
-//
-// This guards against the regression in #9147, where a per-disk Balance↔EC
-// conflict on a small cluster permanently blocked auto-EC any time an unrelated
-// balance task was retrying.
 func TestCrossTypeTasksDoNotBlockPerDisk(t *testing.T) {
 	topology := NewActiveTopology(10)
 	topology.UpdateTopology(createSampleTopology())
 
-	// Assign a balance task using disk 10.0.0.1:8080:0 as source.
 	err := topology.AddPendingTask(TaskSpec{
 		TaskID:     "balance1",
 		TaskType:   TaskTypeBalance,
@@ -378,8 +370,6 @@ func TestCrossTypeTasksDoNotBlockPerDisk(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, topology.AssignTask("balance1"))
 
-	// A vacuum (different type, different volume) must still see the source
-	// disk as a candidate.
 	availableDisks := topology.GetAvailableDisks(TaskTypeVacuum, "")
 	sourceDiskAvailable := false
 	for _, disk := range availableDisks {
@@ -392,14 +382,12 @@ func TestCrossTypeTasksDoNotBlockPerDisk(t *testing.T) {
 		"Source disk should remain available for an unrelated task type")
 }
 
-// TestECPlanningNotBlockedByUnrelatedBalance is the direct regression test for
-// #9147: a 4-disk cluster with one in-flight balance task must still expose all
-// 4 disks to EC placement so MinTotalDisks can be satisfied.
+// Regression for #9147: a 4-disk cluster with one in-flight balance task must
+// still expose all 4 disks to EC placement so MinTotalDisks can be satisfied.
 func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
 	topology := NewActiveTopology(10)
-	topology.UpdateTopology(createSampleTopology()) // 2 nodes x 2 disks = 4 disks
+	topology.UpdateTopology(createSampleTopology()) // 2 nodes x 2 disks
 
-	// One in-flight balance moving an unrelated volume.
 	err := topology.AddPendingTask(TaskSpec{
 		TaskID:     "balance1",
 		TaskType:   TaskTypeBalance,
@@ -415,8 +403,6 @@ func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, topology.AssignTask("balance1"))
 
-	// EC must still see all 4 disks. Pre-fix, the per-disk Balance↔EC conflict
-	// pruned the source and destination of the balance task, leaving only 2.
 	ecCandidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
 	assert.Equal(t, 4, len(ecCandidates),
 		"EC must still see all 4 disks even with an unrelated in-flight balance")
