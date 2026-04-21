@@ -236,19 +236,13 @@ func (at *ActiveTopology) getPlanningCapacityUnsafe(disk *activeDisk) StorageSlo
 	}
 }
 
-// isDiskAvailableForPlanning checks if disk can accept new tasks considering pending load
+// isDiskAvailableForPlanning checks if disk can accept new tasks considering pending load.
+// See isDiskAvailable for why per-disk cross-task-type conflicts are not enforced.
 func (at *ActiveTopology) isDiskAvailableForPlanning(disk *activeDisk, taskType TaskType) bool {
 	// Check total load including pending tasks
 	totalLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
 	if MaxTotalTaskLoadPerDisk > 0 && totalLoad >= MaxTotalTaskLoadPerDisk {
 		return false
-	}
-
-	// Check for conflicting task types in active tasks only
-	for _, task := range disk.assignedTasks {
-		if at.areTaskTypesConflicting(task.TaskType, taskType) {
-			return false
-		}
 	}
 
 	return true

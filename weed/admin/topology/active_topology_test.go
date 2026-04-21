@@ -261,11 +261,11 @@ func TestTargetSelectionScenarios(t *testing.T) {
 			expectedTargets: 4,  // All 4 disks available
 		},
 		{
-			name:            "Vacuum task - avoid conflicting disks",
+			name:            "Vacuum task - cross-type tasks do not block per disk",
 			topology:        createTopologyWithConflicts(),
 			taskType:        TaskTypeVacuum,
 			excludeNode:     "",
-			expectedTargets: 1, // Only 1 disk without conflicts (conflicts exclude more disks)
+			expectedTargets: 4, // All 4 disks available; per-volume safety is enforced by HasAnyTask
 		},
 	}
 
@@ -279,8 +279,6 @@ func TestTargetSelectionScenarios(t *testing.T) {
 			for _, disk := range availableDisks {
 				assert.NotEqual(t, tt.excludeNode, disk.NodeID,
 					"Available disk should not be on excluded node")
-
-				assert.Less(t, disk.LoadCount, 2, "Disk load should be less than 2")
 			}
 		})
 	}
@@ -353,12 +351,18 @@ func TestDiskLoadCalculation(t *testing.T) {
 	assert.Equal(t, 1, targetDisk.LoadCount)
 }
 
-// TestTaskConflictDetection tests task conflict detection
-func TestTaskConflictDetection(t *testing.T) {
+// TestCrossTypeTasksDoNotBlockPerDisk verifies that an in-flight task of one
+// type on a disk does not exclude the disk from accepting tasks of a different
+// type. Per-volume safety is the responsibility of HasAnyTask at detection time.
+//
+// This guards against the regression in #9147, where a per-disk Balance↔EC
+// conflict on a small cluster permanently blocked auto-EC any time an unrelated
+// balance task was retrying.
+func TestCrossTypeTasksDoNotBlockPerDisk(t *testing.T) {
 	topology := NewActiveTopology(10)
 	topology.UpdateTopology(createSampleTopology())
 
-	// Add a balance task
+	// Assign a balance task using disk 10.0.0.1:8080:0 as source.
 	err := topology.AddPendingTask(TaskSpec{
 		TaskID:     "balance1",
 		TaskType:   TaskTypeBalance,
@@ -371,13 +375,12 @@ func TestTaskConflictDetection(t *testing.T) {
 			{ServerID: "10.0.0.2:8080", DiskID: 1},
 		},
 	})
-	assert.NoError(t, err, "Should add balance task successfully")
-	topology.AssignTask("balance1")
+	require.NoError(t, err)
+	require.NoError(t, topology.AssignTask("balance1"))
 
-	// Try to get available disks for vacuum (conflicts with balance)
+	// A vacuum (different type, different volume) must still see the source
+	// disk as a candidate.
 	availableDisks := topology.GetAvailableDisks(TaskTypeVacuum, "")
-
-	// Source disk should not be available due to conflict
 	sourceDiskAvailable := false
 	for _, disk := range availableDisks {
 		if disk.NodeID == "10.0.0.1:8080" && disk.DiskID == 0 {
@@ -385,7 +388,38 @@ func TestTaskConflictDetection(t *testing.T) {
 			break
 		}
 	}
-	assert.False(t, sourceDiskAvailable, "Source disk should not be available due to task conflict")
+	assert.True(t, sourceDiskAvailable,
+		"Source disk should remain available for an unrelated task type")
+}
+
+// TestECPlanningNotBlockedByUnrelatedBalance is the direct regression test for
+// #9147: a 4-disk cluster with one in-flight balance task must still expose all
+// 4 disks to EC placement so MinTotalDisks can be satisfied.
+func TestECPlanningNotBlockedByUnrelatedBalance(t *testing.T) {
+	topology := NewActiveTopology(10)
+	topology.UpdateTopology(createSampleTopology()) // 2 nodes x 2 disks = 4 disks
+
+	// One in-flight balance moving an unrelated volume.
+	err := topology.AddPendingTask(TaskSpec{
+		TaskID:     "balance1",
+		TaskType:   TaskTypeBalance,
+		VolumeID:   42,
+		VolumeSize: 1024 * 1024 * 1024,
+		Sources: []TaskSourceSpec{
+			{ServerID: "10.0.0.1:8080", DiskID: 0},
+		},
+		Destinations: []TaskDestinationSpec{
+			{ServerID: "10.0.0.2:8080", DiskID: 0},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, topology.AssignTask("balance1"))
+
+	// EC must still see all 4 disks. Pre-fix, the per-disk Balance↔EC conflict
+	// pruned the source and destination of the balance task, leaving only 2.
+	ecCandidates := topology.GetDisksWithEffectiveCapacity(TaskTypeErasureCoding, "", 0)
+	assert.Equal(t, 4, len(ecCandidates),
+		"EC must still see all 4 disks even with an unrelated in-flight balance")
 }
 
 // TestPublicInterfaces tests the public interface methods
