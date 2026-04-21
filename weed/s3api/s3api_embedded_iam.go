@@ -5,6 +5,8 @@ package s3api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1387,12 +1389,15 @@ func (e *EmbeddedIamApi) CreateServiceAccount(s3cfg *iam_pb.S3ApiConfiguration, 
 		}
 	}
 
-	// Generate unique ID and credentials
-	saId, err := iamStringWithCharset(ServiceAccountIDLength, iamCharsetUpper)
-	if err != nil {
+	// Generate a unique service account ID in the format required by
+	// credential.ValidateServiceAccountId: sa:<parent>:<uuid>. 16 bytes of
+	// randomness (hex-encoded) matches the shell command's generator and
+	// satisfies the persistence-layer regex `^sa:[A-Za-z0-9_-]+:[a-z0-9-]+$`.
+	var idBytes [16]byte
+	if _, err := rand.Read(idBytes[:]); err != nil {
 		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate ID: %w", err)}
 	}
-	saId = ServiceAccountIDPrefix + "-" + saId
+	saId := fmt.Sprintf("%s:%s:%s", ServiceAccountIDPrefix, parentUser, hex.EncodeToString(idBytes[:]))
 
 	// Generate access key ID with correct length (20 chars total including prefix)
 	// AWS access keys are always 20 characters: 4-char prefix (ABIA) + 16 random chars

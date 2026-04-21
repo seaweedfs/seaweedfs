@@ -659,13 +659,15 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 	if policyManager != nil {
 		userPolicies, err := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
 		if err != nil {
-			glog.V(2).Infof("GetFederationToken: failed to resolve policies for %s: %v", identity.Name, err)
-			h.writeSTSErrorResponse(w, r, STSErrInternalError,
-				fmt.Errorf("failed to resolve caller policies"))
-			return
-		}
-		for _, p := range userPolicies {
-			policySet[p] = struct{}{}
+			// A legacy-config IAM user authenticated via SigV4 may not be present
+			// in the IAM user store. Log and continue with identity.PolicyNames
+			// rather than hard-failing: the caller's SigV4 identity is already
+			// authoritative for legacy users.
+			glog.V(2).Infof("GetFederationToken: IAM policy lookup for %s failed, using SigV4 identity policies only: %v", identity.Name, err)
+		} else {
+			for _, p := range userPolicies {
+				policySet[p] = struct{}{}
+			}
 		}
 	}
 
