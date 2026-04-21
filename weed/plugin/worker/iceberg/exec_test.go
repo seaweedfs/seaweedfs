@@ -2668,6 +2668,7 @@ func TestCompactDataFilesWithPositionDeletes(t *testing.T) {
 }
 
 func TestCompactDataFilesWithEqualityDeletes(t *testing.T) {
+	skipIfEqualityDeleteAvroUnsupported(t)
 	fs, client := startFakeFiler(t)
 
 	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
@@ -2820,6 +2821,7 @@ func TestCompactDataFilesApplyDeletesDisabled(t *testing.T) {
 }
 
 func TestCompactDataFilesWithMixedDeletes(t *testing.T) {
+	skipIfEqualityDeleteAvroUnsupported(t)
 	fs, client := startFakeFiler(t)
 
 	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
@@ -3553,6 +3555,7 @@ func TestRewritePositionDeleteFilesPreservesUnsupportedMultiTargetDeletes(t *tes
 }
 
 func TestRewritePositionDeleteFilesRebuildsMixedDeleteManifests(t *testing.T) {
+	skipIfEqualityDeleteAvroUnsupported(t)
 	fs, client := startFakeFiler(t)
 
 	setup := tableSetup{BucketName: "tb", Namespace: "ns", TableName: "tbl"}
