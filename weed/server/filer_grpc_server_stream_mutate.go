@@ -19,6 +19,12 @@ import (
 // so one noisy mount cannot exhaust filer resources.
 const streamMutateConcurrency = 64
 
+// streamMutatePendingLimit caps total outstanding requests per stream
+// (admitted + waiting-for-admission). Prevents goroutine explosion when a
+// client floods requests against a conflicted path while leaving enough
+// headroom that cross-path requests never block Recv in practice.
+const streamMutatePendingLimit = 1024
+
 // syncStream wraps a bidi stream so that concurrent goroutines can Send
 // without interleaving frames. gRPC requires that Send not be called
 // concurrently; this mutex is the serialization point.
@@ -40,6 +46,11 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 	// a new request conflicts with an in-flight one on the same path or with
 	// a barrier directory at the same path / an ancestor.
 	sched := newMutateScheduler(streamMutateConcurrency)
+	// pendingSem caps goroutines-per-stream. The receive loop only blocks on
+	// this sem (not on Admit), so one conflicted path cannot head-of-line
+	// block receipt of unrelated paths — later distinct-path requests can be
+	// spawned, admitted, and processed while the conflicted request waits.
+	pendingSem := make(chan struct{}, streamMutatePendingLimit)
 	var wg sync.WaitGroup
 	// Track the first fatal send error across worker goroutines.
 	var sendErrMu sync.Mutex
@@ -73,10 +84,14 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 		}
 
 		primary, secondary, kind := classifyMutation(req)
-		sched.Admit(primary, secondary, kind)
+		pendingSem <- struct{}{}
 		wg.Add(1)
 		go func(req *filer_pb.StreamMutateEntryRequest, p, s util.FullPath, k mutateJobKind) {
 			defer wg.Done()
+			defer func() { <-pendingSem }()
+			// Admission happens off the Recv loop so a conflicted path never
+			// blocks receipt of unrelated requests.
+			sched.Admit(p, s, k)
 			defer sched.Done(p, s, k)
 			if e := fs.handleStreamMutateRequest(ss, req); e != nil {
 				setSendErr(e)
