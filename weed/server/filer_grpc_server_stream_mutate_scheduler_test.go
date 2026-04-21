@@ -391,32 +391,52 @@ func TestAdmitRenameTwoPathConflict(t *testing.T) {
 	}
 }
 
+// waitQueueLen blocks until pathQueue[p] has exactly n entries, or fails the
+// test on timeout. Uses the scheduler's own mutex to observe state so the
+// caller never needs a sleep to "let things settle".
+func waitQueueLen(t *testing.T, s *mutateScheduler, p util.FullPath, n int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		got := len(s.pathQueue[p])
+		s.mu.Unlock()
+		if got == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pathQueue[%q] len = %d, want %d (timeout)", p, got, n)
+		}
+		time.Sleep(100 * time.Microsecond)
+	}
+}
+
 // TestAdmitSamePathFIFO verifies arrival order is preserved for same-path
 // admits. Regression test for the Cond.Broadcast race where later admits
 // could be woken and registered before earlier ones.
+//
+// The arrival ordering is made deterministic by observing the scheduler's
+// per-path queue length between spawns — no sleep-based fudging.
 func TestAdmitSamePathFIFO(t *testing.T) {
 	s := newMutateScheduler(100)
 
 	// A barrier on /a holds the whole path while we enqueue N waiters.
+	// After this call pathQueue["/a"] has 1 entry (the barrier holder).
 	s.Admit("/a", "", kindMutateBarrierDir)
 
 	const N = 20
 	order := make(chan int, N)
-	started := make(chan struct{}, N)
 	for i := 0; i < N; i++ {
 		i := i
 		go func() {
-			started <- struct{}{}
 			s.Admit("/a", "", kindMutateFile)
 			order <- i
 			s.Done("/a", "", kindMutateFile)
 		}()
-		// Wait until this goroutine has observably scheduled its Admit call
-		// before spawning the next, so arrival order is deterministic.
-		<-started
-		// Small yield so the goroutine's Admit actually lands before the next
-		// one's; under -race this otherwise sometimes interleaves.
-		time.Sleep(time.Millisecond)
+		// Before spawning the next goroutine, wait until this one has
+		// observably enqueued itself. The barrier holder plus i+1 file
+		// waiters should be present on /a.
+		waitQueueLen(t, s, "/a", 1+i+1)
 	}
 
 	// Still held — nothing admitted yet.
