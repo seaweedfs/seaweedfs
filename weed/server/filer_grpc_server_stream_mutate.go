@@ -159,8 +159,16 @@ func (fs *FilerServer) handleStreamMutateRequest(ss *syncStream, req *filer_pb.S
 		return fs.handleStreamMutateRename(ss, req.RequestId, r.RenameRequest)
 
 	default:
+		// Send a terminal error response so the client's per-RequestId waiter
+		// is released; returning nil here would leak the client-side waiter
+		// forever when a future oneof variant or a malformed request arrives.
 		glog.Warningf("StreamMutateEntry: unknown request type %T", req.Request)
-		return nil
+		return ss.Send(&filer_pb.StreamMutateEntryResponse{
+			RequestId: req.RequestId,
+			IsLast:    true,
+			Error:     "unknown request type",
+			Errno:     int32(syscall.EINVAL),
+		})
 	}
 }
 
