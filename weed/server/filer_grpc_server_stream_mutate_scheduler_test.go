@@ -97,7 +97,7 @@ func TestClassifyMutation(t *testing.T) {
 			wantKind:    kindMutateNonBarrierDir,
 		},
 		{
-			name: "delete non-recursive",
+			name: "delete non-recursive (barrier: target type unknown)",
 			req: &filer_pb.StreamMutateEntryRequest{
 				Request: &filer_pb.StreamMutateEntryRequest_DeleteRequest{
 					DeleteRequest: &filer_pb.DeleteEntryRequest{
@@ -106,7 +106,7 @@ func TestClassifyMutation(t *testing.T) {
 				},
 			},
 			wantPrimary: "/a/f",
-			wantKind:    kindMutateFile,
+			wantKind:    kindMutateBarrierDir,
 		},
 		{
 			name: "delete recursive (barrier)",
@@ -118,6 +118,32 @@ func TestClassifyMutation(t *testing.T) {
 				},
 			},
 			wantPrimary: "/a/d",
+			wantKind:    kindMutateBarrierDir,
+		},
+		{
+			name: "malformed create (nil Entry)",
+			req: &filer_pb.StreamMutateEntryRequest{
+				Request: &filer_pb.StreamMutateEntryRequest_CreateRequest{
+					CreateRequest: &filer_pb.CreateEntryRequest{Directory: "/a"},
+				},
+			},
+			wantPrimary: "/",
+			wantKind:    kindMutateBarrierDir,
+		},
+		{
+			name: "malformed update (nil Entry)",
+			req: &filer_pb.StreamMutateEntryRequest{
+				Request: &filer_pb.StreamMutateEntryRequest_UpdateRequest{
+					UpdateRequest: &filer_pb.UpdateEntryRequest{Directory: "/a"},
+				},
+			},
+			wantPrimary: "/",
+			wantKind:    kindMutateBarrierDir,
+		},
+		{
+			name:        "empty oneof",
+			req:         &filer_pb.StreamMutateEntryRequest{},
+			wantPrimary: "/",
 			wantKind:    kindMutateBarrierDir,
 		},
 		{

@@ -193,21 +193,38 @@ func mutatePathAncestors(p util.FullPath) []util.FullPath {
 // classifyMutation extracts the admission key(s) and kind for a mutation
 // request. It returns primary, secondary (empty unless rename), and kind.
 //
-// The type of the target entry is inferred conservatively when the request
-// does not carry it (DeleteRequest has no IsDirectory): non-recursive delete
-// is treated as kindMutateFile (same-path serialization only); recursive
-// delete is treated as kindMutateBarrierDir so the entire subtree drains.
+// Malformed requests (missing oneof payload, nil Entry, missing rename fields)
+// are routed to a barrier at "/" so admission still runs under the full stream
+// lock; the handler will then send EINVAL to the client. This keeps the
+// scheduler and Recv loop crash-free regardless of client-side validation.
+//
+// Deletes are always classified as kindMutateBarrierDir because a
+// DeleteEntryRequest can target a directory (empty or, with IsRecursive, with
+// contents) but does not carry IsDirectory on the wire. Treating every delete
+// as a barrier at its target path makes it conflict with an in-flight
+// non-barrier directory update on the same path (e.g. chmod), which a
+// kindMutateFile classification would miss.
 func classifyMutation(req *filer_pb.StreamMutateEntryRequest) (primary, secondary util.FullPath, kind mutateJobKind) {
+	// Default fallback for any shape we cannot classify safely.
+	primary = util.FullPath("/")
+	kind = kindMutateBarrierDir
+
 	switch r := req.Request.(type) {
 
 	case *filer_pb.StreamMutateEntryRequest_CreateRequest:
 		cr := r.CreateRequest
+		if cr == nil || cr.Entry == nil {
+			return
+		}
 		primary = util.FullPath(cr.Directory).Child(cr.Entry.Name)
 		kind = classifyEntry(cr.Entry.IsDirectory, false)
 		return
 
 	case *filer_pb.StreamMutateEntryRequest_UpdateRequest:
 		ur := r.UpdateRequest
+		if ur == nil || ur.Entry == nil {
+			return
+		}
 		primary = util.FullPath(ur.Directory).Child(ur.Entry.Name)
 		// UpdateEntry never changes the name, so directory updates are always
 		// in-place attribute updates. File updates (chunk manifests, xattrs)
@@ -217,16 +234,23 @@ func classifyMutation(req *filer_pb.StreamMutateEntryRequest) (primary, secondar
 
 	case *filer_pb.StreamMutateEntryRequest_DeleteRequest:
 		dr := r.DeleteRequest
-		primary = util.FullPath(dr.Directory).Child(dr.Name)
-		if dr.IsRecursive {
-			kind = kindMutateBarrierDir
-		} else {
-			kind = kindMutateFile
+		if dr == nil {
+			return
 		}
+		primary = util.FullPath(dr.Directory).Child(dr.Name)
+		// Barrier regardless of IsRecursive: the request does not carry the
+		// target's IsDirectory, and barrier classification correctly blocks
+		// concurrent non-barrier dir updates at the same path. Descendant
+		// wait for a non-recursive delete of a non-empty dir is wasted but
+		// not wrong — that call fails at the store anyway.
+		kind = kindMutateBarrierDir
 		return
 
 	case *filer_pb.StreamMutateEntryRequest_RenameRequest:
 		rr := r.RenameRequest
+		if rr == nil {
+			return
+		}
 		primary = util.FullPath(rr.OldDirectory).Child(rr.OldName)
 		secondary = util.FullPath(rr.NewDirectory).Child(rr.NewName)
 		// Renames reshape the namespace on both sides; conservatively treat as
@@ -236,10 +260,6 @@ func classifyMutation(req *filer_pb.StreamMutateEntryRequest) (primary, secondar
 		return
 
 	default:
-		// Unknown request types get a safe per-request serialization at "/"
-		// so they do not sneak past admission entirely.
-		primary = util.FullPath("/")
-		kind = kindMutateBarrierDir
 		return
 	}
 }
