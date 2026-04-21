@@ -2,6 +2,7 @@ package weed_server
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"strings"
 	"sync"
@@ -219,8 +220,26 @@ func (p *renameStreamProxy) Context() context.Context {
 	return p.parent.stream.Context()
 }
 
-func (p *renameStreamProxy) SendMsg(m any) error             { return p.parent.stream.SendMsg(m) }
-func (p *renameStreamProxy) RecvMsg(m any) error             { return p.parent.stream.RecvMsg(m) }
+// SendMsg routes through Send so the payload is wrapped into a
+// StreamMutateEntryResponse and goes through the syncStream mutex. Calling
+// SendMsg with anything other than *filer_pb.StreamRenameEntryResponse would
+// emit the wrong protobuf type on this RPC, so reject other shapes.
+func (p *renameStreamProxy) SendMsg(m any) error {
+	resp, ok := m.(*filer_pb.StreamRenameEntryResponse)
+	if !ok {
+		return fmt.Errorf("renameStreamProxy.SendMsg: unexpected type %T", m)
+	}
+	return p.Send(resp)
+}
+
+// RecvMsg on the proxy would race with the outer StreamMutateEntry recv
+// loop and could steal unrelated mutation requests. The rename logic never
+// calls RecvMsg (it is strictly a server-push stream), so fail loudly if it
+// ever does.
+func (p *renameStreamProxy) RecvMsg(m any) error {
+	return fmt.Errorf("renameStreamProxy.RecvMsg is not supported")
+}
+
 func (p *renameStreamProxy) SetHeader(md metadata.MD) error  { return p.parent.stream.SetHeader(md) }
 func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.stream.SendHeader(md) }
 func (p *renameStreamProxy) SetTrailer(md metadata.MD)       { p.parent.stream.SetTrailer(md) }
