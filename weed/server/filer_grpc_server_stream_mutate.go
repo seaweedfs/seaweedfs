@@ -4,88 +4,148 @@ import (
 	"context"
 	"io"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/pb/filer_pb"
+	"github.com/seaweedfs/seaweedfs/weed/util"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 )
 
+// streamMutateConcurrency bounds the number of in-flight mutations processed
+// concurrently per client stream. Set to the typical filer-store sweet spot
+// so one noisy mount cannot exhaust filer resources.
+const streamMutateConcurrency = 64
+
+// syncStream wraps a bidi stream so that concurrent goroutines can Send
+// without interleaving frames. gRPC requires that Send not be called
+// concurrently; this mutex is the serialization point.
+type syncStream struct {
+	stream grpc.BidiStreamingServer[filer_pb.StreamMutateEntryRequest, filer_pb.StreamMutateEntryResponse]
+	mu     sync.Mutex
+}
+
+func (s *syncStream) Send(r *filer_pb.StreamMutateEntryResponse) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stream.Send(r)
+}
+
 func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_pb.StreamMutateEntryRequest, filer_pb.StreamMutateEntryResponse]) error {
+	ss := &syncStream{stream: stream}
+	// Path-keyed admission + subtree barriers, adapted from filer.sync's
+	// MetadataProcessor (weed/command/filer_sync_jobs.go). Admit blocks when
+	// a new request conflicts with an in-flight one on the same path or with
+	// a barrier directory at the same path / an ancestor.
+	sched := newMutateScheduler(streamMutateConcurrency)
+	var wg sync.WaitGroup
+	// Track the first fatal send error across worker goroutines.
+	var sendErrMu sync.Mutex
+	var sendErr error
+	setSendErr := func(e error) {
+		sendErrMu.Lock()
+		if sendErr == nil {
+			sendErr = e
+		}
+		sendErrMu.Unlock()
+	}
+	getSendErr := func() error {
+		sendErrMu.Lock()
+		defer sendErrMu.Unlock()
+		return sendErr
+	}
+
 	for {
+		if e := getSendErr(); e != nil {
+			wg.Wait()
+			return e
+		}
 		req, err := stream.Recv()
 		if err == io.EOF {
-			return nil
+			wg.Wait()
+			return getSendErr()
 		}
 		if err != nil {
+			wg.Wait()
 			return err
 		}
 
-		switch r := req.Request.(type) {
+		primary, secondary, kind := classifyMutation(req)
+		sched.Admit(primary, secondary, kind)
+		wg.Add(1)
+		go func(req *filer_pb.StreamMutateEntryRequest, p, s util.FullPath, k mutateJobKind) {
+			defer wg.Done()
+			defer sched.Done(p, s, k)
+			if e := fs.handleStreamMutateRequest(ss, req); e != nil {
+				setSendErr(e)
+			}
+		}(req, primary, secondary, kind)
+	}
+}
 
-		case *filer_pb.StreamMutateEntryRequest_CreateRequest:
-			resp, createErr := fs.CreateEntry(stream.Context(), r.CreateRequest)
-			if createErr != nil {
-				resp = &filer_pb.CreateEntryResponse{Error: createErr.Error()}
-			}
-			streamResp := &filer_pb.StreamMutateEntryResponse{
-				RequestId: req.RequestId,
-				IsLast:    true,
-				Response:  &filer_pb.StreamMutateEntryResponse_CreateResponse{CreateResponse: resp},
-			}
-			if resp.Error != "" {
-				streamResp.Error = resp.Error
-				streamResp.Errno = int32(syscall.EIO)
-			}
-			if sendErr := stream.Send(streamResp); sendErr != nil {
-				return sendErr
-			}
+// handleStreamMutateRequest processes one request and sends exactly one
+// (possibly multi-message) response via the shared sync stream. It returns
+// a non-nil error only if Send fails — in which case the caller should
+// tear down the stream.
+func (fs *FilerServer) handleStreamMutateRequest(ss *syncStream, req *filer_pb.StreamMutateEntryRequest) error {
+	switch r := req.Request.(type) {
 
-		case *filer_pb.StreamMutateEntryRequest_UpdateRequest:
-			resp, updateErr := fs.UpdateEntry(stream.Context(), r.UpdateRequest)
-			if updateErr != nil {
-				resp = &filer_pb.UpdateEntryResponse{}
-			}
-			streamResp := &filer_pb.StreamMutateEntryResponse{
-				RequestId: req.RequestId,
-				IsLast:    true,
-				Response:  &filer_pb.StreamMutateEntryResponse_UpdateResponse{UpdateResponse: resp},
-			}
-			if updateErr != nil {
-				streamResp.Error = updateErr.Error()
-				streamResp.Errno = int32(syscall.EIO)
-			}
-			if sendErr := stream.Send(streamResp); sendErr != nil {
-				return sendErr
-			}
-
-		case *filer_pb.StreamMutateEntryRequest_DeleteRequest:
-			resp, deleteErr := fs.DeleteEntry(stream.Context(), r.DeleteRequest)
-			if deleteErr != nil {
-				resp = &filer_pb.DeleteEntryResponse{Error: deleteErr.Error()}
-			}
-			streamResp := &filer_pb.StreamMutateEntryResponse{
-				RequestId: req.RequestId,
-				IsLast:    true,
-				Response:  &filer_pb.StreamMutateEntryResponse_DeleteResponse{DeleteResponse: resp},
-			}
-			if resp.Error != "" {
-				streamResp.Error = resp.Error
-				streamResp.Errno = int32(syscall.EIO)
-			}
-			if sendErr := stream.Send(streamResp); sendErr != nil {
-				return sendErr
-			}
-
-		case *filer_pb.StreamMutateEntryRequest_RenameRequest:
-			if err := fs.handleStreamMutateRename(stream, req.RequestId, r.RenameRequest); err != nil {
-				return err
-			}
-
-		default:
-			glog.Warningf("StreamMutateEntry: unknown request type %T", req.Request)
+	case *filer_pb.StreamMutateEntryRequest_CreateRequest:
+		resp, createErr := fs.CreateEntry(ss.stream.Context(), r.CreateRequest)
+		if createErr != nil {
+			resp = &filer_pb.CreateEntryResponse{Error: createErr.Error()}
 		}
+		out := &filer_pb.StreamMutateEntryResponse{
+			RequestId: req.RequestId,
+			IsLast:    true,
+			Response:  &filer_pb.StreamMutateEntryResponse_CreateResponse{CreateResponse: resp},
+		}
+		if resp.Error != "" {
+			out.Error = resp.Error
+			out.Errno = int32(syscall.EIO)
+		}
+		return ss.Send(out)
+
+	case *filer_pb.StreamMutateEntryRequest_UpdateRequest:
+		resp, updateErr := fs.UpdateEntry(ss.stream.Context(), r.UpdateRequest)
+		if updateErr != nil {
+			resp = &filer_pb.UpdateEntryResponse{}
+		}
+		out := &filer_pb.StreamMutateEntryResponse{
+			RequestId: req.RequestId,
+			IsLast:    true,
+			Response:  &filer_pb.StreamMutateEntryResponse_UpdateResponse{UpdateResponse: resp},
+		}
+		if updateErr != nil {
+			out.Error = updateErr.Error()
+			out.Errno = int32(syscall.EIO)
+		}
+		return ss.Send(out)
+
+	case *filer_pb.StreamMutateEntryRequest_DeleteRequest:
+		resp, deleteErr := fs.DeleteEntry(ss.stream.Context(), r.DeleteRequest)
+		if deleteErr != nil {
+			resp = &filer_pb.DeleteEntryResponse{Error: deleteErr.Error()}
+		}
+		out := &filer_pb.StreamMutateEntryResponse{
+			RequestId: req.RequestId,
+			IsLast:    true,
+			Response:  &filer_pb.StreamMutateEntryResponse_DeleteResponse{DeleteResponse: resp},
+		}
+		if resp.Error != "" {
+			out.Error = resp.Error
+			out.Errno = int32(syscall.EIO)
+		}
+		return ss.Send(out)
+
+	case *filer_pb.StreamMutateEntryRequest_RenameRequest:
+		return fs.handleStreamMutateRename(ss, req.RequestId, r.RenameRequest)
+
+	default:
+		glog.Warningf("StreamMutateEntry: unknown request type %T", req.Request)
+		return nil
 	}
 }
 
@@ -93,7 +153,7 @@ func (fs *FilerServer) StreamMutateEntry(stream grpc.BidiStreamingServer[filer_p
 // using a proxy stream that converts StreamRenameEntryResponse events into
 // StreamMutateEntryResponse messages on the parent bidi stream.
 func (fs *FilerServer) handleStreamMutateRename(
-	parent grpc.BidiStreamingServer[filer_pb.StreamMutateEntryRequest, filer_pb.StreamMutateEntryResponse],
+	parent *syncStream,
 	requestId uint64,
 	req *filer_pb.StreamRenameEntryRequest,
 ) error {
@@ -112,10 +172,7 @@ func (fs *FilerServer) handleStreamMutateRename(
 		finalResp.Errno = renameErrno(renameErr)
 		glog.V(0).Infof("StreamMutateEntry rename: %v", renameErr)
 	}
-	if sendErr := parent.Send(finalResp); sendErr != nil {
-		return sendErr
-	}
-	return nil
+	return parent.Send(finalResp)
 }
 
 // renameStreamProxy adapts the bidi StreamMutateEntry stream to look like a
@@ -123,7 +180,7 @@ func (fs *FilerServer) handleStreamMutateRename(
 // moveEntry expect. Each Send() call forwards the response as a non-final
 // StreamMutateEntryResponse.
 type renameStreamProxy struct {
-	parent    grpc.BidiStreamingServer[filer_pb.StreamMutateEntryRequest, filer_pb.StreamMutateEntryResponse]
+	parent    *syncStream
 	requestId uint64
 }
 
@@ -136,14 +193,14 @@ func (p *renameStreamProxy) Send(resp *filer_pb.StreamRenameEntryResponse) error
 }
 
 func (p *renameStreamProxy) Context() context.Context {
-	return p.parent.Context()
+	return p.parent.stream.Context()
 }
 
-func (p *renameStreamProxy) SendMsg(m any) error             { return p.parent.SendMsg(m) }
-func (p *renameStreamProxy) RecvMsg(m any) error             { return p.parent.RecvMsg(m) }
-func (p *renameStreamProxy) SetHeader(md metadata.MD) error  { return p.parent.SetHeader(md) }
-func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.SendHeader(md) }
-func (p *renameStreamProxy) SetTrailer(md metadata.MD)       { p.parent.SetTrailer(md) }
+func (p *renameStreamProxy) SendMsg(m any) error             { return p.parent.stream.SendMsg(m) }
+func (p *renameStreamProxy) RecvMsg(m any) error             { return p.parent.stream.RecvMsg(m) }
+func (p *renameStreamProxy) SetHeader(md metadata.MD) error  { return p.parent.stream.SetHeader(md) }
+func (p *renameStreamProxy) SendHeader(md metadata.MD) error { return p.parent.stream.SendHeader(md) }
+func (p *renameStreamProxy) SetTrailer(md metadata.MD)       { p.parent.stream.SetTrailer(md) }
 
 // renameErrno maps a rename error to a POSIX errno for the client.
 func renameErrno(err error) int32 {
