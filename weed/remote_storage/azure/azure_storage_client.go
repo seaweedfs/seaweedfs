@@ -287,6 +287,9 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 // slower WAN links.
 func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
 
+	if offset < 0 {
+		return nil, fmt.Errorf("invalid offset %d for %s%s", offset, loc.Bucket, loc.Path)
+	}
 	if size < 0 {
 		return nil, fmt.Errorf("invalid size %d for %s%s", size, loc.Bucket, loc.Path)
 	}
