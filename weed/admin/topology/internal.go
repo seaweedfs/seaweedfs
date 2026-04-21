@@ -64,42 +64,15 @@ func (at *ActiveTopology) assignTaskToDisk(task *taskState) {
 	}
 }
 
-// isDiskAvailable checks if a disk can accept new tasks
+// isDiskAvailable checks if a disk can accept new tasks. Per-volume safety is
+// enforced by HasAnyTask at detection time, so cross-type tasks on the same
+// disk are intentionally not considered conflicting (see #9147).
 func (at *ActiveTopology) isDiskAvailable(disk *activeDisk, taskType TaskType) bool {
-	// Check if disk has too many pending and active tasks
 	activeLoad := len(disk.pendingTasks) + len(disk.assignedTasks)
 	if MaxConcurrentTasksPerDisk > 0 && activeLoad >= MaxConcurrentTasksPerDisk {
 		return false
 	}
-
-	// Check for conflicting task types
-	for _, task := range disk.assignedTasks {
-		if at.areTaskTypesConflicting(task.TaskType, taskType) {
-			return false
-		}
-	}
-
 	return true
-}
-
-// areTaskTypesConflicting checks if two task types conflict
-func (at *ActiveTopology) areTaskTypesConflicting(existing, new TaskType) bool {
-	// Examples of conflicting task types
-	conflictMap := map[TaskType][]TaskType{
-		TaskTypeVacuum:        {TaskTypeBalance, TaskTypeErasureCoding},
-		TaskTypeBalance:       {TaskTypeVacuum, TaskTypeErasureCoding},
-		TaskTypeErasureCoding: {TaskTypeVacuum, TaskTypeBalance},
-	}
-
-	if conflicts, exists := conflictMap[existing]; exists {
-		for _, conflictType := range conflicts {
-			if conflictType == new {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // cleanupRecentTasks removes old recent tasks
