@@ -152,7 +152,32 @@ func (h *Handler) handleJoinGroup(connContext *ConnectionContext, correlationID 
 			group.State = consumer.GroupStateCompletingRebalance
 		}
 	case consumer.GroupStateCompletingRebalance:
-		// Allow join but don't change generation until SyncGroup
+		// A new member joining here — after the leader has already taken its
+		// member-list snapshot in its JoinGroup response — means the
+		// leader's upcoming SyncGroup will omit this member. That leaves it
+		// with an empty Assignment when the group goes Stable, and its own
+		// SyncGroup then silently serves the empty assignment (the
+		// CI-observed orphan). Pre-empt that: bump the generation so the
+		// leader's in-flight SyncGroup fails its generation check and the
+		// join cycle restarts with the new member in the leader's snapshot.
+		// (handleSyncGroup also catches this at commit time as a
+		// belt-and-suspenders check in case a new member slipped in between
+		// the leader's JoinGroup reply and its SyncGroup without hitting
+		// CompletingRebalance state here.)
+		if isNewMember {
+			group.State = consumer.GroupStatePreparingRebalance
+			group.Generation++
+			// Clear prior-generation assignments. The non-leader SyncGroup
+			// path in handleSyncGroup only returns REBALANCE_IN_PROGRESS
+			// when `member.Assignment` is empty; without clearing, a
+			// member rejoining at the new generation would be served its
+			// stale old-generation partitions from the pre-rebalance
+			// state.
+			for _, m := range group.Members {
+				m.State = consumer.MemberStatePending
+				m.Assignment = nil
+			}
+		}
 	case consumer.GroupStateDead:
 		return h.buildJoinGroupErrorResponse(correlationID, ErrorCodeInvalidGroupID, apiVersion), nil
 	}
@@ -829,6 +854,8 @@ type SyncGroupRequest struct {
 	GenerationID     int32
 	MemberID         string
 	GroupInstanceID  string
+	ProtocolType     string
+	ProtocolName     string
 	GroupAssignments []GroupAssignment // Only from group leader
 }
 
@@ -879,9 +906,20 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeUnknownMemberID, apiVersion), nil
 	}
 
-	// Validate generation
+	// Validate generation. When a late joiner forces us back to
+	// PreparingRebalance mid-round, the in-flight leader's SyncGroup carries
+	// the stale generation. Returning ILLEGAL_GENERATION here would tear down
+	// Sarama's Consume() (it does not re-enter on that error); returning
+	// REBALANCE_IN_PROGRESS while the group is rebalancing lets Sarama's
+	// newSession retry the join/sync cycle at the new generation, mirroring
+	// the handling in handleHeartbeat.
 	if request.GenerationID != group.Generation {
-		return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
+		switch group.State {
+		case consumer.GroupStatePreparingRebalance, consumer.GroupStateCompletingRebalance:
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+		default:
+			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeIllegalGeneration, apiVersion), nil
+		}
 	}
 
 	// Check if this is the group leader with assignments
@@ -889,13 +927,72 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 		request.MemberID, group.Leader, group.State, len(request.GroupAssignments) > 0, len(group.Members), request.GenerationID)
 
 	if request.MemberID == group.Leader && len(request.GroupAssignments) > 0 {
-		// Leader is providing assignments - process and store them
+		// Leader is providing assignments - process and store them.
+		// Note: the len(...) > 0 gate matters. Schema Registry's
+		// SchemaRegistryCoordinator uses a server-side-assignment
+		// protocol and sends leader SyncGroup with an empty
+		// GroupAssignments array by design; that case has to fall
+		// through to the server-side-assignment else-branch below, not
+		// be treated as a missing-member situation. Dropping the gate
+		// here puts the schema-registry group into an infinite
+		// REBALANCE_IN_PROGRESS / rejoin loop (observed in the kafka
+		// loadtest CI job).
+
+		// Before committing, verify the leader's assignment covers every
+		// current member. A late joiner can arrive either during the
+		// leader's JoinGroup call (added to group.Members but not in the
+		// response the leader already built) or during the narrow window
+		// between the leader's JoinGroup reply and this SyncGroup. In both
+		// cases the missing member's ID won't appear in GroupAssignments;
+		// committing now would leave it with an empty Assignment, and once
+		// state goes Stable its own SyncGroup would silently serve that
+		// empty assignment (the CI-observed orphan).
+		//
+		// Reject instead: bump the generation, reset state to
+		// PreparingRebalance, and return REBALANCE_IN_PROGRESS so Sarama's
+		// newSession retries the join/sync cycle at the new generation
+		// with the complete member list in the leader's JoinGroup response.
+		// The stale SyncGroup that the leader is still trying to deliver
+		// will hit the generation-mismatch branch above and also retry.
+		assigned := make(map[string]bool, len(request.GroupAssignments))
+		for _, ga := range request.GroupAssignments {
+			assigned[ga.MemberID] = true
+		}
+		for mid := range group.Members {
+			if !assigned[mid] {
+				glog.V(1).Infof("[SYNCGROUP] Leader %s assignment omits member %s (late joiner); forcing rebalance",
+					request.MemberID, mid)
+				group.State = consumer.GroupStatePreparingRebalance
+				group.Generation++
+				// Clear prior-generation assignments so the non-leader
+				// SyncGroup path (which only returns REBALANCE_IN_PROGRESS
+				// when member.Assignment is empty) doesn't serve stale
+				// partitions between now and the next successful
+				// leader SyncGroup.
+				for _, m := range group.Members {
+					m.State = consumer.MemberStatePending
+					m.Assignment = nil
+				}
+				return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeRebalanceInProgress, apiVersion), nil
+			}
+		}
+
 		glog.V(2).Infof("[SYNCGROUP] Leader %s providing client-side assignments for group %s (%d assignments)",
 			request.MemberID, request.GroupID, len(request.GroupAssignments))
-		err = h.processGroupAssignments(group, request.GroupAssignments)
-		if err != nil {
-			glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
-			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+		if request.GroupID == "schema-registry" {
+			// Schema Registry's group assignment payload is its own leader-election
+			// data, not ConsumerGroupMemberAssignment partition bytes. We only need
+			// the group to become stable; serializeSchemaRegistryAssignment builds
+			// the response from the elected leader's JoinGroup metadata below.
+			for _, m := range group.Members {
+				m.Assignment = nil
+			}
+		} else {
+			err = h.processGroupAssignments(group, request.GroupAssignments)
+			if err != nil {
+				glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
+				return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+			}
 		}
 
 		// Move group to stable state
@@ -1079,6 +1176,26 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 	// Parse assignments array if present (leader sends assignments)
 	assignments := make([]GroupAssignment, 0)
 
+	var protocolType string
+	var protocolName string
+	if apiVersion >= 5 {
+		if isFlexible {
+			var consumed int
+			var decodeErr error
+			protocolType, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol type compact string: %w", decodeErr)
+			}
+			offset += consumed
+
+			protocolName, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol name compact string: %w", decodeErr)
+			}
+			offset += consumed
+		}
+	}
+
 	if offset < len(data) {
 		var assignmentsCount uint32
 		if isFlexible {
@@ -1187,6 +1304,8 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		GenerationID:     generationID,
 		MemberID:         memberID,
 		GroupInstanceID:  groupInstanceID,
+		ProtocolType:     protocolType,
+		ProtocolName:     protocolName,
 		GroupAssignments: assignments,
 	}, nil
 }
