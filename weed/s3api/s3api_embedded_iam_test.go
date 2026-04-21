@@ -911,6 +911,220 @@ func TestEmbeddedIamCreateAccessKey(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[0].Credentials, 1)
 }
 
+// TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys tests creating an access key with caller-supplied credentials
+func TestEmbeddedIamCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "myapp")
+	form.Set("SecretAccessKey", "mysecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Verify caller-supplied keys were used, not random ones
+	var out iamCreateAccessKeyResponse
+	err := xml.Unmarshal(rr.Body.Bytes(), &out)
+	require.NoError(t, err, "failed to unmarshal CreateAccessKey response")
+	assert.Equal(t, "myapp", *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, "mysecret123", *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Equal(t, "TestUser", *out.CreateAccessKeyResult.AccessKey.UserName)
+
+	// Verify credentials were persisted with caller-supplied keys
+	assert.Equal(t, "myapp", api.mockConfig.Identities[0].Credentials[0].AccessKey)
+	assert.Equal(t, "mysecret123", api.mockConfig.Identities[0].Credentials[0].SecretKey)
+}
+
+// TestEmbeddedIamCreateAccessKeyRejectsWeakKeys tests that weak caller-supplied keys are rejected
+func TestEmbeddedIamCreateAccessKeyRejectsWeakKeys(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	// AccessKeyId too short
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "ab")
+	form.Set("SecretAccessKey", "validsecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId must be 4 to 128 alphanumeric characters")
+
+	// SecretAccessKey too short
+	form.Set("AccessKeyId", "validkey")
+	form.Set("SecretAccessKey", "short")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "SecretAccessKey must be between 8 and 128 characters")
+	// AccessKeyId with SigV4 delimiters
+	form.Set("AccessKeyId", "foo/bar=baz")
+	form.Set("SecretAccessKey", "validsecret123")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId must be 4 to 128 alphanumeric characters")
+}
+
+// TestEmbeddedIamCreateAccessKeyRejectsCollision tests that duplicate access keys are rejected
+func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "ExistingUser",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "takenkey", SecretKey: "existingsecret"},
+				},
+			},
+			{Name: "NewUser"},
+		},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "NewUser")
+	form.Set("AccessKeyId", "takenkey")
+	form.Set("SecretAccessKey", "newsecret123")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "already in use")
+
+	// Verify no credentials were added to NewUser
+	assert.Len(t, api.mockConfig.Identities[1].Credentials, 0)
+}
+
+// TestEmbeddedIamCreateAccessKeyMixedSupply tests supplying only AccessKeyId
+func TestEmbeddedIamCreateAccessKeyMixedSupply(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "myappkey")
+	// SecretAccessKey intentionally omitted
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+	apiRouter.ServeHTTP(rr, req)
+
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	var out iamCreateAccessKeyResponse
+	err := xml.Unmarshal(rr.Body.Bytes(), &out)
+	require.NoError(t, err)
+	assert.Equal(t, "myappkey", *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotEmpty(t, *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+}
+
+// TestEmbeddedIamCreateAccessKeyBoundary tests key length boundaries
+func TestEmbeddedIamCreateAccessKeyBoundary(t *testing.T) {
+	api := NewEmbeddedIamApiForTest()
+	api.mockConfig = &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{Name: "TestUser"},
+		},
+	}
+
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+
+	// Exactly 4 chars — should pass
+	form := url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("AccessKeyId", "abcd")
+	form.Set("SecretAccessKey", "validsecret1")
+
+	req, _ := http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.Equal(t, http.StatusOK, rr.Code)
+
+	// Exactly 3 chars — should fail
+	api.mockConfig.Identities[0].Credentials = nil
+	form.Set("AccessKeyId", "abc")
+
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "alphanumeric")
+}
+
 // TestEmbeddedIamDeleteAccessKey tests deleting an access key via direct form post
 func TestEmbeddedIamDeleteAccessKey(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()

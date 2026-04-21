@@ -924,18 +924,66 @@ func GetActions(policy *policy_engine.PolicyDocument) ([]string, error) {
 	return actions, nil
 }
 
+func isValidCallerSuppliedAccessKeyId(accessKeyId string) bool {
+	if len(accessKeyId) < 4 || len(accessKeyId) > 128 {
+		return false
+	}
+	for _, r := range accessKeyId {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (resp *CreateAccessKeyResponse, iamErr *IamError) {
 	resp = &CreateAccessKeyResponse{}
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
 
-	accessKeyId, err := StringWithCharset(21, charsetUpper)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	accessKeyId := values.Get("AccessKeyId")
+	secretAccessKey := values.Get("SecretAccessKey")
+	// Validate caller-supplied keys
+	if accessKeyId != "" && !isValidCallerSuppliedAccessKeyId(accessKeyId) {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId must be 4 to 128 alphanumeric characters")}
 	}
-	secretAccessKey, err := StringWithCharset(42, charset)
-	if err != nil {
-		return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	if secretAccessKey != "" && (len(secretAccessKey) < 8 || len(secretAccessKey) > 128) {
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("SecretAccessKey must be between 8 and 128 characters")}
+	}
+	// Check for access key collision across identities and service accounts
+	if accessKeyId != "" {
+		for _, ident := range s3cfg.Identities {
+			for _, cred := range ident.Credentials {
+				if cred.AccessKey == accessKeyId {
+					glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by user %s", ident.Name)
+					return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+				}
+			}
+		}
+		for _, sa := range s3cfg.ServiceAccounts {
+			if sa.Credential != nil && sa.Credential.AccessKey == accessKeyId {
+				glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by service account %s", sa.Id)
+				return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+			}
+		}
+	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		glog.Warningf("CreateAccessKey: partial caller-supplied credentials for user %s (AccessKeyId=%t, SecretAccessKey=%t) — missing key will be auto-generated",
+			userName, accessKeyId != "", secretAccessKey != "")
+	}
+	if accessKeyId == "" {
+		var err error
+		accessKeyId, err = StringWithCharset(21, charsetUpper)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+		}
+	}
+	if secretAccessKey == "" {
+		var err error
+		secretAccessKey, err = StringWithCharset(42, charset)
+		if err != nil {
+			return resp, &IamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+		}
 	}
 
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
@@ -1085,7 +1133,15 @@ func (iama *IamApiServer) DoActions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	glog.V(4).Infof("DoActions: %+v", values)
+	safeValues := url.Values{}
+	for k, v := range values {
+		if k == "SecretAccessKey" {
+			safeValues[k] = []string{"[REDACTED]"}
+		} else {
+			safeValues[k] = v
+		}
+	}
+	glog.V(4).Infof("DoActions: %+v", safeValues)
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch r.Form.Get("Action") {

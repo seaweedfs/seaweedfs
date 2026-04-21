@@ -402,24 +402,68 @@ func (e *EmbeddedIamApi) UpdateUser(s3cfg *iam_pb.S3ApiConfiguration, values url
 	return resp, nil
 }
 
+func isValidCallerSuppliedAccessKeyId(accessKeyId string) bool {
+	if len(accessKeyId) < 4 || len(accessKeyId) > 128 {
+		return false
+	}
+	for _, r := range accessKeyId {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
 // CreateAccessKey creates an access key for a user.
 func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, values url.Values) (*iamCreateAccessKeyResponse, *iamError) {
 	resp := &iamCreateAccessKeyResponse{}
 	userName := values.Get("UserName")
 	status := iam.StatusTypeActive
-
-	// Generate AWS-standard access key: AKIA prefix + 16 random uppercase chars = 20 total
-	randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
-	if err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+	// Use caller-supplied keys if provided, otherwise generate random ones
+	accessKeyId := values.Get("AccessKeyId")
+	secretAccessKey := values.Get("SecretAccessKey")
+	// Validate caller-supplied keys
+	if accessKeyId != "" && !isValidCallerSuppliedAccessKeyId(accessKeyId) {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId must be 4 to 128 alphanumeric characters")}
 	}
-	accessKeyId := UserAccessKeyPrefix + randomPart
-
-	secretAccessKey, err := iamStringWithCharset(SecretKeyLength, iamCharset)
-	if err != nil {
-		return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+	if secretAccessKey != "" && (len(secretAccessKey) < 8 || len(secretAccessKey) > 128) {
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("SecretAccessKey must be between 8 and 128 characters")}
 	}
-
+	// Check for access key collision across identities and service accounts
+	if accessKeyId != "" {
+		for _, ident := range s3cfg.Identities {
+			for _, cred := range ident.Credentials {
+				if cred.AccessKey == accessKeyId {
+					glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by user %s", ident.Name)
+					return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+				}
+			}
+		}
+		for _, sa := range s3cfg.ServiceAccounts {
+			if sa.Credential != nil && sa.Credential.AccessKey == accessKeyId {
+				glog.V(4).Infof("CreateAccessKey: supplied AccessKeyId already in use by service account %s", sa.Id)
+				return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
+			}
+		}
+	}
+	if (accessKeyId != "") != (secretAccessKey != "") {
+		glog.Warningf("CreateAccessKey: partial caller-supplied credentials for user %s (AccessKeyId=%t, SecretAccessKey=%t) — missing key will be auto-generated",
+			userName, accessKeyId != "", secretAccessKey != "")
+	}
+	if accessKeyId == "" {
+		randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate access key: %w", err)}
+		}
+		accessKeyId = UserAccessKeyPrefix + randomPart
+	}
+	if secretAccessKey == "" {
+		var err error
+		secretAccessKey, err = iamStringWithCharset(SecretKeyLength, iamCharset)
+		if err != nil {
+			return resp, &iamError{Code: iam.ErrCodeServiceFailureException, Error: fmt.Errorf("failed to generate secret key: %w", err)}
+		}
+	}
 	resp.CreateAccessKeyResult.AccessKey.AccessKeyId = &accessKeyId
 	resp.CreateAccessKeyResult.AccessKey.SecretAccessKey = &secretAccessKey
 	resp.CreateAccessKeyResult.AccessKey.UserName = &userName
@@ -2087,7 +2131,15 @@ func (e *EmbeddedIamApi) ExecuteAction(ctx context.Context, values url.Values, s
 		return nil, &iamError{Code: s3err.GetAPIError(s3err.ErrInternalError).Code, Error: fmt.Errorf("failed to get s3 api configuration: %v", err)}
 	}
 
-	glog.V(4).Infof("IAM ExecuteAction: %+v", values)
+	safeValues := url.Values{}
+	for k, v := range values {
+		if k == "SecretAccessKey" {
+			safeValues[k] = []string{"[REDACTED]"}
+		} else {
+			safeValues[k] = v
+		}
+	}
+	glog.V(4).Infof("IAM ExecuteAction: %+v", safeValues)
 	var response iamlib.RequestIDSetter
 	changed := true
 	switch values.Get("Action") {

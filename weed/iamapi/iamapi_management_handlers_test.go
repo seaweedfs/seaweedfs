@@ -629,3 +629,142 @@ func TestListAttachedUserPolicies(t *testing.T) {
 	assert.NotNil(t, iamErr)
 	assert.Equal(t, iam.ErrCodeNoSuchEntityException, iamErr.Code)
 }
+
+func TestCreateAccessKeyWithCallerSuppliedKeys(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	values := url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"myappkey"},
+		"SecretAccessKey": []string{"mysecret1234"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "myappkey", *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.Equal(t, "mysecret1234", *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Equal(t, "alice", *resp.CreateAccessKeyResult.AccessKey.UserName)
+	assert.Equal(t, "myappkey", s3cfg.Identities[0].Credentials[0].AccessKey)
+	assert.Equal(t, "mysecret1234", s3cfg.Identities[0].Credentials[0].SecretKey)
+}
+
+func TestCreateAccessKeyRandomGeneration(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	values := url.Values{
+		"UserName": []string{"alice"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.NotEmpty(t, *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotEmpty(t, *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Len(t, s3cfg.Identities[0].Credentials, 1)
+}
+
+func TestCreateAccessKeyRejectsWeakKeys(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// Too short
+	values := url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"ab"},
+		"SecretAccessKey": []string{"validsecret1"},
+	}
+	_, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// Short secret
+	values = url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"validkey"},
+		"SecretAccessKey": []string{"short"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+
+	// SigV4 delimiters
+	values = url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"foo/bar=baz"},
+		"SecretAccessKey": []string{"validsecret1"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+}
+
+func TestCreateAccessKeyRejectsCollision(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{
+			{
+				Name: "existing",
+				Credentials: []*iam_pb.Credential{
+					{AccessKey: "takenkey", SecretKey: "existingsecret"},
+				},
+			},
+			{Name: "newuser"},
+		},
+	}
+	values := url.Values{
+		"UserName":       []string{"newuser"},
+		"AccessKeyId":    []string{"takenkey"},
+		"SecretAccessKey": []string{"newsecret123"},
+	}
+	_, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeEntityAlreadyExistsException, iamErr.Code)
+	assert.NotContains(t, iamErr.Error.Error(), "existing", "should not leak owner name")
+	assert.Len(t, s3cfg.Identities[1].Credentials, 0)
+}
+
+func TestCreateAccessKeyBoundary(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// Exactly 4 chars - should pass
+	values := url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"abcd"},
+		"SecretAccessKey": []string{"secretkey123"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "abcd", *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+
+	// Exactly 3 chars - should fail
+	s3cfg.Identities[0].Credentials = nil
+	values = url.Values{
+		"UserName":       []string{"alice"},
+		"AccessKeyId":    []string{"abc"},
+		"SecretAccessKey": []string{"secretkey123"},
+	}
+	_, iamErr = iama.CreateAccessKey(s3cfg, values)
+	assert.NotNil(t, iamErr)
+	assert.Equal(t, iam.ErrCodeInvalidInputException, iamErr.Code)
+}
+
+func TestCreateAccessKeyMixedSupply(t *testing.T) {
+	iama := newTestIamApiServer(Policies{})
+	s3cfg := &iam_pb.S3ApiConfiguration{
+		Identities: []*iam_pb.Identity{{Name: "alice"}},
+	}
+	// AccessKeyId supplied, SecretAccessKey generated
+	values := url.Values{
+		"UserName":    []string{"alice"},
+		"AccessKeyId": []string{"myappkey"},
+	}
+	resp, iamErr := iama.CreateAccessKey(s3cfg, values)
+	assert.Nil(t, iamErr)
+	assert.Equal(t, "myappkey", *resp.CreateAccessKeyResult.AccessKey.AccessKeyId)
+	assert.NotEmpty(t, *resp.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	assert.Equal(t, "myappkey", s3cfg.Identities[0].Credentials[0].AccessKey)
+}
