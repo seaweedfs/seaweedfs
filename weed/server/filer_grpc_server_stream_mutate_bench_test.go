@@ -251,19 +251,30 @@ func dialFakeFiler(t testing.TB, addr string) *grpc.ClientConn {
 	return conn
 }
 
+// opsForWorker splits `ops` across `concurrency` workers, handing the
+// remainder to the first `remainder` workers so the total is always exactly
+// `ops`. Returns the count for worker index g.
+func opsForWorker(g, concurrency, ops int) int {
+	per := ops / concurrency
+	if g < ops%concurrency {
+		return per + 1
+	}
+	return per
+}
+
 // runUnaryCreateWorkload fires `ops` CreateEntry unary RPCs across `concurrency`
 // goroutines, all sharing a single client connection. Returns total duration.
 func runUnaryCreateWorkload(t testing.TB, conn *grpc.ClientConn, concurrency, ops int) time.Duration {
 	t.Helper()
 	client := filer_pb.NewSeaweedFilerClient(conn)
 	var wg sync.WaitGroup
-	perGoroutine := ops / concurrency
 	start := time.Now()
 	for g := 0; g < concurrency; g++ {
 		wg.Add(1)
+		count := opsForWorker(g, concurrency, ops)
 		go func() {
 			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+			for i := 0; i < count; i++ {
 				_, err := client.CreateEntry(context.Background(), &filer_pb.CreateEntryRequest{
 					Directory: "/",
 					Entry: &filer_pb.Entry{
@@ -355,17 +366,20 @@ func runStreamCreateWorkloadAt(t testing.TB, conn *grpc.ClientConn, concurrency,
 	}()
 
 	var wg sync.WaitGroup
-	perGoroutine := ops / concurrency
 	start := time.Now()
+	offset := 0
 	for g := 0; g < concurrency; g++ {
 		wg.Add(1)
-		go func(gi int) {
+		count := opsForWorker(g, concurrency, ops)
+		startOff := offset
+		offset += count
+		go func(startOff, count int) {
 			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+			for i := 0; i < count; i++ {
 				id := nextID.Add(1)
 				done := make(chan struct{})
 				pending.Store(id, done)
-				dir, name := path(gi*perGoroutine + i)
+				dir, name := path(startOff + i)
 				sendCh <- &filer_pb.StreamMutateEntryRequest{
 					RequestId: id,
 					Request: &filer_pb.StreamMutateEntryRequest_CreateRequest{
@@ -377,7 +391,7 @@ func runStreamCreateWorkloadAt(t testing.TB, conn *grpc.ClientConn, concurrency,
 				}
 				<-done
 			}
-		}(g)
+		}(startOff, count)
 	}
 	wg.Wait()
 	elapsed := time.Since(start)
@@ -447,16 +461,16 @@ func runStreamAsyncCreateWorkload(t testing.TB, conn *grpc.ClientConn, concurren
 		sendErr <- nil
 	}()
 
-	perGoroutine := ops / concurrency
-	outstanding.Store(int64(perGoroutine * concurrency))
+	outstanding.Store(int64(ops))
 
 	var wg sync.WaitGroup
 	start := time.Now()
 	for g := 0; g < concurrency; g++ {
 		wg.Add(1)
-		go func() {
+		count := opsForWorker(g, concurrency, ops)
+		go func(count int) {
 			defer wg.Done()
-			for i := 0; i < perGoroutine; i++ {
+			for i := 0; i < count; i++ {
 				id := nextID.Add(1)
 				// Fire-and-forget: push to sendCh, do not wait for response.
 				sendCh <- &filer_pb.StreamMutateEntryRequest{
@@ -469,7 +483,7 @@ func runStreamAsyncCreateWorkload(t testing.TB, conn *grpc.ClientConn, concurren
 					},
 				}
 			}
-		}()
+		}(count)
 	}
 	wg.Wait()
 	// All requests queued; wait for server to drain all responses.
