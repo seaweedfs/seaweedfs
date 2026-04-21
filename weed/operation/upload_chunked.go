@@ -99,12 +99,16 @@ uploadLoop:
 		// Read one chunk
 		dataSize, err := bytesBuffer.ReadFrom(limitedReader)
 		if err != nil {
-			glog.V(2).Infof("UploadReaderInChunks: read error at offset %d: %v", chunkOffset, err)
+			// Attach offset + bytes-read to distinguish client disconnect
+			// before any data (offset=0,got=0) from mid-stream truncation.
+			// A bare io.ErrUnexpectedEOF is not actionable on its own (see #9149).
+			wrapped := fmt.Errorf("read chunk at offset %d (got %d bytes): %w", chunkOffset, dataSize, err)
+			glog.V(2).Infof("UploadReaderInChunks: %v", wrapped)
 			chunkBufferPool.Put(bytesBuffer)
 			<-bytesBufferLimitChan
 			uploadErrLock.Lock()
 			if uploadErr == nil {
-				uploadErr = err
+				uploadErr = wrapped
 			}
 			uploadErrLock.Unlock()
 			break
