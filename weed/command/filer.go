@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/spf13/viper"
-	"google.golang.org/grpc/credentials/tls/certprovider"
-	"google.golang.org/grpc/credentials/tls/certprovider/pemfile"
 	"google.golang.org/grpc/reflection"
 
 	"github.com/seaweedfs/seaweedfs/weed/credential"
@@ -82,7 +80,6 @@ type FilerOptions struct {
 	allowedOrigins            *string
 	exposeDirectoryData       *bool
 	tusBasePath               *string
-	certProvider              certprovider.Provider
 	s3ConfigFile              *string // optional path to static S3 identity config
 	mountPeerRegistryEnable        *bool   // accept MountRegister/MountList RPCs (peer chunk sharing tier 1)
 	// shutdownCtx, when non-nil, tells startFiler to gracefully shut down its
@@ -315,15 +312,6 @@ func runFiler(cmd *Command, args []string) bool {
 	return true
 }
 
-// GetCertificateWithUpdate Auto refreshing TSL certificate
-func (fo *FilerOptions) GetCertificateWithUpdate(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-	certs, err := fo.certProvider.KeyMaterial(context.Background())
-	if certs == nil {
-		return nil, err
-	}
-	return &certs.Certs[0], err
-}
-
 func (fo *FilerOptions) startFiler() {
 
 	defaultMux := http.NewServeMux()
@@ -500,13 +488,9 @@ func (fo *FilerOptions) startFiler() {
 		caCertFile := viper.GetString("https.filer.ca")
 		disbaleTlsVerifyClientCert := viper.GetBool("https.filer.disable_tls_verify_client_cert")
 
-		pemfileOptions := pemfile.Options{
-			CertFile:        certFile,
-			KeyFile:         keyFile,
-			RefreshDuration: security.CredRefreshingInterval,
-		}
-		if fo.certProvider, err = pemfile.NewProvider(pemfileOptions); err != nil {
-			glog.Fatalf("pemfile.NewProvider(%v) failed: %v", pemfileOptions, err)
+		getCert, _, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("Filer failed to load HTTPS certificate: %v", err)
 		}
 
 		caCertPool := x509.NewCertPool()
@@ -524,7 +508,7 @@ func (fo *FilerOptions) startFiler() {
 		}
 
 		tlsConfig := &tls.Config{
-			GetCertificate: fo.GetCertificateWithUpdate,
+			GetCertificate: getCert,
 			ClientAuth:     clientAuth,
 			ClientCAs:      caCertPool,
 		}
