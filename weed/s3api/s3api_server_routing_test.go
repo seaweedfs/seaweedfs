@@ -78,6 +78,52 @@ func TestRouting_STSWithBodyParams(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, rr.Code, "Should route to STS fallback handler (503 because STS not initialized)")
 }
 
+// TestRouting_GetFederationTokenWithQueryParams verifies that GetFederationToken with
+// Action in the query string routes to the STS handler (not IAM / not S3).
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/9157
+func TestRouting_GetFederationTokenWithQueryParams(t *testing.T) {
+	router := mux.NewRouter()
+	s3a := setupRoutingTestServer(t)
+	s3a.registerRouter(router)
+
+	req, _ := http.NewRequest("POST", "/?Action=GetFederationToken&Name=admin", nil)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	// Must not be 501 NotImplemented (previous buggy behavior).
+	// Expected: routes to STS -> 503 (service not initialized in test) or 400 (validation).
+	assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should route to STS, not fall through to S3 NotImplemented")
+	assert.Contains(t, []int{http.StatusBadRequest, http.StatusServiceUnavailable, http.StatusForbidden}, rr.Code, "Should route to STS handler")
+}
+
+// TestRouting_GetFederationTokenAuthenticatedBody verifies that an authenticated
+// POST with Action=GetFederationToken in the form body is dispatched by
+// UnifiedPostHandler to the STS handler instead of being treated as an IAM action.
+// Regression test for https://github.com/seaweedfs/seaweedfs/issues/9157
+func TestRouting_GetFederationTokenAuthenticatedBody(t *testing.T) {
+	router := mux.NewRouter()
+	s3a := setupRoutingTestServer(t)
+	s3a.registerRouter(router)
+
+	data := url.Values{}
+	data.Set("Action", "GetFederationToken")
+	data.Set("Name", "admin")
+	data.Set("Version", "2011-06-15")
+
+	req, _ := http.NewRequest("POST", "/", strings.NewReader(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIA.../...")
+
+	rr := httptest.NewRecorder()
+	router.ServeHTTP(rr, req)
+
+	// Must not be 501 NotImplemented (previous buggy behavior where the request
+	// was routed to S3 / IAM and rejected as an unknown operation).
+	assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not fall through to NotImplemented")
+}
+
 // TestRouting_AuthenticatedIAM verifies that authenticated IAM requests route to IAM handler
 func TestRouting_AuthenticatedIAM(t *testing.T) {
 	router := mux.NewRouter()
