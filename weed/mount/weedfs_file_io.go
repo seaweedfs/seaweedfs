@@ -1,6 +1,9 @@
 package mount
 
-import "github.com/seaweedfs/go-fuse/v2/fuse"
+import (
+	"github.com/seaweedfs/go-fuse/v2/fuse"
+	"github.com/seaweedfs/seaweedfs/weed/glog"
+)
 
 /**
 	 * Open a file
@@ -133,6 +136,17 @@ func (wfs *WFS) invalidateOpenMtimeCache(inode uint64) {
 }
 
 func (wfs *WFS) Release(cancel <-chan struct{}, in *fuse.ReleaseIn) {
+	// Flush is usually sent before Release, but the FUSE protocol does not
+	// guarantee it. Route every Release through doFlush so a dirty handle
+	// (e.g. a deferred create with no intervening Flush) is not dropped.
+	// doFlush itself inspects dirtyMetadata / asyncFlushPending and fast-paths
+	// the clean case, so the duplicate call after a normal Flush is cheap.
+	if fh := wfs.GetHandle(FileHandleId(in.Fh)); fh != nil {
+		allowAsync := in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK == 0
+		if status := wfs.doFlush(fh, in.Uid, in.Gid, allowAsync); status != fuse.OK {
+			glog.Warningf("release fh %d inode %d: fallback flush failed: %v", in.Fh, in.NodeId, status)
+		}
+	}
 	if in.ReleaseFlags&fuse.FUSE_RELEASE_FLOCK_UNLOCK != 0 {
 		wfs.posixLocks.ReleaseFlockOwner(in.NodeId, in.LockOwner)
 	}
