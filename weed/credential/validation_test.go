@@ -9,6 +9,8 @@ func TestValidateServiceAccountId(t *testing.T) {
 		wantErr bool
 	}{
 		{"simple", "sa:alice:abcdef0123456789", false},
+		{"uppercase parent", "sa:ALICE:abcdef0123456789", false},
+		{"hyphenated uuid suffix", "sa:alice:123e4567-e89b-12d3-a456-426614174000", false},
 		{"with hyphen", "sa:test-user:abcdef0123456789", false},
 		{"with underscore", "sa:test_user:abcdef0123456789", false},
 

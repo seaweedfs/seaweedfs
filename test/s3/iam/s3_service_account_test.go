@@ -358,7 +358,7 @@ func callIAMAPI(t *testing.T, action string, params url.Values) (*http.Response,
 		secretKey := os.Getenv("STS_TEST_SECRET_KEY")
 		creds := credentials.NewStaticCredentials(accessKey, secretKey, "")
 		signer := v4.NewSigner(creds)
-		if _, err := signer.Sign(req, strings.NewReader(body), "s3", "us-east-1", time.Now()); err != nil {
+		if _, err := signer.Sign(req, strings.NewReader(body), "iam", "us-east-1", time.Now()); err != nil {
 			return nil, fmt.Errorf("failed to sign IAM request: %w", err)
 		}
 	}

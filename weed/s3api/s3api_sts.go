@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/seaweedfs/seaweedfs/weed/credential"
 	"github.com/seaweedfs/seaweedfs/weed/glog"
 	"github.com/seaweedfs/seaweedfs/weed/iam/integration"
 	"github.com/seaweedfs/seaweedfs/weed/iam/ldap"
@@ -658,16 +659,25 @@ func (h *STSHandlers) handleGetFederationToken(w http.ResponseWriter, r *http.Re
 	}
 	if policyManager != nil {
 		userPolicies, err := policyManager.GetPoliciesForUser(r.Context(), identity.Name)
-		if err != nil {
-			// A legacy-config IAM user authenticated via SigV4 may not be present
-			// in the IAM user store. Log and continue with identity.PolicyNames
-			// rather than hard-failing: the caller's SigV4 identity is already
-			// authoritative for legacy users.
-			glog.V(2).Infof("GetFederationToken: IAM policy lookup for %s failed, using SigV4 identity policies only: %v", identity.Name, err)
-		} else {
+		switch {
+		case err == nil:
 			for _, p := range userPolicies {
 				policySet[p] = struct{}{}
 			}
+		case errors.Is(err, credential.ErrUserNotFound):
+			// Legacy-config IAM users authenticated via SigV4 are not
+			// present in the IAM user store. Fall back to
+			// identity.PolicyNames — the caller's SigV4 identity is
+			// authoritative for them.
+			glog.V(2).Infof("GetFederationToken: %s not in IAM user store, using SigV4 identity policies only", identity.Name)
+		default:
+			// Any other failure (store unreachable, misconfigured, etc.)
+			// means we cannot compute the caller's effective policies.
+			// Fail closed rather than mint a token with an incomplete set.
+			glog.V(2).Infof("GetFederationToken: failed to resolve policies for %s: %v", identity.Name, err)
+			h.writeSTSErrorResponse(w, r, STSErrInternalError,
+				fmt.Errorf("failed to resolve caller policies"))
+			return
 		}
 	}
 

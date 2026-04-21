@@ -6,11 +6,24 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	v4 "github.com/aws/aws-sdk-go/aws/signer/v4"
 	"github.com/gorilla/mux"
 	"github.com/seaweedfs/seaweedfs/weed/credential"
+	"github.com/seaweedfs/seaweedfs/weed/s3api/s3_constants"
 	"github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/stretchr/testify/assert"
+)
+
+// routingTestAccessKey/routingTestSecretKey are the credentials seeded into
+// the IAM for tests that need to exercise code paths behind SigV4
+// verification (e.g., UnifiedPostHandler's STS dispatch).
+const (
+	routingTestAccessKey = "routing-test-ak"
+	routingTestSecretKey = "routing-test-sk"
+	routingTestUser      = "routing-test-user"
 )
 
 // setupRoutingTestServer creates a minimal S3ApiServer for routing tests
@@ -27,6 +40,29 @@ func setupRoutingTestServer(t *testing.T) *S3ApiServer {
 		iam.credentialManager = cm
 	}
 
+	// Seed a test identity with known credentials so SigV4-signed requests
+	// can pass AuthSignatureOnly and reach downstream handlers.
+	testIdent := &Identity{
+		Name:     routingTestUser,
+		Actions:  []Action{s3_constants.ACTION_ADMIN},
+		IsStatic: true,
+		Credentials: []*Credential{{
+			AccessKey: routingTestAccessKey,
+			SecretKey: routingTestSecretKey,
+		}},
+	}
+	iam.m.Lock()
+	if iam.accessKeyIdent == nil {
+		iam.accessKeyIdent = make(map[string]*Identity)
+	}
+	if iam.nameToIdentity == nil {
+		iam.nameToIdentity = make(map[string]*Identity)
+	}
+	iam.identities = append(iam.identities, testIdent)
+	iam.accessKeyIdent[routingTestAccessKey] = testIdent
+	iam.nameToIdentity[routingTestUser] = testIdent
+	iam.m.Unlock()
+
 	server := &S3ApiServer{
 		option:            opt,
 		iam:               iam,
@@ -36,6 +72,17 @@ func setupRoutingTestServer(t *testing.T) *S3ApiServer {
 	}
 
 	return server
+}
+
+// signRoutingTestRequest signs req with the seeded routing-test credentials
+// for the given AWS service. Fails the test on signing errors.
+func signRoutingTestRequest(t *testing.T, req *http.Request, body, service string) {
+	t.Helper()
+	creds := credentials.NewStaticCredentials(routingTestAccessKey, routingTestSecretKey, "")
+	signer := v4.NewSigner(creds)
+	if _, err := signer.Sign(req, strings.NewReader(body), service, "us-east-1", time.Now()); err != nil {
+		t.Fatalf("sign request: %v", err)
+	}
 }
 
 // TestRouting_STSWithQueryParams verifies that AssumeRoleWithWebIdentity with query params routes to STS
@@ -102,6 +149,13 @@ func TestRouting_GetFederationTokenWithQueryParams(t *testing.T) {
 // POST with Action=GetFederationToken in the form body is dispatched by
 // UnifiedPostHandler to the STS handler instead of being treated as an IAM action.
 // Regression test for https://github.com/seaweedfs/seaweedfs/issues/9157
+//
+// The request is signed with seeded test credentials so it passes
+// AuthSignatureOnly in UnifiedPostHandler and actually reaches STSHandlers.
+// STSHandlers is a zero value in the test server (no stsService set), so a
+// correctly routed request must return 503 ServiceUnavailable from
+// writeSTSErrorResponse(STSErrSTSNotReady). Any other status means we didn't
+// reach STSHandlers.HandleSTSRequest.
 func TestRouting_GetFederationTokenAuthenticatedBody(t *testing.T) {
 	router := mux.NewRouter()
 	s3a := setupRoutingTestServer(t)
@@ -111,17 +165,20 @@ func TestRouting_GetFederationTokenAuthenticatedBody(t *testing.T) {
 	data.Set("Action", "GetFederationToken")
 	data.Set("Name", "admin")
 	data.Set("Version", "2011-06-15")
+	body := data.Encode()
 
-	req, _ := http.NewRequest("POST", "/", strings.NewReader(data.Encode()))
+	req, _ := http.NewRequest("POST", "http://localhost/", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.Header.Set("Authorization", "AWS4-HMAC-SHA256 Credential=AKIA.../...")
+	signRoutingTestRequest(t, req, body, "sts")
 
 	rr := httptest.NewRecorder()
 	router.ServeHTTP(rr, req)
 
-	// Must not be 501 NotImplemented (previous buggy behavior where the request
-	// was routed to S3 / IAM and rejected as an unknown operation).
-	assert.NotEqual(t, http.StatusNotImplemented, rr.Code, "Should not fall through to NotImplemented")
+	// Reaching STSHandlers with an uninitialized stsService yields 503.
+	// 501 would mean we fell through to the S3 NotImplemented handler.
+	// 403 would mean AuthSignatureOnly rejected us (test seed broken).
+	assert.Equal(t, http.StatusServiceUnavailable, rr.Code,
+		"should reach STS handler; got %d body=%s", rr.Code, rr.Body.String())
 }
 
 // TestRouting_AuthenticatedIAM verifies that authenticated IAM requests route to IAM handler
