@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/seaweedfs/seaweedfs/weed/security/certreload"
 	util "github.com/seaweedfs/seaweedfs/weed/util"
 	"github.com/spf13/viper"
 )
@@ -100,7 +101,7 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 	var tlsConfig *tls.Config = nil
 
 	if httpClient.expectHttpsScheme {
-		clientCertPair, err := getClientCertPair(clientName)
+		certFileName, keyFileName, hasClientCert, err := clientCertPaths(clientName)
 		if err != nil {
 			return nil, err
 		}
@@ -110,20 +111,23 @@ func NewHttpClient(clientName ClientName, opts ...HttpClientOpt) (*HTTPClient, e
 			return nil, err
 		}
 
-		if clientCertPair != nil || len(clientCaCert) != 0 {
+		if hasClientCert || len(clientCaCert) != 0 {
 			caCertPool, err := createHTTPClientCertPool(clientCaCert, clientCaCertName)
 			if err != nil {
 				return nil, err
 			}
 
 			tlsConfig = &tls.Config{
-				Certificates:       []tls.Certificate{},
 				RootCAs:            caCertPool,
 				InsecureSkipVerify: false,
 			}
 
-			if clientCertPair != nil {
-				tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCertPair)
+			if hasClientCert {
+				getClientCert, _, err := certreload.NewClientGetCertificate(certFileName, keyFileName)
+				if err != nil {
+					return nil, fmt.Errorf("error loading client certificate and key: %s", err)
+				}
+				tlsConfig.GetClientCertificate = getClientCert
 			}
 		}
 
@@ -175,20 +179,20 @@ func getFileContentFromSecurityConfiguration(clientName ClientName, fileType str
 	return nil, "", nil
 }
 
-func getClientCertPair(clientName ClientName) (*tls.Certificate, error) {
-	certFileName := getStringOptionFromSecurityConfiguration(clientName, "cert")
-	keyFileName := getStringOptionFromSecurityConfiguration(clientName, "key")
-	if certFileName == "" && keyFileName == "" {
-		return nil, nil
+// clientCertPaths reads the https.<clientName>.{cert,key} paths from the
+// security config, validates they're either both set or both empty, and
+// returns them along with a hasClientCert flag. Loading is deferred to
+// certreload so the cert/key pair is picked up from disk on rotation.
+func clientCertPaths(clientName ClientName) (certFile, keyFile string, hasClientCert bool, err error) {
+	certFile = getStringOptionFromSecurityConfiguration(clientName, "cert")
+	keyFile = getStringOptionFromSecurityConfiguration(clientName, "key")
+	if certFile == "" && keyFile == "" {
+		return "", "", false, nil
 	}
-	if certFileName != "" && keyFileName != "" {
-		clientCert, err := tls.LoadX509KeyPair(certFileName, keyFileName)
-		if err != nil {
-			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
-		}
-		return &clientCert, nil
+	if certFile == "" || keyFile == "" {
+		return "", "", false, fmt.Errorf("https.%s: both cert and key must be set (got cert=%q key=%q)", clientName.LowerCaseString(), certFile, keyFile)
 	}
-	return nil, fmt.Errorf("error loading key pair: key `%s` and certificate `%s`", keyFileName, certFileName)
+	return certFile, keyFile, true, nil
 }
 
 func getClientCaCert(clientName ClientName) ([]byte, string, error) {
@@ -208,13 +212,13 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 		return nil, fmt.Errorf("both cert and key are required for mTLS, got cert=%q key=%q", certFile, keyFile)
 	}
 
-	var clientCert *tls.Certificate
+	var getClientCert func(*tls.CertificateRequestInfo) (*tls.Certificate, error)
 	if certFile != "" && keyFile != "" {
-		cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+		cb, _, err := certreload.NewClientGetCertificate(certFile, keyFile)
 		if err != nil {
 			return nil, fmt.Errorf("error loading client certificate and key: %s", err)
 		}
-		clientCert = &cert
+		getClientCert = cb
 	}
 
 	var caCertPool *x509.CertPool
@@ -229,14 +233,11 @@ func NewHttpClientWithTLS(certFile, keyFile, caFile string, insecureSkipVerify b
 		}
 	}
 
-	if clientCert != nil || caCertPool != nil || insecureSkipVerify {
+	if getClientCert != nil || caCertPool != nil || insecureSkipVerify {
 		tlsConfig = &tls.Config{
-			Certificates:       []tls.Certificate{},
-			RootCAs:            caCertPool,
-			InsecureSkipVerify: insecureSkipVerify,
-		}
-		if clientCert != nil {
-			tlsConfig.Certificates = append(tlsConfig.Certificates, *clientCert)
+			GetClientCertificate: getClientCert,
+			RootCAs:              caCertPool,
+			InsecureSkipVerify:   insecureSkipVerify,
 		}
 	}
 

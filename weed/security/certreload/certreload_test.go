@@ -1,4 +1,4 @@
-package security
+package certreload
 
 import (
 	"crypto/ecdsa"
@@ -14,12 +14,10 @@ import (
 	"time"
 )
 
-// TestReloadingServerCertificatePicksUpNewFile writes an initial cert/key
-// pair, starts the reloader, then overwrites the files with a new pair and
-// asserts that the callback eventually returns the new certificate. The
-// test shortens CredRefreshingInterval via the pemfile poll loop by writing
-// new files to disk and waiting.
-func TestReloadingServerCertificatePicksUpNewFile(t *testing.T) {
+// TestServerGetCertificatePicksUpNewFile writes an initial cert/key
+// pair, starts the reloader, then overwrites the files with a new pair
+// and asserts that the callback eventually returns the new certificate.
+func TestServerGetCertificatePicksUpNewFile(t *testing.T) {
 	dir := t.TempDir()
 	certPath := filepath.Join(dir, "tls.crt")
 	keyPath := filepath.Join(dir, "tls.key")
@@ -29,9 +27,9 @@ func TestReloadingServerCertificatePicksUpNewFile(t *testing.T) {
 	}
 
 	// Use a short refresh window so the test doesn't wait 5h.
-	getCert, provider, err := newReloadingServerCertificate(certPath, keyPath, 100*time.Millisecond)
+	getCert, provider, err := newServerGetCertificate(certPath, keyPath, 100*time.Millisecond)
 	if err != nil {
-		t.Fatalf("NewReloadingServerCertificate: %v", err)
+		t.Fatalf("newServerGetCertificate: %v", err)
 	}
 	defer provider.Close()
 
