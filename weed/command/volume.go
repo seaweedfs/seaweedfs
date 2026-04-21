@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	httppprof "net/http/pprof"
@@ -461,14 +462,24 @@ func (v VolumeServerOptions) startClusterHttpService(handler http.Handler) httpd
 	httpDown := httpdown.HTTP{
 		KillTimeout: time.Minute,
 		StopTimeout: 30 * time.Second,
-		CertFile:    certFile,
-		KeyFile:     keyFile}
+	}
 	httpS := &http.Server{Handler: handler}
 
 	if viper.GetString("https.volume.ca") != "" {
 		clientCertFile := viper.GetString("https.volume.ca")
 		httpS.TLSConfig = security.LoadClientTLSHTTP(clientCertFile)
 		security.FixTlsConfig(util.GetViper(), httpS.TLSConfig)
+	}
+
+	if certFile != "" && keyFile != "" {
+		getCert, _, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("Volume server failed to load TLS certificate: %v", err)
+		}
+		if httpS.TLSConfig == nil {
+			httpS.TLSConfig = &tls.Config{}
+		}
+		httpS.TLSConfig.GetCertificate = getCert
 	}
 
 	clusterHttpServer := httpDown.Serve(httpS, listener)

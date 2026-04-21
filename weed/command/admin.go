@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"fmt"
 	"log"
 	"net"
@@ -441,7 +442,16 @@ func startAdminServer(ctx context.Context, options AdminOptions, enableUI bool, 
 
 		if useTLS {
 			log.Printf("Starting SeaweedFS Admin Server with TLS on port %d", *options.port)
-			err = server.ListenAndServeTLS(certFile, keyFile)
+			getCert, _, certErr := security.NewReloadingServerCertificate(certFile, keyFile)
+			if certErr != nil {
+				log.Printf("Failed to load admin HTTPS certificate: %v", certErr)
+				return
+			}
+			if server.TLSConfig == nil {
+				server.TLSConfig = &tls.Config{}
+			}
+			server.TLSConfig.GetCertificate = getCert
+			err = server.ListenAndServeTLS("", "")
 		} else {
 			err = server.ListenAndServe()
 		}

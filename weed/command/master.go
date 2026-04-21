@@ -328,7 +328,15 @@ func startMaster(masterOption MasterOptions, masterWhiteList []string) {
 	}
 
 	if useTLS {
-		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, certFile, keyFile)
+		getCert, _, err := security.NewReloadingServerCertificate(certFile, keyFile)
+		if err != nil {
+			glog.Fatalf("failed to load master HTTPS certificate: %v", err)
+		}
+		if tlsConfig == nil {
+			tlsConfig = &tls.Config{}
+		}
+		tlsConfig.GetCertificate = getCert
+		go newHttpServer(r, tlsConfig).ServeTLS(masterListener, "", "")
 	} else {
 		go newHttpServer(r, nil).Serve(masterListener)
 	}
