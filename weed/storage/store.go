@@ -154,8 +154,17 @@ func NewStore(
 	}
 	wg.Wait()
 
+	// Resolve state.pb's directory via the first disk location so it inherits
+	// the same `~` expansion and empty-idxFolder fallback used for .idx files,
+	// and is never written as a relative path against the process CWD (#9173).
+	stateDir := idxFolder
+	if len(s.Locations) > 0 {
+		stateDir = s.Locations[0].IdxDirectory
+	} else if stateDir != "" {
+		stateDir = util.ResolvePath(stateDir)
+	}
 	var err error
-	s.State, err = NewState(idxFolder)
+	s.State, err = NewState(stateDir)
 	if err != nil {
 		glog.Fatalf("failed to resolve state for volume %s: %v", id, err)
 	}
