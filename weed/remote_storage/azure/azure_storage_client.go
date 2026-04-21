@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"reflect"
 	"regexp"
@@ -286,8 +287,15 @@ func (az *azureRemoteStorageClient) ReadFile(loc *remote_pb.RemoteStorageLocatio
 // slower WAN links.
 func (az *azureRemoteStorageClient) ReadFileWithConcurrency(loc *remote_pb.RemoteStorageLocation, offset int64, size int64, concurrency int) (data []byte, err error) {
 
+	if size < 0 {
+		return nil, fmt.Errorf("invalid size %d for %s%s", size, loc.Bucket, loc.Path)
+	}
+
 	if concurrency <= 0 {
 		concurrency = defaultReadConcurrency
+	} else if concurrency > math.MaxUint16 {
+		// DownloadBufferOptions.Concurrency is uint16; clamp to avoid wraparound.
+		concurrency = math.MaxUint16
 	}
 
 	key := loc.Path[1:]
