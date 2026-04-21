@@ -854,6 +854,8 @@ type SyncGroupRequest struct {
 	GenerationID     int32
 	MemberID         string
 	GroupInstanceID  string
+	ProtocolType     string
+	ProtocolName     string
 	GroupAssignments []GroupAssignment // Only from group leader
 }
 
@@ -977,10 +979,20 @@ func (h *Handler) handleSyncGroup(correlationID uint32, apiVersion uint16, reque
 
 		glog.V(2).Infof("[SYNCGROUP] Leader %s providing client-side assignments for group %s (%d assignments)",
 			request.MemberID, request.GroupID, len(request.GroupAssignments))
-		err = h.processGroupAssignments(group, request.GroupAssignments)
-		if err != nil {
-			glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
-			return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+		if request.GroupID == "schema-registry" {
+			// Schema Registry's group assignment payload is its own leader-election
+			// data, not ConsumerGroupMemberAssignment partition bytes. We only need
+			// the group to become stable; serializeSchemaRegistryAssignment builds
+			// the response from the elected leader's JoinGroup metadata below.
+			for _, m := range group.Members {
+				m.Assignment = nil
+			}
+		} else {
+			err = h.processGroupAssignments(group, request.GroupAssignments)
+			if err != nil {
+				glog.Errorf("[SYNCGROUP] ERROR processing leader assignments: %v", err)
+				return h.buildSyncGroupErrorResponse(correlationID, ErrorCodeInconsistentGroupProtocol, apiVersion), nil
+			}
 		}
 
 		// Move group to stable state
@@ -1164,6 +1176,26 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 	// Parse assignments array if present (leader sends assignments)
 	assignments := make([]GroupAssignment, 0)
 
+	var protocolType string
+	var protocolName string
+	if apiVersion >= 5 {
+		if isFlexible {
+			var consumed int
+			var decodeErr error
+			protocolType, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol type compact string: %w", decodeErr)
+			}
+			offset += consumed
+
+			protocolName, consumed, decodeErr = DecodeFlexibleString(data[offset:])
+			if decodeErr != nil {
+				return nil, fmt.Errorf("invalid protocol name compact string: %w", decodeErr)
+			}
+			offset += consumed
+		}
+	}
+
 	if offset < len(data) {
 		var assignmentsCount uint32
 		if isFlexible {
@@ -1272,6 +1304,8 @@ func (h *Handler) parseSyncGroupRequest(data []byte, apiVersion uint16) (*SyncGr
 		GenerationID:     generationID,
 		MemberID:         memberID,
 		GroupInstanceID:  groupInstanceID,
+		ProtocolType:     protocolType,
+		ProtocolName:     protocolName,
 		GroupAssignments: assignments,
 	}, nil
 }
