@@ -391,6 +391,82 @@ func TestAdmitRenameTwoPathConflict(t *testing.T) {
 	}
 }
 
+// TestAdmitSamePathFIFO verifies arrival order is preserved for same-path
+// admits. Regression test for the Cond.Broadcast race where later admits
+// could be woken and registered before earlier ones.
+func TestAdmitSamePathFIFO(t *testing.T) {
+	s := newMutateScheduler(100)
+
+	// A barrier on /a holds the whole path while we enqueue N waiters.
+	s.Admit("/a", "", kindMutateBarrierDir)
+
+	const N = 20
+	order := make(chan int, N)
+	started := make(chan struct{}, N)
+	for i := 0; i < N; i++ {
+		i := i
+		go func() {
+			started <- struct{}{}
+			s.Admit("/a", "", kindMutateFile)
+			order <- i
+			s.Done("/a", "", kindMutateFile)
+		}()
+		// Wait until this goroutine has observably scheduled its Admit call
+		// before spawning the next, so arrival order is deterministic.
+		<-started
+		// Small yield so the goroutine's Admit actually lands before the next
+		// one's; under -race this otherwise sometimes interleaves.
+		time.Sleep(time.Millisecond)
+	}
+
+	// Still held — nothing admitted yet.
+	select {
+	case got := <-order:
+		t.Fatalf("unexpected early admit %d while /a is held", got)
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	s.Done("/a", "", kindMutateBarrierDir)
+
+	for i := 0; i < N; i++ {
+		select {
+		case got := <-order:
+			if got != i {
+				t.Fatalf("admit order[%d] = %d, want %d (FIFO violated)", i, got, i)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("only %d/%d admits completed", i, N)
+		}
+	}
+}
+
+// TestAdmitSamePathNonBarrierSerializes verifies that two non-barrier dir
+// updates at the same path no longer overlap (filer.sync's last-writer-wins
+// optimization is intentionally dropped for streamed mutations, which carry
+// client-submitted operations whose order matters).
+func TestAdmitSamePathNonBarrierSerializes(t *testing.T) {
+	s := newMutateScheduler(100)
+	s.Admit("/a", "", kindMutateNonBarrierDir)
+
+	second := make(chan struct{})
+	go func() {
+		s.Admit("/a", "", kindMutateNonBarrierDir)
+		close(second)
+	}()
+	select {
+	case <-second:
+		t.Fatal("second non-barrier dir update should not run concurrently with first at same path")
+	case <-time.After(30 * time.Millisecond):
+	}
+	s.Done("/a", "", kindMutateNonBarrierDir)
+	select {
+	case <-second:
+	case <-time.After(time.Second):
+		t.Fatal("second non-barrier admit did not unblock after first Done")
+	}
+	s.Done("/a", "", kindMutateNonBarrierDir)
+}
+
 // TestAdmitPressureFromManyWaiters: 100 goroutines all want /a; exactly one at
 // a time is active; all 100 eventually complete. This is both a smoke test for
 // the broadcast/signal wake-up and a guard against lost wake-ups.

@@ -16,85 +16,102 @@ import (
 type mutateJobKind int
 
 const (
-	// kindMutateFile: a regular file event, or a non-recursive delete whose
-	// target type is unknown. Conflicts only with same-path file jobs and with
-	// any barrier directory on the same path or on an ancestor.
+	// kindMutateFile: a regular file event. Conflicts with any in-flight job
+	// on the same path and with any barrier directory on the same path or on
+	// an ancestor.
 	kindMutateFile mutateJobKind = iota
 	// kindMutateBarrierDir: a directory create, a directory rename, or a
-	// recursive delete. Acts as a subtree barrier: must drain every active
-	// descendant, and blocks every new job under it until it completes.
+	// delete (target type unknown on the wire). Acts as a subtree barrier:
+	// must drain every active descendant, and blocks every new job under it
+	// until it completes.
 	kindMutateBarrierDir
 	// kindMutateNonBarrierDir: an in-place directory attribute update
-	// (mode / xattr / mtime with unchanged name). Conflicts at the same path
-	// with barrier dirs, but never with descendants.
+	// (mode / xattr / mtime with unchanged name). Conflicts with any other
+	// in-flight job at the same path, but never with descendants.
 	kindMutateNonBarrierDir
 )
 
 // mutateScheduler serializes mutations by path while allowing cross-path work
-// to run in parallel. It is a direct adaptation of filer.sync's
-// MetadataProcessor (weed/command/filer_sync_jobs.go):
+// to run in parallel. The conflict taxonomy mirrors filer.sync's
+// MetadataProcessor (weed/command/filer_sync_jobs.go); admission adds
+// per-path FIFO ordering so two requests arriving on the same stream on the
+// same path are always processed in arrival order, even when a Cond broadcast
+// would otherwise race them.
 //
-//   - the same four indexes (activeFilePaths, activeBarrierDirPaths,
-//     activeNonBarrierDirPaths, descendantCount)
-//   - the same conflict taxonomy (pathConflicts)
-//   - the same cond.Wait admission loop bounded by concurrencyLimit
-//
-// It differs in three small ways: it takes already-extracted (path, kind)
-// instead of a SubscribeMetadataResponse; it has no watermark/heap because
-// mutations are not timestamp-ordered events; and Admit/Done are split so the
-// caller can run the mutation in its own goroutine.
+// Invariants:
+//   - pathQueue[p] contains every waiter (pending + admitted) that is
+//     interested in path p, in arrival order. admit dequeues nothing; Done
+//     dequeues the head.
+//   - A waiter is admissible iff it is the head of every path queue it
+//     joined (primary and secondary), pathConflictsLocked passes for each
+//     path against *active* state, and totalActive < concurrencyLimit.
 type mutateScheduler struct {
 	concurrencyLimit int
 
-	mu   sync.Mutex
-	cond *sync.Cond
+	mu sync.Mutex
 
 	totalActive              int
 	activeFilePaths          map[util.FullPath]int
 	activeBarrierDirPaths    map[util.FullPath]int
 	activeNonBarrierDirPaths map[util.FullPath]int
 	descendantCount          map[util.FullPath]int
+
+	// pathQueue maps each path to the FIFO list of waiters (pending or
+	// admitted) interested in it. Entries are removed by Done.
+	pathQueue map[util.FullPath][]*mutateWaiter
+}
+
+// mutateWaiter is one outstanding Admit call. admitted flips under mu when
+// the waiter moves from pending to active; ready is closed at the same time
+// so the Admit caller unblocks.
+type mutateWaiter struct {
+	primary, secondary util.FullPath
+	kind               mutateJobKind
+	admitted           bool
+	ready              chan struct{}
 }
 
 func newMutateScheduler(concurrency int) *mutateScheduler {
-	s := &mutateScheduler{
+	return &mutateScheduler{
 		concurrencyLimit:         concurrency,
 		activeFilePaths:          make(map[util.FullPath]int),
 		activeBarrierDirPaths:    make(map[util.FullPath]int),
 		activeNonBarrierDirPaths: make(map[util.FullPath]int),
 		descendantCount:          make(map[util.FullPath]int),
+		pathQueue:                make(map[util.FullPath][]*mutateWaiter),
 	}
-	s.cond = sync.NewCond(&s.mu)
-	return s
 }
 
 // Admit blocks until this (primary, secondary, kind) tuple can be admitted
-// without violating the conflict rules and without exceeding concurrencyLimit.
-// On return it has registered the job in the indexes; the caller must call
-// Done with the same arguments when the work is finished.
+// without violating the conflict rules and without exceeding concurrencyLimit,
+// and until every earlier waiter on any of its paths has itself been admitted.
+// On return the job is registered in the indexes; the caller must call Done
+// with the same arguments when the work is finished.
 //
 // For single-path operations (create / update / delete) pass secondary="".
 // For rename, pass old path as primary and new path as secondary; kind is
-// kindMutateBarrierDir for directory renames, kindMutateFile for file renames.
+// kindMutateBarrierDir.
 func (s *mutateScheduler) Admit(primary, secondary util.FullPath, kind mutateJobKind) {
+	w := &mutateWaiter{
+		primary:   primary,
+		secondary: secondary,
+		kind:      kind,
+		ready:     make(chan struct{}),
+	}
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for s.totalActive >= s.concurrencyLimit ||
-		s.pathConflictsLocked(primary, kind) ||
-		(secondary != "" && s.pathConflictsLocked(secondary, kind)) {
-		s.cond.Wait()
+	s.pathQueue[primary] = append(s.pathQueue[primary], w)
+	if secondary != "" && secondary != primary {
+		s.pathQueue[secondary] = append(s.pathQueue[secondary], w)
 	}
+	s.tryPromoteLocked()
+	s.mu.Unlock()
 
-	s.addPathLocked(primary, kind)
-	if secondary != "" {
-		s.addPathLocked(secondary, kind)
-	}
-	s.totalActive++
+	<-w.ready
 }
 
-// Done releases the slot reserved by Admit and wakes any waiters whose
-// conflicts may have cleared. Must be called exactly once per successful
+// Done releases the slot reserved by Admit and promotes any waiters that
+// became admissible as a result. Must be called exactly once per successful
 // Admit with the same arguments.
 func (s *mutateScheduler) Done(primary, secondary util.FullPath, kind mutateJobKind) {
 	s.mu.Lock()
@@ -105,7 +122,94 @@ func (s *mutateScheduler) Done(primary, secondary util.FullPath, kind mutateJobK
 		s.removePathLocked(secondary, kind)
 	}
 	s.totalActive--
-	s.cond.Broadcast()
+
+	s.dequeueHeadLocked(primary)
+	if secondary != "" && secondary != primary {
+		s.dequeueHeadLocked(secondary)
+	}
+
+	s.tryPromoteLocked()
+}
+
+// dequeueHeadLocked removes the current head of path p and deletes the map
+// entry when the queue becomes empty. Must be called under s.mu.
+func (s *mutateScheduler) dequeueHeadLocked(p util.FullPath) {
+	q := s.pathQueue[p]
+	if len(q) == 0 {
+		return
+	}
+	// Shift left without reallocating; drop the reference so the waiter can
+	// be garbage-collected before the tail shrinks.
+	q[0] = nil
+	copy(q, q[1:])
+	q = q[:len(q)-1]
+	if len(q) == 0 {
+		delete(s.pathQueue, p)
+	} else {
+		s.pathQueue[p] = q
+	}
+}
+
+// tryPromoteLocked admits as many queue heads as possible while respecting
+// path-FIFO order, the active-state conflict rules, and concurrencyLimit.
+// The admitted set can grow in one call because admitting one waiter frees
+// zero or more paths whose new heads may now pass the conflict check.
+// Must be called under s.mu.
+func (s *mutateScheduler) tryPromoteLocked() {
+	for s.totalActive < s.concurrencyLimit {
+		promoted := false
+		// Walk distinct head waiters across all path queues. Map iteration
+		// order is randomized, which is fine: path-FIFO is preserved by the
+		// head-of-queue check inside admitIfHeadLocked, and cross-path order
+		// is not constrained.
+		for _, q := range s.pathQueue {
+			if len(q) == 0 {
+				continue
+			}
+			w := q[0]
+			if w.admitted {
+				continue
+			}
+			if s.admitIfHeadLocked(w) {
+				promoted = true
+				if s.totalActive >= s.concurrencyLimit {
+					return
+				}
+			}
+		}
+		if !promoted {
+			return
+		}
+	}
+}
+
+// admitIfHeadLocked admits w if w is the head of every path queue it joined
+// and pathConflictsLocked passes. Returns true if admitted. Must be called
+// under s.mu.
+func (s *mutateScheduler) admitIfHeadLocked(w *mutateWaiter) bool {
+	if s.pathQueue[w.primary][0] != w {
+		return false
+	}
+	if w.secondary != "" && w.secondary != w.primary {
+		q := s.pathQueue[w.secondary]
+		if len(q) == 0 || q[0] != w {
+			return false
+		}
+	}
+	if s.pathConflictsLocked(w.primary, w.kind) {
+		return false
+	}
+	if w.secondary != "" && s.pathConflictsLocked(w.secondary, w.kind) {
+		return false
+	}
+	s.addPathLocked(w.primary, w.kind)
+	if w.secondary != "" {
+		s.addPathLocked(w.secondary, w.kind)
+	}
+	s.totalActive++
+	w.admitted = true
+	close(w.ready)
+	return true
 }
 
 // pathConflictsLocked mirrors MetadataProcessor.pathConflicts exactly.
