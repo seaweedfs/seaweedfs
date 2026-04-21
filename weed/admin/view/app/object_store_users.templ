@@ -504,6 +504,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         const STATUS_ACTIVE = 'Active';
         const STATUS_INACTIVE = 'Inactive';
 
+        // Use basePath() from admin.js for -urlPrefix; it is loaded in the layout footer before DOMContentLoaded fires.
         document.addEventListener('DOMContentLoaded', function() {
 
             // Event delegation for user action buttons
@@ -591,7 +592,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Load buckets
         async function loadBuckets() {
             try {
-                const response = await fetch('/api/s3/buckets');
+                const response = await fetch(basePath('/api/s3/buckets'));
                 if (response.ok) {
                     const data = await response.json();
                     availableBuckets = (data.buckets || []).map(bucket => ({ name: bucket.name, type: 's3' }));
@@ -605,7 +606,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 availableBuckets = [];
             }
             try {
-                const response = await fetch('/api/s3tables/buckets');
+                const response = await fetch(basePath('/api/s3tables/buckets'));
                 if (response.ok) {
                     const data = await response.json();
                     const tableBuckets = (data.buckets || data.tableBuckets || []).map(bucket => ({ name: bucket.name, type: 's3tables' }));
@@ -623,7 +624,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Load policies
         async function loadPolicies() {
             try {
-                const response = await fetch('/api/object-store/policies');
+                const response = await fetch(basePath('/api/object-store/policies'));
                 if (response.ok) {
                     const data = await response.json();
                     const policies = data.policies || [];
@@ -910,7 +911,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function showUserDetails(username) {
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}`);
+                const response = await fetch(basePath(`/api/users/${encodedUsername}`));
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('userDetailsContent').innerHTML = createUserDetailsContent(user);
@@ -929,7 +930,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function editUser(username) {
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}`);
+                const response = await fetch(basePath(`/api/users/${encodedUsername}`));
                 if (response.ok) {
                     const user = await response.json();
 
@@ -1008,7 +1009,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function manageAccessKeys(username) {
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}`);
+                const response = await fetch(basePath(`/api/users/${encodedUsername}`));
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysUsername').textContent = username;
@@ -1029,7 +1030,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             showDeleteConfirm(username, async function() {
                 try {
                     const encodedUsername = encodeURIComponent(username);
-                    const response = await fetch(`/api/users/${encodedUsername}`, {
+                    const response = await fetch(basePath(`/api/users/${encodedUsername}`), {
                         method: 'DELETE'
                     });
 
@@ -1074,7 +1075,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             };
 
             try {
-                const response = await fetch('/api/users', {
+                const response = await fetch(basePath('/api/users'), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1118,13 +1119,13 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             try {
                 // Fetch all groups
-                const groupsResp = await fetch('/api/groups');
+                const groupsResp = await fetch(basePath('/api/groups'));
                 if (!groupsResp.ok) return;
                 const groupsData = await groupsResp.json();
                 const allGroups = groupsData.groups || [];
 
                 // Fetch user details to get current groups
-                const userResp = await fetch(`/api/users/${encodeURIComponent(username)}`);
+                const userResp = await fetch(basePath(`/api/users/${encodeURIComponent(username)}`));
                 if (!userResp.ok) return;
                 const user = await userResp.json();
                 const userGroups = user.groups || [];
@@ -1172,7 +1173,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
             if (!groupName) return;
 
             try {
-                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members`, {
+                const response = await fetch(basePath(`/api/groups/${encodeURIComponent(groupName)}/members`), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username: username })
@@ -1192,7 +1193,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function removeUserFromGroupInEdit(groupName) {
             const username = document.getElementById('editUsername').value;
             try {
-                const response = await fetch(`/api/groups/${encodeURIComponent(groupName)}/members/${encodeURIComponent(username)}`, {
+                const response = await fetch(basePath(`/api/groups/${encodeURIComponent(groupName)}/members/${encodeURIComponent(username)}`), {
                     method: 'DELETE'
                 });
                 if (response.ok) {
@@ -1237,7 +1238,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}`, {
+                const response = await fetch(basePath(`/api/users/${encodedUsername}`), {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1374,7 +1375,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         async function refreshAccessKeysList(username) {
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}`);
+                const response = await fetch(basePath(`/api/users/${encodedUsername}`));
                 if (response.ok) {
                     const user = await response.json();
                     document.getElementById('accessKeysContent').innerHTML = createAccessKeysContent(user);
@@ -1387,7 +1388,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
         // Update access key status
         async function updateAccessKeyStatus(username, accessKey, status) {
             try {
-                const response = await fetch(`/api/users/${encodeURIComponent(username)}/access-keys/${encodeURIComponent(accessKey)}/status`, {
+                const response = await fetch(basePath(`/api/users/${encodeURIComponent(username)}/access-keys/${encodeURIComponent(accessKey)}/status`), {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1473,7 +1474,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
 
             try {
                 const encodedUsername = encodeURIComponent(username);
-                const response = await fetch(`/api/users/${encodedUsername}/access-keys`, {
+                const response = await fetch(basePath(`/api/users/${encodedUsername}/access-keys`), {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -1514,7 +1515,7 @@ templ ObjectStoreUsers(data dash.ObjectStoreUsersData) {
                 try {
                     const encodedUsername = encodeURIComponent(username);
                     const encodedAccessKey = encodeURIComponent(accessKey);
-                    const response = await fetch(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`, {
+                    const response = await fetch(basePath(`/api/users/${encodedUsername}/access-keys/${encodedAccessKey}`), {
                         method: 'DELETE'
                     });
 

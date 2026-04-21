@@ -243,7 +243,7 @@ templ Groups(data dash.GroupsPageData) {
                 return;
             }
             try {
-                const response = await fetch('/api/groups', {
+                const response = await fetch(basePath('/api/groups'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ name: name })
@@ -269,7 +269,7 @@ templ Groups(data dash.GroupsPageData) {
 
         async function refreshGroupDetails(requestedName) {
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(requestedName));
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(requestedName)));
                 if (!response.ok) throw new Error('Failed to fetch group');
                 if (requestedName !== currentGroupName) return; // stale response
                 const group = await response.json();
@@ -339,7 +339,7 @@ templ Groups(data dash.GroupsPageData) {
             const username = document.getElementById('addMemberSelect').value;
             if (!username) return;
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/members', {
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(currentGroupName) + '/members'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username: username })
@@ -358,7 +358,7 @@ templ Groups(data dash.GroupsPageData) {
 
         async function removeMember(username) {
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/members/' + encodeURIComponent(username), {
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(currentGroupName) + '/members/' + encodeURIComponent(username)), {
                     method: 'DELETE'
                 });
                 if (response.ok) {
@@ -377,7 +377,7 @@ templ Groups(data dash.GroupsPageData) {
             const policyName = document.getElementById('attachPolicySelect').value;
             if (!policyName) return;
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies', {
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ policy_name: policyName })
@@ -396,7 +396,7 @@ templ Groups(data dash.GroupsPageData) {
 
         async function detachPolicy(policyName) {
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies/' + encodeURIComponent(policyName), {
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(currentGroupName) + '/policies/' + encodeURIComponent(policyName)), {
                     method: 'DELETE'
                 });
                 if (response.ok) {
@@ -414,7 +414,7 @@ templ Groups(data dash.GroupsPageData) {
         async function toggleGroupStatus() {
             const enabled = document.getElementById('groupEnabledSwitch').checked;
             try {
-                const response = await fetch('/api/groups/' + encodeURIComponent(currentGroupName) + '/status', {
+                const response = await fetch(basePath('/api/groups/' + encodeURIComponent(currentGroupName) + '/status'), {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ enabled: enabled })
