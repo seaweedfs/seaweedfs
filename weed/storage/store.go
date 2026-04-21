@@ -154,8 +154,14 @@ func NewStore(
 	}
 	wg.Wait()
 
+	// Fall back to the first disk location when -dir.idx is unset, so state.pb
+	// is not written as a relative path against the process CWD (issue #9173).
+	stateDir := idxFolder
+	if stateDir == "" && len(s.Locations) > 0 {
+		stateDir = s.Locations[0].IdxDirectory
+	}
 	var err error
-	s.State, err = NewState(idxFolder)
+	s.State, err = NewState(stateDir)
 	if err != nil {
 		glog.Fatalf("failed to resolve state for volume %s: %v", id, err)
 	}
