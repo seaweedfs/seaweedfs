@@ -25,8 +25,18 @@ func (fs *FilerServer) CacheRemoteObjectToLocalCluster(ctx context.Context, req 
 	// This benefits all clients: S3 API, filer HTTP, Hadoop, etc.
 	cacheKey := req.Directory + "/" + req.Name
 
+	// Detach from caller ctx: on failure doCacheRemoteObjectToLocalCluster
+	// deletes every chunk already written, so cancelling mid-download (e.g.
+	// caller's 30s wait elapses, boto3 retries and tears down siblings)
+	// throws away all progress and the retry starts over. For blobs too big
+	// to finish before the next tear-down the loop never converges. Letting
+	// the download run to completion means subsequent waiters — via
+	// singleflight, or a fresh retry landing after completion — find the
+	// cached entry.
+	bgCtx := context.WithoutCancel(ctx)
+
 	result, err, shared := fs.remoteCacheGroup.Do(cacheKey, func() (interface{}, error) {
-		return fs.doCacheRemoteObjectToLocalCluster(ctx, req)
+		return fs.doCacheRemoteObjectToLocalCluster(bgCtx, req)
 	})
 
 	if shared {
