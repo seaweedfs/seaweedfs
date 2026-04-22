@@ -1435,13 +1435,33 @@ impl VolumeServer for VolumeGrpcService {
                                 ));
                                 break;
                             }
-                            // Go prefers a HardDriveType location, then falls back to first
-                            let dir = store
-                                .locations
-                                .iter()
-                                .find(|loc| loc.disk_type == DiskType::HardDrive)
-                                .or_else(|| store.locations.first())
-                                .map(|loc| loc.directory.clone());
+                            // disk_id=0 means "unset" (protobuf default), so auto-select
+                            // mirrors VolumeEcShardsCopy: prefer a disk already holding
+                            // this volume's shards, then any HDD, then any disk.
+                            let vid = VolumeId(info.volume_id);
+                            let dir = if info.disk_id > 0 {
+                                let count = store.locations.len();
+                                if (info.disk_id as usize) >= count {
+                                    resp_error = Some(format!(
+                                        "invalid disk_id {}: only have {} disks",
+                                        info.disk_id, count
+                                    ));
+                                    break;
+                                }
+                                Some(store.locations[info.disk_id as usize].directory.clone())
+                            } else {
+                                let loc_idx = store
+                                    .find_free_location_predicate(|loc| loc.has_ec_volume(vid))
+                                    .or_else(|| {
+                                        store.find_free_location_predicate(|loc| {
+                                            loc.disk_type == DiskType::HardDrive
+                                        })
+                                    })
+                                    .or_else(|| {
+                                        store.find_free_location_predicate(|_| true)
+                                    });
+                                loc_idx.map(|i| store.locations[i].directory.clone())
+                            };
                             drop(store);
                             let dir = match dir {
                                 Some(d) => d,
