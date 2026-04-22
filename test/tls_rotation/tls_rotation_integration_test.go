@@ -78,6 +78,12 @@ func TestMasterHTTPSCertRotation(t *testing.T) {
 	)
 	cmd.Dir = masterDir
 	cmd.Env = append(os.Environ(),
+		// Isolate HOME so the subprocess cannot pick up a developer's
+		// ~/.seaweedfs/security.toml. Viper's AddConfigPath uses the
+		// literal string "$HOME/.seaweedfs" without env expansion today,
+		// so this is only belt-and-braces — but it insures us against a
+		// future viper upgrade that does expand env vars.
+		"HOME="+dir,
 		"WEED_HTTPS_MASTER_CERT="+certPath,
 		"WEED_HTTPS_MASTER_KEY="+keyPath,
 		// Short refresh window so rotation completes in seconds.
@@ -124,8 +130,9 @@ func TestMasterHTTPSCertRotation(t *testing.T) {
 	waitForCert(t, addr, caPool, leafSerial1, 30*time.Second, "initial cert")
 
 	// Sanity: same handshake twice still observes the initial leaf.
-	if got := peekServerCert(t, addr, caPool); got == nil || got.SerialNumber.Cmp(leafSerial1) != 0 {
-		t.Fatalf("second probe before rotation did not return initial leaf: %v", got)
+	got, err := peekServerCert(addr, caPool)
+	if err != nil || got == nil || got.SerialNumber.Cmp(leafSerial1) != 0 {
+		t.Fatalf("second probe before rotation did not return initial leaf: cert=%v err=%v", got, err)
 	}
 
 	// 2. Rotate on disk. pemfile watches mtime, so each file's write is
@@ -140,14 +147,19 @@ func TestMasterHTTPSCertRotation(t *testing.T) {
 
 // waitForCert polls until a TLS handshake against addr yields a peer
 // cert with the expected serial, or fails the test at the deadline.
+// The last handshake error is surfaced in the fatal message so that a
+// CI flake makes the root cause obvious (master didn't come up, TLS
+// handshake rejected, CA pool mismatch, etc.).
 func waitForCert(t *testing.T, addr string, caPool *x509.CertPool, wantSerial *big.Int, within time.Duration, label string) {
 	t.Helper()
 	deadline := time.Now().Add(within)
 	var lastErr error
 	var lastSerial *big.Int
 	for time.Now().Before(deadline) {
-		cert := peekServerCert(t, addr, caPool)
-		if cert != nil {
+		cert, err := peekServerCert(addr, caPool)
+		if err != nil {
+			lastErr = err
+		} else if cert != nil {
 			lastSerial = cert.SerialNumber
 			if cert.SerialNumber.Cmp(wantSerial) == 0 {
 				return
@@ -158,25 +170,26 @@ func waitForCert(t *testing.T, addr string, caPool *x509.CertPool, wantSerial *b
 	t.Fatalf("timeout waiting for %s (want serial %s, last seen %v, last err %v)", label, wantSerial, lastSerial, lastErr)
 }
 
-// peekServerCert opens a one-shot TLS connection, returns the leaf, and
-// closes the connection. Returning nil means the handshake failed; the
-// caller treats that as "not ready yet" and keeps polling.
-func peekServerCert(t *testing.T, addr string, caPool *x509.CertPool) *x509.Certificate {
-	t.Helper()
+// peekServerCert opens a one-shot TLS connection and returns the leaf.
+// Errors (dial failure, handshake rejection, empty peer chain) are
+// returned rather than swallowed, so the caller can surface them when
+// the test times out.
+func peekServerCert(addr string, caPool *x509.CertPool) (*x509.Certificate, error) {
 	d := &net.Dialer{Timeout: 2 * time.Second}
 	conn, err := tls.DialWithDialer(d, "tcp", addr, &tls.Config{
 		RootCAs:    caPool,
 		ServerName: "localhost",
+		MinVersion: tls.VersionTLS12,
 	})
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer conn.Close()
 	state := conn.ConnectionState()
 	if len(state.PeerCertificates) == 0 {
-		return nil
+		return nil, fmt.Errorf("handshake returned empty peer chain")
 	}
-	return state.PeerCertificates[0]
+	return state.PeerCertificates[0], nil
 }
 
 func getFreeTCPPort(t *testing.T) int {
