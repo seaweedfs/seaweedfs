@@ -54,12 +54,25 @@ type Cluster struct {
 	masterCmd *exec.Cmd
 	volumeCmd *exec.Cmd
 
+	volumeDataDirs []string
+
 	cleanupOnce sync.Once
 }
 
 // StartSingleVolumeCluster boots one master and one volume server.
 func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
+	return StartSingleVolumeClusterWithDataDirs(t, profile, 1)
+}
+
+// StartSingleVolumeClusterWithDataDirs boots one master and one volume server
+// with dataDirCount separate data directories (passed to -dir as a comma list).
+// Each directory becomes its own DiskLocation on the volume server, letting
+// tests exercise multi-disk EC placement paths.
+func StartSingleVolumeClusterWithDataDirs(t testing.TB, profile matrix.Profile, dataDirCount int) *Cluster {
 	t.Helper()
+	if dataDirCount < 1 {
+		t.Fatalf("dataDirCount must be >= 1, got %d", dataDirCount)
+	}
 
 	weedBinary, err := FindOrBuildWeedBinary()
 	if err != nil {
@@ -74,8 +87,12 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 	configDir := filepath.Join(baseDir, "config")
 	logsDir := filepath.Join(baseDir, "logs")
 	masterDataDir := filepath.Join(baseDir, "master")
-	volumeDataDir := filepath.Join(baseDir, "volume")
-	for _, dir := range []string{configDir, logsDir, masterDataDir, volumeDataDir} {
+	volumeDataDirs := make([]string, dataDirCount)
+	for i := 0; i < dataDirCount; i++ {
+		volumeDataDirs[i] = filepath.Join(baseDir, fmt.Sprintf("volume%d", i))
+	}
+	setupDirs := append([]string{configDir, logsDir, masterDataDir}, volumeDataDirs...)
+	for _, dir := range setupDirs {
 		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
 			t.Fatalf("create %s: %v", dir, mkErr)
 		}
@@ -120,11 +137,12 @@ func StartSingleVolumeCluster(t testing.TB, profile matrix.Profile) *Cluster {
 		t.Fatalf("wait for master readiness: %v\nmaster log tail:\n%s", err, masterLog)
 	}
 
-	if err = c.startVolume(volumeDataDir); err != nil {
+	if err = c.startVolume(volumeDataDirs); err != nil {
 		masterLog := c.tailLog("master.log")
 		c.Stop()
 		t.Fatalf("start volume: %v\nmaster log tail:\n%s", err, masterLog)
 	}
+	c.volumeDataDirs = volumeDataDirs
 	if err = c.waitForHTTP(c.VolumeAdminURL() + "/status"); err != nil {
 		volumeLog := c.tailLog("volume.log")
 		c.Stop()
@@ -184,12 +202,16 @@ func (c *Cluster) startMaster(dataDir string) error {
 	return c.masterCmd.Start()
 }
 
-func (c *Cluster) startVolume(dataDir string) error {
+func (c *Cluster) startVolume(dataDirs []string) error {
 	logFile, err := os.Create(filepath.Join(c.logsDir, "volume.log"))
 	if err != nil {
 		return err
 	}
 
+	maxPerDir := make([]string, len(dataDirs))
+	for i := range dataDirs {
+		maxPerDir[i] = "16"
+	}
 	args := []string{
 		"-config_dir=" + c.configDir,
 		"volume",
@@ -197,8 +219,8 @@ func (c *Cluster) startVolume(dataDir string) error {
 		"-port=" + strconv.Itoa(c.volumePort),
 		"-port.grpc=" + strconv.Itoa(c.volumeGrpcPort),
 		"-port.public=" + strconv.Itoa(c.volumePubPort),
-		"-dir=" + dataDir,
-		"-max=16",
+		"-dir=" + strings.Join(dataDirs, ","),
+		"-max=" + strings.Join(maxPerDir, ","),
 		"-master=127.0.0.1:" + strconv.Itoa(c.masterPort),
 		"-readMode=" + c.profile.ReadMode,
 		"-concurrentUploadLimitMB=" + strconv.Itoa(c.profile.ConcurrentUploadLimitMB),
@@ -414,4 +436,11 @@ func (c *Cluster) VolumePublicURL() string {
 
 func (c *Cluster) BaseDir() string {
 	return c.baseDir
+}
+
+// VolumeDataDirs returns the data directories the volume server was started with.
+// Index 0 corresponds to DiskLocation 0, index 1 to DiskLocation 1, and so on.
+// Tests can scan these directories to verify where files physically landed.
+func (c *Cluster) VolumeDataDirs() []string {
+	return append([]string(nil), c.volumeDataDirs...)
 }
