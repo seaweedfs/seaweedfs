@@ -1048,8 +1048,9 @@ func TestEmbeddedIamCreateAccessKeyRejectsCollision(t *testing.T) {
 	assert.Len(t, api.mockConfig.Identities[1].Credentials, 0)
 }
 
-// TestEmbeddedIamCreateAccessKeyMixedSupply tests supplying only AccessKeyId
-func TestEmbeddedIamCreateAccessKeyMixedSupply(t *testing.T) {
+// TestEmbeddedIamCreateAccessKeyRejectsPartialSupply tests that supplying only
+// one of AccessKeyId / SecretAccessKey is rejected.
+func TestEmbeddedIamCreateAccessKeyRejectsPartialSupply(t *testing.T) {
 	api := NewEmbeddedIamApiForTest()
 	api.mockConfig = &iam_pb.S3ApiConfiguration{
 		Identities: []*iam_pb.Identity{
@@ -1057,11 +1058,14 @@ func TestEmbeddedIamCreateAccessKeyMixedSupply(t *testing.T) {
 		},
 	}
 
+	apiRouter := mux.NewRouter().SkipClean(true)
+	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
+
+	// AccessKeyId supplied, SecretAccessKey omitted
 	form := url.Values{}
 	form.Set("Action", "CreateAccessKey")
 	form.Set("UserName", "TestUser")
 	form.Set("AccessKeyId", "myappkey")
-	// SecretAccessKey intentionally omitted
 
 	req, _ := http.NewRequest("POST", "/", nil)
 	req.PostForm = form
@@ -1069,17 +1073,27 @@ func TestEmbeddedIamCreateAccessKeyMixedSupply(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
 	rr := httptest.NewRecorder()
-	apiRouter := mux.NewRouter().SkipClean(true)
-	apiRouter.Path("/").Methods(http.MethodPost).HandlerFunc(api.DoActions)
 	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId and SecretAccessKey must be supplied together")
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
 
-	assert.Equal(t, http.StatusOK, rr.Code)
+	// SecretAccessKey supplied, AccessKeyId omitted
+	form = url.Values{}
+	form.Set("Action", "CreateAccessKey")
+	form.Set("UserName", "TestUser")
+	form.Set("SecretAccessKey", "validsecret1")
 
-	var out iamCreateAccessKeyResponse
-	err := xml.Unmarshal(rr.Body.Bytes(), &out)
-	require.NoError(t, err)
-	assert.Equal(t, "myappkey", *out.CreateAccessKeyResult.AccessKey.AccessKeyId)
-	assert.NotEmpty(t, *out.CreateAccessKeyResult.AccessKey.SecretAccessKey)
+	req, _ = http.NewRequest("POST", "/", nil)
+	req.PostForm = form
+	req.Form = form
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+
+	rr = httptest.NewRecorder()
+	apiRouter.ServeHTTP(rr, req)
+	assert.NotEqual(t, http.StatusOK, rr.Code)
+	assert.Contains(t, rr.Body.String(), "AccessKeyId and SecretAccessKey must be supplied together")
+	assert.Len(t, api.mockConfig.Identities[0].Credentials, 0)
 }
 
 // TestEmbeddedIamCreateAccessKeyBoundary tests key length boundaries

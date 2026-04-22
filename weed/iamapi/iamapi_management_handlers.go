@@ -946,8 +946,7 @@ func (iama *IamApiServer) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, valu
 		return resp, &IamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
 	}
 	if (accessKeyId != "") != (secretAccessKey != "") {
-		glog.Warningf("CreateAccessKey: partial caller-supplied credentials for user %s (AccessKeyId=%t, SecretAccessKey=%t) — missing key will be auto-generated",
-			userName, accessKeyId != "", secretAccessKey != "")
+		return resp, &IamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
 	}
 	if accessKeyId == "" {
 		var err error

@@ -425,8 +425,7 @@ func (e *EmbeddedIamApi) CreateAccessKey(s3cfg *iam_pb.S3ApiConfiguration, value
 		return resp, &iamError{Code: iam.ErrCodeEntityAlreadyExistsException, Error: fmt.Errorf("AccessKeyId is already in use")}
 	}
 	if (accessKeyId != "") != (secretAccessKey != "") {
-		glog.Warningf("CreateAccessKey: partial caller-supplied credentials for user %s (AccessKeyId=%t, SecretAccessKey=%t) — missing key will be auto-generated",
-			userName, accessKeyId != "", secretAccessKey != "")
+		return resp, &iamError{Code: iam.ErrCodeInvalidInputException, Error: fmt.Errorf("AccessKeyId and SecretAccessKey must be supplied together")}
 	}
 	if accessKeyId == "" {
 		randomPart, err := iamStringWithCharset(AccessKeyLength-len(UserAccessKeyPrefix), iamCharsetUpper)
